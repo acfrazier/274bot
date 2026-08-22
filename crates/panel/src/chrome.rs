@@ -20,6 +20,31 @@ pub fn sections() -> &'static [Section] {
     ]
 }
 
+/// Gap between equal-width buttons (rs2b0t `gap: 6px`).
+pub const BUTTON_GAP: f32 = 6.0;
+/// Below this, a row of equal buttons stacks full-width instead of overflowing.
+pub const MIN_BUTTON: f32 = 72.0;
+
+/// Width of each of `count` equal buttons in an `avail` strip, with gaps.
+/// The row never exceeds `avail` (the 330px panel must not grow a horizontal
+/// scrollbar).
+pub fn equal_button_width(avail: f32, count: usize) -> f32 {
+    let n = count.max(1) as f32;
+    let avail = avail.max(1.0);
+    ((avail - BUTTON_GAP * (n - 1.0)) / n).max(1.0)
+}
+
+/// `(button_width, stack)`: stack full-width when equal cells would be too
+/// narrow for the label to exist without forcing a horizontal scroll.
+pub fn button_row_layout(avail: f32, count: usize) -> (f32, bool) {
+    let w = equal_button_width(avail, count);
+    if w < MIN_BUTTON {
+        (avail.max(1.0), true)
+    } else {
+        (w, false)
+    }
+}
+
 /// Global/Nav/Loadouts/MultiBox are controls inside parameters/title, still listed.
 pub const MOCK_BUTTONS: &[&str] = &[
     "Browse…",
@@ -32,10 +57,16 @@ pub const MOCK_BUTTONS: &[&str] = &[
     "MultiBox",
 ];
 
+pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
+pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
+
 #[cfg(test)]
 mod tests {
-    use crate::chrome::{MOCK_BUTTONS, sections};
-    use crate::theme::{apply_amber, ACCENT, integer_ui_scale};
+    use crate::chrome::{
+        button_row_layout, equal_button_width, MOCK_BUTTONS, PARAM_ROW, SCRIPT_ROW, sections,
+        BUTTON_GAP, MIN_BUTTON,
+    };
+    use crate::theme::{apply_amber, ACCENT, PANEL_WIDTH, integer_ui_scale};
 
     #[test]
     fn sections_contains_all_section_ids() {
@@ -65,6 +96,28 @@ mod tests {
         assert_eq!(integer_ui_scale(1.0), 1.0);
         assert_eq!(integer_ui_scale(1.75), 2.0);
         assert_eq!(integer_ui_scale(0.5), 1.0);
+    }
+
+    #[test]
+    fn equal_button_width_stays_inside_panel() {
+        // 330 minus 10px padding each side, the rs2b0t content box.
+        let avail = PANEL_WIDTH - 20.0;
+        for n in 1..=4 {
+            let w = equal_button_width(avail, n);
+            let total = w * n as f32 + BUTTON_GAP * (n.saturating_sub(1) as f32);
+            assert!(
+                total <= avail + 0.01,
+                "row of {n} buttons {total} overflowed {avail}"
+            );
+        }
+        let (w, stack) = button_row_layout(40.0, 3);
+        assert!(stack);
+        assert_eq!(w, 40.0);
+        let (_, stack) = button_row_layout(avail, 3);
+        assert!(!stack, "Start/Pause/Stop fit the 330px strip");
+        assert!(MIN_BUTTON > 0.0);
+        assert_eq!(SCRIPT_ROW.len(), 3);
+        assert_eq!(PARAM_ROW.len(), 3);
     }
 
     #[test]

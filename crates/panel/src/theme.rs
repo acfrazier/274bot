@@ -16,8 +16,14 @@ pub const TEXT_DIM: [f32; 4] = [0.4, 0.4, 0.4, 1.0];
 pub const FRAME: [f32; 4] = [0.102, 0.102, 0.102, 1.0]; // #1a1a1a
 /// Borders (#333).
 pub const BORDER: [f32; 4] = [0.2, 0.2, 0.2, 1.0];
+/// Warn banner text (#e0d75b).
+pub const WARN: [f32; 4] = [224.0 / 255.0, 215.0 / 255.0, 91.0 / 255.0, 1.0];
+/// Error banner text (#ff7b7b).
+pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
 /// Panel window title.
 pub const TITLE: &str = "274bot";
+/// Dim build line under the title (no fake git hash).
+pub const BUILD_LINE: &str = "campaign 2 · mock chrome";
 /// Right-hand chrome width, matching rs2b0t's 330px panel.
 pub const PANEL_WIDTH: f32 = 330.0;
 /// Stable ImGui window name for the right-hand chrome.

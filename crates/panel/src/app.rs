@@ -11,13 +11,13 @@ use dear_imgui_rs::{
     Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, Ui, WindowFlags,
 };
 
-use crate::chrome::MOCK_BUTTONS;
+use crate::chrome::{button_row_layout, PARAM_ROW, SCRIPT_ROW};
 use crate::focus::{should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
-    PANEL_WINDOW, TITLE,
+    BUILD_LINE, ERROR, PANEL_WINDOW, TEXT_DIM, TITLE,
 };
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
@@ -274,48 +274,85 @@ fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
     keys
 }
 
-/// Right panel: wired vault/profile/status/log/rendering/input chrome plus the
-/// mocked script/parameters sections. Docked as a thin slice; it scrolls.
+/// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
+/// only — wrap/clip, never a horizontal bar.
 fn panel_window(ui: &Ui, session: &mut Session) {
-    ui.window(PANEL_WINDOW)
-        .build(|| {
-            ui.text_colored(ACCENT, TITLE);
-            ui.separator();
-            profile_section(ui, session);
-            ui.separator();
-            credentials_section(ui, session);
-            ui.separator();
-            script_section(ui);
-            ui.separator();
-            parameters_section(ui);
-            ui.separator();
-            status_section(ui, session);
-            ui.separator();
-            log_section(ui, session);
-            ui.separator();
-            rendering_section(ui, session);
-            ui.separator();
-            input_section(ui, session);
-        });
+    ui.window(PANEL_WINDOW).build(|| {
+        let _width = ui.push_item_width(-1.0);
+        let _wrap = ui.push_text_wrap_pos(0.0);
+        title_row(ui);
+        ui.text_colored(TEXT_DIM, BUILD_LINE);
+        banner(ui, session);
+        profile_section(ui, session);
+        credentials_section(ui, session);
+        script_section(ui);
+        parameters_section(ui);
+        status_section(ui, session);
+        log_section(ui, session);
+        rendering_section(ui, session);
+        input_section(ui, session);
+    });
+}
+
+fn title_row(ui: &Ui) {
+    ui.text_colored(ACCENT, TITLE);
+    ui.same_line();
+    let avail = ui.content_region_avail()[0];
+    let w = avail.min(72.0).max(1.0);
+    ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - w).max(0.0));
+    mock_button(ui, "MultiBox", "campaign 4", [w, 0.0]);
+}
+
+fn banner(ui: &Ui, session: &Session) {
+    if let Some(err) = &session.error {
+        ui.text_colored(ERROR, format!("{err}"));
+    }
+}
+
+fn section_title(ui: &Ui, id: &str) {
+    ui.spacing();
+    ui.text_disabled(id);
+    ui.separator();
+}
+
+fn kv_row(ui: &Ui, key: &str, value: &str) {
+    ui.text_disabled(key);
+    ui.same_line();
+    ui.text_wrapped(value);
+}
+
+fn mock_button(ui: &Ui, label: &str, hint: &str, size: [f32; 2]) {
+    let _disabled = ui.begin_disabled();
+    ui.button_with_size(label, size);
+    ui.tooltip_text(hint);
+}
+
+fn mock_button_row(ui: &Ui, labels: &[&str], hint: &str) {
+    let avail = ui.content_region_avail()[0];
+    let (w, stack) = button_row_layout(avail, labels.len());
+    for (i, label) in labels.iter().enumerate() {
+        if !stack && i > 0 {
+            ui.same_line();
+        }
+        mock_button(ui, label, hint, [w, 0.0]);
+    }
 }
 
 /// profile: vault combo + mainland checkbox; password prompt until unlocked.
 fn profile_section(ui: &Ui, session: &mut Session) {
-    ui.text_disabled("profile");
+    section_title(ui, "profile");
     if session.vault.is_none() {
         ui.input_text("##vault-pass", &mut session.pass_scratch)
             .password(true)
             .hint("vault passphrase")
             .build();
-        if ui.button("Unlock vault") {
+        let w = ui.content_region_avail()[0];
+        if ui.button_with_size("Unlock vault", [w, 0.0]) {
             let pass = session.pass_scratch.trim().to_string();
             if !pass.is_empty() {
                 session.unlock(&pass);
                 session.pass_scratch.clear();
             }
-        }
-        if let Some(err) = &session.error {
-            ui.text_colored(ERROR, format!("vault: {err}"));
         }
         return;
     }
@@ -335,9 +372,6 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     if ui.checkbox("mainland hop", &mut mainland) {
         session.mainland.store(mainland, Ordering::Relaxed);
     }
-    if let Some(err) = &session.error {
-        ui.text_colored(ERROR, format!("vault: {err}"));
-    }
 }
 
 /// credentials: editable user/pass fields. Save upserts the vault profile,
@@ -346,98 +380,113 @@ fn profile_section(ui: &Ui, session: &mut Session) {
 /// already-spawned slot; Clear empties the two fields without touching the
 /// vault. Panel does not auto-create test/test.
 fn credentials_section(ui: &Ui, session: &mut Session) {
-    ui.text_disabled("credentials");
+    section_title(ui, "credentials");
     if session.vault.is_none() {
         ui.text_disabled("vault locked");
         return;
     }
+    ui.text_disabled("user");
     ui.input_text("##cred-user", &mut session.cred_user)
         .hint("username")
         .build();
+    ui.text_disabled("pass");
     ui.input_text("##cred-pass", &mut session.cred_pass)
         .password(true)
         .hint("password")
         .build();
-    if ui.button("Save") {
+    let avail = ui.content_region_avail()[0];
+    let (w, stack) = button_row_layout(avail, 3);
+    if ui.button_with_size("Save", [w, 0.0]) {
         session.save_credentials();
     }
-    ui.same_line();
-    if ui.button("Log in") {
+    if !stack {
+        ui.same_line();
+    }
+    if ui.button_with_size("Log in", [w, 0.0]) {
         let name = session.cred_user.trim().to_string();
         if !name.is_empty() {
             session.login(&name);
         }
     }
-    ui.same_line();
-    if ui.button("Clear") {
+    if !stack {
+        ui.same_line();
+    }
+    if ui.button_with_size("Clear", [w, 0.0]) {
         session.clear_credentials();
     }
-    ui.text_disabled("Save writes the vault and spawns the slot if needed.");
+    {
+        let _disabled = ui.begin_disabled();
+        let mut auto = false;
+        ui.checkbox("auto-login on title", &mut auto);
+        ui.tooltip_text("mocked");
+    }
 }
 
-/// script: mocked until campaign 5.
+/// script: mocked until campaign 5. Layout matches BotPanel (name+Browse,
+/// then Start/Pause/Stop, then a status row).
 fn script_section(ui: &Ui) {
-    ui.text_disabled("script");
-    mock_buttons(ui, &MOCK_BUTTONS[..4], "campaign 5");
+    section_title(ui, "script");
+    ui.text_colored(ACCENT, "(none)");
+    ui.same_line();
+    let rest = ui.content_region_avail()[0];
+    mock_button(ui, "Browse…", "campaign 5", [rest.max(1.0), 0.0]);
+    mock_button_row(ui, SCRIPT_ROW, "campaign 5");
+    kv_row(ui, "status", "idle");
 }
 
 /// parameters: mocked until campaign 5.
 fn parameters_section(ui: &Ui) {
-    ui.text_disabled("parameters");
+    section_title(ui, "parameters");
     ui.text_disabled("(no parameters)");
-    mock_buttons(ui, &MOCK_BUTTONS[4..], "campaign 5");
+    let w = ui.content_region_avail()[0];
+    mock_button(ui, "Edit parameters", "campaign 5", [w, 0.0]);
+    mock_button_row(ui, PARAM_ROW, "campaign 5");
 }
 
-/// Disabled, dimmed mock buttons with the owning campaign as a tooltip.
-fn mock_buttons(ui: &Ui, buttons: &[&str], hint: &str) {
-    let _disabled = ui.begin_disabled();
-    for (i, name) in buttons.iter().enumerate() {
-        if i > 0 {
-            ui.same_line();
-        }
-        ui.button(*name);
-        ui.tooltip_text(hint);
-    }
-}
-
-/// status: one row per running slot from the shared `SlotStatus` list.
+/// status: rs2b0t key/value rows (state, player, tile, modals), wrapped.
 fn status_section(ui: &Ui, session: &Session) {
-    ui.text_disabled("status");
+    section_title(ui, "status");
     let statuses = session.statuses();
     if statuses.is_empty() {
-        ui.text_disabled("no slots");
+        kv_row(ui, "state", "no slots");
+        kv_row(ui, "player", "—");
+        kv_row(ui, "tile", "—");
+        kv_row(ui, "modals", "—");
         return;
     }
-    for s in &statuses {
-        let state = if s.ingame {
-            format!("ingame scene {}", s.scene_state)
-        } else if let Some(err) = &s.error {
-            format!("login {err}")
-        } else if s.login_started.is_some() {
-            "logging in…".to_string()
-        } else {
-            "waiting".to_string()
-        };
-        let player = if s.player.is_empty() { "?" } else { &s.player };
-        ui.text(format!(
-            "{} — {state} | {player} @ {},{} | modal {}",
-            s.username, s.tile_x, s.tile_z, s.main_modal_id
-        ));
-        if s.ingame {
-            ui.text_disabled(format!("energy {} run_sends {}", s.runenergy, s.run_sends));
-        }
-    }
+    // Focused slot if present, else the first runner. One bot's rows, not a
+    // concatenated line that overflows the 330px strip.
+    let focused = session.focused_name();
+    let s = statuses
+        .iter()
+        .find(|s| focused.as_deref() == Some(s.username.as_str()))
+        .unwrap_or(&statuses[0]);
+    let state = if s.ingame {
+        format!("ingame scene {}", s.scene_state)
+    } else if let Some(err) = &s.error {
+        format!("login {err}")
+    } else if s.login_started.is_some() {
+        "logging in…".to_string()
+    } else {
+        "waiting".to_string()
+    };
+    let player = if s.player.is_empty() { "?" } else { s.player.as_str() };
+    kv_row(ui, "state", &state);
+    kv_row(ui, "player", player);
+    kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
+    kv_row(ui, "modals", &format!("{}", s.main_modal_id));
 }
 
 /// log: status-transition lines, scrollable.
 fn log_section(ui: &Ui, session: &Session) {
-    ui.text_disabled("log");
+    section_title(ui, "log");
     let log = session.log.lock().unwrap();
     ui.child_window("panel-log")
         .size([0.0, 80.0])
         .build(ui, || {
+            let _wrap = ui.push_text_wrap_pos(0.0);
             for line in log.iter() {
-                ui.text_disabled(line);
+                ui.text_wrapped(line);
             }
         });
 }
@@ -445,13 +494,13 @@ fn log_section(ui: &Ui, session: &Session) {
 /// rendering: game renderer checkbox; `set_draw` is applied by the slot
 /// threads from the shared focus on every frame.
 fn rendering_section(ui: &Ui, session: &mut Session) {
-    ui.text_disabled("rendering");
+    section_title(ui, "rendering");
     let on = session.focus.lock().unwrap().renderer;
     let mut cur = on;
     if ui.checkbox("game renderer", &mut cur) {
         session.set_renderer(cur);
     }
-    ui.text_disabled(if on {
+    ui.text_wrapped(if on {
         "Rendering never pauses the bot."
     } else {
         "renderer off"
@@ -460,14 +509,14 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
 
 /// input: per-focused-bot capture toggle. Off = watch-only, zero input work.
 fn input_section(ui: &Ui, session: &mut Session) {
-    ui.text_disabled("input");
+    section_title(ui, "input");
     let on = session.focus.lock().unwrap().capture;
     let mut cur = on;
     if ui.checkbox("capture input", &mut cur) {
         session.set_capture(cur);
     }
-    ui.text_disabled(if on {
-        "click-through on"
+    ui.text_wrapped(if on {
+        "click-through on; at most one keyboard"
     } else {
         "watch-only; no input work"
     });
@@ -512,8 +561,7 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
         .run()
 }
 
-/// Error tint for vault/login failures in the panel banner.
-const ERROR: [f32; 4] = [1.0, 0.5, 0.5, 1.0];
+
 
 #[cfg(test)]
 mod tests {
