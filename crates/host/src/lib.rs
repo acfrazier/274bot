@@ -115,9 +115,12 @@ impl Host {
     }
 
     /// One 20 ms frame: drain optional input into the shell, latch the
-    /// click, run one `mainloop` pass, drain gens, then copy the redraw
-    /// into optional pixels. `run_sends` is overwritten with the slot's
-    /// running count of accepted auto-run sends.
+    /// click, run one `mainloop` pass, render the frame (`mainredraw` —
+    /// the draw switch gates the paint; this is what fills `draw_area` and
+    /// runs the `game_draw` minimenu build, mirroring `Client::run`),
+    /// drain gens, then copy the redraw into optional pixels. `run_sends`
+    /// is overwritten with the slot's running count of accepted auto-run
+    /// sends.
     /// `SlotLoop` stays module-private (tests live in this module); the
     /// pub surface exists so `run_client` and the tests share the frame.
     #[allow(private_interfaces)]
@@ -134,6 +137,7 @@ impl Host {
         }
         client.shell.latch_click();
         client.mainloop();
+        client.mainredraw();
         let result = slot.after_drain(client);
         if should_emit_tick(result.player_info) && debug_enabled() {
             eprintln!("[host] slot {username}: tick");
@@ -377,8 +381,10 @@ mod tests {
         c.set_draw(false);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert!(buf.snapshot().is_empty(), "draw off must not copy pixels");
-        // Renderer on: `mainredraw` paints the title screen and the frame
-        // copies a full applet into the buffer.
+        // Renderer on: `mainredraw` runs the frame render pass (with no
+        // title assets in this test the paint is empty, but the frame still
+        // copies a full applet into the buffer; the non-zero paint is
+        // proven live by the panel_view e2e).
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(

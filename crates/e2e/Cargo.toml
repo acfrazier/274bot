@@ -5,5 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
+host = { path = "../host" }
 host-play = { path = "../host-play" }
 vault = { path = "../vault" }
