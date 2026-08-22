@@ -300,7 +300,12 @@ fn title_row(ui: &Ui) {
     let avail = ui.content_region_avail()[0];
     let w = avail.min(72.0).max(1.0);
     ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - w).max(0.0));
-    mock_button(ui, "MultiBox", "campaign 4", [w, 0.0]);
+    mock_button(
+        ui,
+        "MultiBox",
+        "slots already live; wall/sidecar is campaign 4",
+        [w, 0.0],
+    );
 }
 
 fn banner(ui: &Ui, session: &Session) {

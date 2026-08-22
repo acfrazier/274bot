@@ -20,7 +20,10 @@ credentials, status/log, game renderer, click-through capture, amber chrome.
 
 ## What it does not (yet)
 
-- Not **nav**, not **scripts**, not **wall** — later campaigns.
+- Not **nav**, not **scripts**, not the **wall**. Unlocking the vault
+  already runs every profile as a live slot (that profile-combo
+  “channel change” is N clients, one raster). Sidecar/grid wall is
+  campaign 4.
 - No hosted product, no official anything: this is **not** Jagex, **not**
   official Lost City, **not** Fairy Ring, **not** a file-port of rs2b0t
   (rs2b0t's chrome is mimicked in the panel; the code is our own).

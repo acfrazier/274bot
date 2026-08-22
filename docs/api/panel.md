@@ -39,6 +39,12 @@ thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
 generation is unchanged.
 
+The Game Image is already a **wgpu texture** (GPU composite). The 274 scene
+behind it is still **CPU Pix3D** into `draw_area` — same painter as the
+headless client, not a GPU 3D backend, and not the client's `Present`
+(softbuffer). Unfocused slots skip `mainredraw`; every unlocked profile
+still runs `mainloop` so the combo can channel-change without a relog.
+
 ## Renderer vs capture
 
 Two independent checkboxes, both gated on a focused profile with its pane
