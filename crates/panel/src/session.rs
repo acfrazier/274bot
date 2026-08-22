@@ -15,7 +15,7 @@ use host::{InputEv, PixelBuf, SlotInput, map_image_to_applet};
 use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotStatus};
 use vault::{Profile, Vault};
 
-use crate::focus::should_draw;
+use crate::focus::draw_for_slot;
 
 const DEFAULT_PORT: u16 = 43594;
 
@@ -55,7 +55,8 @@ pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, 
 
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
-    /// apply `client.set_draw(should_draw(&focus))`.
+    /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
+    /// focused slot rasters.
     pub focus: Arc<Mutex<crate::focus::Focus>>,
     pub vault: Option<Vault>,
     /// Last vault/connection error shown in the banner.
@@ -75,6 +76,9 @@ pub struct Session {
     pub pass_scratch: String,
     /// Last status poll (delta source for the log).
     pub statuses: Vec<SlotStatus>,
+    /// Credentials-section scratch buffers (username/password fields).
+    pub cred_user: String,
+    pub cred_pass: String,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
     options: PlayOptions,
 }
@@ -110,6 +114,8 @@ impl Session {
             log: Arc::new(Mutex::new(Vec::new())),
             pass_scratch: String::new(),
             statuses: Vec::new(),
+            cred_user: String::new(),
+            cred_pass: String::new(),
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
@@ -164,7 +170,8 @@ impl Session {
                 None => (None, None),
             },
             move |c, name| {
-                c.set_draw(should_draw(&focus.lock().unwrap()));
+                let draw = draw_for_slot(&focus.lock().unwrap(), name);
+                c.set_draw(draw);
                 if mainland.load(Ordering::Relaxed)
                     && c.ingame
                     && c.scene_state == 2
@@ -265,7 +272,8 @@ impl Session {
     }
 
     /// Switch the focused profile. Capture follows the new focus when the
-    /// single capture toggle is on (never two keyboards).
+    /// single capture toggle is on (never two keyboards). The credentials
+    /// fields follow the newly focused profile.
     pub fn select(&mut self, name: &str) {
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
@@ -284,6 +292,13 @@ impl Session {
             self.capture_on(name);
         } else {
             self.capture_tx = None;
+        }
+        // Credentials fields follow the newly focused profile.
+        if let Some(vault) = &self.vault {
+            if let Some(p) = vault.get(name) {
+                self.cred_user = p.username.clone();
+                self.cred_pass = p.password.clone();
+            }
         }
     }
 
@@ -326,12 +341,88 @@ impl Session {
         }
         self.capture_tx = None;
     }
+
+    /// Save the credentials fields as a vault profile: the username field
+    /// is the key, the password field the secret, and an existing profile's
+    /// uid/settings are kept. Returns whether the write landed; failures set
+    /// [`Session::error`].
+    pub fn save_credentials(&mut self) -> bool {
+        let Some(vault) = &mut self.vault else {
+            self.error = Some("credentials: vault locked".into());
+            return false;
+        };
+        let username = self.cred_user.trim().to_string();
+        if username.is_empty() {
+            self.error = Some("credentials: username required".into());
+            return false;
+        }
+        let existing = vault.get(&username).cloned();
+        let profile = Profile {
+            uid: existing
+                .as_ref()
+                .map(|p| p.uid)
+                .unwrap_or_else(|| fresh_uid(vault)),
+            username: username.clone(),
+            password: self.cred_pass.clone(),
+            settings: existing.map(|p| p.settings).unwrap_or_default(),
+        };
+        match vault.upsert(profile) {
+            Ok(()) => {
+                self.error = None;
+                true
+            }
+            Err(e) => {
+                self.error = Some(format!("credentials: {e}"));
+                false
+            }
+        }
+    }
+
+    /// Focus the credentials username. Every vault profile is spawned at
+    /// unlock, so selecting a vault username focuses its already-running
+    /// slot (the existing session spawn path).
+    pub fn login(&mut self, name: &str) {
+        self.select(name);
+    }
+
+    /// Empty the credentials-section fields. The vault entry is untouched.
+    pub fn clear_credentials(&mut self) {
+        self.cred_user.clear();
+        self.cred_pass.clear();
+    }
+}
+
+/// Fresh uid for a profile with no existing vault entry: one past the max
+/// (host-play assigns uids from the same 274M base range).
+fn fresh_uid(vault: &Vault) -> i32 {
+    vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
 #[cfg(test)]
 mod tests {
-    use super::maybe_send_click;
+    use super::{Session, maybe_send_click};
     use host::InputEv;
+    use vault::{Profile, ProfileSettings, Vault};
+
+    fn tmp_vault(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("274bot-panel-session-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        if p.exists() {
+            std::fs::remove_file(&p).unwrap();
+        }
+        p
+    }
+
+    fn profile(username: &str, password: &str, uid: i32) -> Profile {
+        Profile {
+            username: username.into(),
+            password: password.into(),
+            uid,
+            settings: ProfileSettings::default(),
+        }
+    }
 
     #[test]
     fn maybe_send_click_is_noop_without_tx() {
@@ -353,5 +444,91 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         maybe_send_click(&Some(tx), -5.0, 10.0, 765.0, 503.0);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn login_focuses_the_named_profile() {
+        let mut s = Session::new();
+        assert!(s.focused_name().is_none());
+        s.login("alice");
+        assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn select_syncs_credentials_fields_from_focused_profile() {
+        let path = tmp_vault("select-sync.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault.as_mut().unwrap().upsert(profile("alice", "pw", 42)).unwrap();
+
+        s.select("alice");
+        assert_eq!(s.cred_user, "alice");
+        assert_eq!(s.cred_pass, "pw");
+    }
+
+    #[test]
+    fn save_credentials_upserts_under_username_key_keeping_uid() {
+        let path = tmp_vault("save-creds.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault.as_mut().unwrap().upsert(profile("alice", "oldpass", 42)).unwrap();
+
+        s.cred_user = "alice".into();
+        s.cred_pass = "newpass".into();
+        assert!(s.save_credentials());
+
+        let p = s.vault.as_ref().unwrap().get("alice").unwrap();
+        assert_eq!(p.password, "newpass");
+        assert_eq!(p.uid, 42, "save must keep the existing uid");
+    }
+
+    #[test]
+    fn save_credentials_creates_new_profile_when_username_is_new() {
+        let path = tmp_vault("new-user.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault.as_mut().unwrap().upsert(profile("alice", "pw", 42)).unwrap();
+
+        s.cred_user = "bob".into();
+        s.cred_pass = "bobpass".into();
+        assert!(s.save_credentials());
+
+        let p = s.vault.as_ref().unwrap().get("bob").unwrap();
+        assert_eq!(p.password, "bobpass");
+        assert_ne!(p.uid, 42, "a new profile gets a fresh uid");
+        assert_eq!(
+            s.vault.as_ref().unwrap().get("alice").unwrap().password,
+            "pw",
+            "saving a new username must not touch existing profiles"
+        );
+    }
+
+    #[test]
+    fn save_credentials_rejects_empty_username() {
+        let path = tmp_vault("empty-user.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.cred_user = "  ".into();
+        s.cred_pass = "x".into();
+        assert!(!s.save_credentials());
+        assert!(s.error.is_some());
+    }
+
+    #[test]
+    fn clear_credentials_empties_fields_but_keeps_vault() {
+        let path = tmp_vault("clear-creds.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault.as_mut().unwrap().upsert(profile("alice", "pw", 42)).unwrap();
+        s.select("alice");
+        s.cred_pass = "edited".into();
+
+        s.clear_credentials();
+        assert!(s.cred_user.is_empty());
+        assert!(s.cred_pass.is_empty());
+        assert!(
+            s.vault.as_ref().unwrap().get("alice").is_some(),
+            "clear must not delete the vault profile"
+        );
     }
 }

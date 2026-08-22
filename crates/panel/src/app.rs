@@ -182,23 +182,41 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// credentials: the focused profile's stored user/pass from the vault.
-fn credentials_section(ui: &Ui, session: &Session) {
+/// credentials: editable user/pass fields for the focused profile. Save
+/// upserts the vault profile, Log in focuses the already-spawned slot, Clear
+/// empties the two fields without touching the vault.
+fn credentials_section(ui: &Ui, session: &mut Session) {
     ui.text_disabled("credentials");
-    let name = match session.focused_name() {
-        Some(n) => n,
-        None => {
-            ui.text_disabled("no focused profile");
-            return;
-        }
-    };
-    match session.vault.as_ref().and_then(|v| v.get(&name)) {
-        Some(p) => {
-            ui.text(format!("user: {}", p.username));
-            ui.text(format!("pass: {}", p.password));
-        }
-        None => ui.text_disabled("running slot outside vault"),
+    if session.vault.is_none() {
+        ui.text_disabled("vault locked");
+        return;
     }
+    if session.focused_name().is_none() {
+        ui.text_disabled("no focused profile");
+        return;
+    }
+    ui.input_text("##cred-user", &mut session.cred_user)
+        .hint("username")
+        .build();
+    ui.input_text("##cred-pass", &mut session.cred_pass)
+        .password(true)
+        .hint("password")
+        .build();
+    if ui.button("Save") {
+        session.save_credentials();
+    }
+    ui.same_line();
+    if ui.button("Log in") {
+        let name = session.cred_user.trim().to_string();
+        if !name.is_empty() {
+            session.login(&name);
+        }
+    }
+    ui.same_line();
+    if ui.button("Clear") {
+        session.clear_credentials();
+    }
+    ui.text_disabled("Save writes the vault; Clear only empties these fields.");
 }
 
 /// script: mocked until campaign 5.
