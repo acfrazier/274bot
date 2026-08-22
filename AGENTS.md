@@ -2,11 +2,13 @@
 
 Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
-**What this is:** Rust bot host for the 274 client. Local: `/Users/acfrazier/experiments/274bot-host`. GitHub: `acfrazier/274bot` (private). Spec: `docs/superpowers/specs/2026-08-22-bot-host-kernel-design.md` on the FR clone (gitignored). Plan: `docs/superpowers/plans/2026-08-22-bot-host-kernel.md` there.
+**What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`Fairy-Ring/FR-client-rust` `rs2-r274`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` on the FR clone, not this repo.
 
-**Not this repo:** Fairy-Ring/FR-client-rust (`/Users/acfrazier/experiments/274bot`). Do not put bot crates there. Client is a **submodule** at `vendor/fr-client-rust` (path dep). Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests.
+**Not this repo:** Do not put bot crates in FR-client-rust. Do not fork/patch the submodule from here. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests.
 
-**Layout:** crates under `crates/{host,vault,api,host-play}`.
+**Layout:** crates under `crates/{host,vault,api,host-play,e2e}`.
+
+**SDD models (operator):** task implementer `deepseek-v4-flash`, per-task reviewer `deepseek-v4-pro` (or flash if it behaves), **whole-branch review: grok**. Do not skip the final grok pass.
 
 **Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Commit on `main`. Write the report file the orch named.
 

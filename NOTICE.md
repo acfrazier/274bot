@@ -1,0 +1,22 @@
+# NOTICE
+
+**274bot** is an independent Rust **bot host** for a 274-era client. It is **not** a RuneScape official product, **not** endorsed by Jagex Ltd, **not** official Lost City / LostCityRS, and **not** a Fairy Ring release.
+
+**RuneScape** and related marks are trademarks of Jagex Ltd. Period assets (jag files, cache, maps) remain Jagex IP where they exist in *other* trees — they are **not** redistributed from this git repository.
+
+## Client (submodule)
+
+Headless clients in this process are [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) (`rs2-r274`), vendored at `vendor/fr-client-rust`. That tree is a derivation of open **Lost City / LostCityRS** client work (Client-TS 274, Client-Java 274) under MIT. See that repo’s [NOTICE.md](https://github.com/Fairy-Ring/FR-client-rust/blob/rs2-r274/NOTICE.md) and [LICENSE](https://github.com/Fairy-Ring/FR-client-rust/blob/rs2-r274/LICENSE).
+
+This repository does **not** relicense Lost City–originated client code as original work of 274bot. Bot crates (`host`, `vault`, `api`, `host-play`, `e2e`) are original to this project under [LICENSE](LICENSE) (MIT).
+
+Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,” or “rs2b0t.”
+
+## Ideas borrowed, not copied
+
+- **API shape:** snapshot → query → interact → settle is a **borrowed idea** from m8aq-style bot APIs. This is not a file port of m8aq (or any other bot framework).
+- **Product:** a Rust-first **rewrite** of the rs2b0t *idea* (many headless 274 clients, login queue, live harnesses). It is **not** a port of the rs2b0t TypeScript tree.
+
+## AI use (explicit)
+
+Development of this repository **uses AI tools and coding agents**. Humans own product judgment.

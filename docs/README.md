@@ -1,4 +1,5 @@
 # 274bot docs
 
-Product documentation for the 274bot workspace. Working notes and ephemeral
-plans live in `docs/superpowers/`, which is gitignored.
+Committed product docs for agents: [`api/`](api/README.md).
+
+Working notes (`specs/`, `plans/`) live in `docs/superpowers/` on a local checkout and are **gitignored** — they are not this GitHub tree.

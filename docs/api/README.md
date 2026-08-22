@@ -14,7 +14,7 @@ tick and the encrypted vault.
 | Crate | Role |
 | --- | --- |
 | `api` | Read model (`snapshot`, `query`), act primitives (`interact`, `settle`), legal send table (`prot`) |
-| `host` | One OS thread per client slot; drains gens per frame and synthesizes `on_server_tick` |
+| `host` | One OS thread per client slot; drains gens per frame; snapshot/settle/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM) |
 | `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |
 
@@ -23,20 +23,22 @@ The kernel talks to it through `api::interact::Driver` (real impl: `Client`)
 and `api::prot::Out` (real impl: the client's ISAAC `Packet`). The kernel
 never writes a bare opcode outside those two paths.
 
-## Tick model: `on_server_tick`
+## Tick model
 
 274 has **no tick-end opcode** in its server protocol. The host synthesizes
 the tick edge instead:
 
 1. One thread per slot runs `client.mainloop()` once every **20 ms** frame.
-2. After each pass the drain `Pump` diffs `Client.gens` (`crates/host/src/slot.rs`).
-3. When the drain applied a `PLAYER_INFO` (the player gen moved), the host
-   calls `on_server_tick(client, username, slot_state)` and host think hooks
-   run there (`crates/host/src/lib.rs`).
+2. After each pass the drain `Pump` diffs `Client.gens` (`crates/host/src/slot.rs`)
+   and returns `DrainResult.dirty` (computed **before** committing `last`).
+3. Families whose gens moved are rebuilt on the slot’s `GameSnapshot`. Settle
+   runs when any family is dirty. Auto-run think runs every `after_drain`
+   (energy can move on `UPDATE_RUNENERGY` without `PLAYER_INFO`).
 
 `player_info` true ⇔ `gens.player` moved since the last drain — that is the
-tick edge. A drain with only e.g. `NPC_INFO` marks families dirty but emits
-no tick.
+**server-tick** edge (scripts that must think once per cycle use it). A drain
+with only e.g. `NPC_INFO` marks families dirty and still rebuilds/settles,
+but is not a player-tick.
 
 ## Auto-run
 
