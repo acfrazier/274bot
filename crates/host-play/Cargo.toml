@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+api = { path = "../api" }
 client = { workspace = true }
 host = { path = "../host" }
 vault = { path = "../vault" }

@@ -25,6 +25,12 @@ per-uid cooldown.
 first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). Call `reset()` on
 any successful login.
 
+## Mainland hop (tutorial skip)
+
+New accounts spawn on Tutorial Island. The cheap rs2b0t `mainlandAccount` **send** is `api::interact::mainland_hop` after `ingame && scene_state == 2`: `CLIENT_CHEAT` `tele 0,50,50,20,20` then `setvar tutorial 1000`. host-play: `--mainland` or `BOT_MAINLAND=1`.
+
+This does **not** relog. Side icons stay tutorial-locked until a later campaign (clean IF logout + login FIFO). Local engine grants staff cheats when not `production`.
+
 ## Wiring
 
 `api::interact::login` routes the handshake through the driver

@@ -57,6 +57,8 @@ cargo run -p host-play -- --user test
 
 `--vault-pass` is equivalent to the env. Empty passphrase is rejected. First run creates `~/.274bot/vault` and profiles (`password = username` unless you upsert). Headless **lowmem** is the default; `--highmem` if you need it. `--debug` or `BOT_DEBUG=1` prints slot logs.
 
+`--mainland` (or `BOT_MAINLAND=1`) after scene 2 sends the rs2b0t tutorial skip (`tele` Lumbridge courtyard + `setvar tutorial 1000`). It does not relog; sidebar unlock is later. New accounts otherwise stay on Tutorial Island.
+
 There is **no window** in this crate (that is campaign 2). To watch the world, run Fairy Ring `client-play --window` on a **different** account.
 
 ## Live tests

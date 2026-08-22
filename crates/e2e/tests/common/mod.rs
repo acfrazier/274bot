@@ -68,6 +68,7 @@ pub fn options() -> PlayOptions {
         port: 43594,
         cache_dir: format!("{home}/experiments/Server/engine/data/pack/client"),
         lowmem: true,
+        mainland: false,
     }
 }
 

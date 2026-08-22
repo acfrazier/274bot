@@ -24,6 +24,8 @@ pub struct PlayOptions {
     pub port: u16,
     pub cache_dir: String,
     pub lowmem: bool,
+    /// After scene 2, queue rs2b0t `mainlandAccount` tele+setvar (no relog).
+    pub mainland: bool,
 }
 
 /// Pollable per-slot view; the slot threads update it after each frame.
@@ -88,6 +90,7 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
         let ifaces_template = ifaces.clone();
         let slot_queue = Arc::clone(&queue);
         let slot_statuses = Arc::clone(&statuses);
+        let mainland = options.mainland;
 
         handles.push(thread::spawn(move || {
             let mut client = prepare_client(config, uid, slot_cache, ifaces_template);
@@ -160,7 +163,17 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
                 }
             }
 
+            let mut mainland_sent = false;
             Host::run_client(&mut client, &username, |c, name, run_sends| {
+                if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
+                    api::interact::mainland_hop(c);
+                    mainland_sent = true;
+                    if debug_enabled() {
+                        eprintln!(
+                            "[host-play] slot {name}: queued mainland tele+setvar (scene 2)"
+                        );
+                    }
+                }
                 let mut all = slot_statuses.lock().unwrap();
                 for s in all.iter_mut() {
                     if s.username == name {

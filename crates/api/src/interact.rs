@@ -5,6 +5,7 @@
 //! driver accepted the send, not that the server applied it.
 
 use client::client::{Client, MiniMenuAction};
+use client::io::ClientProt;
 
 use crate::prot::{Out, Send};
 
@@ -13,6 +14,8 @@ use crate::prot::{Out, Send};
 pub const RUN_ORB_IFACE: i32 = 153;
 /// The run-off orb; `set_run(false)` presses it.
 pub const RUN_ORB_OFF: i32 = 152;
+/// Lumbridge courtyard hop (`tele` arg). Same as rs2b0t `mainlandAccount`.
+pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 
 /// The send-side driver the kernel writes through. `Client` implements it
 /// over `doAction`/`tryMove`/`out`; tests use a recording stub.
@@ -141,6 +144,25 @@ pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
 pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
     Send::count_dialog(amount).write(driver.out());
     true
+}
+
+/// Queue a `CLIENT_CHEAT` (`::` command) through the ISAAC sink.
+/// `cmd` is the cheat without the `::` prefix (Java `chatInput.substring(2)`).
+pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
+    let out = driver.out();
+    out.p1_enc(ClientProt::CLIENT_CHEAT.id);
+    out.p1((cmd.len() + 1) as i32);
+    out.pjstr(cmd);
+    true
+}
+
+/// Tutorial-skip hop used by rs2b0t `mainlandAccount`: tele off the island
+/// then `setvar tutorial 1000`. Call after `ingame && scene_state == 2`.
+/// Does **not** relog (side icons stay tutorial-locked until campaign 2).
+pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
+    let tele = format!("tele {OFF_ISLAND_TELE}");
+    cheat(driver, &tele);
+    cheat(driver, "setvar tutorial 1000");
 }
 
 /// Queue a login through the driver's handshake.

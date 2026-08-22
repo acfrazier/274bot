@@ -22,6 +22,8 @@ vetoes) and then writes the opcode + payload through the ISAAC sink.
 | `close_modal(driver)` | `CLOSE_MODAL` via `Out` | close open modal |
 | `answer_count(driver, amount)` | `RESUME_P_COUNTDIALOG` via `Out` | answer count dialog |
 | `login(driver, user, pass, reconnect)` | driver handshake (`Client::login`) | queue a login |
+| `cheat(driver, cmd)` | `CLIENT_CHEAT` via `Out` | `::` command without the prefix |
+| `mainland_hop(driver)` | two `cheat`s | tele Lumbridge courtyard + `setvar tutorial 1000` |
 
 `set_run(true)` presses **153** (run on); `set_run(false)` presses **152**
 (run off). Auto-run only sends 153 when run is off. Run state is

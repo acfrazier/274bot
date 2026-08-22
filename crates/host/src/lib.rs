@@ -88,7 +88,7 @@ impl Host {
     /// auto-run `set_run(true)` sends.
     pub fn run_client<F>(client: &mut Client, username: &str, mut observe: F)
     where
-        F: FnMut(&Client, &str, u32),
+        F: FnMut(&mut Client, &str, u32),
     {
         let mut slot = SlotLoop::new();
         loop {

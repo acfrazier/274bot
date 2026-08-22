@@ -115,19 +115,27 @@ legal_send!(
 /// bare opcode outside this path.
 pub trait Out {
     fn p1_enc(&mut self, opcode: i32);
+    fn p1(&mut self, value: i32);
     fn p2(&mut self, value: i32);
     fn p4(&mut self, value: i32);
+    fn pjstr(&mut self, s: &str);
 }
 
 impl Out for Packet {
     fn p1_enc(&mut self, opcode: i32) {
         Packet::p1_enc(self, opcode);
     }
+    fn p1(&mut self, value: i32) {
+        Packet::p1(self, value);
+    }
     fn p2(&mut self, value: i32) {
         Packet::p2(self, value);
     }
     fn p4(&mut self, value: i32) {
         Packet::p4(self, value);
+    }
+    fn pjstr(&mut self, s: &str) {
+        Packet::pjstr(self, s);
     }
 }
 

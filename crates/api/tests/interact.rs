@@ -5,8 +5,8 @@
 // `client/tests/gens.rs` — no network).
 
 use api::interact::{
-    answer_count, close_modal, interact, login, press, set_run, walk, Driver, RUN_ORB_IFACE,
-    RUN_ORB_OFF,
+    answer_count, cheat, close_modal, interact, login, mainland_hop, press, set_run, walk, Driver,
+    OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
 };
 use api::prot::{LegalSend, LEGAL_SEND};
 use api::settle::{item_delta, modal_delta, xp_gained, Settle};
@@ -111,22 +111,30 @@ const ALL_CLIENT_PROTS: &[ClientProt] = &[
 ];
 
 /// The outbound writes a driver receives, as recorded by the stub.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum OutByte {
     Enc(i32),
+    P1(i32),
     P2(i32),
     P4(i32),
+    Jstr(String),
 }
 
 impl api::prot::Out for OutSink {
     fn p1_enc(&mut self, opcode: i32) {
         self.0.push(OutByte::Enc(opcode));
     }
+    fn p1(&mut self, value: i32) {
+        self.0.push(OutByte::P1(value));
+    }
     fn p2(&mut self, value: i32) {
         self.0.push(OutByte::P2(value));
     }
     fn p4(&mut self, value: i32) {
         self.0.push(OutByte::P4(value));
+    }
+    fn pjstr(&mut self, s: &str) {
+        self.0.push(OutByte::Jstr(s.to_string()));
     }
 }
 
@@ -259,6 +267,50 @@ fn interact_dispatches_prepared_slot() {
     assert!(interact(&mut r, 2));
     assert_eq!(r.actions, vec![2]);
     assert!(r.menus.is_empty());
+}
+
+/// `cheat` is CLIENT_CHEAT: enc opcode, size byte (cmd+nul), pjstr(cmd).
+#[test]
+fn cheat_writes_client_cheat_without_colon_prefix() {
+    let mut r = Recorder::default();
+    assert!(cheat(&mut r, "ping"));
+    assert_eq!(
+        r.out.0,
+        vec![
+            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
+            OutByte::P1(5),
+            OutByte::Jstr("ping".into()),
+        ]
+    );
+}
+
+/// `mainland_hop` queues tele + setvar tutorial 1000 (no relog).
+#[test]
+fn mainland_hop_queues_tele_and_tutorial_setvar() {
+    let mut r = Recorder::default();
+    mainland_hop(&mut r);
+    let tele = format!("tele {OFF_ISLAND_TELE}");
+    assert_eq!(
+        r.out.0,
+        vec![
+            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
+            OutByte::P1((tele.len() + 1) as i32),
+            OutByte::Jstr(tele),
+            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
+            OutByte::P1(("setvar tutorial 1000".len() + 1) as i32),
+            OutByte::Jstr("setvar tutorial 1000".into()),
+        ]
+    );
+}
+
+/// Real `Client` driver: cheat matches Java `::ping` CLIENT_CHEAT layout.
+#[test]
+fn client_driver_cheat_matches_java_client_cheat() {
+    let mut c = Client::new(cfg());
+    assert!(cheat(&mut c, "ping"));
+    assert_eq!(c.out.data()[0] as i32, ClientProt::CLIENT_CHEAT.id & 0xff);
+    assert_eq!(c.out.data()[1], 5);
+    assert_eq!(&c.out.data()[2..7], b"ping\n");
 }
 
 /// `close_modal` writes the CLOSE_MODAL opcode through the ISAAC sink.

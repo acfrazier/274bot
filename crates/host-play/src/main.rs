@@ -34,13 +34,14 @@ struct Args {
     cache: String,
     users: Vec<String>,
     lowmem: bool,
+    mainland: bool,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: host-play [--vault PATH] [--vault-pass PASS] \
          [--host HOST] [--port PORT] [--cache DIR] [--lowmem|--highmem] \
-         [--debug] [--user USER]... (default user: test)"
+         [--mainland] [--debug] [--user USER]... (default user: test)"
     );
     std::process::exit(2);
 }
@@ -58,6 +59,7 @@ fn parse_args() -> Args {
         cache: default_cache_dir(),
         users: Vec::new(),
         lowmem: true,
+        mainland: env::var("BOT_MAINLAND").as_deref() == Ok("1"),
     };
     let mut it = env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -70,6 +72,7 @@ fn parse_args() -> Args {
             "--lowmem" => args.lowmem = true,
             "--highmem" => args.lowmem = false,
             "--user" => args.users.push(value(&mut it)),
+            "--mainland" => args.mainland = true,
             "--debug" => set_debug(true),
             "--help" | "-h" => usage(),
             _ => usage(),
@@ -142,6 +145,7 @@ fn main() -> ExitCode {
             port: args.port,
             cache_dir: args.cache,
             lowmem: args.lowmem,
+            mainland: args.mainland,
         },
         profiles,
     );
