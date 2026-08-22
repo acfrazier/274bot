@@ -172,16 +172,15 @@ impl Session {
         }
     }
 
-    /// Unlock (or first-run create) the vault and spawn every profile as a
-    /// host slot with per-profile pixel + input channels. Returns whether
-    /// the unlock succeeded; failures land in [`Session::error`].
+    /// Unlock (or first-run create) the vault and start the play. Only the
+    /// focused profile is spawned as a slot; other vault rows stay parked
+    /// until selected (channel-change keeps a slot once it has run).
     pub fn unlock(&mut self, pass: &str) -> bool {
         let path = default_vault_path();
         match open_vault(&path, pass) {
             Ok(vault) => {
-                let profiles: Vec<Profile> = vault.profiles().cloned().collect();
                 self.error = None;
-                self.spawn_all(vault, profiles);
+                self.start_play(vault);
                 true
             }
             Err(e) => {
@@ -191,15 +190,9 @@ impl Session {
         }
     }
 
-    /// Spawn one slot thread per profile via `host_play::run_with_io`. Each
-    /// slot gets its own `PixelBuf` + `SlotInput` (never shared across
-    /// slots). The per-frame hook applies the focus `set_draw` switch and
-    /// the live mainland hop.
-    fn spawn_all(&mut self, vault: Vault, profiles: Vec<Profile>) {
-        let mut io: HashMap<String, (Arc<SlotInput>, Arc<PixelBuf>)> = HashMap::new();
-        for p in &profiles {
-            io.insert(p.username.clone(), (SlotInput::new(), PixelBuf::new()));
-        }
+    /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
+    /// first focused profile only. Parked names are started from [`select`].
+    fn start_play(&mut self, vault: Vault) {
         let focus = Arc::clone(&self.focus);
         let log = Arc::clone(&self.log);
         let mainland = Arc::clone(&self.mainland);
@@ -207,11 +200,8 @@ impl Session {
         let options = self.options.clone();
         let play = run_with_io(
             &options,
-            profiles,
-            |name| match io.get(name) {
-                Some((input, pixels)) => (Some(Arc::clone(input)), Some(Arc::clone(pixels))),
-                None => (None, None),
-            },
+            Vec::new(),
+            |_| (None, None),
             move |c, name| {
                 let draw = draw_for_slot(&focus.lock().unwrap(), name);
                 c.set_draw(draw);
@@ -227,10 +217,6 @@ impl Session {
                 }
             },
         );
-        self.slots = io
-            .into_iter()
-            .map(|(name, (input, pixels))| (name, SlotIo { input, pixels }))
-            .collect();
         self.play = Some(play);
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         self.vault = Some(vault);
@@ -324,10 +310,12 @@ impl Session {
         self.slots.get(&name)
     }
 
-    /// Switch the focused profile. Capture follows the new focus when the
-    /// single capture toggle is on (never two keyboards). The credentials
-    /// fields follow the newly focused profile.
+    /// Switch the focused profile. A parked vault name is spawned on first
+    /// select (login FIFO); already-running slots stay up so the combo can
+    /// channel-change. Capture follows the new focus when the single capture
+    /// toggle is on (never two keyboards). The credentials fields follow.
     pub fn select(&mut self, name: &str) {
+        self.ensure_slot(name);
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
             return;
@@ -467,8 +455,8 @@ impl Session {
             .insert(username.to_string(), SlotIo { input, pixels });
     }
 
-    /// Focus the credentials username. Save is the spawn path; Log in only
-    /// selects an already-running slot.
+    /// Focus the credentials username. Save upserts then selects (spawn if
+    /// needed). Log in is the same select path.
     pub fn login(&mut self, name: &str) {
         self.select(name);
     }
@@ -539,6 +527,34 @@ mod tests {
         s.focus_first_profile();
         assert_eq!(s.focused_name().as_deref(), Some("alice"));
         assert_eq!(s.cred_user, "alice");
+        assert!(s.slots.contains_key("alice"));
+        assert!(
+            !s.slots.contains_key("bob"),
+            "parked vault rows must not start a Client"
+        );
+    }
+
+    #[test]
+    fn select_spawns_parked_profile_once() {
+        let path = tmp_vault("select-spawn.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.select("alice");
+        assert_eq!(s.slots.len(), 1);
+        s.select("bob");
+        assert_eq!(s.slots.len(), 2);
+        s.select("alice");
+        assert_eq!(s.slots.len(), 2);
     }
 
     #[test]

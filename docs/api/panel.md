@@ -10,7 +10,7 @@ pixel buffer); the panel displays those pixels and feeds input back.
 
 ```bash
 export BOT_VAULT_PASS=bot
-cargo run -p panel --bin panel-play
+cargo run --release -p panel --bin panel-play
 ```
 
 A passphrase is required and an empty one is rejected. First run creates
@@ -26,12 +26,13 @@ mainland hop at scene 2.
 
 ## Wiring
 
-`Session::unlock` spawns every vault profile as a host slot via
-`host_play::run_with_io`, giving each its own `PixelBuf` + `SlotInput`
-(never shared across slots), then **selects the first name** so the Game
-Image is not stuck on `renderer off`. A per-frame observe hook applies the
-focus `set_draw` switch and the mainland hop, so slot threads and the UI
-never share a lock hot path. The runner is configured with **docking on, multi-viewports off** (single
+`Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)
+via `host_play::run_with_io`, then **selects the first vault name**, which
+spawns **that one slot**. Parked profiles do not get a `Client` until you
+select them; once spawned they stay up so the combo can channel-change.
+Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
+observe hook applies the focus `set_draw` switch and the mainland hop.
+The runner is configured with **docking on, multi-viewports off** (single
 main viewport). Default dock: **game left**, **330px-class panel right**.
 The Game pane title is the focused profile name. Closing the Game pane sets
 `game_pane_open = false` (`set_draw` off) and turns capture off. The UI
@@ -42,8 +43,9 @@ generation is unchanged.
 The Game Image is already a **wgpu texture** (GPU composite). The 274 scene
 behind it is still **CPU Pix3D** into `draw_area` — same painter as the
 headless client, not a GPU 3D backend, and not the client's `Present`
-(softbuffer). Unfocused slots skip `mainredraw`; every unlocked profile
-still runs `mainloop` so the combo can channel-change without a relog.
+(softbuffer). Unfocused running slots skip `mainredraw` but still
+`mainloop`. Run **`--release`** (or rely on `[profile.dev.package.client]
+opt-level = 3`) or Pix3D in a default debug build will pin a core.
 
 ## Renderer vs capture
 

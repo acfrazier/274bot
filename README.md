@@ -53,11 +53,17 @@ unset: `$HOME/experiments/Server/engine/data/pack/client` (override with
 ```bash
 export BOT_VAULT_PASS=bot
 # CLI: run one or more vaulted profiles
-cargo run -p host-play -- --user test
+cargo run --release -p host-play -- --user test
 
 # Panel: same vault, native UI (campaign 2)
-cargo run -p panel --bin panel-play
+cargo run --release -p panel --bin panel-play
 ```
+
+`--release` matters: Pix3D is a CPU 3D painter. A debug `cargo run` will
+look frozen and show a gigabyte-class Activity Monitor spike (and `cargo`
+itself may dwarf the process). The panel only starts the **focused**
+vault profile; switching the combo starts a parked name once, then
+channel-changes among already-running slots.
 
 `--vault-pass` is equivalent to the env (panel-play uses the env or the
 in-panel prompt). Empty passphrase is rejected. First run creates

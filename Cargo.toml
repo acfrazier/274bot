@@ -4,3 +4,9 @@ members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "cra
 
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client" }
+
+# Pix3D is a software 3D painter. Unoptimized debug `cargo run` pins a core
+# and looks like a hung client. Optimize that crate even in dev; bot crates
+# stay unoptimized so TDD rebuilds stay cheap.
+[profile.dev.package.client]
+opt-level = 3
