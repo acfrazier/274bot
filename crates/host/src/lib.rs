@@ -19,7 +19,7 @@ use client::config::{Cache, IfType};
 use vault::Profile;
 
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
-pub use slot_io::{PixelBuf, SlotInput};
+pub use slot_io::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 
 /// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
 /// via [`debug_enabled`] regardless.
@@ -75,33 +75,77 @@ impl Host {
                 eprintln!("[host] slot {}: thread up", profile.username);
             }
 
-            Self::run_client(&mut client, &profile.username, |_, _, _| {});
+            Self::run_client(&mut client, &profile.username, None, None, |_, _, _| {});
         })
     }
 
-    /// Drive one client's `mainloop` at 20 ms until the process exits. After
-    /// each pass the drain pump diffs `Client.gens`; a `PLAYER_INFO` this
-    /// drain synthesizes `on_server_tick`. Dirty snapshot families rebuild
-    /// from [`DrainResult::dirty`] (not `Pump::dirty()` after drain). Settle
-    /// runs when a family gen moved; think (auto-run) reads energy from the
-    /// snapshot stat view when it has been rebuilt. `observe` runs after
-    /// every frame so callers can mirror client state (host-play's live
-    /// harness polls it). The third observe arg is the count of accepted
+    /// Drive one client's `mainloop` at 20 ms until the process exits. Each
+    /// frame [`Host::client_frame`] drains optional [`SlotInput`] events
+    /// (only while enabled), latches the click, runs `mainloop`, then copies
+    /// the redraw into optional [`PixelBuf`]s. Dirty snapshot families
+    /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
+    /// drain); settle runs when a family gen moved; think (auto-run) reads
+    /// energy from the snapshot stat view when it has been rebuilt. `observe`
+    /// runs after every frame so callers can mirror client state (host-play's
+    /// live harness polls it). The third observe arg is the count of accepted
     /// auto-run `set_run(true)` sends.
-    pub fn run_client<F>(client: &mut Client, username: &str, mut observe: F)
-    where
+    pub fn run_client<F>(
+        client: &mut Client,
+        username: &str,
+        input: Option<Arc<SlotInput>>,
+        pixels: Option<Arc<PixelBuf>>,
+        mut observe: F,
+    ) where
         F: FnMut(&mut Client, &str, u32),
     {
         let mut slot = SlotLoop::new();
+        let mut run_sends = 0u32;
         loop {
             thread::sleep(FRAME_MS);
-            client.mainloop();
-            let result = slot.after_drain(client);
-            if should_emit_tick(result.player_info) && debug_enabled() {
-                eprintln!("[host] slot {username}: tick");
-            }
-            observe(client, username, slot.run_sends);
+            Self::client_frame(
+                client,
+                &mut slot,
+                username,
+                input.as_deref(),
+                pixels.as_deref(),
+                &mut run_sends,
+            );
+            observe(client, username, run_sends);
         }
+    }
+
+    /// One 20 ms frame: drain optional input into the shell, latch the
+    /// click, run one `mainloop` pass, drain gens, then copy the redraw
+    /// into optional pixels. `run_sends` is overwritten with the slot's
+    /// running count of accepted auto-run sends.
+    /// `SlotLoop` stays module-private (tests live in this module); the
+    /// pub surface exists so `run_client` and the tests share the frame.
+    #[allow(private_interfaces)]
+    pub fn client_frame(
+        client: &mut Client,
+        slot: &mut SlotLoop,
+        username: &str,
+        input: Option<&SlotInput>,
+        pixels: Option<&PixelBuf>,
+        run_sends: &mut u32,
+    ) {
+        if let Some(inp) = input {
+            inp.drain(&mut client.shell);
+        }
+        client.shell.latch_click();
+        client.mainloop();
+        let result = slot.after_drain(client);
+        if client.draw {
+            if let Some(px) = pixels {
+                px.copy_from(
+                    &client.draw_area.pixels,
+                    client.draw_area.width,
+                    client.draw_area.height,
+                );
+            }
+        }
+        *run_sends = slot.run_sends;
+        let _ = (username, result);
     }
 }
 
@@ -302,5 +346,22 @@ mod tests {
         let mut slot = SlotLoop::new();
         slot.after_drain(&mut client);
         assert_eq!(slot.run_sends, 1);
+    }
+
+    #[test]
+    fn client_frame_applies_click_only_when_input_enabled() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let inp = SlotInput::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        inp.connect_rx(rx);
+        tx.send(InputEv::Down { button: 1, x: 20, y: 20 }).unwrap();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        inp.set_enabled(false);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        assert_eq!(c.shell.mouse_click_button, 0);
+        inp.set_enabled(true);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        assert_eq!(c.shell.mouse_click_button, 1);
     }
 }

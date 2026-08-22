@@ -164,7 +164,7 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
             }
 
             let mut mainland_sent = false;
-            Host::run_client(&mut client, &username, |c, name, run_sends| {
+            Host::run_client(&mut client, &username, None, None, |c, name, run_sends| {
                 if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                     api::interact::mainland_hop(c);
                     mainland_sent = true;
