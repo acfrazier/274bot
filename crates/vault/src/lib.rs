@@ -25,7 +25,10 @@ const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
 /// PBKDF2 iterations used when creating a new vault. Unlock reads the round
 /// count from the file header, so this can be raised without breaking files.
+/// `parse_header` rejects round counts above `MAX_PBKDF2_ROUNDS` so a crafted
+/// file cannot force a long KDF.
 const PBKDF2_ROUNDS: u32 = 100_000;
+const MAX_PBKDF2_ROUNDS: u32 = 10_000_000;
 const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 
 /// Per-profile settings. Low-memory is the default for headless clients.
@@ -121,14 +124,22 @@ impl Vault {
         self.profiles.get(username)
     }
 
-    /// Inserts or replaces a profile and rewrites the encrypted file.
+    /// Inserts or replaces a profile and rewrites the encrypted file. The new
+    /// state is written to disk first; on error the vault is unchanged both on
+    /// disk and in memory.
     pub fn upsert(&mut self, profile: Profile) -> Result<(), VaultError> {
-        self.profiles.insert(profile.username.clone(), profile);
-        self.persist()
+        let mut next = self.profiles.clone();
+        next.insert(profile.username.clone(), profile);
+        self.persist_map(&next)?;
+        self.profiles = next;
+        Ok(())
     }
 
-    fn persist(&self) -> Result<(), VaultError> {
-        let data = serde_json::to_vec(&self.profiles)
+    fn persist_map(
+        &self,
+        profiles: &BTreeMap<String, Profile>,
+    ) -> Result<(), VaultError> {
+        let data = serde_json::to_vec(profiles)
             .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
         let blob = build_blob(&self.salt, &self.key, &data)?;
         atomic_write(&self.path, &blob)
@@ -190,8 +201,8 @@ fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError>
         .try_into()
         .map_err(|_| VaultError::Corrupt("short rounds field".into()))?;
     let rounds = u32::from_le_bytes(rounds_bytes);
-    if rounds == 0 {
-        return Err(VaultError::Corrupt("zero pbkdf2 rounds".into()));
+    if rounds == 0 || rounds > MAX_PBKDF2_ROUNDS {
+        return Err(VaultError::Corrupt("pbkdf2 rounds out of range".into()));
     }
     let mut salt = [0u8; SALT_LEN];
     salt.copy_from_slice(&blob[MAGIC.len() + 5..HEADER_LEN - NONCE_LEN]);
@@ -328,6 +339,44 @@ mod tests {
         assert!(matches!(
             Vault::create(&path, "bot"),
             Err(VaultError::AlreadyExists(_))
+        ));
+    }
+
+    #[test]
+    fn upsert_failure_leaves_state_unchanged() {
+        let dir = std::env::temp_dir()
+            .join(format!("274bot-vault-test-{}", std::process::id()))
+            .join("rollback.d");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("vault");
+
+        let mut v = Vault::create(&file, "bot").unwrap();
+        v.upsert(profile("alice", "pw1")).unwrap();
+
+        // Remove the directory so the next write cannot succeed.
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(v.upsert(profile("bob", "pw2")).is_err());
+        assert!(
+            v.get("bob").is_none(),
+            "failed upsert must not change in-memory state"
+        );
+        assert_eq!(v.get("alice").unwrap().password, "pw1");
+    }
+
+    #[test]
+    fn unlock_rejects_absurd_pbkdf2_rounds() {
+        let path = tmp_path("rounds.vault");
+        Vault::create(&path, "bot").unwrap();
+
+        // Patch the header's rounds field to u32::MAX.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let rounds_off = b"274VAULT".len() + 1;
+        bytes[rounds_off..rounds_off + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert!(matches!(
+            Vault::unlock(&path, "bot"),
+            Err(VaultError::Corrupt(_))
         ));
     }
 }
