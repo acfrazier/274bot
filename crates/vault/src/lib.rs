@@ -74,6 +74,10 @@ pub struct Vault {
     path: PathBuf,
     salt: [u8; SALT_LEN],
     key: Zeroizing<[u8; KEY_LEN]>,
+    /// KDF rounds used to derive `key`. Persist stamps this, not the current
+    /// [`PBKDF2_ROUNDS`] constant, so raising the constant cannot brick an
+    /// already-unlocked file on the next upsert.
+    rounds: u32,
     profiles: BTreeMap<String, Profile>,
 }
 
@@ -90,12 +94,13 @@ impl Vault {
         let empty: BTreeMap<String, Profile> = BTreeMap::new();
         let data = serde_json::to_vec(&empty)
             .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
-        let blob = build_blob(&salt, &key, &data)?;
+        let blob = build_blob(&salt, &key, &data, PBKDF2_ROUNDS)?;
         atomic_write(path, &blob)?;
         Ok(Self {
             path: path.to_path_buf(),
             salt,
             key,
+            rounds: PBKDF2_ROUNDS,
             profiles: BTreeMap::new(),
         })
     }
@@ -103,18 +108,17 @@ impl Vault {
     /// Opens the vault at `path` with the given passphrase.
     pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
         require_passphrase(passphrase)?;
-        let blob = std::fs::read(path)
-            .map_err(|_| VaultError::NotFound(path.to_path_buf()))?;
+        let blob = std::fs::read(path).map_err(|_| VaultError::NotFound(path.to_path_buf()))?;
         let (salt, rounds, payload) = parse_header(&blob)?;
         let key = derive_key(passphrase, &salt, rounds);
-        let plaintext =
-            decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?;
+        let plaintext = decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?;
         let profiles: BTreeMap<String, Profile> = serde_json::from_slice(&plaintext)
             .map_err(|e| VaultError::Corrupt(format!("deserialize profiles: {e}")))?;
         Ok(Self {
             path: path.to_path_buf(),
             salt,
             key,
+            rounds,
             profiles,
         })
     }
@@ -135,13 +139,10 @@ impl Vault {
         Ok(())
     }
 
-    fn persist_map(
-        &self,
-        profiles: &BTreeMap<String, Profile>,
-    ) -> Result<(), VaultError> {
+    fn persist_map(&self, profiles: &BTreeMap<String, Profile>) -> Result<(), VaultError> {
         let data = serde_json::to_vec(profiles)
             .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
-        let blob = build_blob(&self.salt, &self.key, &data)?;
+        let blob = build_blob(&self.salt, &self.key, &data, self.rounds)?;
         atomic_write(&self.path, &blob)
     }
 }
@@ -154,11 +155,7 @@ fn require_passphrase(passphrase: &str) -> Result<(), VaultError> {
     }
 }
 
-fn derive_key(
-    passphrase: &str,
-    salt: &[u8; SALT_LEN],
-    rounds: u32,
-) -> Zeroizing<[u8; KEY_LEN]> {
+fn derive_key(passphrase: &str, salt: &[u8; SALT_LEN], rounds: u32) -> Zeroizing<[u8; KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     pbkdf2_hmac::<Sha256>(passphrase.as_bytes(), salt, rounds, key.as_mut());
     key
@@ -170,6 +167,7 @@ fn build_blob(
     salt: &[u8; SALT_LEN],
     key: &[u8; KEY_LEN],
     plaintext: &[u8],
+    rounds: u32,
 ) -> Result<Vec<u8>, VaultError> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -179,7 +177,7 @@ fn build_blob(
     let mut blob = Vec::with_capacity(HEADER_LEN + ciphertext.len());
     blob.extend_from_slice(MAGIC);
     blob.push(FORMAT_VERSION);
-    blob.extend_from_slice(&PBKDF2_ROUNDS.to_le_bytes());
+    blob.extend_from_slice(&rounds.to_le_bytes());
     blob.extend_from_slice(salt);
     blob.extend_from_slice(&nonce);
     blob.extend_from_slice(&ciphertext);
@@ -209,10 +207,7 @@ fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError>
     Ok((salt, rounds, &blob[HEADER_LEN - NONCE_LEN..]))
 }
 
-fn decrypt(
-    key: &[u8; KEY_LEN],
-    nonce_and_payload: &[u8],
-) -> Result<Vec<u8>, aes_gcm::Error> {
+fn decrypt(key: &[u8; KEY_LEN], nonce_and_payload: &[u8]) -> Result<Vec<u8>, aes_gcm::Error> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher.decrypt(
         Nonce::from_slice(&nonce_and_payload[..NONCE_LEN]),
@@ -240,8 +235,7 @@ mod tests {
     use super::{Profile, ProfileSettings, Vault, VaultError};
 
     fn tmp_path(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-vault-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("274bot-vault-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(name);
         if p.exists() {
@@ -378,5 +372,28 @@ mod tests {
             Vault::unlock(&path, "bot"),
             Err(VaultError::Corrupt(_))
         ));
+    }
+
+    #[test]
+    fn upsert_stamps_unlock_rounds_not_current_constant() {
+        let path = tmp_path("old-rounds.vault");
+        let salt = [7u8; super::SALT_LEN];
+        let rounds = 50_000;
+        let key = super::derive_key("bot", &salt, rounds);
+        let empty: std::collections::BTreeMap<String, Profile> = Default::default();
+        let data = serde_json::to_vec(&empty).unwrap();
+        let blob = super::build_blob(&salt, &key, &data, rounds).unwrap();
+        std::fs::write(&path, blob).unwrap();
+
+        let mut v = Vault::unlock(&path, "bot").unwrap();
+        v.upsert(profile("alice", "pw")).unwrap();
+        drop(v);
+
+        let v = Vault::unlock(&path, "bot").unwrap();
+        assert_eq!(v.get("alice").unwrap().password, "pw");
+        let bytes = std::fs::read(&path).unwrap();
+        let rounds_off = b"274VAULT".len() + 1;
+        let stored = u32::from_le_bytes(bytes[rounds_off..rounds_off + 4].try_into().unwrap());
+        assert_eq!(stored, 50_000);
     }
 }

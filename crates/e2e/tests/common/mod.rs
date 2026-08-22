@@ -97,10 +97,7 @@ pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
 
 /// Sorted login-handshake start times (for the not-simultaneous assert).
 pub fn login_starts(statuses: &[SlotStatus]) -> Vec<Instant> {
-    let mut starts: Vec<Instant> = statuses
-        .iter()
-        .filter_map(|s| s.login_started)
-        .collect();
+    let mut starts: Vec<Instant> = statuses.iter().filter_map(|s| s.login_started).collect();
     starts.sort();
     starts
 }

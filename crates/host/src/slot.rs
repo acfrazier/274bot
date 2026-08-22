@@ -8,11 +8,13 @@
 use client::client::ClientGens;
 
 /// Outcome of one drain (one 20 ms frame): whether a `PLAYER_INFO` packet
-/// applied this frame and the generation snapshot the frame ended on.
+/// applied this frame, the generation snapshot the frame ended on, and the
+/// families that moved **this** drain (computed before `last` is committed).
 #[derive(Clone, Copy)]
 pub struct DrainResult {
     pub player_info: bool,
     pub gens: ClientGens,
+    pub dirty: DirtyFamilies,
 }
 
 /// A `PLAYER_INFO` applied this drain — synthesize `on_server_tick` (274 has
@@ -32,6 +34,13 @@ pub struct DirtyFamilies {
     pub stat: bool,
     pub chat: bool,
     pub scene: bool,
+}
+
+impl DirtyFamilies {
+    /// True if any family gen moved.
+    pub fn any(self) -> bool {
+        self.npc || self.player || self.inv || self.varp || self.stat || self.chat || self.scene
+    }
 }
 
 /// Families whose generation moved from `last` to `current`.
@@ -61,10 +70,17 @@ impl Pump {
 
     /// Diff `gens` against the last snapshot, commit it, and report the
     /// drain result. `player_info` is true iff the player gen moved.
+    /// `dirty` is computed **before** committing `last` so callers can
+    /// rebuild from the returned value after drain.
     pub fn drain(&mut self, gens: ClientGens) -> DrainResult {
+        let dirty = dirty_families(self.last, gens);
         let player_info = gens.player != self.last.player;
         self.last = gens;
-        DrainResult { player_info, gens }
+        DrainResult {
+            player_info,
+            gens,
+            dirty,
+        }
     }
 
     /// The snapshot committed by the most recent [`Pump::drain`].
@@ -72,7 +88,9 @@ impl Pump {
         self.last
     }
 
-    /// Families whose gen moved since the last committed snapshot.
+    /// Families whose gen moved versus uncommitted `gens`. Call **before**
+    /// `drain`. After `drain` has committed `last`, this is empty — use
+    /// [`DrainResult::dirty`] instead.
     pub fn dirty(&self, gens: ClientGens) -> DirtyFamilies {
         dirty_families(self.last, gens)
     }
@@ -82,7 +100,7 @@ impl Pump {
 mod tests {
     use client::client::ClientGens;
 
-    use super::{DirtyFamilies, Pump, dirty_families, should_emit_tick};
+    use super::{dirty_families, should_emit_tick, DirtyFamilies, Pump};
 
     fn gens() -> ClientGens {
         ClientGens::default()
@@ -123,6 +141,16 @@ mod tests {
         let mut pump = Pump::new();
         let result = pump.drain(after);
         assert!(!should_emit_tick(result.player_info));
+        assert!(
+            result.dirty.npc,
+            "post-drain DrainResult.dirty must see the npc bump"
+        );
+        assert!(!result.dirty.player);
+        assert_eq!(
+            pump.dirty(after),
+            DirtyFamilies::default(),
+            "Pump::dirty() after drain is the empty-trap; use DrainResult.dirty"
+        );
     }
 
     #[test]
@@ -137,9 +165,8 @@ mod tests {
         quiet.npc = 1;
         let result = pump.drain(quiet);
         assert!(!should_emit_tick(result.player_info));
-        let dirty = dirty_families(g, quiet);
-        assert!(dirty.npc);
-        assert!(!dirty.player);
+        assert!(result.dirty.npc);
+        assert!(!result.dirty.player);
     }
 
     #[test]
@@ -151,6 +178,6 @@ mod tests {
         // Same snapshot again: no new tick, no dirty families.
         let result = pump.drain(g);
         assert!(!should_emit_tick(result.player_info));
-        assert_eq!(dirty_families(result.gens, g), DirtyFamilies::default());
+        assert_eq!(result.dirty, DirtyFamilies::default());
     }
 }

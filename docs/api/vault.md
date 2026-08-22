@@ -3,7 +3,9 @@
 `crates/vault` stores login profiles in a single encrypted file. Profiles
 are JSON sealed with **AES-256-GCM** under a key derived from the passphrase
 via **PBKDF2-HMAC-SHA256** (100,000 rounds for new files; unlock reads the
-round count from the file header and caps it at 10M). The file holds only
+round count from the file header and **rejects** 0 or values above 10M as
+`Corrupt`). Persist stamps the rounds the key was derived with, not the
+current constant. The file holds only
 the KDF salt, nonce, and ciphertext — passphrases and profile passwords
 never appear in plaintext. The AES key lives in RAM (zeroized on drop).
 

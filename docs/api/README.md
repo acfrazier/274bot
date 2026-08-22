@@ -16,7 +16,7 @@ tick and the encrypted vault.
 | `api` | Read model (`snapshot`, `query`), act primitives (`interact`, `settle`), legal send table (`prot`) |
 | `host` | One OS thread per client slot; drains gens per frame and synthesizes `on_server_tick` |
 | `vault` | Encrypted profile store (AES-256-GCM) |
-| `host-play` | Scratch/playground crate (the future CLI that wires host + vault) |
+| `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)
@@ -40,13 +40,21 @@ no tick.
 
 ## Auto-run
 
-The one behaviour on the tick hook today: when run energy crosses **20%**
-(`RUN_ENERGY_THRESHOLD`, 0–100), the host presses the run orb
-(`RUN_ORB_IFACE = 153`, an `IF_BUTTON` on controls overlay 147) via the
-`doAction` path and tracks `run_on` so it sends once per crossing. Run state
-is server-echoed; the caller decides from snapshot state whether to send.
+The one behaviour on the think hook today: when run energy crosses **20%**
+(`RUN_ENERGY_THRESHOLD`, 0–100) **and run is off**, the host presses the
+run-on orb (`RUN_ORB_IFACE = 153`) via `set_run(true)` / `IF_BUTTON`.
+`set_run(false)` presses **152**. `run_on` is not process-lifetime sticky:
+energy 0 (cannot be running) clears it so a later 20 crossing sends again.
+Already on (energy ≥20 and run echo) → no extra send.
 
 ## Live harnesses
 
-`crates/e2e` live tests (run with `LIVE=1 cargo test -p e2e -- --ignored`)
-land in a later task.
+`crates/e2e` lives here. Operator command:
+
+```bash
+LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
+```
+
+`host-play` is the CLI (`BOT_VAULT_PASS` / `--vault-pass`). Verbose only if
+`BOT_DEBUG=1`. Failures print `FAIL:` and `exit(1)`. Wait until
+`ingame && scene_state == 2`.

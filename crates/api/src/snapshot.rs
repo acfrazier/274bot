@@ -56,6 +56,7 @@ pub struct GameSnapshot {
     /// World generations the snapshot has been rebuilt up to.
     gens: ClientGens,
     npc: Vec<NpcView>,
+    runenergy: i32,
 }
 
 impl GameSnapshot {
@@ -78,15 +79,29 @@ impl GameSnapshot {
             Family::Player => track(client.gens.player, &mut self.gens.player),
             Family::Inv => track(client.gens.inv, &mut self.gens.inv),
             Family::Varp => track(client.gens.varp, &mut self.gens.varp),
-            Family::Stat => track(client.gens.stat, &mut self.gens.stat),
+            Family::Stat => self.rebuild_stat(client),
             Family::Chat => track(client.gens.chat, &mut self.gens.chat),
             Family::Scene => track(client.gens.scene, &mut self.gens.scene),
         }
     }
 
-    /// NPC views from the last npc rebuild, in slot-index order.
+    /// NPC views from the last npc rebuild, in `npc_ids` order (not sorted
+    /// slots).
     pub fn npcs(&self) -> &[NpcView] {
         &self.npc
+    }
+
+    /// Last rebuilt run energy (stat family). `0` until a stat rebuild.
+    pub fn runenergy(&self) -> i32 {
+        self.runenergy
+    }
+
+    fn rebuild_stat(&mut self, client: &Client) -> bool {
+        if !track(client.gens.stat, &mut self.gens.stat) {
+            return false;
+        }
+        self.runenergy = client.runenergy;
+        true
     }
 
     fn rebuild_npcs(&mut self, client: &Client) -> bool {
@@ -98,7 +113,7 @@ impl GameSnapshot {
         self.npc.reserve(client.npc_count as usize);
         for i in 0..client.npc_count as usize {
             let index = client.npc_ids[i] as usize;
-            if let Some(npc) = &client.npc[index] {
+            if let Some(npc) = client.npc.get(index).and_then(|n| n.as_ref()) {
                 self.npc.push(NpcView::from_slot(index, npc));
             }
         }

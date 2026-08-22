@@ -7,8 +7,8 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use host_play::{PlayOptions, run};
-use vault::{Profile, ProfileSettings, Vault};
+use host_play::{open_vault, run, set_debug, PlayOptions};
+use vault::{Profile, ProfileSettings, VaultError};
 
 const DEFAULT_PORT: u16 = 43594;
 
@@ -40,7 +40,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: host-play [--vault PATH] [--vault-pass PASS] \
          [--host HOST] [--port PORT] [--cache DIR] [--lowmem|--highmem] \
-         [--user USER]... (default user: test)"
+         [--debug] [--user USER]... (default user: test)"
     );
     std::process::exit(2);
 }
@@ -70,6 +70,7 @@ fn parse_args() -> Args {
             "--lowmem" => args.lowmem = true,
             "--highmem" => args.lowmem = false,
             "--user" => args.users.push(value(&mut it)),
+            "--debug" => set_debug(true),
             "--help" | "-h" => usage(),
             _ => usage(),
         }
@@ -87,15 +88,25 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    let mut vault = match Vault::unlock(&args.vault, &pass) {
+    let mut vault = match open_vault(&args.vault, &pass) {
         Ok(v) => v,
-        Err(_) => match Vault::create(&args.vault, &pass) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("host-play: vault {}: {e}", args.vault.display());
-                return ExitCode::FAILURE;
+        Err(e) => {
+            match e {
+                VaultError::WrongPassphrase => {
+                    eprintln!("host-play: wrong passphrase");
+                }
+                VaultError::Corrupt(msg) => {
+                    eprintln!("host-play: corrupt vault: {msg}");
+                }
+                VaultError::EmptyPassphrase => {
+                    eprintln!("host-play: empty passphrase");
+                }
+                other => {
+                    eprintln!("host-play: vault {}: {other}", args.vault.display());
+                }
             }
-        },
+            return ExitCode::FAILURE;
+        }
     };
 
     let mut profiles = Vec::new();
@@ -119,7 +130,11 @@ fn main() -> ExitCode {
     }
 
     if host_play::debug_enabled() {
-        eprintln!("host-play: running {} profile(s) via {}", profiles.len(), args.host);
+        eprintln!(
+            "host-play: running {} profile(s) via {}",
+            profiles.len(),
+            args.host
+        );
     }
     let play = run(
         &PlayOptions {

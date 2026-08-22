@@ -131,6 +131,30 @@ fn snapshot_tracks_family_generations() {
     assert_eq!(snap.gens().npc, 0);
 }
 
+/// An npc_ids index past `Client.npc` is skipped (`.get()`, no panic).
+#[test]
+fn npc_rebuild_skips_out_of_range_index() {
+    let mut c = client_with_npc();
+    c.npc_ids[0] = 99_999;
+    c.npc_count = 1;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    snap.rebuild_family(&c, Family::Npc);
+    assert!(snap.npcs().is_empty());
+}
+
+/// Stat rebuild copies run energy for auto-run's snapshot view.
+#[test]
+fn stat_rebuild_copies_runenergy() {
+    let mut c = client_with_npc();
+    c.runenergy = 20;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+    assert!(snap.rebuild_family(&c, Family::Stat));
+    assert_eq!(snap.runenergy(), 20);
+    assert!(!snap.rebuild_family(&c, Family::Stat));
+}
+
 /// Queries borrow one family without allocating: by slot index or by tile.
 #[test]
 fn queries_borrow_by_index_and_tile() {

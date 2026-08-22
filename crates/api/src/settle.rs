@@ -71,6 +71,7 @@ pub fn modal_delta(before: Option<i32>, after: Option<i32>) -> (Option<i32>, Opt
     match (before, after) {
         (None, Some(id)) => (Some(id), None),
         (Some(id), None) => (None, Some(id)),
+        (Some(a), Some(b)) if a != b => (Some(b), Some(a)),
         _ => (None, None),
     }
 }

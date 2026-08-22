@@ -5,15 +5,15 @@ pub const RUN_ENERGY_THRESHOLD: i32 = 20;
 
 /// True iff the host should send `set_run(true)` this tick: energy at or
 /// above the threshold and run not already on. Stateless per call — the slot
-/// owns `run_on`, flips it true after an accepted send, and `false` keeps it
-/// that way until the player stops running.
+/// owns `run_on`, flips it true after an accepted send, and clears it when
+/// energy hits 0 (cannot be running) so a later 20 crossing sends again.
 pub fn auto_run_tick(energy: i32, run_on: bool) -> bool {
     !run_on && energy >= RUN_ENERGY_THRESHOLD
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RUN_ENERGY_THRESHOLD, auto_run_tick};
+    use super::{auto_run_tick, RUN_ENERGY_THRESHOLD};
 
     /// Energy crossing 19 → 20 with run off: the crossing tick sends; with
     /// the slot's `run_on` flipped after the send, the next tick stays quiet
@@ -38,5 +38,22 @@ mod tests {
     fn below_threshold_with_run_off_never_sends() {
         assert!(!auto_run_tick(19, false));
         assert!(!auto_run_tick(0, false));
+    }
+
+    /// 20 → 0 → 20: energy 0 cannot be running, so the slot clears `run_on`
+    /// and the second crossing sends again.
+    #[test]
+    fn deplete_then_recover_sends_again() {
+        let mut run_on = false;
+        assert!(auto_run_tick(20, run_on));
+        run_on = true;
+        assert!(!auto_run_tick(20, run_on));
+        // Slot clears the sticky flag when energy hits 0.
+        run_on = false;
+        assert!(!auto_run_tick(0, run_on));
+        assert!(
+            auto_run_tick(20, run_on),
+            "second 20 crossing after energy 0 must send"
+        );
     }
 }

@@ -16,15 +16,15 @@ vetoes) and then writes the opcode + payload through the ISAAC sink.
 | Helper | Mechanism | Effect |
 | --- | --- | --- |
 | `press(driver, iface_id)` | menu slot 0 = `IF_BUTTON` + `doAction(0)` | press interface child |
-| `set_run(driver, on)` | `press` on `RUN_ORB_IFACE` | toggle run (run orb) |
+| `set_run(driver, on)` | `press` 153 if `on`, 152 if off | set run on/off |
 | `walk(driver, x, z)` | `tryMove` from the local route, type 0 | plain ground walk |
 | `interact(driver, slot)` | `doAction(slot)` on a prepared slot | dispatch prepared menu option |
 | `close_modal(driver)` | `CLOSE_MODAL` via `Out` | close open modal |
 | `answer_count(driver, amount)` | `RESUME_P_COUNTDIALOG` via `Out` | answer count dialog |
 | `login(driver, user, pass, reconnect)` | driver handshake (`Client::login`) | queue a login |
 
-`RUN_ORB_IFACE = 153` — the run-on button drawn on controls overlay 147
-(`controls:com_5`). Auto-run uses it via `set_run`; run state is
+`set_run(true)` presses **153** (run on); `set_run(false)` presses **152**
+(run off). Auto-run only sends 153 when run is off. Run state is
 server-echoed, so the caller decides from snapshot state whether to send.
 
 ## `LEGAL_SEND` / `ClientProt` table

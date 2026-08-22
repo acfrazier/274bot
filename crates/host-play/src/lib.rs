@@ -3,17 +3,20 @@
 //! this library so it can poll per-slot state instead of scraping logs.
 
 use std::panic::AssertUnwindSafe;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use client::client::{Client, ClientConfig};
+use client::client::ClientConfig;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
-use host::login_queue::{LoginBackoff, LoginQueue, Permit};
 pub use host::debug_enabled;
+use host::login_queue::{LoginBackoff, LoginQueue, Permit};
+use host::prepare_client;
+pub use host::set_debug;
 pub use host::Host;
-use vault::Profile;
+use vault::{Profile, Vault, VaultError};
 
 /// Connection settings shared by every spawned slot.
 pub struct PlayOptions {
@@ -33,6 +36,9 @@ pub struct SlotStatus {
     pub scene_state: i32,
     /// Last login error (code + message); cleared after a successful login.
     pub error: Option<String>,
+    pub runenergy: i32,
+    /// Accepted auto-run `set_run(true)` sends this slot has made.
+    pub run_sends: u32,
 }
 
 /// Running slots and their shared status. Slots drive `mainloop` until the
@@ -84,10 +90,7 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
         let slot_statuses = Arc::clone(&statuses);
 
         handles.push(thread::spawn(move || {
-            let mut client = Client::new(config);
-            client.login_uid = uid;
-            client.cache = slot_cache;
-            client.ifaces = ifaces_template;
+            let mut client = prepare_client(config, uid, slot_cache, ifaces_template);
 
             {
                 let mut all = slot_statuses.lock().unwrap();
@@ -139,9 +142,7 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
                         }
                         {
                             let mut all = slot_statuses.lock().unwrap();
-                            if let Some(s) =
-                                all.iter_mut().find(|s| s.username == username)
-                            {
+                            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
                                 s.error = Some(msg);
                             }
                         }
@@ -159,20 +160,18 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
                 }
             }
 
-            Host::run_client(&mut client, &username, |c, name| {
+            Host::run_client(&mut client, &username, |c, name, run_sends| {
                 let mut all = slot_statuses.lock().unwrap();
                 for s in all.iter_mut() {
                     if s.username == name {
                         s.ingame = c.ingame;
                         s.scene_state = c.scene_state;
+                        s.runenergy = c.runenergy;
+                        s.run_sends = run_sends;
                     }
                 }
                 drop(all);
-                if debug_enabled()
-                    && c.ingame
-                    && c.scene_state == 1
-                    && c.loop_cycle % 100 == 0
-                {
+                if debug_enabled() && c.ingame && c.scene_state == 1 && c.loop_cycle % 100 == 0 {
                     let od = c
                         .on_demand
                         .as_ref()
@@ -212,22 +211,41 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
     Play { statuses, handles }
 }
 
+/// Unlock `path`, or create it (and parent dirs) when missing. Any other
+/// unlock error (`WrongPassphrase`, `Corrupt`, `EmptyPassphrase`) is
+/// returned as-is so the CLI can print it instead of falling through to
+/// `AlreadyExists`.
+pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
+    match Vault::unlock(path, passphrase) {
+        Ok(v) => Ok(v),
+        Err(VaultError::NotFound(_)) => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            Vault::create(path, passphrase)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Unpack the config/interface jags once and share the tables across slots
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
 fn load_template(cache_dir: &str) -> (Cache, Vec<Option<IfType>>) {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
-        Ok(bytes) => std::panic::catch_unwind(AssertUnwindSafe(|| {
-            Cache::unpack(&JagFile::new(bytes))
-        }))
-        .unwrap_or_default(),
+        Ok(bytes) => {
+            std::panic::catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
+                .unwrap_or_default()
+        }
         Err(_) => Cache::default(),
     };
     let ifaces = match std::fs::read(format!("{cache_dir}/interface")) {
-        Ok(bytes) => std::panic::catch_unwind(AssertUnwindSafe(|| {
-            IfType::unpack(&JagFile::new(bytes))
-        }))
-        .unwrap_or_default(),
+        Ok(bytes) => {
+            std::panic::catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(bytes))))
+                .unwrap_or_default()
+        }
         Err(_) => Vec::new(),
     };
     (cache, ifaces)
@@ -244,5 +262,56 @@ fn wait_for_permit(queue: &Arc<Mutex<LoginQueue>>, uid: i32) {
             }
         };
         thread::sleep(wait);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use client::client::ClientConfig;
+    use client::config::Cache;
+
+    fn tmp_vault(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-host-play-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("nested").join("vault")
+    }
+
+    #[test]
+    fn open_vault_creates_missing_parent_dirs() {
+        let path = tmp_vault("create");
+        assert!(!path.exists());
+        let v = open_vault(&path, "bot").unwrap();
+        drop(v);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn open_vault_wrong_pass_is_not_already_exists() {
+        let path = tmp_vault("wrong");
+        open_vault(&path, "bot").unwrap();
+        match open_vault(&path, "nope") {
+            Err(VaultError::WrongPassphrase) => {}
+            Err(e) => panic!("expected WrongPassphrase, got {e}"),
+            Ok(_) => panic!("expected WrongPassphrase, unlocked"),
+        }
+    }
+
+    #[test]
+    fn prepare_client_from_shared_template() {
+        let cache = Arc::new(Cache::default());
+        let cfg = ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        };
+        let a = prepare_client(cfg, 1, Arc::clone(&cache), vec![]);
+        assert!(Arc::ptr_eq(&a.cache, &cache));
+        assert!(!a.error_loading);
     }
 }

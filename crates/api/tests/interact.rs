@@ -6,6 +6,7 @@
 
 use api::interact::{
     answer_count, close_modal, interact, login, press, set_run, walk, Driver, RUN_ORB_IFACE,
+    RUN_ORB_OFF,
 };
 use api::prot::{LegalSend, LEGAL_SEND};
 use api::settle::{item_delta, modal_delta, xp_gained, Settle};
@@ -210,6 +211,17 @@ fn set_run_presses_run_orb_via_if_button_do_action() {
     );
 }
 
+/// `set_run(false)` presses the run-off orb (152), not the on orb.
+#[test]
+fn set_run_false_presses_run_off_orb() {
+    let mut r = Recorder::default();
+    assert!(set_run(&mut r, false));
+    assert_eq!(
+        r.menus,
+        vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, RUN_ORB_OFF)]
+    );
+}
+
 /// `press` dispatches an IF_BUTTON on the given child through slot 0.
 #[test]
 fn press_dispatches_if_button_on_child() {
@@ -386,6 +398,10 @@ fn settle_detects_modal_open_and_close() {
 
     let (opened, closed) = modal_delta(Some(94), Some(94));
     assert_eq!((opened, closed), (None, None));
+
+    let (opened, closed) = modal_delta(Some(94), Some(12));
+    assert_eq!(opened, Some(12));
+    assert_eq!(closed, Some(94));
 }
 
 /// Settle: `done` needs armed evidence within the tick/ms budget.

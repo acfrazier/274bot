@@ -8,10 +8,11 @@ use client::client::{Client, MiniMenuAction};
 
 use crate::prot::{Out, Send};
 
-/// The run-orb interface component; `set_run` presses it through the
-/// `doAction` IF_BUTTON path. 274 draws the run orb on controls overlay 147
-/// (`controls:com_5`, the run-on button); auto-run uses it via `set_run`.
+/// The run-on orb; `set_run(true)` presses it through `doAction` IF_BUTTON.
+/// 274 draws it on controls overlay 147 (`controls:com_5`).
 pub const RUN_ORB_IFACE: i32 = 153;
+/// The run-off orb; `set_run(false)` presses it.
+pub const RUN_ORB_OFF: i32 = 152;
 
 /// The send-side driver the kernel writes through. `Client` implements it
 /// over `doAction`/`tryMove`/`out`; tests use a recording stub.
@@ -114,11 +115,11 @@ pub fn press<D: Driver + ?Sized>(driver: &mut D, iface_id: i32) -> bool {
     driver.do_action(0)
 }
 
-/// Toggle run on/off by pressing the run orb (the `doAction` IF_BUTTON
-/// path). Run state is server-echoed; the caller decides from snapshot
+/// Set run on (iface 153) or off (iface 152) via the `doAction` IF_BUTTON
+/// path. Run state is server-echoed; the caller decides from snapshot
 /// state whether to send at all.
-pub fn set_run<D: Driver + ?Sized>(driver: &mut D, _on: bool) -> bool {
-    press(driver, RUN_ORB_IFACE)
+pub fn set_run<D: Driver + ?Sized>(driver: &mut D, on: bool) -> bool {
+    press(driver, if on { RUN_ORB_IFACE } else { RUN_ORB_OFF })
 }
 
 /// Walk to a tile (the `tryMove` path, plain ground walk), routing from

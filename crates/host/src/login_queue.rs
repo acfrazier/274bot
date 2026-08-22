@@ -53,6 +53,7 @@ impl LoginQueue {
     /// only when spacing, the per-IP window, and the per-uid rule all pass.
     /// A blocked caller retries after the returned wait.
     pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
+        self.prune_uid(now);
         if !self.queue.contains(&uid) {
             self.queue.push_back(uid);
         }
@@ -93,10 +94,10 @@ impl LoginQueue {
             wait = Some(wait.map_or(until, |w| w.max(until)));
         }
 
-        let state = self
-            .by_uid
-            .entry(uid)
-            .or_insert(UidState { count: 0, last: None });
+        let state = self.by_uid.entry(uid).or_insert(UidState {
+            count: 0,
+            last: None,
+        });
         if state.count >= UID_GRANT_CAP {
             if let Some(last) = state.last {
                 if now.saturating_duration_since(last) < UID_COOLDOWN {
@@ -113,16 +114,41 @@ impl LoginQueue {
         self.last_grant = Some(now);
         self.window.push_back(now);
 
-        let state = self
-            .by_uid
-            .entry(uid)
-            .or_insert(UidState { count: 0, last: None });
+        let state = self.by_uid.entry(uid).or_insert(UidState {
+            count: 0,
+            last: None,
+        });
         if state.count >= UID_GRANT_CAP {
             // Cooldown has elapsed; restart the uid window.
             state.count = 0;
         }
         state.count += 1;
         state.last = Some(now);
+    }
+
+    /// Drop uid cooldown entries whose 16 s window elapsed and who are not
+    /// queued, so a long-lived host does not keep one map slot per uid ever
+    /// seen.
+    fn prune_uid(&mut self, now: Instant) {
+        let queued = &self.queue;
+        self.by_uid.retain(|uid, state| {
+            if queued.contains(uid) {
+                return true;
+            }
+            if state.count >= UID_GRANT_CAP {
+                match state.last {
+                    Some(last) => now.saturating_duration_since(last) < UID_COOLDOWN,
+                    None => false,
+                }
+            } else {
+                true
+            }
+        });
+    }
+
+    #[cfg(test)]
+    fn tracks(&self, uid: i32) -> bool {
+        self.by_uid.contains_key(&uid)
     }
 }
 
@@ -257,6 +283,24 @@ mod tests {
             prev = Some(now);
             now += SPACING;
         }
+    }
+
+    #[test]
+    fn by_uid_prunes_elapsed_unqueued() {
+        let mut q = LoginQueue::default();
+        let mut now = Instant::now();
+        for _ in 0..4 {
+            assert!(matches!(q.request_permit(7, now), Permit::Grant));
+            now += SPACING;
+        }
+        assert!(q.tracks(7));
+        now += UID_COOLDOWN;
+        assert!(matches!(q.request_permit(8, now), Permit::Grant));
+        assert!(
+            !q.tracks(7),
+            "cooldown-elapsed uid 7 is not queued and must drop"
+        );
+        assert!(q.tracks(8));
     }
 
     #[test]
