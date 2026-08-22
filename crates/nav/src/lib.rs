@@ -1,5 +1,7 @@
-//! Nav: tile coordinates, Chebyshev distance, and walkability grids.
+//! Nav: tile coordinates, Chebyshev distance, walkability grids, routing,
+//! and arrival detection.
 
+pub mod arrival;
 pub mod grid;
 pub mod router;
 pub mod tile;
