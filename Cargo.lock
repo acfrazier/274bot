@@ -1453,6 +1453,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "panel"
+version = "0.1.0"
+dependencies = [
+ "host",
+]
+
+[[package]]
 name = "password-hash"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
