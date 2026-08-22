@@ -45,9 +45,14 @@ behind it is still **CPU Pix3D** into `draw_area` — same painter as the
 headless client, not a GPU 3D backend, and not the client's `Present`
 (softbuffer). Unfocused running slots skip `mainredraw` **this tick** (`observe` latches
 `set_draw` before the raster; renderer checkbox off or unfocused → no
-Pix3D). They still `mainloop`. Run **`--release`** (or rely on
-`[profile.dev.package.client] opt-level = 3`) or Pix3D in a default debug
-build will pin a core.
+Pix3D). They still `mainloop`. Watch-only (renderer on, capture off)
+rasters every other tick (~25 fps); click-through rasters every 20 ms so
+the minimenu tracks the pointer. The slot sleeps the leftover of 20 ms
+*after* the work (Java GameShell), not a fixed 20 ms before it.
+
+Run **`--release`**. A default debug Pix3D pins a core. One live client
+still holds on the order of a gigabyte (process-wide model/anim stores +
+scene); that is the 274 painter, not the ImGui chrome.
 
 ## Renderer vs capture
 

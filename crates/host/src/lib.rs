@@ -101,7 +101,7 @@ impl Host {
         let mut slot = SlotLoop::new();
         let mut run_sends = 0u32;
         loop {
-            thread::sleep(FRAME_MS);
+            let start = std::time::Instant::now();
             Self::client_tick(
                 client,
                 &mut slot,
@@ -111,6 +111,12 @@ impl Host {
                 &mut run_sends,
                 &mut observe,
             );
+            // Java GameShell sleeps the leftover of 20 ms *after* the work.
+            // A fixed sleep *before* the tick made the period 20 ms + Pix3D
+            // (slow picture, extra idle). If the tick overruns, skip sleep.
+            if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
+                thread::sleep(rest);
+            }
         }
     }
 
@@ -156,12 +162,16 @@ impl Host {
         }
         client.shell.latch_click();
         client.mainloop();
-        client.mainredraw();
+        let capture = input.map(|i| i.enabled()).unwrap_or(false);
+        let paint = raster_this_tick(client.draw, capture, &mut slot.raster_n);
+        if paint {
+            client.mainredraw();
+        }
         let result = slot.after_drain(client);
         if should_emit_tick(result.player_info) && debug_enabled() {
             eprintln!("[host] slot {username}: tick");
         }
-        if client.draw {
+        if paint {
             if let Some(px) = pixels {
                 px.copy_from(
                     &client.draw_area.pixels,
@@ -174,6 +184,20 @@ impl Host {
     }
 }
 
+/// Watch-only (renderer on, capture off) paints every other 20 ms tick
+/// (~25 fps). Click-through paints every tick so the minimenu matches the
+/// pointer. Renderer off never paints.
+fn raster_this_tick(draw: bool, capture: bool, n: &mut u32) -> bool {
+    if !draw {
+        return false;
+    }
+    if capture {
+        return true;
+    }
+    *n = n.wrapping_add(1);
+    *n % 2 == 1
+}
+
 /// Per-slot post-drain state: snapshot, settle, auto-run.
 struct SlotLoop {
     pump: Pump,
@@ -182,6 +206,7 @@ struct SlotLoop {
     run_on: bool,
     run_sends: u32,
     last_modal: Option<i32>,
+    raster_n: u32,
 }
 
 impl SlotLoop {
@@ -193,6 +218,7 @@ impl SlotLoop {
             run_on: false,
             run_sends: 0,
             last_modal: None,
+            raster_n: 0,
         }
     }
 
@@ -451,5 +477,46 @@ mod tests {
             gen,
             "renderer off must not copy pixels this tick"
         );
+    }
+
+    #[test]
+    fn raster_this_tick_watch_skips_every_other_capture_does_not() {
+        let mut n = 0;
+        assert!(!raster_this_tick(false, false, &mut n));
+        assert!(!raster_this_tick(false, true, &mut n));
+        assert!(raster_this_tick(true, false, &mut n));
+        assert!(!raster_this_tick(true, false, &mut n));
+        assert!(raster_this_tick(true, false, &mut n));
+        assert!(raster_this_tick(true, true, &mut n));
+        assert!(raster_this_tick(true, true, &mut n));
+    }
+
+    #[test]
+    fn watch_only_draw_copies_every_other_tick() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        c.set_draw(true);
+        let buf = PixelBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 1);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 1, "watch-only skips the even tick");
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 2);
+    }
+
+    #[test]
+    fn capture_draw_copies_every_tick() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        c.set_draw(true);
+        let buf = PixelBuf::new();
+        let inp = SlotInput::new();
+        inp.set_enabled(true);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 2);
     }
 }
