@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/e2e"]
 
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client" }

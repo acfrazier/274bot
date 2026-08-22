@@ -1,7 +1,7 @@
 //! 274 bot host: one OS thread per client slot.
 
 mod auto_run;
-mod login_queue;
+pub mod login_queue;
 mod slot;
 
 use std::sync::Arc;
@@ -41,9 +41,7 @@ pub struct Host;
 impl Host {
     /// Spawn one slot thread. Builds a `Client` from `config` on the thread,
     /// stamps it with the profile uid and the shared cache/iface template,
-    /// then drives `mainloop` at 20 ms. After each pass the drain pump diffs
-    /// `Client.gens`; a `PLAYER_INFO` this drain synthesizes `on_server_tick`.
-    /// (The snapshot-family rebuild hooks in at Task 8.)
+    /// then drives `mainloop` via [`Host::run_client`] at 20 ms.
     pub fn spawn_slot(
         config: ClientConfig,
         profile: Profile,
@@ -60,20 +58,34 @@ impl Host {
                 eprintln!("[host] slot {}: thread up", profile.username);
             }
 
-            let mut pump = Pump::new();
-            // Auto-run state: true after the host sent `set_run(true)` and
-            // until the player stops running. Start unknown → off, so the
-            // first threshold crossing triggers.
-            let mut run_on = false;
-            loop {
-                thread::sleep(FRAME_MS);
-                client.mainloop();
-                let result = pump.drain(client.gens);
-                if should_emit_tick(result.player_info) {
-                    on_server_tick(&mut client, &profile.username, &mut run_on);
-                }
-            }
+            Self::run_client(&mut client, &profile.username, |_, _| {});
         })
+    }
+
+    /// Drive one client's `mainloop` at 20 ms until the process exits. After
+    /// each pass the drain pump diffs `Client.gens`; a `PLAYER_INFO` this
+    /// drain synthesizes `on_server_tick`. `observe` runs after every frame
+    /// so callers can mirror client state (host-play's live harness polls
+    /// it). The frame loop lives here so queue-aware login slots share the
+    /// kernel's tick/auto-run path instead of re-implementing it.
+    pub fn run_client<F>(client: &mut Client, username: &str, mut observe: F)
+    where
+        F: FnMut(&Client, &str),
+    {
+        let mut pump = Pump::new();
+        // Auto-run state: true after the host sent `set_run(true)` and until
+        // the player stops running. Start unknown → off, so the first
+        // threshold crossing triggers.
+        let mut run_on = false;
+        loop {
+            thread::sleep(FRAME_MS);
+            client.mainloop();
+            let result = pump.drain(client.gens);
+            if should_emit_tick(result.player_info) {
+                on_server_tick(client, username, &mut run_on);
+            }
+            observe(client, username);
+        }
     }
 }
 

@@ -1,10 +1,9 @@
 [package]
-name = "host-play"
+name = "e2e"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-client = { workspace = true }
-host = { path = "../host" }
+host-play = { path = "../host-play" }
 vault = { path = "../vault" }

@@ -596,6 +596,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
+name = "e2e"
+version = "0.1.0"
+dependencies = [
+ "host-play",
+ "vault",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -781,6 +789,11 @@ dependencies = [
 [[package]]
 name = "host-play"
 version = "0.1.0"
+dependencies = [
+ "client",
+ "host",
+ "vault",
+]
 
 [[package]]
 name = "image"
