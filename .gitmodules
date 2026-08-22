@@ -1,0 +1,4 @@
+[submodule "vendor/fr-client-rust"]
+	path = vendor/fr-client-rust
+	url = https://github.com/Fairy-Ring/FR-client-rust.git
+	branch = rs2-r274
