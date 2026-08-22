@@ -134,15 +134,17 @@ impl Traveller {
             Leg::Walk { tiles } => {
                 let last = *tiles.last().expect("walk legs are non-empty");
                 // Aim at the leg's far end when it is within 20 tiles;
-                // otherwise hop to a tile ~15 steps ahead along the leg so
-                // the client re-routes a fresh, short path each tick.
+                // otherwise hop to a tile ~15 steps ahead of `here` along
+                // the leg so the client re-routes a fresh, short path each
+                // tick and never aims back toward the leg start.
                 let target = if chebyshev(here, last) <= 20 {
                     last
                 } else {
                     tiles
                         .iter()
                         .copied()
-                        .find(|t| chebyshev(here, *t) >= 15)
+                        .skip_while(|t| *t != here)
+                        .nth(15)
                         .unwrap_or(last)
                 };
                 walk(d, target.x, target.z);
@@ -247,6 +249,29 @@ mod tests {
         // Far end is 39 away (> 20): hop to a tile ~15 steps ahead.
         let (x, z) = r.walked.expect("walk sent");
         assert!((10..=20).contains(&x), "hop target x was {x}");
+        assert_eq!(z, 0);
+    }
+
+    #[test]
+    fn long_walk_leg_second_hop_stays_ahead() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_open_1x40(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 39, z: 0, level: 0 },
+            )
+            .unwrap(),
+        );
+        let mut r = Rec {
+            route: Some((15, 0)),
+            ..Rec::default()
+        };
+        // Second hop from 15 tiles in: the target must stay ahead of
+        // `here`, not point back toward the leg start.
+        t.tick(&mut r, Tile { x: 15, z: 0, level: 0 }, false);
+        let (x, z) = r.walked.expect("walk sent");
+        assert!((25..=35).contains(&x), "second-hop target x was {x}");
         assert_eq!(z, 0);
     }
 
