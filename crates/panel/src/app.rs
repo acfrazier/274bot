@@ -1,18 +1,18 @@
 //! dear-app shell: docking enabled, multi-viewport disabled, amber chrome.
 
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use dear_app::AddOns;
 use dear_imgui_rs::internal::RawWrapper;
-use dear_imgui_rs::{Condition, StyleColor, Ui};
+use dear_imgui_rs::{Condition, Key, MouseButton, StyleColor, Ui};
 
 use crate::chrome::MOCK_BUTTONS;
 use crate::focus::{should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
-use crate::session::{Session, maybe_send_click};
-use crate::theme::{ACCENT, BG, TITLE, integer_ui_scale};
+use crate::session::{combo_index, stream_capture, Session};
+use crate::theme::{integer_ui_scale, ACCENT, BG, TITLE};
 
 /// Runner configuration from the task brief: docking on, viewports off.
 pub fn runner_config() -> dear_app::RunnerConfig {
@@ -71,7 +71,8 @@ impl Default for PanelState {
 }
 
 fn game_window(ui: &Ui, addons: &mut AddOns, scale: f32, state: &mut PanelState) {
-    ui.window("Game")
+    let built = ui
+        .window("Game")
         .size([500.0, 400.0], Condition::FirstUseEver)
         .build(|| {
             let _bg = ui.push_style_color(StyleColor::ChildBg, [0.0, 0.0, 0.0, 1.0]);
@@ -94,18 +95,23 @@ fn game_window(ui: &Ui, addons: &mut AddOns, scale: f32, state: &mut PanelState)
                         let view = state.game_view.as_ref().expect("game view initialized");
                         let size = game_image_size(scale);
                         ui.image(view.tex_id, size);
-                        // Click-through: only map/enqueue while capture is
-                        // on; capture off skips the coord math entirely.
-                        if capture && ui.is_item_clicked() {
-                            let io = ui.io();
-                            let mouse = io.mouse_pos();
+                        // Capture: only map/enqueue while on and hovered;
+                        // capture off skips the coord math entirely (tx is
+                        // also None).
+                        if capture && ui.is_item_hovered() {
+                            let mouse = ui.io().mouse_pos();
                             let min = ui.item_rect_min();
-                            maybe_send_click(
+                            stream_capture(
                                 &state.session.capture_tx,
                                 mouse[0] - min[0],
                                 mouse[1] - min[1],
                                 size[0],
                                 size[1],
+                                ui.is_mouse_clicked(MouseButton::Left),
+                                ui.is_mouse_clicked(MouseButton::Right),
+                                ui.is_mouse_released(MouseButton::Left),
+                                ui.is_mouse_released(MouseButton::Right),
+                                &capture_keys(ui),
                             );
                         }
                     } else {
@@ -113,6 +119,100 @@ fn game_window(ui: &Ui, addons: &mut AddOns, scale: f32, state: &mut PanelState)
                     }
                 });
         });
+    state.session.set_game_pane_open(built.is_some());
+}
+
+/// Map hovered ImGui keys to GameShell `ch` values (arrows 1–4, ASCII).
+fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
+    let shift = ui.is_key_down(Key::LeftShift) || ui.is_key_down(Key::RightShift);
+    let mut keys = Vec::new();
+    const NAMED: &[(Key, i32)] = &[
+        (Key::LeftArrow, 1),
+        (Key::RightArrow, 2),
+        (Key::UpArrow, 3),
+        (Key::DownArrow, 4),
+        (Key::Backspace, 8),
+        (Key::Delete, 8),
+        (Key::Tab, 9),
+        (Key::Enter, 10),
+        (Key::Escape, 27),
+        (Key::Space, 32),
+    ];
+    for &(key, ch) in NAMED {
+        if ui.is_key_pressed_with_repeat(key, false) {
+            keys.push((true, ch));
+        }
+        if ui.is_key_released(key) {
+            keys.push((false, ch));
+        }
+    }
+    const LETTERS: [Key; 26] = [
+        Key::A,
+        Key::B,
+        Key::C,
+        Key::D,
+        Key::E,
+        Key::F,
+        Key::G,
+        Key::H,
+        Key::I,
+        Key::J,
+        Key::K,
+        Key::L,
+        Key::M,
+        Key::N,
+        Key::O,
+        Key::P,
+        Key::Q,
+        Key::R,
+        Key::S,
+        Key::T,
+        Key::U,
+        Key::V,
+        Key::W,
+        Key::X,
+        Key::Y,
+        Key::Z,
+    ];
+    for (i, &key) in LETTERS.iter().enumerate() {
+        let ch = if shift {
+            (b'A' + i as u8) as i32
+        } else {
+            (b'a' + i as u8) as i32
+        };
+        if ui.is_key_pressed_with_repeat(key, false) {
+            keys.push((true, ch));
+        }
+        if ui.is_key_released(key) {
+            keys.push((false, ch));
+        }
+    }
+    const DIGITS: [(Key, u8, u8); 10] = [
+        (Key::Key0, b'0', b')'),
+        (Key::Key1, b'1', b'!'),
+        (Key::Key2, b'2', b'@'),
+        (Key::Key3, b'3', b'#'),
+        (Key::Key4, b'4', b'$'),
+        (Key::Key5, b'5', b'%'),
+        (Key::Key6, b'6', b'^'),
+        (Key::Key7, b'7', b'&'),
+        (Key::Key8, b'8', b'*'),
+        (Key::Key9, b'9', b'('),
+    ];
+    for &(key, unshifted, shifted) in &DIGITS {
+        let ch = if shift {
+            shifted as i32
+        } else {
+            unshifted as i32
+        };
+        if ui.is_key_pressed_with_repeat(key, false) {
+            keys.push((true, ch));
+        }
+        if ui.is_key_released(key) {
+            keys.push((false, ch));
+        }
+    }
+    keys
 }
 
 /// Left panel: wired vault/profile/status/log/rendering/input chrome plus the
@@ -164,14 +264,14 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     let names = session.profile_names();
     if names.is_empty() {
         ui.text_disabled("no profiles in vault");
-        return;
-    }
-    let mut idx = session
-        .focused_name()
-        .and_then(|n| names.iter().position(|x| *x == n))
-        .unwrap_or(0);
-    if ui.combo("##profile", &mut idx, &names, |n: &String| Cow::Borrowed(n.as_str())) {
-        session.select(&names[idx]);
+    } else if let Some(mut idx) = combo_index(session.focused_name().as_deref(), &names) {
+        if ui.combo("##profile", &mut idx, &names, |n: &String| {
+            Cow::Borrowed(n.as_str())
+        }) {
+            session.select(&names[idx]);
+        }
+    } else {
+        ui.text_disabled("no focused profile");
     }
     let mut mainland = session.mainland.load(Ordering::Relaxed);
     if ui.checkbox("mainland hop", &mut mainland) {
@@ -182,17 +282,15 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// credentials: editable user/pass fields for the focused profile. Save
-/// upserts the vault profile, Log in focuses the already-spawned slot, Clear
-/// empties the two fields without touching the vault.
+/// credentials: editable user/pass fields. Save upserts the vault profile,
+/// spawns the slot if it is not running, then selects it. Usable with an
+/// empty first-run vault (no focused profile required). Log in focuses an
+/// already-spawned slot; Clear empties the two fields without touching the
+/// vault. Panel does not auto-create test/test.
 fn credentials_section(ui: &Ui, session: &mut Session) {
     ui.text_disabled("credentials");
     if session.vault.is_none() {
         ui.text_disabled("vault locked");
-        return;
-    }
-    if session.focused_name().is_none() {
-        ui.text_disabled("no focused profile");
         return;
     }
     ui.input_text("##cred-user", &mut session.cred_user)
@@ -216,7 +314,7 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
     if ui.button("Clear") {
         session.clear_credentials();
     }
-    ui.text_disabled("Save writes the vault; Clear only empties these fields.");
+    ui.text_disabled("Save writes the vault and spawns the slot if needed.");
 }
 
 /// script: mocked until campaign 5.

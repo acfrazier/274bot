@@ -2,6 +2,7 @@
 //! unlocks a vault and runs the named profiles; the `e2e` harness links
 //! this library so it can poll per-slot state instead of scraping logs.
 
+use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -55,9 +56,18 @@ pub struct SlotStatus {
 
 /// Running slots and their shared status. Slots drive `mainloop` until the
 /// process exits; callers poll [`Play::statuses`] and then exit.
+///
+/// [`Play::spawn_slot`] can add a profile after the initial [`run_with_io`]
+/// call; later slots share the same login FIFO, cache, and per-frame hook.
 pub struct Play {
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: Vec<thread::JoinHandle<()>>,
+    options: PlayOptions,
+    cache: Arc<Cache>,
+    ifaces: Vec<Option<IfType>>,
+    queue: Arc<Mutex<LoginQueue>>,
+    per_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
+    spawned: HashSet<String>,
 }
 
 impl Play {
@@ -72,6 +82,31 @@ impl Play {
         for handle in self.handles {
             let _ = handle.join();
         }
+    }
+
+    /// Spawn one more slot on this play's FIFO. No-op if `username` is
+    /// already in the status list (already running).
+    pub fn spawn_slot(
+        &mut self,
+        profile: Profile,
+        input: Option<Arc<SlotInput>>,
+        pixels: Option<Arc<PixelBuf>>,
+    ) {
+        if !self.spawned.insert(profile.username.clone()) {
+            return;
+        }
+        spawn_slot_thread(
+            &self.options,
+            profile,
+            input,
+            pixels,
+            Arc::clone(&self.cache),
+            self.ifaces.clone(),
+            Arc::clone(&self.queue),
+            Arc::clone(&self.statuses),
+            Arc::clone(&self.per_frame),
+            &mut self.handles,
+        );
     }
 }
 
@@ -99,112 +134,131 @@ where
     G: Fn(&mut Client, &str) + Send + Sync + 'static,
 {
     let (cache, ifaces) = load_template(&options.cache_dir);
-    let cache = Arc::new(cache);
-    let queue = Arc::new(Mutex::new(LoginQueue::default()));
-    let statuses = Arc::new(Mutex::new(Vec::new()));
-    let per_frame = Arc::new(per_frame);
-    let mut handles = Vec::new();
-
+    let mut play = Play {
+        statuses: Arc::new(Mutex::new(Vec::new())),
+        handles: Vec::new(),
+        options: options.clone(),
+        cache: Arc::new(cache),
+        ifaces,
+        queue: Arc::new(Mutex::new(LoginQueue::default())),
+        per_frame: Arc::new(per_frame),
+        spawned: HashSet::new(),
+    };
     for profile in profiles {
-        let username = profile.username.clone();
-        let uid = profile.uid;
-        let password = profile.password.clone();
-        let config = ClientConfig {
-            host: options.host.clone(),
-            port: options.port,
-            cache_dir: options.cache_dir.clone(),
-            members: true,
-            lowmem: options.lowmem,
-        };
-        let slot_cache = Arc::clone(&cache);
-        let ifaces_template = ifaces.clone();
-        let slot_queue = Arc::clone(&queue);
-        let slot_statuses = Arc::clone(&statuses);
-        let mainland = options.mainland;
-        let (slot_input, slot_pixels) = per_slot(&username);
-        let slot_frame = Arc::clone(&per_frame);
+        let (slot_input, slot_pixels) = per_slot(&profile.username);
+        play.spawn_slot(profile, slot_input, slot_pixels);
+    }
+    play
+}
 
-        handles.push(thread::spawn(move || {
-            let mut client = prepare_client(config, uid, slot_cache, ifaces_template);
+fn spawn_slot_thread(
+    options: &PlayOptions,
+    profile: Profile,
+    slot_input: Option<Arc<SlotInput>>,
+    slot_pixels: Option<Arc<PixelBuf>>,
+    slot_cache: Arc<Cache>,
+    ifaces_template: Vec<Option<IfType>>,
+    slot_queue: Arc<Mutex<LoginQueue>>,
+    slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    slot_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
+    handles: &mut Vec<thread::JoinHandle<()>>,
+) {
+    let username = profile.username.clone();
+    let uid = profile.uid;
+    let password = profile.password.clone();
+    let config = ClientConfig {
+        host: options.host.clone(),
+        port: options.port,
+        cache_dir: options.cache_dir.clone(),
+        members: true,
+        lowmem: options.lowmem,
+    };
+    let mainland = options.mainland;
 
+    handles.push(thread::spawn(move || {
+        let mut client = prepare_client(config, uid, slot_cache, ifaces_template);
+
+        {
+            let mut all = slot_statuses.lock().unwrap();
+            all.push(SlotStatus {
+                username: username.clone(),
+                ..SlotStatus::default()
+            });
+        }
+        if debug_enabled() {
+            eprintln!("[host-play] slot {username}: thread up");
+        }
+
+        // Jag/anim/model/map prefetch (mirrors client-play; the scene
+        // cannot reach scene_state 2 until the loc models are in).
+        client.maininit();
+        if client.error_loading {
+            if debug_enabled() {
+                eprintln!("[host-play] slot {username}: maininit failed");
+            }
+        }
+
+        let mut backoff = LoginBackoff::new();
+        loop {
+            wait_for_permit(&slot_queue, uid);
+            let login_started = Instant::now();
             {
                 let mut all = slot_statuses.lock().unwrap();
-                all.push(SlotStatus {
-                    username: username.clone(),
-                    ..SlotStatus::default()
-                });
-            }
-            if debug_enabled() {
-                eprintln!("[host-play] slot {username}: thread up");
-            }
-
-            // Jag/anim/model/map prefetch (mirrors client-play; the scene
-            // cannot reach scene_state 2 until the loc models are in).
-            client.maininit();
-            if client.error_loading {
-                if debug_enabled() {
-                    eprintln!("[host-play] slot {username}: maininit failed");
+                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                    // First attempt only: retries must not move the
+                    // handshake-start metric the harness asserts on.
+                    if s.login_started.is_none() {
+                        s.login_started = Some(login_started);
+                    }
+                    s.error = None;
                 }
             }
-
-            let mut backoff = LoginBackoff::new();
-            loop {
-                wait_for_permit(&slot_queue, uid);
-                let login_started = Instant::now();
-                {
-                    let mut all = slot_statuses.lock().unwrap();
-                    if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                        // First attempt only: retries must not move the
-                        // handshake-start metric the harness asserts on.
-                        if s.login_started.is_none() {
-                            s.login_started = Some(login_started);
-                        }
-                        s.error = None;
+            match client.login(&username, &password, false) {
+                Ok(()) => {
+                    backoff.reset();
+                    if debug_enabled() {
+                        eprintln!("[host-play] slot {username}: ingame");
                     }
+                    break;
                 }
-                match client.login(&username, &password, false) {
-                    Ok(()) => {
-                        backoff.reset();
-                        if debug_enabled() {
-                            eprintln!("[host-play] slot {username}: ingame");
-                        }
-                        break;
+                Err(e) => {
+                    let msg = format!("code {}: {}", e.code, e.mes2);
+                    if debug_enabled() {
+                        eprintln!("[host-play] slot {username}: login {msg}");
                     }
-                    Err(e) => {
-                        let msg = format!("code {}: {}", e.code, e.mes2);
-                        if debug_enabled() {
-                            eprintln!("[host-play] slot {username}: login {msg}");
+                    {
+                        let mut all = slot_statuses.lock().unwrap();
+                        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                            s.error = Some(msg);
                         }
-                        {
-                            let mut all = slot_statuses.lock().unwrap();
-                            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                                s.error = Some(msg);
-                            }
-                        }
-                        // Response 16 (world full) escalates; response 5 is
-                        // the engine's login-limit message ("Try again in
-                        // 60 secs") and waits that long; other codes (wrong
-                        // credentials, RSA mismatch, ...) retry slower.
-                        let wait = match e.code {
-                            16 => backoff.delay(),
-                            5 => Duration::from_secs(60),
-                            _ => Duration::from_secs(5),
-                        };
-                        thread::sleep(wait);
                     }
+                    // Response 16 (world full) escalates; response 5 is
+                    // the engine's login-limit message ("Try again in
+                    // 60 secs") and waits that long; other codes (wrong
+                    // credentials, RSA mismatch, ...) retry slower.
+                    let wait = match e.code {
+                        16 => backoff.delay(),
+                        5 => Duration::from_secs(60),
+                        _ => Duration::from_secs(5),
+                    };
+                    thread::sleep(wait);
                 }
             }
+        }
 
-            let mut mainland_sent = false;
-            Host::run_client(&mut client, &username, slot_input, slot_pixels, |c, name, run_sends| {
+        let mut mainland_sent = false;
+        Host::run_client(
+            &mut client,
+            &username,
+            slot_input,
+            slot_pixels,
+            |c, name, run_sends| {
                 slot_frame(c, name);
                 if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                     api::interact::mainland_hop(c);
                     mainland_sent = true;
                     if debug_enabled() {
-                        eprintln!(
-                            "[host-play] slot {name}: queued mainland tele+setvar (scene 2)"
-                        );
+                        eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
                     }
                 }
                 let mut all = slot_statuses.lock().unwrap();
@@ -256,11 +310,9 @@ where
                         c.awaiting_player_info
                     );
                 }
-            });
-        }));
-    }
-
-    Play { statuses, handles }
+            },
+        );
+    }));
 }
 
 /// Unlock `path`, or create it (and parent dirs) when missing. Any other
@@ -350,6 +402,23 @@ mod tests {
             Err(e) => panic!("expected WrongPassphrase, got {e}"),
             Ok(_) => panic!("expected WrongPassphrase, unlocked"),
         }
+    }
+
+    #[test]
+    fn run_with_io_empty_profiles_starts_no_slots() {
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        assert!(play.statuses().is_empty());
     }
 
     #[test]

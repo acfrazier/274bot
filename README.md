@@ -58,7 +58,10 @@ cargo run -p panel --bin panel-play
 
 `--vault-pass` is equivalent to the env (panel-play uses the env or the
 in-panel prompt). Empty passphrase is rejected. First run creates
-`~/.274bot/vault` and profiles (`password = username` unless you upsert).
+`~/.274bot/vault`. **host-play** upserts named users (`--user test` defaults
+to `test`/`test`, `password = username`). **panel-play does not auto-create
+`test`/`test`**: an empty first-run vault stays empty until you type a
+username/password in credentials and Save (upsert, spawn that slot, select).
 Headless **lowmem** is the default; `--highmem` if you need it. `--debug` or
 `BOT_DEBUG=1` prints slot logs. `--mainland` (or `BOT_MAINLAND=1`) after
 scene 2 sends the rs2b0t tutorial skip (`tele` Lumbridge courtyard +

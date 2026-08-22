@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
-use host::{InputEv, PixelBuf, SlotInput, map_image_to_applet};
+use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotStatus};
 use vault::{Profile, Vault};
 
@@ -42,15 +42,58 @@ pub struct SlotIo {
     pub pixels: Arc<PixelBuf>,
 }
 
+/// Combo highlight: `None` when nothing is focused so the widget cannot
+/// display index 0 as selected.
+pub fn combo_index(focused: Option<&str>, names: &[String]) -> Option<usize> {
+    focused.and_then(|n| names.iter().position(|x| x == n))
+}
+
 /// Click-through helper: maps a click inside the Game Image (local coords,
 /// Image widget size) to applet coords and enqueues `InputEv::Down`. No-op
 /// when the capture channel has been dropped (capture off) or the point is
-/// outside the Image. This is the click path; the real app also sends
-/// Move/Up from the ImGui mouse.
+/// outside the Image.
 pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, h: f32) {
-    let Some(tx) = tx else { return; };
-    let Some((x, y)) = map_image_to_applet(lx, ly, w, h) else { return; };
+    let Some(tx) = tx else {
+        return;
+    };
+    let Some((x, y)) = map_image_to_applet(lx, ly, w, h) else {
+        return;
+    };
     let _ = tx.send(InputEv::Down { button: 1, x, y });
+}
+
+/// Stream one hovered capture frame: `Move` first, then `Down` (left=1,
+/// right=2), then `Up`, then keys. No-op when `tx` is `None` (capture off).
+pub fn stream_capture(
+    tx: &Option<Sender<InputEv>>,
+    lx: f32,
+    ly: f32,
+    w: f32,
+    h: f32,
+    left_down: bool,
+    right_down: bool,
+    left_up: bool,
+    right_up: bool,
+    keys: &[(bool, i32)],
+) {
+    let Some(tx) = tx else {
+        return;
+    };
+    if let Some((x, y)) = map_image_to_applet(lx, ly, w, h) {
+        let _ = tx.send(InputEv::Move { x, y });
+        if left_down {
+            let _ = tx.send(InputEv::Down { button: 1, x, y });
+        }
+        if right_down {
+            let _ = tx.send(InputEv::Down { button: 2, x, y });
+        }
+    }
+    if left_up || right_up {
+        let _ = tx.send(InputEv::Up);
+    }
+    for &(down, ch) in keys {
+        let _ = tx.send(InputEv::Key { down, ch });
+    }
 }
 
 pub struct Session {
@@ -178,7 +221,9 @@ impl Session {
                     && mainland_sent.lock().unwrap().insert(name.to_string())
                 {
                     api::interact::mainland_hop(c);
-                    log.lock().unwrap().push(format!("{name}: mainland hop queued"));
+                    log.lock()
+                        .unwrap()
+                        .push(format!("{name}: mainland hop queued"));
                 }
             },
         );
@@ -187,18 +232,26 @@ impl Session {
             .map(|(name, (input, pixels))| (name, SlotIo { input, pixels }))
             .collect();
         self.play = Some(play);
-        self.statuses = self
-            .play
-            .as_ref()
-            .map(|p| p.statuses())
-            .unwrap_or_default();
+        self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         self.vault = Some(vault);
+        self.focus_first_profile();
+    }
+
+    /// After unlock/`spawn_all`: if the vault (or running slots) has names,
+    /// focus the first so the combo and renderer are not stuck on `None`.
+    fn focus_first_profile(&mut self) {
+        let names = self.profile_names();
+        if !names.is_empty() {
+            self.select(&names[0]);
+        }
     }
 
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
-        let Some(play) = &self.play else { return; };
+        let Some(play) = &self.play else {
+            return;
+        };
         let current = play.statuses();
         {
             let mut log = self.log.lock().unwrap();
@@ -308,6 +361,18 @@ impl Session {
         self.focus.lock().unwrap().renderer = on;
     }
 
+    /// Game window `.build()` Some/None. Closing the pane turns capture off
+    /// (`set_enabled(false)` + drop tx); reopening does not re-enable it.
+    pub fn set_game_pane_open(&mut self, open: bool) {
+        let mut focus = self.focus.lock().unwrap();
+        let was = focus.game_pane_open;
+        focus.game_pane_open = open;
+        drop(focus);
+        if was && !open {
+            self.set_capture(false);
+        }
+    }
+
     /// Capture checkbox. On: attach a fresh channel and enable the focused
     /// slot's drain. Off: disable the drain and drop the sender so the UI
     /// cannot enqueue (the slot thread does no `try_recv` while disabled).
@@ -344,43 +409,66 @@ impl Session {
 
     /// Save the credentials fields as a vault profile: the username field
     /// is the key, the password field the secret, and an existing profile's
-    /// uid/settings are kept. Returns whether the write landed; failures set
-    /// [`Session::error`].
+    /// uid/settings are kept. Does not require a focused profile (first-run
+    /// empty vault). After a successful upsert, spawns the slot via the
+    /// existing FIFO if it is not running, then selects it. Returns whether
+    /// the write landed; failures set [`Session::error`].
     pub fn save_credentials(&mut self) -> bool {
-        let Some(vault) = &mut self.vault else {
+        if self.vault.is_none() {
             self.error = Some("credentials: vault locked".into());
             return false;
-        };
+        }
         let username = self.cred_user.trim().to_string();
         if username.is_empty() {
             self.error = Some("credentials: username required".into());
             return false;
         }
-        let existing = vault.get(&username).cloned();
-        let profile = Profile {
-            uid: existing
-                .as_ref()
-                .map(|p| p.uid)
-                .unwrap_or_else(|| fresh_uid(vault)),
-            username: username.clone(),
-            password: self.cred_pass.clone(),
-            settings: existing.map(|p| p.settings).unwrap_or_default(),
-        };
-        match vault.upsert(profile) {
-            Ok(()) => {
-                self.error = None;
-                true
+        let profile = {
+            let vault = self.vault.as_mut().expect("vault checked");
+            let existing = vault.get(&username).cloned();
+            Profile {
+                uid: existing
+                    .as_ref()
+                    .map(|p| p.uid)
+                    .unwrap_or_else(|| fresh_uid(vault)),
+                username: username.clone(),
+                password: self.cred_pass.clone(),
+                settings: existing.map(|p| p.settings).unwrap_or_default(),
             }
+        };
+        match self.vault.as_mut().expect("vault checked").upsert(profile) {
+            Ok(()) => self.error = None,
             Err(e) => {
                 self.error = Some(format!("credentials: {e}"));
-                false
+                return false;
             }
         }
+        self.ensure_slot(&username);
+        self.select(&username);
+        true
     }
 
-    /// Focus the credentials username. Every vault profile is spawned at
-    /// unlock, so selecting a vault username focuses its already-running
-    /// slot (the existing session spawn path).
+    /// Register per-slot IO and spawn via [`Play::spawn_slot`] when a play
+    /// is live. Without `play` (unit tests / pre-unlock) only the IO map is
+    /// filled so focus can attach.
+    fn ensure_slot(&mut self, username: &str) {
+        if self.slots.contains_key(username) {
+            return;
+        }
+        let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
+            return;
+        };
+        let input = SlotInput::new();
+        let pixels = PixelBuf::new();
+        if let Some(play) = &mut self.play {
+            play.spawn_slot(profile, Some(Arc::clone(&input)), Some(Arc::clone(&pixels)));
+        }
+        self.slots
+            .insert(username.to_string(), SlotIo { input, pixels });
+    }
+
+    /// Focus the credentials username. Save is the spawn path; Log in only
+    /// selects an already-running slot.
     pub fn login(&mut self, name: &str) {
         self.select(name);
     }
@@ -400,13 +488,13 @@ fn fresh_uid(vault: &Vault) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Session, maybe_send_click};
-    use host::InputEv;
+    use super::{combo_index, maybe_send_click, stream_capture, Session, SlotIo};
+    use host::{InputEv, PixelBuf, SlotInput};
     use vault::{Profile, ProfileSettings, Vault};
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("274bot-panel-session-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-session-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(name);
         if p.exists() {
@@ -425,8 +513,140 @@ mod tests {
     }
 
     #[test]
+    fn combo_index_is_none_when_unfocused() {
+        let names = vec!["alice".into(), "bob".into()];
+        assert_eq!(combo_index(None, &names), None);
+        assert_eq!(combo_index(Some("alice"), &names), Some(0));
+        assert_eq!(combo_index(Some("bob"), &names), Some(1));
+        assert_eq!(combo_index(Some("carol"), &names), None);
+    }
+
+    #[test]
+    fn focus_first_profile_selects_first_vault_name() {
+        let path = tmp_vault("focus-first.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.focus_first_profile();
+        assert_eq!(s.focused_name().as_deref(), Some("alice"));
+        assert_eq!(s.cred_user, "alice");
+    }
+
+    #[test]
+    fn focus_first_profile_noop_when_empty() {
+        let path = tmp_vault("focus-empty.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.focus_first_profile();
+        assert!(s.focused_name().is_none());
+    }
+
+    #[test]
     fn maybe_send_click_is_noop_without_tx() {
         maybe_send_click(&None, 1.0, 1.0, 765.0, 503.0);
+    }
+
+    #[test]
+    fn stream_capture_is_noop_without_tx() {
+        stream_capture(
+            &None,
+            1.0,
+            1.0,
+            765.0,
+            503.0,
+            true,
+            true,
+            true,
+            true,
+            &[(true, b'a' as i32)],
+        );
+    }
+
+    #[test]
+    fn stream_capture_sends_move_then_down() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        stream_capture(
+            &Some(tx),
+            0.0,
+            0.0,
+            765.0,
+            503.0,
+            true,
+            false,
+            false,
+            false,
+            &[],
+        );
+        match rx.try_recv() {
+            Ok(InputEv::Move { x, y }) => assert_eq!((x, y), (0, 0)),
+            other => panic!("{other:?}"),
+        }
+        match rx.try_recv() {
+            Ok(InputEv::Down { button, x, y }) => assert_eq!((button, x, y), (1, 0, 0)),
+            other => panic!("{other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stream_capture_sends_right_up_and_key() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        stream_capture(
+            &Some(tx),
+            0.0,
+            0.0,
+            765.0,
+            503.0,
+            false,
+            true,
+            true,
+            false,
+            &[(true, 10)],
+        );
+        let evs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(matches!(evs[0], InputEv::Move { x: 0, y: 0 }));
+        assert!(matches!(
+            evs[1],
+            InputEv::Down {
+                button: 2,
+                x: 0,
+                y: 0
+            }
+        ));
+        assert!(matches!(evs[2], InputEv::Up));
+        assert!(matches!(evs[3], InputEv::Key { down: true, ch: 10 }));
+    }
+
+    #[test]
+    fn closing_game_pane_turns_capture_off() {
+        let mut s = Session::new();
+        s.select("alice");
+        s.set_capture(true);
+        assert!(s.focus.lock().unwrap().capture);
+        s.set_game_pane_open(false);
+        let f = s.focus.lock().unwrap();
+        assert!(!f.game_pane_open);
+        assert!(!f.capture);
+        assert!(s.capture_tx.is_none());
+    }
+
+    #[test]
+    fn opening_game_pane_sets_flag_without_capture() {
+        let mut s = Session::new();
+        s.set_game_pane_open(false);
+        s.set_game_pane_open(true);
+        let f = s.focus.lock().unwrap();
+        assert!(f.game_pane_open);
+        assert!(!f.capture);
     }
 
     #[test]
@@ -459,7 +679,11 @@ mod tests {
         let path = tmp_vault("select-sync.vault");
         let mut s = Session::new();
         s.vault = Some(Vault::create(&path, "bot").unwrap());
-        s.vault.as_mut().unwrap().upsert(profile("alice", "pw", 42)).unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
 
         s.select("alice");
         assert_eq!(s.cred_user, "alice");
@@ -471,7 +695,11 @@ mod tests {
         let path = tmp_vault("save-creds.vault");
         let mut s = Session::new();
         s.vault = Some(Vault::create(&path, "bot").unwrap());
-        s.vault.as_mut().unwrap().upsert(profile("alice", "oldpass", 42)).unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "oldpass", 42))
+            .unwrap();
 
         s.cred_user = "alice".into();
         s.cred_pass = "newpass".into();
@@ -487,11 +715,17 @@ mod tests {
         let path = tmp_vault("new-user.vault");
         let mut s = Session::new();
         s.vault = Some(Vault::create(&path, "bot").unwrap());
-        s.vault.as_mut().unwrap().upsert(profile("alice", "pw", 42)).unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
 
         s.cred_user = "bob".into();
         s.cred_pass = "bobpass".into();
         assert!(s.save_credentials());
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert!(s.slots.contains_key("bob"));
 
         let p = s.vault.as_ref().unwrap().get("bob").unwrap();
         assert_eq!(p.password, "bobpass");
@@ -515,11 +749,53 @@ mod tests {
     }
 
     #[test]
+    fn save_credentials_without_focus_upserts_spawns_and_selects() {
+        let path = tmp_vault("empty-first-run.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        assert!(s.focused_name().is_none());
+        s.cred_user = "test".into();
+        s.cred_pass = "test".into();
+        assert!(s.save_credentials());
+        assert!(s.vault.as_ref().unwrap().get("test").is_some());
+        assert_eq!(s.focused_name().as_deref(), Some("test"));
+        assert!(s.slots.contains_key("test"));
+    }
+
+    #[test]
+    fn save_credentials_does_not_duplicate_running_slot() {
+        let path = tmp_vault("no-dup-slot.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: PixelBuf::new(),
+            },
+        );
+        s.cred_user = "alice".into();
+        s.cred_pass = "newpw".into();
+        assert!(s.save_credentials());
+        assert_eq!(s.slots.len(), 1);
+        assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    }
+
+    #[test]
     fn clear_credentials_empties_fields_but_keeps_vault() {
         let path = tmp_vault("clear-creds.vault");
         let mut s = Session::new();
         s.vault = Some(Vault::create(&path, "bot").unwrap());
-        s.vault.as_mut().unwrap().upsert(profile("alice", "pw", 42)).unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
         s.select("alice");
         s.cred_pass = "edited".into();
 

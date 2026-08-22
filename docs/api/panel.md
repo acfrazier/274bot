@@ -13,9 +13,11 @@ export BOT_VAULT_PASS=bot
 cargo run -p panel --bin panel-play
 ```
 
-Same vault rules as `host-play`: a passphrase is required and an empty one is
-rejected, first run creates `~/.274bot/vault` with profiles
-(`password = username` unless you upsert). Unlike the CLI there is **no
+A passphrase is required and an empty one is rejected. First run creates
+`~/.274bot/vault` **empty** — panel-play does **not** auto-create `test`/`test`
+(that is host-play CLI: `--user test` defaults, `password = username`).
+Type a username/password in credentials and **Save** to upsert, spawn that
+slot on the login FIFO, and select it. Unlike the CLI there is **no
 `--vault-pass` flag** — the passphrase comes from `BOT_VAULT_PASS`, or from
 the in-panel prompt (which also covers interactive use). When
 `BOT_VAULT_PASS` is set, the panel unlocks **before** the window opens so the
@@ -26,10 +28,12 @@ mainland hop at scene 2.
 
 `Session::unlock` spawns every vault profile as a host slot via
 `host_play::run_with_io`, giving each its own `PixelBuf` + `SlotInput`
-(never shared across slots). A per-frame observe hook applies the focus
-`set_draw` switch and the mainland hop, so slot threads and the UI never
-share a lock hot path. The runner is configured with **docking on,
-multi-viewports off** (single main viewport).
+(never shared across slots), then **selects the first name** so the Game
+Image is not stuck on `renderer off`. A per-frame observe hook applies the
+focus `set_draw` switch and the mainland hop, so slot threads and the UI
+never share a lock hot path. The runner is configured with **docking on,
+multi-viewports off** (single main viewport). Closing the Game pane sets
+`game_pane_open = false` (`set_draw` off) and turns capture off.
 
 ## Renderer vs capture
 
@@ -40,9 +44,11 @@ open:
   rasters. The Game Image is an RGBA8 **765×503** texture (the client applet
   size, never mutated); the widget scales the display by an integer DPI
   factor (2× on Retina). Rendering never pauses the bot.
-- **capture input** — click-through: while on, clicks in the Game Image map
-  to applet coords and enqueue `InputEv::Down` on the focused slot's channel.
-  Off means watch-only with zero input work (the slot does no `try_recv`).
+- **capture input** — click-through: while on and the Image is hovered,
+  local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
+  (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
+  Off means watch-only with zero input work (`tx` is `None`; the slot does
+  no `try_recv`).
 
 Capture follows focus (never two keyboards) and implies renderer.
 
