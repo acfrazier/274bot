@@ -64,16 +64,19 @@ fn panel_window(ui: &Ui) {
         });
 }
 
-/// Game window: black placeholder viewport until Task 7 wires the 765×503
-/// texture; logical size divides by scale so the physical render stays 765×503.
+/// Game window: black placeholder viewport until Task 7 wires the texture.
+/// Texture is 765×503; widget size is 765*dpi × 503*dpi.
+fn game_image_size(scale: f32) -> [f32; 2] {
+    [765.0 * scale.max(1.0), 503.0 * scale.max(1.0)]
+}
+
 fn game_window(ui: &Ui, scale: f32) {
-    let s = scale.max(1.0);
     ui.window("Game")
         .size([500.0, 400.0], Condition::FirstUseEver)
         .build(|| {
             let _bg = ui.push_style_color(StyleColor::ChildBg, [0.0, 0.0, 0.0, 1.0]);
             ui.child_window("game_viewport")
-                .size([765.0 / s, 503.0 / s])
+                .size(game_image_size(scale))
                 .build(ui, || {
                     ui.text("no bot focused");
                 });
@@ -107,7 +110,7 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
 mod tests {
     use dear_imgui_rs::ConfigFlags;
 
-    use super::{apply_ui_scale, runner_config};
+    use super::{apply_ui_scale, game_image_size, runner_config};
 
     #[test]
     fn runner_config_docks_without_viewports() {
@@ -126,5 +129,11 @@ mod tests {
         let after = ctx.style().window_padding();
         assert_eq!(before, [8.0, 8.0]);
         assert_eq!(after, [16.0, 16.0]);
+    }
+
+    #[test]
+    fn game_image_size_scales_up_for_retina() {
+        assert_eq!(game_image_size(2.0), [1530.0, 1006.0]);
+        assert_eq!(game_image_size(1.0), [765.0, 503.0]);
     }
 }
