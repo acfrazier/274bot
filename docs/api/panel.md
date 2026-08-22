@@ -43,9 +43,11 @@ generation is unchanged.
 The Game Image is already a **wgpu texture** (GPU composite). The 274 scene
 behind it is still **CPU Pix3D** into `draw_area` — same painter as the
 headless client, not a GPU 3D backend, and not the client's `Present`
-(softbuffer). Unfocused running slots skip `mainredraw` but still
-`mainloop`. Run **`--release`** (or rely on `[profile.dev.package.client]
-opt-level = 3`) or Pix3D in a default debug build will pin a core.
+(softbuffer). Unfocused running slots skip `mainredraw` **this tick** (`observe` latches
+`set_draw` before the raster; renderer checkbox off or unfocused → no
+Pix3D). They still `mainloop`. Run **`--release`** (or rely on
+`[profile.dev.package.client] opt-level = 3`) or Pix3D in a default debug
+build will pin a core.
 
 ## Renderer vs capture
 

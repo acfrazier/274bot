@@ -80,15 +80,15 @@ impl Host {
     }
 
     /// Drive one client's `mainloop` at 20 ms until the process exits. Each
-    /// frame [`Host::client_frame`] drains optional [`SlotInput`] events
-    /// (only while enabled), latches the click, runs `mainloop`, then copies
-    /// the redraw into optional [`PixelBuf`]s. Dirty snapshot families
+    /// tick [`Host::client_tick`] runs `observe` **before** [`Host::client_frame`]
+    /// so panel `set_draw` (focused + renderer checkbox) gates **this**
+    /// `mainredraw`, then drains input, latches the click, runs `mainloop`,
+    /// and copies pixels only while `client.draw`. Dirty snapshot families
     /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
     /// drain); settle runs when a family gen moved; think (auto-run) reads
-    /// energy from the snapshot stat view when it has been rebuilt. `observe`
-    /// runs after every frame so callers can mirror client state (host-play's
-    /// live harness polls it). The third observe arg is the count of accepted
-    /// auto-run `set_run(true)` sends.
+    /// energy from the snapshot stat view when it has been rebuilt. The
+    /// third observe arg is the count of accepted auto-run `set_run(true)`
+    /// sends (from the previous tick).
     pub fn run_client<F>(
         client: &mut Client,
         username: &str,
@@ -102,16 +102,35 @@ impl Host {
         let mut run_sends = 0u32;
         loop {
             thread::sleep(FRAME_MS);
-            Self::client_frame(
+            Self::client_tick(
                 client,
                 &mut slot,
                 username,
                 input.as_deref(),
                 pixels.as_deref(),
                 &mut run_sends,
+                &mut observe,
             );
-            observe(client, username, run_sends);
         }
+    }
+
+    /// One host tick: `observe` first (panel latches `set_draw`), then one
+    /// [`Host::client_frame`]. Unfocused / renderer-off slots skip Pix3D
+    /// on this tick, not the next.
+    #[allow(private_interfaces)]
+    pub fn client_tick<F>(
+        client: &mut Client,
+        slot: &mut SlotLoop,
+        username: &str,
+        input: Option<&SlotInput>,
+        pixels: Option<&PixelBuf>,
+        run_sends: &mut u32,
+        observe: &mut F,
+    ) where
+        F: FnMut(&mut Client, &str, u32),
+    {
+        observe(client, username, *run_sends);
+        Self::client_frame(client, slot, username, input, pixels, run_sends);
     }
 
     /// One 20 ms frame: drain optional input into the shell, latch the
@@ -390,6 +409,47 @@ mod tests {
         assert_eq!(
             buf.snapshot().len(),
             (client::client::APPLET_W * client::client::APPLET_H) as usize
+        );
+    }
+
+    #[test]
+    fn client_tick_latches_observe_draw_before_redraw() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let buf = PixelBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        assert!(!c.draw, "slots start with the renderer off");
+        // Observe-after-frame would skip this paint (draw still false
+        // during mainredraw). Observe-before must copy this tick.
+        Host::client_tick(
+            &mut c,
+            &mut slot,
+            "t",
+            None,
+            Some(&buf),
+            &mut sends,
+            &mut |c, _, _| c.set_draw(true),
+        );
+        assert!(c.draw);
+        assert_eq!(
+            buf.snapshot().len(),
+            (client::client::APPLET_W * client::client::APPLET_H) as usize
+        );
+        let gen = buf.generation();
+        Host::client_tick(
+            &mut c,
+            &mut slot,
+            "t",
+            None,
+            Some(&buf),
+            &mut sends,
+            &mut |c, _, _| c.set_draw(false),
+        );
+        assert!(!c.draw);
+        assert_eq!(
+            buf.generation(),
+            gen,
+            "renderer off must not copy pixels this tick"
         );
     }
 }
