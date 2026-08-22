@@ -135,6 +135,9 @@ impl Host {
         client.shell.latch_click();
         client.mainloop();
         let result = slot.after_drain(client);
+        if should_emit_tick(result.player_info) && debug_enabled() {
+            eprintln!("[host] slot {username}: tick");
+        }
         if client.draw {
             if let Some(px) = pixels {
                 px.copy_from(
@@ -145,7 +148,6 @@ impl Host {
             }
         }
         *run_sends = slot.run_sends;
-        let _ = (username, result);
     }
 }
 
