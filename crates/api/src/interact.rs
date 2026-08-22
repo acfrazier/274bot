@@ -9,10 +9,9 @@ use client::client::{Client, MiniMenuAction};
 use crate::prot::{Out, Send};
 
 /// The run-orb interface component; `set_run` presses it through the
-/// `doAction` IF_BUTTON path. 274 draws the orb on the game screen
-/// interface; the exact component id is config data and the auto-run task
-/// pins it when wiring `set_run`.
-pub const RUN_ORB_IFACE: i32 = 0;
+/// `doAction` IF_BUTTON path. 274 draws the run orb on controls overlay 147
+/// (`controls:com_5`, the run-on button); auto-run uses it via `set_run`.
+pub const RUN_ORB_IFACE: i32 = 153;
 
 /// The send-side driver the kernel writes through. `Client` implements it
 /// over `doAction`/`tryMove`/`out`; tests use a recording stub.

@@ -287,7 +287,14 @@ fn client_driver_set_run_writes_if_button_payload() {
     let mut c = Client::new(cfg());
     c.ingame = true;
     assert!(set_run(&mut c, true));
-    assert_eq!(c.out.data()[..3], [ClientProt::IF_BUTTON.id as u8, 0, 0]);
+    assert_eq!(
+        c.out.data()[..3],
+        [
+            ClientProt::IF_BUTTON.id as u8,
+            (RUN_ORB_IFACE >> 8) as u8,
+            RUN_ORB_IFACE as u8,
+        ]
+    );
     assert_eq!(c.out.pos, 3);
 }
 

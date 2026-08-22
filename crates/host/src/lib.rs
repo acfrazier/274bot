@@ -1,5 +1,6 @@
 //! 274 bot host: one OS thread per client slot.
 
+mod auto_run;
 mod login_queue;
 mod slot;
 
@@ -8,6 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use api::interact::set_run;
+use auto_run::auto_run_tick;
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType};
 use vault::Profile;
@@ -58,12 +61,16 @@ impl Host {
             }
 
             let mut pump = Pump::new();
+            // Auto-run state: true after the host sent `set_run(true)` and
+            // until the player stops running. Start unknown → off, so the
+            // first threshold crossing triggers.
+            let mut run_on = false;
             loop {
                 thread::sleep(FRAME_MS);
                 client.mainloop();
                 let result = pump.drain(client.gens);
                 if should_emit_tick(result.player_info) {
-                    on_server_tick(&mut client, &profile.username);
+                    on_server_tick(&mut client, &profile.username, &mut run_on);
                 }
             }
         })
@@ -71,13 +78,17 @@ impl Host {
 }
 
 /// Synthesized `on_server_tick`: fired once per drain that applied a
-/// `PLAYER_INFO`. Later tasks hook the host think (auto-run) here; the dirty
-/// families from [`Pump::dirty`] drive the Task 8 snapshot rebuild.
-fn on_server_tick(client: &mut Client, username: &str) {
+/// `PLAYER_INFO`. Host think hooks here — auto-run is the only behaviour so
+/// far; `run_on` is the slot's tracked run state.
+fn on_server_tick(client: &mut Client, username: &str, run_on: &mut bool) {
     if debug_enabled() {
         eprintln!("[host] slot {username}: tick");
     }
-    let _ = client;
+    if auto_run_tick(client.runenergy, *run_on) {
+        if set_run(client, true) {
+            *run_on = true;
+        }
+    }
 }
 
 #[test]
