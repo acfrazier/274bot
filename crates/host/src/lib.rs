@@ -163,7 +163,12 @@ impl Host {
         client.shell.latch_click();
         client.mainloop();
         let capture = input.map(|i| i.enabled()).unwrap_or(false);
-        let paint = raster_this_tick(client.draw, capture, &mut slot.raster_n);
+        let paint = raster_this_tick(
+            client.draw,
+            capture,
+            &mut slot.raster_n,
+            &mut slot.raster_was_on,
+        );
         if paint {
             client.mainredraw();
         }
@@ -184,18 +189,28 @@ impl Host {
     }
 }
 
-/// Watch-only (renderer on, capture off) paints every other 20 ms tick
-/// (~25 fps). Click-through paints every tick so the minimenu matches the
-/// pointer. Renderer off never paints.
-fn raster_this_tick(draw: bool, capture: bool, n: &mut u32) -> bool {
+/// rs2b0t rail: watch-only is **1 fps** (every 50 ticks of 20 ms). The first
+/// tick after draw rises paints immediately so checking the box is not a
+/// cold hitch. Capture paints every tick (minimenu). Draw off never paints.
+const WATCH_RASTER_TICKS: u32 = 50;
+
+fn raster_this_tick(draw: bool, capture: bool, n: &mut u32, was_on: &mut bool) -> bool {
     if !draw {
+        *was_on = false;
         return false;
     }
     if capture {
+        *was_on = true;
+        return true;
+    }
+    let rising = !*was_on;
+    *was_on = true;
+    if rising {
+        *n = 0;
         return true;
     }
     *n = n.wrapping_add(1);
-    *n % 2 == 1
+    *n % WATCH_RASTER_TICKS == 0
 }
 
 /// Per-slot post-drain state: snapshot, settle, auto-run.
@@ -207,6 +222,7 @@ struct SlotLoop {
     run_sends: u32,
     last_modal: Option<i32>,
     raster_n: u32,
+    raster_was_on: bool,
 }
 
 impl SlotLoop {
@@ -219,6 +235,7 @@ impl SlotLoop {
             run_sends: 0,
             last_modal: None,
             raster_n: 0,
+            raster_was_on: false,
         }
     }
 
@@ -480,19 +497,26 @@ mod tests {
     }
 
     #[test]
-    fn raster_this_tick_watch_skips_every_other_capture_does_not() {
+    fn raster_this_tick_watch_is_one_fps_capture_is_every_tick() {
         let mut n = 0;
-        assert!(!raster_this_tick(false, false, &mut n));
-        assert!(!raster_this_tick(false, true, &mut n));
-        assert!(raster_this_tick(true, false, &mut n));
-        assert!(!raster_this_tick(true, false, &mut n));
-        assert!(raster_this_tick(true, false, &mut n));
-        assert!(raster_this_tick(true, true, &mut n));
-        assert!(raster_this_tick(true, true, &mut n));
+        let mut on = false;
+        assert!(!raster_this_tick(false, false, &mut n, &mut on));
+        assert!(raster_this_tick(true, false, &mut n, &mut on), "rising edge paints now");
+        for _ in 0..(WATCH_RASTER_TICKS - 1) {
+            assert!(!raster_this_tick(true, false, &mut n, &mut on));
+        }
+        assert!(raster_this_tick(true, false, &mut n, &mut on));
+        assert!(raster_this_tick(true, true, &mut n, &mut on));
+        assert!(raster_this_tick(true, true, &mut n, &mut on));
+        on = false;
+        assert!(
+            raster_this_tick(true, false, &mut n, &mut on),
+            "draw rising after off paints immediately"
+        );
     }
 
     #[test]
-    fn watch_only_draw_copies_every_other_tick() {
+    fn watch_only_draw_copies_first_tick_then_one_fps() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         c.set_draw(true);
         let buf = PixelBuf::new();
@@ -500,8 +524,10 @@ mod tests {
         let mut sends = 0u32;
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 1);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
-        assert_eq!(buf.generation(), 1, "watch-only skips the even tick");
+        for _ in 0..(WATCH_RASTER_TICKS - 1) {
+            Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+            assert_eq!(buf.generation(), 1);
+        }
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 2);
     }

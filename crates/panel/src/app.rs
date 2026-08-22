@@ -506,9 +506,9 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
         session.set_renderer(cur);
     }
     ui.text_wrapped(if on {
-        "CPU Pix3D on this focused slot. Rendering never pauses the bot."
+        "1 fps rail (CPU). Capture raises it to 50 fps. Never pauses the bot."
     } else {
-        "renderer off — bot still runs. Check to watch (CPU painter)."
+        "renderer off — bot still runs."
     });
 }
 

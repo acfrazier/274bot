@@ -142,7 +142,7 @@ impl Session {
         Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
-                renderer: false,
+                renderer: true,
                 game_pane_open: true,
                 capture: false,
             })),
@@ -501,13 +501,10 @@ mod tests {
     }
 
     #[test]
-    fn session_starts_with_renderer_off() {
+    fn session_starts_with_renderer_on_capture_off() {
         let s = Session::new();
         let f = s.focus.lock().unwrap();
-        assert!(
-            !f.renderer,
-            "50-bot host: CPU Pix3D stays off until the checkbox"
-        );
+        assert!(f.renderer, "rail is on; host paints 1 fps until capture");
         assert!(!f.capture);
     }
 

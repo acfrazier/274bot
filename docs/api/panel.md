@@ -43,12 +43,10 @@ generation is unchanged.
 The Game Image is already a **wgpu texture** (GPU composite). The 274 scene
 behind it is still **CPU Pix3D** into `draw_area` — same painter as the
 headless client, not a GPU 3D backend, and not the client's `Present`
-(softbuffer). Unfocused running slots skip `mainredraw` **this tick** (`observe` latches
-`set_draw` before the raster; renderer checkbox off or unfocused → no
-Pix3D). They still `mainloop`. Watch-only (renderer on, capture off)
-rasters every other tick (~25 fps); click-through rasters every 20 ms so
-the minimenu tracks the pointer. The slot sleeps the leftover of 20 ms
-*after* the work (Java GameShell), not a fixed 20 ms before it.
+(softbuffer). Unfocused running slots skip `mainredraw` **this tick**. Watch-only is a
+**1 fps rail**; turning the renderer on paints immediately. Capture is
+full 20 ms for the minimenu. The slot sleeps the leftover of 20 ms after
+the work.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
@@ -59,13 +57,10 @@ scene); that is the 274 painter, not the ImGui chrome.
 Two independent checkboxes, both gated on a focused profile with its pane
 open:
 
-- **game renderer** — default **off**. `set_draw(draw_for_slot(...))`: only
-  the focused slot rasters, and only while this is checked. CPU Pix3D is
-  opt-in so a vault of bots does not each paint. The Game Image is an RGBA8
-  **765×503** texture (the client applet size, never mutated). The widget is
-  the largest 765:503 box that fits the left-hand Game pane (no extra
-  Retina multiply — HiDpi already maps logical pixels). Rendering never
-  pauses the bot.
+- **game renderer** — default **on**, **1 fps rail** (rs2b0t). Checking
+  it after off paints **this tick** (no cold wait). Capture raises the
+  focused slot to 50 fps. Unfocused slots do not raster. The Game Image is
+  an RGBA8 **765×503** texture. Rendering never pauses the bot.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
