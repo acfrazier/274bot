@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use client::client::Client;
 use client::client::ClientConfig;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
@@ -16,9 +17,11 @@ use host::login_queue::{LoginBackoff, LoginQueue, Permit};
 use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
+use host::{PixelBuf, SlotInput};
 use vault::{Profile, Vault, VaultError};
 
 /// Connection settings shared by every spawned slot.
+#[derive(Clone)]
 pub struct PlayOptions {
     pub host: String,
     pub port: u16,
@@ -41,6 +44,13 @@ pub struct SlotStatus {
     pub runenergy: i32,
     /// Accepted auto-run `set_run(true)` sends this slot has made.
     pub run_sends: u32,
+    /// Local-player tile (filled from `local_player` in observe).
+    pub tile_x: i32,
+    pub tile_z: i32,
+    /// Local-player name, empty until `PLAYER_INFO` lands.
+    pub player: String,
+    /// `Client.main_modal_id` (open modal interface, -1 when none).
+    pub main_modal_id: i32,
 }
 
 /// Running slots and their shared status. Slots drive `mainloop` until the
@@ -67,12 +77,32 @@ impl Play {
 
 /// Spawn one slot thread per profile. Each slot waits for a login-queue
 /// permit, sends the handshake, then drives `mainloop` at the host cadence
-/// while mirroring its state into the shared status list.
+/// while mirroring its state into the shared status list. Slots run with no
+/// input and no pixel output; [`run_with_io`] adds per-slot channels.
 pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
+    run_with_io(options, profiles, |_| (None, None), |_, _| {})
+}
+
+/// Like [`run`], but each slot gets the `SlotInput`/`PixelBuf` returned by
+/// `per_slot` (called synchronously, keyed by username), and `per_frame`
+/// runs inside the observe hook on every 20 ms frame so callers can mirror
+/// panel state (e.g. `client.set_draw`) into the slot thread. The FIFO
+/// login queue and mainland hop are shared by every slot.
+pub fn run_with_io<F, G>(
+    options: &PlayOptions,
+    profiles: Vec<Profile>,
+    per_slot: F,
+    per_frame: G,
+) -> Play
+where
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<PixelBuf>>),
+    G: Fn(&mut Client, &str) + Send + Sync + 'static,
+{
     let (cache, ifaces) = load_template(&options.cache_dir);
     let cache = Arc::new(cache);
     let queue = Arc::new(Mutex::new(LoginQueue::default()));
     let statuses = Arc::new(Mutex::new(Vec::new()));
+    let per_frame = Arc::new(per_frame);
     let mut handles = Vec::new();
 
     for profile in profiles {
@@ -91,6 +121,8 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
         let slot_queue = Arc::clone(&queue);
         let slot_statuses = Arc::clone(&statuses);
         let mainland = options.mainland;
+        let (slot_input, slot_pixels) = per_slot(&username);
+        let slot_frame = Arc::clone(&per_frame);
 
         handles.push(thread::spawn(move || {
             let mut client = prepare_client(config, uid, slot_cache, ifaces_template);
@@ -164,7 +196,8 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
             }
 
             let mut mainland_sent = false;
-            Host::run_client(&mut client, &username, None, None, |c, name, run_sends| {
+            Host::run_client(&mut client, &username, slot_input, slot_pixels, |c, name, run_sends| {
+                slot_frame(c, name);
                 if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                     api::interact::mainland_hop(c);
                     mainland_sent = true;
@@ -181,6 +214,12 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
                         s.scene_state = c.scene_state;
                         s.runenergy = c.runenergy;
                         s.run_sends = run_sends;
+                        s.main_modal_id = c.main_modal_id;
+                        if let Some(lp) = &c.local_player {
+                            s.tile_x = lp.x;
+                            s.tile_z = lp.z;
+                            s.player = lp.name.clone().unwrap_or_default();
+                        }
                     }
                 }
                 drop(all);

@@ -28,6 +28,7 @@ impl PixelBuf {
     }
 }
 
+#[derive(Debug)]
 pub enum InputEv {
     Move { x: i32, y: i32 },
     Down { button: i32, x: i32, y: i32 },

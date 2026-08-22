@@ -5,9 +5,12 @@ edition = "2021"
 publish = false
 
 [dependencies]
+api = { path = "../api" }
 dear-app = "0.15.1"
 dear-imgui-rs = "0.15"
 host = { path = "../host" }
+host-play = { path = "../host-play" }
+vault = { path = "../vault" }
 wgpu = "29"
 
 [[bin]]

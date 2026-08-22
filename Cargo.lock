@@ -1838,9 +1838,12 @@ dependencies = [
 name = "panel"
 version = "0.1.0"
 dependencies = [
+ "api",
  "dear-app",
  "dear-imgui-rs",
  "host",
+ "host-play",
+ "vault",
  "wgpu",
 ]
 

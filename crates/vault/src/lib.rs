@@ -128,6 +128,11 @@ impl Vault {
         self.profiles.get(username)
     }
 
+    /// All stored profiles (sorted by username; the map is a `BTreeMap`).
+    pub fn profiles(&self) -> impl Iterator<Item = &Profile> {
+        self.profiles.values()
+    }
+
     /// Inserts or replaces a profile and rewrites the encrypted file. The new
     /// state is written to disk first; on error the vault is unchanged both on
     /// disk and in memory.

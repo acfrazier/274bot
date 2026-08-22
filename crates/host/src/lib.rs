@@ -366,4 +366,24 @@ mod tests {
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
         assert_eq!(c.shell.mouse_click_button, 1);
     }
+
+    #[test]
+    fn client_frame_skips_pixel_copy_when_draw_off() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let buf = PixelBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        // Renderer off: the redraw area is never copied into the buffer.
+        c.set_draw(false);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert!(buf.snapshot().is_empty(), "draw off must not copy pixels");
+        // Renderer on: `mainredraw` paints the title screen and the frame
+        // copies a full applet into the buffer.
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(
+            buf.snapshot().len(),
+            (client::client::APPLET_W * client::client::APPLET_H) as usize
+        );
+    }
 }
