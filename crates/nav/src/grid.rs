@@ -2,6 +2,17 @@
 
 use crate::tile::Tile;
 
+/// One door on the grid. `from` and `to` are the walkable tiles on either
+/// side; `loc` is the door's own tile (typically not walkable) and `loc_id`
+/// its client object id. Traversal is directed `from` -> `to`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DoorEdge {
+    pub loc: Tile,
+    pub loc_id: i32,
+    pub from: Tile,
+    pub to: Tile,
+}
+
 /// A rectangular grid of per-tile walkability flags (v1: one byte per tile,
 /// `1` = walkable). `origin` is the tile at `walk[0]`; the grid spans `width`
 /// tiles in +x then `height` rows in +z, all on `origin.level`.
@@ -10,6 +21,8 @@ pub struct StepGrid {
     width: usize,
     height: usize,
     origin: Tile,
+    /// Door edges routing may traverse.
+    pub doors: Vec<DoorEdge>,
 }
 
 impl StepGrid {
@@ -50,13 +63,34 @@ impl StepGrid {
     }
 
     /// A 3×3 grid on level 0 with its corner at `(0, 0)`: tiles with
-    /// x and z in 0..3, all walkable.
+    /// x and z in 0..3, all walkable. No doors.
     pub fn fixture_open_3x3() -> Self {
         Self {
             walk: vec![1; 9],
             width: 3,
             height: 3,
             origin: Tile { x: 0, z: 0, level: 0 },
+            doors: vec![],
+        }
+    }
+
+    /// A 1×5 corridor on level 0: x in 0..5 at z=0, walkable except a wall
+    /// at x=2. A door edge crosses the wall: (1,0) -> (3,0) via loc (2,0),
+    /// loc_id 1530.
+    pub fn fixture_door_corridor() -> Self {
+        let mut walk = vec![1; 5];
+        walk[2] = 0;
+        Self {
+            walk,
+            width: 5,
+            height: 1,
+            origin: Tile { x: 0, z: 0, level: 0 },
+            doors: vec![DoorEdge {
+                loc: Tile { x: 2, z: 0, level: 0 },
+                loc_id: 1530,
+                from: Tile { x: 1, z: 0, level: 0 },
+                to: Tile { x: 3, z: 0, level: 0 },
+            }],
         }
     }
 }
