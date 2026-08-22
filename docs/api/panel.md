@@ -59,11 +59,13 @@ scene); that is the 274 painter, not the ImGui chrome.
 Two independent checkboxes, both gated on a focused profile with its pane
 open:
 
-- **game renderer** — `set_draw(draw_for_slot(...))`: only the focused slot
-  rasters. The Game Image is an RGBA8 **765×503** texture (the client applet
-  size, never mutated). The widget is the largest 765:503 box that fits the
-  left-hand Game pane (no extra Retina multiply — HiDpi already maps logical
-  pixels). Rendering never pauses the bot.
+- **game renderer** — default **off**. `set_draw(draw_for_slot(...))`: only
+  the focused slot rasters, and only while this is checked. CPU Pix3D is
+  opt-in so a vault of bots does not each paint. The Game Image is an RGBA8
+  **765×503** texture (the client applet size, never mutated). The widget is
+  the largest 765:503 box that fits the left-hand Game pane (no extra
+  Retina multiply — HiDpi already maps logical pixels). Rendering never
+  pauses the bot.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.

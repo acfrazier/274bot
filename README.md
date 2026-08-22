@@ -78,8 +78,10 @@ scene 2 sends the rs2b0t tutorial skip (`tele` Lumbridge courtyard +
 Tutorial Island.
 
 There is **no client window** anywhere in this tree. The panel's Game Image
-is a 765×503 texture rendered from slot pixels; to watch the real client, run
-Fairy Ring `client-play --window` on a different account.
+is a 765×503 texture from slot pixels when **game renderer** is checked
+(default off — CPU Pix3D is opt-in). To watch the real applet, run Fairy
+Ring `client-play --window` on a different account. A GPU 3D backend belongs
+on that client crate, not as a second painter in this repo.
 
 ## Live tests
 
