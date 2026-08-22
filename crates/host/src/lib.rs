@@ -3,6 +3,7 @@
 mod auto_run;
 pub mod login_queue;
 mod slot;
+mod slot_io;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use client::config::{Cache, IfType};
 use vault::Profile;
 
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
+pub use slot_io::{PixelBuf, SlotInput};
 
 /// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
 /// via [`debug_enabled`] regardless.
