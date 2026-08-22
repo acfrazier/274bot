@@ -31,6 +31,24 @@ impl StepGrid {
         self.walk[z * self.width + x] == 1
     }
 
+    /// Mark tile `t` walkable or blocked. Tiles outside the grid or on
+    /// another level are ignored.
+    pub fn set_walkable(&mut self, t: Tile, walkable: bool) {
+        if t.level != self.origin.level {
+            return;
+        }
+        let x = t.x - self.origin.x;
+        let z = t.z - self.origin.z;
+        if x < 0 || z < 0 {
+            return;
+        }
+        let (x, z) = (x as usize, z as usize);
+        if x >= self.width || z >= self.height {
+            return;
+        }
+        self.walk[z * self.width + x] = if walkable { 1 } else { 0 };
+    }
+
     /// A 3×3 grid on level 0 with its corner at `(0, 0)`: tiles with
     /// x and z in 0..3, all walkable.
     pub fn fixture_open_3x3() -> Self {

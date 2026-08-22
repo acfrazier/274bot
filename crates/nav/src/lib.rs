@@ -1,6 +1,7 @@
 //! Nav: tile coordinates, Chebyshev distance, and walkability grids.
 
 pub mod grid;
+pub mod router;
 pub mod tile;
 
 #[cfg(test)]
