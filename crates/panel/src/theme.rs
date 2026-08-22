@@ -14,6 +14,10 @@ pub const TEXT: [f32; 4] = [0.867, 0.867, 0.867, 1.0];
 pub const TEXT_DIM: [f32; 4] = [0.4, 0.4, 0.4, 1.0];
 /// Frame / button fill.
 pub const FRAME: [f32; 4] = [0.102, 0.102, 0.102, 1.0]; // #1a1a1a
+/// Hover/selected fill — dark amber, so #ddd text stays readable (not white-on-#FFB000).
+pub const HOVER_FILL: [f32; 4] = [0.18, 0.12, 0.04, 1.0];
+/// Pressed fill.
+pub const ACTIVE_FILL: [f32; 4] = [0.24, 0.16, 0.04, 1.0];
 /// Borders (#333).
 pub const BORDER: [f32; 4] = [0.2, 0.2, 0.2, 1.0];
 /// Warn banner text (#e0d75b).
@@ -68,8 +72,8 @@ pub fn apply_amber(style: &mut Style) {
     style.set_color(StyleColor::Border, BORDER);
     style.set_color(StyleColor::BorderShadow, [0.0, 0.0, 0.0, 0.0]);
     style.set_color(StyleColor::FrameBg, FRAME);
-    style.set_color(StyleColor::FrameBgHovered, ACCENT_HOVER);
-    style.set_color(StyleColor::FrameBgActive, ACCENT);
+    style.set_color(StyleColor::FrameBgHovered, HOVER_FILL);
+    style.set_color(StyleColor::FrameBgActive, ACTIVE_FILL);
     style.set_color(StyleColor::TitleBg, BG_DEEP);
     style.set_color(StyleColor::TitleBgActive, [0.12, 0.09, 0.02, 1.0]);
     style.set_color(StyleColor::TitleBgCollapsed, BG_DEEP);
@@ -79,14 +83,15 @@ pub fn apply_amber(style: &mut Style) {
     style.set_color(StyleColor::ScrollbarGrabHovered, ACCENT_HOVER);
     style.set_color(StyleColor::ScrollbarGrabActive, ACCENT);
     style.set_color(StyleColor::CheckMark, ACCENT);
+    style.set_color(StyleColor::CheckboxSelectedBg, HOVER_FILL);
     style.set_color(StyleColor::SliderGrab, ACCENT);
-    style.set_color(StyleColor::SliderGrabActive, ACCENT_HOVER);
+    style.set_color(StyleColor::SliderGrabActive, ACCENT);
     style.set_color(StyleColor::Button, FRAME);
-    style.set_color(StyleColor::ButtonHovered, ACCENT);
-    style.set_color(StyleColor::ButtonActive, ACCENT_HOVER);
-    style.set_color(StyleColor::Header, [0.20, 0.14, 0.02, 1.0]);
-    style.set_color(StyleColor::HeaderHovered, ACCENT);
-    style.set_color(StyleColor::HeaderActive, ACCENT_HOVER);
+    style.set_color(StyleColor::ButtonHovered, HOVER_FILL);
+    style.set_color(StyleColor::ButtonActive, ACTIVE_FILL);
+    style.set_color(StyleColor::Header, HOVER_FILL);
+    style.set_color(StyleColor::HeaderHovered, HOVER_FILL);
+    style.set_color(StyleColor::HeaderActive, ACTIVE_FILL);
     style.set_color(StyleColor::Separator, BORDER);
     style.set_color(StyleColor::SeparatorHovered, ACCENT);
     style.set_color(StyleColor::SeparatorActive, ACCENT);
@@ -94,8 +99,8 @@ pub fn apply_amber(style: &mut Style) {
     style.set_color(StyleColor::ResizeGripHovered, ACCENT);
     style.set_color(StyleColor::ResizeGripActive, ACCENT_HOVER);
     style.set_color(StyleColor::Tab, [0.14, 0.10, 0.02, 1.0]);
-    style.set_color(StyleColor::TabHovered, ACCENT);
-    style.set_color(StyleColor::TabSelected, [0.22, 0.15, 0.02, 1.0]);
+    style.set_color(StyleColor::TabHovered, HOVER_FILL);
+    style.set_color(StyleColor::TabSelected, ACTIVE_FILL);
     style.set_color(StyleColor::TabSelectedOverline, ACCENT);
     style.set_color(StyleColor::TabDimmed, BG_DEEP);
     style.set_color(StyleColor::TabDimmedSelected, [0.16, 0.11, 0.02, 1.0]);

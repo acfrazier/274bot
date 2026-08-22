@@ -131,5 +131,17 @@ mod tests {
         assert!(title[0] > title[2]);
         let bg = ctx.style().color(dear_imgui_rs::StyleColor::WindowBg);
         assert!(bg[0] < 0.1 && bg[1] < 0.1 && bg[2] < 0.1);
+        let hover = ctx.style().color(dear_imgui_rs::StyleColor::ButtonHovered);
+        assert!(
+            hover[1] < 0.5,
+            "hover fill must stay dark so #ddd text is readable on amber"
+        );
+        let check_bg = ctx.style().color(dear_imgui_rs::StyleColor::CheckboxSelectedBg);
+        assert!(
+            check_bg[2] < 0.2,
+            "checkbox fill must not be default imgui blue"
+        );
+        let frame_hover = ctx.style().color(dear_imgui_rs::StyleColor::FrameBgHovered);
+        assert!(frame_hover[2] < 0.2, "frame hover must not be imgui blue");
     }
 }
