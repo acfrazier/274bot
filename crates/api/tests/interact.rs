@@ -5,8 +5,8 @@
 // `client/tests/gens.rs` — no network).
 
 use api::interact::{
-    answer_count, cheat, close_modal, interact, login, mainland_hop, press, set_run, walk, Driver,
-    OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
+    answer_count, cheat, close_modal, interact, login, mainland_hop, op_loc, press, set_run, walk,
+    Driver, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
 };
 use api::prot::{LegalSend, LEGAL_SEND};
 use api::settle::{item_delta, modal_delta, xp_gained, Settle};
@@ -267,6 +267,19 @@ fn interact_dispatches_prepared_slot() {
     assert!(interact(&mut r, 2));
     assert_eq!(r.actions, vec![2]);
     assert!(r.menus.is_empty());
+}
+
+/// `op_loc` interacts with a loc via OP_LOC1: menu slot 0 carries
+/// (OP_LOC1, loc_id, x, z) and the driver dispatches it.
+#[test]
+fn op_loc_sets_menu_oploc1_then_do_action() {
+    let mut r = Recorder::default();
+    assert!(op_loc(&mut r, 2816, 3438, 1530));
+    assert_eq!(r.actions, vec![0]);
+    assert_eq!(
+        r.menus,
+        vec![(0, MiniMenuAction::OP_LOC1, 1530, 2816, 3438)]
+    );
 }
 
 /// `cheat` is CLIENT_CHEAT: enc opcode, size byte (cmd+nul), pjstr(cmd).

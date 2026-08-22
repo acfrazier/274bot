@@ -134,6 +134,14 @@ pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
     driver.try_move(px, pz, x, z, false, 0, 0, 0, 0, 0, 0)
 }
 
+/// Interact with a loc via OP_LOC1 through the `doAction` path. The client
+/// dispatches `interact_with_loc(b, c, a, OPLOC1)`, so the menu carries
+/// `a=loc_id`, `b=x`, `c=z`.
+pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -> bool {
+    driver.set_menu(0, MiniMenuAction::OP_LOC1, loc_id, x, z);
+    driver.do_action(0)
+}
+
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
     Send::close_modal().write(driver.out());
