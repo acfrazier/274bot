@@ -5,4 +5,10 @@ edition = "2021"
 publish = false
 
 [dependencies]
+dear-app = "0.15.1"
+dear-imgui-rs = "0.15"
 host = { path = "../host" }
+
+[[bin]]
+name = "panel-play"
+path = "src/main.rs"
