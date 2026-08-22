@@ -1361,6 +1361,10 @@ dependencies = [
 [[package]]
 name = "nav"
 version = "0.1.0"
+dependencies = [
+ "api",
+ "client",
+]
 
 [[package]]
 name = "ndk"

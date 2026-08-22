@@ -5,6 +5,7 @@ pub mod arrival;
 pub mod grid;
 pub mod router;
 pub mod tile;
+pub mod traveller;
 
 #[cfg(test)]
 mod tests {

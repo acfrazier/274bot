@@ -74,6 +74,19 @@ impl StepGrid {
         }
     }
 
+    /// A 1×40 corridor on level 0: x in 0..40 at z=0, all walkable. No
+    /// doors. Long enough for a walk leg whose far end is more than the
+    /// traveller's 20-tile near-end threshold.
+    pub fn fixture_open_1x40() -> Self {
+        Self {
+            walk: vec![1; 40],
+            width: 40,
+            height: 1,
+            origin: Tile { x: 0, z: 0, level: 0 },
+            doors: vec![],
+        }
+    }
+
     /// A 1×5 corridor on level 0: x in 0..5 at z=0, walkable except a wall
     /// at x=2. A door edge crosses the wall: (1,0) -> (3,0) via loc (2,0),
     /// loc_id 1530.
