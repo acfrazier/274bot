@@ -1,3 +1,5 @@
 /target
 docs/superpowers/
 .DS_Store
+imgui.ini
+274bot-panel.ini

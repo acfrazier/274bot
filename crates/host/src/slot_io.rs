@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 
@@ -6,11 +6,15 @@ use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 
 pub struct PixelBuf {
     inner: Mutex<Vec<u32>>,
+    gen: AtomicU64,
 }
 
 impl PixelBuf {
     pub fn new() -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self { inner: Mutex::new(Vec::new()) })
+        std::sync::Arc::new(Self {
+            inner: Mutex::new(Vec::new()),
+            gen: AtomicU64::new(0),
+        })
     }
     pub fn copy_from(&self, pix: &[i32], w: i32, h: i32) {
         if w != APPLET_W || h != APPLET_H || pix.len() < (APPLET_W * APPLET_H) as usize {
@@ -22,9 +26,15 @@ impl PixelBuf {
         for (dst, src) in g.iter_mut().zip(pix.iter().take(n)) {
             *dst = pack_rgb(*src);
         }
+        self.gen.fetch_add(1, Ordering::Relaxed);
     }
     pub fn snapshot(&self) -> Vec<u32> {
         self.inner.lock().unwrap().clone()
+    }
+    /// Bumps on every successful [`copy_from`]. The panel skips GPU uploads
+    /// while this stays unchanged (dear-app would otherwise Poll-spin).
+    pub fn generation(&self) -> u64 {
+        self.gen.load(Ordering::Relaxed)
     }
 }
 
@@ -114,6 +124,17 @@ mod tests {
         let buf = PixelBuf::new();
         buf.copy_from(&[1, 2, 3], 2, 2);
         assert!(buf.snapshot().is_empty());
+        assert_eq!(buf.generation(), 0);
+    }
+
+    #[test]
+    fn copy_from_bumps_generation() {
+        let buf = PixelBuf::new();
+        assert_eq!(buf.generation(), 0);
+        buf.copy_from(&vec![0i32; 765 * 503], 765, 503);
+        assert_eq!(buf.generation(), 1);
+        buf.copy_from(&vec![1i32; 765 * 503], 765, 503);
+        assert_eq!(buf.generation(), 2);
     }
 
     #[test]

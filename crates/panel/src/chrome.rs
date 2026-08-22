@@ -35,7 +35,7 @@ pub const MOCK_BUTTONS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use crate::chrome::{MOCK_BUTTONS, sections};
-    use crate::theme::{ACCENT, integer_ui_scale};
+    use crate::theme::{apply_amber, ACCENT, integer_ui_scale};
 
     #[test]
     fn sections_contains_all_section_ids() {
@@ -65,5 +65,18 @@ mod tests {
         assert_eq!(integer_ui_scale(1.0), 1.0);
         assert_eq!(integer_ui_scale(1.75), 2.0);
         assert_eq!(integer_ui_scale(0.5), 1.0);
+    }
+
+    #[test]
+    fn apply_amber_replaces_imgui_blue_title() {
+        let mut ctx = dear_imgui_rs::Context::create();
+        apply_amber(ctx.style_mut());
+        let title = ctx.style().color(dear_imgui_rs::StyleColor::TitleBgActive);
+        // Default imgui TitleBgActive is the blue-gray chrome. Amber CRT is
+        // dark and red-dominant, never that blue.
+        assert!(title[2] < 0.15, "title bar must not be imgui blue");
+        assert!(title[0] > title[2]);
+        let bg = ctx.style().color(dear_imgui_rs::StyleColor::WindowBg);
+        assert!(bg[0] < 0.1 && bg[1] < 0.1 && bg[2] < 0.1);
     }
 }

@@ -19,6 +19,7 @@ pub struct GameView {
     pub tex_id: TextureId,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
+    rgba: Vec<u8>,
 }
 
 impl GameView {
@@ -41,17 +42,22 @@ impl GameView {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let tex_id = gpu.register_texture(&texture, &view);
-        Self { tex_id, texture, view }
+        Self {
+            tex_id,
+            texture,
+            view,
+            rgba: vec![0u8; (APPLET_W * APPLET_H * 4) as usize],
+        }
     }
 
     /// Upload packed `0x00RRGGBB` pixels (a `PixelBuf` snapshot) into the
     /// texture. dear-app's `GpuApi` exposes no per-texture sampler choice, so
     /// the Image samples with the renderer's default rather than a pixelated
-    /// one.
-    pub fn upload(&self, gpu: &GpuApi, pixels: &[u32]) {
+    /// one. Reuses an RGBA scratch buffer so Poll-rate frames don't allocate.
+    pub fn upload(&mut self, gpu: &GpuApi, pixels: &[u32]) {
         let n = (APPLET_W * APPLET_H) as usize;
-        let mut rgba = vec![0u8; n * 4];
-        expand_rgba(&pixels[..n.min(pixels.len())], &mut rgba);
+        self.rgba.resize(n * 4, 0);
+        expand_rgba(&pixels[..n.min(pixels.len())], &mut self.rgba);
         gpu.queue().write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -59,7 +65,7 @@ impl GameView {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &rgba,
+            &self.rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(APPLET_W * 4),

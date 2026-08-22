@@ -1,28 +1,42 @@
 //! dear-app shell: docking enabled, multi-viewport disabled, amber chrome.
 
 use std::borrow::Cow;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use dear_app::AddOns;
+use dear_app::{AddOns, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
-use dear_imgui_rs::{Condition, Key, MouseButton, StyleColor, Ui};
+use dear_imgui_rs::{
+    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, Ui, WindowFlags,
+};
 
 use crate::chrome::MOCK_BUTTONS;
 use crate::focus::{should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
 use crate::session::{combo_index, stream_capture, Session};
-use crate::theme::{integer_ui_scale, ACCENT, BG, TITLE};
+use crate::theme::{
+    apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
+    PANEL_WINDOW, TITLE,
+};
 
-/// Runner configuration from the task brief: docking on, viewports off.
+/// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
+/// `auto_dockspace` is off so we own the split (game left, 330px panel right).
+/// Default dear-app `RedrawMode::Poll` spins the UI thread and starves the
+/// 20 ms slot; WaitUntil matches the client tick.
 pub fn runner_config() -> dear_app::RunnerConfig {
     let mut cfg = dear_app::RunnerConfig::default();
     cfg.window_title = "274bot".into();
-    cfg.window_size = (1100.0, 560.0);
+    cfg.window_size = (1120.0, 580.0);
     cfg.clear_color = BG;
+    cfg.theme = Some(Theme::Dark);
+    cfg.redraw = RedrawMode::WaitUntil { fps: 50.0 };
+    cfg.ini_filename = Some(PathBuf::from("274bot-panel.ini"));
+    cfg.restore_previous_geometry = false;
     cfg.docking = dear_app::DockingConfig {
         enable: true,
-        auto_dockspace: true,
+        auto_dockspace: false,
+        dockspace_flags: DockNodeFlags::NONE,
         ..Default::default()
     };
     // Viewports stay off: dear-app renders into the single main viewport only.
@@ -40,18 +54,9 @@ pub fn apply_ui_scale(style: &mut dear_imgui_rs::Style, dpi: f32) {
     }
 }
 
-/// Push the amber accent into hover/header/tab style colors.
+/// Push the amber CRT palette over Theme::Dark (kills default imgui blue).
 fn amber_style(ctx: &mut dear_imgui_rs::Context) {
-    let style = ctx.style_mut();
-    style.set_color(StyleColor::ButtonHovered, ACCENT);
-    style.set_color(StyleColor::Header, ACCENT);
-    style.set_color(StyleColor::Tab, ACCENT);
-}
-
-/// Game window: RGBA8 765×503 texture in a black viewport. Texture data is
-/// always 765×503; the widget size is 765*dpi × 503*dpi.
-fn game_image_size(scale: f32) -> [f32; 2] {
-    [765.0 * scale.max(1.0), 503.0 * scale.max(1.0)]
+    apply_amber(ctx.style_mut());
 }
 
 /// Per-frame panel state: lazily-created game texture and the session (vault,
@@ -59,6 +64,10 @@ fn game_image_size(scale: f32) -> [f32; 2] {
 struct PanelState {
     game_view: Option<GameView>,
     session: Session,
+    dock_inited: bool,
+    game_dock_node: Option<Id>,
+    docked_game_title: String,
+    last_upload: Option<(String, u64)>,
 }
 
 impl Default for PanelState {
@@ -66,58 +75,108 @@ impl Default for PanelState {
         Self {
             game_view: None,
             session: Session::new(),
+            dock_inited: false,
+            game_dock_node: None,
+            docked_game_title: String::new(),
+            last_upload: None,
         }
     }
 }
 
-fn game_window(ui: &Ui, addons: &mut AddOns, scale: f32, state: &mut PanelState) {
-    let built = ui
-        .window("Game")
-        .size([500.0, 400.0], Condition::FirstUseEver)
+/// Fullscreen dock host: game fills the left, 330px-class panel on the right.
+fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
+    let viewport = ui.main_viewport();
+    let pos = viewport.pos();
+    let size = viewport.size();
+    ui.window("##274bot-dockhost")
+        .flags(
+            WindowFlags::NO_TITLE_BAR
+                | WindowFlags::NO_RESIZE
+                | WindowFlags::NO_MOVE
+                | WindowFlags::NO_COLLAPSE
+                | WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS
+                | WindowFlags::NO_NAV_FOCUS
+                | WindowFlags::NO_DOCKING,
+        )
+        .position([pos[0], pos[1]], Condition::Always)
+        .size([size[0], size[1]], Condition::Always)
         .build(|| {
-            let _bg = ui.push_style_color(StyleColor::ChildBg, [0.0, 0.0, 0.0, 1.0]);
-            ui.child_window("game_viewport")
-                .size(game_image_size(scale))
-                .build(ui, || {
-                    if state.game_view.is_none() {
-                        state.game_view = Some(GameView::init(&mut addons.gpu));
+            let dock_id = ui.get_id("274bot-dockspace");
+            let _ = ui.dock_space(dock_id, [0.0, 0.0]);
+            if !state.dock_inited && DockBuilder::node_exists(ui, dock_id) {
+                let ratio = panel_split_ratio(size[0]);
+                let (right, left) =
+                    DockBuilder::split_node(ui, dock_id, SplitDirection::Right, ratio);
+                DockBuilder::dock_window(ui, PANEL_WINDOW, right);
+                DockBuilder::dock_window(ui, game_title, left);
+                DockBuilder::finish(ui, dock_id);
+                state.game_dock_node = Some(left);
+                state.docked_game_title = game_title.to_string();
+                state.dock_inited = true;
+            } else if state.docked_game_title != game_title {
+                if let Some(left) = state.game_dock_node {
+                    DockBuilder::dock_window(ui, game_title, left);
+                }
+                state.docked_game_title = game_title.to_string();
+            }
+        });
+}
+
+fn game_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, title: &str) {
+    let built = ui
+        .window(title)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
+        .build(|| {
+            let avail = ui.content_region_avail();
+            let size = fit_applet(avail);
+            let cursor = ui.cursor_pos();
+            ui.set_cursor_pos([
+                cursor[0] + ((avail[0] - size[0]) * 0.5).max(0.0),
+                cursor[1] + ((avail[1] - size[1]) * 0.5).max(0.0),
+            ]);
+            if state.game_view.is_none() {
+                state.game_view = Some(GameView::init(&mut addons.gpu));
+            }
+            let (draw, capture) = {
+                let focus = state.session.focus.lock().unwrap();
+                (should_draw(&focus), should_capture(&focus))
+            };
+            if draw {
+                let buf = state.session.focused_pixels();
+                let name = state.session.focused_name().unwrap_or_default();
+                let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
+                let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
+                if dirty {
+                    let pixels = game_pixels(&buf);
+                    if let Some(view) = state.game_view.as_mut() {
+                        view.upload(&addons.gpu, &pixels);
                     }
-                    let (draw, capture) = {
-                        let focus = state.session.focus.lock().unwrap();
-                        (should_draw(&focus), should_capture(&focus))
-                    };
-                    if draw {
-                        let pixels = state.session.focused_pixels();
-                        let pixels = game_pixels(&pixels);
-                        if let Some(view) = &state.game_view {
-                            view.upload(&addons.gpu, &pixels);
-                        }
-                        let view = state.game_view.as_ref().expect("game view initialized");
-                        let size = game_image_size(scale);
-                        ui.image(view.tex_id, size);
-                        // Capture: only map/enqueue while on and hovered;
-                        // capture off skips the coord math entirely (tx is
-                        // also None).
-                        if capture && ui.is_item_hovered() {
-                            let mouse = ui.io().mouse_pos();
-                            let min = ui.item_rect_min();
-                            stream_capture(
-                                &state.session.capture_tx,
-                                mouse[0] - min[0],
-                                mouse[1] - min[1],
-                                size[0],
-                                size[1],
-                                ui.is_mouse_clicked(MouseButton::Left),
-                                ui.is_mouse_clicked(MouseButton::Right),
-                                ui.is_mouse_released(MouseButton::Left),
-                                ui.is_mouse_released(MouseButton::Right),
-                                &capture_keys(ui),
-                            );
-                        }
-                    } else {
-                        ui.text_disabled("renderer off");
-                    }
-                });
+                    state.last_upload = Some((name, gen));
+                }
+                let view = state.game_view.as_ref().expect("game view initialized");
+                ui.image(view.tex_id, size);
+                // Capture: only map/enqueue while on and hovered;
+                // capture off skips the coord math entirely (tx is
+                // also None).
+                if capture && ui.is_item_hovered() {
+                    let mouse = ui.io().mouse_pos();
+                    let min = ui.item_rect_min();
+                    stream_capture(
+                        &state.session.capture_tx,
+                        mouse[0] - min[0],
+                        mouse[1] - min[1],
+                        size[0],
+                        size[1],
+                        ui.is_mouse_clicked(MouseButton::Left),
+                        ui.is_mouse_clicked(MouseButton::Right),
+                        ui.is_mouse_released(MouseButton::Left),
+                        ui.is_mouse_released(MouseButton::Right),
+                        &capture_keys(ui),
+                    );
+                }
+            } else {
+                ui.text_disabled("renderer off");
+            }
         });
     state.session.set_game_pane_open(built.is_some());
 }
@@ -215,11 +274,10 @@ fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
     keys
 }
 
-/// Left panel: wired vault/profile/status/log/rendering/input chrome plus the
-/// mocked script/parameters sections.
+/// Right panel: wired vault/profile/status/log/rendering/input chrome plus the
+/// mocked script/parameters sections. Docked as a thin slice; it scrolls.
 fn panel_window(ui: &Ui, session: &mut Session) {
-    ui.window("274bot")
-        .size([360.0, 520.0], Condition::FirstUseEver)
+    ui.window(PANEL_WINDOW)
         .build(|| {
             ui.text_colored(ACCENT, TITLE);
             ui.separator();
@@ -376,7 +434,7 @@ fn log_section(ui: &Ui, session: &Session) {
     ui.text_disabled("log");
     let log = session.log.lock().unwrap();
     ui.child_window("panel-log")
-        .size([320.0, 120.0])
+        .size([0.0, 80.0])
         .build(ui, || {
             for line in log.iter() {
                 ui.text_disabled(line);
@@ -444,10 +502,12 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
             );
         })
         .on_frame(move |ui, addons| {
-            let scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
+            let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             state.session.pump_status();
+            let title = game_window_title(state.session.focused_name().as_deref());
+            dock_host(ui, &mut state, &title);
             panel_window(ui, &mut state.session);
-            game_window(ui, addons, scale, &mut state);
+            game_window(ui, addons, &mut state, &title);
         })
         .run()
 }
@@ -459,15 +519,22 @@ const ERROR: [f32; 4] = [1.0, 0.5, 0.5, 1.0];
 mod tests {
     use dear_imgui_rs::ConfigFlags;
 
-    use super::{apply_ui_scale, game_image_size, runner_config};
+    use super::{apply_ui_scale, runner_config};
+    use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
+    use dear_app::RedrawMode;
 
     #[test]
     fn runner_config_docks_without_viewports() {
         let c = runner_config();
         assert!(c.docking.enable);
+        assert!(
+            !c.docking.auto_dockspace,
+            "we own the game-left / panel-right split"
+        );
         let flags = c.io_config_flags.expect("flags");
         assert!(flags.contains(ConfigFlags::DOCKING_ENABLE));
         assert!(!flags.contains(ConfigFlags::VIEWPORTS_ENABLE));
+        assert!(matches!(c.redraw, RedrawMode::WaitUntil { fps } if (fps - 50.0).abs() < 0.01));
     }
 
     #[test]
@@ -481,8 +548,26 @@ mod tests {
     }
 
     #[test]
-    fn game_image_size_scales_up_for_retina() {
-        assert_eq!(game_image_size(2.0), [1530.0, 1006.0]);
-        assert_eq!(game_image_size(1.0), [765.0, 503.0]);
+    fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
+        assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
+        let small = fit_applet([382.5, 251.5]);
+        assert!((small[0] / small[1] - 765.0 / 503.0).abs() < 0.01);
+        let wide = fit_applet([2000.0, 503.0]);
+        assert!((wide[1] - 503.0).abs() < 0.01);
+        assert!(wide[0] <= 2000.0);
+    }
+
+    #[test]
+    fn game_window_title_is_the_profile_name() {
+        assert_eq!(game_window_title(Some("test")), "test");
+        assert_eq!(game_window_title(None), "Game");
+        assert_eq!(game_window_title(Some("")), "Game");
+    }
+
+    #[test]
+    fn panel_split_is_a_thin_right_slice() {
+        let r = panel_split_ratio(1120.0);
+        assert!((r - 330.0 / 1120.0).abs() < 0.001);
+        assert!(r < 0.4);
     }
 }

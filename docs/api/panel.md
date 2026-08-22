@@ -31,9 +31,13 @@ mainland hop at scene 2.
 (never shared across slots), then **selects the first name** so the Game
 Image is not stuck on `renderer off`. A per-frame observe hook applies the
 focus `set_draw` switch and the mainland hop, so slot threads and the UI
-never share a lock hot path. The runner is configured with **docking on,
-multi-viewports off** (single main viewport). Closing the Game pane sets
-`game_pane_open = false` (`set_draw` off) and turns capture off.
+never share a lock hot path. The runner is configured with **docking on, multi-viewports off** (single
+main viewport). Default dock: **game left**, **330px-class panel right**.
+The Game pane title is the focused profile name. Closing the Game pane sets
+`game_pane_open = false` (`set_draw` off) and turns capture off. The UI
+thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
+Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
+generation is unchanged.
 
 ## Renderer vs capture
 
@@ -42,8 +46,9 @@ open:
 
 - **game renderer** — `set_draw(draw_for_slot(...))`: only the focused slot
   rasters. The Game Image is an RGBA8 **765×503** texture (the client applet
-  size, never mutated); the widget scales the display by an integer DPI
-  factor (2× on Retina). Rendering never pauses the bot.
+  size, never mutated). The widget is the largest 765:503 box that fits the
+  left-hand Game pane (no extra Retina multiply — HiDpi already maps logical
+  pixels). Rendering never pauses the bot.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
@@ -54,8 +59,9 @@ Capture follows focus (never two keyboards) and implies renderer.
 
 ## Amber
 
-Accent color **`#FFB000`** (hover `#FFC14D`) — the rs2b0t amber, applied to
-ImGui hover/header/tab colors. Panel background `#111`.
+Accent color **`#FFB000`** (hover `#FFC14D`) — amber CRT over Theme::Dark
+(title bars, tabs, frames, buttons). Not default imgui blue, not rs2b0t
+green `#04A800`. Panel background `#111`.
 
 ## Mocks
 
