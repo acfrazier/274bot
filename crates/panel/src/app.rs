@@ -3,10 +3,14 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use dear_app::AddOns;
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{Condition, StyleColor, Ui};
+use host::PixelBuf;
 
 use crate::chrome::{MOCK_BUTTONS, sections};
+use crate::focus::{Focus, should_draw};
+use crate::game_view::{game_pixels, GameView};
 use crate::theme::{ACCENT, BG, TITLE, integer_ui_scale};
 
 /// Runner configuration from the task brief: docking on, viewports off.
@@ -64,13 +68,38 @@ fn panel_window(ui: &Ui) {
         });
 }
 
-/// Game window: black placeholder viewport until Task 7 wires the texture.
-/// Texture is 765×503; widget size is 765*dpi × 503*dpi.
+/// Game window: RGBA8 765×503 texture in a black viewport. Texture data is
+/// always 765×503; the widget size is 765*dpi × 503*dpi.
 fn game_image_size(scale: f32) -> [f32; 2] {
     [765.0 * scale.max(1.0), 503.0 * scale.max(1.0)]
 }
 
-fn game_window(ui: &Ui, scale: f32) {
+/// Per-frame panel state: lazily-created game texture, focus policy, and the
+/// focused slot's pixels (None until a slot is wired).
+struct PanelState {
+    game_view: Option<GameView>,
+    focus: Focus,
+    pixels: Option<Arc<PixelBuf>>,
+}
+
+impl Default for PanelState {
+    fn default() -> Self {
+        Self {
+            game_view: None,
+            // No slot is focused yet: the game pane shows "renderer off" and
+            // the texture is not uploaded until a bot connects.
+            focus: Focus {
+                focused: None,
+                renderer: true,
+                game_pane_open: true,
+                capture: false,
+            },
+            pixels: None,
+        }
+    }
+}
+
+fn game_window(ui: &Ui, addons: &mut AddOns, scale: f32, state: &mut PanelState) {
     ui.window("Game")
         .size([500.0, 400.0], Condition::FirstUseEver)
         .build(|| {
@@ -78,7 +107,19 @@ fn game_window(ui: &Ui, scale: f32) {
             ui.child_window("game_viewport")
                 .size(game_image_size(scale))
                 .build(ui, || {
-                    ui.text("no bot focused");
+                    if state.game_view.is_none() {
+                        state.game_view = Some(GameView::init(&mut addons.gpu));
+                    }
+                    if should_draw(&state.focus) {
+                        let pixels = game_pixels(&state.pixels);
+                        if let Some(view) = &state.game_view {
+                            view.upload(&addons.gpu, &pixels);
+                        }
+                        let view = state.game_view.as_ref().expect("game view initialized");
+                        ui.image(view.tex_id, game_image_size(scale));
+                    } else {
+                        ui.text_disabled("renderer off");
+                    }
                 });
         });
 }
@@ -87,6 +128,7 @@ fn game_window(ui: &Ui, scale: f32) {
 pub fn run_panel() -> Result<(), dear_app::DearAppError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
+    let mut state = PanelState::default();
 
     let cfg = runner_config();
     dear_app::AppBuilder::new()
@@ -98,10 +140,10 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
                 Ordering::Relaxed,
             );
         })
-        .on_frame(move |ui, _addons| {
+        .on_frame(move |ui, addons| {
             let scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             panel_window(ui);
-            game_window(ui, scale);
+            game_window(ui, addons, scale, &mut state);
         })
         .run()
 }

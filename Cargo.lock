@@ -1841,6 +1841,7 @@ dependencies = [
  "dear-app",
  "dear-imgui-rs",
  "host",
+ "wgpu",
 ]
 
 [[package]]
