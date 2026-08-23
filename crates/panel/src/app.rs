@@ -905,6 +905,14 @@ fn resource_card(ui: &Ui, state: &mut PanelState) {
 /// rising-edge `open_popup` so Esc cannot be defeated by a per-frame reopen.
 static PREV_CHOOSER: AtomicBool = AtomicBool::new(false);
 
+/// Rising-edge helper: `(open_popup, new_prev)`. `open_popup` is true only
+/// on the `want` false→true edge, so `+ add bot` reopens after a close;
+/// `new_prev` tracks `want` on **both** values, or a closed chooser would
+/// keep a stale `true` and the next reopen would never fire.
+pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
+    (want && !prev, want)
+}
+
 /// Chooser modal: one row per vault profile. Click a row to load it onto
 /// the wall; the row ✕ deletes the vault profile only (a live wall member
 /// is untouched); Load all loads every profile. Esc (native popup
@@ -913,8 +921,12 @@ fn chooser_window(ui: &Ui, session: &mut Session) {
     let want = session.wall.chooser_open;
     // Rising edge only: re-calling OpenPopup every frame would re-open the
     // modal the moment Esc closes it (BeginPopupModal writes `opened` false
-    // when the popup is not open, which then just gets re-opened).
-    if want && !PREV_CHOOSER.swap(want, Ordering::Relaxed) {
+    // when the popup is not open). The prev latch is updated on both true
+    // and false so a later `+ add bot` is a fresh edge.
+    let (open_popup, new_prev) =
+        chooser_should_open_popup(want, PREV_CHOOSER.load(Ordering::Relaxed));
+    PREV_CHOOSER.store(new_prev, Ordering::Relaxed);
+    if open_popup {
         ui.open_popup("274bot-chooser");
     }
     let mut open = want;
@@ -1016,9 +1028,9 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
                 ui.set_next_window_class(&class);
                 rail_window(ui, addons, &mut state);
             }
-            if state.session.wall.chooser_open {
-                chooser_window(ui, &mut state.session);
-            }
+            // Every frame, not only while open: the prev latch must track
+            // the close so the next `+ add bot` is a fresh rising edge.
+            chooser_window(ui, &mut state.session);
         })
         .run()
 }
@@ -1029,9 +1041,38 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
 mod tests {
     use dear_imgui_rs::ConfigFlags;
 
-    use super::{apply_ui_scale, runner_config};
+    use super::{apply_ui_scale, chooser_should_open_popup, runner_config};
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
+
+    #[test]
+    fn chooser_should_open_popup_table() {
+        // First open: rising edge opens the popup and latches prev.
+        assert_eq!(chooser_should_open_popup(true, false), (true, true));
+        // Already open: no re-open while want stays true.
+        assert_eq!(chooser_should_open_popup(true, true), (false, true));
+        // Esc closed it: want drops to false and prev must fall so a later
+        // `+ add bot` is a fresh rising edge.
+        assert_eq!(chooser_should_open_popup(false, true), (false, false));
+        assert_eq!(chooser_should_open_popup(false, false), (false, false));
+    }
+
+    #[test]
+    fn chooser_reopens_after_a_close() {
+        let mut prev = false;
+        let (open, np) = chooser_should_open_popup(true, prev);
+        assert!(open, "first + add opens the chooser");
+        prev = np;
+        let (open, np) = chooser_should_open_popup(true, prev);
+        assert!(!open, "already open: no reopen");
+        prev = np;
+        let (open, np) = chooser_should_open_popup(false, prev);
+        assert!(!open);
+        prev = np;
+        assert!(!prev, "prev must track the close so + add can reopen");
+        let (open, _np) = chooser_should_open_popup(true, prev);
+        assert!(open, "the next + add bot reopens the chooser");
+    }
 
     #[test]
     fn runner_config_docks_without_viewports() {
