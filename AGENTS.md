@@ -2,7 +2,7 @@
 
 Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
-**What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bothost`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` on the FR clone, not this repo.
+**What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bothost`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` **in this checkout** (not Fairy-Ring, not GitHub).
 
 **Client fork:** Patch `FR-client-bothost` `r274-bothost` (instrumentation, skip-paint). **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 

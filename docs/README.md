@@ -2,4 +2,4 @@
 
 Committed product docs for agents: [`api/`](api/README.md).
 
-Working notes (`specs/`, `plans/`) live in `docs/superpowers/` on a local checkout and are **gitignored** — they are not this GitHub tree.
+Working notes (`specs/`, `plans/`) live in **this checkout’s** gitignored `docs/superpowers/` — not the Fairy-Ring clone, not GitHub.
