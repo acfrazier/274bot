@@ -225,3 +225,28 @@ pub fn login<D: Driver + ?Sized>(
 ) -> bool {
     driver.login(username, password, reconnect)
 }
+
+/// The logout button's client code (`IfType.client_code == 205`); the
+/// client vetoes the press server-side, so this is the safe logout path.
+pub const CC_LOGOUT: i32 = 205;
+
+/// The slot index of the first iface whose client code is [`CC_LOGOUT`].
+pub fn logout_iface_id(ifaces: &[Option<client::config::IfType>]) -> Option<i32> {
+    ifaces.iter().enumerate().find_map(|(i, c)| {
+        c.as_ref()
+            .filter(|c| c.client_code == CC_LOGOUT)
+            .map(|_| i as i32)
+    })
+}
+
+/// Press the logout button (IF_BUTTON on the CC_LOGOUT iface) via the
+/// doAction path. Missing iface → `false`, no panic.
+pub fn logout<D: Driver + ?Sized>(
+    driver: &mut D,
+    ifaces: &[Option<client::config::IfType>],
+) -> bool {
+    let Some(id) = logout_iface_id(ifaces) else {
+        return false;
+    };
+    press(driver, id)
+}

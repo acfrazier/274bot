@@ -549,3 +549,23 @@ fn settle_done_requires_evidence_within_budget() {
     let no_evidence = Settle::default();
     assert!(!no_evidence.done(), "no evidence armed");
 }
+
+#[test]
+fn logout_presses_cc_logout_iface_and_missing_is_false() {
+    use api::interact::{logout, CC_LOGOUT};
+    use client::config::IfType;
+    let empty: Vec<Option<IfType>> = Vec::new();
+    let mut rec = Recorder::default();
+    assert!(!logout(&mut rec, &empty));
+    assert!(rec.actions.is_empty());
+    assert!(rec.menus.is_empty());
+
+    let mut ifaces: Vec<Option<IfType>> = vec![None; 10];
+    let mut com = IfType::default();
+    com.client_code = CC_LOGOUT;
+    ifaces[7] = Some(com);
+    let mut rec = Recorder::default();
+    assert!(logout(&mut rec, &ifaces));
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 7)]);
+}
