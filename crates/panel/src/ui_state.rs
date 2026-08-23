@@ -1,5 +1,5 @@
 //! Persisted panel UI prefs (`~/.274bot/panel-ui.json`): last focused
-//! profile and (later) collapsed section maps.
+//! profile and per-profile collapsed section maps.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +9,11 @@ pub struct PanelUiState {
     pub last_focus: Option<String>,
     #[serde(default)]
     pub collapsed: HashMap<String, HashMap<String, bool>>,
+}
+
+/// Default closed (collapsed) when no persisted entry: script + parameters only.
+pub fn default_section_closed(id: &str) -> bool {
+    id == "script" || id == "parameters"
 }
 
 /// Prefer `last` when it is still in `names`; otherwise the first name.
@@ -149,5 +154,18 @@ mod tests {
             "path should sit under .274bot, got {}",
             p.display()
         );
+    }
+
+    #[test]
+    fn default_section_closed_only_script_and_parameters() {
+        use super::default_section_closed;
+        assert!(default_section_closed("script"));
+        assert!(default_section_closed("parameters"));
+        assert!(!default_section_closed("profile"));
+        assert!(!default_section_closed("credentials"));
+        assert!(!default_section_closed("status"));
+        assert!(!default_section_closed("log"));
+        assert!(!default_section_closed("rendering"));
+        assert!(!default_section_closed("input"));
     }
 }

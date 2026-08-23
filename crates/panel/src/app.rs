@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use dear_app::{AddOns, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
-    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, Ui, WindowClass,
-    WindowFlags,
+    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, TreeNodeFlags, Ui,
+    WindowClass, WindowFlags,
 };
 
 use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
@@ -622,8 +622,8 @@ fn panel_window(ui: &Ui, session: &mut Session) {
         profile_section(ui, session);
         credentials_section(ui, session);
         walkto_button(ui, session);
-        script_section(ui);
-        parameters_section(ui);
+        script_section(ui, session);
+        parameters_section(ui, session);
         status_section(ui, session);
         log_section(ui, session);
         rendering_section(ui, session);
@@ -670,10 +670,30 @@ fn banner(ui: &Ui, session: &Session) {
     }
 }
 
-fn section_title(ui: &Ui, id: &str) {
-    ui.spacing();
-    ui.text_disabled(id);
-    ui.separator();
+/// Collapsing section header. Open state is per focused profile in
+/// `PanelUiState.collapsed`; defaults closed for script + parameters.
+fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
+    let user = session.focused_name().unwrap_or_else(|| "_".into());
+    let closed = session
+        .ui
+        .collapsed
+        .get(&user)
+        .and_then(|m| m.get(id))
+        .copied()
+        .unwrap_or_else(|| crate::ui_state::default_section_closed(id));
+    let desired = !closed;
+    ui.set_next_item_open(desired);
+    let open = ui.collapsing_header(id, TreeNodeFlags::NONE);
+    if open != desired {
+        session
+            .ui
+            .collapsed
+            .entry(user)
+            .or_default()
+            .insert(id.to_string(), !open);
+        crate::ui_state::save(&session.ui);
+    }
+    open
 }
 
 fn kv_row(ui: &Ui, key: &str, value: &str) {
@@ -703,7 +723,9 @@ fn mock_button_row(ui: &Ui, labels: &[&str], hint: &str) {
 
 /// profile: vault combo; password prompt until unlocked.
 fn profile_section(ui: &Ui, session: &mut Session) {
-    section_title(ui, "profile");
+    if !section_open(ui, session, "profile") {
+        return;
+    }
     if session.vault.is_none() {
         ui.input_text("##vault-pass", &mut session.pass_scratch)
             .password(true)
@@ -740,7 +762,9 @@ fn profile_section(ui: &Ui, session: &mut Session) {
 /// arms a clean IF logout and latches auto-login; Clear empties the two
 /// fields without touching the vault. Panel does not auto-create test/test.
 fn credentials_section(ui: &Ui, session: &mut Session) {
-    section_title(ui, "credentials");
+    if !section_open(ui, session, "credentials") {
+        return;
+    }
     if session.vault.is_none() {
         ui.text_disabled("vault locked");
         return;
@@ -819,8 +843,10 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
 
 /// script: mocked until campaign 5. Layout matches BotPanel (name+Browse,
 /// then Start/Pause/Stop, then a status row).
-fn script_section(ui: &Ui) {
-    section_title(ui, "script");
+fn script_section(ui: &Ui, session: &mut Session) {
+    if !section_open(ui, session, "script") {
+        return;
+    }
     ui.text_colored(ACCENT, "(none)");
     ui.same_line();
     let rest = ui.content_region_avail()[0];
@@ -830,8 +856,10 @@ fn script_section(ui: &Ui) {
 }
 
 /// parameters: mocked until campaign 5.
-fn parameters_section(ui: &Ui) {
-    section_title(ui, "parameters");
+fn parameters_section(ui: &Ui, session: &mut Session) {
+    if !section_open(ui, session, "parameters") {
+        return;
+    }
     ui.text_disabled("(no parameters)");
     let w = ui.content_region_avail()[0];
     mock_button(ui, "Edit parameters", "campaign 5", [w, 0.0]);
@@ -839,8 +867,10 @@ fn parameters_section(ui: &Ui) {
 }
 
 /// status: rs2b0t key/value rows (state, player, tile, modals), wrapped.
-fn status_section(ui: &Ui, session: &Session) {
-    section_title(ui, "status");
+fn status_section(ui: &Ui, session: &mut Session) {
+    if !section_open(ui, session, "status") {
+        return;
+    }
     let statuses = session.statuses();
     if statuses.is_empty() {
         kv_row(ui, "state", "no slots");
@@ -882,8 +912,10 @@ fn status_section(ui: &Ui, session: &Session) {
 }
 
 /// log: focused slot's status-transition lines (or PROCESS when none).
-fn log_section(ui: &Ui, session: &Session) {
-    section_title(ui, "log");
+fn log_section(ui: &Ui, session: &mut Session) {
+    if !section_open(ui, session, "log") {
+        return;
+    }
     let key = session
         .focused_name()
         .unwrap_or_else(|| PROCESS.to_string());
@@ -903,7 +935,9 @@ fn log_section(ui: &Ui, session: &Session) {
 /// rendering: game renderer checkbox; `set_draw` is applied by the slot
 /// threads from the shared focus on every frame.
 fn rendering_section(ui: &Ui, session: &mut Session) {
-    section_title(ui, "rendering");
+    if !section_open(ui, session, "rendering") {
+        return;
+    }
     let on = session.focus.lock().unwrap().renderer;
     let mut cur = on;
     if ui.checkbox("game renderer", &mut cur) {
@@ -918,7 +952,9 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
 
 /// input: per-focused-bot capture toggle. Off = watch-only, zero input work.
 fn input_section(ui: &Ui, session: &mut Session) {
-    section_title(ui, "input");
+    if !section_open(ui, session, "input") {
+        return;
+    }
     let on = session.focus.lock().unwrap().capture;
     let mut cur = on;
     if ui.checkbox("capture input", &mut cur) {

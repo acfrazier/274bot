@@ -160,6 +160,8 @@ pub struct Session {
     /// MultiBox toggle: rail (or grid) policy is up. `Focus.wall_open`
     /// mirrors this so extra rasters only run while the wall is visible.
     pub multibox: bool,
+    /// Persisted panel prefs (last focus + per-profile collapsed sections).
+    pub ui: crate::ui_state::PanelUiState,
 }
 
 /// Keep each per-name panel log bounded.
@@ -221,6 +223,7 @@ impl Session {
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             wall: Wall::default(),
             multibox: false,
+            ui: crate::ui_state::load(),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -487,9 +490,11 @@ impl Session {
         let arm = self.arm_for_profile(name);
         self.ensure_slot(name, arm);
         {
+            // Reload so an injected/disk collapsed map is not clobbered.
             let mut ui = crate::ui_state::load();
             ui.last_focus = Some(name.to_string());
             crate::ui_state::save(&ui);
+            self.ui = ui;
         }
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
