@@ -67,6 +67,12 @@ cargo run --release -p panel --bin panel-play
 cargo run --release -p panel --bin panel-play -- --live null_raster
 # or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
 
+# Headless RSS ladder (all slots Null / set_draw=false). One N per process.
+LIVE=1 RSS_N=1 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=2 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=4 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+# Does not fail on RSS size. Do not run two N in one process (peak RSS).
+
 # 50-bot MultiBox wall watch (temp vault s00…s49; 10 min timeout; local engine)
 cargo run --release -p panel --bin panel-play -- --live stress50
 # or BOT_LIVE=stress50; FIFO login takes minutes; does not fail on RSS size

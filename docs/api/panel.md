@@ -163,6 +163,20 @@ Headless twin:
 LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
 ```
 
+### Headless `rss_ladder`
+
+Measure-then-cut: N=1, then 2, then 4 headless Clients, **every** slot
+`set_draw(false)`. One N per process. Names `r0`…`r{N-1}`. Wait scene 2
+(180s), hold 10s, print Darwin/Linux peak RSS. Does **not** fail on RSS
+size. FAIL if Null breaks (`paint_n>0` or `game_draw` grows in the hold)
+or `rss=0`.
+
+```bash
+LIVE=1 RSS_N=1 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=2 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=4 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+```
+
 ### `--live stress50`
 
 Fifty-slot MultiBox wall watch (temp vault `s00`…`s49`, password =
