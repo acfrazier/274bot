@@ -20,7 +20,8 @@ Two mapsquares are baked: Lumbridge `m50_50.jm2` and Catherby
 `m44_53.jm2`. Output goes to `$NAV_PACK` or, by default,
 `~/.274bot/274bot.navpack`. Missing mapsquares are skipped with a stderr
 count; the remaining squares still produce a pack. The bake exits non-zero
-only when no door configs parse or no mapsquare bakes.
+when no door configs parse, no mapsquare bakes, or the pack file cannot be
+written.
 
 Collision comes from the Server jm2 text (MAP `fN` flags, LOC blockwalk
 footprints, door configs), **not** from the client's `.lcnav.gz` webwalk
@@ -47,10 +48,13 @@ re-routes a short fresh path; a rejected `tryMove` falls back to the next
 leg tile. A door leg sends `op_loc` — the packed wall typecode via
 `Driver::loc_typecode`, falling back to the loc id — and, when the caller
 reports the door open, re-opens and walks through on the **same tick** so a
-closing door cannot slam. Statuses: `Idle`, `Walking`, `Door`, `Arrived`,
-`Closest`, `Blocked`, `Budget` (60 ticks per hop, reset on any advance),
-`Interrupted`. Arrival is `nav::arrival::arrived`: standing on the dest, or
-adjacent to it when the dest is solid.
+closing door cannot slam. Statuses emitted today: `Idle`, `Walking`,
+`Door`, `Arrived`, `Budget` (60 ticks per hop, reset on any advance); the
+enum also declares `Closest`, `Blocked`, and `Interrupted` for later.
+Arrival is `nav::arrival::arrived`: standing on the dest, or adjacent to it
+when the dest is solid — Traveller currently calls it with
+`dest_walkable = true`, so solid-adjacent arrival is in place but not yet
+active (every armed dest is walkable today).
 
 ## Catherby fixture
 
@@ -77,8 +81,9 @@ LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 `nav_walk`: one slot, Lumbridge courtyard walk to (3220,3212,0);
 `arrived` within 90 s of arm. `nav_door`: two slots in one process — the
 walker stages outside the Catherby range house and walks through door 1530
-to (2817,3443,0) while a tick-perfect closer keeps the door open;
-`chebyshev ≤ 1` of dest within 120 s.
+to (2817,3443,0) while a tick-perfect closer keeps the door **closed**
+(`op_loc` whenever the loc is not the closed id 1530); `chebyshev ≤ 1` of
+dest within 120 s.
 
 ## Credit
 
