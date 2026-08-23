@@ -34,7 +34,9 @@ Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single
 main viewport). Default dock: **game left**, **330px-class panel right**.
-The Game pane title is the focused profile name. Closing the Game pane sets
+Single-bot hides the dock tab strip on each pane (`AUTO_HIDE_TAB_BAR`);
+stacking a second window in a node (MultiBox later) shows tabs again.
+The Game pane title is the focused profile name when the tab bar is visible. Closing the Game pane sets
 `game_pane_open = false` (`set_draw` off) and turns capture off. The UI
 thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`

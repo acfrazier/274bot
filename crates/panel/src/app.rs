@@ -8,7 +8,8 @@ use std::sync::Arc;
 use dear_app::{AddOns, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
-    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, Ui, WindowFlags,
+    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, Ui, WindowClass,
+    WindowFlags,
 };
 
 use crate::chrome::{button_row_layout, PARAM_ROW, SCRIPT_ROW};
@@ -38,7 +39,7 @@ pub fn runner_config() -> dear_app::RunnerConfig {
     cfg.docking = dear_app::DockingConfig {
         enable: true,
         auto_dockspace: false,
-        dockspace_flags: DockNodeFlags::NONE,
+        dockspace_flags: DockNodeFlags::AUTO_HIDE_TAB_BAR,
         ..Default::default()
     };
     // Viewports stay off: dear-app renders into the single main viewport only.
@@ -89,6 +90,13 @@ impl Default for PanelState {
     }
 }
 
+/// Leaf dock nodes hide the tab bar while they host a single window.
+fn single_bot_window_class() -> WindowClass {
+    WindowClass::new(Id::from(1u32))
+        .dock_node_flags_override_set(DockNodeFlags::AUTO_HIDE_TAB_BAR)
+        .docking_always_tab_bar(false)
+}
+
 /// Fullscreen dock host: game fills the left, 330px-class panel on the right.
 fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
     let viewport = ui.main_viewport();
@@ -108,7 +116,15 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
         .size([size[0], size[1]], Condition::Always)
         .build(|| {
             let dock_id = ui.get_id("274bot-dockspace");
-            let _ = ui.dock_space(dock_id, [0.0, 0.0]);
+            // Single-bot default: each split leaf hosts one window, so hide
+            // the tab strip. MultiBox (campaign 4) can stack windows in a
+            // node and the bar comes back.
+            let _ = ui.dock_space_with_class(
+                dock_id,
+                [0.0, 0.0],
+                DockNodeFlags::AUTO_HIDE_TAB_BAR,
+                None,
+            );
             if !state.dock_inited && DockBuilder::node_exists(ui, dock_id) {
                 let ratio = panel_split_ratio(size[0]);
                 let (right, left) =
@@ -587,10 +603,13 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
             state.session.pump_status();
             let title = game_window_title(state.session.focused_name().as_deref());
             dock_host(ui, &mut state, &title);
+            let class = single_bot_window_class();
+            ui.set_next_window_class(&class);
             panel_window(ui, &mut state.session);
             if state.session.walkto_open {
                 picker::picker_window(ui, &mut state.session);
             }
+            ui.set_next_window_class(&class);
             game_window(ui, addons, &mut state, &title);
         })
         .run()
@@ -614,10 +633,25 @@ mod tests {
             !c.docking.auto_dockspace,
             "we own the game-left / panel-right split"
         );
+        assert!(
+            c.docking
+                .dockspace_flags
+                .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR),
+            "single-bot hides the game/panel tab strip"
+        );
         let flags = c.io_config_flags.expect("flags");
         assert!(flags.contains(ConfigFlags::DOCKING_ENABLE));
         assert!(!flags.contains(ConfigFlags::VIEWPORTS_ENABLE));
         assert!(matches!(c.redraw, RedrawMode::WaitUntil { fps } if (fps - 50.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn single_bot_window_class_hides_tab_bar() {
+        let c = super::single_bot_window_class();
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR));
+        assert!(!c.docking_always_tab_bar);
     }
 
     #[test]
