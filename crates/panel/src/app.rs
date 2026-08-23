@@ -14,6 +14,7 @@ use dear_imgui_rs::{
 use crate::chrome::{button_row_layout, PARAM_ROW, SCRIPT_ROW};
 use crate::focus::{should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
+use crate::overlay::PathOverlay;
 use crate::picker;
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
@@ -69,6 +70,9 @@ struct PanelState {
     game_dock_node: Option<Id>,
     docked_game_title: String,
     last_upload: Option<(String, u64)>,
+    /// Cached path overlay; rebuilt at the 1 s raster cadence or on a new
+    /// arm (see `overlay`).
+    overlay: PathOverlay,
 }
 
 impl Default for PanelState {
@@ -80,6 +84,7 @@ impl Default for PanelState {
             game_dock_node: None,
             docked_game_title: String::new(),
             last_upload: None,
+            overlay: PathOverlay::new(),
         }
     }
 }
@@ -156,6 +161,12 @@ fn game_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, title: &str
                 }
                 let view = state.game_view.as_ref().expect("game view initialized");
                 ui.image(view.tex_id, size);
+                // Nav path overlay: amber polyline of the armed route's
+                // remaining tiles, drawn over the Image (rebuilds at the
+                // 1 s raster cadence or on a new arm, not per frame).
+                state
+                    .overlay
+                    .frame(ui, &state.session, ui.item_rect_min(), size);
                 // Capture: only map/enqueue while on and hovered;
                 // capture off skips the coord math entirely (tx is
                 // also None).

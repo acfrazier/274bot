@@ -79,6 +79,57 @@ impl Traveller {
         self.dest
     }
 
+    /// The tiles still ahead on the armed route, front to back. Walk legs
+    /// contribute all their tiles; a door leg contributes its `from` and
+    /// `to` so the polyline stays connected across the crossing. When
+    /// `here` is given (the player's observed tile), legs already traversed
+    /// are skipped exactly as [`Traveller::tick`] skips them, and the
+    /// current walk leg is trimmed to the tiles from `here` onward so the
+    /// line shrinks as the player walks, not only at leg end. Empty when
+    /// nothing is armed or every leg is done.
+    pub fn remaining_walk_tiles(&self, here: Option<Tile>) -> Vec<Tile> {
+        let Some(route) = self.route.as_ref() else {
+            return Vec::new();
+        };
+        let mut leg = self.leg.min(route.legs.len());
+        if let Some(here) = here {
+            while leg < route.legs.len() {
+                let done = match &route.legs[leg] {
+                    Leg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
+                    Leg::Door { to, .. } => *to == here,
+                };
+                if !done {
+                    break;
+                }
+                leg += 1;
+            }
+        }
+        let mut out = Vec::new();
+        for (i, l) in route.legs.iter().enumerate().skip(leg) {
+            match l {
+                Leg::Walk { tiles } => {
+                    if i == leg {
+                        if let Some(here) = here {
+                            if let Some(pos) = tiles.iter().position(|t| *t == here) {
+                                out.extend(tiles[pos..].iter().copied());
+                                continue;
+                            }
+                        }
+                    }
+                    out.extend(tiles.iter().copied());
+                }
+                Leg::Door { from, to, .. } => {
+                    out.push(*from);
+                    out.push(*to);
+                }
+            }
+        }
+        // A door's `to` is the next walk leg's first tile: drop the
+        // duplicate crossing tile so the line does not double back.
+        out.dedup();
+        out
+    }
+
     /// Advance the route one tick: send the driver the next hop toward
     /// `dest`, or work the current door leg. `here` is the player's tile;
     /// `door_open` is the door's current state (the caller reads it live).
@@ -190,6 +241,85 @@ mod tests {
             t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false),
             NavStatus::Idle
         );
+    }
+
+    #[test]
+    fn remaining_is_empty_without_route() {
+        let t = Traveller::new();
+        assert!(t.remaining_walk_tiles(None).is_empty());
+    }
+
+    #[test]
+    fn remaining_covers_armed_route_tiles() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_open_3x3(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 2, z: 2, level: 0 },
+            )
+            .unwrap(),
+        );
+        let tiles = t.remaining_walk_tiles(None);
+        assert_eq!(tiles.first(), Some(&Tile { x: 0, z: 0, level: 0 }));
+        assert_eq!(tiles.last(), Some(&Tile { x: 2, z: 2, level: 0 }));
+    }
+
+    #[test]
+    fn remaining_is_empty_when_standing_on_dest() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_open_3x3(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 2, z: 2, level: 0 },
+            )
+            .unwrap(),
+        );
+        assert!(t
+            .remaining_walk_tiles(Some(Tile { x: 2, z: 2, level: 0 }))
+            .is_empty());
+    }
+
+    #[test]
+    fn remaining_skips_completed_legs_and_connects_doors() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_door_corridor(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 4, z: 0, level: 0 },
+            )
+            .unwrap(),
+        );
+        // Standing on the door's from-tile: the first walk leg is done and
+        // the door connects straight to the far walk leg (no duplicate
+        // crossing tile).
+        let tiles = t.remaining_walk_tiles(Some(Tile { x: 1, z: 0, level: 0 }));
+        let expected = vec![
+            Tile { x: 1, z: 0, level: 0 },
+            Tile { x: 3, z: 0, level: 0 },
+            Tile { x: 4, z: 0, level: 0 },
+        ];
+        assert_eq!(tiles, expected);
+    }
+
+    #[test]
+    fn remaining_trims_current_leg_to_here() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_open_1x40(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 39, z: 0, level: 0 },
+            )
+            .unwrap(),
+        );
+        // Mid-leg: the line starts at the player's tile, not the leg start.
+        let tiles = t.remaining_walk_tiles(Some(Tile { x: 15, z: 0, level: 0 }));
+        assert_eq!(tiles.first(), Some(&Tile { x: 15, z: 0, level: 0 }));
+        assert_eq!(tiles.len(), 25);
+        assert_eq!(tiles.last(), Some(&Tile { x: 39, z: 0, level: 0 }));
     }
 
     #[test]

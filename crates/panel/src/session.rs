@@ -135,6 +135,11 @@ pub struct Session {
     pub walk_dest: Option<Tile>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
+    /// Overlay generation: bumped whenever the focused traveller's route
+    /// can change (a new arm, or the focused profile switching). The path
+    /// overlay rebuilds immediately on a bump instead of waiting for its
+    /// 1 s raster cadence.
+    route_gen: u64,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
     options: PlayOptions,
 }
@@ -175,6 +180,7 @@ impl Session {
             travellers: HashMap::new(),
             walk_dest: None,
             walkto_open: false,
+            route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
@@ -340,6 +346,9 @@ impl Session {
         focus.focused = Some(name.to_string());
         let capture = focus.capture;
         drop(focus);
+        // The overlay follows the focused traveller: switching focus may
+        // show a different (or no) route, so force a rebuild.
+        self.route_gen += 1;
         if capture {
             if let Some(old) = old {
                 if let Some(slot) = self.slots.get(&old) {
@@ -507,12 +516,31 @@ impl Session {
                         .entry(name.clone())
                         .or_insert_with(|| Arc::new(Mutex::new(Traveller::new())));
                     traveller.lock().unwrap().arm(route);
+                    // Rising edge: the overlay must paint the new route on
+                    // this frame, not after the 1 s raster cadence.
+                    self.route_gen += 1;
                 }
             }
             Err(NoPath) => {
                 self.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
             }
         }
+    }
+
+    /// The focused slot's observed tile, `None` when nothing is focused or
+    /// the slot has not reported a position yet (both coordinates zero).
+    pub fn focused_tile(&self) -> Option<(i32, i32)> {
+        let name = self.focused_name()?;
+        self.statuses()
+            .iter()
+            .find(|s| s.username == name)
+            .filter(|s| s.tile_x != 0 || s.tile_z != 0)
+            .map(|s| (s.tile_x, s.tile_z))
+    }
+
+    /// Overlay generation for the path overlay's rising-edge refresh.
+    pub fn route_gen(&self) -> u64 {
+        self.route_gen
     }
 
     /// The status-row walk cell: `"—"` when nothing is queued, else the
@@ -628,6 +656,36 @@ mod tests {
         s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
         assert_eq!(s.walk_dest, Some(dest));
         assert!(s.travellers.is_empty(), "no focused name to key a traveller");
+    }
+
+    #[test]
+    fn arm_walk_on_success_bumps_route_gen() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        let g = StepGrid::fixture_open_3x3();
+        assert_eq!(s.route_gen(), 0);
+        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 2, z: 2, level: 0 });
+        assert_ne!(s.route_gen(), 0, "a new arm must bump the overlay gen");
+    }
+
+    #[test]
+    fn select_bumps_route_gen_only_on_focus_change() {
+        let mut s = Session::new();
+        assert_eq!(s.route_gen(), 0);
+        s.select("alice");
+        assert_eq!(s.route_gen(), 1);
+        assert_eq!(s.focused_name().as_deref(), Some("alice"));
+        s.select("alice");
+        assert_eq!(s.route_gen(), 1, "re-selecting the focused name is a no-op");
+        s.select("bob");
+        assert_eq!(s.route_gen(), 2);
+    }
+
+    #[test]
+    fn focused_tile_is_none_without_status() {
+        let s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        assert_eq!(s.focused_tile(), None, "no status rows yet");
     }
 
     #[test]

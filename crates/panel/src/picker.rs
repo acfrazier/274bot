@@ -101,18 +101,6 @@ pub fn click_to_tile(
     snap(grid, tx, tz, level)
 }
 
-/// The focused slot's observed tile, or `None` when nothing is focused or the
-/// slot has not reported a position yet (both coordinates zero).
-fn focused_tile(session: &Session) -> Option<(i32, i32)> {
-    let name = session.focused_name()?;
-    session
-        .statuses()
-        .iter()
-        .find(|s| s.username == name)
-        .filter(|s| s.tile_x != 0 || s.tile_z != 0)
-        .map(|s| (s.tile_x, s.tile_z))
-}
-
 /// The "WalkTo" picker window. Draws the collision-dot map when the pack
 /// loads; shows a run-nav-pack hint otherwise.
 pub fn picker_window(ui: &Ui, session: &mut Session) {
@@ -144,7 +132,7 @@ fn picker_no_pack_window(ui: &Ui, open: &mut bool) {
 fn picker_map_window(ui: &Ui, session: &mut Session, grid: &StepGrid, open: &mut bool) {
     // Reset the view when the picker opens fresh.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
-        let (cx, cz) = focused_tile(session).unwrap_or(DEFAULT_CENTRE);
+        let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
         CENTRE_X.store(cx, Ordering::Relaxed);
         CENTRE_Z.store(cz, Ordering::Relaxed);
         LEVEL.store(available_levels(grid)[0], Ordering::Relaxed);
@@ -180,7 +168,7 @@ fn picker_map_window(ui: &Ui, session: &mut Session, grid: &StepGrid, open: &mut
             }
             ui.same_line();
             if ui.button("recentre") {
-                let (cx, cz) = focused_tile(session).unwrap_or(DEFAULT_CENTRE);
+                let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
                 CENTRE_X.store(cx, Ordering::Relaxed);
                 CENTRE_Z.store(cz, Ordering::Relaxed);
             }
@@ -275,7 +263,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) -> bool {
         size,
         LEVEL.load(Ordering::Relaxed),
     ) {
-        match focused_tile(session) {
+        match session.focused_tile() {
             Some((fx, fz)) => {
                 let from = Tile {
                     x: fx,
