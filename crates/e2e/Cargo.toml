@@ -10,3 +10,4 @@ host-play = { path = "../host-play" }
 vault = { path = "../vault" }
 api = { path = "../api" }
 nav = { path = "../nav" }
+client = { workspace = true }

@@ -749,6 +749,7 @@ name = "e2e"
 version = "0.1.0"
 dependencies = [
  "api",
+ "client",
  "host",
  "host-play",
  "nav",
