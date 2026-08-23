@@ -23,15 +23,21 @@ slot on the login FIFO, and select it. Unlike the CLI there is **no
 `--vault-pass` flag** — the passphrase comes from `BOT_VAULT_PASS`, or from
 the in-panel prompt (which also covers interactive use). When
 `BOT_VAULT_PASS` is set, the panel unlocks **before** the window opens so the
-headless path works unchanged. `BOT_MAINLAND=1` (or the checkbox) queues the
-mainland hop at scene 2.
+headless path works unchanged. There is **no mainland checkbox** in the
+panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues the
+mainland hop after scene 2.
+
+Last focused profile is restored from `~/.274bot/panel-ui.json`
+(`last_focus`). Collapsible section open/closed state persists there per
+profile; **script** and **parameters** default closed.
 
 ## Wiring
 
 `Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)
-via `host_play::run_with_io`, then **selects the first vault name**, which
-spawns **that one slot**. Parked profiles do not get a `Client` until you
-select them; once spawned they stay up so the combo can channel-change.
+via `host_play::run_with_io`, then selects the restored `last_focus` (or
+the first vault name), which spawns **that one slot**. Parked profiles do
+not get a `Client` until you select them; once spawned they stay up so the
+combo can channel-change.
 Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single
@@ -68,7 +74,9 @@ open:
 - **game renderer** — default **on**, **1 fps rail** (rs2b0t). Checking
   it after off paints **this tick** (no cold wait). Capture raises the
   focused slot to 50 fps. Unfocused slots do not raster. The Game Image is
-  an RGBA8 **765×503** texture. Rendering never pauses the bot.
+  an RGBA8 texture that is **never below 765×503** (`fit_applet` scale
+  floor 1.0). Grid tiles may still downscale. Rendering never pauses the
+  bot.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
@@ -134,9 +142,14 @@ suspected leak, not a closed RAM budget).
 
 ## Headed live
 
-`BOT_VAULT_PASS` is unused for `--live`. Headed live waits until both
-slots are `ingame && scene_state==2`, prints RSS/counters, PASS, and
-**leaves the window interactive** (you can click the rail). The 3 s
+`BOT_VAULT_PASS` is unused for `--live`. FAIL prints and exits 1. On PASS
+the window stays up and remains interactive (operator may click). Local
+engine required.
+
+### `--live null_raster`
+
+Two-slot headed twin of the headless e2e test. Waits until both slots are
+`ingame && scene_state==2`, prints RSS/counters, PASS. The 3 s
 unfocused-`game_draw` freeze is the **headless** twin only.
 
 ```bash
@@ -144,10 +157,23 @@ cargo run --release -p panel --bin panel-play -- --live null_raster
 # or: BOT_LIVE=null_raster cargo run --release -p panel --bin panel-play
 ```
 
-FAIL prints and exits 1. On PASS the window stays up. Headless twin:
+Headless twin:
 
 ```bash
 LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
+```
+
+### `--live stress50`
+
+Fifty-slot MultiBox wall watch (temp vault `s00`…`s49`, password =
+username). Chooser closed, only-render-selected, focus `s00`, then
+`login_all`. Timeout **600s** (10 minutes). Announces at 1/50 and 10/50
+scene 2; at 50 prints `PASS: live stress50 rss=… ingame50` and **keeps the
+window up**. Does **not** fail on RSS size. FIFO login will take minutes.
+
+```bash
+cargo run --release -p panel --bin panel-play -- --live stress50
+# or: BOT_LIVE=stress50 cargo run --release -p panel --bin panel-play
 ```
 
 ## Amber
@@ -156,15 +182,27 @@ Accent color **`#FFB000`** (hover `#FFC14D`) — amber CRT over Theme::Dark
 (title bars, tabs, frames, buttons). Not default imgui blue, not rs2b0t
 green `#04A800`. Panel background `#111`.
 
-## Mocks
+## Chrome
 
-Chrome follows rs2b0t `BotPanel` in the **330px** right strip: title
-(MultiBox is a live toggle), dim build line, banner, profile, credentials
-(Save / Log in / Logout / Clear, auto-login on title), status key/value
-rows, log, rendering, input. Script and parameters stay mocked (campaign 5).
-Unwired controls are **disabled** with a per-item `campaign 5`
-tooltip (`SetItemTooltip`, not one window for every mock). Text and buttons wrap or equal-width-squish — **no horizontal
-scroll**. `chrome.rs` keeps the section inventory (`wired: bool`).
+Right strip is **330px**-class. Section headings are collapsible (persisted
+per profile in `panel-ui.json`; **script** / **parameters** default closed).
+
+**Credentials** are a **2×2** button grid: **Save** / **Clear** on the first
+row, **Log in** / **Logout** on the second. Logout stays disabled unless
+the focused slot is ingame. Auto-login on title follows the focused
+profile's vault setting.
+
+**Log** is **per client thread** (per username status-transition lines),
+not one concatenated process log. When nothing is focused the view shows
+the `PROCESS` key.
+
+Script and parameters stay mocked (campaign 5). Unwired controls are
+**disabled** with a per-item `campaign 5` tooltip (`SetItemTooltip`, not
+one window for every mock). Text and buttons wrap or equal-width-squish —
+**no horizontal scroll**. `chrome.rs` keeps the section inventory
+(`wired: bool`). Title (MultiBox is a live toggle), dim build line,
+banner, profile, status key/value rows, rendering, and input fill out the
+strip.
 
 ## Headless proof
 

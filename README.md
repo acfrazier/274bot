@@ -66,13 +66,23 @@ cargo run --release -p panel --bin panel-play
 # Headed live (BOT_VAULT_PASS unused): FAIL+exit 1; PASS keeps the window up
 cargo run --release -p panel --bin panel-play -- --live null_raster
 # or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
+
+# 50-bot MultiBox wall watch (temp vault s00…s49; 10 min timeout; local engine)
+cargo run --release -p panel --bin panel-play -- --live stress50
+# or BOT_LIVE=stress50; FIFO login takes minutes; does not fail on RSS size
 ```
 
 `--release` matters: Pix3D is a CPU 3D painter. A debug `cargo run` will
 look frozen and show a gigabyte-class Activity Monitor spike (and `cargo`
 itself may dwarf the process). The panel only starts the **focused**
 vault profile; switching the combo starts a parked name once, then
-channel-changes among already-running slots.
+channel-changes among already-running slots. Last focus persists in
+`~/.274bot/panel-ui.json` (`last_focus`). Collapsible section headings
+persist per profile there too (**script** / **parameters** default closed).
+Credentials are **2×2**: Save/Clear then Log in/Logout (Logout disabled
+unless focused+ingame). The panel log is **per client thread** (per
+username), not one concatenated process log. There is **no mainland
+checkbox** in the panel.
 
 `--vault-pass` is equivalent to the env (panel-play uses the env or the
 in-panel prompt). Empty passphrase is rejected. First run creates
@@ -87,14 +97,16 @@ scene 2 sends the rs2b0t tutorial skip (`tele` Lumbridge courtyard +
 Tutorial Island.
 
 **Windows:** `panel-play` is an OS window. It does **not** open the client's
-`Present` applet. The Game pane is a **765×503 CpuPix3D** blit into ImGui
-(watch **1 fps**, capture **50 fps**). Unfocused / renderer-off slots skip
-`game_draw` (`draw=false`). The real 765×503 applet is
+`Present` applet. The Game pane is a **CpuPix3D** blit into ImGui, **never
+below 765×503** (`fit_applet` scale floor 1.0; grid tiles may still
+downscale). Watch **1 fps**, capture **50 fps**. Unfocused / renderer-off
+slots skip `game_draw` (`draw=false`). The real 765×503 applet is
 `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity —
 not a second 3D engine in 274bot. CpuPix3D is the **holding** painter for
 the operator wall (Null / 1 fps). A GPU 3D backend is **not** this repo and
 **not** Fairy-Ring; if it happens it is **last** on bothost — a tech demo
 of **50 clients at full rate on one GPU**, not the 50-bot product path.
+Scripts stay mocked.
 
 ## Live tests
 
