@@ -2,6 +2,7 @@ pub mod app;
 pub mod chrome;
 pub mod focus;
 pub mod game_view;
+pub mod picker;
 pub mod session;
 pub mod theme;
 

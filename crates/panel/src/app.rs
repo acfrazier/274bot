@@ -14,6 +14,7 @@ use dear_imgui_rs::{
 use crate::chrome::{button_row_layout, PARAM_ROW, SCRIPT_ROW};
 use crate::focus::{should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
+use crate::picker;
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
@@ -428,15 +429,14 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// WalkTo: main-chrome button that opens the tile picker (Task 10). Until
-/// the picker exists clicking just sets the open flag; no map window yet.
+/// WalkTo: main-chrome button that opens the collision-dot tile picker.
 fn walkto_button(ui: &Ui, session: &mut Session) {
     ui.spacing();
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("WalkTo", [w, 0.0]) {
         session.walkto_open = true;
     }
-    ui.tooltip_text("open tile picker (Task 10)");
+    ui.tooltip_text("open tile picker");
 }
 
 /// script: mocked until campaign 5. Layout matches BotPanel (name+Browse,
@@ -575,6 +575,9 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
             let title = game_window_title(state.session.focused_name().as_deref());
             dock_host(ui, &mut state, &title);
             panel_window(ui, &mut state.session);
+            if state.session.walkto_open {
+                picker::picker_window(ui, &mut state.session);
+            }
             game_window(ui, addons, &mut state, &title);
         })
         .run()
