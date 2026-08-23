@@ -472,6 +472,18 @@ fn spawn_slot_thread(
                             tick_flags(c, &ifaces_template, &arm) || !c.ingame
                         },
                     );
+                    // The 20 ms body exits as soon as the client leaves the
+                    // game (clean IF logout / DC / stop); the last observe
+                    // ran before the exit, so record the title state here —
+                    // statuses, the rail traffic light, and the live
+                    // harness must see `!ingame`.
+                    {
+                        let mut all = slot_statuses.lock().unwrap();
+                        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                            s.ingame = client.ingame;
+                            s.scene_state = client.scene_state;
+                        }
+                    }
                 }
                 Err(e) => {
                     let msg = format!("code {}: {}", e.code, e.mes2);

@@ -102,3 +102,47 @@ pub fn login_starts(statuses: &[SlotStatus]) -> Vec<Instant> {
     starts.sort();
     starts
 }
+
+/// Poll `play` until `want` slots show `!ingame` (a clean IF logout put
+/// them back on the title) or the timeout fires (then `fail` — a dirty
+/// disconnect is a FAIL, not a skip).
+pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let statuses = play.statuses();
+        let out = statuses.iter().filter(|s| !s.ingame).count();
+        if out >= want {
+            println!("PASS: {case}: {out} slot(s) on the title after logout");
+            return;
+        }
+        if Instant::now() >= deadline {
+            fail(&format!(
+                "{case}: {out}/{want} slot(s) left the game after {timeout:?}; \
+                 statuses: {statuses:?}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// A title-hold assert: for `duration`, every slot must stay `!ingame`
+/// (armed slots must not handshake on their own). Fails on the first
+/// ingame status.
+pub fn assert_none_ingame_for(play: &Play, duration: Duration, case: &str) {
+    let deadline = Instant::now() + duration;
+    loop {
+        let statuses = play.statuses();
+        let ingame = statuses.iter().filter(|s| s.ingame).count();
+        if ingame > 0 {
+            fail(&format!(
+                "{case}: {ingame} slot(s) went ingame during the {duration:?} title hold; \
+                 statuses: {statuses:?}"
+            ));
+        }
+        if Instant::now() >= deadline {
+            println!("PASS: {case}: no slot ingame for {duration:?}");
+            return;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+}
