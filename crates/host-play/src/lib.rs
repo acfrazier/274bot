@@ -14,7 +14,7 @@ use client::client::ClientConfig;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
 pub use host::debug_enabled;
-use host::login_queue::{LoginBackoff, LoginQueue, Permit};
+use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
@@ -57,6 +57,11 @@ pub struct SlotStatus {
     pub walk_x: i32,
     pub walk_z: i32,
     pub walk_level: i32,
+    /// Place in the login FIFO while waiting for a permit: 1-based
+    /// `position` of `total`; both -1 when not queued (same sentinel as
+    /// the `walk_*` fields).
+    pub queue_position: i32,
+    pub queue_total: i32,
 }
 
 /// Absolute world tile from the scene origin plus the local-player route
@@ -90,6 +95,8 @@ impl Default for SlotStatus {
             walk_x: -1,
             walk_z: -1,
             walk_level: -1,
+            queue_position: -1,
+            queue_total: -1,
         }
     }
 }
@@ -240,7 +247,7 @@ fn spawn_slot_thread(
 
         let mut backoff = LoginBackoff::new();
         loop {
-            wait_for_permit(&slot_queue, uid);
+            wait_for_permit(&slot_queue, &slot_statuses, &username, uid);
             let login_started = Instant::now();
             {
                 let mut all = slot_statuses.lock().unwrap();
@@ -401,14 +408,45 @@ fn load_template(cache_dir: &str) -> (Cache, Vec<Option<IfType>>) {
     (cache, ifaces)
 }
 
-/// Block until the login queue grants `uid` a handshake permit.
-fn wait_for_permit(queue: &Arc<Mutex<LoginQueue>>, uid: i32) {
+/// Copy a login-queue snapshot onto every `SlotStatus` row named `name`;
+/// `None` (granted or not queued) clears both fields back to -1.
+fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
+    let (position, total) = match pos {
+        Some(p) => (p.position as i32, p.total as i32),
+        None => (-1, -1),
+    };
+    for s in rows.iter_mut().filter(|s| s.username == name) {
+        s.queue_position = position;
+        s.queue_total = total;
+    }
+}
+
+/// Block until the login queue grants `uid` a handshake permit, mirroring
+/// the queue position onto the slot's status row while it waits.
+fn wait_for_permit(
+    queue: &Arc<Mutex<LoginQueue>>,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    uid: i32,
+) {
     loop {
         let wait = {
             let mut q = queue.lock().unwrap();
             match q.request_permit(uid, Instant::now()) {
-                Permit::Grant => return,
-                Permit::Wait(wait) => wait,
+                Permit::Grant => {
+                    drop(q);
+                    let mut all = statuses.lock().unwrap();
+                    apply_queue_wait(&mut all, username, None);
+                    return;
+                }
+                Permit::Wait(wait) => {
+                    let pos = q.status(uid);
+                    drop(q);
+                    let mut all = statuses.lock().unwrap();
+                    apply_queue_wait(&mut all, username, pos);
+                    drop(all);
+                    wait
+                }
             }
         };
         thread::sleep(wait);
@@ -486,6 +524,20 @@ mod tests {
     fn slot_status_walk_defaults_cleared() {
         let s = SlotStatus::default();
         assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
+    }
+
+    #[test]
+    fn apply_queue_wait_writes_k_of_n_and_grant_clears() {
+        let mut rows = vec![
+            SlotStatus { username: "a".into(), queue_position: -1, queue_total: -1, ..SlotStatus::default() },
+            SlotStatus { username: "b".into(), queue_position: -1, queue_total: -1, ..SlotStatus::default() },
+        ];
+        apply_queue_wait(&mut rows, "b", Some(host::login_queue::QueuePos { position: 2, total: 2 }));
+        assert_eq!(rows[1].queue_position, 2);
+        assert_eq!(rows[1].queue_total, 2);
+        apply_queue_wait(&mut rows, "b", None);
+        assert_eq!(rows[1].queue_position, -1);
+        assert_eq!(rows[1].queue_total, -1);
     }
 
     #[test]
