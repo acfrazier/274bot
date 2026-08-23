@@ -43,6 +43,8 @@ pub struct Traveller {
     /// The tile observed on the previous tick; the per-hop budget resets
     /// when the player advances off it.
     last_here: Option<Tile>,
+    /// Whether the most recent walk hop was accepted by the driver.
+    last_walk_ok: Option<bool>,
     /// The leg currently being worked.
     leg: usize,
 }
@@ -57,6 +59,7 @@ impl Traveller {
             hop_ticks: 0,
             budget: 60,
             last_here: None,
+            last_walk_ok: None,
             leg: 0,
         }
     }
@@ -67,6 +70,7 @@ impl Traveller {
         self.route = Some(route);
         self.hop_ticks = 0;
         self.last_here = None;
+        self.last_walk_ok = None;
         self.leg = 0;
         self.status = NavStatus::Idle;
     }
@@ -77,12 +81,19 @@ impl Traveller {
         self.dest = None;
         self.hop_ticks = 0;
         self.last_here = None;
+        self.last_walk_ok = None;
         self.leg = 0;
     }
 
     /// The destination currently queued, if any.
     pub fn queued(&self) -> Option<Tile> {
         self.dest
+    }
+
+    /// Whether the most recent walk hop was accepted by the driver (for
+    /// live diagnostics; `None` before the first hop).
+    pub fn last_walk_ok(&self) -> Option<bool> {
+        self.last_walk_ok
     }
 
     /// The tiles still ahead on the armed route, front to back. Walk legs
@@ -210,7 +221,7 @@ impl Traveller {
                         .nth(15)
                         .unwrap_or(last)
                 };
-                walk(d, target.x, target.z);
+                self.last_walk_ok = Some(walk(d, target.x, target.z));
                 self.status = NavStatus::Walking;
             }
             Leg::Door { loc, loc_id, to, .. } => {
@@ -219,7 +230,7 @@ impl Traveller {
                 // open, re-open and walk through on the same tick so a
                 // closing door cannot slam between ticks.
                 if door_open {
-                    walk(d, to.x, to.z);
+                    self.last_walk_ok = Some(walk(d, to.x, to.z));
                 }
                 self.status = NavStatus::Door;
             }

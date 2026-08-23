@@ -279,6 +279,20 @@ fn walk_translates_absolute_dest_into_scene_coords() {
     assert_eq!(r.moves, vec![(52, 52, 30, 22, false, 0, 0, 0, 0, 0, 0)]);
 }
 
+/// `walk` clamps an absolute dest that lands outside the current 104×104
+/// build area into 1..102 scene coords, so `tryMove` can always path the
+/// last mile from this rebuild (the next tick re-aims after the crossing).
+#[test]
+fn walk_clamps_absolute_dest_into_current_scene() {
+    let mut r = Recorder {
+        route: Some((52, 52)),
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    assert!(walk(&mut r, 3400, 3000));
+    assert_eq!(r.moves, vec![(52, 52, 102, 1, false, 0, 0, 0, 0, 0, 0)]);
+}
+
 /// `interact` dispatches the already-prepared menu slot.
 #[test]
 fn interact_dispatches_prepared_slot() {

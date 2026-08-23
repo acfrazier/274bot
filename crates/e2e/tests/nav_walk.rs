@@ -32,6 +32,8 @@ const DEST: Tile = Tile { x: 3230, z: 3222, level: 0 };
 struct Shared {
     last_gen: u64,
     here: Option<Tile>,
+    scene_state: i32,
+    base: (i32, i32),
     traveller: Traveller,
     arrived: bool,
     failed: Option<String>,
@@ -42,6 +44,8 @@ impl Default for Shared {
         Self {
             last_gen: 0,
             here: None,
+            scene_state: 0,
+            base: (0, 0),
             traveller: Traveller::new(),
             arrived: false,
             failed: None,
@@ -83,6 +87,8 @@ fn nav_walk() {
                     level: 0,
                 };
                 let mut s = shared.lock().unwrap();
+                s.scene_state = c.scene_state;
+                s.base = (c.map_build_base_x, c.map_build_base_z);
                 // Tick on movement or on a player update: the gen latch
                 // re-arms a walk while standing, the tile latch advances
                 // the route as the player moves.
@@ -93,7 +99,16 @@ fn nav_walk() {
                 s.here = Some(here);
                 let status = s.traveller.tick(c, here, false);
                 if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                    println!("nav_walk: here={here:?} status={status:?}");
+                    let (bx, bz) = (c.map_build_base_x, c.map_build_base_z);
+                    println!(
+                        "nav_walk: here={here:?} status={status:?} walk_ok={:?} \
+                         base=({bx},{bz}) scene_dest=({},{}) flag=({},{})",
+                        s.traveller.last_walk_ok(),
+                        DEST.x - bx,
+                        DEST.z - bz,
+                        c.minimap_flag_x,
+                        c.minimap_flag_z,
+                    );
                 }
                 match status {
                     NavStatus::Arrived => s.arrived = true,
@@ -125,19 +140,23 @@ fn nav_walk() {
             return;
         }
         if !armed {
-            if let Some(here) = s.here {
-                if grid.walkable(here) {
-                    match find(&grid, here, DEST) {
-                        Ok(route) => {
-                            s.traveller.arm(route);
-                            armed = true;
-                            started = Some(Instant::now());
-                            println!("nav_walk: armed route {here:?} -> {DEST:?}");
-                        }
-                        Err(_) => {
-                            fail(&format!(
-                                "nav_walk: no pack path from {here:?} to {DEST:?}"
-                            ))
+            // Wait for a real mainland scene: scene 2 with a world build
+            // origin (>=3000), not the tutorial island or a 0 base.
+            if s.scene_state == 2 && s.base.0 >= 3000 && s.base.1 >= 3000 {
+                if let Some(here) = s.here {
+                    if grid.walkable(here) {
+                        match find(&grid, here, DEST) {
+                            Ok(route) => {
+                                s.traveller.arm(route);
+                                armed = true;
+                                started = Some(Instant::now());
+                                println!("nav_walk: armed route {here:?} -> {DEST:?}");
+                            }
+                            Err(_) => {
+                                fail(&format!(
+                                    "nav_walk: no pack path from {here:?} to {DEST:?}"
+                                ))
+                            }
                         }
                     }
                 }
