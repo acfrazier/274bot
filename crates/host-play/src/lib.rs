@@ -107,19 +107,23 @@ impl Default for SlotStatus {
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
 /// slot logs in immediately.
 pub struct SlotArm {
+    /// The profile uid this arm controls; `stop_slot` uses it to drop the
+    /// slot's login-FIFO place before the thread exits.
+    pub uid: i32,
     pub want_login: Arc<AtomicBool>,
     pub want_logout: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
     pub latch: Arc<AtomicBool>,
-    /// The spawn-time auto-login intent (CLI `new(true)` stays armed so an
-    /// unexpected DC re-handshakes; a panel one-shot arm disarms after the
-    /// handshake unless the profile's auto_login was on).
+    /// The spawn-time auto-login intent (CLI `new(uid, true)` stays armed
+    /// so an unexpected DC re-handshakes; a panel one-shot arm disarms
+    /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
 }
 
 impl SlotArm {
-    pub fn new(want_login: bool) -> Arc<Self> {
+    pub fn new(uid: i32, want_login: bool) -> Arc<Self> {
         Arc::new(Self {
+            uid,
             want_login: Arc::new(AtomicBool::new(want_login)),
             want_logout: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
@@ -168,7 +172,7 @@ fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> 
 /// call; later slots share the same login FIFO, cache, and per-frame hook.
 pub struct Play {
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
-    handles: Vec<thread::JoinHandle<()>>,
+    handles: HashMap<String, thread::JoinHandle<()>>,
     options: PlayOptions,
     cache: Arc<Cache>,
     ifaces: Vec<Option<IfType>>,
@@ -187,7 +191,7 @@ impl Play {
     /// Blocks until every slot thread exits (slot threads run forever, so
     /// this only returns if a slot panicked).
     pub fn join(self) {
-        for handle in self.handles {
+        for (_, handle) in self.handles {
             let _ = handle.join();
         }
     }
@@ -198,10 +202,28 @@ impl Play {
         self.arms.get(name).cloned()
     }
 
+    /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
+    /// place immediately (a queued slot must not keep later slots behind
+    /// it even if the thread is still blocked in `wait_for_permit`),
+    /// forget the name, then join the thread. The slot body checks `stop`
+    /// every 20 ms, so the join returns within a frame when the thread is
+    /// inside `run_client`. Do **not** abort the TCP link here — the
+    /// caller sends a clean IF logout before calling this.
+    pub fn stop_slot(&mut self, name: &str) {
+        if let Some(arm) = self.arms.get(name) {
+            arm.stop.store(true, Ordering::Relaxed);
+            self.queue.lock().unwrap().leave(arm.uid);
+        }
+        self.spawned.remove(name);
+        if let Some(handle) = self.handles.remove(name) {
+            let _ = handle.join();
+        }
+    }
+
     /// Spawn one more slot on this play's FIFO. No-op if `username` is
     /// already in the status list (already running). `None` arm behaves as
-    /// [`SlotArm::new(true)`] — the slot logs in immediately (CLI/e2e);
-    /// the panel passes a real arm so it can sit on the title.
+    /// [`SlotArm::new(profile.uid, true)`] — the slot logs in immediately
+    /// (CLI/e2e); the panel passes a real arm so it can sit on the title.
     pub fn spawn_slot(
         &mut self,
         profile: Profile,
@@ -212,7 +234,12 @@ impl Play {
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
-        let arm = arm.unwrap_or_else(|| SlotArm::new(true));
+        let mut arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
+        // `stop_slot` leaves the FIFO by `arm.uid`; force it from the
+        // profile at spawn so a panel arm built before spawn cannot drift.
+        if let Some(arm) = Arc::get_mut(&mut arm) {
+            arm.uid = profile.uid;
+        }
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         spawn_slot_thread(
             &self.options,
@@ -256,7 +283,7 @@ where
     let (cache, ifaces) = load_template(&options.cache_dir);
     let mut play = Play {
         statuses: Arc::new(Mutex::new(Vec::new())),
-        handles: Vec::new(),
+        handles: HashMap::new(),
         options: options.clone(),
         cache: Arc::new(cache),
         ifaces,
@@ -283,7 +310,7 @@ fn spawn_slot_thread(
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
-    handles: &mut Vec<thread::JoinHandle<()>>,
+    handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
     let username = profile.username.clone();
     let uid = profile.uid;
@@ -297,7 +324,7 @@ fn spawn_slot_thread(
     };
     let mainland = options.mainland;
 
-    handles.push(thread::spawn(move || {
+    handles.insert(username.clone(), thread::spawn(move || {
         let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
 
         {
@@ -601,6 +628,50 @@ mod tests {
     }
 
     #[test]
+    fn stop_slot_sets_stop_and_forgets_name() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        // No real client: fake arm (uid 7) and a handle that exits only
+        // once `stop_slot` flags it.
+        let arm = SlotArm::new(7, false);
+        play.arms.insert("alice".into(), Arc::clone(&arm));
+        let watchdog = {
+            let arm = Arc::clone(&arm);
+            thread::spawn(move || {
+                while !arm.stop.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+        play.handles.insert("alice".into(), watchdog);
+        play.spawned.insert("alice".into());
+        // uid 7 sits queued behind a granted head; stop_slot must drop it
+        // from the FIFO even though the thread is still running.
+        {
+            let mut q = play.queue.lock().unwrap();
+            assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
+            assert!(matches!(q.request_permit(7, Instant::now()), Permit::Wait(_)));
+        }
+
+        play.stop_slot("alice");
+
+        assert!(arm.stop.load(Ordering::Relaxed));
+        assert!(!play.spawned.contains("alice"));
+        assert!(play.handles.is_empty());
+        assert!(play.queue.lock().unwrap().status(7).is_none());
+    }
+
+    #[test]
     fn prepare_client_from_shared_template() {
         let cache = Arc::new(Cache::default());
         let cfg = ClientConfig {
@@ -637,7 +708,7 @@ mod tests {
 
     #[test]
     fn spawn_without_auto_login_does_not_handshake() {
-        let arm = SlotArm::new(false);
+        let arm = SlotArm::new(0, false);
         assert!(!should_handshake(&arm, false));
         arm.want_login.store(true, Ordering::Relaxed);
         assert!(should_handshake(&arm, false));
@@ -650,21 +721,21 @@ mod tests {
 
     #[test]
     fn login_success_keeps_auto_login_armed_but_disarms_one_shot() {
-        // CLI: `new(true)` (auto_login true) stays armed so an unexpected
+        // CLI: `new(uid, true)` (auto_login true) stays armed so an unexpected
         // DC re-handshakes.
-        let arm = SlotArm::new(true);
+        let arm = SlotArm::new(0, true);
         on_login_success(&arm);
         assert!(should_handshake(&arm, false));
 
         // Panel Log in / Login all: armed explicitly, then disarmed after
         // the handshake — a DC sits on the title.
-        let arm = SlotArm::new(false);
+        let arm = SlotArm::new(0, false);
         arm.want_login.store(true, Ordering::Relaxed);
         on_login_success(&arm);
         assert!(!should_handshake(&arm, false));
 
         // The intentional-logout latch blocks even an auto-login slot.
-        let arm = SlotArm::new(true);
+        let arm = SlotArm::new(0, true);
         arm.latch.store(true, Ordering::Relaxed);
         on_login_success(&arm);
         assert!(!should_handshake(&arm, false));
@@ -685,7 +756,7 @@ mod tests {
         ifaces[7] = Some(com);
         let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), ifaces.clone());
         client.ingame = true;
-        let arm = SlotArm::new(false);
+        let arm = SlotArm::new(0, false);
         arm.want_logout.store(true, Ordering::Relaxed);
 
         // want_logout + ingame presses CC_LOGOUT, latches, and does not stop.
