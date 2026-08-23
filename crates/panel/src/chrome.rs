@@ -45,7 +45,18 @@ pub fn button_row_layout(avail: f32, count: usize) -> (f32, bool) {
     }
 }
 
-/// Global/Nav/Loadouts/MultiBox are controls inside parameters/title, still listed.
+/// Title-row tooltips for the wired MultiBox toggle: `on` = the sidecar
+/// rail/grid is up, `off` = closing it does not log anyone out.
+pub fn multibox_tooltip(on: bool) -> &'static str {
+    if on {
+        "hide rail — slots keep running"
+    } else {
+        "sidecar wall"
+    }
+}
+
+/// Global/Nav/Loadouts are controls inside parameters, still listed.
+/// MultiBox was a title-row mock before campaign 4; it is now wired.
 pub const MOCK_BUTTONS: &[&str] = &[
     "Browse…",
     "Start",
@@ -54,7 +65,6 @@ pub const MOCK_BUTTONS: &[&str] = &[
     "Global settings",
     "Nav settings",
     "Loadouts",
-    "MultiBox",
 ];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
@@ -63,8 +73,8 @@ pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
 #[cfg(test)]
 mod tests {
     use crate::chrome::{
-        button_row_layout, equal_button_width, MOCK_BUTTONS, PARAM_ROW, SCRIPT_ROW, sections,
-        BUTTON_GAP, MIN_BUTTON,
+        button_row_layout, equal_button_width, multibox_tooltip, MOCK_BUTTONS, PARAM_ROW,
+        SCRIPT_ROW, sections, BUTTON_GAP, MIN_BUTTON,
     };
     use crate::theme::{apply_amber, ACCENT, PANEL_WIDTH, integer_ui_scale};
 
@@ -84,9 +94,20 @@ mod tests {
     }
 
     #[test]
-    fn mock_buttons_include_panel_controls() {
-        for b in ["Global settings", "Nav settings", "Loadouts", "MultiBox"] {
-            assert!(MOCK_BUTTONS.contains(&b), "missing mock button {b:?}");
+    fn multibox_tooltip_matches_the_plan_copy() {
+        assert_eq!(multibox_tooltip(true), "hide rail — slots keep running");
+        assert_eq!(multibox_tooltip(false), "sidecar wall");
+    }
+
+    #[test]
+    fn multibox_is_wired_not_a_mock() {
+        assert!(
+            !MOCK_BUTTONS.contains(&"MultiBox"),
+            "MultiBox is a live toggle; only script chrome stays mocked"
+        );
+        for b in ["Browse…", "Start", "Pause", "Stop", "Global settings", "Nav settings", "Loadouts"]
+        {
+            assert!(MOCK_BUTTONS.contains(&b), "script mock {b:?} must still be listed");
         }
     }
 

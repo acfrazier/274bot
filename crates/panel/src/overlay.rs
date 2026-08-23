@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use dear_imgui_rs::Ui;
 use nav::tile::Tile;
 
+use crate::queue_card::{queue_ahead_label, queue_k_of_n, QUEUE_CARD_TITLE};
 use crate::session::Session;
 use crate::theme::ACCENT;
 
@@ -83,6 +84,53 @@ fn points_for(session: &Session, min: [f32; 2], size: [f32; 2]) -> Vec<[f32; 2]>
         .collect()
 }
 
+/// Amber queue-card lines for a focused FIFO place: title, `k of n`,
+/// ahead label. Empty when the slot is not queued, so the card disappears
+/// the moment the grant lands (`logging in…`).
+fn queue_card_lines(queue: Option<(i32, i32)>) -> Vec<String> {
+    match queue {
+        Some((k, n)) => vec![
+            QUEUE_CARD_TITLE.to_string(),
+            queue_k_of_n(k, n).unwrap_or_default(),
+            queue_ahead_label(k.max(1) as u32),
+        ],
+        None => Vec::new(),
+    }
+}
+
+/// Draw the queue card as a dark amber-bordered block over the Image,
+/// using the same WindowDrawList as the nav polyline. `min` is the Image's
+/// top-left corner. Width is an estimate (no font measurement at this
+/// layer), so the block only needs to be legible, not pixel-perfect.
+fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
+    const PAD: f32 = 8.0;
+    const LINE_H: f32 = 15.0;
+    let top = [min[0] + PAD, min[1] + PAD];
+    let width = lines
+        .iter()
+        .map(|l| l.len() as f32 * 7.0)
+        .fold(PAD * 2.0, f32::max);
+    let height = PAD * 2.0 + LINE_H * (lines.len() as f32 - 1.0) + 13.0;
+    let dl = ui.get_window_draw_list();
+    dl.add_rect(
+        [top[0] - PAD, top[1] - PAD],
+        [top[0] + width, top[1] + height],
+        [0.0, 0.0, 0.0, 0.6],
+    )
+    .filled(true)
+    .build();
+    dl.add_rect(
+        [top[0] - PAD, top[1] - PAD],
+        [top[0] + width, top[1] + height],
+        ACCENT,
+    )
+    .thickness(1.0)
+    .build();
+    for (i, line) in lines.iter().enumerate() {
+        dl.add_text([top[0], top[1] + i as f32 * LINE_H], ACCENT, line);
+    }
+}
+
 /// Cached overlay polyline: window-space vertices rebuilt only when the
 /// route generation changes (rising edge on a new arm / focus switch) or
 /// [`REFRESH`] elapsed, so an unchanged route does not recompute or
@@ -91,6 +139,10 @@ pub struct PathOverlay {
     points: Vec<[f32; 2]>,
     gen: u64,
     last: Instant,
+    /// Cached focused FIFO place; the queue card must appear immediately
+    /// on enqueue, so the tuple (not the 1 s raster cadence) is the gen.
+    queue: Option<(i32, i32)>,
+    queue_lines: Vec<String>,
 }
 
 impl PathOverlay {
@@ -99,6 +151,8 @@ impl PathOverlay {
             points: Vec::new(),
             gen: 0,
             last: Instant::now(),
+            queue: None,
+            queue_lines: Vec::new(),
         }
     }
 
@@ -124,6 +178,14 @@ impl PathOverlay {
                 .thickness(2.0)
                 .build();
         }
+        let queue = session.focused_queue();
+        if queue != self.queue {
+            self.queue = queue;
+            self.queue_lines = queue_card_lines(queue);
+        }
+        if !self.queue_lines.is_empty() {
+            draw_queue_card(ui, min, &self.queue_lines);
+        }
     }
 }
 
@@ -140,7 +202,7 @@ mod tests {
     use nav::grid::StepGrid;
     use nav::tile::Tile;
 
-    use super::{needs_refresh, tile_to_local, PathOverlay};
+    use super::{needs_refresh, queue_card_lines, tile_to_local, PathOverlay};
     use crate::session::Session;
 
     #[test]
@@ -271,5 +333,63 @@ mod tests {
         ctx.render();
         assert_eq!(overlay.points()[0], first);
         assert_ne!(overlay.points().last().copied(), Some(last));
+    }
+
+    #[test]
+    fn queue_card_lines_match_rs2b0t_copy() {
+        assert_eq!(queue_card_lines(None), Vec::<String>::new());
+        let lines = queue_card_lines(Some((1, 2)));
+        assert_eq!(lines[0], "AUTO-LOGIN QUEUE");
+        assert_eq!(lines[1], "1 of 2");
+        assert_eq!(lines[2], "0 bots in front");
+        let lines = queue_card_lines(Some((2, 2)));
+        assert_eq!(lines[2], "1 bot in front");
+    }
+
+    #[test]
+    fn overlay_draws_queue_card_when_focused_slot_is_queued() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.statuses.push(host_play::SlotStatus {
+            username: "alice".into(),
+            queue_position: 1,
+            queue_total: 2,
+            ..host_play::SlotStatus::default()
+        });
+        let mut overlay = PathOverlay::new();
+        ui.window("##overlay-queue-test").build(|| {
+            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+        });
+        ctx.render();
+        assert_eq!(
+            overlay.queue_lines,
+            vec!["AUTO-LOGIN QUEUE".to_string(), "1 of 2".to_string(), "0 bots in front".to_string()]
+        );
+    }
+
+    #[test]
+    fn overlay_skips_queue_card_when_not_queued() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        let mut overlay = PathOverlay::new();
+        ui.window("##overlay-queue-test").build(|| {
+            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+        });
+        ctx.render();
+        assert!(overlay.queue_lines.is_empty(), "no queue -> no card");
     }
 }

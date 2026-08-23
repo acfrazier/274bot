@@ -5,6 +5,7 @@ pub mod game_view;
 pub mod overlay;
 pub mod picker;
 pub mod queue_card;
+pub mod rail;
 pub mod resource;
 pub mod session;
 pub mod theme;

@@ -155,6 +155,9 @@ pub struct Session {
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
     /// it for the chooser and rail; [`Session`] methods drive it.
     pub wall: Wall,
+    /// MultiBox toggle: rail (or grid) policy is up. `Focus.wall_open`
+    /// mirrors this so extra rasters only run while the wall is visible.
+    pub multibox: bool,
 }
 
 /// Keep the panel log bounded.
@@ -203,6 +206,7 @@ impl Session {
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             wall: Wall::default(),
+            multibox: false,
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -584,6 +588,41 @@ impl Session {
         self.cred_pass.clear();
     }
 
+    /// Log out one member (the credentials Logout button): latch it so
+    /// auto-login is blocked until [`Session::login_all`], then arm a clean
+    /// IF logout. The slot stays up and focused; only the login intent
+    /// changes.
+    pub fn logout(&mut self, name: &str) {
+        self.wall.latch_logout(name);
+        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
+            arm.want_login.store(false, Ordering::Relaxed);
+            arm.want_logout.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Persist the focused profile's auto-login checkbox to the vault
+    /// (`ProfileSettings.auto_login`). Slot spawns/loads read the setting;
+    /// this method itself never spawns or stops a slot.
+    pub fn set_auto_login(&mut self, name: &str, on: bool) -> bool {
+        let Some(vault) = self.vault.as_mut() else {
+            self.error = Some("auto-login: vault locked".into());
+            return false;
+        };
+        let Some(mut profile) = vault.get(name).cloned() else {
+            self.error = Some(format!("auto-login: no profile {name}"));
+            return false;
+        };
+        profile.settings.auto_login = on;
+        match vault.upsert(profile) {
+            Ok(()) => self.error = None,
+            Err(e) => {
+                self.error = Some(format!("auto-login: {e}"));
+                return false;
+            }
+        }
+        true
+    }
+
     /// Load a wall member: ensure its slot and select it. Auto-login
     /// follows the vault profile setting unless the member's logout latch
     /// blocks it (`SlotArm::new(should_auto_login)`); a latched member is
@@ -638,6 +677,34 @@ impl Session {
                 arm.want_logout.store(true, Ordering::Relaxed);
                 arm.want_login.store(false, Ordering::Relaxed);
             }
+        }
+    }
+
+    /// MultiBox toggle. On: seed the wall with every already-running slot
+    /// (first on this process opens the chooser) and open the wall draw
+    /// policy (`Focus.wall_open`), which stays true for rail **or** grid.
+    /// Off: clear the grid and any open chooser and stop extra rasters
+    /// (`wall_open = false`) without logging anyone out.
+    pub fn set_multibox(&mut self, on: bool) {
+        self.multibox = on;
+        if on {
+            let running: Vec<String> = self
+                .play
+                .as_ref()
+                .map(|p| p.statuses().iter().map(|s| s.username.clone()).collect())
+                .unwrap_or_default();
+            self.wall.on_multibox_on(&running);
+        } else {
+            self.wall.on_multibox_off();
+        }
+        self.focus.lock().unwrap().wall_open = on;
+    }
+
+    /// Grid submode of MultiBox: hides the rail in the Game pane (the grid
+    /// cells themselves land in Task 12). A no-op while MultiBox is off.
+    pub fn set_grid(&mut self, on: bool) {
+        if self.multibox {
+            self.wall.grid = on;
         }
     }
 
@@ -738,6 +805,29 @@ impl Session {
             .find(|s| s.username == name)
             .filter(|s| s.tile_x != 0 || s.tile_z != 0)
             .map(|s| (s.tile_x, s.tile_z))
+    }
+
+    /// The focused slot's login-FIFO place `(position, total)` while it
+    /// waits for a permit (`position >= 1`), else `None`. The status row
+    /// and the queue card read this; grant clears it to `None`.
+    pub fn focused_queue(&self) -> Option<(i32, i32)> {
+        let name = self.focused_name()?;
+        self.statuses()
+            .iter()
+            .find(|s| s.username == name)
+            .filter(|s| s.queue_position >= 1)
+            .map(|s| (s.queue_position, s.queue_total))
+    }
+
+    /// Whether the focused slot is ingame — the Logout button's enable
+    /// gate (a queued or title-screen slot has nothing to log out).
+    pub fn focused_ingame(&self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        self.statuses()
+            .iter()
+            .any(|s| s.username == name && s.ingame)
     }
 
     /// Overlay generation for the path overlay's rising-edge refresh.
@@ -1307,5 +1397,112 @@ mod tests {
             s.vault.as_ref().unwrap().get("alice").is_some(),
             "clear must not delete the vault profile"
         );
+    }
+
+    #[test]
+    fn set_multibox_wires_wall_open_and_off_clears_grid() {
+        let mut s = Session::new();
+        assert!(!s.multibox);
+        assert!(!s.focus.lock().unwrap().wall_open);
+        s.set_multibox(true);
+        assert!(s.multibox);
+        assert!(s.focus.lock().unwrap().wall_open, "rail or grid: wall is open");
+        s.set_grid(true);
+        assert!(s.wall.grid);
+        assert!(
+            s.focus.lock().unwrap().wall_open,
+            "grid is a submode of MultiBox; wall_open stays on"
+        );
+        s.set_multibox(false);
+        assert!(!s.multibox);
+        assert!(!s.focus.lock().unwrap().wall_open, "extra rasters stop");
+        assert!(!s.wall.grid, "MultiBox off clears grid");
+    }
+
+    #[test]
+    fn set_grid_is_noop_while_multibox_off() {
+        let mut s = Session::new();
+        s.set_grid(true);
+        assert!(!s.wall.grid);
+    }
+
+    #[test]
+    fn set_auto_login_upserts_without_spawning() {
+        let path = tmp_vault("auto-login.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        assert!(s.set_auto_login("alice", true));
+        assert!(
+            s.vault.as_ref().unwrap().get("alice").unwrap().settings.auto_login
+        );
+        assert!(s.slots.is_empty(), "set_auto_login must not spawn a slot");
+        assert!(s.set_auto_login("alice", false));
+        assert!(
+            !s.vault.as_ref().unwrap().get("alice").unwrap().settings.auto_login
+        );
+    }
+
+    #[test]
+    fn set_auto_login_rejects_unknown_profile_without_spawning() {
+        let path = tmp_vault("auto-login-missing.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        assert!(!s.set_auto_login("nobody", true));
+        assert!(s.error.is_some(), "missing profile sets the banner");
+        assert!(s.slots.is_empty());
+    }
+
+    #[test]
+    fn logout_latches_member_until_login_all() {
+        let mut s = Session::new();
+        s.wall.load("alice");
+        s.logout("alice");
+        assert!(s.wall.latch.contains("alice"), "intentional logout latches");
+        assert!(!s.wall.should_auto_login("alice", true));
+        s.login_all();
+        assert!(!s.wall.latch.contains("alice"), "Login all clears the latch");
+    }
+
+    #[test]
+    fn focused_ingame_is_false_without_status() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        assert!(!s.focused_ingame());
+        s.statuses.push(SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            ..SlotStatus::default()
+        });
+        assert!(s.focused_ingame());
+    }
+
+    #[test]
+    fn focused_queue_tracks_the_focused_status_row() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        assert_eq!(s.focused_queue(), None, "not queued by default");
+        s.statuses.push(SlotStatus {
+            username: "alice".into(),
+            queue_position: 2,
+            queue_total: 3,
+            ..SlotStatus::default()
+        });
+        assert_eq!(s.focused_queue(), Some((2, 3)));
+
+        // A queued non-focused slot does not surface on another focus.
+        let mut s2 = Session::new();
+        s2.focus.lock().unwrap().focused = Some("bob".into());
+        s2.statuses.push(SlotStatus {
+            username: "alice".into(),
+            queue_position: 1,
+            queue_total: 2,
+            ..SlotStatus::default()
+        });
+        assert_eq!(s2.focused_queue(), None);
     }
 }

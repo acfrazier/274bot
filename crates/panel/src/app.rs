@@ -12,11 +12,13 @@ use dear_imgui_rs::{
     WindowFlags,
 };
 
-use crate::chrome::{button_row_layout, PARAM_ROW, SCRIPT_ROW};
+use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
 use crate::focus::{should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
 use crate::overlay::PathOverlay;
 use crate::picker;
+use crate::queue_card::queue_k_of_n;
+use crate::rail::{RAIL_W, RAIL_WINDOW};
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
@@ -62,12 +64,23 @@ fn amber_style(ctx: &mut dear_imgui_rs::Context) {
     apply_amber(ctx.style_mut());
 }
 
+/// Dock layouts for [`dock_host`]: single-bot `[game | panel]` or the
+/// MultiBox `[game | panel | rail]` strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockLayout {
+    Single,
+    Rail,
+}
+
 /// Per-frame panel state: lazily-created game texture and the session (vault,
 /// running slots, focus).
 struct PanelState {
     game_view: Option<GameView>,
     session: Session,
     dock_inited: bool,
+    /// Which dock layout the tree was last built with; `None` before the
+    /// first init. A MultiBox toggle rebuilds the tree when this differs.
+    dock_layout: Option<DockLayout>,
     game_dock_node: Option<Id>,
     docked_game_title: String,
     last_upload: Option<(String, u64)>,
@@ -82,6 +95,7 @@ impl Default for PanelState {
             game_view: None,
             session: Session::new(),
             dock_inited: false,
+            dock_layout: None,
             game_dock_node: None,
             docked_game_title: String::new(),
             last_upload: None,
@@ -98,6 +112,13 @@ fn single_bot_window_class() -> WindowClass {
 }
 
 /// Fullscreen dock host: game fills the left, 330px-class panel on the right.
+/// MultiBox (rail mode) splits an extra `RAIL_W` node on the far right.
+///
+/// OS-grow note: dear-app's `AddOns` does **not** expose the winit window
+/// (no `set_inner_size` on `AddOns`/`GpuApi`/`DockingApi`), so the plan's
+/// fallback path landed: the rail is split inside the current window and
+/// the game/panel shrink by `RAIL_W`. A later dear-app release that exposes
+/// the window could swap this for `window.set_inner_size` + `RAIL_W`.
 fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
     let viewport = ui.main_viewport();
     let pos = viewport.pos();
@@ -125,14 +146,44 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                 DockNodeFlags::AUTO_HIDE_TAB_BAR,
                 None,
             );
+            let want = if state.session.multibox && !state.session.wall.grid {
+                DockLayout::Rail
+            } else {
+                DockLayout::Single
+            };
+            if state.dock_layout != Some(want) {
+                // A MultiBox toggle rebuilds the whole tree. The next
+                // frame's DockSpace call above re-creates the node, so
+                // windows are re-docked a frame after the toggle.
+                DockBuilder::remove_node(ui, dock_id);
+                state.dock_layout = Some(want);
+                state.dock_inited = false;
+            }
             if !state.dock_inited && DockBuilder::node_exists(ui, dock_id) {
-                let ratio = panel_split_ratio(size[0]);
-                let (right, left) =
-                    DockBuilder::split_node(ui, dock_id, SplitDirection::Right, ratio);
-                DockBuilder::dock_window(ui, PANEL_WINDOW, right);
-                DockBuilder::dock_window(ui, game_title, left);
+                DockBuilder::set_node_size(ui, dock_id, [size[0], size[1]]);
+                match want {
+                    DockLayout::Single => {
+                        let ratio = panel_split_ratio(size[0]);
+                        let (right, left) =
+                            DockBuilder::split_node(ui, dock_id, SplitDirection::Right, ratio);
+                        DockBuilder::dock_window(ui, PANEL_WINDOW, right);
+                        DockBuilder::dock_window(ui, game_title, left);
+                        state.game_dock_node = Some(left);
+                    }
+                    DockLayout::Rail => {
+                        let rail_ratio = (RAIL_W / size[0]).clamp(0.1, 0.9);
+                        let (rail, main) =
+                            DockBuilder::split_node(ui, dock_id, SplitDirection::Right, rail_ratio);
+                        let panel_ratio = panel_split_ratio((size[0] - RAIL_W).max(1.0));
+                        let (panel, game) =
+                            DockBuilder::split_node(ui, main, SplitDirection::Right, panel_ratio);
+                        DockBuilder::dock_window(ui, RAIL_WINDOW, rail);
+                        DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
+                        DockBuilder::dock_window(ui, game_title, game);
+                        state.game_dock_node = Some(game);
+                    }
+                }
                 DockBuilder::finish(ui, dock_id);
-                state.game_dock_node = Some(left);
                 state.docked_game_title = game_title.to_string();
                 state.dock_inited = true;
             } else if state.docked_game_title != game_title {
@@ -308,7 +359,7 @@ fn panel_window(ui: &Ui, session: &mut Session) {
     ui.window(PANEL_WINDOW).build(|| {
         let _width = ui.push_item_width(-1.0);
         let _wrap = ui.push_text_wrap_pos(0.0);
-        title_row(ui);
+        title_row(ui, session);
         ui.text_colored(TEXT_DIM, BUILD_LINE);
         banner(ui, session);
         profile_section(ui, session);
@@ -323,18 +374,37 @@ fn panel_window(ui: &Ui, session: &mut Session) {
     });
 }
 
-fn title_row(ui: &Ui) {
+fn title_row(ui: &Ui, session: &mut Session) {
     ui.text_colored(ACCENT, TITLE);
     ui.same_line();
     let avail = ui.content_region_avail()[0];
-    let w = avail.min(72.0).max(1.0);
-    ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - w).max(0.0));
-    mock_button(
-        ui,
-        "MultiBox",
-        "slots already live; wall/sidecar is campaign 4",
-        [w, 0.0],
-    );
+    let (w, stack) = button_row_layout(avail, 2);
+    if !stack {
+        let total = w * 2.0 + BUTTON_GAP;
+        ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - total).max(0.0));
+    }
+    if ui.button_with_size("MultiBox", [w, 0.0]) {
+        session.set_multibox(!session.multibox);
+    }
+    ui.set_item_tooltip(multibox_tooltip(session.multibox));
+    if !stack {
+        ui.same_line();
+    }
+    // Grid is a MultiBox submode: hide the rail, Game pane lays members
+    // (cells land in Task 12). Unreachable until MultiBox is on.
+    let _grid_disabled = if session.multibox {
+        None
+    } else {
+        Some(ui.begin_disabled())
+    };
+    if ui.button_with_size("Grid", [w, 0.0]) {
+        session.set_grid(!session.wall.grid);
+    }
+    ui.set_item_tooltip(if session.multibox {
+        "grid mode — hide rail"
+    } else {
+        "enable MultiBox first"
+    });
 }
 
 fn banner(ui: &Ui, session: &Session) {
@@ -413,8 +483,9 @@ fn profile_section(ui: &Ui, session: &mut Session) {
 /// credentials: editable user/pass fields. Save upserts the vault profile,
 /// spawns the slot if it is not running, then selects it. Usable with an
 /// empty first-run vault (no focused profile required). Log in focuses an
-/// already-spawned slot; Clear empties the two fields without touching the
-/// vault. Panel does not auto-create test/test.
+/// already-spawned slot; Logout (enabled while the focused slot is ingame)
+/// arms a clean IF logout and latches auto-login; Clear empties the two
+/// fields without touching the vault. Panel does not auto-create test/test.
 fn credentials_section(ui: &Ui, session: &mut Session) {
     section_title(ui, "credentials");
     if session.vault.is_none() {
@@ -431,7 +502,7 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
         .hint("password")
         .build();
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 3);
+    let (w, stack) = button_row_layout(avail, 4);
     if ui.button_with_size("Save", [w, 0.0]) {
         session.save_credentials();
     }
@@ -447,14 +518,39 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
     if !stack {
         ui.same_line();
     }
+    {
+        let focused = session.focused_name();
+        let _logout_disabled = if focused.is_some() && session.focused_ingame() {
+            None
+        } else {
+            Some(ui.begin_disabled())
+        };
+        if ui.button_with_size("Logout", [w, 0.0]) {
+            if let Some(name) = focused {
+                session.logout(&name);
+            }
+        }
+        ui.set_item_tooltip("log out the focused slot — it stays in the combo");
+    }
+    if !stack {
+        ui.same_line();
+    }
     if ui.button_with_size("Clear", [w, 0.0]) {
         session.clear_credentials();
     }
-    {
-        let _disabled = ui.begin_disabled();
-        let mut auto = false;
-        ui.checkbox("auto-login on title", &mut auto);
-        ui.set_item_tooltip("mocked");
+    // Auto-login follows the focused profile's vault setting; toggling
+    // upserts it (never spawns a slot).
+    let focused = session.focused_name();
+    let auto = focused
+        .as_deref()
+        .and_then(|n| session.vault.as_ref().and_then(|v| v.get(n)))
+        .map(|p| p.settings.auto_login)
+        .unwrap_or(false);
+    let mut auto_cur = auto;
+    if ui.checkbox("auto-login on title", &mut auto_cur) {
+        if let Some(name) = focused {
+            session.set_auto_login(&name, auto_cur);
+        }
     }
 }
 
@@ -498,6 +594,7 @@ fn status_section(ui: &Ui, session: &Session) {
         kv_row(ui, "player", "—");
         kv_row(ui, "tile", "—");
         kv_row(ui, "walk", &session.walk_status_text());
+        kv_row(ui, "queue", "—");
         kv_row(ui, "modals", "—");
         return;
     }
@@ -522,6 +619,8 @@ fn status_section(ui: &Ui, session: &Session) {
     kv_row(ui, "player", player);
     kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
     kv_row(ui, "walk", &session.walk_status_text());
+    let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
+    kv_row(ui, "queue", &queue);
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
 }
 
@@ -570,6 +669,20 @@ fn input_section(ui: &Ui, session: &mut Session) {
     });
 }
 
+/// Sidecar rail window: only while MultiBox is on and Grid is off. Task 11
+/// paints the member tiles; this task shows the stub strip.
+fn rail_window(ui: &Ui, session: &Session) {
+    ui.window(RAIL_WINDOW)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
+        .build(|| {
+            ui.text_colored(ACCENT, "rail");
+            ui.text_wrapped(format!(
+                "{} member(s) · tiles land in Task 11",
+                session.wall.members.len()
+            ));
+        });
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
 pub fn run_panel() -> Result<(), dear_app::DearAppError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
@@ -611,6 +724,10 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
             }
             ui.set_next_window_class(&class);
             game_window(ui, addons, &mut state, &title);
+            if state.session.multibox && !state.session.wall.grid {
+                ui.set_next_window_class(&class);
+                rail_window(ui, &state.session);
+            }
         })
         .run()
 }
