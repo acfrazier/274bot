@@ -67,6 +67,10 @@ cargo run --release -p host-play -- --user test
 
 # Panel: same vault, native UI (campaign 2)
 cargo run --release -p panel --bin panel-play
+
+# Headed live (BOT_VAULT_PASS unused): FAIL+exit 1; PASS keeps the window up
+cargo run --release -p panel --bin panel-play -- --live null_raster
+# or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
 ```
 
 `--release` matters: Pix3D is a CPU 3D painter. A debug `cargo run` will

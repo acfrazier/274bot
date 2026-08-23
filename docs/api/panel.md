@@ -117,7 +117,34 @@ and never touches the vault.
 
 ### Resource honesty
 
-The resource card samples once a second. The first CPU and traffic samples read "measuring…". Traffic is the sum of each live slot’s `ClientStream` payload `bytes_in + bytes_out` over that second — never a fake `0 B/s` before two samples, and never `0 B/s` when there are no slots (still measuring…). A failed process sampler shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is the whole host (Null skip-paint does not free the ~1 GB scene). `BOT_DEBUG=1` also prints 1 Hz loop vs raster timings per slot and the RSS sample (4.5b baseline; 4 bots at ~10 GB is a suspected leak, not a closed RAM budget).
+The resource card is the operator measurement surface: **bots**, **CPU**,
+**RAM**, **traffic**, and **draw**, sampled once a second. The first CPU and
+traffic samples read "measuring…". Traffic is the sum of each live slot’s
+`ClientStream` payload `bytes_in + bytes_out` over that second — never a fake
+`0 B/s` before two samples, and never `0 B/s` when there are no slots (still
+measuring…). If a slot drops (or the byte sum shrinks), traffic
+**re-baselines** instead of inventing a wrap spike. A failed process sampler
+shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is
+the whole host (Null skip-paint does not free the ~1 GB scene); on macOS the
+RAM row is **peak** (`ru_maxrss`). Draw is the focused slot’s `game_draw`
+enters plus paint/skip counts. `BOT_DEBUG=1` also prints 1 Hz loop vs raster
+timings per slot and the RSS sample (4.5b baseline; 4 bots at ~10 GB is a
+suspected leak, not a closed RAM budget).
+
+## Headed live
+
+`BOT_VAULT_PASS` is unused for `--live`. Run the headed freeze harness:
+
+```bash
+cargo run --release -p panel --bin panel-play -- --live null_raster
+# or: BOT_LIVE=null_raster cargo run --release -p panel --bin panel-play
+```
+
+FAIL prints and exits 1. On PASS the window stays up. Headless twin:
+
+```bash
+LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
+```
 
 ## Amber
 
