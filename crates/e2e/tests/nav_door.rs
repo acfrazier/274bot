@@ -1,6 +1,9 @@
 //! Live: two headless slots in one `run_with_io` — `test` walks through the
 //! Catherby range-house door while `test2` is a tick-perfect closer.
 //!
+//! `per_frame` runs *before* host-play `mainland_hop` on the first
+//! `scene_state == 2`, so Catherby `cheat` teles wait until a later tick
+//! when `here` is the Lumbridge courtyard (mainland already applied).
 //! After the mainland hop, both cheat-tele to Catherby. The walker stages
 //! outside at (2813,3436,0) then arms dest (2817,3443,0) through door
 //! 1530 @ (2816,3438,0). The closer, on every `player_info`, `op_loc`s the
@@ -74,6 +77,9 @@ struct Slot {
     here: Option<Tile>,
     scene_state: i32,
     base: (i32, i32),
+    /// First `scene_state == 2` was observed; that frame host-play still
+    /// queues `mainland_hop` after `per_frame`, so Catherby tele waits.
+    scene2_seen: bool,
     tele_sent: bool,
     /// Closer: 1530 was already tried on this open door.
     tried_1530: bool,
@@ -102,6 +108,7 @@ impl Default for Slot {
             here: None,
             scene_state: 0,
             base: (0, 0),
+            scene2_seen: false,
             tele_sent: false,
             tried_1530: false,
         }
@@ -216,22 +223,18 @@ fn walker_frame(c: &mut client::client::Client, shared: &Arc<Mutex<Shared>>) {
     let mut s = shared.lock().unwrap();
     s.walker.scene_state = c.scene_state;
     s.walker.base = (c.map_build_base_x, c.map_build_base_z);
+    let here_changed = s.walker.here != Some(here);
+    s.walker.here = Some(here);
     s.loc_id = loc_id;
 
-    if at_lumbridge(here) && c.scene_state == 2 && !s.walker.tele_sent {
-        cheat(c, WALKER_TELE);
-        s.walker.tele_sent = true;
-        if debug() {
-            println!("nav_door walker: tele {WALKER_TELE} from {here:?}");
-        }
+    if stage_catherby_tele(c, here, &mut s.walker, WALKER_TELE, "walker") {
         return;
     }
 
-    if c.gens.player == s.walker.last_gen && s.walker.here == Some(here) {
+    if c.gens.player == s.walker.last_gen && !here_changed {
         return;
     }
     s.walker.last_gen = c.gens.player;
-    s.walker.here = Some(here);
 
     if !s.dest_armed {
         return;
@@ -282,12 +285,7 @@ fn closer_frame(c: &mut client::client::Client, shared: &Arc<Mutex<Shared>>) {
     s.closer.base = (c.map_build_base_x, c.map_build_base_z);
     s.closer.here = Some(here);
 
-    if at_lumbridge(here) && c.scene_state == 2 && !s.closer.tele_sent {
-        cheat(c, CLOSER_TELE);
-        s.closer.tele_sent = true;
-        if debug() {
-            println!("nav_door closer: tele {CLOSER_TELE} from {here:?}");
-        }
+    if stage_catherby_tele(c, here, &mut s.closer, CLOSER_TELE, "closer") {
         return;
     }
 
@@ -313,6 +311,37 @@ fn closer_frame(c: &mut client::client::Client, shared: &Arc<Mutex<Shared>>) {
     if debug() {
         println!("nav_door closer: here={here:?} loc_id={id} op_loc {op_id}");
     }
+}
+
+/// Host-play queues `mainland_hop` *after* `per_frame` on the first
+/// `scene_state == 2`. Skip that frame; Catherby-tele only once `here` is
+/// the Lumbridge courtyard (or `x > 3100` and not already at Catherby).
+fn stage_catherby_tele(
+    c: &mut client::client::Client,
+    here: Tile,
+    slot: &mut Slot,
+    cmd: &str,
+    who: &str,
+) -> bool {
+    if at_catherby(here) || slot.tele_sent {
+        return false;
+    }
+    if c.scene_state != 2 {
+        return false;
+    }
+    if !slot.scene2_seen {
+        slot.scene2_seen = true;
+        return false;
+    }
+    if !at_lumbridge(here) && here.x <= 3100 {
+        return false;
+    }
+    cheat(c, cmd);
+    slot.tele_sent = true;
+    if debug() {
+        println!("nav_door {who}: {cmd} from {here:?} (after mainland)");
+    }
+    true
 }
 
 fn wall_loc_id(c: &client::client::Client, tile: Tile) -> Option<i32> {
