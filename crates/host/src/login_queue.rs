@@ -18,6 +18,13 @@ pub enum Permit {
 const UID_GRANT_CAP: usize = 4;
 const UID_COOLDOWN: Duration = Duration::from_secs(16);
 
+/// Snapshot of a queued uid's place: `position` is 1-based among `total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueuePos {
+    pub position: u32,
+    pub total: u32,
+}
+
 /// FIFO queue of login permit requests.
 #[derive(Debug)]
 pub struct LoginQueue {
@@ -68,6 +75,21 @@ impl LoginQueue {
                 Permit::Grant
             }
         }
+    }
+
+    /// Where `uid` sits in the queue. `position` is 1-based; a granted uid
+    /// is popped and no longer present.
+    pub fn status(&self, uid: i32) -> Option<QueuePos> {
+        let i = self.queue.iter().position(|&u| u == uid)?;
+        Some(QueuePos {
+            position: (i as u32) + 1,
+            total: self.queue.len() as u32,
+        })
+    }
+
+    /// Drop `uid` from the queue (rail ✕ while queued). No-op if absent.
+    pub fn leave(&mut self, uid: i32) {
+        self.queue.retain(|&u| u != uid);
     }
 
     /// Longest unmet constraint for granting `uid` at `now`.
@@ -301,6 +323,37 @@ mod tests {
             "cooldown-elapsed uid 7 is not queued and must drop"
         );
         assert!(q.tracks(8));
+    }
+
+    #[test]
+    fn status_is_k_of_n_and_grant_clears() {
+        let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
+        let now = Instant::now();
+        assert!(q.status(1).is_none());
+        assert!(matches!(q.request_permit(1, now), Permit::Grant));
+        assert!(q.status(1).is_none());
+        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
+        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
+        let s2 = q.status(2).unwrap();
+        let s3 = q.status(3).unwrap();
+        assert_eq!((s2.position, s2.total), (1, 2));
+        assert_eq!((s3.position, s3.total), (2, 2));
+        q.leave(2);
+        let s3 = q.status(3).unwrap();
+        assert_eq!((s3.position, s3.total), (1, 1));
+        assert!(q.status(2).is_none());
+    }
+
+    #[test]
+    fn two_uids_enqueue_in_order() {
+        let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
+        let now = Instant::now();
+        let _ = q.request_permit(10, now); // grant
+        let _ = q.request_permit(11, now);
+        let _ = q.request_permit(12, now);
+        assert_eq!(q.status(11).unwrap().position, 1);
+        assert_eq!(q.status(12).unwrap().position, 2);
+        assert_eq!(q.status(12).unwrap().total, 2);
     }
 
     #[test]
