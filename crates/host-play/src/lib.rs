@@ -111,6 +111,10 @@ pub struct SlotArm {
     pub want_logout: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
     pub latch: Arc<AtomicBool>,
+    /// The spawn-time auto-login intent (CLI `new(true)` stays armed so an
+    /// unexpected DC re-handshakes; a panel one-shot arm disarms after the
+    /// handshake unless the profile's auto_login was on).
+    pub auto_login: Arc<AtomicBool>,
 }
 
 impl SlotArm {
@@ -120,6 +124,7 @@ impl SlotArm {
             want_logout: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
             latch: Arc::new(AtomicBool::new(false)),
+            auto_login: Arc::new(AtomicBool::new(want_login)),
         })
     }
 }
@@ -130,6 +135,30 @@ fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
     !ingame
         && arm.want_login.load(Ordering::Relaxed)
         && !arm.latch.load(Ordering::Relaxed)
+}
+
+/// After a successful handshake: stay armed only when this slot was spawned
+/// with auto-login (an unexpected DC re-handshakes); a one-shot Log in /
+/// Login all disarms until the next explicit arm.
+fn on_login_success(arm: &SlotArm) {
+    arm.want_login.store(
+        arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+}
+
+/// Per-frame arm handling in the 20 ms body: press the CC_LOGOUT iface when
+/// the panel armed a logout on an ingame slot, then report whether the
+/// thread must stop (rail ✕). The press is the only place a clean logout
+/// can go out while the slot is inside [`Host::run_client`].
+fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> bool {
+    if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
+        api::interact::logout(client, ifaces);
+        arm.want_logout.store(false, Ordering::Relaxed);
+        arm.latch.store(true, Ordering::Relaxed);
+        arm.want_login.store(false, Ordering::Relaxed);
+    }
+    arm.stop.load(Ordering::Relaxed)
 }
 
 /// Running slots and their shared status. Slots drive `mainloop` until the
@@ -269,7 +298,7 @@ fn spawn_slot_thread(
     let mainland = options.mainland;
 
     handles.push(thread::spawn(move || {
-        let mut client = prepare_client(config, uid, slot_cache, ifaces_template);
+        let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
 
         {
             let mut all = slot_statuses.lock().unwrap();
@@ -319,10 +348,93 @@ fn spawn_slot_thread(
             match client.login(&username, &password, false) {
                 Ok(()) => {
                     backoff.reset();
+                    // Auto-login slots stay armed so an unexpected DC
+                    // re-handshakes; a one-shot Log in / Login all disarms
+                    // until the next explicit arm.
+                    on_login_success(&arm);
                     if debug_enabled() {
                         eprintln!("[host-play] slot {username}: ingame");
                     }
-                    break;
+                    let mut mainland_sent = false;
+                    Host::run_client(
+                        &mut client,
+                        &username,
+                        slot_input.clone(),
+                        slot_pixels.clone(),
+                        |c, name, run_sends| {
+                            slot_frame(c, name);
+                            if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
+                                api::interact::mainland_hop(c);
+                                mainland_sent = true;
+                                if debug_enabled() {
+                                    eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
+                                }
+                            }
+                            let mut all = slot_statuses.lock().unwrap();
+                            for s in all.iter_mut() {
+                                if s.username == name {
+                                    s.ingame = c.ingame;
+                                    s.scene_state = c.scene_state;
+                                    s.runenergy = c.runenergy;
+                                    s.run_sends = run_sends;
+                                    s.main_modal_id = c.main_modal_id;
+                                    if let Some(lp) = &c.local_player {
+                                        let (tx, tz) = player_world_tile(
+                                            c.map_build_base_x,
+                                            c.map_build_base_z,
+                                            lp.route_x[0],
+                                            lp.route_z[0],
+                                        );
+                                        s.tile_x = tx;
+                                        s.tile_z = tz;
+                                        s.player = lp.name.clone().unwrap_or_default();
+                                    }
+                                }
+                            }
+                            drop(all);
+                            if debug_enabled() && c.ingame && c.scene_state == 1 && c.loop_cycle % 100 == 0 {
+                                let od = c
+                                    .on_demand
+                                    .as_ref()
+                                    .map(|od| {
+                                        format!(
+                                            "remaining={} fail={} msg={:?}",
+                                            od.remaining(),
+                                            od.fail_count,
+                                            od.message
+                                        )
+                                    })
+                                    .unwrap_or_else(|| "ondemand=none".into());
+                                let ground = c
+                                    .map_build_ground_data
+                                    .iter()
+                                    .filter(|d| d.is_some())
+                                    .count();
+                                let locs = c
+                                    .map_build_location_data
+                                    .iter()
+                                    .filter(|d| d.is_some())
+                                    .count();
+                                eprintln!(
+                                    "[host-play] slot {name}: scene loading {od} \
+                                     ground={}/{} loc={}/{} await_pi={}",
+                                    ground,
+                                    c.map_build_ground_data.len(),
+                                    locs,
+                                    c.map_build_location_data.len(),
+                                    c.awaiting_player_info
+                                );
+                            }
+                        },
+                        |c| {
+                            // Leave the 20 ms body on `stop`, or once the
+                            // client is back on the title (clean IF logout
+                            // / DC) so this control loop decides the next
+                            // handshake. `tick_flags` presses CC_LOGOUT
+                            // while the arm asks for a logout.
+                            tick_flags(c, &ifaces_template, &arm) || !c.ingame
+                        },
+                    );
                 }
                 Err(e) => {
                     let msg = format!("code {}: {}", e.code, e.mes2);
@@ -348,79 +460,6 @@ fn spawn_slot_thread(
                 }
             }
         }
-
-        let mut mainland_sent = false;
-        Host::run_client(
-            &mut client,
-            &username,
-            slot_input,
-            slot_pixels,
-            |c, name, run_sends| {
-                slot_frame(c, name);
-                if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
-                    api::interact::mainland_hop(c);
-                    mainland_sent = true;
-                    if debug_enabled() {
-                        eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
-                    }
-                }
-                let mut all = slot_statuses.lock().unwrap();
-                for s in all.iter_mut() {
-                    if s.username == name {
-                        s.ingame = c.ingame;
-                        s.scene_state = c.scene_state;
-                        s.runenergy = c.runenergy;
-                        s.run_sends = run_sends;
-                        s.main_modal_id = c.main_modal_id;
-                        if let Some(lp) = &c.local_player {
-                            let (tx, tz) = player_world_tile(
-                                c.map_build_base_x,
-                                c.map_build_base_z,
-                                lp.route_x[0],
-                                lp.route_z[0],
-                            );
-                            s.tile_x = tx;
-                            s.tile_z = tz;
-                            s.player = lp.name.clone().unwrap_or_default();
-                        }
-                    }
-                }
-                drop(all);
-                if debug_enabled() && c.ingame && c.scene_state == 1 && c.loop_cycle % 100 == 0 {
-                    let od = c
-                        .on_demand
-                        .as_ref()
-                        .map(|od| {
-                            format!(
-                                "remaining={} fail={} msg={:?}",
-                                od.remaining(),
-                                od.fail_count,
-                                od.message
-                            )
-                        })
-                        .unwrap_or_else(|| "ondemand=none".into());
-                    let ground = c
-                        .map_build_ground_data
-                        .iter()
-                        .filter(|d| d.is_some())
-                        .count();
-                    let locs = c
-                        .map_build_location_data
-                        .iter()
-                        .filter(|d| d.is_some())
-                        .count();
-                    eprintln!(
-                        "[host-play] slot {name}: scene loading {od} \
-                         ground={}/{} loc={}/{} await_pi={}",
-                        ground,
-                        c.map_build_ground_data.len(),
-                        locs,
-                        c.map_build_location_data.len(),
-                        c.awaiting_player_info
-                    );
-                }
-            },
-        );
     }));
 }
 
@@ -607,6 +646,67 @@ mod tests {
         arm.latch.store(false, Ordering::Relaxed);
         assert!(should_handshake(&arm, false));
         assert!(!should_handshake(&arm, true));
+    }
+
+    #[test]
+    fn login_success_keeps_auto_login_armed_but_disarms_one_shot() {
+        // CLI: `new(true)` (auto_login true) stays armed so an unexpected
+        // DC re-handshakes.
+        let arm = SlotArm::new(true);
+        on_login_success(&arm);
+        assert!(should_handshake(&arm, false));
+
+        // Panel Log in / Login all: armed explicitly, then disarmed after
+        // the handshake — a DC sits on the title.
+        let arm = SlotArm::new(false);
+        arm.want_login.store(true, Ordering::Relaxed);
+        on_login_success(&arm);
+        assert!(!should_handshake(&arm, false));
+
+        // The intentional-logout latch blocks even an auto-login slot.
+        let arm = SlotArm::new(true);
+        arm.latch.store(true, Ordering::Relaxed);
+        on_login_success(&arm);
+        assert!(!should_handshake(&arm, false));
+    }
+
+    #[test]
+    fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
+        let cfg = ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        };
+        let mut ifaces = vec![None; 10];
+        let mut com = IfType::default();
+        com.client_code = api::interact::CC_LOGOUT;
+        ifaces[7] = Some(com);
+        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), ifaces.clone());
+        client.ingame = true;
+        let arm = SlotArm::new(false);
+        arm.want_logout.store(true, Ordering::Relaxed);
+
+        // want_logout + ingame presses CC_LOGOUT, latches, and does not stop.
+        assert!(!tick_flags(&mut client, &ifaces, &arm));
+        assert!(!arm.want_logout.load(Ordering::Relaxed));
+        assert!(arm.latch.load(Ordering::Relaxed));
+        assert!(!arm.want_login.load(Ordering::Relaxed));
+        assert_eq!(
+            client.out.data()[0],
+            client::io::ClientProt::IF_BUTTON.id as u8
+        );
+
+        // A title slot never presses; `stop` still reports.
+        client.ingame = false;
+        arm.want_logout.store(true, Ordering::Relaxed);
+        arm.stop.store(true, Ordering::Relaxed);
+        assert!(tick_flags(&mut client, &ifaces, &arm));
+        assert!(
+            arm.want_logout.load(Ordering::Relaxed),
+            "no CC_LOGOUT press on the title; the flag stays for the panel"
+        );
     }
 
     #[test]

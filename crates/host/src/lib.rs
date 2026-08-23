@@ -75,11 +75,13 @@ impl Host {
                 eprintln!("[host] slot {}: thread up", profile.username);
             }
 
-            Self::run_client(&mut client, &profile.username, None, None, |_, _, _| {});
+            Self::run_client(&mut client, &profile.username, None, None, |_, _, _| {}, |_| false);
         })
     }
 
-    /// Drive one client's `mainloop` at 20 ms until the process exits. Each
+    /// Drive one client's `mainloop` at 20 ms until `probe` returns true
+    /// (checked before every tick, so the slot thread can stop a rail ✕
+    /// or return to its control loop within one frame). Each
     /// tick [`Host::client_tick`] runs `observe` **before** [`Host::client_frame`]
     /// so panel `set_draw` (focused + renderer checkbox) gates **this**
     /// `mainredraw`, then drains input, latches the click, runs `mainloop`,
@@ -89,18 +91,23 @@ impl Host {
     /// energy from the snapshot stat view when it has been rebuilt. The
     /// third observe arg is the count of accepted auto-run `set_run(true)`
     /// sends (from the previous tick).
-    pub fn run_client<F>(
+    pub fn run_client<F, P>(
         client: &mut Client,
         username: &str,
         input: Option<Arc<SlotInput>>,
         pixels: Option<Arc<PixelBuf>>,
         mut observe: F,
+        mut probe: P,
     ) where
         F: FnMut(&mut Client, &str, u32),
+        P: FnMut(&mut Client) -> bool,
     {
         let mut slot = SlotLoop::new();
         let mut run_sends = 0u32;
         loop {
+            if probe(client) {
+                return;
+            }
             let start = std::time::Instant::now();
             Self::client_tick(
                 client,
