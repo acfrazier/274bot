@@ -24,6 +24,9 @@ pub use rss::sample_process;
 use host::{PixelBuf, SlotInput};
 use vault::{Profile, Vault, VaultError};
 
+/// Slot thread stack: 1 MiB (the Java client thread default).
+const THREAD_STACK: usize = 1024 * 1024;
+
 /// Connection settings shared by every spawned slot.
 #[derive(Clone)]
 pub struct PlayOptions {
@@ -410,194 +413,201 @@ fn spawn_slot_thread(
     let config = bot_client_config(options, &profile);
     let mainland = options.mainland;
 
-    handles.insert(username.clone(), thread::spawn(move || {
-        let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
-        #[cfg(test)]
-        {
-            // Unit tests spawn slots with no web server on :80; shrink
-            // maininit's HTTP retry so `stop_slot`'s join returns fast
-            // (the client's own HTTP tests stub retries the same way).
-            client.fetch_retry_wait = Duration::from_millis(1);
-        }
+    handles.insert(
+        username.clone(),
+        thread::Builder::new()
+            .name(username.clone())
+            .stack_size(THREAD_STACK)
+            .spawn(move || {
+            let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
+            #[cfg(test)]
+            {
+                // Unit tests spawn slots with no web server on :80; shrink
+                // maininit's HTTP retry so `stop_slot`'s join returns fast
+                // (the client's own HTTP tests stub retries the same way).
+                client.fetch_retry_wait = Duration::from_millis(1);
+            }
 
-        {
-            let mut all = slot_statuses.lock().unwrap();
-            all.push(SlotStatus {
-                username: username.clone(),
-                ..SlotStatus::default()
-            });
-        }
-        if debug_enabled() {
-            eprintln!("[host-play] slot {username}: thread up");
-        }
-
-        // Jag/anim/model/map prefetch (mirrors client-play; the scene
-        // cannot reach scene_state 2 until the loc models are in).
-        client.maininit();
-        if client.error_loading {
-            if debug_enabled() {
-                eprintln!("[host-play] slot {username}: maininit failed");
-            }
-        }
-
-        let mut backoff = LoginBackoff::new();
-        loop {
-            if arm.stop.load(Ordering::Relaxed) {
-                slot_queue.lock().unwrap().leave(uid);
-                return;
-            }
-            if !should_handshake(&arm, client.ingame) {
-                // Sit on the title: no permit request, no handshake, until
-                // the arm wants a login (auto-login / Log in / Login all).
-                thread::sleep(Duration::from_millis(20));
-                continue;
-            }
-            wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
-            if arm.stop.load(Ordering::Relaxed) {
-                slot_queue.lock().unwrap().leave(uid);
-                return;
-            }
-            let login_started = Instant::now();
             {
                 let mut all = slot_statuses.lock().unwrap();
-                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                    // First attempt only: retries must not move the
-                    // handshake-start metric the harness asserts on.
-                    if s.login_started.is_none() {
-                        s.login_started = Some(login_started);
-                    }
-                    s.error = None;
+                all.push(SlotStatus {
+                    username: username.clone(),
+                    ..SlotStatus::default()
+                });
+            }
+            if debug_enabled() {
+                eprintln!("[host-play] slot {username}: thread up");
+            }
+
+            // Jag/anim/model/map prefetch (mirrors client-play; the scene
+            // cannot reach scene_state 2 until the loc models are in).
+            client.maininit();
+            if client.error_loading {
+                if debug_enabled() {
+                    eprintln!("[host-play] slot {username}: maininit failed");
                 }
             }
-            match client.login(&username, &password, false) {
-                Ok(()) => {
-                    backoff.reset();
-                    // Auto-login slots stay armed so an unexpected DC
-                    // re-handshakes; a one-shot Log in / Login all disarms
-                    // until the next explicit arm.
-                    on_login_success(&arm);
-                    if debug_enabled() {
-                        eprintln!("[host-play] slot {username}: ingame");
+
+            let mut backoff = LoginBackoff::new();
+            loop {
+                if arm.stop.load(Ordering::Relaxed) {
+                    slot_queue.lock().unwrap().leave(uid);
+                    return;
+                }
+                if !should_handshake(&arm, client.ingame) {
+                    // Sit on the title: no permit request, no handshake, until
+                    // the arm wants a login (auto-login / Log in / Login all).
+                    thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+                wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
+                if arm.stop.load(Ordering::Relaxed) {
+                    slot_queue.lock().unwrap().leave(uid);
+                    return;
+                }
+                let login_started = Instant::now();
+                {
+                    let mut all = slot_statuses.lock().unwrap();
+                    if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                        // First attempt only: retries must not move the
+                        // handshake-start metric the harness asserts on.
+                        if s.login_started.is_none() {
+                            s.login_started = Some(login_started);
+                        }
+                        s.error = None;
                     }
-                    let mut mainland_sent = false;
-                    Host::run_client(
-                        &mut client,
-                        &username,
-                        slot_input.clone(),
-                        slot_pixels.clone(),
-                        |c, name, run_sends| {
-                            slot_frame(c, name);
-                            if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
-                                api::interact::mainland_hop(c);
-                                mainland_sent = true;
-                                if debug_enabled() {
-                                    eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
-                                }
-                            }
-                            let mut all = slot_statuses.lock().unwrap();
-                            for s in all.iter_mut() {
-                                if s.username == name {
-                                    s.ingame = c.ingame;
-                                    s.scene_state = c.scene_state;
-                                    s.runenergy = c.runenergy;
-                                    s.run_sends = run_sends;
-                                    s.main_modal_id = c.main_modal_id;
-                                    copy_stream_and_draw(c, s);
-                                    if let Some(lp) = &c.local_player {
-                                        let (tx, tz) = player_world_tile(
-                                            c.map_build_base_x,
-                                            c.map_build_base_z,
-                                            lp.route_x[0],
-                                            lp.route_z[0],
-                                        );
-                                        s.tile_x = tx;
-                                        s.tile_z = tz;
-                                        s.player = lp.name.clone().unwrap_or_default();
+                }
+                match client.login(&username, &password, false) {
+                    Ok(()) => {
+                        backoff.reset();
+                        // Auto-login slots stay armed so an unexpected DC
+                        // re-handshakes; a one-shot Log in / Login all disarms
+                        // until the next explicit arm.
+                        on_login_success(&arm);
+                        if debug_enabled() {
+                            eprintln!("[host-play] slot {username}: ingame");
+                        }
+                        let mut mainland_sent = false;
+                        Host::run_client(
+                            &mut client,
+                            &username,
+                            slot_input.clone(),
+                            slot_pixels.clone(),
+                            |c, name, run_sends| {
+                                slot_frame(c, name);
+                                if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
+                                    api::interact::mainland_hop(c);
+                                    mainland_sent = true;
+                                    if debug_enabled() {
+                                        eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
                                     }
                                 }
+                                let mut all = slot_statuses.lock().unwrap();
+                                for s in all.iter_mut() {
+                                    if s.username == name {
+                                        s.ingame = c.ingame;
+                                        s.scene_state = c.scene_state;
+                                        s.runenergy = c.runenergy;
+                                        s.run_sends = run_sends;
+                                        s.main_modal_id = c.main_modal_id;
+                                        copy_stream_and_draw(c, s);
+                                        if let Some(lp) = &c.local_player {
+                                            let (tx, tz) = player_world_tile(
+                                                c.map_build_base_x,
+                                                c.map_build_base_z,
+                                                lp.route_x[0],
+                                                lp.route_z[0],
+                                            );
+                                            s.tile_x = tx;
+                                            s.tile_z = tz;
+                                            s.player = lp.name.clone().unwrap_or_default();
+                                        }
+                                    }
+                                }
+                                drop(all);
+                                if debug_enabled() && c.ingame && c.scene_state == 1 && c.loop_cycle % 100 == 0 {
+                                    let od = c
+                                        .on_demand
+                                        .as_ref()
+                                        .map(|od| {
+                                            format!(
+                                                "remaining={} fail={} msg={:?}",
+                                                od.remaining(),
+                                                od.fail_count,
+                                                od.message
+                                            )
+                                        })
+                                        .unwrap_or_else(|| "ondemand=none".into());
+                                    let ground = c
+                                        .map_build_ground_data
+                                        .iter()
+                                        .filter(|d| d.is_some())
+                                        .count();
+                                    let locs = c
+                                        .map_build_location_data
+                                        .iter()
+                                        .filter(|d| d.is_some())
+                                        .count();
+                                    eprintln!(
+                                        "[host-play] slot {name}: scene loading {od} \
+                                         ground={}/{} loc={}/{} await_pi={}",
+                                        ground,
+                                        c.map_build_ground_data.len(),
+                                        locs,
+                                        c.map_build_location_data.len(),
+                                        c.awaiting_player_info
+                                    );
+                                }
+                            },
+                            |c| {
+                                // Leave the 20 ms body on `stop`, or once the
+                                // client is back on the title (clean IF logout
+                                // / DC) so this control loop decides the next
+                                // handshake. `tick_flags` presses CC_LOGOUT
+                                // while the arm asks for a logout.
+                                tick_flags(c, &ifaces_template, &arm) || !c.ingame
+                            },
+                        );
+                        // The 20 ms body exits as soon as the client leaves the
+                        // game (clean IF logout / DC / stop); the last observe
+                        // ran before the exit, so record the title state here —
+                        // statuses, the rail traffic light, and the live
+                        // harness must see `!ingame`.
+                        {
+                            let mut all = slot_statuses.lock().unwrap();
+                            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                                s.ingame = client.ingame;
+                                s.scene_state = client.scene_state;
                             }
-                            drop(all);
-                            if debug_enabled() && c.ingame && c.scene_state == 1 && c.loop_cycle % 100 == 0 {
-                                let od = c
-                                    .on_demand
-                                    .as_ref()
-                                    .map(|od| {
-                                        format!(
-                                            "remaining={} fail={} msg={:?}",
-                                            od.remaining(),
-                                            od.fail_count,
-                                            od.message
-                                        )
-                                    })
-                                    .unwrap_or_else(|| "ondemand=none".into());
-                                let ground = c
-                                    .map_build_ground_data
-                                    .iter()
-                                    .filter(|d| d.is_some())
-                                    .count();
-                                let locs = c
-                                    .map_build_location_data
-                                    .iter()
-                                    .filter(|d| d.is_some())
-                                    .count();
-                                eprintln!(
-                                    "[host-play] slot {name}: scene loading {od} \
-                                     ground={}/{} loc={}/{} await_pi={}",
-                                    ground,
-                                    c.map_build_ground_data.len(),
-                                    locs,
-                                    c.map_build_location_data.len(),
-                                    c.awaiting_player_info
-                                );
-                            }
-                        },
-                        |c| {
-                            // Leave the 20 ms body on `stop`, or once the
-                            // client is back on the title (clean IF logout
-                            // / DC) so this control loop decides the next
-                            // handshake. `tick_flags` presses CC_LOGOUT
-                            // while the arm asks for a logout.
-                            tick_flags(c, &ifaces_template, &arm) || !c.ingame
-                        },
-                    );
-                    // The 20 ms body exits as soon as the client leaves the
-                    // game (clean IF logout / DC / stop); the last observe
-                    // ran before the exit, so record the title state here —
-                    // statuses, the rail traffic light, and the live
-                    // harness must see `!ingame`.
-                    {
-                        let mut all = slot_statuses.lock().unwrap();
-                        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                            s.ingame = client.ingame;
-                            s.scene_state = client.scene_state;
                         }
                     }
-                }
-                Err(e) => {
-                    let msg = format!("code {}: {}", e.code, e.mes2);
-                    if debug_enabled() {
-                        eprintln!("[host-play] slot {username}: login {msg}");
-                    }
-                    {
-                        let mut all = slot_statuses.lock().unwrap();
-                        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                            s.error = Some(msg);
+                    Err(e) => {
+                        let msg = format!("code {}: {}", e.code, e.mes2);
+                        if debug_enabled() {
+                            eprintln!("[host-play] slot {username}: login {msg}");
                         }
+                        {
+                            let mut all = slot_statuses.lock().unwrap();
+                            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                                s.error = Some(msg);
+                            }
+                        }
+                        // Response 16 (world full) escalates; response 5 is
+                        // the engine's login-limit message ("Try again in
+                        // 60 secs") and waits that long; other codes (wrong
+                        // credentials, RSA mismatch, ...) retry slower.
+                        let wait = match e.code {
+                            16 => backoff.delay(),
+                            5 => Duration::from_secs(60),
+                            _ => Duration::from_secs(5),
+                        };
+                        thread::sleep(wait);
                     }
-                    // Response 16 (world full) escalates; response 5 is
-                    // the engine's login-limit message ("Try again in
-                    // 60 secs") and waits that long; other codes (wrong
-                    // credentials, RSA mismatch, ...) retry slower.
-                    let wait = match e.code {
-                        16 => backoff.delay(),
-                        5 => Duration::from_secs(60),
-                        _ => Duration::from_secs(5),
-                    };
-                    thread::sleep(wait);
                 }
             }
-        }
-    }));
+            })
+            .expect("failed to spawn slot thread"),
+    );
 }
 
 /// Unlock `path`, or create it (and parent dirs) when missing. Any other
