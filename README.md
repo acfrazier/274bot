@@ -14,14 +14,9 @@ Headless **RuneScape revision 274** (~2004) **bot host**: N clients in one proce
 A Rust bot host over the 274 client. The kernel runs one OS thread per
 `Client` on a 20 ms loop, shares unpacked type tables across slots, throttles
 login handshakes through a FIFO, keeps profiles in an AES-256-GCM vault, and
-exposes a small agent API (snapshot → interact → settle). Campaign 2 adds a
-native dear-app/ImGui **panel** (`panel-play`): profile combo, editable
-credentials, status/log, game renderer, click-through capture, amber chrome.
-Campaign 3 adds a panel **WalkTo** picker: amber collision dots over the
-baked nav pack, click to arm the focused slot's traveller. Campaign 4
-adds the **MultiBox wall**: one panel process runs N vault slots on the
-shared login FIFO as a 264px sidecar **rail** or a full-pane **grid** of
-tiles, with bulk **Login all / Logout all** and a profile **chooser**.
+exposes a small agent API (snapshot → interact → settle). **`panel-play`**
+is the operator window (dear-app/ImGui): credentials, status, WalkTo picker,
+game blit, click-through capture, MultiBox rail/grid, `--live` harness.
 
 ## What it does not (yet)
 
@@ -91,11 +86,14 @@ scene 2 sends the rs2b0t tutorial skip (`tele` Lumbridge courtyard +
 `setvar tutorial 1000`); it does not relog. New accounts otherwise stay on
 Tutorial Island.
 
-There is **no client window** anywhere in this tree. The panel's Game Image
-is a 765×503 texture at **1 fps** (rs2b0t rail) while you watch; capture
-is 50 fps. Unfocused slots do not paint. A GPU 3D backend belongs on the
-Fairy Ring client crate, not as a second painter here. `client-play
---window` is the real applet.
+**Windows:** `panel-play` is an OS window. It does **not** open the client's
+`Present` applet. The Game pane is a **765×503 CpuPix3D** blit into ImGui
+(watch **1 fps**, capture **50 fps**). Unfocused / renderer-off slots skip
+`game_draw` (`draw=false`). The real 765×503 applet is
+`vendor/fr-client-rust` `client-play --window` (bothost), for fidelity —
+not a second 3D engine in 274bot. A GPU 3D backend is **not** in this repo
+and **not** on Fairy-Ring `rs2-r274`; if it happens it is optional bothost
+work after Null (CpuPix3D is the holding painter).
 
 ## Live tests
 

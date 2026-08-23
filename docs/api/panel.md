@@ -47,13 +47,13 @@ thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
 generation is unchanged.
 
-The Game Image is already a **wgpu texture** (GPU composite). The 274 scene
-behind it is still **CPU Pix3D** into `draw_area` — same painter as the
-headless client, not a GPU 3D backend, and not the client's `Present`
-(softbuffer). Unfocused running slots skip `mainredraw` **this tick**. Watch-only is a
-**1 fps rail**; turning the renderer on paints immediately. Capture is
-full 20 ms for the minimenu. The slot sleeps the leftover of 20 ms after
-the work.
+The Game Image is an ImGui **wgpu texture** (GPU *composite* of the blit).
+The 274 scene behind it is still **CPU Pix3D** into `draw_area` — same
+painter as the headless client, not a GPU 3D backend, and not the client's
+`Present` (that applet is `client-play --window` on bothost). Unfocused /
+renderer-off slots skip `game_draw`. Watch-only is a **1 fps rail**;
+capture is 50 fps. A GPU 3D rasterizer is not in 274bot and not on
+Fairy-Ring `rs2-r274`.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
