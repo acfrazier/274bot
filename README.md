@@ -6,7 +6,7 @@ Headless **RuneScape revision 274** (~2004) **bot host**: N clients in one proce
 |--|--|
 | **Revision** | RuneScape 274 (~2004) |
 | **Engine** | A **local** Lost City engine (game `43594`, HTTP `/crc` on `:80`) |
-| **Client** | submodule [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) `rs2-r274` |
+| **Client** | submodule [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) `r274-bothost` (fork of Fairy-Ring `rs2-r274`) |
 | **This repo** | [acfrazier/274bot](https://github.com/acfrazier/274bot) — **MIT** ([LICENSE](LICENSE), [NOTICE.md](NOTICE.md)) |
 
 ## What it is
@@ -35,9 +35,11 @@ tiles, with bulk **Login all / Logout all** and a profile **chooser**.
 - No hosted product, no official anything: this is **not** Jagex, **not**
   official Lost City, **not** Fairy Ring, **not** a file-port of rs2b0t
   (rs2b0t's chrome is mimicked in the panel; the code is our own).
-- The playable/headless **client library** is Fairy Ring's 274 Rust port (a
-  Lost City derivation), vendored as a submodule and injected — never forked,
-  patched, or grown a bot API inside. Client MIT/NOTICE stay in the submodule.
+- The playable/headless **client library** is [FR-client-bothost](https://github.com/acfrazier/FR-client-bothost)
+  `r274-bothost`, a bot-host fork of Fairy Ring's 274 Rust port (a Lost City
+  derivation). Packet timing and `doAction` stay Java-shaped; viewport opti
+  and read-only instrumentation land on the fork. Still no bot action API
+  inside `client`. Client MIT/NOTICE stay in the submodule.
 
 This tree ships **no Jagex assets**; you bring your own local engine and pack
 cache. AI-assisted development is explicit and TDD-driven, and we do **not**

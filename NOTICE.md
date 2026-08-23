@@ -6,7 +6,7 @@
 
 ## Client (submodule)
 
-Headless clients in this process are [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) (`rs2-r274`), vendored at `vendor/fr-client-rust`. That tree is a derivation of open **Lost City / LostCityRS** client work (Client-TS 274, Client-Java 274) under MIT. See that repo’s [NOTICE.md](https://github.com/Fairy-Ring/FR-client-rust/blob/rs2-r274/NOTICE.md) and [LICENSE](https://github.com/Fairy-Ring/FR-client-rust/blob/rs2-r274/LICENSE).
+Headless clients in this process are [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) (`r274-bothost`), vendored at `vendor/fr-client-rust`. That tree is a bot-host fork of [Fairy-Ring/FR-client-rust](https://github.com/Fairy-Ring/FR-client-rust) `rs2-r274`, itself a derivation of open **Lost City / LostCityRS** client work (Client-TS 274, Client-Java 274) under MIT. See the submodule’s [NOTICE.md](vendor/fr-client-rust/NOTICE.md) and [LICENSE](vendor/fr-client-rust/LICENSE).
 
 This repository does **not** relicense Lost City–originated client code as original work of 274bot. Bot crates (`host`, `vault`, `api`, `host-play`, `e2e`) are original to this project under [LICENSE](LICENSE) (MIT).
 
