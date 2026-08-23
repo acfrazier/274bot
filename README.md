@@ -91,9 +91,10 @@ Tutorial Island.
 (watch **1 fps**, capture **50 fps**). Unfocused / renderer-off slots skip
 `game_draw` (`draw=false`). The real 765×503 applet is
 `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity —
-not a second 3D engine in 274bot. A GPU 3D backend is **not** in this repo
-and **not** on Fairy-Ring `rs2-r274`; if it happens it is optional bothost
-work after Null (CpuPix3D is the holding painter).
+not a second 3D engine in 274bot. CpuPix3D is the holding painter. A GPU
+3D backend is **out of 274bot** and **out of Fairy-Ring**; if it happens
+at all it is **last** (optional bothost `r274-bothost`, after Null is
+proven — not a second painter in this repo).
 
 ## Live tests
 
