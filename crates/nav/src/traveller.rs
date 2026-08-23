@@ -40,6 +40,9 @@ pub struct Traveller {
     status: NavStatus,
     hop_ticks: u32,
     budget: u32,
+    /// The tile observed on the previous tick; the per-hop budget resets
+    /// when the player advances off it.
+    last_here: Option<Tile>,
     /// The leg currently being worked.
     leg: usize,
 }
@@ -53,6 +56,7 @@ impl Traveller {
             status: NavStatus::Idle,
             hop_ticks: 0,
             budget: 60,
+            last_here: None,
             leg: 0,
         }
     }
@@ -62,6 +66,7 @@ impl Traveller {
         self.dest = Some(route.dest);
         self.route = Some(route);
         self.hop_ticks = 0;
+        self.last_here = None;
         self.leg = 0;
         self.status = NavStatus::Idle;
     }
@@ -71,6 +76,7 @@ impl Traveller {
         self.route = None;
         self.dest = None;
         self.hop_ticks = 0;
+        self.last_here = None;
         self.leg = 0;
     }
 
@@ -152,6 +158,12 @@ impl Traveller {
             return status;
         }
 
+        // The budget is per hop, not per route: any advance off the
+        // previous tile restarts the clock for the next hop.
+        if self.last_here != Some(here) {
+            self.hop_ticks = 0;
+            self.last_here = Some(here);
+        }
         self.hop_ticks += 1;
         if self.hop_ticks > self.budget {
             self.status = NavStatus::Budget;
@@ -492,6 +504,32 @@ mod tests {
         }
         assert_eq!(status, NavStatus::Budget);
         assert_eq!(t.queued(), None);
+    }
+
+    #[test]
+    fn budget_resets_when_here_advances() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_open_3x3(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 2, z: 2, level: 0 },
+            )
+            .unwrap(),
+        );
+        let mut r = Rec {
+            route: Some((0, 0)),
+            ..Rec::default()
+        };
+        let mut status;
+        for _ in 0..59 {
+            status = t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false);
+            assert_eq!(status, NavStatus::Walking);
+        }
+        // The 60th tick moves off the stuck tile: the clock restarts, so
+        // the traveller keeps walking instead of tripping the budget.
+        status = t.tick(&mut r, Tile { x: 1, z: 0, level: 0 }, false);
+        assert_eq!(status, NavStatus::Walking);
     }
 
     /// Recording driver: captures the last walk target and counts OP_LOC1

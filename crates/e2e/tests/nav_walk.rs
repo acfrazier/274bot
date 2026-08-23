@@ -1,9 +1,10 @@
 //! Live: one headless client via host-play with `mainland` on. After login
-//! the mainland hop teleports the player to the Lumbridge courtyard at
-//! (3220,3222,0) (`tele 0,50,50,20,20`); the nav traveller then walks the
-//! packed route 10 tiles east to (3230,3222,0), open ground. PASS only when
-//! `arrived(here, dest, true)` fires within 90 s; FAIL on timeout or on the
-//! traveller's per-hop budget.
+//! the mainland hop teleports the player into the Lumbridge courtyard
+//! (`tele 0,50,50,20,20`); the landing tile can be (3220,3220,0) or
+//! (3220,3222,0), so the test arms from the observed walkable `here`. The
+//! nav traveller then walks to (3230,3222,0), open ground. PASS only when
+//! `arrived(here, dest, true)` fires within 90 s of arming; FAIL on timeout
+//! or on the traveller's per-hop budget.
 //!
 //! Run with the engine up:
 //! `LIVE=1 cargo test -p e2e --test nav_walk -- --ignored --test-threads=1 --nocapture`
@@ -71,11 +72,6 @@ fn nav_walk() {
             // Drive the traveller only when a player update landed; the
             // player's tile is the route head, as in `Driver::local_route`.
             move |c, _| {
-                let mut s = shared.lock().unwrap();
-                if c.gens.player == s.last_gen {
-                    return;
-                }
-                s.last_gen = c.gens.player;
                 let Some(lp) = &c.local_player else {
                     return;
                 };
@@ -86,6 +82,14 @@ fn nav_walk() {
                     z: c.map_build_base_z + lp.route_z[0],
                     level: 0,
                 };
+                let mut s = shared.lock().unwrap();
+                // Tick on movement or on a player update: the gen latch
+                // re-arms a walk while standing, the tile latch advances
+                // the route as the player moves.
+                if c.gens.player == s.last_gen && s.here == Some(here) {
+                    return;
+                }
+                s.last_gen = c.gens.player;
                 s.here = Some(here);
                 let status = s.traveller.tick(c, here, false);
                 if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
@@ -108,16 +112,16 @@ fn nav_walk() {
     // courtyard (tutorial island is off-grid, so a walkable tile means the
     // tele arrived). The player is stationary until armed, so the observed
     // tile is a safe route origin even when it is not the expected landing.
-    let start = Instant::now();
-    let deadline = start + Duration::from_secs(90);
     let mut armed = false;
+    let mut started: Option<Instant> = None;
     loop {
         let mut s = shared.lock().unwrap();
         if let Some(msg) = s.failed.clone() {
             fail(&msg);
         }
         if s.arrived {
-            println!("PASS: nav_walk arrived at {DEST:?} in {:?}", start.elapsed());
+            let elapsed = started.map(|st| st.elapsed()).unwrap_or_default();
+            println!("PASS: nav_walk arrived at {DEST:?} in {elapsed:?}");
             return;
         }
         if !armed {
@@ -127,6 +131,7 @@ fn nav_walk() {
                         Ok(route) => {
                             s.traveller.arm(route);
                             armed = true;
+                            started = Some(Instant::now());
                             println!("nav_walk: armed route {here:?} -> {DEST:?}");
                         }
                         Err(_) => {
@@ -138,7 +143,11 @@ fn nav_walk() {
                 }
             }
         }
-        let timed_out = Instant::now() >= deadline;
+        // The 90 s clock starts at arm, not after wait_ingame, so a slow
+        // tutorial->tele hop cannot eat the walk budget.
+        let timed_out = started
+            .map(|st| Instant::now() >= st + Duration::from_secs(90))
+            .unwrap_or(false);
         let here = s.here;
         drop(s);
         if timed_out {
