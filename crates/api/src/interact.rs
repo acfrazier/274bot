@@ -41,8 +41,14 @@ pub trait Driver {
         forceapproach: i32,
         r#type: i32,
     ) -> bool;
-    /// The route origin tile (local player).
+    /// The route origin tile (local player), in the client's build-area
+    /// (scene-relative) space, as `route_x[0]`/`route_z[0]`.
     fn local_route(&self) -> Option<(i32, i32)>;
+    /// The scene origin (`map_build_base_x`, `map_build_base_z`): absolute
+    /// world tiles are `base + scene` coords, so walk targets and loc
+    /// tiles from the nav grid (absolute) translate by subtracting this.
+    /// Test drivers return `(0, 0)` so absolute == scene.
+    fn build_base(&self) -> (i32, i32);
     /// The outbound packet sink (ISAAC-encrypted writes only).
     fn out(&mut self) -> &mut dyn Out;
     /// Queue a login handshake. Returns true iff the driver accepted it.
@@ -97,6 +103,10 @@ impl Driver for Client {
             .map(|p| (p.route_x[0], p.route_z[0]))
     }
 
+    fn build_base(&self) -> (i32, i32) {
+        (self.map_build_base_x, self.map_build_base_z)
+    }
+
     fn out(&mut self) -> &mut dyn Out {
         &mut self.out
     }
@@ -125,20 +135,25 @@ pub fn set_run<D: Driver + ?Sized>(driver: &mut D, on: bool) -> bool {
     press(driver, if on { RUN_ORB_IFACE } else { RUN_ORB_OFF })
 }
 
-/// Walk to a tile (the `tryMove` path, plain ground walk), routing from
-/// the local player.
+/// Walk to an absolute world tile (the `tryMove` path, plain ground walk),
+/// routing from the local player. The client routes in build-area (scene)
+/// coordinates — the route head already is, and the absolute target is
+/// translated through [`Driver::build_base`] before `try_move`.
 pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
     let Some((px, pz)) = driver.local_route() else {
         return false;
     };
-    driver.try_move(px, pz, x, z, false, 0, 0, 0, 0, 0, 0)
+    let (bx, bz) = driver.build_base();
+    driver.try_move(px, pz, x - bx, z - bz, false, 0, 0, 0, 0, 0, 0)
 }
 
 /// Interact with a loc via OP_LOC1 through the `doAction` path. The client
 /// dispatches `interact_with_loc(b, c, a, OPLOC1)`, so the menu carries
-/// `a=loc_id`, `b=x`, `c=z`.
+/// `a=loc_id`, `b=x`, `c=z` in build-area (scene) coordinates — the
+/// absolute loc tile is translated through [`Driver::build_base`] first.
 pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -> bool {
-    driver.set_menu(0, MiniMenuAction::OP_LOC1, loc_id, x, z);
+    let (bx, bz) = driver.build_base();
+    driver.set_menu(0, MiniMenuAction::OP_LOC1, loc_id, x - bx, z - bz);
     driver.do_action(0)
 }
 

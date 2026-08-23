@@ -538,6 +538,10 @@ mod tests {
             self.route
         }
 
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+
         fn out(&mut self) -> &mut dyn Out {
             &mut self.sink
         }

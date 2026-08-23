@@ -8,3 +8,5 @@ publish = false
 host = { path = "../host" }
 host-play = { path = "../host-play" }
 vault = { path = "../vault" }
+api = { path = "../api" }
+nav = { path = "../nav" }

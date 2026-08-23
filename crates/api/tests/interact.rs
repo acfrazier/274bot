@@ -151,6 +151,7 @@ struct Recorder {
     out: OutSink,
     logins: usize,
     route: Option<(i32, i32)>,
+    base: (i32, i32),
 }
 
 impl Driver for Recorder {
@@ -195,6 +196,10 @@ impl Driver for Recorder {
 
     fn local_route(&self) -> Option<(i32, i32)> {
         self.route
+    }
+
+    fn build_base(&self) -> (i32, i32) {
+        self.base
     }
 
     fn out(&mut self) -> &mut dyn api::prot::Out {
@@ -260,6 +265,20 @@ fn walk_without_local_route_is_not_sent() {
     assert!(r.moves.is_empty());
 }
 
+/// `walk` takes absolute world tiles: with a non-zero build base the
+/// tryMove src/dest are translated into the client's scene space (the
+/// route head is already scene-relative, so only the dest shifts).
+#[test]
+fn walk_translates_absolute_dest_into_scene_coords() {
+    let mut r = Recorder {
+        route: Some((52, 52)),
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    assert!(walk(&mut r, 3230, 3222));
+    assert_eq!(r.moves, vec![(52, 52, 30, 22, false, 0, 0, 0, 0, 0, 0)]);
+}
+
 /// `interact` dispatches the already-prepared menu slot.
 #[test]
 fn interact_dispatches_prepared_slot() {
@@ -279,6 +298,22 @@ fn op_loc_sets_menu_oploc1_then_do_action() {
     assert_eq!(
         r.menus,
         vec![(0, MiniMenuAction::OP_LOC1, 1530, 2816, 3438)]
+    );
+}
+
+/// `op_loc` takes absolute loc tiles: with a non-zero build base the menu
+/// carries scene coordinates, matching `Client.interact_with_loc`.
+#[test]
+fn op_loc_translates_absolute_loc_into_scene_coords() {
+    let mut r = Recorder {
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    assert!(op_loc(&mut r, 3230, 3222, 1530));
+    assert_eq!(r.actions, vec![0]);
+    assert_eq!(
+        r.menus,
+        vec![(0, MiniMenuAction::OP_LOC1, 1530, 30, 22)]
     );
 }
 
