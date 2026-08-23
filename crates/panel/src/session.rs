@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use api::interact::Driver;
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
@@ -425,8 +426,10 @@ impl Session {
     /// select (login FIFO); already-running slots stay up so the combo can
     /// channel-change. Capture follows the new focus when the single capture
     /// toggle is on (never two keyboards). The credentials fields follow.
+    /// New slots inherit the vault profile's auto-login (and logout latch).
     pub fn select(&mut self, name: &str) {
-        self.ensure_slot(name, None);
+        let arm = self.arm_for_profile(name);
+        self.ensure_slot(name, arm);
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
             return;
@@ -457,10 +460,15 @@ impl Session {
         }
     }
 
-    /// Renderer checkbox. The slot threads apply `set_draw` from the focus
-    /// in their per-frame observe hook, so no other wiring is needed.
+    /// Renderer checkbox. Writes both the focused checkbox (`Focus.renderer`)
+    /// and `renderer_by[focused]` so per-slot draw policy stays in sync.
+    /// Slot threads apply `set_draw` from the focus in their per-frame hook.
     pub fn set_renderer(&mut self, on: bool) {
-        self.focus.lock().unwrap().renderer = on;
+        let mut focus = self.focus.lock().unwrap();
+        focus.renderer = on;
+        if let Some(name) = focus.focused.clone() {
+            focus.renderer_by.insert(name, on);
+        }
     }
 
     /// Game window `.build()` Some/None. Closing the pane turns capture off
@@ -545,16 +553,28 @@ impl Session {
                 return false;
             }
         }
-        self.ensure_slot(&username, None);
+        // `select` builds the arm from the vault auto-login setting.
         self.select(&username);
         true
+    }
+
+    /// Control arm for a vault profile: `SlotArm::new(uid, auto_login)` with
+    /// `want_login` cleared when the wall logout latch blocks auto-login.
+    fn arm_for_profile(&self, name: &str) -> Option<Arc<SlotArm>> {
+        let profile = self.vault.as_ref().and_then(|v| v.get(name))?;
+        let auto_login = profile.settings.auto_login;
+        let arm = SlotArm::new(profile.uid, auto_login);
+        if !self.wall.should_auto_login(name, auto_login) {
+            arm.want_login.store(false, Ordering::Relaxed);
+        }
+        Some(arm)
     }
 
     /// Register per-slot IO and spawn via [`Play::spawn_slot`] when a play
     /// is live. Without `play` (unit tests / pre-unlock) only the IO map is
     /// filled so focus can attach. `arm` carries the spawn's login intent:
-    /// `None` logs in immediately (the pre-wall behavior); a wall `load`
-    /// passes a real arm so a latched logout can hold the title screen.
+    /// `None` logs in immediately (CLI/e2e); panel paths pass
+    /// [`Session::arm_for_profile`] so auto-login / latch are respected.
     fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>) {
         if self.slots.contains_key(username) {
             return;
@@ -576,9 +596,13 @@ impl Session {
             .insert(username.to_string(), SlotIo { input, pixels });
     }
 
-    /// Focus the credentials username. Save upserts then selects (spawn if
-    /// needed). Log in is the same select path.
+    /// Credentials Log in: clear the logout latch, arm a handshake the same
+    /// way as Login all (`arm_login_all`), then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
+        self.wall.clear_latch(name);
+        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
+            arm_login_all(&arm);
+        }
         self.select(name);
     }
 
@@ -601,8 +625,8 @@ impl Session {
     }
 
     /// Persist the focused profile's auto-login checkbox to the vault
-    /// (`ProfileSettings.auto_login`). Slot spawns/loads read the setting;
-    /// this method itself never spawns or stops a slot.
+    /// (`ProfileSettings.auto_login`) and mirror it onto a running slot's
+    /// `arm.auto_login`. Never spawns or stops a slot.
     pub fn set_auto_login(&mut self, name: &str, on: bool) -> bool {
         let Some(vault) = self.vault.as_mut() else {
             self.error = Some("auto-login: vault locked".into());
@@ -619,6 +643,9 @@ impl Session {
                 self.error = Some(format!("auto-login: {e}"));
                 return false;
             }
+        }
+        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
+            arm.auto_login.store(on, Ordering::Relaxed);
         }
         true
     }
@@ -643,12 +670,7 @@ impl Session {
             arm.want_login.store(want_login, Ordering::Relaxed);
             arm.auto_login.store(auto_login, Ordering::Relaxed);
         } else {
-            let arm = self
-                .vault
-                .as_ref()
-                .and_then(|v| v.get(name))
-                .map(|p| SlotArm::new(p.uid, want_login));
-            self.ensure_slot(name, arm);
+            self.ensure_slot(name, self.arm_for_profile(name));
         }
         self.select(name);
         self.sync_wall_focus();
@@ -755,13 +777,13 @@ impl Session {
         }
     }
 
-    /// Remove a member from the rail: drop it from the wall, clear its
-    /// logout latch (so a re-added member is not blocked from auto-login),
-    /// arm a clean logout when it is ingame, then stop the slot and forget
-    /// its IO. The wait-until-`!ingame` between the logout and the stop is
-    /// a live/UI concern; here the flags are set in the right order and the
-    /// thread is joined immediately.
+    /// Remove a member from the rail: focus a neighbour if this name was
+    /// focused, drop it from the wall, clear its logout latch, arm a clean
+    /// logout when ingame (without `stop`), wait until `!ingame` or ~10 s,
+    /// then `stop_slot` and forget its IO. Not-ingame members stop immediately.
     pub fn rail_remove(&mut self, name: &str) {
+        let focused = self.focused_name();
+        let neighbour = self.wall.focus_neighbour(name, focused.as_deref());
         self.wall.rail_remove(name);
         self.wall.clear_latch(name);
         if let Some(play) = &self.play {
@@ -769,10 +791,12 @@ impl Session {
                 .statuses()
                 .iter()
                 .any(|s| s.username == name && s.ingame);
-            if let Some(arm) = play.arm(name) {
-                if ingame {
+            if ingame {
+                if let Some(arm) = play.arm(name) {
+                    // Clean logout only — do not set stop until !ingame.
                     arm.want_logout.store(true, Ordering::Relaxed);
                 }
+                play.wait_until_not_ingame(name, Duration::from_secs(10));
             }
         }
         if let Some(play) = &mut self.play {
@@ -780,6 +804,15 @@ impl Session {
         }
         self.slots.remove(name);
         self.sync_wall_focus();
+        if focused.as_deref() == Some(name) {
+            match neighbour {
+                Some(n) => self.select(&n),
+                None => {
+                    self.focus.lock().unwrap().focused = None;
+                    self.capture_tx = None;
+                }
+            }
+        }
     }
 
     /// Arm a walk to `dest`. The picked dest is always stored so the status
@@ -932,6 +965,7 @@ mod tests {
     use host::{InputEv, PixelBuf, SlotInput};
     use host_play::{SlotArm, SlotStatus};
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use nav::grid::StepGrid;
     use nav::tile::Tile;
     use vault::{Profile, ProfileSettings, Vault};
@@ -1300,6 +1334,42 @@ mod tests {
     }
 
     #[test]
+    fn login_after_logout_rearms_handshake_on_fake_arm() {
+        // Logout latches + clears want_login; Log in must call arm_login_all
+        // (clear latch, want_login, cancel want_logout) then select.
+        let mut s = Session::new();
+        let mut play = host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        let arm = SlotArm::new(7, false);
+        arm.latch.store(true, Ordering::Relaxed);
+        arm.want_login.store(false, Ordering::Relaxed);
+        arm.want_logout.store(true, Ordering::Relaxed);
+        play.attach_arm("alice", Arc::clone(&arm));
+        s.play = Some(play);
+        s.wall.load("alice");
+        s.logout("alice");
+        assert!(s.wall.latch.contains("alice"));
+
+        s.login("alice");
+
+        assert!(arm.want_login.load(Ordering::Relaxed));
+        assert!(!arm.want_logout.load(Ordering::Relaxed));
+        assert!(!arm.latch.load(Ordering::Relaxed));
+        assert!(!s.wall.latch.contains("alice"));
+        assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    }
+
+    #[test]
     fn arm_login_all_cancels_pending_logout() {
         // A title-screen member keeps want_logout=true (the slot body only
         // clears it when it observes ingame); Login all must cancel it or
@@ -1496,6 +1566,75 @@ mod tests {
     }
 
     #[test]
+    fn set_auto_login_mirrors_running_arm() {
+        let path = tmp_vault("auto-login-arm.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        let mut play = host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        let arm = SlotArm::new(42, false);
+        play.attach_arm("alice", Arc::clone(&arm));
+        s.play = Some(play);
+        assert!(s.set_auto_login("alice", true));
+        assert!(arm.auto_login.load(Ordering::Relaxed));
+        assert!(s.set_auto_login("alice", false));
+        assert!(!arm.auto_login.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn set_renderer_writes_renderer_by_for_focused() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.set_renderer(false);
+        let f = s.focus.lock().unwrap();
+        assert!(!f.renderer);
+        assert_eq!(f.renderer_by.get("alice").copied(), Some(false));
+        drop(f);
+        s.set_renderer(true);
+        let f = s.focus.lock().unwrap();
+        assert!(f.renderer);
+        assert_eq!(f.renderer_by.get("alice").copied(), Some(true));
+    }
+
+    #[test]
+    fn arm_for_profile_respects_auto_login_and_latch() {
+        let path = tmp_vault("arm-for-profile.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        let mut p = profile("alice", "pw", 42);
+        p.settings.auto_login = true;
+        s.vault.as_mut().unwrap().upsert(p).unwrap();
+        let arm = s.arm_for_profile("alice").expect("arm");
+        assert!(arm.want_login.load(Ordering::Relaxed));
+        assert!(arm.auto_login.load(Ordering::Relaxed));
+        s.wall.latch_logout("alice");
+        let arm = s.arm_for_profile("alice").expect("arm");
+        assert!(
+            !arm.want_login.load(Ordering::Relaxed),
+            "latch blocks handshake"
+        );
+        assert!(
+            arm.auto_login.load(Ordering::Relaxed),
+            "profile auto_login stays on the arm"
+        );
+    }
+
+    #[test]
     fn set_auto_login_rejects_unknown_profile_without_spawning() {
         let path = tmp_vault("auto-login-missing.vault");
         let mut s = Session::new();
@@ -1576,12 +1715,35 @@ mod tests {
             vec!["alice".to_string(), "bob".to_string()],
             "membership mirrors into Focus.wall for draw_for_slot"
         );
-        s.rail_remove("alice");
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        s.rail_remove("bob");
         assert_eq!(
             s.focus.lock().unwrap().wall,
-            vec!["bob".to_string()],
+            vec!["alice".to_string()],
             "rail ✕ drops the name from Focus.wall too"
         );
+        assert_eq!(
+            s.focused_name().as_deref(),
+            Some("alice"),
+            "rail ✕ focuses the neighbour when the focused member is removed"
+        );
+    }
+
+    #[test]
+    fn rail_remove_clears_focus_when_last_member() {
+        let path = tmp_vault("rail-remove-last.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.load("alice");
+        assert_eq!(s.focused_name().as_deref(), Some("alice"));
+        s.rail_remove("alice");
+        assert!(s.focused_name().is_none());
+        assert!(s.wall.members.is_empty());
     }
 
     #[test]

@@ -26,9 +26,10 @@ tiles, with bulk **Login all / Logout all** and a profile **chooser**.
 ## What it does not (yet)
 
 - Not **scripts** — script/parameter chrome stays mocked (campaign 5).
-- The **wall is in** (campaign 4). Unlocking the vault runs every profile
-  as a live slot; the MultiBox toggle raises that set as a sidecar rail or
-  a grid, with bulk **Login all / Logout all** and a profile chooser.
+- The **wall is in** (campaign 4). Unlocking the vault starts the **first**
+  profile as a live slot; other vault rows stay parked until selected (or
+  loaded onto the wall). MultiBox raises the running set as a sidecar rail
+  or a grid, with bulk **Login all / Logout all** and a profile chooser.
   Auto-login defaults **off** per profile; closing the rail does not log
   anyone out.
 - No hosted product, no official anything: this is **not** Jagex, **not**

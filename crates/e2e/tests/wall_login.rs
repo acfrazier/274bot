@@ -5,6 +5,9 @@
 //! would hold the engine's 60 s "account in use" window and FAIL this
 //! step), and a second Login all re-enters the FIFO.
 //!
+//! `!ingame` here is the client's local title state after the IF logout
+//! press — this harness does not separately prove clean-vs-dirty TCP.
+//!
 //! Run with the engine up:
 //! `LIVE=1 cargo test -p e2e --test wall_login -- --ignored --test-threads=1`
 

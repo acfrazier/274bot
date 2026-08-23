@@ -154,14 +154,19 @@ fn on_login_success(arm: &SlotArm) {
 
 /// Per-frame arm handling in the 20 ms body: press the CC_LOGOUT iface when
 /// the panel armed a logout on an ingame slot, then report whether the
-/// thread must stop (rail ✕). The press is the only place a clean logout
-/// can go out while the slot is inside [`Host::run_client`].
+/// thread must stop (rail ✕). Probe order: logout press returns `false`
+/// (keep running until `!ingame`); only then may `stop` end the body. The
+/// press is the only place a clean logout can go out while the slot is
+/// inside [`Host::run_client`].
 fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> bool {
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
         api::interact::logout(client, ifaces);
         arm.want_logout.store(false, Ordering::Relaxed);
         arm.latch.store(true, Ordering::Relaxed);
         arm.want_login.store(false, Ordering::Relaxed);
+        // Do not honor `stop` on the same probe as the logout press — the
+        // body must keep running until the client leaves the game.
+        return false;
     }
     arm.stop.load(Ordering::Relaxed)
 }
@@ -206,10 +211,10 @@ impl Play {
     /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
     /// place immediately (a queued slot must not keep later slots behind
     /// it even if the thread is still blocked in `wait_for_permit`),
-    /// forget the name, then join the thread. The slot body checks `stop`
-    /// every 20 ms, so the join returns within a frame when the thread is
-    /// inside `run_client`. Do **not** abort the TCP link here — the
-    /// caller sends a clean IF logout before calling this.
+    /// drop the status row and arm, then join the thread. The slot body
+    /// checks `stop` every 20 ms, so the join returns within a frame when
+    /// the thread is inside `run_client`. Do **not** abort the TCP link
+    /// here — the caller sends a clean IF logout before calling this.
     pub fn stop_slot(&mut self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
@@ -219,8 +224,39 @@ impl Play {
                 .leave(arm.uid.load(Ordering::Relaxed));
         }
         self.spawned.remove(name);
+        self.statuses
+            .lock()
+            .unwrap()
+            .retain(|s| s.username != name);
+        self.arms.remove(name);
         if let Some(handle) = self.handles.remove(name) {
             let _ = handle.join();
+        }
+    }
+
+    /// Register a control arm without spawning a slot thread (panel unit
+    /// tests that drive login/logout flags through [`Play::arm`]).
+    pub fn attach_arm(&mut self, name: &str, arm: Arc<SlotArm>) {
+        self.arms.insert(name.to_string(), arm);
+    }
+
+    /// Poll until `name` reports `!ingame` (or is absent), or `timeout`
+    /// elapses. Used by rail ✕ after arming a clean logout so `stop_slot`
+    /// does not cut the TCP link while still ingame.
+    pub fn wait_until_not_ingame(&self, name: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if !self
+                .statuses()
+                .iter()
+                .any(|s| s.username == name && s.ingame)
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -369,7 +405,11 @@ fn spawn_slot_thread(
                 thread::sleep(Duration::from_millis(20));
                 continue;
             }
-            wait_for_permit(&slot_queue, &slot_statuses, &username, uid);
+            wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
+            if arm.stop.load(Ordering::Relaxed) {
+                slot_queue.lock().unwrap().leave(uid);
+                return;
+            }
             let login_started = Instant::now();
             {
                 let mut all = slot_statuses.lock().unwrap();
@@ -566,14 +606,24 @@ fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) 
 }
 
 /// Block until the login queue grants `uid` a handshake permit, mirroring
-/// the queue position onto the slot's status row while it waits.
+/// the queue position onto the slot's status row while it waits. Observes
+/// `stop` each iteration **before** `request_permit` so a `leave` from
+/// [`Play::stop_slot`] is not undone by a re-enqueue, and returns without
+/// granting when stop is set.
 fn wait_for_permit(
     queue: &Arc<Mutex<LoginQueue>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
+    stop: &AtomicBool,
 ) {
     loop {
+        if stop.load(Ordering::Relaxed) {
+            queue.lock().unwrap().leave(uid);
+            let mut all = statuses.lock().unwrap();
+            apply_queue_wait(&mut all, username, None);
+            return;
+        }
         let wait = {
             let mut q = queue.lock().unwrap();
             match q.request_permit(uid, Instant::now()) {
@@ -686,11 +736,21 @@ mod tests {
             assert!(matches!(q.request_permit(7, Instant::now()), Permit::Wait(_)));
         }
 
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        });
+
         play.stop_slot("alice");
 
         assert!(arm.stop.load(Ordering::Relaxed));
         assert!(!play.spawned.contains("alice"));
         assert!(play.handles.is_empty());
+        assert!(play.arms.get("alice").is_none(), "stop_slot drops the arm");
+        assert!(
+            play.statuses().iter().all(|s| s.username != "alice"),
+            "stop_slot drops the status row"
+        );
         assert!(play.queue.lock().unwrap().status(7).is_none());
     }
 
@@ -828,8 +888,10 @@ mod tests {
         client.ingame = true;
         let arm = SlotArm::new(0, false);
         arm.want_logout.store(true, Ordering::Relaxed);
+        // Even with stop already set, the logout probe must return false so
+        // the body keeps running until !ingame (no dirty disconnect).
+        arm.stop.store(true, Ordering::Relaxed);
 
-        // want_logout + ingame presses CC_LOGOUT, latches, and does not stop.
         assert!(!tick_flags(&mut client, &ifaces, &arm));
         assert!(!arm.want_logout.load(Ordering::Relaxed));
         assert!(arm.latch.load(Ordering::Relaxed));
@@ -839,15 +901,75 @@ mod tests {
             client::io::ClientProt::IF_BUTTON.id as u8
         );
 
+        // After the logout press, a later probe honors stop.
+        assert!(tick_flags(&mut client, &ifaces, &arm));
+
         // A title slot never presses; `stop` still reports.
         client.ingame = false;
         arm.want_logout.store(true, Ordering::Relaxed);
-        arm.stop.store(true, Ordering::Relaxed);
         assert!(tick_flags(&mut client, &ifaces, &arm));
         assert!(
             arm.want_logout.load(Ordering::Relaxed),
             "no CC_LOGOUT press on the title; the flag stays for the panel"
         );
+    }
+
+    #[test]
+    fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
+        let queue = Arc::new(Mutex::new(LoginQueue::default()));
+        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        }]));
+        let stop = AtomicBool::new(false);
+        // Occupy the FIFO head so alice waits.
+        assert!(matches!(
+            queue.lock().unwrap().request_permit(1, Instant::now()),
+            Permit::Grant
+        ));
+        assert!(matches!(
+            queue.lock().unwrap().request_permit(7, Instant::now()),
+            Permit::Wait(_)
+        ));
+        // Simulate stop_slot: leave then set stop; the waiter must not
+        // request_permit again (which would Grant or re-queue uid 7).
+        queue.lock().unwrap().leave(7);
+        stop.store(true, Ordering::Relaxed);
+        wait_for_permit(&queue, &statuses, "alice", 7, &stop);
+        assert!(
+            queue.lock().unwrap().status(7).is_none(),
+            "stop must not re-enqueue after leave"
+        );
+    }
+
+    #[test]
+    fn wait_until_not_ingame_observes_status_flip() {
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            ..SlotStatus::default()
+        });
+        let statuses = Arc::clone(&play.statuses);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            if let Some(s) = statuses.lock().unwrap().iter_mut().find(|s| s.username == "alice")
+            {
+                s.ingame = false;
+            }
+        });
+        assert!(play.wait_until_not_ingame("alice", Duration::from_secs(1)));
     }
 
     #[test]
