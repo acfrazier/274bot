@@ -33,7 +33,7 @@ pub struct PlayOptions {
 }
 
 /// Pollable per-slot view; the slot threads update it after each frame.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SlotStatus {
     pub username: String,
     /// When the slot's first login handshake started (after its permit).
@@ -52,6 +52,34 @@ pub struct SlotStatus {
     pub player: String,
     /// `Client.main_modal_id` (open modal interface, -1 when none).
     pub main_modal_id: i32,
+    /// Queued walk target tile, -1 when idle (filled from the slot's
+    /// traveller when one is wired; Task 8+).
+    pub walk_x: i32,
+    pub walk_z: i32,
+    pub walk_level: i32,
+}
+
+/// Defaults match the derived `Default` for every field except the queued
+/// walk tile, which starts `-1` (none) instead of `0`.
+impl Default for SlotStatus {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            login_started: None,
+            ingame: false,
+            scene_state: 0,
+            error: None,
+            runenergy: 0,
+            run_sends: 0,
+            tile_x: 0,
+            tile_z: 0,
+            player: String::new(),
+            main_modal_id: 0,
+            walk_x: -1,
+            walk_z: -1,
+            walk_level: -1,
+        }
+    }
 }
 
 /// Running slots and their shared status. Slots drive `mainloop` until the
@@ -434,5 +462,11 @@ mod tests {
         let a = prepare_client(cfg, 1, Arc::clone(&cache), vec![]);
         assert!(Arc::ptr_eq(&a.cache, &cache));
         assert!(!a.error_loading);
+    }
+
+    #[test]
+    fn slot_status_walk_defaults_cleared() {
+        let s = SlotStatus::default();
+        assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
     }
 }
