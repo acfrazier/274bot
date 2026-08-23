@@ -18,14 +18,19 @@ exposes a small agent API (snapshot → interact → settle). Campaign 2 adds a
 native dear-app/ImGui **panel** (`panel-play`): profile combo, editable
 credentials, status/log, game renderer, click-through capture, amber chrome.
 Campaign 3 adds a panel **WalkTo** picker: amber collision dots over the
-baked nav pack, click to arm the focused slot's traveller.
+baked nav pack, click to arm the focused slot's traveller. Campaign 4
+adds the **MultiBox wall**: one panel process runs N vault slots on the
+shared login FIFO as a 264px sidecar **rail** or a full-pane **grid** of
+tiles, with bulk **Login all / Logout all** and a profile **chooser**.
 
 ## What it does not (yet)
 
-- Not **scripts**, not the **wall**. Unlocking the vault
-  already runs every profile as a live slot (that profile-combo
-  “channel change” is N clients, one raster). Sidecar/grid wall is
-  campaign 4.
+- Not **scripts** — script/parameter chrome stays mocked (campaign 5).
+- The **wall is in** (campaign 4). Unlocking the vault runs every profile
+  as a live slot; the MultiBox toggle raises that set as a sidecar rail or
+  a grid, with bulk **Login all / Logout all** and a profile chooser.
+  Auto-login defaults **off** per profile; closing the rail does not log
+  anyone out.
 - No hosted product, no official anything: this is **not** Jagex, **not**
   official Lost City, **not** Fairy Ring, **not** a file-port of rs2b0t
   (rs2b0t's chrome is mimicked in the panel; the code is our own).

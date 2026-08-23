@@ -1,7 +1,9 @@
 # Panel: native UI (`panel-play`)
 
-`crates/panel` is the campaign-2 UI: a native **dear-app / ImGui** window over
-the same kernel slots `host-play` runs ([login.md](login.md), [vault.md](vault.md)).
+`crates/panel` is the native **dear-app / ImGui** UI over the same kernel
+slots `host-play` runs ([login.md](login.md), [vault.md](vault.md)).
+Campaign 2 built the single-bot chrome; campaign 4 adds the **MultiBox
+wall** (sidecar rail, grid mode, profile chooser) below.
 It does **not** reimplement the client UI — there is **no Present**, no client
 window feature. The client stays headless (`set_draw` only rasters into a
 pixel buffer); the panel displays those pixels and feeds input back.
@@ -34,8 +36,11 @@ Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single
 main viewport). Default dock: **game left**, **330px-class panel right**.
-Single-bot hides the dock tab strip on each pane (`AUTO_HIDE_TAB_BAR`);
-stacking a second window in a node (MultiBox later) shows tabs again.
+Single-bot hides the dock tab strip on each pane (`AUTO_HIDE_TAB_BAR`).
+MultiBox rail mode splits a third **264px rail** on the far right (game
+and panel shrink by `RAIL_W`; dear-app's `AddOns` cannot resize the OS
+window, so the rail is split inside the current window), which brings the
+strip's tab bar back.
 The Game pane title is the focused profile name when the tab bar is visible. Closing the Game pane sets
 `game_pane_open = false` (`set_draw` off) and turns capture off. The UI
 thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
@@ -71,6 +76,52 @@ open:
 
 Capture follows focus (never two keyboards) and implies renderer.
 
+## MultiBox wall (campaign 4)
+
+The title-row **MultiBox** toggle raises the wall. On the first toggle the
+wall seeds with every already-running slot and opens the **chooser** once;
+later toggles go straight to the rail. **Closing the rail does not log
+anyone out** — MultiBox off drops the grid, closes the chooser, and stops
+extra rasters (`wall_open = false`); every slot keeps running.
+
+### Rail
+
+A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
+**Login all** / **Logout all**, an **only render selected** checkbox, one
+tile per wall member, **+ add bot**, and the 1 Hz resource card. A tile is
+a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
+member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
+body focuses the member. The dot is error **red**, then ingame **amber**,
+then FIFO-queue **warn**, else grey. **only render selected** mirrors
+`Focus.only_render_selected`: when off, unfocused wall members also
+`set_draw` (the tile body shows their raster); when on, only the focused
+member paints.
+
+### Grid
+
+A MultiBox submode (the toggle sits behind MultiBox, unreachable until it
+is on). The Game pane is divided into equal cells — one per member, each
+the largest 765:503 box that fits its slot — row-major, with `cols` chosen
+to maximise the cell area. Clicking a cell selects that member; capture
+reaches **only** the focused cell; the queue card overlays it while queued.
+
+### Chooser
+
+A modal listing every vault profile. Clicking a row loads it onto the wall
+(stays open for more); **Load all** loads every profile; **Close**/Esc
+closes without loading. The row **✕** deletes the **vault profile only** —
+a live wall member keeps running and stays on the rail (credentials Save
+re-creates the row). The rail tile **✕** is the opposite: it removes the
+member from the wall, arms a clean IF logout when ingame, stops the slot,
+and never touches the vault.
+
+### Resource honesty
+
+The resource card samples once a second. The first CPU sample reads
+"measuring…", a failed sampler shows "monitor error" — never a stale
+number — and the traffic row is **always** unavailable ("no host byte
+counters (ClientStream is FR)") rather than fabricating zeros.
+
 ## Amber
 
 Accent color **`#FFB000`** (hover `#FFC14D`) — amber CRT over Theme::Dark
@@ -79,10 +130,11 @@ green `#04A800`. Panel background `#111`.
 
 ## Mocks
 
-Chrome follows rs2b0t `BotPanel` in the **330px** right strip: title +
-MultiBox, dim build line, banner, profile, credentials (Save / Log in /
-Clear, auto-login mocked), script, parameters, status key/value rows, log,
-rendering, input. Unwired controls are **disabled** with a per-item `campaign N`
+Chrome follows rs2b0t `BotPanel` in the **330px** right strip: title
+(MultiBox is a live toggle), dim build line, banner, profile, credentials
+(Save / Log in / Logout / Clear, auto-login on title), status key/value
+rows, log, rendering, input. Script and parameters stay mocked (campaign 5).
+Unwired controls are **disabled** with a per-item `campaign 5`
 tooltip (`SetItemTooltip`, not one window for every mock). Text and buttons wrap or equal-width-squish — **no horizontal
 scroll**. `chrome.rs` keeps the section inventory (`wired: bool`).
 

@@ -9,7 +9,7 @@ tick and the encrypted vault.
 - [nav.md](nav.md) — baked nav pack, A* router, per-tick traveller, WalkTo picker
 - [login.md](login.md) — login FIFO throttle numbers
 - [vault.md](vault.md) — encrypted profile vault, `BOT_VAULT_PASS` / `--vault-pass`
-- [panel.md](panel.md) — campaign-2 native UI (`panel-play`), renderer vs capture, mocks
+- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox wall (rail/grid/chooser), renderer vs capture, mocks
 
 ## Layout
 
@@ -20,7 +20,7 @@ tick and the encrypted vault.
 | `host` | One OS thread per client slot; drains gens per frame; snapshot/settle/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM) |
 | `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |
-| `panel` | Native dear-app/ImGui UI (`panel-play`): profile combo, credentials, status/log, game renderer, capture |
+| `panel` | Native dear-app/ImGui UI (`panel-play`): profile combo, credentials, status/log, game renderer, capture, MultiBox wall (rail/grid/chooser) |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)

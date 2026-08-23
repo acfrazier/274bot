@@ -25,11 +25,22 @@ per-uid cooldown.
 first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). Call `reset()` on
 any successful login.
 
+## Queue position and leaving
+
+While a slot waits it sits on the FIFO. `LoginQueue::status(uid)` returns
+its place as `Option<QueuePos { position: u32, total: u32 }>` — the **k of n**
+snapshot (1-based; a granted uid is popped and no longer present). host-play
+mirrors that onto `SlotStatus.queue_position` / `queue_total` while the slot
+waits; the panel renders it as **"k of n"** in the status row and as the
+queue card over the focused slot. `LoginQueue::leave(uid)` drops a queued
+uid (no-op if absent) — the panel's rail ✕ and `stop_slot` call it so a
+removed slot does not sit in the FIFO.
+
 ## Mainland hop (tutorial skip)
 
 New accounts spawn on Tutorial Island. The cheap rs2b0t `mainlandAccount` **send** is `api::interact::mainland_hop` after `ingame && scene_state == 2`: `CLIENT_CHEAT` `tele 0,50,50,20,20` then `setvar tutorial 1000`. host-play: `--mainland` or `BOT_MAINLAND=1`.
 
-This does **not** relog. Side icons stay tutorial-locked until a later campaign (clean IF logout + login FIFO). Local engine grants staff cheats when not `production`.
+This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](interact.md)). Local engine grants staff cheats when not `production`.
 
 ## Wiring
 
@@ -37,3 +48,19 @@ This does **not** relog. Side icons stay tutorial-locked until a later campaign 
 (`Client::login`), which opens a fresh stream per attempt and blocks until
 the server responds. The FIFO sits ahead of that handshake: request a permit,
 wait the returned `Duration` when throttled, then send.
+
+
+## Panel: Login all vs auto-login
+
+The panel arms logins through `SlotArm` flags (host-play), not
+`api::interact::login` directly. Two intents differ:
+
+- **Login all / Log in** is a **one-shot**: it clears the member's logout
+  latch, cancels any pending logout, and arms the handshake. Once the grant
+  lands the arm disarms, so an unexpected DC leaves the slot on the title
+  until the next explicit arm.
+- **Auto-login** (the credentials **auto-login on title** checkbox, backed
+  by `ProfileSettings.auto_login`, default **off**) keeps the arm armed
+  after a successful handshake, so a DC re-handshakes. An explicit
+  **Logout / Logout all** latches the member, which blocks even an
+  auto-login slot until the next **Login all** clears the latch.

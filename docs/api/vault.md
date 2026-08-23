@@ -28,6 +28,9 @@ v.upsert(profile)?                              // rewrites the file; error leav
 ```
 
 `Profile.settings.lowmem` defaults to `true` (headless clients).
+`ProfileSettings.auto_login` defaults to `false` (serde default), so v1
+blobs that only carried `lowmem` deserialize with the box unchecked; the
+panel's "auto-login on title" checkbox reads and upserts it.
 
 Errors: `EmptyPassphrase`, `AlreadyExists`, `NotFound`, `WrongPassphrase`
 (the file is left unmodified), `Corrupt`, `Io`.
