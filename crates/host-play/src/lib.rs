@@ -69,6 +69,11 @@ pub struct SlotStatus {
     /// Client draw-entry counters (honest zeros until first paint enter).
     pub game_draw_enters: u64,
     pub title_screen_draw_enters: u64,
+    /// Host-stamped frame timings / paint-vs-skip counts from `Client`.
+    pub loop_ns: u64,
+    pub raster_ns: u64,
+    pub paint_n: u64,
+    pub skip_n: u64,
 }
 
 /// Absolute world tile from the scene origin plus the local-player route
@@ -108,6 +113,10 @@ impl Default for SlotStatus {
             bytes_out: 0,
             game_draw_enters: 0,
             title_screen_draw_enters: 0,
+            loop_ns: 0,
+            raster_ns: 0,
+            paint_n: 0,
+            skip_n: 0,
         }
     }
 }
@@ -117,6 +126,10 @@ impl Default for SlotStatus {
 pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
     s.game_draw_enters = c.game_draw_enters;
     s.title_screen_draw_enters = c.title_screen_draw_enters;
+    s.loop_ns = c.loop_ns;
+    s.raster_ns = c.raster_ns;
+    s.paint_n = c.paint_n;
+    s.skip_n = c.skip_n;
     let (bi, bo) = c
         .stream
         .as_ref()
@@ -870,6 +883,35 @@ mod tests {
         assert_eq!(s.bytes_out, 0);
         assert_eq!(s.game_draw_enters, 0);
         assert_eq!(s.title_screen_draw_enters, 0);
+    }
+
+    #[test]
+    fn copy_stream_and_draw_copies_timing_fields() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            vec![],
+        );
+        c.loop_ns = 10;
+        c.raster_ns = 3;
+        c.paint_n = 2;
+        c.skip_n = 8;
+        let mut s = SlotStatus {
+            username: "t".into(),
+            ..SlotStatus::default()
+        };
+        copy_stream_and_draw(&c, &mut s);
+        assert_eq!(s.loop_ns, 10);
+        assert_eq!(s.raster_ns, 3);
+        assert_eq!(s.paint_n, 2);
+        assert_eq!(s.skip_n, 8);
     }
 
     #[test]
