@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -108,8 +108,9 @@ impl Default for SlotStatus {
 /// slot logs in immediately.
 pub struct SlotArm {
     /// The profile uid this arm controls; `stop_slot` uses it to drop the
-    /// slot's login-FIFO place before the thread exits.
-    pub uid: i32,
+    /// slot's login-FIFO place before the thread exits. Atomic so spawn
+    /// can force it from the profile even while callers hold clones.
+    pub uid: AtomicI32,
     pub want_login: Arc<AtomicBool>,
     pub want_logout: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
@@ -123,7 +124,7 @@ pub struct SlotArm {
 impl SlotArm {
     pub fn new(uid: i32, want_login: bool) -> Arc<Self> {
         Arc::new(Self {
-            uid,
+            uid: AtomicI32::new(uid),
             want_login: Arc::new(AtomicBool::new(want_login)),
             want_logout: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
@@ -212,7 +213,10 @@ impl Play {
     pub fn stop_slot(&mut self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
-            self.queue.lock().unwrap().leave(arm.uid);
+            self.queue
+                .lock()
+                .unwrap()
+                .leave(arm.uid.load(Ordering::Relaxed));
         }
         self.spawned.remove(name);
         if let Some(handle) = self.handles.remove(name) {
@@ -234,12 +238,11 @@ impl Play {
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
-        let mut arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
+        let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
         // `stop_slot` leaves the FIFO by `arm.uid`; force it from the
-        // profile at spawn so a panel arm built before spawn cannot drift.
-        if let Some(arm) = Arc::get_mut(&mut arm) {
-            arm.uid = profile.uid;
-        }
+        // profile at spawn. The store goes through the shared inner field
+        // so a caller's own clone cannot keep a stale uid.
+        arm.uid.store(profile.uid, Ordering::Relaxed);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         spawn_slot_thread(
             &self.options,
@@ -326,6 +329,13 @@ fn spawn_slot_thread(
 
     handles.insert(username.clone(), thread::spawn(move || {
         let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
+        #[cfg(test)]
+        {
+            // Unit tests spawn slots with no web server on :80; shrink
+            // maininit's HTTP retry so `stop_slot`'s join returns fast
+            // (the client's own HTTP tests stub retries the same way).
+            client.fetch_retry_wait = Duration::from_millis(1);
+        }
 
         {
             let mut all = slot_statuses.lock().unwrap();
@@ -582,6 +592,7 @@ mod tests {
 
     use client::client::ClientConfig;
     use client::config::Cache;
+    use vault::ProfileSettings;
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {
         let dir =
@@ -669,6 +680,53 @@ mod tests {
         assert!(!play.spawned.contains("alice"));
         assert!(play.handles.is_empty());
         assert!(play.queue.lock().unwrap().status(7).is_none());
+    }
+
+    #[test]
+    fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
+        // A caller that retains its own clone makes the arm shared before
+        // spawn; the uid must still be forced from the profile (an
+        // `Arc::get_mut` fixup would silently no-op here).
+        let arm = SlotArm::new(0, false);
+        let _caller_clone = Arc::clone(&arm);
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        // The profile uid 42 sits queued behind a granted head; stopping
+        // must drop 42 from the FIFO, not the arm's stale uid 0.
+        {
+            let mut q = play.queue.lock().unwrap();
+            assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
+            assert!(matches!(q.request_permit(42, Instant::now()), Permit::Wait(_)));
+        }
+        play.spawn_slot(
+            Profile {
+                username: "alice".into(),
+                password: "pw".into(),
+                uid: 42,
+                settings: ProfileSettings::default(),
+            },
+            None,
+            None,
+            Some(Arc::clone(&arm)),
+        );
+
+        assert_eq!(arm.uid.load(Ordering::Relaxed), 42);
+        play.stop_slot("alice");
+
+        assert!(arm.stop.load(Ordering::Relaxed));
+        assert!(play.queue.lock().unwrap().status(42).is_none());
+        assert!(!play.spawned.contains("alice"));
+        assert!(play.handles.is_empty());
     }
 
     #[test]
