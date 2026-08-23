@@ -5,8 +5,10 @@
 //! width/height u32le, one walk byte per tile (row-major z then x, 1 =
 //! walkable, same indexing as [`StepGrid`]), door count u32le, then per door
 //! `(loc_x, loc_z, loc_level, loc_id, from_x, from_z, from_level, to_x, to_z,
-//! to_level)` all i32le.
+//! to_level)` all i32le. Door loc ids come from the Server
+//! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
@@ -22,6 +24,8 @@ const MAGIC: &[u8; 4] = b"274N";
 const SQUARE: usize = 64;
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
+/// Largest grid side a pack may decode (4096×4096 tiles).
+const MAX_GRID: usize = 4096;
 
 /// Errors loading, writing, or baking a nav pack.
 #[derive(Debug)]
@@ -103,6 +107,11 @@ pub fn decode(bytes: &[u8]) -> Result<StepGrid, PackError> {
     };
     let width = read_u32(&mut r)? as usize;
     let height = read_u32(&mut r)? as usize;
+    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
+        return Err(PackError::BadLength(format!(
+            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
+        )));
+    }
     let cells = width
         .checked_mul(height)
         .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
@@ -166,25 +175,67 @@ pub struct Mapsquare {
     pub doors: Vec<DoorEdge>,
 }
 
+/// Door loc ids from `content/scripts/doors/configs/*.loc` text: every
+/// `[loc_N]` block that can open, i.e. has `op1=Open` or
+/// `category=door_closed`. Non-numeric blocks (e.g. `[membergatel]`) are
+/// ignored, as are the `op1=Close`/`*_opened` counterpart states.
+pub fn parse_door_config(text: &str) -> HashSet<i32> {
+    let mut ids = HashSet::new();
+    let mut cur: Option<i32> = None;
+    let mut openable = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(n) = loc_header(line) {
+            if let Some(id) = cur {
+                if openable {
+                    ids.insert(id);
+                }
+            }
+            cur = Some(n);
+            openable = false;
+        } else if cur.is_some() && (line == "op1=Open" || line == "category=door_closed") {
+            openable = true;
+        }
+    }
+    if let Some(id) = cur {
+        if openable {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
+/// `[loc_N]` block header -> `N`.
+fn loc_header(line: &str) -> Option<i32> {
+    line.strip_prefix("[loc_")?.strip_suffix(']')?.parse().ok()
+}
+
 /// Parse one mapsquare jm2 file (level 0 only). A MAP flag with bit 0 set
 /// (`fN`, BLOCK_MAP_SQUARE) is blocked; tiles without a MAP line are not
-/// walkable. A LOC 1530 with shape 0 (wall) becomes a [`DoorEdge`] crossing
-/// the wall: angle 0/2 crosses east-west, angle 1/3 north-south, and the
-/// door's own tile is marked not walkable. Other levels, locs, and shapes
-/// are ignored. Malformed lines are skipped. I/O failures and files without
-/// a MAP section are errors (callers skip that mapsquare).
+/// walkable. A LOC whose loc id is in `door_ids` (openable wall doors from
+/// the Server door configs) with shape 0 becomes a [`DoorEdge`] crossing the
+/// wall: angle 0/2 crosses east-west, angle 1/3 north-south, and the door's
+/// own tile is marked not walkable. Other levels, locs, and shapes are
+/// ignored. Malformed lines are skipped. I/O failures and files without a
+/// MAP section are errors (callers skip that mapsquare).
 pub fn parse_mapsquare_jm2(
     path: &Path,
     mapsquare_x: i32,
     mapsquare_z: i32,
+    door_ids: &HashSet<i32>,
 ) -> Result<Mapsquare, PackError> {
     let text = std::fs::read_to_string(path).map_err(PackError::Io)?;
-    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z)
+    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids)
         .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
 }
 
 /// Parse jm2 text into a [`Mapsquare`], or None without a MAP section.
-fn parse_mapsquare_text(text: &str, mapsquare_x: i32, mapsquare_z: i32) -> Option<Mapsquare> {
+fn parse_mapsquare_text(
+    text: &str,
+    mapsquare_x: i32,
+    mapsquare_z: i32,
+    door_ids: &HashSet<i32>,
+) -> Option<Mapsquare> {
     let mut walk = vec![0u8; SQUARE * SQUARE];
     let mut doors = Vec::new();
     let mut in_map = false;
@@ -206,7 +257,7 @@ fn parse_mapsquare_text(text: &str, mapsquare_x: i32, mapsquare_z: i32) -> Optio
                 walk[z * SQUARE + x] = if blocked { 0 } else { 1 };
             }
         } else if in_loc {
-            if let Some((x, z, door)) = parse_loc_line(line, mapsquare_x, mapsquare_z) {
+            if let Some((x, z, door)) = parse_loc_line(line, mapsquare_x, mapsquare_z, door_ids) {
                 walk[z * SQUARE + x] = 0;
                 doors.push(door);
             }
@@ -288,8 +339,13 @@ fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
     Some((x, z, blocked))
 }
 
-/// Parse a LOC line into `(x, z, door)` for a shape-0 1530 wall on level 0.
-fn parse_loc_line(line: &str, mapsquare_x: i32, mapsquare_z: i32) -> Option<(usize, usize, DoorEdge)> {
+/// Parse a LOC line into `(x, z, door)` for a shape-0 door wall on level 0.
+fn parse_loc_line(
+    line: &str,
+    mapsquare_x: i32,
+    mapsquare_z: i32,
+    door_ids: &HashSet<i32>,
+) -> Option<(usize, usize, DoorEdge)> {
     let (coords, rest) = line.split_once(':')?;
     let mut c = coords.split_whitespace();
     let level: i32 = c.next()?.parse().ok()?;
@@ -309,7 +365,7 @@ fn parse_loc_line(line: &str, mapsquare_x: i32, mapsquare_z: i32) -> Option<(usi
     let loc_id: i32 = t.next()?.parse().ok()?;
     let shape: i32 = t.next()?.parse().ok()?;
     let angle: i32 = t.next().map_or(Ok(0), |a| a.parse()).ok()?;
-    if loc_id != 1530 || shape != 0 {
+    if !door_ids.contains(&loc_id) || shape != 0 {
         return None;
     }
     let loc = Tile {
@@ -328,7 +384,7 @@ fn parse_loc_line(line: &str, mapsquare_x: i32, mapsquare_z: i32) -> Option<(usi
         ),
         _ => return None,
     };
-    Some((x, z, DoorEdge { loc, loc_id: 1530, from, to }))
+    Some((x, z, DoorEdge { loc, loc_id, from, to }))
 }
 
 fn read_i32(r: &mut Cursor<&[u8]>) -> Result<i32, PackError> {
@@ -345,7 +401,10 @@ fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, encode, merge_squares, parse_mapsquare_text, walkable_dots, Mapsquare};
+    use super::{
+        decode, encode, merge_squares, parse_door_config, parse_mapsquare_text, walkable_dots,
+        Mapsquare,
+    };
     use crate::grid::StepGrid;
     use crate::pack::PackError;
     use crate::tile::Tile;
@@ -374,6 +433,32 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_oversized_grid() {
+        // Huge width would try to allocate GiB of walk bytes.
+        let bytes = header(0, u32::MAX, 1);
+        assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
+    }
+
+    #[test]
+    fn decode_rejects_zero_grid() {
+        assert!(matches!(decode(&header(0, 0, 1)), Err(PackError::BadLength(_))));
+        assert!(matches!(decode(&header(0, 1, 0)), Err(PackError::BadLength(_))));
+    }
+
+    /// Magic + version + zero origin + width/height, nothing else.
+    fn header(level: i32, width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"274N");
+        bytes.push(1);
+        for v in [0i32, 0, level] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes
+    }
+
+    #[test]
     fn walkable_dots_lists_only_walkable_tiles() {
         let g = StepGrid::fixture_door_corridor();
         let dots: Vec<Tile> = walkable_dots(&g, 0).collect();
@@ -383,36 +468,72 @@ mod tests {
     }
 
     #[test]
-    fn parse_jm2_text_marks_walk_blocked_and_door() {
+    fn parse_door_config_collects_openable_doors() {
+        // Mirrors the real config format: closed/open counterpart blocks.
+        let text = "\
+[loc_1512]
+name=Large door
+op1=Open
+category=door_closed
+
+[loc_1513]
+op1=Open
+
+[loc_1514]
+op1=Close
+category=door_opened
+
+[loc_1530]
+op1=Open
+category=door_closed
+
+[membergatel]
+name=Gate
+op1=Open
+";
+        let ids = parse_door_config(text);
+        assert!(ids.contains(&1512));
+        assert!(ids.contains(&1513));
+        assert!(ids.contains(&1530));
+        assert!(!ids.contains(&1514));
+        assert!(!ids.contains(&1531));
+    }
+
+    #[test]
+    fn parse_jm2_text_pins_catherby_door() {
+        let door_ids = parse_door_config(
+            "[loc_1530]\nop1=Open\ncategory=door_closed\n[loc_980]\nop1=Close\ncategory=door_opened\n",
+        );
         let text = "\
 ==== MAP ====
 0 0 0: h1 o6 u48
 0 1 0: f1 u48
 0 0 1: f16 u50
+0 0 46: h1 o6 f1 u50
 ==== LOC ====
-0 0 3: 1530 0 1
-0 1 3: 980 0 0
-1 0 0: 1530 0 1
-0 0 4: 1530 0 7
+0 0 46: 1530 0 1
+0 1 46: 980 0 0
+1 0 46: 1530 0 1
+0 0 47: 1530 0 7
 ==== NPC ====
 0 0 0: 1234
 ";
-        let sq = parse_mapsquare_text(text, 44, 53).unwrap();
+        let sq = parse_mapsquare_text(text, 44, 53, &door_ids).unwrap();
         // (0,0): no f flag -> walkable; (1,0): f1 bit 0 -> blocked;
         // (0,1): f16 bit 0 clear -> walkable; (2,0): no MAP line -> blocked.
         assert_eq!(sq.walk[0], 1);
         assert_eq!(sq.walk[1], 0);
         assert_eq!(sq.walk[64], 1);
         assert_eq!(sq.walk[2], 0);
-        // Only the level-0 shape-0 1530 with a known angle becomes a door.
+        // The Catherby closed door: 1530 @ local (0,46) -> 2816,3438,0.
         assert_eq!(sq.doors.len(), 1);
         let d = sq.doors[0];
-        assert_eq!(d.loc, Tile { x: 2816, z: 3395, level: 0 });
+        assert_eq!(d.loc, Tile { x: 2816, z: 3438, level: 0 });
         assert_eq!(d.loc_id, 1530);
-        assert_eq!(d.from, Tile { x: 2816, z: 3394, level: 0 });
-        assert_eq!(d.to, Tile { x: 2816, z: 3396, level: 0 });
+        assert_eq!(d.from, Tile { x: 2816, z: 3437, level: 0 });
+        assert_eq!(d.to, Tile { x: 2816, z: 3439, level: 0 });
         // The door tile is a wall: not walkable.
-        assert_eq!(sq.walk[3 * 64], 0);
+        assert_eq!(sq.walk[46 * 64], 0);
     }
 
     #[test]
