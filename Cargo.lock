@@ -1852,6 +1852,7 @@ dependencies = [
  "dear-imgui-rs",
  "host",
  "host-play",
+ "nav",
  "vault",
  "wgpu",
 ]

@@ -285,6 +285,7 @@ fn panel_window(ui: &Ui, session: &mut Session) {
         banner(ui, session);
         profile_section(ui, session);
         credentials_section(ui, session);
+        walkto_button(ui, session);
         script_section(ui);
         parameters_section(ui);
         status_section(ui, session);
@@ -427,6 +428,17 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
     }
 }
 
+/// WalkTo: main-chrome button that opens the tile picker (Task 10). Until
+/// the picker exists clicking just sets the open flag; no map window yet.
+fn walkto_button(ui: &Ui, session: &mut Session) {
+    ui.spacing();
+    let w = ui.content_region_avail()[0];
+    if ui.button_with_size("WalkTo", [w, 0.0]) {
+        session.walkto_open = true;
+    }
+    ui.tooltip_text("open tile picker (Task 10)");
+}
+
 /// script: mocked until campaign 5. Layout matches BotPanel (name+Browse,
 /// then Start/Pause/Stop, then a status row).
 fn script_section(ui: &Ui) {
@@ -456,6 +468,7 @@ fn status_section(ui: &Ui, session: &Session) {
         kv_row(ui, "state", "no slots");
         kv_row(ui, "player", "—");
         kv_row(ui, "tile", "—");
+        kv_row(ui, "walk", &session.walk_status_text());
         kv_row(ui, "modals", "—");
         return;
     }
@@ -479,6 +492,7 @@ fn status_section(ui: &Ui, session: &Session) {
     kv_row(ui, "state", &state);
     kv_row(ui, "player", player);
     kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
+    kv_row(ui, "walk", &session.walk_status_text());
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
 }
 
@@ -592,6 +606,7 @@ mod tests {
 
     #[test]
     fn apply_ui_scale_scales_padding_for_retina() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
         let before = ctx.style().window_padding();
         apply_ui_scale(ctx.style_mut(), 2.0);

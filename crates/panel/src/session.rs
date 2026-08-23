@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotStatus};
+use nav::tile::Tile;
+use nav::traveller::Traveller;
 use vault::{Profile, Vault};
 
 use crate::focus::draw_for_slot;
@@ -122,6 +124,15 @@ pub struct Session {
     /// Credentials-section scratch buffers (username/password fields).
     pub cred_user: String,
     pub cred_pass: String,
+    /// Per-username nav travellers; the focused slot's traveller carries
+    /// the armed walk route (ticked from observe in Task 10+).
+    pub travellers: HashMap<String, Arc<Mutex<Traveller>>>,
+    /// The tile the user last picked for WalkTo; `None` until armed. Read
+    /// by [`Session::walk_status_text`] so the status row stays honest even
+    /// when no route could be found.
+    pub walk_dest: Option<Tile>,
+    /// WalkTo picker open flag; the picker window lands in Task 10.
+    pub walkto_open: bool,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
     options: PlayOptions,
 }
@@ -159,6 +170,9 @@ impl Session {
             statuses: Vec::new(),
             cred_user: String::new(),
             cred_pass: String::new(),
+            travellers: HashMap::new(),
+            walk_dest: None,
+            walkto_open: false,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
@@ -466,6 +480,23 @@ impl Session {
         self.cred_user.clear();
         self.cred_pass.clear();
     }
+
+    /// Arm a walk to `dest`. The picked dest is always stored so the status
+    /// row shows what the user asked for even when no route could be found.
+    /// Routing needs the player's observed tile and a loaded pack; until
+    /// the picker wiring lands (Task 10) this only records the dest.
+    pub fn arm_walk(&mut self, dest: Tile) {
+        self.walk_dest = Some(dest);
+    }
+
+    /// The status-row walk cell: `"—"` when nothing is queued, else the
+    /// queued dest as `"x z level"`.
+    pub fn walk_status_text(&self) -> String {
+        match self.walk_dest {
+            Some(d) => format!("{} {} {}", d.x, d.z, d.level),
+            None => "—".into(),
+        }
+    }
 }
 
 /// Fresh uid for a profile with no existing vault entry: one past the max
@@ -478,6 +509,7 @@ fn fresh_uid(vault: &Vault) -> i32 {
 mod tests {
     use super::{combo_index, maybe_send_click, stream_capture, Session, SlotIo};
     use host::{InputEv, PixelBuf, SlotInput};
+    use nav::tile::Tile;
     use vault::{Profile, ProfileSettings, Vault};
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {
@@ -506,6 +538,19 @@ mod tests {
         let f = s.focus.lock().unwrap();
         assert!(f.renderer, "rail is on; host paints 1 fps until capture");
         assert!(!f.capture);
+    }
+
+    #[test]
+    fn walk_status_is_dash_when_no_route() {
+        let s = Session::new();
+        assert_eq!(s.walk_status_text(), "—");
+    }
+
+    #[test]
+    fn arm_walk_sets_queued_text() {
+        let mut s = Session::new();
+        s.arm_walk(Tile { x: 3222, z: 3222, level: 0 });
+        assert!(s.walk_status_text().contains("3222"));
     }
 
     #[test]
