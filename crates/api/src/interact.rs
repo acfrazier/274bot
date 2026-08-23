@@ -144,26 +144,7 @@ pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
         return false;
     };
     let (bx, bz) = driver.build_base();
-    // tryMove indexes the collision map in 0..104 build-area (scene) space,
-    // so a target in another mapsquare cannot be routed from this rebuild.
-    // Clamp only an out-of-scene dest back into the interior; in-scene
-    // targets (0..103) pass through unchanged so edge tiles stay reachable.
-    let dx = clamp_scene(x - bx);
-    let dz = clamp_scene(z - bz);
-    driver.try_move(px, pz, dx, dz, false, 0, 0, 0, 0, 0, 0)
-}
-
-/// Keep a scene coordinate inside the 104×104 build area: out-of-bounds
-/// values collapse to the interior edge (1..102), in-range values pass
-/// through unchanged.
-fn clamp_scene(v: i32) -> i32 {
-    if v < 0 {
-        1
-    } else if v > 103 {
-        102
-    } else {
-        v
-    }
+    driver.try_move(px, pz, x - bx, z - bz, false, 0, 0, 0, 0, 0, 0)
 }
 
 /// Interact with a loc via OP_LOC1 through the `doAction` path. The client

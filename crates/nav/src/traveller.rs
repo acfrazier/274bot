@@ -221,7 +221,22 @@ impl Traveller {
                         .nth(15)
                         .unwrap_or(last)
                 };
-                self.last_walk_ok = Some(walk(d, target.x, target.z));
+                let mut accepted = walk(d, target.x, target.z);
+                if !accepted {
+                    // The client rejected the leg shot (collision has no
+                    // route that far). Retry the tile right after `here` on
+                    // this leg once so the next rebuild step still sends.
+                    let next = tiles
+                        .iter()
+                        .position(|t| *t == here)
+                        .and_then(|i| tiles.get(i + 1))
+                        .copied()
+                        .unwrap_or(last);
+                    if next != target {
+                        accepted = walk(d, next.x, next.z);
+                    }
+                }
+                self.last_walk_ok = Some(accepted);
                 self.status = NavStatus::Walking;
             }
             Leg::Door { loc, loc_id, to, .. } => {
@@ -543,14 +558,41 @@ mod tests {
         assert_eq!(status, NavStatus::Walking);
     }
 
+    #[test]
+    fn walk_leg_falls_back_to_next_tile_when_dest_rejected() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_open_3x3(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 2, z: 2, level: 0 },
+            )
+            .unwrap(),
+        );
+        let mut r = Rec {
+            route: Some((0, 0)),
+            reject_far: true,
+            ..Rec::default()
+        };
+        // The leg far end (2,2) is 2 away and the driver rejects it; the
+        // traveller retries the adjacent tile so the hop still goes out.
+        assert_eq!(
+            t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false),
+            NavStatus::Walking
+        );
+        assert!(r.walked.is_some(), "adjacent fallback hop was sent");
+    }
+
     /// Recording driver: captures the last walk target and counts OP_LOC1
     /// interactions. `route` stands in for the local player tile so
-    /// `api::walk` finds a route origin.
+    /// `api::walk` finds a route origin. `reject_far` mirrors the live
+    /// client rejecting a tryMove shot of more than one tile.
     #[derive(Default)]
     struct Rec {
         walked: Option<(i32, i32)>,
         locs: usize,
         route: Option<(i32, i32)>,
+        reject_far: bool,
         sink: Sink,
     }
 
@@ -567,8 +609,8 @@ mod tests {
 
         fn try_move(
             &mut self,
-            _src_x: i32,
-            _src_z: i32,
+            src_x: i32,
+            src_z: i32,
             dx: i32,
             dz: i32,
             _try_nearest: bool,
@@ -579,6 +621,9 @@ mod tests {
             _forceapproach: i32,
             _ty: i32,
         ) -> bool {
+            if self.reject_far && (src_x - dx).abs().max((src_z - dz).abs()) > 1 {
+                return false;
+            }
             self.walked = Some((dx, dz));
             true
         }

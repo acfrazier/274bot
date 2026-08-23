@@ -127,6 +127,7 @@ fn nav_walk() {
     // courtyard (tutorial island is off-grid, so a walkable tile means the
     // tele arrived). The player is stationary until armed, so the observed
     // tile is a safe route origin even when it is not the expected landing.
+    let arm_deadline = Instant::now() + Duration::from_secs(90);
     let mut armed = false;
     let mut started: Option<Instant> = None;
     loop {
@@ -162,16 +163,24 @@ fn nav_walk() {
                 }
             }
         }
-        // The 90 s clock starts at arm, not after wait_ingame, so a slow
-        // tutorial->tele hop cannot eat the walk budget.
-        let timed_out = started
-            .map(|st| Instant::now() >= st + Duration::from_secs(90))
+        // The walk clock starts at arm; a separate wait_ingame clock fails
+        // a never-arm so the test cannot hang past 90 s either way.
+        let now = Instant::now();
+        let walk_timed_out = started
+            .map(|st| now >= st + Duration::from_secs(90))
             .unwrap_or(false);
+        let arm_timed_out = !armed && now >= arm_deadline;
         let here = s.here;
+        let scene = s.scene_state;
         drop(s);
-        if timed_out {
+        if walk_timed_out {
             fail(&format!(
-                "nav_walk: not at {DEST:?} within 90 s (armed={armed}, here={here:?})"
+                "nav_walk: not at {DEST:?} within 90 s of arm (armed={armed}, here={here:?})"
+            ));
+        }
+        if arm_timed_out {
+            fail(&format!(
+                "nav_walk: never armed within 90 s of ingame (here={here:?}, scene={scene})"
             ));
         }
         std::thread::sleep(Duration::from_millis(250));
