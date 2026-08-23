@@ -1856,7 +1856,6 @@ dependencies = [
  "dear-imgui-rs",
  "host",
  "host-play",
- "libc",
  "nav",
  "serde",
  "serde_json",

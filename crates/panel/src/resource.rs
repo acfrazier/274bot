@@ -117,33 +117,9 @@ pub fn format_rss(bytes: u64) -> String {
     }
 }
 
-/// Best-effort sample of this process: `(rss_bytes, cpu_time_secs)`.
-/// Returns `(0, 0.0)` on failure; the caller surfaces `Metric::Error`.
-///
-/// `getrusage`'s `ru_maxrss` is **bytes** on Darwin but kilobytes on Linux,
-/// so the unit depends on `target_os` and cannot be shared as-is.
-#[cfg(target_os = "macos")]
-pub fn sample_process() -> (u64, f64) {
-    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    if rc != 0 {
-        return (0, 0.0);
-    }
-    // Darwin: `ru_maxrss` is bytes.
-    let rss = usage.ru_maxrss as u64;
-    let cpu = usage.ru_utime.tv_sec as f64
-        + usage.ru_utime.tv_usec as f64 / 1e6
-        + usage.ru_stime.tv_sec as f64
-        + usage.ru_stime.tv_usec as f64 / 1e6;
-    (rss, cpu)
-}
-
-/// Non-Darwin hosts have no portable sampler wired up yet; report failure
-/// so the caller shows `Metric::Error` rather than fake numbers.
-#[cfg(not(target_os = "macos"))]
-pub fn sample_process() -> (u64, f64) {
-    (0, 0.0)
-}
+/// Sampler lives in `host-play` (Darwin bytes, Linux `ru_maxrss` * 1024);
+/// re-exported so `app.rs` keeps `use crate::resource::sample_process`.
+pub use host_play::sample_process;
 
 #[cfg(test)]
 mod tests {
