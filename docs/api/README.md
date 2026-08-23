@@ -6,6 +6,7 @@ tick and the encrypted vault.
 
 - [snapshot.md](snapshot.md) — generation-stamped world reads (families + gens)
 - [interact.md](interact.md) — acting (`doAction` path), the `LEGAL_SEND`/`ClientProt` table
+- [nav.md](nav.md) — baked nav pack, A* router, per-tick traveller, WalkTo picker
 - [login.md](login.md) — login FIFO throttle numbers
 - [vault.md](vault.md) — encrypted profile vault, `BOT_VAULT_PASS` / `--vault-pass`
 - [panel.md](panel.md) — campaign-2 native UI (`panel-play`), renderer vs capture, mocks
@@ -15,6 +16,7 @@ tick and the encrypted vault.
 | Crate | Role |
 | --- | --- |
 | `api` | Read model (`snapshot`, `query`), act primitives (`interact`, `settle`), legal send table (`prot`) |
+| `nav` | Nav pack bake/load, A* router, per-tick traveller, WalkTo picker grid |
 | `host` | One OS thread per client slot; drains gens per frame; snapshot/settle/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM) |
 | `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |

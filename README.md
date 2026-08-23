@@ -17,10 +17,12 @@ login handshakes through a FIFO, keeps profiles in an AES-256-GCM vault, and
 exposes a small agent API (snapshot → interact → settle). Campaign 2 adds a
 native dear-app/ImGui **panel** (`panel-play`): profile combo, editable
 credentials, status/log, game renderer, click-through capture, amber chrome.
+Campaign 3 adds a panel **WalkTo** picker: amber collision dots over the
+baked nav pack, click to arm the focused slot's traveller.
 
 ## What it does not (yet)
 
-- Not **nav**, not **scripts**, not the **wall**. Unlocking the vault
+- Not **scripts**, not the **wall**. Unlocking the vault
   already runs every profile as a live slot (that profile-combo
   “channel change” is N clients, one raster). Sidecar/grid wall is
   campaign 4.
