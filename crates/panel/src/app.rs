@@ -25,7 +25,8 @@ use crate::rail::{traffic_light, Light, RAIL_W, TILE_H, TILE_W};
 use host::debug_enabled;
 
 use crate::resource::{
-    cpu_from_delta, format_bots, format_rss, sample_process, traffic_from_delta, Metric,
+    cpu_from_delta, draw_metric, format_bots, format_rss_caption, sample_process,
+    traffic_from_samples, Metric,
 };
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
@@ -106,9 +107,11 @@ struct PanelState {
     res_ram: Metric,
     /// Cached 1 Hz traffic metric for the resource card.
     res_traffic: Metric,
-    /// Last traffic sample `(instant, sum of bytes_in+bytes_out)`; `None`
-    /// until the first 1 Hz pass (first rate needs two samples).
-    last_traffic: Option<(Instant, u64)>,
+    /// Cached 1 Hz draw/paint metric for the focused slot.
+    res_draw: Metric,
+    /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
+    /// first 1 Hz pass (first rate needs two samples).
+    last_traffic: Option<(Instant, u64, usize)>,
 }
 
 /// One rail tile's GPU texture plus the slot `PixelBuf` generation last
@@ -133,7 +136,7 @@ impl PanelState {
         let due = match &self.last_proc {
             Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
             None => match &self.last_traffic {
-                Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
+                Some((t, ..)) => now.duration_since(*t).as_secs_f64() >= 1.0,
                 None => true,
             },
         };
@@ -148,14 +151,20 @@ impl PanelState {
             .map(|s| s.bytes_in.wrapping_add(s.bytes_out))
             .sum();
         match self.last_traffic {
-            Some((t0, sum0)) => {
+            Some((t0, sum0, n_prev)) => {
                 let dt = now.duration_since(t0).as_secs_f64();
-                let d = sum.wrapping_sub(sum0);
-                self.res_traffic = traffic_from_delta(d, dt, n);
+                self.res_traffic = traffic_from_samples(sum, sum0, dt, n, n_prev);
             }
             None => self.res_traffic = Metric::Measuring,
         }
-        self.last_traffic = Some((now, sum));
+        self.last_traffic = Some((now, sum, n));
+
+        let focused = self.session.focused_name();
+        self.res_draw = draw_metric(
+            statuses
+                .iter()
+                .find(|s| Some(s.username.as_str()) == focused.as_deref()),
+        );
 
         let (rss, cpu) = sample_process();
         if debug_enabled() {
@@ -178,7 +187,7 @@ impl PanelState {
             }
             None => self.res_cpu = Metric::Measuring,
         }
-        self.res_ram = Metric::Available(format_rss(rss));
+        self.res_ram = Metric::Available(format_rss_caption(rss));
         self.last_proc = Some((now, cpu));
     }
 }
@@ -199,6 +208,7 @@ impl Default for PanelState {
             res_cpu: Metric::Measuring,
             res_ram: Metric::Measuring,
             res_traffic: Metric::Measuring,
+            res_draw: Metric::Measuring,
             last_traffic: None,
         }
     }
@@ -977,9 +987,10 @@ fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     }
 }
 
-/// Resource card at the rail bottom: bots, CPU/RAM, and traffic from
-/// ClientStream byte counters (1 Hz). First CPU/traffic sample reads
-/// "measuring…"; a failed process sampler shows error for CPU/RAM only.
+/// Resource card at the rail bottom: bots, CPU/RAM, focused draw/paint,
+/// and traffic from ClientStream byte counters (1 Hz). First CPU/traffic/
+/// draw sample reads "measuring…"; a failed process sampler shows error
+/// for CPU/RAM only.
 fn resource_card(ui: &Ui, state: &mut PanelState) {
     ui.spacing();
     ui.text_disabled("resource");
@@ -998,6 +1009,12 @@ fn resource_card(ui: &Ui, state: &mut PanelState) {
         Metric::Available(s) => kv_row(ui, "ram", s),
         Metric::Unavailable(r) => kv_row(ui, "ram", r),
         Metric::Error(e) => kv_row(ui, "ram", e),
+    }
+    match &state.res_draw {
+        Metric::Measuring => kv_row(ui, "draw", "measuring…"),
+        Metric::Available(s) => kv_row(ui, "draw", s),
+        Metric::Unavailable(r) => kv_row(ui, "draw", r),
+        Metric::Error(e) => kv_row(ui, "draw", e),
     }
     match &state.res_traffic {
         Metric::Measuring => kv_row(ui, "traffic", "measuring…"),
