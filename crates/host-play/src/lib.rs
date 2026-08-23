@@ -19,6 +19,8 @@ use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
+mod rss;
+pub use rss::sample_process;
 use host::{PixelBuf, SlotInput};
 use vault::{Profile, Vault, VaultError};
 

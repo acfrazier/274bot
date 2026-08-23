@@ -1062,6 +1062,7 @@ dependencies = [
  "api",
  "client",
  "host",
+ "libc",
  "vault",
 ]
 
