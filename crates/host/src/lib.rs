@@ -168,7 +168,9 @@ impl Host {
             inp.drain(&mut client.shell);
         }
         client.shell.latch_click();
+        let t_loop = std::time::Instant::now();
         client.mainloop();
+        slot.loop_ns = slot.loop_ns.wrapping_add(t_loop.elapsed().as_nanos() as u64);
         let capture = input.map(|i| i.enabled()).unwrap_or(false);
         let paint = raster_this_tick(
             client.draw,
@@ -177,7 +179,24 @@ impl Host {
             &mut slot.raster_was_on,
         );
         if paint {
+            let t_r = std::time::Instant::now();
             client.mainredraw();
+            slot.raster_ns = slot.raster_ns.wrapping_add(t_r.elapsed().as_nanos() as u64);
+            slot.paint_n = slot.paint_n.wrapping_add(1);
+        } else {
+            slot.skip_n = slot.skip_n.wrapping_add(1);
+        }
+        slot.log_n = slot.log_n.wrapping_add(1);
+        if debug_enabled() && slot.log_n % 50 == 0 {
+            eprintln!(
+                "[host] slot {username}: loop_us={} raster_us={} paints={} skips={} game_draw={} title={}",
+                slot.loop_ns / 1000,
+                slot.raster_ns / 1000,
+                slot.paint_n,
+                slot.skip_n,
+                client.game_draw_enters,
+                client.title_screen_draw_enters
+            );
         }
         let result = slot.after_drain(client);
         if should_emit_tick(result.player_info) && debug_enabled() {
@@ -230,6 +249,11 @@ struct SlotLoop {
     last_modal: Option<i32>,
     raster_n: u32,
     raster_was_on: bool,
+    loop_ns: u64,
+    raster_ns: u64,
+    paint_n: u64,
+    skip_n: u64,
+    log_n: u32,
 }
 
 impl SlotLoop {
@@ -243,6 +267,11 @@ impl SlotLoop {
             last_modal: None,
             raster_n: 0,
             raster_was_on: false,
+            loop_ns: 0,
+            raster_ns: 0,
+            paint_n: 0,
+            skip_n: 0,
+            log_n: 0,
         }
     }
 
@@ -460,6 +489,34 @@ mod tests {
             buf.snapshot().len(),
             (client::client::APPLET_W * client::client::APPLET_H) as usize
         );
+    }
+
+    #[test]
+    fn client_frame_draw_off_does_not_enter_game_or_title_draw() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(false);
+        for _ in 0..3 {
+            Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        }
+        assert_eq!(c.game_draw_enters, 0);
+        assert_eq!(c.title_screen_draw_enters, 0);
+        assert_eq!(slot.skip_n, 3);
+        assert_eq!(slot.paint_n, 0);
+        assert!(slot.loop_ns > 0, "mainloop still ran");
+    }
+
+    #[test]
+    fn client_frame_draw_on_increments_title_and_paint_n() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(c.title_screen_draw_enters >= 1);
+        assert_eq!(c.game_draw_enters, 0);
+        assert_eq!(slot.paint_n, 1);
     }
 
     #[test]
