@@ -394,7 +394,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
 fn game_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, title: &str) {
     let built = ui
         .window(title)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::HORIZONTAL_SCROLLBAR)
         .build(|| {
             let avail = ui.content_region_avail();
             if state.session.multibox && state.session.wall.grid {
@@ -1357,8 +1357,8 @@ mod tests {
     #[test]
     fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
         assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
-        let small = fit_applet([382.5, 251.5]);
-        assert!((small[0] / small[1] - 765.0 / 503.0).abs() < 0.01);
+        // Small pane must not downscale — native 765×503 floor.
+        assert_eq!(fit_applet([382.5, 251.5]), [765.0, 503.0]);
         let wide = fit_applet([2000.0, 503.0]);
         assert!((wide[1] - 503.0).abs() < 0.01);
         assert!(wide[0] <= 2000.0);
