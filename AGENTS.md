@@ -12,7 +12,8 @@ Read this file once. Do **not** search the disk for another `AGENTS.md`.
 rail, grid mode, profile chooser (rail/grid/chooser). **Nav** remains
 in-scope (pack bake, router/traveller, WalkTo picker, live door harness).
 Still no dummy tick-end opcode, no scripts, no GPU 3D in this repo
-(CpuPix3D holds; wgpu if ever is last on bothost, not Fairy-Ring).
+(CpuPix3D holds for the wall; wgpu if ever is last on bothost — 50
+full-rate GPU clients as a tech demo — not Fairy-Ring).
 
 **SDD models (operator):** task implementer `deepseek-v4-flash`, per-task reviewer `deepseek-v4-pro` (or flash if it behaves), **whole-branch review: grok**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 

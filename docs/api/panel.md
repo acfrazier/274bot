@@ -52,8 +52,9 @@ The 274 scene behind it is still **CPU Pix3D** into `draw_area` — same
 painter as the headless client, not a GPU 3D backend, and not the client's
 `Present` (that applet is `client-play --window` on bothost). Unfocused /
 renderer-off slots skip `game_draw`. Watch-only is a **1 fps rail**;
-capture is 50 fps. CpuPix3D holds. A GPU 3D rasterizer is not in 274bot
-and not on Fairy-Ring; optional bothost work **at the end**, if ever.
+capture is 50 fps. CpuPix3D holds for the wall. A GPU 3D rasterizer is
+not in 274bot and not on Fairy-Ring; optional bothost **last**, if ever:
+tech demo of 50 clients at full rate on one GPU.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
