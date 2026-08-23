@@ -148,6 +148,20 @@ impl Vault {
         Ok(())
     }
 
+    /// Removes a profile by username and rewrites the encrypted file (the
+    /// chooser's row ✕). Returns false when no such profile exists. On error
+    /// the vault is unchanged both on disk and in memory. Wall membership
+    /// is untouched — a running member survives a chooser ✕.
+    pub fn remove(&mut self, username: &str) -> Result<bool, VaultError> {
+        let mut next = self.profiles.clone();
+        if next.remove(username).is_none() {
+            return Ok(false);
+        }
+        self.persist_map(&next)?;
+        self.profiles = next;
+        Ok(true)
+    }
+
     fn persist_map(&self, profiles: &BTreeMap<String, Profile>) -> Result<(), VaultError> {
         let data = serde_json::to_vec(profiles)
             .map_err(|e| VaultError::Corrupt(format!("serialize profiles: {e}")))?;
@@ -424,5 +438,24 @@ mod tests {
         let rounds_off = b"274VAULT".len() + 1;
         let stored = u32::from_le_bytes(bytes[rounds_off..rounds_off + 4].try_into().unwrap());
         assert_eq!(stored, 50_000);
+    }
+
+    #[test]
+    fn remove_deletes_only_that_profile_and_persists() {
+        let path = tmp_path("remove.vault");
+        let mut v = Vault::create(&path, "bot").unwrap();
+        v.upsert(profile("alice", "pw1")).unwrap();
+        v.upsert(profile("bob", "pw2")).unwrap();
+        assert!(v.remove("alice").unwrap(), "chooser ✕ removes the row");
+        assert!(
+            !v.remove("alice").unwrap(),
+            "a second remove of the same name is a no-op"
+        );
+        assert!(v.get("alice").is_none());
+        assert_eq!(v.get("bob").unwrap().password, "pw2");
+        drop(v);
+        let v = Vault::unlock(&path, "bot").unwrap();
+        assert!(v.get("alice").is_none(), "removal persists across unlock");
+        assert!(v.get("bob").is_some());
     }
 }

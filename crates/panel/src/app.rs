@@ -1,9 +1,11 @@
 //! dear-app shell: docking enabled, multi-viewport disabled, amber chrome.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use dear_app::{AddOns, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
@@ -13,16 +15,19 @@ use dear_imgui_rs::{
 };
 
 use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
-use crate::focus::{should_capture, should_draw};
+use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
 use crate::overlay::PathOverlay;
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
-use crate::rail::{RAIL_W, RAIL_WINDOW};
+use crate::rail::{traffic_light, Light, RAIL_W, TILE_H, TILE_W};
+use crate::resource::{
+    cpu_from_delta, format_bots, format_rss, sample_process, traffic_metric, Metric,
+};
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
-    BUILD_LINE, ERROR, PANEL_WINDOW, TEXT_DIM, TITLE,
+    BUILD_LINE, ERROR, PANEL_WINDOW, RAIL_WINDOW, TEXT_DIM, TITLE,
 };
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
@@ -87,6 +92,60 @@ struct PanelState {
     /// Cached path overlay; rebuilt at the 1 s raster cadence or on a new
     /// arm (see `overlay`).
     overlay: PathOverlay,
+    /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
+    views: HashMap<String, TileView>,
+    /// Last 1 Hz process sample `(instant, cpu secs)`; `None` before the
+    /// first sample or after a sampler failure (CPU then re-measures).
+    last_proc: Option<(Instant, f64)>,
+    /// Cached 1 Hz CPU metric for the resource card.
+    res_cpu: Metric,
+    /// Cached 1 Hz RAM metric for the resource card.
+    res_ram: Metric,
+}
+
+/// One rail tile's GPU texture plus the slot `PixelBuf` generation last
+/// uploaded, so uploads happen only when the slot repaints.
+struct TileView {
+    view: GameView,
+    gen: u64,
+}
+
+impl PanelState {
+    /// 1 Hz process sample for the resource card. CPU needs a wall+CPU
+    /// delta, so the first sample is [`Metric::Measuring`]; RAM is
+    /// available from the start. A sampler failure flips both to
+    /// [`Metric::Error`] and re-baselines — never a stale Available
+    /// string after an error.
+    fn sample_resources(&mut self) {
+        let now = Instant::now();
+        let due = match &self.last_proc {
+            Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
+            None => true,
+        };
+        if !due {
+            return;
+        }
+        let (rss, cpu) = sample_process();
+        if rss == 0 && cpu == 0.0 {
+            self.res_cpu = Metric::Error("process sample failed".into());
+            self.res_ram = Metric::Error("process sample failed".into());
+            self.last_proc = None;
+            return;
+        }
+        match self.last_proc {
+            Some((t0, cpu0)) => {
+                let wall = now.duration_since(t0).as_secs_f64();
+                let ncpu = std::thread::available_parallelism()
+                    .map(|n| n.get() as u32)
+                    .unwrap_or(1)
+                    .max(1);
+                self.res_cpu = cpu_from_delta(cpu - cpu0, wall, ncpu);
+            }
+            None => self.res_cpu = Metric::Measuring,
+        }
+        self.res_ram = Metric::Available(format_rss(rss));
+        self.last_proc = Some((now, cpu));
+    }
 }
 
 impl Default for PanelState {
@@ -100,6 +159,10 @@ impl Default for PanelState {
             docked_game_title: String::new(),
             last_upload: None,
             overlay: PathOverlay::new(),
+            views: HashMap::new(),
+            last_proc: None,
+            res_cpu: Metric::Measuring,
+            res_ram: Metric::Measuring,
         }
     }
 }
@@ -669,18 +732,243 @@ fn input_section(ui: &Ui, session: &mut Session) {
     });
 }
 
-/// Sidecar rail window: only while MultiBox is on and Grid is off. Task 11
-/// paints the member tiles; this task shows the stub strip.
-fn rail_window(ui: &Ui, session: &Session) {
+/// Sidecar rail window: only while MultiBox is on and Grid is off. Bulk
+/// Login all / Logout all, the only-render-selected checkbox, one tile per
+/// wall member (cap + 1 fps body or renderer-off placeholder), `+ add bot`,
+/// and the 1 Hz resource card.
+fn rail_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
+    state.sample_resources();
     ui.window(RAIL_WINDOW)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
+        .flags(WindowFlags::NO_COLLAPSE)
         .build(|| {
-            ui.text_colored(ACCENT, "rail");
-            ui.text_wrapped(format!(
-                "{} member(s) · tiles land in Task 11",
-                session.wall.members.len()
-            ));
+            rail_bulk_row(ui, state);
+            rail_tiles(ui, addons, state);
+            add_bot_button(ui, state);
+            resource_card(ui, state);
         });
+}
+
+/// Sticky bulk row: Login all / Logout all, then the only-render-selected
+/// checkbox that writes `Focus.only_render_selected` (slot threads apply
+/// `set_draw` from it every frame).
+fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
+    let avail = ui.content_region_avail()[0];
+    let (w, stack) = button_row_layout(avail, 2);
+    if ui.button_with_size("Login all", [w, 0.0]) {
+        state.session.login_all();
+    }
+    if !stack {
+        ui.same_line();
+    }
+    if ui.button_with_size("Logout all", [w, 0.0]) {
+        state.session.logout_all();
+    }
+    let mut only = state.session.focus.lock().unwrap().only_render_selected;
+    if ui.checkbox("only render selected", &mut only) {
+        state.session.focus.lock().unwrap().only_render_selected = only;
+    }
+}
+
+/// One tile per wall member, in wall order: cap (traffic-light dot, name,
+/// ✕) then a `TILE_W`×`TILE_H` body. The body blits the slot's `PixelBuf`
+/// when `draw_for_slot` says this member paints, else the renderer-off
+/// placeholder. Clicking the name or the body focuses the member; the ✕
+/// (a sibling button, never part of the name click) removes it.
+fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
+    ui.spacing();
+    let members = state.session.wall.members.clone();
+    let statuses = state.session.statuses();
+    // Drop textures for members that left the rail (rail ✕ or wall change).
+    state.views.retain(|name, _| members.iter().any(|m| m == name));
+    for name in &members {
+        let status = statuses.iter().find(|s| &s.username == name);
+        let light = traffic_light(
+            status.is_some_and(|s| s.ingame),
+            status.is_some_and(|s| s.error.is_some()),
+            status.is_some_and(|s| s.queue_position >= 1),
+        );
+        let (focused, draw) = {
+            let focus = state.session.focus.lock().unwrap();
+            (focus.focused.clone(), draw_for_slot(&focus, name))
+        };
+        let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref());
+        let body_clicked = rail_body(ui, addons, state, name, draw);
+        if cap_remove {
+            state.session.rail_remove(name);
+        } else if cap_select || body_clicked {
+            state.session.select(name);
+        }
+        ui.spacing();
+    }
+}
+
+/// Cap row: the traffic-light dot, the member's name (click selects), and
+/// a small ✕ (rail remove: logout arm then `stop_slot`, never `vault`).
+/// Returns `(selected, removed)`.
+fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>) -> (bool, bool) {
+    let avail = ui.content_region_avail()[0];
+    const X_W: f32 = 24.0;
+    const DOT_W: f32 = 16.0;
+    ui.text_colored(light.rgb(), "●");
+    ui.same_line();
+    let selected = focused == Some(name);
+    let clicked = ui
+        .selectable_config(name)
+        .selected(selected)
+        .size([(avail - X_W - DOT_W).max(10.0), 0.0])
+        .build();
+    ui.same_line();
+    let removed = ui.button_with_size(format!("✕##{name}"), [X_W, 0.0]);
+    (clicked, removed)
+}
+
+/// Tile body: blit the member's `PixelBuf` into a `TILE_W`×`TILE_H` Image
+/// (one cached [`GameView`] per name, uploaded only when the slot repaints)
+/// or the renderer-off placeholder. Returns whether the body was clicked
+/// (the tile's select path, not the cap ✕).
+fn rail_body(
+    ui: &Ui,
+    addons: &mut AddOns,
+    state: &mut PanelState,
+    name: &str,
+    draw: bool,
+) -> bool {
+    if !draw {
+        return ui
+            .selectable_config(format!("renderer off##{name}"))
+            .size([TILE_W, TILE_H])
+            .build();
+    }
+    let gen = state
+        .session
+        .slots
+        .get(name)
+        .map(|s| s.pixels.generation())
+        .unwrap_or(0);
+    let tv = state.views.entry(name.to_string()).or_insert_with(|| TileView {
+        view: GameView::init(&mut addons.gpu),
+        gen: u64::MAX,
+    });
+    if tv.gen != gen {
+        let pixels = state
+            .session
+            .slots
+            .get(name)
+            .map(|s| s.pixels.snapshot())
+            .unwrap_or_default();
+        tv.view.upload(&addons.gpu, &pixels);
+        tv.gen = gen;
+    }
+    ui.image(tv.view.tex_id, [TILE_W, TILE_H]);
+    ui.is_item_clicked_with_button(MouseButton::Left)
+}
+
+/// `+ add bot`: opens the chooser modal again (first MultiBox-on opened it
+/// once already; this button always reopens).
+fn add_bot_button(ui: &Ui, state: &mut PanelState) {
+    ui.spacing();
+    let w = ui.content_region_avail()[0];
+    if ui.button_with_size("+ add bot", [w, 0.0]) {
+        state.session.wall.chooser_open = true;
+    }
+}
+
+/// Resource card at the rail bottom: bots, CPU/RAM (1 Hz sample), and the
+/// always-honest unavailable traffic row. First CPU sample reads
+/// "measuring…"; a failed sampler shows "monitor error", never a stale
+/// number.
+fn resource_card(ui: &Ui, state: &mut PanelState) {
+    ui.spacing();
+    ui.text_disabled("resource");
+    ui.separator();
+    let statuses = state.session.statuses();
+    let ingame = statuses.iter().filter(|s| s.ingame).count();
+    kv_row(ui, "bots", &format_bots(statuses.len(), ingame));
+    match &state.res_cpu {
+        Metric::Measuring => kv_row(ui, "cpu", "measuring…"),
+        Metric::Available(s) => kv_row(ui, "cpu", s),
+        Metric::Unavailable(r) => kv_row(ui, "cpu", r),
+        Metric::Error(e) => kv_row(ui, "cpu", e),
+    }
+    match &state.res_ram {
+        Metric::Measuring => kv_row(ui, "ram", "measuring…"),
+        Metric::Available(s) => kv_row(ui, "ram", s),
+        Metric::Unavailable(r) => kv_row(ui, "ram", r),
+        Metric::Error(e) => kv_row(ui, "ram", e),
+    }
+    if let Metric::Unavailable(reason) = traffic_metric() {
+        kv_row(ui, "traffic", reason);
+    }
+}
+
+/// True while the chooser modal was wanted last frame; drives the
+/// rising-edge `open_popup` so Esc cannot be defeated by a per-frame reopen.
+static PREV_CHOOSER: AtomicBool = AtomicBool::new(false);
+
+/// Chooser modal: one row per vault profile. Click a row to load it onto
+/// the wall; the row ✕ deletes the vault profile only (a live wall member
+/// is untouched); Load all loads every profile. Esc (native popup
+/// behavior) closes without loading.
+fn chooser_window(ui: &Ui, session: &mut Session) {
+    let want = session.wall.chooser_open;
+    // Rising edge only: re-calling OpenPopup every frame would re-open the
+    // modal the moment Esc closes it (BeginPopupModal writes `opened` false
+    // when the popup is not open, which then just gets re-opened).
+    if want && !PREV_CHOOSER.swap(want, Ordering::Relaxed) {
+        ui.open_popup("274bot-chooser");
+    }
+    let mut open = want;
+    if let Some(_t) = ui
+        .begin_modal_popup_config("274bot-chooser")
+        .opened(&mut open)
+        .begin()
+    {
+        let names: Vec<String> = session
+            .vault
+            .as_ref()
+            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
+            .unwrap_or_default();
+        let w = ui.content_region_avail()[0];
+        if ui.button_with_size("Load all", [w, 0.0]) {
+            session.load_all();
+        }
+        ui.spacing();
+        if names.is_empty() {
+            ui.text_disabled("vault is empty — Save creates the first profile");
+        }
+        for name in &names {
+            let on_wall = session.wall.members.iter().any(|m| m == name);
+            let (loaded, removed) = chooser_row(ui, name, on_wall);
+            if loaded {
+                session.load(name);
+            }
+            if removed {
+                session.vault_remove(name);
+            }
+        }
+        ui.spacing();
+        let w = ui.content_region_avail()[0];
+        if ui.button_with_size("Close", [w, 0.0]) {
+            ui.close_current_popup();
+        }
+    }
+    session.wall.chooser_open = open;
+}
+
+/// One chooser row: a selectable name (click loads; stays open so more
+/// rows can be clicked) plus a small ✕ (vault row delete). The ✕ is a
+/// sibling item, so its click never also loads the row.
+fn chooser_row(ui: &Ui, name: &str, on_wall: bool) -> (bool, bool) {
+    let avail = ui.content_region_avail()[0];
+    let loaded = ui
+        .selectable_config(name)
+        .selected(on_wall)
+        .close_popups(false)
+        .size([(avail - 26.0).max(10.0), 0.0])
+        .build();
+    ui.same_line();
+    let removed = ui.button_with_size(format!("✕##{name}"), [24.0, 0.0]);
+    (loaded, removed)
 }
 
 /// Open the 274bot panel window. Call after the vault has been started.
@@ -726,7 +1014,10 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
             game_window(ui, addons, &mut state, &title);
             if state.session.multibox && !state.session.wall.grid {
                 ui.set_next_window_class(&class);
-                rail_window(ui, &state.session);
+                rail_window(ui, addons, &mut state);
+            }
+            if state.session.wall.chooser_open {
+                chooser_window(ui, &mut state.session);
             }
         })
         .run()

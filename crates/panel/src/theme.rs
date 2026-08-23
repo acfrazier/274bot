@@ -32,6 +32,8 @@ pub const BUILD_LINE: &str = "campaign 2 · mock chrome";
 pub const PANEL_WIDTH: f32 = 330.0;
 /// Stable ImGui window name for the right-hand chrome.
 pub const PANEL_WINDOW: &str = "274bot";
+/// Stable ImGui window name for the MultiBox sidecar rail.
+pub const RAIL_WINDOW: &str = "274bot-rail";
 
 /// Integer UI scale for ImGui chrome. Never mutates 765×503. Do **not** also
 /// multiply the Game Image by this — HiDpi already maps logical pixels.

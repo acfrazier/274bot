@@ -651,7 +651,53 @@ impl Session {
             self.ensure_slot(name, arm);
         }
         self.select(name);
+        self.sync_wall_focus();
         newly
+    }
+
+    /// Load every profile (vault plus running slots) that is not already a
+    /// wall member — the chooser's "Load all". Returns how many were newly
+    /// added. Login intent still follows each profile's auto-login setting.
+    pub fn load_all(&mut self) -> usize {
+        let names = self.profile_names();
+        let mut added = 0;
+        for name in names {
+            if self.load(&name) {
+                added += 1;
+            }
+        }
+        added
+    }
+
+    /// Chooser row ✕: delete the vault profile only. A live wall member is
+    /// **not** logged out or dropped; the row just disappears from the
+    /// chooser (credentials Save re-creates it). Returns whether a row was
+    /// removed; failures set [`Session::error`].
+    pub fn vault_remove(&mut self, name: &str) -> bool {
+        let Some(vault) = self.vault.as_mut() else {
+            self.error = Some("chooser: vault locked".into());
+            return false;
+        };
+        match vault.remove(name) {
+            Ok(removed) => {
+                if removed {
+                    self.error = None;
+                }
+                removed
+            }
+            Err(e) => {
+                self.error = Some(format!("chooser: {e}"));
+                false
+            }
+        }
+    }
+
+    /// Mirror `wall.members` into `Focus.wall` so `draw_for_slot` can paint
+    /// unfocused tiles when only-render-selected is off. Call whenever
+    /// membership changes: load, load_all, rail_remove, or the seed path.
+    fn sync_wall_focus(&mut self) {
+        let members = self.wall.members.clone();
+        self.focus.lock().unwrap().wall = members;
     }
 
     /// Log in every wall member: clear their latches and arm a login so
@@ -698,6 +744,7 @@ impl Session {
             self.wall.on_multibox_off();
         }
         self.focus.lock().unwrap().wall_open = on;
+        self.sync_wall_focus();
     }
 
     /// Grid submode of MultiBox: hides the rail in the Game pane (the grid
@@ -732,6 +779,7 @@ impl Session {
             play.stop_slot(name);
         }
         self.slots.remove(name);
+        self.sync_wall_focus();
     }
 
     /// Arm a walk to `dest`. The picked dest is always stored so the status
@@ -1504,5 +1552,101 @@ mod tests {
             ..SlotStatus::default()
         });
         assert_eq!(s2.focused_queue(), None);
+    }
+
+    #[test]
+    fn load_and_rail_remove_sync_focus_wall() {
+        let path = tmp_vault("focus-wall-sync.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.load("alice");
+        s.load("bob");
+        assert_eq!(
+            s.focus.lock().unwrap().wall,
+            vec!["alice".to_string(), "bob".to_string()],
+            "membership mirrors into Focus.wall for draw_for_slot"
+        );
+        s.rail_remove("alice");
+        assert_eq!(
+            s.focus.lock().unwrap().wall,
+            vec!["bob".to_string()],
+            "rail ✕ drops the name from Focus.wall too"
+        );
+    }
+
+    #[test]
+    fn set_multibox_on_syncs_focus_wall() {
+        let mut s = Session::new();
+        s.set_multibox(true);
+        assert_eq!(
+            s.focus.lock().unwrap().wall,
+            s.wall.members,
+            "the seed path (running slots) mirrors into Focus.wall too"
+        );
+        s.set_multibox(false);
+        assert_eq!(s.focus.lock().unwrap().wall, s.wall.members);
+    }
+
+    #[test]
+    fn load_all_loads_vault_profiles_and_syncs_focus_wall() {
+        let path = tmp_vault("load-all.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.load("alice");
+        let added = s.load_all();
+        assert_eq!(added, 1, "only bob is new");
+        assert_eq!(
+            s.wall.members,
+            vec!["alice".to_string(), "bob".to_string()]
+        );
+        assert_eq!(s.focus.lock().unwrap().wall, s.wall.members);
+    }
+
+    #[test]
+    fn chooser_vault_remove_keeps_wall_member_and_slot() {
+        let path = tmp_vault("chooser-remove.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.load("alice");
+        assert!(s.vault_remove("alice"), "chooser ✕ deletes the vault row");
+        assert!(
+            s.vault.as_ref().unwrap().get("alice").is_none(),
+            "profile row gone from the vault"
+        );
+        assert_eq!(
+            s.wall.members,
+            vec!["alice".to_string()],
+            "chooser ✕ must not rail_remove a live member"
+        );
+        assert!(s.slots.contains_key("alice"), "slot stays up");
+        assert!(
+            s.focus.lock().unwrap().wall.contains(&"alice".to_string()),
+            "Focus.wall still lists the member"
+        );
     }
 }
