@@ -992,6 +992,13 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
     } else {
         "renderer off — bot still runs."
     });
+    // Music / SFX follows the focused profile's lowmem vault setting;
+    // checked means highmem (music on). Takes effect on next spawn.
+    let mut music = !session.focused_lowmem();
+    if ui.checkbox("Music / SFX", &mut music) {
+        session.set_focused_lowmem(!music);
+    }
+    ui.text_wrapped("highmem audio; applies the next time this profile starts");
 }
 
 /// input: per-focused-bot capture toggle. Off = watch-only, zero input work.

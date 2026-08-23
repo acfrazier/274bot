@@ -752,6 +752,43 @@ impl Session {
         true
     }
 
+    /// The focused profile's `settings.lowmem`; `true` (the default) when
+    /// no profile is focused or the vault is locked.
+    pub fn focused_lowmem(&self) -> bool {
+        self.focused_name()
+            .and_then(|n| self.vault.as_ref().and_then(|v| v.get(&n)))
+            .map(|p| p.settings.lowmem)
+            .unwrap_or(true)
+    }
+
+    /// Persist the focused profile's lowmem setting to the vault
+    /// (`ProfileSettings.lowmem`). Takes effect on the profile's next
+    /// spawn; a live slot is not torn down or restarted. Returns whether
+    /// the write landed; failures set [`Session::error`].
+    pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
+        let Some(name) = self.focused_name() else {
+            self.error = Some("music/sfx: no focused profile".into());
+            return false;
+        };
+        let Some(vault) = self.vault.as_mut() else {
+            self.error = Some("music/sfx: vault locked".into());
+            return false;
+        };
+        let Some(mut profile) = vault.get(&name).cloned() else {
+            self.error = Some(format!("music/sfx: no profile {name}"));
+            return false;
+        };
+        profile.settings.lowmem = lowmem;
+        match vault.upsert(profile) {
+            Ok(()) => self.error = None,
+            Err(e) => {
+                self.error = Some(format!("music/sfx: {e}"));
+                return false;
+            }
+        }
+        true
+    }
+
     /// Load a wall member: ensure its slot and select it. Auto-login
     /// follows the vault profile setting unless the member's logout latch
     /// blocks it (`SlotArm::new(should_auto_login)`); a latched member is
@@ -1868,6 +1905,30 @@ mod tests {
         assert!(s.set_auto_login("alice", false));
         assert!(
             !s.vault.as_ref().unwrap().get("alice").unwrap().settings.auto_login
+        );
+    }
+
+    #[test]
+    fn music_sfx_persists_lowmem_false() {
+        let path = tmp_vault("music-sfx.vault");
+        let mut s = Session::new();
+        assert!(s.focused_lowmem(), "no focused profile defaults to lowmem");
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        assert!(s.focused_lowmem(), "fresh profile defaults to lowmem");
+        assert!(s.set_focused_lowmem(false));
+        assert!(
+            !s.vault.as_ref().unwrap().get("alice").unwrap().settings.lowmem
+        );
+        assert!(!s.focused_lowmem(), "focused profile reflects the setting");
+        assert!(s.set_focused_lowmem(true));
+        assert!(
+            s.vault.as_ref().unwrap().get("alice").unwrap().settings.lowmem
         );
     }
 
