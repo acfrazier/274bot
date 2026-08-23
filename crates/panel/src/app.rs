@@ -342,7 +342,9 @@ fn kv_row(ui: &Ui, key: &str, value: &str) {
 fn mock_button(ui: &Ui, label: &str, hint: &str, size: [f32; 2]) {
     let _disabled = ui.begin_disabled();
     ui.button_with_size(label, size);
-    ui.tooltip_text(hint);
+    // SetItemTooltip: only this widget, including while disabled. `tooltip_text`
+    // is SetTooltip and every mock dumps into one always-on blob.
+    ui.set_item_tooltip(hint);
 }
 
 fn mock_button_row(ui: &Ui, labels: &[&str], hint: &str) {
@@ -436,7 +438,7 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
         let _disabled = ui.begin_disabled();
         let mut auto = false;
         ui.checkbox("auto-login on title", &mut auto);
-        ui.tooltip_text("mocked");
+        ui.set_item_tooltip("mocked");
     }
 }
 
@@ -447,7 +449,7 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
     if ui.button_with_size("WalkTo", [w, 0.0]) {
         session.walkto_open = true;
     }
-    ui.tooltip_text("open tile picker");
+    ui.set_item_tooltip("open tile picker");
 }
 
 /// script: mocked until campaign 5. Layout matches BotPanel (name+Browse,

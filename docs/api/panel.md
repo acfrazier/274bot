@@ -80,8 +80,8 @@ green `#04A800`. Panel background `#111`.
 Chrome follows rs2b0t `BotPanel` in the **330px** right strip: title +
 MultiBox, dim build line, banner, profile, credentials (Save / Log in /
 Clear, auto-login mocked), script, parameters, status key/value rows, log,
-rendering, input. Unwired controls are **disabled** with a `campaign N`
-tooltip. Text and buttons wrap or equal-width-squish — **no horizontal
+rendering, input. Unwired controls are **disabled** with a per-item `campaign N`
+tooltip (`SetItemTooltip`, not one window for every mock). Text and buttons wrap or equal-width-squish — **no horizontal
 scroll**. `chrome.rs` keeps the section inventory (`wired: bool`).
 
 ## Headless proof
