@@ -63,6 +63,12 @@ pub struct SlotStatus {
     /// the `walk_*` fields).
     pub queue_position: i32,
     pub queue_total: i32,
+    /// Payload bytes from `Client.stream` (0 when no stream).
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    /// Client draw-entry counters (honest zeros until first paint enter).
+    pub game_draw_enters: u64,
+    pub title_screen_draw_enters: u64,
 }
 
 /// Absolute world tile from the scene origin plus the local-player route
@@ -98,8 +104,26 @@ impl Default for SlotStatus {
             walk_level: -1,
             queue_position: -1,
             queue_total: -1,
+            bytes_in: 0,
+            bytes_out: 0,
+            game_draw_enters: 0,
+            title_screen_draw_enters: 0,
         }
     }
+}
+
+/// Copy stream byte counters and draw-entry counts from `Client` onto a
+/// `SlotStatus` row. No stream → bytes stay 0.
+pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
+    s.game_draw_enters = c.game_draw_enters;
+    s.title_screen_draw_enters = c.title_screen_draw_enters;
+    let (bi, bo) = c
+        .stream
+        .as_ref()
+        .map(|st| (st.bytes_in(), st.bytes_out()))
+        .unwrap_or((0, 0));
+    s.bytes_in = bi;
+    s.bytes_out = bo;
 }
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
@@ -455,6 +479,7 @@ fn spawn_slot_thread(
                                     s.runenergy = c.runenergy;
                                     s.run_sends = run_sends;
                                     s.main_modal_id = c.main_modal_id;
+                                    copy_stream_and_draw(c, s);
                                     if let Some(lp) = &c.local_player {
                                         let (tx, tz) = player_world_tile(
                                             c.map_build_base_x,
@@ -820,6 +845,31 @@ mod tests {
     fn slot_status_walk_defaults_cleared() {
         let s = SlotStatus::default();
         assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
+    }
+
+    #[test]
+    fn copy_stream_and_draw_zeros_without_stream() {
+        let c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            vec![],
+        );
+        let mut s = SlotStatus {
+            username: "t".into(),
+            ..SlotStatus::default()
+        };
+        copy_stream_and_draw(&c, &mut s);
+        assert_eq!(s.bytes_in, 0);
+        assert_eq!(s.bytes_out, 0);
+        assert_eq!(s.game_draw_enters, 0);
+        assert_eq!(s.title_screen_draw_enters, 0);
     }
 
     #[test]
