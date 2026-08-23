@@ -65,7 +65,7 @@ export BOT_VAULT_PASS=bot
 # CLI: run one or more vaulted profiles
 cargo run --release -p host-play -- --user test
 
-# Panel: same vault, native UI (campaign 2)
+# Panel: same vault, native UI (MultiBox, --live)
 cargo run --release -p panel --bin panel-play
 
 # Headed live (BOT_VAULT_PASS unused): FAIL+exit 1; PASS keeps the window up
