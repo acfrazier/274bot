@@ -117,10 +117,7 @@ and never touches the vault.
 
 ### Resource honesty
 
-The resource card samples once a second. The first CPU sample reads
-"measuring…", a failed sampler shows "monitor error" — never a stale
-number — and the traffic row is **always** unavailable ("no host byte
-counters (ClientStream is FR)") rather than fabricating zeros.
+The resource card samples once a second. The first CPU and traffic samples read "measuring…". Traffic is the sum of each live slot’s `ClientStream` payload `bytes_in + bytes_out` over that second — never a fake `0 B/s` before two samples, and never `0 B/s` when there are no slots (still measuring…). A failed process sampler shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is the whole host (Null skip-paint does not free the ~1 GB scene). `BOT_DEBUG=1` also prints 1 Hz loop vs raster timings per slot and the RSS sample (4.5b baseline; 4 bots at ~10 GB is a suspected leak, not a closed RAM budget).
 
 ## Amber
 
