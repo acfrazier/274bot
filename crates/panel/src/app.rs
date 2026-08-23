@@ -112,14 +112,27 @@ struct PanelState {
     /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
     /// first 1 Hz pass (first rate needs two samples).
     last_traffic: Option<(Instant, u64, usize)>,
-    /// Headed `--live null_raster` watch; `None` for the interactive panel.
-    live: Option<LiveNull>,
+    /// Headed `--live` watch (`null_raster` or `stress50`); `None` interactive.
+    live: Option<LiveHarness>,
+}
+
+/// Headed live harness: null_raster (2 slots) or stress50 (50 slots).
+enum LiveHarness {
+    Null(LiveNull),
+    Stress(LiveStress),
 }
 
 /// Headed `null_raster` harness state. `started` is the 120s login clock.
 struct LiveNull {
     started: Instant,
     saw_scene2: bool,
+    passed: bool,
+}
+
+/// Headed `stress50` harness. `started` is the 600s login clock.
+struct LiveStress {
+    started: Instant,
+    last_announced: u8,
     passed: bool,
 }
 
@@ -224,7 +237,7 @@ impl Default for PanelState {
     }
 }
 
-const LIVE_USAGE: &str = "usage: panel-play [--live null_raster]";
+const LIVE_USAGE: &str = "usage: panel-play [--live null_raster|stress50]";
 
 /// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored.
 /// Unknown flags/names → `Err((2, msg))`; `--help`/`-h` → `Err((0, usage))`.
@@ -247,7 +260,7 @@ pub fn parse_live_args(
         }
     }
     if let Some(name) = live.as_deref() {
-        if name != "null_raster" {
+        if name != "null_raster" && name != "stress50" {
             return Err((2, LIVE_USAGE.into()));
         }
     }
@@ -295,6 +308,38 @@ fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Op
     println!("PASS: live null_raster");
     live.saw_scene2 = true;
     live.passed = true;
+    None
+}
+
+/// Headed watch: count `ingame && scene_state==2`; announce 1, 10, then 50.
+/// At 50 print PASS and stay open. Timeout 600s. Does **not** freeze-assert
+/// (operator may click). Does **not** fail on RSS magnitude.
+fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -> Option<String> {
+    if live.passed {
+        return None;
+    }
+    let n = statuses
+        .iter()
+        .filter(|s| s.ingame && s.scene_state == 2)
+        .count();
+    if n >= 1 && live.last_announced < 1 {
+        println!("live stress50: 1/50 scene 2");
+        live.last_announced = 1;
+    }
+    if n >= 10 && live.last_announced < 10 {
+        println!("live stress50: 10/50 scene 2");
+        live.last_announced = 10;
+    }
+    if n >= 50 {
+        let (rss, _) = sample_process();
+        println!("PASS: live stress50 rss={rss} ingame50");
+        live.last_announced = 50;
+        live.passed = true;
+        return None;
+    }
+    if live.started.elapsed() >= Duration::from_secs(600) {
+        return Some(format!("live stress50: {n}/50 scene 2 after 600s"));
+    }
     None
 }
 
@@ -1238,31 +1283,47 @@ fn chooser_row(ui: &Ui, name: &str, on_wall: bool) -> (bool, bool) {
 }
 
 /// Open the 274bot panel window. Call after the vault has been started.
-/// `live` is `Some("null_raster")` for the headed freeze harness (temp
-/// vault; `BOT_VAULT_PASS` is unused on that path).
+/// `live` is `Some("null_raster")` or `Some("stress50")` (temp vault;
+/// `BOT_VAULT_PASS` is unused on those paths).
 pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
 
-    if live.as_deref() == Some("null_raster") {
-        if let Err(e) = state.session.live_prepare_null_raster() {
-            eprintln!("FAIL: {e}");
-            std::process::exit(1);
+    match live.as_deref() {
+        Some("null_raster") => {
+            if let Err(e) = state.session.live_prepare_null_raster() {
+                eprintln!("FAIL: {e}");
+                std::process::exit(1);
+            }
+            state.live = Some(LiveHarness::Null(LiveNull {
+                started: Instant::now(),
+                saw_scene2: false,
+                passed: false,
+            }));
         }
-        state.live = Some(LiveNull {
-            started: Instant::now(),
-            saw_scene2: false,
-            passed: false,
-        });
-    } else if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
-        // Interactive/headless env flow: unlock before the window so slots
-        // spawn before the first frame. The in-panel prompt covers typing.
-        if !state.session.unlock(&pass) {
-            eprintln!(
-                "panel: vault: {}",
-                state.session.error.clone().unwrap_or_default()
-            );
+        Some("stress50") => {
+            if let Err(e) = state.session.live_prepare_stress50() {
+                eprintln!("FAIL: {e}");
+                std::process::exit(1);
+            }
+            state.live = Some(LiveHarness::Stress(LiveStress {
+                started: Instant::now(),
+                last_announced: 0,
+                passed: false,
+            }));
+        }
+        _ => {
+            if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
+                // Interactive/headless env flow: unlock before the window so slots
+                // spawn before the first frame. The in-panel prompt covers typing.
+                if !state.session.unlock(&pass) {
+                    eprintln!(
+                        "panel: vault: {}",
+                        state.session.error.clone().unwrap_or_default()
+                    );
+                }
+            }
         }
     }
 
@@ -1281,7 +1342,11 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
             state.session.pump_status();
             let statuses = state.session.statuses();
             if let Some(live) = state.live.as_mut() {
-                if let Some(msg) = live_null_tick(live, &statuses) {
+                let fail = match live {
+                    LiveHarness::Null(n) => live_null_tick(n, &statuses),
+                    LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
+                };
+                if let Some(msg) = fail {
                     eprintln!("FAIL: {msg}");
                     std::process::exit(1);
                 }
@@ -1314,8 +1379,8 @@ mod tests {
     use dear_imgui_rs::ConfigFlags;
 
     use super::{
-        apply_ui_scale, chooser_should_open_popup, live_null_tick, parse_live_args, runner_config,
-        LiveNull, LIVE_USAGE,
+        apply_ui_scale, chooser_should_open_popup, live_null_tick, live_stress_tick,
+        parse_live_args, runner_config, LiveNull, LiveStress, LIVE_USAGE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
@@ -1432,6 +1497,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_live_args_env_and_flag_stress50() {
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("stress50")),
+            Ok(Some("stress50".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "stress50"], None),
+            Ok(Some("stress50".into()))
+        );
+    }
+
+    #[test]
     fn parse_live_args_flag_wins_over_env() {
         assert_eq!(
             parse_live_args(["--live", "null_raster"], Some("other")),
@@ -1533,5 +1610,54 @@ mod tests {
             "{err}"
         );
         assert!(!live.passed);
+    }
+
+    fn stress_at(started: Instant) -> LiveStress {
+        LiveStress {
+            started,
+            last_announced: 0,
+            passed: false,
+        }
+    }
+
+    fn ready_n(n: usize) -> Vec<host_play::SlotStatus> {
+        (0..n)
+            .map(|i| st(&format!("s{i:02}"), true, 2, 0, 0))
+            .collect()
+    }
+
+    #[test]
+    fn live_stress_tick_announces_1_10_50_and_stays_passed() {
+        let mut live = stress_at(Instant::now());
+        assert_eq!(live_stress_tick(&mut live, &[]), None);
+        assert_eq!(live.last_announced, 0);
+        assert!(!live.passed);
+
+        assert_eq!(live_stress_tick(&mut live, &ready_n(1)), None);
+        assert_eq!(live.last_announced, 1);
+        assert!(!live.passed);
+
+        assert_eq!(live_stress_tick(&mut live, &ready_n(10)), None);
+        assert_eq!(live.last_announced, 10);
+        assert!(!live.passed);
+
+        assert_eq!(live_stress_tick(&mut live, &ready_n(50)), None);
+        assert_eq!(live.last_announced, 50);
+        assert!(live.passed);
+        assert_eq!(
+            live_stress_tick(&mut live, &ready_n(50)),
+            None,
+            "stay passed"
+        );
+        assert!(live.passed);
+    }
+
+    #[test]
+    fn live_stress_tick_timeout_before_50() {
+        let mut live = stress_at(Instant::now() - Duration::from_secs(600));
+        let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
+        assert_eq!(err, "live stress50: 1/50 scene 2 after 600s");
+        assert!(!live.passed);
+        assert_eq!(live.last_announced, 1);
     }
 }

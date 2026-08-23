@@ -288,6 +288,42 @@ impl Session {
         Ok(())
     }
 
+    /// Live `stress50` setup: temp vault `s00`…`s49` (password = username,
+    /// uids `274_000_100 + i`), multibox wall of all 50, chooser closed,
+    /// only-render-selected + focus `s00`, renderer on, then `login_all`.
+    pub fn live_prepare_stress50(&mut self) -> Result<(), String> {
+        let names: Vec<(String, String)> = (0..50)
+            .map(|i| {
+                let n = format!("s{i:02}");
+                (n.clone(), n)
+            })
+            .collect();
+        let entries: Vec<(&str, &str)> = names
+            .iter()
+            .map(|(u, p)| (u.as_str(), p.as_str()))
+            .collect();
+        let path = temp_live_vault_from(&entries, 274_000_100);
+        if !self.unlock_at(&path, "bot") {
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| "unlock_at failed".into()));
+        }
+        self.set_multibox(true);
+        // First MultiBox-on opens the chooser; live already loaded all
+        // names. Leave the window usable (operator may click the rail).
+        self.wall.chooser_open = false;
+        for (name, _) in &names {
+            self.load(name);
+        }
+        self.focus.lock().unwrap().only_render_selected = true;
+        // Each load() selects; last would be s49. Focus s00.
+        self.select("s00");
+        self.set_renderer(true);
+        self.login_all();
+        Ok(())
+    }
+
     /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
     /// first focused profile only. Parked names are started from [`select`].
     fn start_play(&mut self, vault: Vault) {
@@ -1009,11 +1045,18 @@ impl Session {
 
 /// Throwaway encrypted vault for live prepare (e2e `temp_vault` pattern,
 /// kept panel-private so panel does not depend on the e2e crate).
+/// Null raster keeps base uid `274_000_001`.
 fn temp_live_vault(entries: &[(&str, &str)]) -> PathBuf {
+    temp_live_vault_from(entries, 274_000_001)
+}
+
+/// Same as [`temp_live_vault`] with an explicit uid base (`base + i`).
+fn temp_live_vault_from(entries: &[(&str, &str)], uid_base: i32) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-live-{}-{}",
+        "274bot-panel-live-{}-{}-{}",
         std::process::id(),
-        entries.len()
+        entries.len(),
+        uid_base
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
@@ -1026,7 +1069,7 @@ fn temp_live_vault(entries: &[(&str, &str)]) -> PathBuf {
             .upsert(Profile {
                 username: (*user).into(),
                 password: (*pass).into(),
-                uid: 274_000_001 + i as i32,
+                uid: uid_base + i as i32,
                 settings: vault::ProfileSettings::default(),
             })
             .unwrap();
