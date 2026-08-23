@@ -17,7 +17,8 @@ use dear_imgui_rs::{
 use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
-use crate::overlay::PathOverlay;
+use crate::grid::grid_cells;
+use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{traffic_light, Light, RAIL_W, TILE_H, TILE_W};
@@ -258,69 +259,130 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
         });
 }
 
+/// The Game pane: the single focused applet, or — while MultiBox is in
+/// Grid mode — one cell per wall member.
 fn game_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, title: &str) {
     let built = ui
         .window(title)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
         .build(|| {
             let avail = ui.content_region_avail();
-            let size = fit_applet(avail);
-            let cursor = ui.cursor_pos();
-            ui.set_cursor_pos([
-                cursor[0] + ((avail[0] - size[0]) * 0.5).max(0.0),
-                cursor[1] + ((avail[1] - size[1]) * 0.5).max(0.0),
-            ]);
-            if state.game_view.is_none() {
-                state.game_view = Some(GameView::init(&mut addons.gpu));
-            }
-            let (draw, capture) = {
-                let focus = state.session.focus.lock().unwrap();
-                (should_draw(&focus), should_capture(&focus))
-            };
-            if draw {
-                let buf = state.session.focused_pixels();
-                let name = state.session.focused_name().unwrap_or_default();
-                let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
-                let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
-                if dirty {
-                    let pixels = game_pixels(&buf);
-                    if let Some(view) = state.game_view.as_mut() {
-                        view.upload(&addons.gpu, &pixels);
-                    }
-                    state.last_upload = Some((name, gen));
-                }
-                let view = state.game_view.as_ref().expect("game view initialized");
-                ui.image(view.tex_id, size);
-                // Nav path overlay: amber polyline of the armed route's
-                // remaining tiles, drawn over the Image (rebuilds at the
-                // 1 s raster cadence or on a new arm, not per frame).
-                state
-                    .overlay
-                    .frame(ui, &state.session, ui.item_rect_min(), size);
-                // Capture: only map/enqueue while on and hovered;
-                // capture off skips the coord math entirely (tx is
-                // also None).
-                if capture && ui.is_item_hovered() {
-                    let mouse = ui.io().mouse_pos();
-                    let min = ui.item_rect_min();
-                    stream_capture(
-                        &state.session.capture_tx,
-                        mouse[0] - min[0],
-                        mouse[1] - min[1],
-                        size[0],
-                        size[1],
-                        ui.is_mouse_clicked(MouseButton::Left),
-                        ui.is_mouse_clicked(MouseButton::Right),
-                        ui.is_mouse_released(MouseButton::Left),
-                        ui.is_mouse_released(MouseButton::Right),
-                        &capture_keys(ui),
-                    );
-                }
+            if state.session.multibox && state.session.wall.grid {
+                grid_pane(ui, addons, state, avail);
             } else {
-                ui.text_disabled("renderer off");
+                game_pane(ui, addons, state, avail);
             }
         });
     state.session.set_game_pane_open(built.is_some());
+}
+
+/// Single-bot Game pane: the focused slot's applet, 765:503 fitted and
+/// centred, with the nav overlay, capture, and queue card.
+fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 2]) {
+    let size = fit_applet(avail);
+    let cursor = ui.cursor_pos();
+    ui.set_cursor_pos([
+        cursor[0] + ((avail[0] - size[0]) * 0.5).max(0.0),
+        cursor[1] + ((avail[1] - size[1]) * 0.5).max(0.0),
+    ]);
+    if state.game_view.is_none() {
+        state.game_view = Some(GameView::init(&mut addons.gpu));
+    }
+    let (draw, capture) = {
+        let focus = state.session.focus.lock().unwrap();
+        (should_draw(&focus), should_capture(&focus))
+    };
+    if draw {
+        let buf = state.session.focused_pixels();
+        let name = state.session.focused_name().unwrap_or_default();
+        let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
+        let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
+        if dirty {
+            let pixels = game_pixels(&buf);
+            if let Some(view) = state.game_view.as_mut() {
+                view.upload(&addons.gpu, &pixels);
+            }
+            state.last_upload = Some((name, gen));
+        }
+        let view = state.game_view.as_ref().expect("game view initialized");
+        ui.image(view.tex_id, size);
+        // Nav path overlay: amber polyline of the armed route's
+        // remaining tiles, drawn over the Image (rebuilds at the
+        // 1 s raster cadence or on a new arm, not per frame).
+        state
+            .overlay
+            .frame(ui, &state.session, ui.item_rect_min(), size);
+        // Capture: only map/enqueue while on and hovered;
+        // capture off skips the coord math entirely (tx is
+        // also None).
+        if capture && ui.is_item_hovered() {
+            let mouse = ui.io().mouse_pos();
+            let min = ui.item_rect_min();
+            stream_capture(
+                &state.session.capture_tx,
+                mouse[0] - min[0],
+                mouse[1] - min[1],
+                size[0],
+                size[1],
+                ui.is_mouse_clicked(MouseButton::Left),
+                ui.is_mouse_clicked(MouseButton::Right),
+                ui.is_mouse_released(MouseButton::Left),
+                ui.is_mouse_released(MouseButton::Right),
+                &capture_keys(ui),
+            );
+        }
+    } else {
+        ui.text_disabled("renderer off");
+    }
+}
+
+/// MultiBox grid-mode Game pane: one cell per wall member, row-major from
+/// [`grid_cells`]. Clicking a cell selects the member; capture reaches
+/// only the focused cell; the queue card overlays the focused cell.
+fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 2]) {
+    let members = state.session.wall.members.clone();
+    if members.is_empty() {
+        ui.text_disabled("no wall members");
+        return;
+    }
+    let cells = grid_cells(members.len(), avail);
+    // Drop textures for members that left the wall (grid ✕ / wall change).
+    state.views.retain(|name, _| members.iter().any(|m| m == name));
+    let (focused, capture) = {
+        let focus = state.session.focus.lock().unwrap();
+        (focus.focused.clone(), should_capture(&focus))
+    };
+    for (i, name) in members.iter().enumerate() {
+        let [cx, cy, cw, ch] = cells[i];
+        let is_focused = focused.as_deref() == Some(name.as_str());
+        let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
+        ui.set_cursor_pos([cx, cy]);
+        let clicked = cell_body(ui, addons, state, name, [cw, ch], draw);
+        // Capture only on the focused cell; a click on another cell is a
+        // select, not a click-through.
+        if is_focused && capture && ui.is_item_hovered() {
+            let mouse = ui.io().mouse_pos();
+            let min = ui.item_rect_min();
+            stream_capture(
+                &state.session.capture_tx,
+                mouse[0] - min[0],
+                mouse[1] - min[1],
+                cw,
+                ch,
+                ui.is_mouse_clicked(MouseButton::Left),
+                ui.is_mouse_clicked(MouseButton::Right),
+                ui.is_mouse_released(MouseButton::Left),
+                ui.is_mouse_released(MouseButton::Right),
+                &capture_keys(ui),
+            );
+        }
+        if clicked {
+            state.session.select(name);
+        }
+        if is_focused {
+            draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
+        }
+    }
 }
 
 /// Map hovered ImGui keys to GameShell `ch` values (arrows 1–4, ASCII).
@@ -822,21 +884,22 @@ fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>) -> (bool, 
     (clicked, removed)
 }
 
-/// Tile body: blit the member's `PixelBuf` into a `TILE_W`×`TILE_H` Image
-/// (one cached [`GameView`] per name, uploaded only when the slot repaints)
-/// or the renderer-off placeholder. Returns whether the body was clicked
-/// (the tile's select path, not the cap ✕).
-fn rail_body(
+/// Tile body: the member's `PixelBuf` blitted into a `size` box via a
+/// cached [`GameView`] per name (uploaded only when the slot repaints),
+/// or the renderer-off placeholder. Returns whether the box was clicked
+/// (the grid cell / rail tile select path).
+fn cell_body(
     ui: &Ui,
     addons: &mut AddOns,
     state: &mut PanelState,
     name: &str,
+    size: [f32; 2],
     draw: bool,
 ) -> bool {
     if !draw {
         return ui
             .selectable_config(format!("renderer off##{name}"))
-            .size([TILE_W, TILE_H])
+            .size(size)
             .build();
     }
     let gen = state
@@ -859,8 +922,13 @@ fn rail_body(
         tv.view.upload(&addons.gpu, &pixels);
         tv.gen = gen;
     }
-    ui.image(tv.view.tex_id, [TILE_W, TILE_H]);
+    ui.image(tv.view.tex_id, size);
     ui.is_item_clicked_with_button(MouseButton::Left)
+}
+
+/// Rail tile body: the fixed `TILE_W`×`TILE_H` case of [`cell_body`].
+fn rail_body(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, name: &str, draw: bool) -> bool {
+    cell_body(ui, addons, state, name, [TILE_W, TILE_H], draw)
 }
 
 /// `+ add bot`: opens the chooser modal again (first MultiBox-on opened it

@@ -131,6 +131,16 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
     }
 }
 
+/// Queue card over the focused slot's cell (MultiBox grid mode). No-op
+/// when the focused slot is not queued, so the card disappears the moment
+/// the grant lands.
+pub fn draw_focused_queue_card(ui: &Ui, session: &Session, min: [f32; 2]) {
+    let lines = queue_card_lines(session.focused_queue());
+    if !lines.is_empty() {
+        draw_queue_card(ui, min, &lines);
+    }
+}
+
 /// Cached overlay polyline: window-space vertices rebuilt only when the
 /// route generation changes (rising edge on a new arm / focus switch) or
 /// [`REFRESH`] elapsed, so an unchanged route does not recompute or
