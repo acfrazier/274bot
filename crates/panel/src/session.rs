@@ -336,12 +336,14 @@ impl Session {
         self.focus_first_profile();
     }
 
-    /// After unlock/`spawn_all`: if the vault (or running slots) has names,
-    /// focus the first so the combo and renderer are not stuck on `None`.
+    /// After unlock/`spawn_all`: restore `last_focus` when it is still a
+    /// vault/slot name; otherwise focus the first so the combo and renderer
+    /// are not stuck on `None`.
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
-        if !names.is_empty() {
-            self.select(&names[0]);
+        let last = crate::ui_state::load().last_focus;
+        if let Some(name) = crate::ui_state::pick_focus(&names, last.as_deref()) {
+            self.select(&name);
         }
     }
 
@@ -458,6 +460,11 @@ impl Session {
     pub fn select(&mut self, name: &str) {
         let arm = self.arm_for_profile(name);
         self.ensure_slot(name, arm);
+        {
+            let mut ui = crate::ui_state::load();
+            ui.last_focus = Some(name.to_string());
+            crate::ui_state::save(&ui);
+        }
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
             return;
@@ -790,6 +797,21 @@ impl Session {
                 .map(|p| p.statuses().iter().map(|s| s.username.clone()).collect())
                 .unwrap_or_default();
             self.wall.on_multibox_on(&running);
+            // After seed: if focus is missing or not a wall member, restore
+            // last_focus when it is on the wall, else the first member.
+            let focused = self.focused_name();
+            let need = match focused.as_deref() {
+                None => true,
+                Some(f) => !self.wall.members.iter().any(|m| m == f),
+            };
+            if need {
+                let last = crate::ui_state::load().last_focus;
+                if let Some(name) =
+                    crate::ui_state::pick_focus(&self.wall.members, last.as_deref())
+                {
+                    self.select(&name);
+                }
+            }
         } else {
             self.wall.on_multibox_off();
         }
@@ -1217,6 +1239,7 @@ mod tests {
 
     #[test]
     fn focus_first_profile_selects_first_vault_name() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState::default());
         let path = tmp_vault("focus-first.vault");
         let mut s = Session::new();
         s.vault = Some(Vault::create(&path, "bot").unwrap());
@@ -1238,6 +1261,72 @@ mod tests {
             !s.slots.contains_key("bob"),
             "parked vault rows must not start a Client"
         );
+    }
+
+    #[test]
+    fn focus_first_prefers_last_focus() {
+        let path = tmp_vault("focus-last.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: Some("bob".into()),
+            ..Default::default()
+        });
+        s.focus_first_profile();
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert_eq!(crate::ui_state::load().last_focus.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn select_saves_last_focus() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+        let path = tmp_vault("select-last-focus.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        assert_eq!(crate::ui_state::load().last_focus.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
+        let path = tmp_vault("multibox-last-focus.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.select("alice");
+        s.wall.load("bob");
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: Some("bob".into()),
+            ..Default::default()
+        });
+        // Focused alice is not a wall member; MultiBox-on should pick bob.
+        s.set_multibox(true);
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert!(s.wall.members.iter().any(|m| m == "bob"));
     }
 
     #[test]

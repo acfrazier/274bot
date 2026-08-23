@@ -10,6 +10,7 @@ pub mod rail;
 pub mod resource;
 pub mod session;
 pub mod theme;
+pub mod ui_state;
 pub mod wall;
 
 pub use app::*;

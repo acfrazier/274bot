@@ -12,6 +12,8 @@ host = { path = "../host" }
 host-play = { path = "../host-play" }
 libc = "0.2"
 nav = { path = "../nav" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
 vault = { path = "../vault" }
 wgpu = "29"
 

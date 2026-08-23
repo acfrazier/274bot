@@ -1,0 +1,153 @@
+//! Persisted panel UI prefs (`~/.274bot/panel-ui.json`): last focused
+//! profile and (later) collapsed section maps.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PanelUiState {
+    pub last_focus: Option<String>,
+    #[serde(default)]
+    pub collapsed: HashMap<String, HashMap<String, bool>>,
+}
+
+/// Prefer `last` when it is still in `names`; otherwise the first name.
+pub fn pick_focus(names: &[String], last: Option<&str>) -> Option<String> {
+    if let Some(l) = last {
+        if names.iter().any(|n| n == l) {
+            return Some(l.to_string());
+        }
+    }
+    names.first().cloned()
+}
+
+/// `~/.274bot/panel-ui.json` (same HOME rule as the vault path).
+pub fn path() -> PathBuf {
+    match std::env::var("HOME") {
+        Ok(home) => PathBuf::from(format!("{home}/.274bot/panel-ui.json")),
+        Err(_) => PathBuf::from(".274bot/panel-ui.json"),
+    }
+}
+
+pub fn load() -> PanelUiState {
+    #[cfg(test)]
+    {
+        // Per-test-thread isolation so parallel `select` calls do not race
+        // on a shared temp file or the operator's real prefs.
+        return TEST_STATE.with(|s| s.borrow().clone());
+    }
+    #[cfg(not(test))]
+    load_at(&path())
+}
+
+pub fn save(state: &PanelUiState) {
+    #[cfg(test)]
+    {
+        TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
+        return;
+    }
+    #[cfg(not(test))]
+    save_at(&path(), state);
+}
+
+pub fn load_at(p: &Path) -> PanelUiState {
+    match std::fs::read(p) {
+        Ok(data) => serde_json::from_slice(&data).unwrap_or_default(),
+        Err(_) => PanelUiState::default(),
+    }
+}
+
+pub fn save_at(p: &Path, state: &PanelUiState) {
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(data) = serde_json::to_vec_pretty(state) {
+        let _ = std::fs::write(p, data);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_STATE: std::cell::RefCell<PanelUiState> =
+        std::cell::RefCell::new(PanelUiState {
+            last_focus: None,
+            collapsed: HashMap::new(),
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load, load_at, path, pick_focus, save, save_at, PanelUiState};
+    use std::collections::HashMap;
+
+    #[test]
+    fn pick_focus_prefers_last_when_present() {
+        let names = vec!["a".into(), "b".into()];
+        assert_eq!(pick_focus(&names, Some("b")).as_deref(), Some("b"));
+        assert_eq!(pick_focus(&names, Some("z")).as_deref(), Some("a"));
+        assert_eq!(pick_focus(&names, None).as_deref(), Some("a"));
+        assert_eq!(pick_focus(&[], Some("a")), None);
+    }
+
+    #[test]
+    fn focus_first_prefers_last_focus() {
+        // Helper used by Session::focus_first_profile.
+        let names = vec!["a".into(), "b".into()];
+        assert_eq!(pick_focus(&names, Some("b")).as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn load_save_roundtrip_last_focus() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-ui-roundtrip-{}-{}",
+            std::process::id(),
+            "rt"
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("panel-ui.json");
+        let _ = std::fs::remove_file(&p);
+
+        let mut state = PanelUiState::default();
+        state.last_focus = Some("bob".into());
+        state
+            .collapsed
+            .insert("bob".into(), HashMap::from([("nav".into(), true)]));
+        save_at(&p, &state);
+
+        let loaded = load_at(&p);
+        assert_eq!(loaded.last_focus.as_deref(), Some("bob"));
+        assert_eq!(loaded.collapsed["bob"]["nav"], true);
+    }
+
+    #[test]
+    fn load_missing_file_is_default() {
+        let p = std::env::temp_dir().join(format!(
+            "274bot-panel-ui-missing-{}-{}.json",
+            std::process::id(),
+            "x"
+        ));
+        let _ = std::fs::remove_file(&p);
+        let loaded = load_at(&p);
+        assert!(loaded.last_focus.is_none());
+        assert!(loaded.collapsed.is_empty());
+    }
+
+    #[test]
+    fn save_load_roundtrip_via_default_api() {
+        let mut state = PanelUiState::default();
+        state.last_focus = Some("carol".into());
+        save(&state);
+        assert_eq!(load().last_focus.as_deref(), Some("carol"));
+    }
+
+    #[test]
+    fn path_uses_home_274bot() {
+        let p = path();
+        assert!(p.ends_with("panel-ui.json"));
+        assert!(
+            p.to_string_lossy().contains(".274bot"),
+            "path should sit under .274bot, got {}",
+            p.display()
+        );
+    }
+}
