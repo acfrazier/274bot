@@ -7,6 +7,7 @@
 //! `(loc_x, loc_z, loc_level, loc_id, from_x, from_z, from_level, to_x, to_z,
 //! to_level)` all i32le. Door loc ids come from the Server
 //! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
+//! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
 
 use std::collections::HashSet;
 use std::fmt;
@@ -58,7 +59,8 @@ impl std::error::Error for PackError {}
 
 /// Serialize `g` to the nav pack byte format.
 pub fn encode(g: &StepGrid) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + g.walk.len() + 4 + g.doors.len() * DOOR_BYTES);
+    let mut out =
+        Vec::with_capacity(4 + 1 + 12 + 8 + g.walk.len() + 4 + g.doors.len() * DOOR_BYTES);
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
     for v in [g.origin.x, g.origin.z, g.origin.level] {
@@ -96,7 +98,8 @@ pub fn decode(bytes: &[u8]) -> Result<StepGrid, PackError> {
         return Err(PackError::BadMagic);
     }
     let mut version = [0u8; 1];
-    r.read_exact(&mut version).map_err(|_| PackError::Truncated)?;
+    r.read_exact(&mut version)
+        .map_err(|_| PackError::Truncated)?;
     if version[0] != VERSION {
         return Err(PackError::BadVersion(version[0]));
     }
@@ -205,6 +208,37 @@ pub fn parse_door_config(text: &str) -> HashSet<i32> {
     ids
 }
 
+/// Loc ids that do **not** block walk: `[loc_N]` blocks with `blockwalk=no`,
+/// `category=door_opened`, or `op1=Close`. Absent `blockwalk` is the 274
+/// default (block). Unknown loc ids are treated as blocking by the bake.
+pub fn parse_passable_locs(text: &str) -> HashSet<i32> {
+    let mut ids = HashSet::new();
+    let mut cur: Option<i32> = None;
+    let mut passable = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(n) = loc_header(line) {
+            if let Some(id) = cur {
+                if passable {
+                    ids.insert(id);
+                }
+            }
+            cur = Some(n);
+            passable = false;
+        } else if cur.is_some()
+            && (line == "blockwalk=no" || line == "category=door_opened" || line == "op1=Close")
+        {
+            passable = true;
+        }
+    }
+    if let Some(id) = cur {
+        if passable {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
 /// `[loc_N]` block header -> `N`.
 fn loc_header(line: &str) -> Option<i32> {
     line.strip_prefix("[loc_")?.strip_suffix(']')?.parse().ok()
@@ -215,17 +249,21 @@ fn loc_header(line: &str) -> Option<i32> {
 /// walkable. A LOC whose loc id is in `door_ids` (openable wall doors from
 /// the Server door configs) with shape 0 becomes a [`DoorEdge`] crossing the
 /// wall: angle 0/2 crosses east-west, angle 1/3 north-south, and the door's
-/// own tile is marked not walkable. Other levels, locs, and shapes are
-/// ignored. Malformed lines are skipped. I/O failures and files without a
-/// MAP section are errors (callers skip that mapsquare).
+/// own tile is marked not walkable. Other blocking locs (unknown types
+/// default to blockwalk) stamp their footprint unwalkable, except door
+/// from/to tiles. Ground decor, wall decor, and roofs are skipped. Open-door
+/// stages in `passable` are not stamped. Malformed lines are skipped. I/O
+/// failures and files without a MAP section are errors (callers skip that
+/// mapsquare).
 pub fn parse_mapsquare_jm2(
     path: &Path,
     mapsquare_x: i32,
     mapsquare_z: i32,
     door_ids: &HashSet<i32>,
+    passable: &HashSet<i32>,
 ) -> Result<Mapsquare, PackError> {
     let text = std::fs::read_to_string(path).map_err(PackError::Io)?;
-    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids)
+    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids, passable)
         .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
 }
 
@@ -235,9 +273,10 @@ fn parse_mapsquare_text(
     mapsquare_x: i32,
     mapsquare_z: i32,
     door_ids: &HashSet<i32>,
+    passable: &HashSet<i32>,
 ) -> Option<Mapsquare> {
     let mut walk = vec![0u8; SQUARE * SQUARE];
-    let mut doors = Vec::new();
+    let mut locs = Vec::new();
     let mut in_map = false;
     let mut in_loc = false;
     let mut saw_map = false;
@@ -257,15 +296,38 @@ fn parse_mapsquare_text(
                 walk[z * SQUARE + x] = if blocked { 0 } else { 1 };
             }
         } else if in_loc {
-            if let Some((x, z, door)) = parse_loc_line(line, mapsquare_x, mapsquare_z, door_ids) {
-                walk[z * SQUARE + x] = 0;
-                doors.push(door);
+            if let Some(loc) = parse_loc_fields(line) {
+                locs.push(loc);
             }
         }
     }
     if !saw_map {
         return None;
     }
+
+    let mut doors = Vec::new();
+    let mut door_sides = HashSet::new();
+    for loc in &locs {
+        if let Some(door) = door_edge(loc, mapsquare_x, mapsquare_z, door_ids) {
+            walk[loc.z * SQUARE + loc.x] = 0;
+            for side in [door.from, door.to] {
+                if let Some((x, z)) = local_in_square(side, mapsquare_x, mapsquare_z) {
+                    door_sides.insert((x, z));
+                }
+            }
+            doors.push(door);
+        }
+    }
+    for loc in &locs {
+        if passable.contains(&loc.loc_id) || !loc_blocks_tile(loc.shape) {
+            continue;
+        }
+        if door_sides.contains(&(loc.x, loc.z)) {
+            continue;
+        }
+        walk[loc.z * SQUARE + loc.x] = 0;
+    }
+
     Some(Mapsquare {
         x: mapsquare_x,
         z: mapsquare_z,
@@ -277,11 +339,22 @@ fn parse_mapsquare_text(
 /// One bbox [`StepGrid`] on level 0 covering every listed mapsquare. Tiles
 /// outside any square are not walkable; squares may leave gaps between them.
 pub fn merge_squares(squares: &[Mapsquare]) -> StepGrid {
-    assert!(!squares.is_empty(), "merge_squares needs at least one mapsquare");
+    assert!(
+        !squares.is_empty(),
+        "merge_squares needs at least one mapsquare"
+    );
     let min_x = squares.iter().map(|s| s.x * SQUARE as i32).min().unwrap();
     let min_z = squares.iter().map(|s| s.z * SQUARE as i32).min().unwrap();
-    let max_x = squares.iter().map(|s| (s.x + 1) * SQUARE as i32).max().unwrap();
-    let max_z = squares.iter().map(|s| (s.z + 1) * SQUARE as i32).max().unwrap();
+    let max_x = squares
+        .iter()
+        .map(|s| (s.x + 1) * SQUARE as i32)
+        .max()
+        .unwrap();
+    let max_z = squares
+        .iter()
+        .map(|s| (s.z + 1) * SQUARE as i32)
+        .max()
+        .unwrap();
     let (width, height) = ((max_x - min_x) as usize, (max_z - min_z) as usize);
     let mut walk = vec![0u8; width * height];
     let mut doors = Vec::new();
@@ -339,13 +412,24 @@ fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
     Some((x, z, blocked))
 }
 
-/// Parse a LOC line into `(x, z, door)` for a shape-0 door wall on level 0.
-fn parse_loc_line(
-    line: &str,
-    mapsquare_x: i32,
-    mapsquare_z: i32,
-    door_ids: &HashSet<i32>,
-) -> Option<(usize, usize, DoorEdge)> {
+/// One level-0 loc placement inside a mapsquare.
+struct LocOnSquare {
+    x: usize,
+    z: usize,
+    loc_id: i32,
+    shape: i32,
+    angle: i32,
+}
+
+/// Walls (0..=3), diagonal wall (9), and centrepiece (10, 11) occupy a walk
+/// footprint. Ground decor (22) only blocks when active; wall decor (4..=8)
+/// and roofs (12..=21) do not.
+fn loc_blocks_tile(shape: i32) -> bool {
+    matches!(shape, 0..=3 | 9..=11)
+}
+
+/// Parse a LOC line into a level-0 placement.
+fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
     let (coords, rest) = line.split_once(':')?;
     let mut c = coords.split_whitespace();
     let level: i32 = c.next()?.parse().ok()?;
@@ -365,26 +449,80 @@ fn parse_loc_line(
     let loc_id: i32 = t.next()?.parse().ok()?;
     let shape: i32 = t.next()?.parse().ok()?;
     let angle: i32 = t.next().map_or(Ok(0), |a| a.parse()).ok()?;
-    if !door_ids.contains(&loc_id) || shape != 0 {
+    Some(LocOnSquare {
+        x,
+        z,
+        loc_id,
+        shape,
+        angle,
+    })
+}
+
+/// Shape-0 openable wall door -> DoorEdge, or None.
+fn door_edge(
+    loc: &LocOnSquare,
+    mapsquare_x: i32,
+    mapsquare_z: i32,
+    door_ids: &HashSet<i32>,
+) -> Option<DoorEdge> {
+    if !door_ids.contains(&loc.loc_id) || loc.shape != 0 {
         return None;
     }
-    let loc = Tile {
-        x: mapsquare_x * SQUARE as i32 + x as i32,
-        z: mapsquare_z * SQUARE as i32 + z as i32,
+    let tile = Tile {
+        x: mapsquare_x * SQUARE as i32 + loc.x as i32,
+        z: mapsquare_z * SQUARE as i32 + loc.z as i32,
         level: 0,
     };
-    let (from, to) = match angle {
+    let (from, to) = match loc.angle {
         0 | 2 => (
-            Tile { x: loc.x - 1, z: loc.z, level: 0 },
-            Tile { x: loc.x + 1, z: loc.z, level: 0 },
+            Tile {
+                x: tile.x - 1,
+                z: tile.z,
+                level: 0,
+            },
+            Tile {
+                x: tile.x + 1,
+                z: tile.z,
+                level: 0,
+            },
         ),
         1 | 3 => (
-            Tile { x: loc.x, z: loc.z - 1, level: 0 },
-            Tile { x: loc.x, z: loc.z + 1, level: 0 },
+            Tile {
+                x: tile.x,
+                z: tile.z - 1,
+                level: 0,
+            },
+            Tile {
+                x: tile.x,
+                z: tile.z + 1,
+                level: 0,
+            },
         ),
         _ => return None,
     };
-    Some((x, z, DoorEdge { loc, loc_id, from, to }))
+    Some(DoorEdge {
+        loc: tile,
+        loc_id: loc.loc_id,
+        from,
+        to,
+    })
+}
+
+/// Absolute tile -> local mapsquare coords, if it sits in that square.
+fn local_in_square(t: Tile, mapsquare_x: i32, mapsquare_z: i32) -> Option<(usize, usize)> {
+    if t.level != 0 {
+        return None;
+    }
+    let x = t.x - mapsquare_x * SQUARE as i32;
+    let z = t.z - mapsquare_z * SQUARE as i32;
+    if x < 0 || z < 0 {
+        return None;
+    }
+    let (x, z) = (x as usize, z as usize);
+    if x >= SQUARE || z >= SQUARE {
+        return None;
+    }
+    Some((x, z))
 }
 
 fn read_i32(r: &mut Cursor<&[u8]>) -> Result<i32, PackError> {
@@ -401,9 +539,11 @@ fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::{
-        decode, encode, merge_squares, parse_door_config, parse_mapsquare_text, walkable_dots,
-        Mapsquare,
+        decode, encode, merge_squares, parse_door_config, parse_mapsquare_text,
+        parse_passable_locs, walkable_dots, Mapsquare,
     };
     use crate::grid::StepGrid;
     use crate::pack::PackError;
@@ -414,7 +554,11 @@ mod tests {
         let g = StepGrid::fixture_door_corridor();
         let bytes = encode(&g);
         let h = decode(&bytes).unwrap();
-        assert!(h.walkable(Tile { x: 0, z: 0, level: 0 }));
+        assert!(h.walkable(Tile {
+            x: 0,
+            z: 0,
+            level: 0
+        }));
         assert_eq!(h.doors.len(), g.doors.len());
     }
 
@@ -441,8 +585,14 @@ mod tests {
 
     #[test]
     fn decode_rejects_zero_grid() {
-        assert!(matches!(decode(&header(0, 0, 1)), Err(PackError::BadLength(_))));
-        assert!(matches!(decode(&header(0, 1, 0)), Err(PackError::BadLength(_))));
+        assert!(matches!(
+            decode(&header(0, 0, 1)),
+            Err(PackError::BadLength(_))
+        ));
+        assert!(matches!(
+            decode(&header(0, 1, 0)),
+            Err(PackError::BadLength(_))
+        ));
     }
 
     /// Magic + version + zero origin + width/height, nothing else.
@@ -463,7 +613,11 @@ mod tests {
         let g = StepGrid::fixture_door_corridor();
         let dots: Vec<Tile> = walkable_dots(&g, 0).collect();
         assert_eq!(dots.len(), 4);
-        assert!(!dots.contains(&Tile { x: 2, z: 0, level: 0 }));
+        assert!(!dots.contains(&Tile {
+            x: 2,
+            z: 0,
+            level: 0
+        }));
         assert_eq!(walkable_dots(&g, 1).count(), 0);
     }
 
@@ -518,7 +672,7 @@ op1=Open
 ==== NPC ====
 0 0 0: 1234
 ";
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids).unwrap();
+        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new()).unwrap();
         // (0,0): no f flag -> walkable; (1,0): f1 bit 0 -> blocked;
         // (0,1): f16 bit 0 clear -> walkable; (2,0): no MAP line -> blocked.
         assert_eq!(sq.walk[0], 1);
@@ -528,12 +682,103 @@ op1=Open
         // The Catherby closed door: 1530 @ local (0,46) -> 2816,3438,0.
         assert_eq!(sq.doors.len(), 1);
         let d = sq.doors[0];
-        assert_eq!(d.loc, Tile { x: 2816, z: 3438, level: 0 });
+        assert_eq!(
+            d.loc,
+            Tile {
+                x: 2816,
+                z: 3438,
+                level: 0
+            }
+        );
         assert_eq!(d.loc_id, 1530);
-        assert_eq!(d.from, Tile { x: 2816, z: 3437, level: 0 });
-        assert_eq!(d.to, Tile { x: 2816, z: 3439, level: 0 });
+        assert_eq!(
+            d.from,
+            Tile {
+                x: 2816,
+                z: 3437,
+                level: 0
+            }
+        );
+        assert_eq!(
+            d.to,
+            Tile {
+                x: 2816,
+                z: 3439,
+                level: 0
+            }
+        );
         // The door tile is a wall: not walkable.
         assert_eq!(sq.walk[46 * 64], 0);
+    }
+
+    #[test]
+    fn parse_passable_locs_blockwalk_no_and_open_door() {
+        let text = "\
+[loc_980]
+name=Fence
+[loc_1124]
+blockwalk=no
+[loc_1531]
+op1=Close
+category=door_opened
+[loc_1259]
+blockwalk=yes
+";
+        let ids = parse_passable_locs(text);
+        assert!(ids.contains(&1124));
+        assert!(ids.contains(&1531));
+        assert!(!ids.contains(&980));
+        assert!(!ids.contains(&1259));
+    }
+
+    #[test]
+    fn parse_jm2_blocking_loc_marks_tile_unwalkable() {
+        // loc 980 (fencing) is unknown / default-block; local (0,45) of
+        // mapsquare 44,53 is absolute 2816,3437.
+        let text = "\
+==== MAP ====
+0 0 45: h1 o6 u50
+==== LOC ====
+0 0 45: 980 0 0
+";
+        let sq = parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new()).unwrap();
+        let grid = merge_squares(&[sq]);
+        assert!(!grid.walkable(Tile {
+            x: 2816,
+            z: 3437,
+            level: 0
+        }));
+    }
+
+    #[test]
+    fn parse_jm2_does_not_wipe_door_from_to() {
+        let door_ids = parse_door_config("[loc_1530]\nop1=Open\ncategory=door_closed\n");
+        let text = "\
+==== MAP ====
+0 0 45: h1 o6 u50
+0 0 46: h1 o6 u50
+0 0 47: h1 o6 u50
+==== LOC ====
+0 0 46: 1530 0 1
+0 0 45: 980 0 0
+";
+        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new()).unwrap();
+        let grid = merge_squares(&[sq]);
+        assert!(!grid.walkable(Tile {
+            x: 2816,
+            z: 3438,
+            level: 0
+        }));
+        assert!(grid.walkable(Tile {
+            x: 2816,
+            z: 3437,
+            level: 0
+        }));
+        assert!(grid.walkable(Tile {
+            x: 2816,
+            z: 3439,
+            level: 0
+        }));
     }
 
     #[test]
@@ -542,11 +787,27 @@ op1=Open
         let b = one_tile_square(52, 52);
         let grid = merge_squares(&[a, b]);
         assert_eq!(grid.doors.len(), 0);
-        assert!(grid.walkable(Tile { x: 3200, z: 3200, level: 0 }));
-        assert!(grid.walkable(Tile { x: 3328, z: 3328, level: 0 }));
+        assert!(grid.walkable(Tile {
+            x: 3200,
+            z: 3200,
+            level: 0
+        }));
+        assert!(grid.walkable(Tile {
+            x: 3328,
+            z: 3328,
+            level: 0
+        }));
         // The square gap between the two squares stays blocked.
-        assert!(!grid.walkable(Tile { x: 3264, z: 3264, level: 0 }));
-        assert!(!grid.walkable(Tile { x: 2816, z: 3200, level: 0 }));
+        assert!(!grid.walkable(Tile {
+            x: 3264,
+            z: 3264,
+            level: 0
+        }));
+        assert!(!grid.walkable(Tile {
+            x: 2816,
+            z: 3200,
+            level: 0
+        }));
     }
 
     /// A 64×64 square with only its local (0,0) tile walkable.

@@ -1,8 +1,9 @@
 //! Live: one headless client via host-play with `mainland` on. After login
 //! the mainland hop teleports the player into the Lumbridge courtyard
 //! (`tele 0,50,50,20,20`); the landing tile can be (3220,3220,0) or
-//! (3220,3222,0), so the test arms from the observed walkable `here`. The
-//! nav traveller then walks to (3230,3222,0), open ground. PASS only when
+//! (3220,3222,0), so the test arms from the observed `here` (A* starts on
+//! an unwalkable tele tile). The nav traveller then walks to (3220,3212,0),
+//! open courtyard south of the castle wall. PASS only when
 //! `arrived(here, dest, true)` fires within 90 s of arming; FAIL on timeout
 //! or on the traveller's per-hop budget.
 //!
@@ -22,8 +23,13 @@ use nav::router::find;
 use nav::tile::Tile;
 use nav::traveller::{NavStatus, Traveller};
 
-/// Open-courtyard walk destination, 10 tiles east of the mainland landing.
-const DEST: Tile = Tile { x: 3230, z: 3222, level: 0 };
+/// Open-courtyard walk destination, 10 tiles south of the briefed landing
+/// (3220,3222). 10 tiles east is inside the castle (needs a door).
+const DEST: Tile = Tile {
+    x: 3220,
+    z: 3212,
+    level: 0,
+};
 
 /// State shared between the slot's observe hook and this test thread.
 /// The hook latches the player-family gen, publishes the player's current
@@ -67,66 +73,60 @@ fn nav_walk() {
     let mut opts = options();
     opts.mainland = true;
 
-    let play = run_with_io(
-        &opts,
-        profiles(&[("test", "test")]),
-        |_| (None, None),
-        {
-            let shared = Arc::clone(&shared);
-            // Drive the traveller only when a player update landed; the
-            // player's tile is the route head, as in `Driver::local_route`.
-            move |c, _| {
-                let Some(lp) = &c.local_player else {
-                    return;
-                };
-                // The client's route head is scene-relative; the nav grid
-                // is in absolute world tiles, so add the build origin.
-                let here = Tile {
-                    x: c.map_build_base_x + lp.route_x[0],
-                    z: c.map_build_base_z + lp.route_z[0],
-                    level: 0,
-                };
-                let mut s = shared.lock().unwrap();
-                s.scene_state = c.scene_state;
-                s.base = (c.map_build_base_x, c.map_build_base_z);
-                // Tick on movement or on a player update: the gen latch
-                // re-arms a walk while standing, the tile latch advances
-                // the route as the player moves.
-                if c.gens.player == s.last_gen && s.here == Some(here) {
-                    return;
-                }
-                s.last_gen = c.gens.player;
-                s.here = Some(here);
-                let status = s.traveller.tick(c, here, false);
-                if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                    let (bx, bz) = (c.map_build_base_x, c.map_build_base_z);
-                    println!(
-                        "nav_walk: here={here:?} status={status:?} walk_ok={:?} \
-                         base=({bx},{bz}) scene_dest=({},{}) flag=({},{})",
-                        s.traveller.last_walk_ok(),
-                        DEST.x - bx,
-                        DEST.z - bz,
-                        c.minimap_flag_x,
-                        c.minimap_flag_z,
-                    );
-                }
-                match status {
-                    NavStatus::Arrived => s.arrived = true,
-                    NavStatus::Budget => {
-                        s.failed = Some("nav_walk: traveller per-hop budget exceeded".into())
-                    }
-                    _ => {}
-                }
+    let play = run_with_io(&opts, profiles(&[("test", "test")]), |_| (None, None), {
+        let shared = Arc::clone(&shared);
+        // Drive the traveller only when a player update landed; the
+        // player's tile is the route head, as in `Driver::local_route`.
+        move |c, _| {
+            let Some(lp) = &c.local_player else {
+                return;
+            };
+            // The client's route head is scene-relative; the nav grid
+            // is in absolute world tiles, so add the build origin.
+            let here = Tile {
+                x: c.map_build_base_x + lp.route_x[0],
+                z: c.map_build_base_z + lp.route_z[0],
+                level: 0,
+            };
+            let mut s = shared.lock().unwrap();
+            s.scene_state = c.scene_state;
+            s.base = (c.map_build_base_x, c.map_build_base_z);
+            // Tick on movement or on a player update: the gen latch
+            // re-arms a walk while standing, the tile latch advances
+            // the route as the player moves.
+            if c.gens.player == s.last_gen && s.here == Some(here) {
+                return;
             }
-        },
-    );
+            s.last_gen = c.gens.player;
+            s.here = Some(here);
+            let status = s.traveller.tick(c, here, false);
+            if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+                let (bx, bz) = (c.map_build_base_x, c.map_build_base_z);
+                println!(
+                    "nav_walk: here={here:?} status={status:?} walk_ok={:?} \
+                         base=({bx},{bz}) scene_dest=({},{}) flag=({},{})",
+                    s.traveller.last_walk_ok(),
+                    DEST.x - bx,
+                    DEST.z - bz,
+                    c.minimap_flag_x,
+                    c.minimap_flag_z,
+                );
+            }
+            match status {
+                NavStatus::Arrived => s.arrived = true,
+                NavStatus::Budget => {
+                    s.failed = Some("nav_walk: traveller per-hop budget exceeded".into())
+                }
+                _ => {}
+            }
+        }
+    });
 
     wait_ingame(&play, 1, Duration::from_secs(90), "nav_walk");
 
-    // Arm once the mainland hop has landed the player on the packed
-    // courtyard (tutorial island is off-grid, so a walkable tile means the
-    // tele arrived). The player is stationary until armed, so the observed
-    // tile is a safe route origin even when it is not the expected landing.
+    // Arm once the mainland hop has landed (scene 2, world build origin).
+    // Tutorial island is off-grid so find() fails there; a loc-blocked
+    // tele tile is still a valid A* start.
     let arm_deadline = Instant::now() + Duration::from_secs(90);
     let mut armed = false;
     let mut started: Option<Instant> = None;
@@ -145,19 +145,18 @@ fn nav_walk() {
             // origin (>=3000), not the tutorial island or a 0 base.
             if s.scene_state == 2 && s.base.0 >= 3000 && s.base.1 >= 3000 {
                 if let Some(here) = s.here {
-                    if grid.walkable(here) {
-                        match find(&grid, here, DEST) {
-                            Ok(route) => {
-                                s.traveller.arm(route);
-                                armed = true;
-                                started = Some(Instant::now());
-                                println!("nav_walk: armed route {here:?} -> {DEST:?}");
-                            }
-                            Err(_) => {
-                                fail(&format!(
-                                    "nav_walk: no pack path from {here:?} to {DEST:?}"
-                                ))
-                            }
+                    // Mainland hop can land on a loc-blocked tile (a bush
+                    // at the tele); A* still starts there and only steps
+                    // onto walkable neighbours.
+                    match find(&grid, here, DEST) {
+                        Ok(route) => {
+                            s.traveller.arm(route);
+                            armed = true;
+                            started = Some(Instant::now());
+                            println!("nav_walk: armed route {here:?} -> {DEST:?}");
+                        }
+                        Err(_) => {
+                            fail(&format!("nav_walk: no pack path from {here:?} to {DEST:?}"))
                         }
                     }
                 }
