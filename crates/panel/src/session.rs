@@ -622,8 +622,7 @@ impl Session {
         for name in self.wall.members.clone() {
             self.wall.clear_latch(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-                arm.latch.store(false, Ordering::Relaxed);
-                arm.want_login.store(true, Ordering::Relaxed);
+                arm_login_all(&arm);
             }
         }
     }
@@ -642,13 +641,15 @@ impl Session {
         }
     }
 
-    /// Remove a member from the rail: drop it from the wall, arm a clean
-    /// logout when it is ingame, then stop the slot and forget its IO. The
-    /// wait-until-`!ingame` between the logout and the stop is a live/UI
-    /// concern; here the flags are set in the right order and the thread
-    /// is joined immediately.
+    /// Remove a member from the rail: drop it from the wall, clear its
+    /// logout latch (so a re-added member is not blocked from auto-login),
+    /// arm a clean logout when it is ingame, then stop the slot and forget
+    /// its IO. The wait-until-`!ingame` between the logout and the stop is
+    /// a live/UI concern; here the flags are set in the right order and the
+    /// thread is joined immediately.
     pub fn rail_remove(&mut self, name: &str) {
         self.wall.rail_remove(name);
+        self.wall.clear_latch(name);
         if let Some(play) = &self.play {
             let ingame = play
                 .statuses()
@@ -760,6 +761,17 @@ fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
+/// The flags `login_all` applies to a member's arm: clear the logout latch,
+/// arm a login, and cancel any pending logout. `want_logout` only clears
+/// inside the slot body when it observes the member ingame, so a
+/// title-screen member keeps a stale logout that would otherwise fire on
+/// the first ingame frame after Login all handshakes it back in.
+fn arm_login_all(arm: &SlotArm) {
+    arm.latch.store(false, Ordering::Relaxed);
+    arm.want_login.store(true, Ordering::Relaxed);
+    arm.want_logout.store(false, Ordering::Relaxed);
+}
+
 /// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.
 fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
     match queued {
@@ -778,9 +790,10 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{combo_index, maybe_send_click, stream_capture, Session, SlotIo};
+    use super::{arm_login_all, combo_index, maybe_send_click, stream_capture, Session, SlotIo};
     use host::{InputEv, PixelBuf, SlotInput};
-    use host_play::SlotStatus;
+    use host_play::{SlotArm, SlotStatus};
+    use std::sync::atomic::Ordering;
     use nav::grid::StepGrid;
     use nav::tile::Tile;
     use vault::{Profile, ProfileSettings, Vault};
@@ -1146,6 +1159,20 @@ mod tests {
         assert!(s.focused_name().is_none());
         s.login("alice");
         assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn arm_login_all_cancels_pending_logout() {
+        // A title-screen member keeps want_logout=true (the slot body only
+        // clears it when it observes ingame); Login all must cancel it or
+        // the handshake would be undone on the first ingame frame.
+        let arm = SlotArm::new(7, false);
+        arm.latch.store(true, Ordering::Relaxed);
+        arm.want_logout.store(true, Ordering::Relaxed);
+        arm_login_all(&arm);
+        assert!(arm.want_login.load(Ordering::Relaxed));
+        assert!(!arm.want_logout.load(Ordering::Relaxed));
+        assert!(!arm.latch.load(Ordering::Relaxed));
     }
 
     #[test]
