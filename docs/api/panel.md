@@ -68,15 +68,20 @@ scene); that is the 274 painter, not the ImGui chrome.
 
 ## Renderer vs capture
 
-Two independent checkboxes, both gated on a focused profile with its pane
-open:
+274bot defaults to **lowmem** (`Profile.settings.lowmem = true`). The
+checkboxes on a focused profile:
 
 - **game renderer** — default **on**, **1 fps rail** (rs2b0t). Checking
   it after off paints **this tick** (no cold wait). Capture raises the
   focused slot to 50 fps. Unfocused slots do not raster. The Game Image is
   an RGBA8 texture that is **never below 765×503** (`fit_applet` scale
   floor 1.0). Grid tiles may still downscale. Rendering never pauses the
-  bot.
+  bot. Renderer-off / `set_draw(false)` still runs `mainloop` and
+  collision, but does not decode loc meshes; flipping the renderer on
+  rebuilds 3D from the same map bytes.
+- **Music / SFX** — unchecked by default (lowmem). Checking it sets
+  `Profile.settings.lowmem = false` for that username, opting that one
+  profile into **highmem**; it applies the next time the profile starts.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.

@@ -73,6 +73,13 @@ LIVE=1 RSS_N=2 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1
 LIVE=1 RSS_N=4 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
 # Does not fail on RSS size. Do not run two N in one process (peak RSS).
 
+274bot defaults to **lowmem**. Renderer-off / `set_draw(false)` still runs
+`mainloop` and collision, but does not decode loc meshes. Flip the renderer on
+to rebuild 3D from the same map bytes. **Music / SFX** (panel rendering
+section) sets `Profile.settings.lowmem = false` for that username; it applies
+the next time the profile starts. Highmem/midi code stays in bothost
+(`client-play --window` / Fairy-Ring).
+
 # 50-bot MultiBox wall watch (temp vault s00…s49; 10 min timeout; local engine)
 cargo run --release -p panel --bin panel-play -- --live stress50
 # or BOT_LIVE=stress50; FIFO login takes minutes; does not fail on RSS size
