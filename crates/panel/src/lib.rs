@@ -8,6 +8,7 @@ pub mod queue_card;
 pub mod resource;
 pub mod session;
 pub mod theme;
+pub mod wall;
 
 pub use app::*;
 pub use chrome::*;

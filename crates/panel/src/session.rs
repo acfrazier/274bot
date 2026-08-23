@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use api::interact::Driver;
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
-use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotStatus};
+use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotArm, SlotStatus};
 use nav::grid::StepGrid;
 use nav::router::{find, NoPath};
 use nav::tile::Tile;
@@ -21,6 +21,7 @@ use nav::traveller::{NavStatus, Traveller};
 use vault::{Profile, Vault};
 
 use crate::focus::draw_for_slot;
+use crate::wall::Wall;
 
 const DEFAULT_PORT: u16 = 43594;
 
@@ -151,6 +152,9 @@ pub struct Session {
     route_gen: u64,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
     options: PlayOptions,
+    /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
+    /// it for the chooser and rail; [`Session`] methods drive it.
+    pub wall: Wall,
 }
 
 /// Keep the panel log bounded.
@@ -198,6 +202,7 @@ impl Session {
             picker_sel: None,
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
+            wall: Wall::default(),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -417,7 +422,7 @@ impl Session {
     /// channel-change. Capture follows the new focus when the single capture
     /// toggle is on (never two keyboards). The credentials fields follow.
     pub fn select(&mut self, name: &str) {
-        self.ensure_slot(name);
+        self.ensure_slot(name, None);
         let mut focus = self.focus.lock().unwrap();
         if focus.focused.as_deref() == Some(name) {
             return;
@@ -536,15 +541,17 @@ impl Session {
                 return false;
             }
         }
-        self.ensure_slot(&username);
+        self.ensure_slot(&username, None);
         self.select(&username);
         true
     }
 
     /// Register per-slot IO and spawn via [`Play::spawn_slot`] when a play
     /// is live. Without `play` (unit tests / pre-unlock) only the IO map is
-    /// filled so focus can attach.
-    fn ensure_slot(&mut self, username: &str) {
+    /// filled so focus can attach. `arm` carries the spawn's login intent:
+    /// `None` logs in immediately (the pre-wall behavior); a wall `load`
+    /// passes a real arm so a latched logout can hold the title screen.
+    fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>) {
         if self.slots.contains_key(username) {
             return;
         }
@@ -558,7 +565,7 @@ impl Session {
                 profile,
                 Some(Arc::clone(&input)),
                 Some(Arc::clone(&pixels)),
-                None,
+                arm,
             );
         }
         self.slots
@@ -575,6 +582,88 @@ impl Session {
     pub fn clear_credentials(&mut self) {
         self.cred_user.clear();
         self.cred_pass.clear();
+    }
+
+    /// Load a wall member: ensure its slot and select it. Auto-login
+    /// follows the vault profile setting unless the member's logout latch
+    /// blocks it (`SlotArm::new(should_auto_login)`); a latched member is
+    /// spawned holding the title screen until [`Session::login_all`].
+    /// Returns whether the name was newly added to the wall.
+    pub fn load(&mut self, name: &str) -> bool {
+        let newly = self.wall.load(name);
+        let auto_login = self
+            .vault
+            .as_ref()
+            .and_then(|v| v.get(name))
+            .map(|p| p.settings.auto_login)
+            .unwrap_or(false);
+        let want_login = self.wall.should_auto_login(name, auto_login);
+        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
+            // Already running (re-click): re-apply the login intent so a
+            // latched logout stays on the title.
+            arm.want_login.store(want_login, Ordering::Relaxed);
+            arm.auto_login.store(auto_login, Ordering::Relaxed);
+        } else {
+            let arm = self
+                .vault
+                .as_ref()
+                .and_then(|v| v.get(name))
+                .map(|p| SlotArm::new(p.uid, want_login));
+            self.ensure_slot(name, arm);
+        }
+        self.select(name);
+        newly
+    }
+
+    /// Log in every wall member: clear their latches and arm a login so
+    /// title-screen slots handshake. One-shot unless the profile's
+    /// auto-login is set (which keeps the arm armed after the handshake).
+    pub fn login_all(&mut self) {
+        for name in self.wall.members.clone() {
+            self.wall.clear_latch(&name);
+            if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
+                arm.latch.store(false, Ordering::Relaxed);
+                arm.want_login.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Log out every wall member: record the latch (blocks auto-login
+    /// until the next [`Session::login_all`]) and arm a clean IF logout.
+    /// `want_login` is cleared too so a title-screen member does not
+    /// handshake right back in.
+    pub fn logout_all(&mut self) {
+        for name in self.wall.members.clone() {
+            self.wall.latch_logout(&name);
+            if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
+                arm.want_logout.store(true, Ordering::Relaxed);
+                arm.want_login.store(false, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Remove a member from the rail: drop it from the wall, arm a clean
+    /// logout when it is ingame, then stop the slot and forget its IO. The
+    /// wait-until-`!ingame` between the logout and the stop is a live/UI
+    /// concern; here the flags are set in the right order and the thread
+    /// is joined immediately.
+    pub fn rail_remove(&mut self, name: &str) {
+        self.wall.rail_remove(name);
+        if let Some(play) = &self.play {
+            let ingame = play
+                .statuses()
+                .iter()
+                .any(|s| s.username == name && s.ingame);
+            if let Some(arm) = play.arm(name) {
+                if ingame {
+                    arm.want_logout.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        if let Some(play) = &mut self.play {
+            play.stop_slot(name);
+        }
+        self.slots.remove(name);
     }
 
     /// Arm a walk to `dest`. The picked dest is always stored so the status
