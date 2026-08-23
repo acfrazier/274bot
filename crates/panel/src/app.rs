@@ -701,7 +701,7 @@ fn mock_button_row(ui: &Ui, labels: &[&str], hint: &str) {
     }
 }
 
-/// profile: vault combo + mainland checkbox; password prompt until unlocked.
+/// profile: vault combo; password prompt until unlocked.
 fn profile_section(ui: &Ui, session: &mut Session) {
     section_title(ui, "profile");
     if session.vault.is_none() {
@@ -730,10 +730,6 @@ fn profile_section(ui: &Ui, session: &mut Session) {
         }
     } else {
         ui.text_disabled("no focused profile");
-    }
-    let mut mainland = session.mainland.load(Ordering::Relaxed);
-    if ui.checkbox("mainland hop", &mut mainland) {
-        session.mainland.store(mainland, Ordering::Relaxed);
     }
 }
 

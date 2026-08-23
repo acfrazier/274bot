@@ -118,7 +118,7 @@ pub struct Session {
     /// The focused slot's live capture sender; `None` while capture is off,
     /// so UI send paths no-op.
     pub capture_tx: Option<Sender<InputEv>>,
-    /// Mainland checkbox; the per-frame hook queues the hop at scene 2.
+    /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
     /// Panel log lines (status transitions), capped at [`LOG_CAP`].
     pub log: Arc<Mutex<Vec<String>>>,
@@ -213,8 +213,8 @@ impl Session {
                 port: DEFAULT_PORT,
                 cache_dir: default_cache_dir(),
                 lowmem: true,
-                // The panel queues the mainland hop itself (live checkbox),
-                // so the spawn-time `PlayOptions.mainland` stays false.
+                // Panel per_frame queues hop from Session.mainland (env);
+                // spawn-time PlayOptions.mainland stays false.
                 mainland: false,
             },
         }
