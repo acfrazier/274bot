@@ -186,6 +186,10 @@ impl Host {
         } else {
             slot.skip_n = slot.skip_n.wrapping_add(1);
         }
+        client.loop_ns = slot.loop_ns;
+        client.raster_ns = slot.raster_ns;
+        client.paint_n = slot.paint_n;
+        client.skip_n = slot.skip_n;
         slot.log_n = slot.log_n.wrapping_add(1);
         if debug_enabled() && slot.log_n % 50 == 0 {
             eprintln!(
@@ -505,6 +509,19 @@ mod tests {
         assert_eq!(slot.skip_n, 3);
         assert_eq!(slot.paint_n, 0);
         assert!(slot.loop_ns > 0, "mainloop still ran");
+    }
+
+    #[test]
+    fn client_frame_stamps_loop_counters_on_client() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(false);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert_eq!(c.skip_n, 1);
+        assert_eq!(c.paint_n, 0);
+        assert_eq!(c.loop_ns, slot.loop_ns);
+        assert!(c.loop_ns > 0);
     }
 
     #[test]
