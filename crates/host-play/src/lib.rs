@@ -214,7 +214,8 @@ fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> 
 /// [`Play::spawn_slot`] can add a profile after the initial [`run_with_io`]
 /// call; later slots share the same login FIFO, cache, and per-frame hook.
 pub struct Play {
-    statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    /// Shared status rows; panel tests push fakes here for `pump_status`.
+    pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: HashMap<String, thread::JoinHandle<()>>,
     options: PlayOptions,
     cache: Arc<Cache>,

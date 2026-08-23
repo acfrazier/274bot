@@ -120,8 +120,9 @@ pub struct Session {
     pub capture_tx: Option<Sender<InputEv>>,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
-    /// Panel log lines (status transitions), capped at [`LOG_CAP`].
-    pub log: Arc<Mutex<Vec<String>>>,
+    /// Per-username panel log lines (status transitions), each capped at
+    /// [`LOG_CAP`]. Vault / no-username lines use [`PROCESS`].
+    pub log_by: Arc<Mutex<HashMap<String, Vec<String>>>>,
     /// Vault passphrase scratch buffer for the in-panel unlock prompt.
     pub pass_scratch: String,
     /// Last status poll (delta source for the log).
@@ -161,8 +162,20 @@ pub struct Session {
     pub multibox: bool,
 }
 
-/// Keep the panel log bounded.
+/// Keep each per-name panel log bounded.
 const LOG_CAP: usize = 200;
+
+/// Log bucket for vault errors and lines with no username.
+pub const PROCESS: &str = "*";
+
+/// Append `line` under `name`, dropping from the front past [`LOG_CAP`].
+fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
+    let vec = map.entry(name.to_string()).or_default();
+    vec.push(line);
+    while vec.len() > LOG_CAP {
+        vec.remove(0);
+    }
+}
 
 impl Default for Session {
     fn default() -> Self {
@@ -193,7 +206,7 @@ impl Session {
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
-            log: Arc::new(Mutex::new(Vec::new())),
+            log_by: Arc::new(Mutex::new(HashMap::new())),
             pass_scratch: String::new(),
             statuses: Vec::new(),
             cred_user: String::new(),
@@ -236,7 +249,13 @@ impl Session {
                 true
             }
             Err(e) => {
-                self.error = Some(e.to_string());
+                let msg = e.to_string();
+                push_log(
+                    &mut self.log_by.lock().unwrap(),
+                    PROCESS,
+                    format!("vault: {msg}"),
+                );
+                self.error = Some(msg);
                 false
             }
         }
@@ -270,7 +289,7 @@ impl Session {
     /// first focused profile only. Parked names are started from [`select`].
     fn start_play(&mut self, vault: Vault) {
         let focus = Arc::clone(&self.focus);
-        let log = Arc::clone(&self.log);
+        let log_by = Arc::clone(&self.log_by);
         let mainland = Arc::clone(&self.mainland);
         let mainland_sent = Arc::clone(&self.mainland_sent);
         let travellers = Arc::clone(&self.travellers);
@@ -290,9 +309,11 @@ impl Session {
                     && mainland_sent.lock().unwrap().insert(name.to_string())
                 {
                     api::interact::mainland_hop(c);
-                    log.lock()
-                        .unwrap()
-                        .push(format!("{name}: mainland hop queued"));
+                    push_log(
+                        &mut log_by.lock().unwrap(),
+                        name,
+                        format!("{name}: mainland hop queued"),
+                    );
                 }
 
                 let (rx, rz) = match &c.local_player {
@@ -355,35 +376,40 @@ impl Session {
         };
         let current = play.statuses();
         {
-            let mut log = self.log.lock().unwrap();
+            let mut log_by = self.log_by.lock().unwrap();
             for s in &current {
+                let name = s.username.as_str();
                 let prev = self.statuses.iter().find(|p| p.username == s.username);
                 match prev {
                     None => {
-                        log.push(format!("{}: slot up", s.username));
+                        push_log(&mut log_by, name, format!("{name}: slot up"));
                         if let Some(e) = &s.error {
-                            log.push(format!("{}: login {}", s.username, e));
+                            push_log(&mut log_by, name, format!("{name}: login {e}"));
                         }
                     }
                     Some(p) => {
                         if p.error.is_none() && s.error.is_some() {
-                            log.push(format!(
-                                "{}: login {}",
-                                s.username,
-                                s.error.as_deref().unwrap_or_default()
-                            ));
+                            push_log(
+                                &mut log_by,
+                                name,
+                                format!(
+                                    "{name}: login {}",
+                                    s.error.as_deref().unwrap_or_default()
+                                ),
+                            );
                         }
                         if !p.ingame && s.ingame {
-                            log.push(format!("{}: ingame", s.username));
+                            push_log(&mut log_by, name, format!("{name}: ingame"));
                         }
                         if p.scene_state != s.scene_state {
-                            log.push(format!("{}: scene {}", s.username, s.scene_state));
+                            push_log(
+                                &mut log_by,
+                                name,
+                                format!("{name}: scene {}", s.scene_state),
+                            );
                         }
                     }
                 }
-            }
-            while log.len() > LOG_CAP {
-                log.remove(0);
             }
         }
         self.statuses = current;
@@ -1046,6 +1072,86 @@ mod tests {
     use nav::grid::StepGrid;
     use nav::tile::Tile;
     use vault::{Profile, ProfileSettings, Vault};
+
+    fn empty_play() -> host_play::Play {
+        host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        )
+    }
+
+    fn status(name: &str, ingame: bool, scene: i32) -> SlotStatus {
+        SlotStatus {
+            username: name.into(),
+            ingame,
+            scene_state: scene,
+            ..SlotStatus::default()
+        }
+    }
+
+    #[test]
+    fn pump_status_log_is_per_username() {
+        // two SlotStatus rows, pump twice with transitions; log_by["alice"] does not contain bob lines
+        let mut s = Session::new();
+        let play = empty_play();
+        play.statuses.lock().unwrap().extend([
+            status("alice", false, 0),
+            status("bob", false, 0),
+        ]);
+        s.play = Some(play);
+
+        s.pump_status();
+        {
+            let log_by = s.log_by.lock().unwrap();
+            let alice = log_by.get("alice").expect("alice log");
+            let bob = log_by.get("bob").expect("bob log");
+            assert!(alice.iter().any(|l| l.contains("slot up")));
+            assert!(bob.iter().any(|l| l.contains("slot up")));
+            assert!(alice.iter().all(|l| !l.contains("bob")));
+            assert!(bob.iter().all(|l| !l.contains("alice")));
+        }
+
+        s.play
+            .as_ref()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .for_each(|row| {
+                if row.username == "alice" {
+                    row.ingame = true;
+                    row.scene_state = 2;
+                } else if row.username == "bob" {
+                    row.ingame = true;
+                    row.scene_state = 1;
+                }
+            });
+        s.pump_status();
+        let log_by = s.log_by.lock().unwrap();
+        let alice = log_by.get("alice").expect("alice log");
+        let bob = log_by.get("bob").expect("bob log");
+        assert!(alice.iter().any(|l| l.contains("ingame")));
+        assert!(alice.iter().any(|l| l.contains("scene 2")));
+        assert!(bob.iter().any(|l| l.contains("ingame")));
+        assert!(bob.iter().any(|l| l.contains("scene 1")));
+        assert!(
+            alice.iter().all(|l| !l.contains("bob") && !l.contains("scene 1")),
+            "alice must not see bob lines: {alice:?}"
+        );
+        assert!(
+            bob.iter().all(|l| !l.contains("alice") && !l.contains("scene 2")),
+            "bob must not see alice lines: {bob:?}"
+        );
+    }
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {
         let dir =

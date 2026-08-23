@@ -28,7 +28,7 @@ use crate::resource::{
     cpu_from_delta, draw_metric, format_bots, format_rss_caption, sample_process,
     traffic_from_samples, Metric,
 };
-use crate::session::{combo_index, stream_capture, Session};
+use crate::session::{combo_index, stream_capture, Session, PROCESS};
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
     BUILD_LINE, ERROR, PANEL_WINDOW, RAIL_WINDOW, TEXT_DIM, TITLE,
@@ -881,15 +881,20 @@ fn status_section(ui: &Ui, session: &Session) {
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
 }
 
-/// log: status-transition lines, scrollable.
+/// log: focused slot's status-transition lines (or PROCESS when none).
 fn log_section(ui: &Ui, session: &Session) {
     section_title(ui, "log");
-    let log = session.log.lock().unwrap();
+    let key = session
+        .focused_name()
+        .unwrap_or_else(|| PROCESS.to_string());
+    let log_by = session.log_by.lock().unwrap();
+    let empty: Vec<String> = Vec::new();
+    let lines = log_by.get(&key).unwrap_or(&empty);
     ui.child_window("panel-log")
         .size([0.0, 80.0])
         .build(ui, || {
             let _wrap = ui.push_text_wrap_pos(0.0);
-            for line in log.iter() {
+            for line in lines.iter() {
                 ui.text_wrapped(line);
             }
         });
