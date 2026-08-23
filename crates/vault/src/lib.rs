@@ -31,15 +31,19 @@ const PBKDF2_ROUNDS: u32 = 100_000;
 const MAX_PBKDF2_ROUNDS: u32 = 10_000_000;
 const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 
-/// Per-profile settings. Low-memory is the default for headless clients.
+/// Per-profile settings. Low-memory is the default for headless clients;
+/// auto-login defaults off so v1 blobs (which only carried `lowmem`)
+/// deserialize with the box unchecked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileSettings {
     pub lowmem: bool,
+    #[serde(default)]
+    pub auto_login: bool,
 }
 
 impl Default for ProfileSettings {
     fn default() -> Self {
-        Self { lowmem: true }
+        Self { lowmem: true, auto_login: false }
     }
 }
 
@@ -254,8 +258,28 @@ mod tests {
             username: username.into(),
             password: password.into(),
             uid: 42,
-            settings: ProfileSettings { lowmem: false },
+            settings: ProfileSettings { lowmem: false, auto_login: false },
         }
+    }
+
+    #[test]
+    fn auto_login_defaults_false_and_old_json_unlocks_off() {
+        assert!(!ProfileSettings::default().auto_login);
+        let path = tmp_path("old-settings.vault");
+        let mut v = Vault::create(&path, "bot").unwrap();
+        v.upsert(Profile {
+            username: "a".into(),
+            password: "a".into(),
+            uid: 1,
+            settings: ProfileSettings { lowmem: true, auto_login: false },
+        })
+        .unwrap();
+        drop(v);
+        // Simulate a v1 blob that only had lowmem: rewrite profiles JSON via unlock+file is
+        // enough if Deserialize default works. Also assert missing field:
+        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+        assert!(missing.lowmem);
+        assert!(!missing.auto_login);
     }
 
     #[test]
