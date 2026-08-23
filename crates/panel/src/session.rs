@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotStatus};
+use nav::grid::StepGrid;
+use nav::router::{find, NoPath};
 use nav::tile::Tile;
 use nav::traveller::Traveller;
 use vault::{Profile, Vault};
@@ -483,10 +485,34 @@ impl Session {
 
     /// Arm a walk to `dest`. The picked dest is always stored so the status
     /// row shows what the user asked for even when no route could be found.
-    /// Routing needs the player's observed tile and a loaded pack; until
-    /// the picker wiring lands (Task 10) this only records the dest.
+    /// Routing needs the player's observed tile and a loaded pack; the
+    /// picker routes via [`Session::arm_walk_on`] when it has both.
     pub fn arm_walk(&mut self, dest: Tile) {
         self.walk_dest = Some(dest);
+    }
+
+    /// Arm a walk to `dest` and route it on `grid` from `from` (the player's
+    /// observed tile). On `Ok(route)` the focused username's traveller is
+    /// armed so the observe tick can step it; on `NoPath` only the dest is
+    /// stored and `error` carries a short message. Callers that do not know
+    /// the player's tile fall back to [`Session::arm_walk`].
+    pub fn arm_walk_on(&mut self, grid: &StepGrid, from: Tile, dest: Tile) {
+        self.walk_dest = Some(dest);
+        match find(grid, from, dest) {
+            Ok(route) => {
+                self.error = None;
+                if let Some(name) = self.focused_name() {
+                    let traveller = self
+                        .travellers
+                        .entry(name.clone())
+                        .or_insert_with(|| Arc::new(Mutex::new(Traveller::new())));
+                    traveller.lock().unwrap().arm(route);
+                }
+            }
+            Err(NoPath) => {
+                self.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
+            }
+        }
     }
 
     /// The status-row walk cell: `"—"` when nothing is queued, else the
@@ -509,6 +535,7 @@ fn fresh_uid(vault: &Vault) -> i32 {
 mod tests {
     use super::{combo_index, maybe_send_click, stream_capture, Session, SlotIo};
     use host::{InputEv, PixelBuf, SlotInput};
+    use nav::grid::StepGrid;
     use nav::tile::Tile;
     use vault::{Profile, ProfileSettings, Vault};
 
@@ -551,6 +578,56 @@ mod tests {
         let mut s = Session::new();
         s.arm_walk(Tile { x: 3222, z: 3222, level: 0 });
         assert!(s.walk_status_text().contains("3222"));
+    }
+
+    #[test]
+    fn arm_walk_on_routes_and_arms_focused_traveller() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        let g = StepGrid::fixture_open_3x3();
+        let dest = Tile { x: 2, z: 2, level: 0 };
+        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
+        assert_eq!(s.walk_dest, Some(dest), "dest stays stored on success");
+        assert!(s.error.is_none(), "a found route clears the error banner");
+        let queued = s
+            .travellers
+            .get("alice")
+            .expect("focused traveller exists")
+            .lock()
+            .unwrap()
+            .queued();
+        assert_eq!(queued, Some(dest));
+    }
+
+    #[test]
+    fn arm_walk_on_no_path_stores_dest_and_sets_error() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        let mut g = StepGrid::fixture_open_3x3();
+        g.set_walkable(Tile { x: 1, z: 0, level: 0 }, false);
+        g.set_walkable(Tile { x: 1, z: 1, level: 0 }, false);
+        g.set_walkable(Tile { x: 1, z: 2, level: 0 }, false);
+        let dest = Tile { x: 2, z: 1, level: 0 };
+        s.arm_walk_on(&g, Tile { x: 0, z: 1, level: 0 }, dest);
+        assert_eq!(s.walk_dest, Some(dest), "dest stays stored on NoPath");
+        let err = s.error.clone().expect("no-path message set");
+        assert!(err.contains("no path"), "short no-path message, got {err:?}");
+        assert!(
+            s.travellers
+                .get("alice")
+                .is_none_or(|t| t.lock().unwrap().queued().is_none()),
+            "no route must be armed when find fails"
+        );
+    }
+
+    #[test]
+    fn arm_walk_on_without_focus_skips_route_but_stores_dest() {
+        let mut s = Session::new();
+        let g = StepGrid::fixture_open_3x3();
+        let dest = Tile { x: 2, z: 2, level: 0 };
+        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
+        assert_eq!(s.walk_dest, Some(dest));
+        assert!(s.travellers.is_empty(), "no focused name to key a traveller");
     }
 
     #[test]

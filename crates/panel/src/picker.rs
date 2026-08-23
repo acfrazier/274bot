@@ -275,7 +275,17 @@ fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) -> bool {
         size,
         LEVEL.load(Ordering::Relaxed),
     ) {
-        session.arm_walk(tile);
+        match focused_tile(session) {
+            Some((fx, fz)) => {
+                let from = Tile {
+                    x: fx,
+                    z: fz,
+                    level: LEVEL.load(Ordering::Relaxed),
+                };
+                session.arm_walk_on(grid, from, tile);
+            }
+            None => session.arm_walk(tile),
+        }
         return true;
     }
     false
