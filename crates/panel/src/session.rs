@@ -254,6 +254,9 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.set_multibox(true);
+        // First MultiBox-on opens the chooser; live already loaded both
+        // names. Leave the window usable (operator may click the rail).
+        self.wall.chooser_open = false;
         self.load("test");
         self.load("test2");
         self.focus.lock().unwrap().only_render_selected = true;
