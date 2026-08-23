@@ -49,6 +49,10 @@ pub trait Driver {
     /// tiles from the nav grid (absolute) translate by subtracting this.
     /// Test drivers return `(0, 0)` so absolute == scene.
     fn build_base(&self) -> (i32, i32);
+    /// Packed loc typecode at a scene tile (`wall.typecode` / scenery),
+    /// the value `interact_with_loc` matches via `type_code2`. Test
+    /// drivers return `None` so [`op_loc`] falls back to the loc id.
+    fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32>;
     /// The outbound packet sink (ISAAC-encrypted writes only).
     fn out(&mut self) -> &mut dyn Out;
     /// Queue a login handshake. Returns true iff the driver accepted it.
@@ -107,6 +111,24 @@ impl Driver for Client {
         (self.map_build_base_x, self.map_build_base_z)
     }
 
+    fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32> {
+        if !(0..104).contains(&scene_x) || !(0..104).contains(&scene_z) {
+            return None;
+        }
+        let level = self.minusedlevel;
+        if let Some(w) = self.world.get_wall(level, scene_x, scene_z) {
+            return Some(w.typecode);
+        }
+        if let Some(d) = self.world.get_decor(level, scene_x, scene_z) {
+            return Some(d.typecode);
+        }
+        if let Some(s) = self.world.get_scene(level, scene_x, scene_z) {
+            return Some(s.typecode);
+        }
+        let gd = self.world.gd_type(level, scene_x, scene_z);
+        (gd != 0).then_some(gd)
+    }
+
     fn out(&mut self) -> &mut dyn Out {
         &mut self.out
     }
@@ -148,12 +170,18 @@ pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
 }
 
 /// Interact with a loc via OP_LOC1 through the `doAction` path. The client
-/// dispatches `interact_with_loc(b, c, a, OPLOC1)`, so the menu carries
-/// `a=loc_id`, `b=x`, `c=z` in build-area (scene) coordinates — the
-/// absolute loc tile is translated through [`Driver::build_base`] first.
+/// dispatches `interact_with_loc(b, c, a, OPLOC1)` and looks up `a` with
+/// `world.type_code2` (exact typecode match), so the menu carries
+/// `a=typecode` (loc id in bits 14..28), `b=x`, `c=z` in scene coordinates.
+/// The absolute loc tile is translated through [`Driver::build_base`].
+/// When the driver has no typecode at that tile, `a` falls back to `loc_id`
+/// (stub drivers).
 pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -> bool {
     let (bx, bz) = driver.build_base();
-    driver.set_menu(0, MiniMenuAction::OP_LOC1, loc_id, x - bx, z - bz);
+    let sx = x - bx;
+    let sz = z - bz;
+    let a = driver.loc_typecode(sx, sz).unwrap_or(loc_id);
+    driver.set_menu(0, MiniMenuAction::OP_LOC1, a, sx, sz);
     driver.do_action(0)
 }
 

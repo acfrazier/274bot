@@ -45,6 +45,8 @@ pub struct Traveller {
     last_here: Option<Tile>,
     /// Whether the most recent walk hop was accepted by the driver.
     last_walk_ok: Option<bool>,
+    /// Whether the most recent door `op_loc` was accepted by the driver.
+    last_op_ok: Option<bool>,
     /// The leg currently being worked.
     leg: usize,
 }
@@ -60,6 +62,7 @@ impl Traveller {
             budget: 60,
             last_here: None,
             last_walk_ok: None,
+            last_op_ok: None,
             leg: 0,
         }
     }
@@ -71,6 +74,7 @@ impl Traveller {
         self.hop_ticks = 0;
         self.last_here = None;
         self.last_walk_ok = None;
+        self.last_op_ok = None;
         self.leg = 0;
         self.status = NavStatus::Idle;
     }
@@ -82,6 +86,7 @@ impl Traveller {
         self.hop_ticks = 0;
         self.last_here = None;
         self.last_walk_ok = None;
+        self.last_op_ok = None;
         self.leg = 0;
     }
 
@@ -94,6 +99,11 @@ impl Traveller {
     /// live diagnostics; `None` before the first hop).
     pub fn last_walk_ok(&self) -> Option<bool> {
         self.last_walk_ok
+    }
+
+    /// Whether the most recent door `op_loc` was accepted (live diagnostics).
+    pub fn last_op_ok(&self) -> Option<bool> {
+        self.last_op_ok
     }
 
     /// The tiles still ahead on the armed route, front to back. Walk legs
@@ -240,7 +250,7 @@ impl Traveller {
                 self.status = NavStatus::Walking;
             }
             Leg::Door { loc, loc_id, to, .. } => {
-                op_loc(d, loc.x, loc.z, *loc_id);
+                self.last_op_ok = Some(op_loc(d, loc.x, loc.z, *loc_id));
                 // Same-tick slam rule: when the caller reports the door
                 // open, re-open and walk through on the same tick so a
                 // closing door cannot slam between ticks.
@@ -634,6 +644,10 @@ mod tests {
 
         fn build_base(&self) -> (i32, i32) {
             (0, 0)
+        }
+
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
         }
 
         fn out(&mut self) -> &mut dyn Out {

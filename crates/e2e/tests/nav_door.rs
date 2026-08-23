@@ -250,9 +250,13 @@ fn walker_frame(c: &mut client::client::Client, shared: &Arc<Mutex<Shared>>) {
     let status = s.traveller.tick(c, here, door_open);
     let sent_op = matches!(status, NavStatus::Door);
     if debug() {
+        let (bx, bz) = s.walker.base;
         println!(
             "nav_door walker: here={here:?} status={status:?} door_open={door_open} \
-             loc_id={loc_id:?} walk_ok={:?} hop={}",
+             loc_id={loc_id:?} scene=({},{}) op_ok={:?} walk_ok={:?} hop={}",
+            DOOR.x - bx,
+            DOOR.z - bz,
+            s.traveller.last_op_ok(),
             s.traveller.last_walk_ok(),
             s.same_tile_ticks
         );

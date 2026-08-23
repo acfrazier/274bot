@@ -152,6 +152,8 @@ struct Recorder {
     logins: usize,
     route: Option<(i32, i32)>,
     base: (i32, i32),
+    /// Packed scene typecode at the loc tile; `None` falls back to loc id.
+    scene_typecode: Option<i32>,
 }
 
 impl Driver for Recorder {
@@ -200,6 +202,10 @@ impl Driver for Recorder {
 
     fn build_base(&self) -> (i32, i32) {
         self.base
+    }
+
+    fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+        self.scene_typecode
     }
 
     fn out(&mut self) -> &mut dyn api::prot::Out {
@@ -314,6 +320,24 @@ fn op_loc_translates_absolute_loc_into_scene_coords() {
     assert_eq!(
         r.menus,
         vec![(0, MiniMenuAction::OP_LOC1, 1530, 30, 22)]
+    );
+}
+
+/// Live `interact_with_loc` matches `a` to `wall.typecode` via `type_code2`.
+/// When the driver has a typecode at the scene tile, that packed value is
+/// menu param `a` (loc id in bits 14..28), not the bare loc id.
+#[test]
+fn op_loc_uses_scene_typecode_as_menu_param_a() {
+    let typecode = (1530i32 & 0x7fff) << 14;
+    let mut r = Recorder {
+        base: (2752, 3392),
+        scene_typecode: Some(typecode),
+        ..Recorder::default()
+    };
+    assert!(op_loc(&mut r, 2816, 3438, 1530));
+    assert_eq!(
+        r.menus,
+        vec![(0, MiniMenuAction::OP_LOC1, typecode, 64, 46)]
     );
 }
 
