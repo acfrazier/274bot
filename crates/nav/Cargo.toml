@@ -7,5 +7,9 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 
+[[bin]]
+name = "nav-pack"
+path = "src/bin/nav-pack.rs"
+
 [dev-dependencies]
 client = { workspace = true }

@@ -3,6 +3,7 @@
 
 pub mod arrival;
 pub mod grid;
+pub mod pack;
 pub mod router;
 pub mod tile;
 pub mod traveller;

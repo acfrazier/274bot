@@ -17,15 +17,33 @@ pub struct DoorEdge {
 /// `1` = walkable). `origin` is the tile at `walk[0]`; the grid spans `width`
 /// tiles in +x then `height` rows in +z, all on `origin.level`.
 pub struct StepGrid {
-    walk: Vec<u8>,
-    width: usize,
-    height: usize,
-    origin: Tile,
+    pub(crate) walk: Vec<u8>,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) origin: Tile,
     /// Door edges routing may traverse.
     pub doors: Vec<DoorEdge>,
 }
 
 impl StepGrid {
+    /// Build a grid from raw parts. `walk` is row-major `z` then `x` (same
+    /// indexing as [`StepGrid::walkable`]), one byte per tile, `1` = walkable.
+    pub(crate) fn from_parts(
+        origin: Tile,
+        width: usize,
+        height: usize,
+        walk: Vec<u8>,
+        doors: Vec<DoorEdge>,
+    ) -> Self {
+        Self {
+            walk,
+            width,
+            height,
+            origin,
+            doors,
+        }
+    }
+
     /// True if `t` is on this grid's level, inside its bounds, and marked
     /// walkable. Anything outside the grid is not walkable.
     pub fn walkable(&self, t: Tile) -> bool {
