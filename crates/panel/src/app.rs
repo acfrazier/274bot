@@ -779,13 +779,18 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
         .hint("password")
         .build();
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 4);
+    let (w, stack) = button_row_layout(avail, 2);
+    // Save, same_line Clear
     if ui.button_with_size("Save", [w, 0.0]) {
         session.save_credentials();
     }
     if !stack {
         ui.same_line();
     }
+    if ui.button_with_size("Clear", [w, 0.0]) {
+        session.clear_credentials();
+    }
+    // Log in, same_line Logout (disabled rules unchanged)
     if ui.button_with_size("Log in", [w, 0.0]) {
         let name = session.cred_user.trim().to_string();
         if !name.is_empty() {
@@ -808,12 +813,6 @@ fn credentials_section(ui: &Ui, session: &mut Session) {
             }
         }
         ui.set_item_tooltip("log out the focused slot — it stays in the combo");
-    }
-    if !stack {
-        ui.same_line();
-    }
-    if ui.button_with_size("Clear", [w, 0.0]) {
-        session.clear_credentials();
     }
     // Auto-login follows the focused profile's vault setting; toggling
     // upserts it (never spawns a slot).

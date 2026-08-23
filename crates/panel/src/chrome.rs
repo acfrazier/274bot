@@ -142,6 +142,13 @@ mod tests {
     }
 
     #[test]
+    fn credentials_grid_is_two_by_two() {
+        let (w, stack) = button_row_layout(330.0, 2);
+        assert!(!stack);
+        assert!(w > 100.0);
+    }
+
+    #[test]
     fn apply_amber_replaces_imgui_blue_title() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
