@@ -10,6 +10,7 @@ dear-app = "0.15.1"
 dear-imgui-rs = "0.15"
 host = { path = "../host" }
 host-play = { path = "../host-play" }
+libc = "0.2"
 nav = { path = "../nav" }
 vault = { path = "../vault" }
 wgpu = "29"

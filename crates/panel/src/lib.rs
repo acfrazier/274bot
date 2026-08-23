@@ -4,6 +4,8 @@ pub mod focus;
 pub mod game_view;
 pub mod overlay;
 pub mod picker;
+pub mod queue_card;
+pub mod resource;
 pub mod session;
 pub mod theme;
 
