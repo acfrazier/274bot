@@ -142,6 +142,8 @@ pub struct Session {
     tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
+    /// Tile highlighted in the WalkTo picker; armed only on confirm.
+    pub picker_sel: Option<Tile>,
     /// Overlay generation: bumped whenever the focused traveller's route
     /// can change (a new arm, or the focused profile switching). The path
     /// overlay rebuilds immediately on a bump instead of waiting for its
@@ -189,6 +191,7 @@ impl Session {
             walk_clear: Arc::new(AtomicBool::new(false)),
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walkto_open: false,
+            picker_sel: None,
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             options: PlayOptions {
@@ -606,6 +609,27 @@ impl Session {
         }
     }
 
+    /// Arm the current [`Session::picker_sel`] on `grid`. Returns false when
+    /// nothing is selected. Clears the selection either way so a second
+    /// confirm does not re-fire.
+    pub fn confirm_picker_walk(&mut self, grid: &StepGrid) -> bool {
+        let Some(tile) = self.picker_sel.take() else {
+            return false;
+        };
+        match self.focused_tile() {
+            Some((fx, fz)) => {
+                let from = Tile {
+                    x: fx,
+                    z: fz,
+                    level: tile.level,
+                };
+                self.arm_walk_on(grid, from, tile);
+            }
+            None => self.arm_walk(tile),
+        }
+        true
+    }
+
     /// The focused slot's observed tile, `None` when nothing is focused or
     /// the slot has not reported a position yet (both coordinates zero).
     pub fn focused_tile(&self) -> Option<(i32, i32)> {
@@ -695,6 +719,18 @@ mod tests {
     fn walk_status_is_dash_when_no_route() {
         let s = Session::new();
         assert_eq!(s.walk_status_text(), "—");
+    }
+
+    #[test]
+    fn picker_select_does_not_arm_until_confirm() {
+        let mut s = Session::new();
+        let dest = Tile { x: 2, z: 2, level: 0 };
+        s.picker_sel = Some(dest);
+        assert_eq!(s.walk_status_text(), "—");
+        assert!(s.confirm_picker_walk(&StepGrid::fixture_open_3x3()));
+        assert!(s.walk_status_text().contains("2"));
+        assert!(s.picker_sel.is_none());
+        assert!(!s.confirm_picker_walk(&StepGrid::fixture_open_3x3()));
     }
 
     #[test]

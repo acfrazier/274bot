@@ -1,9 +1,9 @@
 //! WalkTo picker: a collision-dot map window over the baked nav pack.
 //!
 //! Draws the walkable tiles of the loaded pack as amber dots inside a child
-//! canvas, then arms `session.arm_walk` on click (snapped to the nearest
-//! walkable tile) and closes the picker. The pack is loaded once per process
-//! from `$NAV_PACK` or `~/.274bot/274bot.navpack`.
+//! canvas. Click snaps to the nearest walkable tile (highlight only);
+//! **Walk** arms `session.arm_walk_on` and closes. The pack is loaded once
+//! per process from `$NAV_PACK` or `~/.274bot/274bot.navpack`.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ use nav::pack::{load_pack, walkable_dots};
 use nav::tile::{chebyshev, Tile};
 
 use crate::session::Session;
-use crate::theme::ACCENT;
+use crate::theme::{ACCENT, TEXT};
 
 /// Default picker centre: the Lumbridge courtyard when the player's tile is
 /// unknown.
@@ -127,8 +127,8 @@ fn picker_no_pack_window(ui: &Ui, open: &mut bool) {
         });
 }
 
-/// The collision-dot map window. `open` is the window's live open flag; a
-/// picked tile arms the walk and clears it (closing the picker).
+/// The collision-dot map window. `open` is the window's live open flag;
+/// confirm Walk closes it.
 fn picker_map_window(ui: &Ui, session: &mut Session, grid: &StepGrid, open: &mut bool) {
     // Reset the view when the picker opens fresh.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
@@ -136,8 +136,9 @@ fn picker_map_window(ui: &Ui, session: &mut Session, grid: &StepGrid, open: &mut
         CENTRE_X.store(cx, Ordering::Relaxed);
         CENTRE_Z.store(cz, Ordering::Relaxed);
         LEVEL.store(available_levels(grid)[0], Ordering::Relaxed);
+        session.picker_sel = None;
     }
-    let picked = ui
+    let confirmed = ui
         .window("WalkTo")
         .opened(open)
         .flags(WindowFlags::NO_DOCKING)
@@ -172,19 +173,28 @@ fn picker_map_window(ui: &Ui, session: &mut Session, grid: &StepGrid, open: &mut
                 CENTRE_X.store(cx, Ordering::Relaxed);
                 CENTRE_Z.store(cz, Ordering::Relaxed);
             }
-            let picked = draw_canvas(ui, session, grid);
-            ui.text_disabled("drag to pan · click a dot to walk");
-            picked
+            draw_canvas(ui, session, grid);
+            match session.picker_sel {
+                Some(t) => ui.text_disabled(format!("selected {} {} {}", t.x, t.z, t.level)),
+                None => ui.text_disabled("click a tile, then Walk"),
+            }
+            let can_walk = session.picker_sel.is_some();
+            let _off = ui.begin_disabled_with_cond(!can_walk);
+            ui.button("Walk") && can_walk && session.confirm_picker_walk(grid)
         })
         .unwrap_or(false);
-    if picked {
+    if !*open {
+        PREV_OPEN.store(false, Ordering::Relaxed);
+        session.picker_sel = None;
+    }
+    if confirmed {
         *open = false;
+        PREV_OPEN.store(false, Ordering::Relaxed);
     }
 }
 
-/// The child canvas: amber dots for walkable tiles in the visible window,
-/// drag-to-pan, click-to-arm. Returns true when a tile was picked this frame.
-fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) -> bool {
+/// The child canvas: amber dots, drag-to-pan, click-to-select (does not arm).
+fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) {
     let avail = ui.content_region_avail();
     let canvas_h = (avail[1] - 24.0).max(120.0);
     let mut rect: Option<([f32; 2], [f32; 2])> = None;
@@ -214,24 +224,31 @@ fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) -> bool {
             let ox = min[0] + size[0] / 2.0 - cx * scale;
             let oz = min[1] + size[1] / 2.0 - cz * scale;
             let dot = (scale * 0.72).clamp(1.5, 5.0);
-            let half = dot / 2.0;
+            let sel = session.picker_sel;
             for t in walkable_dots(grid, LEVEL.load(Ordering::Relaxed)) {
                 let (tx, tz) = (t.x as f32, t.z as f32);
                 if tx < wx0 || tx > wx1 || tz < wz0 || tz > wz1 {
                     continue;
                 }
-                let x0 = ox + tx * scale - half;
-                let y0 = oz + tz * scale - half;
-                draw.add_rect([x0, y0], [x0 + dot, y0 + dot], ACCENT)
+                let selected = sel.is_some_and(|s| s == t);
+                let (color, d) = if selected {
+                    (TEXT, (dot + 2.0).min(scale.max(3.0)))
+                } else {
+                    (ACCENT, dot)
+                };
+                let h = d / 2.0;
+                let x0 = ox + tx * scale - h;
+                let y0 = oz + tz * scale - h;
+                draw.add_rect([x0, y0], [x0 + d, y0 + d], color)
                     .filled(true)
                     .build();
             }
         });
     let Some((min, max)) = rect else {
-        return false;
+        return;
     };
     if !ui.is_item_hovered() {
-        return false;
+        return;
     }
     let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
     if ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0) {
@@ -244,10 +261,10 @@ fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) -> bool {
             CENTRE_Z.load(Ordering::Relaxed) - (delta[1] / scale).round() as i32,
             Ordering::Relaxed,
         );
-        return false;
+        return;
     }
     if !ui.is_mouse_clicked(MouseButton::Left) {
-        return false;
+        return;
     }
     let mouse = ui.io().mouse_pos();
     let size = [max[0] - min[0], max[1] - min[1]];
@@ -263,20 +280,8 @@ fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) -> bool {
         size,
         LEVEL.load(Ordering::Relaxed),
     ) {
-        match session.focused_tile() {
-            Some((fx, fz)) => {
-                let from = Tile {
-                    x: fx,
-                    z: fz,
-                    level: LEVEL.load(Ordering::Relaxed),
-                };
-                session.arm_walk_on(grid, from, tile);
-            }
-            None => session.arm_walk(tile),
-        }
-        return true;
+        session.picker_sel = Some(tile);
     }
-    false
 }
 
 #[cfg(test)]
@@ -351,6 +356,6 @@ mod tests {
         let mut open = true;
         picker_map_window(ui, &mut s, &StepGrid::fixture_open_3x3(), &mut open);
         ctx.render();
-        assert!(open, "the window must stay open until a tile is picked");
+        assert!(open, "the window must stay open until Walk is confirmed");
     }
 }

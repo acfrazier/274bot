@@ -66,10 +66,14 @@ pack bake tests and the live `nav_door` harness both pin this door.
 
 The panel's main-chrome **WalkTo** button opens a collision-dot map
 (`crates/panel/src/picker.rs`): walkable tiles from the loaded pack as
-amber dots, drag to pan, click snaps to the nearest walkable tile and arms
-the focused slot's traveller (`Session::arm_walk_on`). The pack loads once
-per process from `$NAV_PACK` or the `nav-pack` default; without it the
-window shows a "run nav-pack" hint.
+amber dots, drag to pan, click highlights the nearest walkable tile,
+**Walk** arms the focused slot's traveller (`Session::arm_walk_on`) and
+closes. The pack loads once per process from `$NAV_PACK` or the
+`nav-pack` default; without it the window shows a "run nav-pack" hint.
+
+The amber polyline on the Game Image is a **schematic** overlay: remaining
+A* walk tiles drawn as a flat 52×34 grid centred on the player, not a
+projection through the 274 camera. It will not sit on the 3D path you see.
 
 ## Live tests
 
