@@ -1,6 +1,6 @@
 # 274bot
 
-Headless **RuneScape revision 274** (~2004) **bot host**: N clients in one process, shared type tables, a login FIFO, an encrypted vault, a small agent API, and (campaign 2) a native panel.
+Headless **RuneScape revision 274** (~2004) **bot host**: N clients in one process, shared type tables, a login FIFO, an encrypted vault, a small agent API, and a native panel (MultiBox wall, --live).
 
 | | |
 |--|--|

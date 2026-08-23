@@ -27,7 +27,7 @@ pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
 /// Panel window title.
 pub const TITLE: &str = "274bot";
 /// Dim build line under the title (no fake git hash).
-pub const BUILD_LINE: &str = "campaign 2 · mock chrome";
+pub const BUILD_LINE: &str = "4.5c · headed instrument";
 /// Right-hand chrome width, matching rs2b0t's 330px panel.
 pub const PANEL_WIDTH: f32 = 330.0;
 /// Stable ImGui window name for the right-hand chrome.
