@@ -315,7 +315,14 @@ fn parse_mapsquare_text(
                     door_sides.insert((x, z));
                 }
             }
+            // Bidirectional: the same loc opens either way.
             doors.push(door);
+            doors.push(DoorEdge {
+                loc: door.loc,
+                loc_id: door.loc_id,
+                from: door.to,
+                to: door.from,
+            });
         }
     }
     for loc in &locs {
@@ -679,34 +686,38 @@ op1=Open
         assert_eq!(sq.walk[1], 0);
         assert_eq!(sq.walk[64], 1);
         assert_eq!(sq.walk[2], 0);
-        // The Catherby closed door: 1530 @ local (0,46) -> 2816,3438,0.
-        assert_eq!(sq.doors.len(), 1);
-        let d = sq.doors[0];
-        assert_eq!(
-            d.loc,
-            Tile {
-                x: 2816,
-                z: 3438,
-                level: 0
-            }
-        );
-        assert_eq!(d.loc_id, 1530);
-        assert_eq!(
-            d.from,
-            Tile {
-                x: 2816,
-                z: 3437,
-                level: 0
-            }
-        );
-        assert_eq!(
-            d.to,
-            Tile {
-                x: 2816,
-                z: 3439,
-                level: 0
-            }
-        );
+        // The Catherby closed door: 1530 @ local (0,46) -> 2816,3438,0,
+        // both from→to and to→from (same loc, loc_id).
+        assert_eq!(sq.doors.len(), 2);
+        let south = Tile {
+            x: 2816,
+            z: 3437,
+            level: 0,
+        };
+        let north = Tile {
+            x: 2816,
+            z: 3439,
+            level: 0,
+        };
+        let loc = Tile {
+            x: 2816,
+            z: 3438,
+            level: 0,
+        };
+        let fwd = sq
+            .doors
+            .iter()
+            .find(|d| d.from == south && d.to == north)
+            .expect("Catherby south→north door");
+        let rev = sq
+            .doors
+            .iter()
+            .find(|d| d.from == north && d.to == south)
+            .expect("Catherby reverse neighbour");
+        assert_eq!(fwd.loc, loc);
+        assert_eq!(fwd.loc_id, 1530);
+        assert_eq!(rev.loc, loc);
+        assert_eq!(rev.loc_id, 1530);
         // The door tile is a wall: not walkable.
         assert_eq!(sq.walk[46 * 64], 0);
     }

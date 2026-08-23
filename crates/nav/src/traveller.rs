@@ -1,8 +1,8 @@
 //! Traveller: drives a route through the kernel `Driver` over ticks. The
 //! caller supplies the player's current tile and the door-open state each
 //! tick; the traveller targets walk legs one hop ahead and works a door
-//! leg by `op_loc`, re-opening and walking through on the same tick when
-//! the caller reports the door open (so a closing door cannot slam).
+//! leg by `op_loc` while closed. When the caller reports the door open,
+//! walk through the same tick without OP_LOC1 (that would Close).
 
 use api::interact::{op_loc, walk, Driver};
 
@@ -157,6 +157,28 @@ impl Traveller {
         out
     }
 
+    /// The current Door leg's loc tile and closed loc id, given `here`.
+    /// Skips already-traversed legs the same way [`Traveller::tick`] does.
+    /// `None` when nothing is armed or the current leg is a walk.
+    pub fn current_door(&self, here: Tile) -> Option<(Tile, i32)> {
+        let route = self.route.as_ref()?;
+        let mut leg = self.leg.min(route.legs.len());
+        while leg < route.legs.len() {
+            let done = match &route.legs[leg] {
+                Leg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
+                Leg::Door { to, .. } => *to == here,
+            };
+            if !done {
+                break;
+            }
+            leg += 1;
+        }
+        match route.legs.get(leg) {
+            Some(Leg::Door { loc, loc_id, .. }) => Some((*loc, *loc_id)),
+            _ => None,
+        }
+    }
+
     /// Advance the route one tick: send the driver the next hop toward
     /// `dest`, or work the current door leg. `here` is the player's tile;
     /// `door_open` is the door's current state (the caller reads it live).
@@ -208,10 +230,11 @@ impl Traveller {
         }
 
         let Some(leg) = route.legs.get(self.leg) else {
-            // Every leg traversed without arriving cannot happen here: the
-            // last leg ends on `dest`, and standing on `dest` returned
-            // Arrived above. Report the current status defensively.
-            return self.status;
+            // Remaining empty without arriving: do not silent-spin.
+            self.status = NavStatus::Budget;
+            let status = self.status;
+            self.clear();
+            return status;
         };
 
         match leg {
@@ -250,11 +273,12 @@ impl Traveller {
                 self.status = NavStatus::Walking;
             }
             Leg::Door { loc, loc_id, to, .. } => {
-                self.last_op_ok = Some(op_loc(d, loc.x, loc.z, *loc_id));
-                // Same-tick slam rule: when the caller reports the door
-                // open, re-open and walk through on the same tick so a
-                // closing door cannot slam between ticks.
-                if door_open {
+                if !door_open {
+                    // Closed: OP_LOC1 the packed typecode (opens 1530).
+                    self.last_op_ok = Some(op_loc(d, loc.x, loc.z, *loc_id));
+                } else {
+                    // Already open: do not OP_LOC1 the live loc (that
+                    // Closes). Walk through this tick.
                     self.last_walk_ok = Some(walk(d, to.x, to.z));
                 }
                 self.status = NavStatus::Door;
@@ -473,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn door_open_same_tick_op_loc_then_walk() {
+    fn door_open_walks_without_requiring_op_loc() {
         let mut t = Traveller::new();
         t.arm(
             find(
@@ -487,13 +511,31 @@ mod tests {
             route: Some((1, 0)),
             ..Rec::default()
         };
-        // skip to door by standing on from-tile
+        // skip to door by standing on from-tile; door already open
         assert_eq!(
             t.tick(&mut r, Tile { x: 1, z: 0, level: 0 }, true),
             NavStatus::Door
         );
-        assert!(r.locs >= 1);
-        assert!(r.walked.is_some());
+        assert!(r.walked.is_some(), "open door walks through");
+        // locs may be 0: OP_LOC1 on an open loc Closes it
+    }
+
+    #[test]
+    fn current_door_is_the_armed_door_leg() {
+        let mut t = Traveller::new();
+        t.arm(
+            find(
+                &StepGrid::fixture_door_corridor(),
+                Tile { x: 0, z: 0, level: 0 },
+                Tile { x: 4, z: 0, level: 0 },
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            t.current_door(Tile { x: 1, z: 0, level: 0 }),
+            Some((Tile { x: 2, z: 0, level: 0 }, 1530))
+        );
+        assert_eq!(t.current_door(Tile { x: 0, z: 0, level: 0 }), None);
     }
 
     #[test]

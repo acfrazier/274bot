@@ -11,12 +11,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
+use api::interact::Driver;
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotStatus};
 use nav::grid::StepGrid;
 use nav::router::{find, NoPath};
 use nav::tile::Tile;
-use nav::traveller::Traveller;
+use nav::traveller::{NavStatus, Traveller};
 use vault::{Profile, Vault};
 
 use crate::focus::draw_for_slot;
@@ -127,12 +128,18 @@ pub struct Session {
     pub cred_user: String,
     pub cred_pass: String,
     /// Per-username nav travellers; the focused slot's traveller carries
-    /// the armed walk route (ticked from observe in Task 10+).
-    pub travellers: HashMap<String, Arc<Mutex<Traveller>>>,
+    /// the armed walk route (ticked from `start_play` `per_frame`).
+    pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<Traveller>>>>>,
     /// The tile the user last picked for WalkTo; `None` until armed. Read
     /// by [`Session::walk_status_text`] so the status row stays honest even
     /// when no route could be found.
     pub walk_dest: Option<Tile>,
+    /// Slot threads set this when a traveller returns Arrived/Budget so
+    /// [`Session::pump_status`] can clear [`Session::walk_dest`].
+    walk_clear: Arc<AtomicBool>,
+    /// Last `(gens.player, here)` ticked per username; skip until either
+    /// changes so we do not re-send walk every 20 ms frame.
+    tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
     /// Overlay generation: bumped whenever the focused traveller's route
@@ -177,8 +184,10 @@ impl Session {
             statuses: Vec::new(),
             cred_user: String::new(),
             cred_pass: String::new(),
-            travellers: HashMap::new(),
+            travellers: Arc::new(Mutex::new(HashMap::new())),
             walk_dest: None,
+            walk_clear: Arc::new(AtomicBool::new(false)),
+            tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walkto_open: false,
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
@@ -219,6 +228,9 @@ impl Session {
         let log = Arc::clone(&self.log);
         let mainland = Arc::clone(&self.mainland);
         let mainland_sent = Arc::clone(&self.mainland_sent);
+        let travellers = Arc::clone(&self.travellers);
+        let tick_latch = Arc::clone(&self.tick_latch);
+        let walk_clear = Arc::clone(&self.walk_clear);
         let options = self.options.clone();
         let play = run_with_io(
             &options,
@@ -236,6 +248,40 @@ impl Session {
                     log.lock()
                         .unwrap()
                         .push(format!("{name}: mainland hop queued"));
+                }
+
+                let (rx, rz) = match &c.local_player {
+                    Some(lp) => (lp.route_x[0], lp.route_z[0]),
+                    None => return,
+                };
+                let here = Tile {
+                    x: c.map_build_base_x + rx,
+                    z: c.map_build_base_z + rz,
+                    level: 0,
+                };
+                let Some(traveller) = travellers.lock().unwrap().get(name).cloned() else {
+                    return;
+                };
+                {
+                    let mut latch = tick_latch.lock().unwrap();
+                    if latch.get(name) == Some(&(c.gens.player, here)) {
+                        return;
+                    }
+                    latch.insert(name.to_string(), (c.gens.player, here));
+                }
+                let door = traveller.lock().unwrap().current_door(here);
+                let door_open = match door {
+                    Some((loc, closed_id)) => {
+                        let (bx, bz) = Driver::build_base(c);
+                        Driver::loc_typecode(c, loc.x - bx, loc.z - bz)
+                            .map(|tc| (tc >> 14) & 0x7fff)
+                            != Some(closed_id)
+                    }
+                    None => false,
+                };
+                let status = traveller.lock().unwrap().tick(c, here, door_open);
+                if matches!(status, NavStatus::Arrived | NavStatus::Budget) {
+                    walk_clear.store(true, Ordering::Relaxed);
                 }
             },
         );
@@ -294,6 +340,33 @@ impl Session {
             }
         }
         self.statuses = current;
+        self.sync_walk_status();
+    }
+
+    /// Copy each slot's traveller `queued()` into `walk_*` (−1 if none) and
+    /// clear [`Session::walk_dest`] after Arrived/Budget.
+    fn sync_walk_status(&mut self) {
+        for s in &mut self.statuses {
+            let queued = self
+                .travellers
+                .lock()
+                .unwrap()
+                .get(&s.username)
+                .and_then(|t| t.lock().unwrap().queued());
+            apply_queued_walk(s, queued);
+        }
+        if self.walk_clear.swap(false, Ordering::Relaxed) {
+            let keep = self.focused_name().and_then(|n| {
+                self.travellers
+                    .lock()
+                    .unwrap()
+                    .get(&n)
+                    .and_then(|t| t.lock().unwrap().queued())
+            });
+            if keep.is_none() {
+                self.walk_dest = None;
+            }
+        }
     }
 
     /// Snapshot of every slot's status (for the status section).
@@ -498,6 +571,7 @@ impl Session {
     /// picker routes via [`Session::arm_walk_on`] when it has both.
     pub fn arm_walk(&mut self, dest: Tile) {
         self.walk_dest = Some(dest);
+        self.walk_clear.store(false, Ordering::Relaxed);
     }
 
     /// Arm a walk to `dest` and route it on `grid` from `from` (the player's
@@ -507,15 +581,20 @@ impl Session {
     /// the player's tile fall back to [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, grid: &StepGrid, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
+        self.walk_clear.store(false, Ordering::Relaxed);
         match find(grid, from, dest) {
             Ok(route) => {
                 self.error = None;
                 if let Some(name) = self.focused_name() {
                     let traveller = self
                         .travellers
+                        .lock()
+                        .unwrap()
                         .entry(name.clone())
-                        .or_insert_with(|| Arc::new(Mutex::new(Traveller::new())));
+                        .or_insert_with(|| Arc::new(Mutex::new(Traveller::new())))
+                        .clone();
                     traveller.lock().unwrap().arm(route);
+                    self.tick_latch.lock().unwrap().remove(&name);
                     // Rising edge: the overlay must paint the new route on
                     // this frame, not after the 1 s raster cadence.
                     self.route_gen += 1;
@@ -559,10 +638,27 @@ fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
+/// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.
+fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
+    match queued {
+        Some(t) => {
+            status.walk_x = t.x;
+            status.walk_z = t.z;
+            status.walk_level = t.level;
+        }
+        None => {
+            status.walk_x = -1;
+            status.walk_z = -1;
+            status.walk_level = -1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{combo_index, maybe_send_click, stream_capture, Session, SlotIo};
     use host::{InputEv, PixelBuf, SlotInput};
+    use host_play::SlotStatus;
     use nav::grid::StepGrid;
     use nav::tile::Tile;
     use vault::{Profile, ProfileSettings, Vault};
@@ -619,6 +715,8 @@ mod tests {
         assert!(s.error.is_none(), "a found route clears the error banner");
         let queued = s
             .travellers
+            .lock()
+            .unwrap()
             .get("alice")
             .expect("focused traveller exists")
             .lock()
@@ -642,6 +740,8 @@ mod tests {
         assert!(err.contains("no path"), "short no-path message, got {err:?}");
         assert!(
             s.travellers
+                .lock()
+                .unwrap()
                 .get("alice")
                 .is_none_or(|t| t.lock().unwrap().queued().is_none()),
             "no route must be armed when find fails"
@@ -655,7 +755,10 @@ mod tests {
         let dest = Tile { x: 2, z: 2, level: 0 };
         s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
         assert_eq!(s.walk_dest, Some(dest));
-        assert!(s.travellers.is_empty(), "no focused name to key a traveller");
+        assert!(
+            s.travellers.lock().unwrap().is_empty(),
+            "no focused name to key a traveller"
+        );
     }
 
     #[test]
@@ -666,6 +769,39 @@ mod tests {
         assert_eq!(s.route_gen(), 0);
         s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 2, z: 2, level: 0 });
         assert_ne!(s.route_gen(), 0, "a new arm must bump the overlay gen");
+    }
+
+    #[test]
+    fn sync_walk_status_copies_queued_and_clears_dest_on_arrived() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.statuses.push(SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        });
+        let g = StepGrid::fixture_open_3x3();
+        let dest = Tile { x: 2, z: 2, level: 0 };
+        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
+        s.sync_walk_status();
+        assert_eq!(
+            (s.statuses[0].walk_x, s.statuses[0].walk_z, s.statuses[0].walk_level),
+            (2, 2, 0)
+        );
+        s.travellers
+            .lock()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .clear();
+        s.walk_clear.store(true, std::sync::atomic::Ordering::Relaxed);
+        s.sync_walk_status();
+        assert_eq!(s.walk_status_text(), "—");
+        assert_eq!(
+            (s.statuses[0].walk_x, s.statuses[0].walk_z, s.statuses[0].walk_level),
+            (-1, -1, -1)
+        );
     }
 
     #[test]

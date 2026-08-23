@@ -59,6 +59,18 @@ pub struct SlotStatus {
     pub walk_level: i32,
 }
 
+/// Absolute world tile from the scene origin plus the local-player route
+/// head (`route_x[0]` / `route_z[0]`). Scene pixels (`lp.x` / `lp.z`) are
+/// 128× these; WalkTo and the picker need world tiles.
+pub fn player_world_tile(
+    map_build_base_x: i32,
+    map_build_base_z: i32,
+    route_x: i32,
+    route_z: i32,
+) -> (i32, i32) {
+    (map_build_base_x + route_x, map_build_base_z + route_z)
+}
+
 /// Defaults match the derived `Default` for every field except the queued
 /// walk tile, which starts `-1` (none) instead of `0`.
 impl Default for SlotStatus {
@@ -298,8 +310,14 @@ fn spawn_slot_thread(
                         s.run_sends = run_sends;
                         s.main_modal_id = c.main_modal_id;
                         if let Some(lp) = &c.local_player {
-                            s.tile_x = lp.x;
-                            s.tile_z = lp.z;
+                            let (tx, tz) = player_world_tile(
+                                c.map_build_base_x,
+                                c.map_build_base_z,
+                                lp.route_x[0],
+                                lp.route_z[0],
+                            );
+                            s.tile_x = tx;
+                            s.tile_z = tz;
                             s.player = lp.name.clone().unwrap_or_default();
                         }
                     }
@@ -468,5 +486,18 @@ mod tests {
     fn slot_status_walk_defaults_cleared() {
         let s = SlotStatus::default();
         assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
+    }
+
+    #[test]
+    fn player_world_tile_adds_build_base_to_route_head() {
+        // Lumbridge courtyard: base 3200,3200 + route 22,20 → 3222,3220.
+        assert_eq!(player_world_tile(3200, 3200, 22, 20), (3222, 3220));
+        // Catherby range door from: base 2752,3392 + route 64,45 → 2816,3437.
+        assert_eq!(player_world_tile(2752, 3392, 64, 45), (2816, 3437));
+        assert_ne!(
+            player_world_tile(3200, 3200, 22, 20),
+            (22 * 128, 20 * 128),
+            "must not report scene pixels"
+        );
     }
 }

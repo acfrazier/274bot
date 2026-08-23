@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use api::interact::{cheat, op_loc};
+use api::interact::{cheat, op_loc, Driver};
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use nav::pack::load_pack;
@@ -349,14 +349,12 @@ fn stage_catherby_tele(
 }
 
 fn wall_loc_id(c: &client::client::Client, tile: Tile) -> Option<i32> {
-    let sx = tile.x - c.map_build_base_x;
-    let sz = tile.z - c.map_build_base_z;
-    if !(0..104).contains(&sx) || !(0..104).contains(&sz) {
-        return None;
-    }
-    c.world
-        .get_wall(0, sx, sz)
-        .map(|w| (w.typecode >> 14) & 0x7fff)
+    let (bx, bz) = c.build_base();
+    let sx = tile.x - bx;
+    let sz = tile.z - bz;
+    // Same wall/decor/scene lookup as `Driver::loc_typecode`. An open door
+    // can sit on decor with no wall; returning on wall-None skipped Close.
+    c.loc_typecode(sx, sz).map(|tc| (tc >> 14) & 0x7fff)
 }
 
 fn at_lumbridge(here: Tile) -> bool {

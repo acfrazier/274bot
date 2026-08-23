@@ -58,7 +58,7 @@ fn points_for(session: &Session, min: [f32; 2], size: [f32; 2]) -> Vec<[f32; 2]>
     let Some(name) = session.focused_name() else {
         return Vec::new();
     };
-    let Some(traveller) = session.travellers.get(&name) else {
+    let Some(traveller) = session.travellers.lock().unwrap().get(&name).cloned() else {
         return Vec::new();
     };
     let here = session
