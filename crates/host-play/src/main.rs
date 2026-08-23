@@ -132,6 +132,14 @@ fn main() -> ExitCode {
         }
     }
 
+    // `--highmem` runs every selected profile with lowmem off for this
+    // session only; the vault blobs are left untouched.
+    if !args.lowmem {
+        for p in profiles.iter_mut() {
+            p.settings.lowmem = false;
+        }
+    }
+
     if host_play::debug_enabled() {
         eprintln!(
             "host-play: running {} profile(s) via {}",

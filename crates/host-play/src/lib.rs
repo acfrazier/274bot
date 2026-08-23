@@ -378,6 +378,19 @@ where
     play
 }
 
+/// Slot client config: connection fields from `options`, memory profile
+/// from the vault profile (`settings.lowmem` defaults true; panel/CLI may
+/// set false for this run).
+fn bot_client_config(options: &PlayOptions, profile: &Profile) -> ClientConfig {
+    ClientConfig {
+        host: options.host.clone(),
+        port: options.port,
+        cache_dir: options.cache_dir.clone(),
+        members: true,
+        lowmem: profile.settings.lowmem,
+    }
+}
+
 fn spawn_slot_thread(
     options: &PlayOptions,
     profile: Profile,
@@ -394,13 +407,7 @@ fn spawn_slot_thread(
     let username = profile.username.clone();
     let uid = profile.uid;
     let password = profile.password.clone();
-    let config = ClientConfig {
-        host: options.host.clone(),
-        port: options.port,
-        cache_dir: options.cache_dir.clone(),
-        members: true,
-        lowmem: options.lowmem,
-    };
+    let config = bot_client_config(options, &profile);
     let mainland = options.mainland;
 
     handles.insert(username.clone(), thread::spawn(move || {
@@ -702,6 +709,31 @@ mod tests {
             std::env::temp_dir().join(format!("274bot-host-play-{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("nested").join("vault")
+    }
+
+    #[test]
+    fn spawn_config_follows_profile_lowmem() {
+        let opt = PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        };
+        let lean = Profile {
+            username: "a".into(),
+            password: "a".into(),
+            uid: 1,
+            settings: ProfileSettings { lowmem: true, auto_login: false },
+        };
+        let loud = Profile {
+            username: "b".into(),
+            password: "b".into(),
+            uid: 2,
+            settings: ProfileSettings { lowmem: false, auto_login: false },
+        };
+        assert!(bot_client_config(&opt, &lean).lowmem);
+        assert!(!bot_client_config(&opt, &loud).lowmem);
     }
 
     #[test]
