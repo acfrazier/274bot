@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -220,12 +220,16 @@ impl Session {
         }
     }
 
-    /// Unlock (or first-run create) the vault and start the play. Only the
-    /// focused profile is spawned as a slot; other vault rows stay parked
-    /// until selected (channel-change keeps a slot once it has run).
+    /// Unlock (or first-run create) the default vault and start the play.
     pub fn unlock(&mut self, pass: &str) -> bool {
-        let path = default_vault_path();
-        match open_vault(&path, pass) {
+        self.unlock_at(&default_vault_path(), pass)
+    }
+
+    /// Unlock (or first-run create) the vault at `path` and start the play.
+    /// Only the focused profile is spawned as a slot; other vault rows stay
+    /// parked until selected (channel-change keeps a slot once it has run).
+    pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
+        match open_vault(path, pass) {
             Ok(vault) => {
                 self.error = None;
                 self.start_play(vault);
@@ -236,6 +240,27 @@ impl Session {
                 false
             }
         }
+    }
+
+    /// Live `null_raster` setup: temp vault with `test`/`test2`, multibox
+    /// wall of both, only-render-selected + focus `test`, renderer on,
+    /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
+    pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
+        let path = temp_live_vault(&[("test", "test"), ("test2", "test2")]);
+        if !self.unlock_at(&path, "bot") {
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| "unlock_at failed".into()));
+        }
+        self.set_multibox(true);
+        self.load("test");
+        self.load("test2");
+        self.focus.lock().unwrap().only_render_selected = true;
+        self.select("test");
+        self.set_renderer(true);
+        self.login_all();
+        Ok(())
     }
 
     /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
@@ -926,6 +951,33 @@ impl Session {
     }
 }
 
+/// Throwaway encrypted vault for live prepare (e2e `temp_vault` pattern,
+/// kept panel-private so panel does not depend on the e2e crate).
+fn temp_live_vault(entries: &[(&str, &str)]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-panel-live-{}-{}",
+        std::process::id(),
+        entries.len()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("vault");
+    if path.exists() {
+        std::fs::remove_file(&path).unwrap();
+    }
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    for (i, (user, pass)) in entries.iter().enumerate() {
+        vault
+            .upsert(Profile {
+                username: (*user).into(),
+                password: (*pass).into(),
+                uid: 274_000_001 + i as i32,
+                settings: vault::ProfileSettings::default(),
+            })
+            .unwrap();
+    }
+    path
+}
+
 /// Fresh uid for a profile with no existing vault entry: one past the max
 /// (host-play assigns uids from the same 274M base range).
 fn fresh_uid(vault: &Vault) -> i32 {
@@ -988,6 +1040,14 @@ mod tests {
             uid,
             settings: ProfileSettings::default(),
         }
+    }
+
+    #[test]
+    fn unlock_at_uses_the_given_path() {
+        let path = tmp_vault("unlock-at.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        assert!(s.vault.is_some());
     }
 
     #[test]
