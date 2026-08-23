@@ -30,6 +30,47 @@ pub fn traffic_from_delta(d_bytes: u64, dt_secs: f64, n_slots: usize) -> Metric 
     Metric::Available(format_bps(bps))
 }
 
+/// If `n_slots==0` or `dt<=0` → Measuring.
+/// If `n_slots != n_prev` or `sum < sum0` → Measuring (re-baseline; do not wrapping_sub).
+/// Else rate from `sum.wrapping_sub(sum0)` / dt.
+pub fn traffic_from_samples(
+    sum: u64,
+    sum0: u64,
+    dt_secs: f64,
+    n_slots: usize,
+    n_prev: usize,
+) -> Metric {
+    if n_slots == 0 || dt_secs <= 0.0 || n_slots != n_prev || sum < sum0 {
+        return Metric::Measuring;
+    }
+    traffic_from_delta(sum.wrapping_sub(sum0), dt_secs, n_slots)
+}
+
+/// None → Measuring. Some → `draw {game_draw_enters}  paint {paint_n}/{paint_n+skip_n}`.
+pub fn draw_metric(focused: Option<&host_play::SlotStatus>) -> Metric {
+    let Some(s) = focused else {
+        return Metric::Measuring;
+    };
+    let total = s.paint_n + s.skip_n;
+    Metric::Available(format!(
+        "draw {}  paint {}/{}",
+        s.game_draw_enters, s.paint_n, total
+    ))
+}
+
+/// macos: `format_rss(bytes) + " peak"`; other: `format_rss(bytes)`.
+pub fn format_rss_caption(bytes: u64) -> String {
+    let base = format_rss(bytes);
+    #[cfg(target_os = "macos")]
+    {
+        format!("{base} peak")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        base
+    }
+}
+
 fn format_bps(bps: f64) -> String {
     let kb = 1024.0;
     let mb = kb * 1024.0;
@@ -148,5 +189,55 @@ mod tests {
         assert_eq!(format_bots(2, 2), "2 bots (2 running)");
         let s = format_rss(1024);
         assert!(s.contains("KB") || s.contains("B") || s.contains("MB"));
+    }
+
+    #[test]
+    fn traffic_rebases_when_sum_drops_or_slot_count_changes() {
+        match traffic_from_samples(10, 100, 1.0, 1, 2) {
+            Metric::Measuring => {}
+            other => panic!("{other:?}"),
+        }
+        match traffic_from_samples(10, 100, 1.0, 2, 2) {
+            Metric::Measuring => {}
+            other => panic!("{other:?}"),
+        }
+        match traffic_from_samples(200, 100, 1.0, 2, 2) {
+            Metric::Available(s) => assert!(s.contains("/s"), "{s}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn draw_metric_measuring_without_focus() {
+        match draw_metric(None) {
+            Metric::Measuring => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn draw_metric_formats_focused_slot() {
+        let s = host_play::SlotStatus {
+            game_draw_enters: 4,
+            paint_n: 4,
+            skip_n: 46,
+            ..Default::default()
+        };
+        match draw_metric(Some(&s)) {
+            Metric::Available(label) => {
+                assert!(label.contains("4"), "{label}");
+                assert!(label.contains("paint"), "{label}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn rss_caption_mentions_peak_on_macos() {
+        let s = format_rss_caption(1024);
+        #[cfg(target_os = "macos")]
+        assert!(s.contains("peak"), "{s}");
+        #[cfg(not(target_os = "macos"))]
+        assert!(!s.contains("peak"), "{s}");
     }
 }
