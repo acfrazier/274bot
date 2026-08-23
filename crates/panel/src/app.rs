@@ -22,8 +22,10 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{traffic_light, Light, RAIL_W, TILE_H, TILE_W};
+use host::debug_enabled;
+
 use crate::resource::{
-    cpu_from_delta, format_bots, format_rss, sample_process, traffic_metric, Metric,
+    cpu_from_delta, format_bots, format_rss, sample_process, traffic_from_delta, Metric,
 };
 use crate::session::{combo_index, stream_capture, Session};
 use crate::theme::{
@@ -102,6 +104,11 @@ struct PanelState {
     res_cpu: Metric,
     /// Cached 1 Hz RAM metric for the resource card.
     res_ram: Metric,
+    /// Cached 1 Hz traffic metric for the resource card.
+    res_traffic: Metric,
+    /// Last traffic sample `(instant, sum of bytes_in+bytes_out)`; `None`
+    /// until the first 1 Hz pass (first rate needs two samples).
+    last_traffic: Option<(Instant, u64)>,
 }
 
 /// One rail tile's GPU texture plus the slot `PixelBuf` generation last
@@ -112,21 +119,48 @@ struct TileView {
 }
 
 impl PanelState {
-    /// 1 Hz process sample for the resource card. CPU needs a wall+CPU
-    /// delta, so the first sample is [`Metric::Measuring`]; RAM is
-    /// available from the start. A sampler failure flips both to
-    /// [`Metric::Error`] and re-baselines — never a stale Available
-    /// string after an error.
+    /// 1 Hz process + stream-byte sample for the resource card. CPU needs
+    /// a wall+CPU delta, so the first sample is [`Metric::Measuring`]; RAM
+    /// is available from the start. Traffic needs two samples of summed
+    /// `bytes_in+bytes_out`; zero slots stay Measuring (never fake 0 B/s).
+    /// A process-sampler failure flips CPU/RAM to [`Metric::Error`] and
+    /// re-baselines them, but traffic still samples from statuses.
     fn sample_resources(&mut self) {
         let now = Instant::now();
+        // Prefer last_proc for the 1 Hz gate; if the process sampler failed
+        // and cleared it, fall back to last_traffic so we keep sampling
+        // stream bytes without spinning every frame.
         let due = match &self.last_proc {
             Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
-            None => true,
+            None => match &self.last_traffic {
+                Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
+                None => true,
+            },
         };
         if !due {
             return;
         }
+
+        let statuses = self.session.statuses();
+        let n = statuses.len();
+        let sum: u64 = statuses
+            .iter()
+            .map(|s| s.bytes_in.wrapping_add(s.bytes_out))
+            .sum();
+        match self.last_traffic {
+            Some((t0, sum0)) => {
+                let dt = now.duration_since(t0).as_secs_f64();
+                let d = sum.wrapping_sub(sum0);
+                self.res_traffic = traffic_from_delta(d, dt, n);
+            }
+            None => self.res_traffic = Metric::Measuring,
+        }
+        self.last_traffic = Some((now, sum));
+
         let (rss, cpu) = sample_process();
+        if debug_enabled() {
+            eprintln!("[panel] rss={} traffic_sum={}", rss, sum);
+        }
         if rss == 0 && cpu == 0.0 {
             self.res_cpu = Metric::Error("process sample failed".into());
             self.res_ram = Metric::Error("process sample failed".into());
@@ -164,6 +198,8 @@ impl Default for PanelState {
             last_proc: None,
             res_cpu: Metric::Measuring,
             res_ram: Metric::Measuring,
+            res_traffic: Metric::Measuring,
+            last_traffic: None,
         }
     }
 }
@@ -941,10 +977,9 @@ fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     }
 }
 
-/// Resource card at the rail bottom: bots, CPU/RAM (1 Hz sample), and the
-/// always-honest unavailable traffic row. First CPU sample reads
-/// "measuring…"; a failed sampler shows "monitor error", never a stale
-/// number.
+/// Resource card at the rail bottom: bots, CPU/RAM, and traffic from
+/// ClientStream byte counters (1 Hz). First CPU/traffic sample reads
+/// "measuring…"; a failed process sampler shows error for CPU/RAM only.
 fn resource_card(ui: &Ui, state: &mut PanelState) {
     ui.spacing();
     ui.text_disabled("resource");
@@ -964,8 +999,11 @@ fn resource_card(ui: &Ui, state: &mut PanelState) {
         Metric::Unavailable(r) => kv_row(ui, "ram", r),
         Metric::Error(e) => kv_row(ui, "ram", e),
     }
-    if let Metric::Unavailable(reason) = traffic_metric() {
-        kv_row(ui, "traffic", reason);
+    match &state.res_traffic {
+        Metric::Measuring => kv_row(ui, "traffic", "measuring…"),
+        Metric::Available(s) => kv_row(ui, "traffic", s),
+        Metric::Unavailable(r) => kv_row(ui, "traffic", r),
+        Metric::Error(e) => kv_row(ui, "traffic", e),
     }
 }
 

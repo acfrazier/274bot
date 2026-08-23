@@ -20,10 +20,26 @@ pub struct ResourceView {
     pub traffic: Metric,
 }
 
-/// Traffic is always unavailable: the 274 client streams over FR's
-/// `ClientStream`, which exposes no host byte counters here.
-pub fn traffic_metric() -> Metric {
-    Metric::Unavailable("no host byte counters (ClientStream is FR)")
+/// Rate from a byte-counter delta. No slots → Measuring (never fake 0 B/s).
+/// Non-positive wall delta → Measuring.
+pub fn traffic_from_delta(d_bytes: u64, dt_secs: f64, n_slots: usize) -> Metric {
+    if n_slots == 0 || dt_secs <= 0.0 {
+        return Metric::Measuring;
+    }
+    let bps = d_bytes as f64 / dt_secs;
+    Metric::Available(format_bps(bps))
+}
+
+fn format_bps(bps: f64) -> String {
+    let kb = 1024.0;
+    let mb = kb * 1024.0;
+    if bps < kb {
+        format!("{bps:.0} B/s")
+    } else if bps < mb {
+        format!("{:.1} KB/s", bps / kb)
+    } else {
+        format!("{:.1} MB/s", bps / mb)
+    }
 }
 
 /// `"{n} bots ({ingame} running)"`, singular `bot` when `n == 1`.
@@ -93,10 +109,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn traffic_is_unavailable_not_zero() {
-        match traffic_metric() {
-            Metric::Unavailable(r) => assert!(r.contains("ClientStream")),
+    fn traffic_measuring_without_slots_or_dt() {
+        match traffic_from_delta(0, 1.0, 0) {
+            Metric::Measuring => {}
             other => panic!("{other:?}"),
+        }
+        match traffic_from_delta(100, 0.0, 2) {
+            Metric::Measuring => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn traffic_rate_after_two_samples() {
+        match traffic_from_delta(2048, 2.0, 2) {
+            Metric::Available(s) => {
+                assert!(s.contains("/s"), "{s}");
+                assert!(!s.starts_with('0') || s.contains("KB") || s.contains("B"), "{s}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn traffic_stub_unavailable_is_gone() {
+        // traffic_metric deleted; rate path never returns Unavailable("…ClientStream…").
+        match traffic_from_delta(0, 1.0, 1) {
+            Metric::Available(s) => assert!(!s.contains("ClientStream"), "{s}"),
+            Metric::Measuring => {}
+            Metric::Unavailable(r) => assert!(!r.contains("ClientStream"), "{r}"),
+            Metric::Error(e) => assert!(!e.contains("ClientStream"), "{e}"),
         }
     }
 
