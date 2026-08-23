@@ -2,9 +2,10 @@
 //! unlocks a vault and runs the named profiles; the `e2e` harness links
 //! this library so it can poll per-slot state instead of scraping logs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -101,6 +102,36 @@ impl Default for SlotStatus {
     }
 }
 
+/// Per-slot control arm. The panel flips these to make a slot sit on the
+/// title screen (no handshake) until login is armed, request a clean IF
+/// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
+/// slot logs in immediately.
+pub struct SlotArm {
+    pub want_login: Arc<AtomicBool>,
+    pub want_logout: Arc<AtomicBool>,
+    pub stop: Arc<AtomicBool>,
+    pub latch: Arc<AtomicBool>,
+}
+
+impl SlotArm {
+    pub fn new(want_login: bool) -> Arc<Self> {
+        Arc::new(Self {
+            want_login: Arc::new(AtomicBool::new(want_login)),
+            want_logout: Arc::new(AtomicBool::new(false)),
+            stop: Arc::new(AtomicBool::new(false)),
+            latch: Arc::new(AtomicBool::new(false)),
+        })
+    }
+}
+
+/// Whether the slot may start a login handshake: on the title (not ingame)
+/// and the arm wants a login that is not latched by an intentional logout.
+fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
+    !ingame
+        && arm.want_login.load(Ordering::Relaxed)
+        && !arm.latch.load(Ordering::Relaxed)
+}
+
 /// Running slots and their shared status. Slots drive `mainloop` until the
 /// process exits; callers poll [`Play::statuses`] and then exit.
 ///
@@ -115,6 +146,7 @@ pub struct Play {
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
     spawned: HashSet<String>,
+    arms: HashMap<String, Arc<SlotArm>>,
 }
 
 impl Play {
@@ -131,22 +163,34 @@ impl Play {
         }
     }
 
+    /// The control arm for a running slot, `None` when the name is not
+    /// running. The panel flips the arm's flags to login/logout/stop.
+    pub fn arm(&self, name: &str) -> Option<Arc<SlotArm>> {
+        self.arms.get(name).cloned()
+    }
+
     /// Spawn one more slot on this play's FIFO. No-op if `username` is
-    /// already in the status list (already running).
+    /// already in the status list (already running). `None` arm behaves as
+    /// [`SlotArm::new(true)`] — the slot logs in immediately (CLI/e2e);
+    /// the panel passes a real arm so it can sit on the title.
     pub fn spawn_slot(
         &mut self,
         profile: Profile,
         input: Option<Arc<SlotInput>>,
         pixels: Option<Arc<PixelBuf>>,
+        arm: Option<Arc<SlotArm>>,
     ) {
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
+        let arm = arm.unwrap_or_else(|| SlotArm::new(true));
+        self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         spawn_slot_thread(
             &self.options,
             profile,
             input,
             pixels,
+            arm,
             Arc::clone(&self.cache),
             self.ifaces.clone(),
             Arc::clone(&self.queue),
@@ -190,10 +234,11 @@ where
         queue: Arc::new(Mutex::new(LoginQueue::default())),
         per_frame: Arc::new(per_frame),
         spawned: HashSet::new(),
+        arms: HashMap::new(),
     };
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
-        play.spawn_slot(profile, slot_input, slot_pixels);
+        play.spawn_slot(profile, slot_input, slot_pixels, None);
     }
     play
 }
@@ -203,6 +248,7 @@ fn spawn_slot_thread(
     profile: Profile,
     slot_input: Option<Arc<SlotInput>>,
     slot_pixels: Option<Arc<PixelBuf>>,
+    arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
     ifaces_template: Vec<Option<IfType>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
@@ -247,6 +293,16 @@ fn spawn_slot_thread(
 
         let mut backoff = LoginBackoff::new();
         loop {
+            if arm.stop.load(Ordering::Relaxed) {
+                slot_queue.lock().unwrap().leave(uid);
+                return;
+            }
+            if !should_handshake(&arm, client.ingame) {
+                // Sit on the title: no permit request, no handshake, until
+                // the arm wants a login (auto-login / Log in / Login all).
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
             wait_for_permit(&slot_queue, &slot_statuses, &username, uid);
             let login_started = Instant::now();
             {
@@ -538,6 +594,19 @@ mod tests {
         apply_queue_wait(&mut rows, "b", None);
         assert_eq!(rows[1].queue_position, -1);
         assert_eq!(rows[1].queue_total, -1);
+    }
+
+    #[test]
+    fn spawn_without_auto_login_does_not_handshake() {
+        let arm = SlotArm::new(false);
+        assert!(!should_handshake(&arm, false));
+        arm.want_login.store(true, Ordering::Relaxed);
+        assert!(should_handshake(&arm, false));
+        arm.latch.store(true, Ordering::Relaxed);
+        assert!(!should_handshake(&arm, false));
+        arm.latch.store(false, Ordering::Relaxed);
+        assert!(should_handshake(&arm, false));
+        assert!(!should_handshake(&arm, true));
     }
 
     #[test]

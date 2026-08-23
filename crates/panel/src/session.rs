@@ -550,7 +550,12 @@ impl Session {
         let input = SlotInput::new();
         let pixels = PixelBuf::new();
         if let Some(play) = &mut self.play {
-            play.spawn_slot(profile, Some(Arc::clone(&input)), Some(Arc::clone(&pixels)));
+            play.spawn_slot(
+                profile,
+                Some(Arc::clone(&input)),
+                Some(Arc::clone(&pixels)),
+                None,
+            );
         }
         self.slots
             .insert(username.to_string(), SlotIo { input, pixels });
