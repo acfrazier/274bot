@@ -116,12 +116,10 @@ struct PanelState {
     live: Option<LiveNull>,
 }
 
-/// Headed `null_raster` harness state. `started` is the 120s login clock
-/// until scene 2, then the 3s freeze clock. `t0` is test2 draw counters.
+/// Headed `null_raster` harness state. `started` is the 120s login clock.
 struct LiveNull {
     started: Instant,
     saw_scene2: bool,
-    t0: Option<(u64, u64)>, // test2 game_draw, title
     passed: bool,
 }
 
@@ -256,8 +254,9 @@ pub fn parse_live_args(
     Ok(live)
 }
 
-/// Drive the headed `null_raster` watch. `Some(msg)` is a FAIL (caller
-/// prints and exits 1). PASS prints and sets `passed` but does not exit.
+/// Headed watch: wait until both slots are scene 2, print RSS/counters, PASS.
+/// Does **not** freeze-assert (operator may click the rail). Null freeze is
+/// the headless `e2e` twin.
 fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Option<String> {
     if live.passed {
         return None;
@@ -266,47 +265,35 @@ fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Op
         .iter()
         .filter(|s| s.ingame && s.scene_state == 2)
         .count();
-    if !live.saw_scene2 {
-        if ready < 2 {
-            if live.started.elapsed() >= Duration::from_secs(120) {
-                return Some(format!(
-                    "live null_raster: {ready}/2 slot(s) ingame scene 2 after 120s"
-                ));
-            }
-            return None;
+    if ready < 2 {
+        if live.started.elapsed() >= Duration::from_secs(120) {
+            return Some(format!(
+                "live null_raster: {ready}/2 slot(s) ingame scene 2 after 120s"
+            ));
         }
-        let (rss, _) = sample_process();
-        println!("live null_raster: rss={rss}");
-        let Some(test2) = statuses.iter().find(|s| s.username == "test2") else {
-            return Some("live null_raster: missing test2".into());
-        };
-        live.t0 = Some((test2.game_draw_enters, test2.title_screen_draw_enters));
-        live.saw_scene2 = true;
-        live.started = Instant::now();
         return None;
     }
-    if live.started.elapsed() < Duration::from_secs(3) {
-        return None;
-    }
-    let Some((g0, title0)) = live.t0 else {
-        return Some("live null_raster: missing test2 snapshot".into());
-    };
+    let (rss, _) = sample_process();
     let Some(test2) = statuses.iter().find(|s| s.username == "test2") else {
         return Some("live null_raster: missing test2".into());
     };
-    if test2.game_draw_enters != g0 {
-        return Some("live null_raster: unfocused test2 game_draw_enters grew".into());
-    }
-    if test2.title_screen_draw_enters != title0 {
-        return Some("live null_raster: unfocused test2 title_screen_draw_enters grew".into());
-    }
     let Some(test) = statuses.iter().find(|s| s.username == "test") else {
         return Some("live null_raster: missing test".into());
     };
+    println!("live null_raster: rss={rss}");
+    println!(
+        "live null_raster test2 game_draw={} title={} bytes={}/{}",
+        test2.game_draw_enters, test2.title_screen_draw_enters, test2.bytes_in, test2.bytes_out
+    );
+    println!(
+        "live null_raster test  game_draw={} title={} bytes={}/{}",
+        test.game_draw_enters, test.title_screen_draw_enters, test.bytes_in, test.bytes_out
+    );
     if test.game_draw_enters == 0 {
         return Some("live null_raster: focused test never entered game_draw".into());
     }
     println!("PASS: live null_raster");
+    live.saw_scene2 = true;
     live.passed = true;
     None
 }
@@ -1230,7 +1217,6 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
         state.live = Some(LiveNull {
             started: Instant::now(),
             saw_scene2: false,
-            t0: None,
             passed: false,
         });
     } else if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
@@ -1470,7 +1456,6 @@ mod tests {
         LiveNull {
             started,
             saw_scene2: false,
-            t0: None,
             passed: false,
         }
     }
@@ -1493,52 +1478,24 @@ mod tests {
     }
 
     #[test]
-    fn live_null_tick_scene2_snapshots_then_pass_after_freeze() {
+    fn live_null_tick_passes_at_scene2_without_freeze() {
         let mut live = live_at(Instant::now());
-        let scene2 = [st("test", true, 2, 4, 1), st("test2", true, 2, 0, 3)];
-        assert_eq!(live_null_tick(&mut live, &scene2), None);
-        assert!(live.saw_scene2);
-        assert_eq!(live.t0, Some((0, 3)));
-        assert!(!live.passed);
-
-        assert_eq!(
-            live_null_tick(&mut live, &scene2),
-            None,
-            "still in 3s freeze"
-        );
-
-        live.started = Instant::now() - Duration::from_secs(3);
+        let scene2 = [st("test", true, 2, 4, 1), st("test2", true, 2, 1, 3)];
         assert_eq!(live_null_tick(&mut live, &scene2), None);
         assert!(live.passed);
+        assert!(live.saw_scene2);
         assert_eq!(live_null_tick(&mut live, &scene2), None, "stay passed");
     }
 
     #[test]
-    fn live_null_tick_fails_if_test2_draw_grows() {
-        let mut live = LiveNull {
-            started: Instant::now() - Duration::from_secs(3),
-            saw_scene2: true,
-            t0: Some((0, 3)),
-            passed: false,
-        };
-        let grew = [st("test", true, 2, 4, 1), st("test2", true, 2, 1, 3)];
-        let err = live_null_tick(&mut live, &grew).expect("grew");
-        assert!(err.contains("test2 game_draw_enters grew"), "{err}");
-    }
-
-    #[test]
     fn live_null_tick_fails_if_focused_never_drew() {
-        let mut live = LiveNull {
-            started: Instant::now() - Duration::from_secs(3),
-            saw_scene2: true,
-            t0: Some((0, 0)),
-            passed: false,
-        };
+        let mut live = live_at(Instant::now());
         let blank = [st("test", true, 2, 0, 0), st("test2", true, 2, 0, 0)];
         let err = live_null_tick(&mut live, &blank).expect("no draw");
         assert!(
             err.contains("focused test never entered game_draw"),
             "{err}"
         );
+        assert!(!live.passed);
     }
 }

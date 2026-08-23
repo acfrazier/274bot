@@ -133,7 +133,10 @@ suspected leak, not a closed RAM budget).
 
 ## Headed live
 
-`BOT_VAULT_PASS` is unused for `--live`. Run the headed freeze harness:
+`BOT_VAULT_PASS` is unused for `--live`. Headed live waits until both
+slots are `ingame && scene_state==2`, prints RSS/counters, PASS, and
+**leaves the window interactive** (you can click the rail). The 3 s
+unfocused-`game_draw` freeze is the **headless** twin only.
 
 ```bash
 cargo run --release -p panel --bin panel-play -- --live null_raster
