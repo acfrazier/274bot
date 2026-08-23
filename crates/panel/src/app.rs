@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dear_app::{AddOns, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
@@ -112,6 +112,17 @@ struct PanelState {
     /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
     /// first 1 Hz pass (first rate needs two samples).
     last_traffic: Option<(Instant, u64, usize)>,
+    /// Headed `--live null_raster` watch; `None` for the interactive panel.
+    live: Option<LiveNull>,
+}
+
+/// Headed `null_raster` harness state. `started` is the 120s login clock
+/// until scene 2, then the 3s freeze clock. `t0` is test2 draw counters.
+struct LiveNull {
+    started: Instant,
+    saw_scene2: bool,
+    t0: Option<(u64, u64)>, // test2 game_draw, title
+    passed: bool,
 }
 
 /// One rail tile's GPU texture plus the slot `PixelBuf` generation last
@@ -210,8 +221,94 @@ impl Default for PanelState {
             res_traffic: Metric::Measuring,
             res_draw: Metric::Measuring,
             last_traffic: None,
+            live: None,
         }
     }
+}
+
+const LIVE_USAGE: &str = "usage: panel-play [--live null_raster]";
+
+/// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored.
+/// Unknown flags/names → `Err((2, msg))`; `--help`/`-h` → `Err((0, usage))`.
+pub fn parse_live_args(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+    env_live: Option<&str>,
+) -> Result<Option<String>, (i32, String)> {
+    let mut live = env_live.filter(|s| !s.is_empty()).map(str::to_string);
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.as_ref() {
+            "--live" => {
+                let Some(name) = it.next() else {
+                    return Err((2, "panel-play: --live needs a name".into()));
+                };
+                live = Some(name.as_ref().to_string());
+            }
+            "--help" | "-h" => return Err((0, LIVE_USAGE.into())),
+            other => return Err((2, format!("panel-play: unknown {other}"))),
+        }
+    }
+    if let Some(name) = live.as_deref() {
+        if name != "null_raster" {
+            return Err((2, LIVE_USAGE.into()));
+        }
+    }
+    Ok(live)
+}
+
+/// Drive the headed `null_raster` watch. `Some(msg)` is a FAIL (caller
+/// prints and exits 1). PASS prints and sets `passed` but does not exit.
+fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Option<String> {
+    if live.passed {
+        return None;
+    }
+    let ready = statuses
+        .iter()
+        .filter(|s| s.ingame && s.scene_state == 2)
+        .count();
+    if !live.saw_scene2 {
+        if ready < 2 {
+            if live.started.elapsed() >= Duration::from_secs(120) {
+                return Some(format!(
+                    "live null_raster: {ready}/2 slot(s) ingame scene 2 after 120s"
+                ));
+            }
+            return None;
+        }
+        let (rss, _) = sample_process();
+        println!("live null_raster: rss={rss}");
+        let Some(test2) = statuses.iter().find(|s| s.username == "test2") else {
+            return Some("live null_raster: missing test2".into());
+        };
+        live.t0 = Some((test2.game_draw_enters, test2.title_screen_draw_enters));
+        live.saw_scene2 = true;
+        live.started = Instant::now();
+        return None;
+    }
+    if live.started.elapsed() < Duration::from_secs(3) {
+        return None;
+    }
+    let Some((g0, title0)) = live.t0 else {
+        return Some("live null_raster: missing test2 snapshot".into());
+    };
+    let Some(test2) = statuses.iter().find(|s| s.username == "test2") else {
+        return Some("live null_raster: missing test2".into());
+    };
+    if test2.game_draw_enters != g0 {
+        return Some("live null_raster: unfocused test2 game_draw_enters grew".into());
+    }
+    if test2.title_screen_draw_enters != title0 {
+        return Some("live null_raster: unfocused test2 title_screen_draw_enters grew".into());
+    }
+    let Some(test) = statuses.iter().find(|s| s.username == "test") else {
+        return Some("live null_raster: missing test".into());
+    };
+    if test.game_draw_enters == 0 {
+        return Some("live null_raster: focused test never entered game_draw".into());
+    }
+    println!("PASS: live null_raster");
+    live.passed = true;
+    None
 }
 
 /// Leaf dock nodes hide the tab bar while they host a single window.
@@ -393,7 +490,9 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
     }
     let cells = grid_cells(members.len(), avail);
     // Drop textures for members that left the wall (grid ✕ / wall change).
-    state.views.retain(|name, _| members.iter().any(|m| m == name));
+    state
+        .views
+        .retain(|name, _| members.iter().any(|m| m == name));
     let (focused, capture) = {
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
@@ -785,7 +884,11 @@ fn status_section(ui: &Ui, session: &Session) {
     } else {
         "waiting".to_string()
     };
-    let player = if s.player.is_empty() { "?" } else { s.player.as_str() };
+    let player = if s.player.is_empty() {
+        "?"
+    } else {
+        s.player.as_str()
+    };
     kv_row(ui, "state", &state);
     kv_row(ui, "player", player);
     kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
@@ -887,7 +990,9 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     let members = state.session.wall.members.clone();
     let statuses = state.session.statuses();
     // Drop textures for members that left the rail (rail ✕ or wall change).
-    state.views.retain(|name, _| members.iter().any(|m| m == name));
+    state
+        .views
+        .retain(|name, _| members.iter().any(|m| m == name));
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
         let light = traffic_light(
@@ -954,10 +1059,13 @@ fn cell_body(
         .get(name)
         .map(|s| s.pixels.generation())
         .unwrap_or(0);
-    let tv = state.views.entry(name.to_string()).or_insert_with(|| TileView {
-        view: GameView::init(&mut addons.gpu),
-        gen: u64::MAX,
-    });
+    let tv = state
+        .views
+        .entry(name.to_string())
+        .or_insert_with(|| TileView {
+            view: GameView::init(&mut addons.gpu),
+            gen: u64::MAX,
+        });
     if tv.gen != gen {
         let pixels = state
             .session
@@ -1107,15 +1215,27 @@ fn chooser_row(ui: &Ui, name: &str, on_wall: bool) -> (bool, bool) {
 }
 
 /// Open the 274bot panel window. Call after the vault has been started.
-pub fn run_panel() -> Result<(), dear_app::DearAppError> {
+/// `live` is `Some("null_raster")` for the headed freeze harness (temp
+/// vault; `BOT_VAULT_PASS` is unused on that path).
+pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
 
-    // Headless env flow: unlock before the window opens so the slots spawn
-    // before the first frame. The in-panel passphrase prompt covers the
-    // interactive flow.
-    if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
+    if live.as_deref() == Some("null_raster") {
+        if let Err(e) = state.session.live_prepare_null_raster() {
+            eprintln!("FAIL: {e}");
+            std::process::exit(1);
+        }
+        state.live = Some(LiveNull {
+            started: Instant::now(),
+            saw_scene2: false,
+            t0: None,
+            passed: false,
+        });
+    } else if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
+        // Interactive/headless env flow: unlock before the window so slots
+        // spawn before the first frame. The in-panel prompt covers typing.
         if !state.session.unlock(&pass) {
             eprintln!(
                 "panel: vault: {}",
@@ -1137,6 +1257,13 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
         .on_frame(move |ui, addons| {
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             state.session.pump_status();
+            let statuses = state.session.statuses();
+            if let Some(live) = state.live.as_mut() {
+                if let Some(msg) = live_null_tick(live, &statuses) {
+                    eprintln!("FAIL: {msg}");
+                    std::process::exit(1);
+                }
+            }
             let title = game_window_title(state.session.focused_name().as_deref());
             dock_host(ui, &mut state, &title);
             let class = single_bot_window_class();
@@ -1158,13 +1285,16 @@ pub fn run_panel() -> Result<(), dear_app::DearAppError> {
         .run()
 }
 
-
-
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use dear_imgui_rs::ConfigFlags;
 
-    use super::{apply_ui_scale, chooser_should_open_popup, runner_config};
+    use super::{
+        apply_ui_scale, chooser_should_open_popup, live_null_tick, parse_live_args, runner_config,
+        LiveNull, LIVE_USAGE,
+    };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
 
@@ -1259,5 +1389,156 @@ mod tests {
         let r = panel_split_ratio(1120.0);
         assert!((r - 330.0 / 1120.0).abs() < 0.001);
         assert!(r < 0.4);
+    }
+
+    #[test]
+    fn parse_live_args_none_without_flag_or_env() {
+        assert_eq!(parse_live_args([] as [&str; 0], None), Ok(None));
+        assert_eq!(parse_live_args([] as [&str; 0], Some("")), Ok(None));
+    }
+
+    #[test]
+    fn parse_live_args_env_and_flag_null_raster() {
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("null_raster")),
+            Ok(Some("null_raster".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "null_raster"], None),
+            Ok(Some("null_raster".into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_flag_wins_over_env() {
+        assert_eq!(
+            parse_live_args(["--live", "null_raster"], Some("other")),
+            Ok(Some("null_raster".into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_unknown_name_is_usage_exit_2() {
+        assert_eq!(
+            parse_live_args(["--live", "nope"], None),
+            Err((2, LIVE_USAGE.into()))
+        );
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("other")),
+            Err((2, LIVE_USAGE.into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_unknown_flag_and_missing_name() {
+        assert_eq!(
+            parse_live_args(["--wat"], None),
+            Err((2, "panel-play: unknown --wat".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live"], None),
+            Err((2, "panel-play: --live needs a name".into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_help_is_usage_exit_0() {
+        assert_eq!(
+            parse_live_args(["--help"], None),
+            Err((0, LIVE_USAGE.into()))
+        );
+        assert_eq!(parse_live_args(["-h"], None), Err((0, LIVE_USAGE.into())));
+    }
+
+    fn st(
+        name: &str,
+        ingame: bool,
+        scene: i32,
+        game_draw: u64,
+        title: u64,
+    ) -> host_play::SlotStatus {
+        let mut s = host_play::SlotStatus::default();
+        s.username = name.into();
+        s.ingame = ingame;
+        s.scene_state = scene;
+        s.game_draw_enters = game_draw;
+        s.title_screen_draw_enters = title;
+        s
+    }
+
+    fn live_at(started: Instant) -> LiveNull {
+        LiveNull {
+            started,
+            saw_scene2: false,
+            t0: None,
+            passed: false,
+        }
+    }
+
+    #[test]
+    fn live_null_tick_waits_until_two_scene2() {
+        let mut live = live_at(Instant::now());
+        let statuses = [st("test", true, 1, 0, 0), st("test2", false, 0, 0, 0)];
+        assert_eq!(live_null_tick(&mut live, &statuses), None);
+        assert!(!live.saw_scene2);
+    }
+
+    #[test]
+    fn live_null_tick_timeout_before_scene2() {
+        let mut live = live_at(Instant::now() - Duration::from_secs(120));
+        let statuses = [st("test", true, 2, 0, 0)];
+        let err = live_null_tick(&mut live, &statuses).expect("timeout");
+        assert!(err.contains("1/2"), "{err}");
+        assert!(err.contains("120s"), "{err}");
+    }
+
+    #[test]
+    fn live_null_tick_scene2_snapshots_then_pass_after_freeze() {
+        let mut live = live_at(Instant::now());
+        let scene2 = [st("test", true, 2, 4, 1), st("test2", true, 2, 0, 3)];
+        assert_eq!(live_null_tick(&mut live, &scene2), None);
+        assert!(live.saw_scene2);
+        assert_eq!(live.t0, Some((0, 3)));
+        assert!(!live.passed);
+
+        assert_eq!(
+            live_null_tick(&mut live, &scene2),
+            None,
+            "still in 3s freeze"
+        );
+
+        live.started = Instant::now() - Duration::from_secs(3);
+        assert_eq!(live_null_tick(&mut live, &scene2), None);
+        assert!(live.passed);
+        assert_eq!(live_null_tick(&mut live, &scene2), None, "stay passed");
+    }
+
+    #[test]
+    fn live_null_tick_fails_if_test2_draw_grows() {
+        let mut live = LiveNull {
+            started: Instant::now() - Duration::from_secs(3),
+            saw_scene2: true,
+            t0: Some((0, 3)),
+            passed: false,
+        };
+        let grew = [st("test", true, 2, 4, 1), st("test2", true, 2, 1, 3)];
+        let err = live_null_tick(&mut live, &grew).expect("grew");
+        assert!(err.contains("test2 game_draw_enters grew"), "{err}");
+    }
+
+    #[test]
+    fn live_null_tick_fails_if_focused_never_drew() {
+        let mut live = LiveNull {
+            started: Instant::now() - Duration::from_secs(3),
+            saw_scene2: true,
+            t0: Some((0, 0)),
+            passed: false,
+        };
+        let blank = [st("test", true, 2, 0, 0), st("test2", true, 2, 0, 0)];
+        let err = live_null_tick(&mut live, &blank).expect("no draw");
+        assert!(
+            err.contains("focused test never entered game_draw"),
+            "{err}"
+        );
     }
 }
