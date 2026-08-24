@@ -160,6 +160,9 @@ pub struct Session {
     /// MultiBox toggle: rail (or grid) policy is up. `Focus.wall_open`
     /// mirrors this so extra rasters only run while the wall is visible.
     pub multibox: bool,
+    /// Channel-head wall: one fat Client (the TV); extras are lean sockets.
+    /// Off for headed `null_raster` (two Clients). On for `stress50` / MultiBox.
+    pub channel_head: bool,
     /// Persisted panel prefs (last focus + per-profile collapsed sections).
     pub ui: crate::ui_state::PanelUiState,
 }
@@ -223,6 +226,7 @@ impl Session {
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             wall: Wall::default(),
             multibox: false,
+            channel_head: false,
             ui: crate::ui_state::load(),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
@@ -276,6 +280,7 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.set_multibox(true);
+        self.channel_head = false;
         // First MultiBox-on opens the chooser; live already loaded both
         // names. Leave the window usable (operator may click the rail).
         self.wall.chooser_open = false;
@@ -310,6 +315,7 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.set_multibox(true);
+        self.channel_head = true;
         // First MultiBox-on opens the chooser; live already loaded all
         // names. Leave the window usable (operator may click the rail).
         self.wall.chooser_open = false;
@@ -507,9 +513,13 @@ impl Session {
         self.focus.lock().unwrap().focused.clone()
     }
 
-    /// The focused slot's pixel buffer (None when nothing is focused).
+    /// Pixels for the Game pane (the TV). Lean channel members have no
+    /// framebuffer; fall back to the unique fat head slot.
     pub fn focused_pixels(&self) -> Option<Arc<PixelBuf>> {
-        self.focused_slot().map(|s| Arc::clone(&s.pixels))
+        if let Some(slot) = self.focused_slot() {
+            return Some(Arc::clone(&slot.pixels));
+        }
+        self.slots.values().next().map(|s| Arc::clone(&s.pixels))
     }
 
     fn focused_slot(&self) -> Option<&SlotIo> {
@@ -681,9 +691,23 @@ impl Session {
         if self.slots.contains_key(username) {
             return;
         }
+        if self
+            .play
+            .as_ref()
+            .is_some_and(|p| p.arm(username).is_some())
+        {
+            return;
+        }
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
             return;
         };
+        let extras_are_lean = self.channel_head && self.play.is_some() && !self.slots.is_empty();
+        if extras_are_lean {
+            if let Some(play) = &mut self.play {
+                play.spawn_channel(profile);
+            }
+            return;
+        }
         let input = SlotInput::new();
         let pixels = PixelBuf::new();
         if let Some(play) = &mut self.play {
@@ -894,6 +918,7 @@ impl Session {
     /// (`wall_open = false`) without logging anyone out.
     pub fn set_multibox(&mut self, on: bool) {
         self.multibox = on;
+        self.channel_head = on;
         if on {
             let running: Vec<String> = self
                 .play
@@ -1541,6 +1566,48 @@ mod tests {
         assert_eq!(s.slots.len(), 2);
         s.select("alice");
         assert_eq!(s.slots.len(), 2);
+    }
+
+    #[test]
+    fn channel_head_spawns_extras_as_lean() {
+        let path = tmp_vault("channel-head-lean.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        for (n, uid) in [("alice", 1), ("bob", 2), ("carol", 3)] {
+            s.vault
+                .as_mut()
+                .unwrap()
+                .upsert(profile(n, "pw", uid))
+                .unwrap();
+        }
+        s.channel_head = true;
+        s.select("alice");
+        s.load("bob");
+        s.load("carol");
+        // spawn_channel_thread pushes the lean row before it attempts TCP.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut fat = 0;
+        let mut lean = 0;
+        while std::time::Instant::now() < deadline {
+            let st = s.play.as_ref().unwrap().statuses();
+            fat = st.iter().filter(|r| !r.lean).count();
+            lean = st.iter().filter(|r| r.lean).count();
+            if fat == 1 && lean == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(s.slots.len(), 1, "only the TV head owns a PixelBuf");
+        assert_eq!(fat, 1, "one fat Client");
+        assert_eq!(lean, 2, "two lean channels");
+        s.select("bob");
+        assert!(
+            s.focused_pixels().is_some(),
+            "Game pane keeps the head framebuffer when focus is a lean cap"
+        );
+        s.play.as_mut().unwrap().stop_slot("alice");
+        s.play.as_mut().unwrap().stop_slot("bob");
+        s.play.as_mut().unwrap().stop_slot("carol");
     }
 
     #[test]

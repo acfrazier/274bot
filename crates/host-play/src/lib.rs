@@ -931,7 +931,14 @@ fn spawn_channel_thread(
                                 },
                                 _ => Duration::from_secs(5),
                             };
-                            thread::sleep(wait);
+                            let deadline = Instant::now() + wait;
+                            while Instant::now() < deadline {
+                                if arm.stop.load(Ordering::Relaxed) {
+                                    slot_queue.lock().unwrap().leave(uid);
+                                    return;
+                                }
+                                thread::sleep(Duration::from_millis(20));
+                            }
                         }
                     }
                 }
