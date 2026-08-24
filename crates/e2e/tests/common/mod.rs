@@ -7,10 +7,38 @@
 #![allow(dead_code)] // each test binary uses a subset of the helpers
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use host_play::{Play, PlayOptions, SlotStatus};
+
+static HEARTBEAT: Mutex<Option<Instant>> = Mutex::new(None);
+
+fn short_status(statuses: &[SlotStatus]) -> String {
+    statuses
+        .iter()
+        .map(|s| {
+            format!(
+                "{} lean={} in={} sc={} q={}/{} err={:?}",
+                s.username, s.lean, s.ingame, s.scene_state, s.queue_position, s.queue_total, s.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn debug_heartbeat(ready: usize, want: usize) -> bool {
+    let _ = (ready, want);
+    let mut last = HEARTBEAT.lock().unwrap();
+    match *last {
+        Some(t) if t.elapsed() < Duration::from_secs(10) => false,
+        _ => {
+            *last = Some(Instant::now());
+            true
+        }
+    }
+}
 use vault::{Profile, ProfileSettings, Vault};
 
 /// rs2b0t-style harness failure: print and exit 1.
@@ -69,6 +97,31 @@ pub fn options() -> PlayOptions {
         cache_dir: format!("{home}/experiments/Server/engine/data/pack/client"),
         lowmem: true,
         mainland: false,
+    }
+}
+
+/// Poll until `want` channels are up (fat: scene 2, lean: ingame).
+pub fn wait_up(play: &Play, want: usize, timeout: Duration, case: &str) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let statuses = play.statuses();
+        let ready = statuses.iter().filter(|s| s.is_up()).count();
+        if ready >= want {
+            println!("{case}: {ready}/{want} up");
+            return;
+        }
+        if Instant::now() >= deadline {
+            fail(&format!(
+                "{case}: {ready}/{want} up after {timeout:?}; statuses: {statuses:?}"
+            ));
+        }
+        if debug_heartbeat(ready, want) {
+            println!(
+                "{case}: waiting {ready}/{want} up; {}",
+                short_status(&statuses)
+            );
+        }
+        thread::sleep(Duration::from_millis(250));
     }
 }
 

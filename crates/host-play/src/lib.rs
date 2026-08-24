@@ -193,6 +193,19 @@ pub struct SlotArm {
     /// Reverse baton: spawn_slot starts from this live socket and opcode-18
     /// reconnects in place.
     pub adopt: Mutex<Option<Lean>>,
+    /// In-place channel change on the fat TV thread (no second `maininit`).
+    pub swap: Mutex<Option<HeadSwap>>,
+    pub want_swap: Arc<AtomicBool>,
+}
+
+/// Steal the current TV socket as a lean, then opcode-18 the incoming
+/// lean onto the **same** fat `Client` thread.
+pub struct HeadSwap {
+    pub lean: Lean,
+    pub username: String,
+    pub password: String,
+    pub uid: i32,
+    pub park: mpsc::Sender<Lean>,
 }
 
 impl SlotArm {
@@ -207,8 +220,38 @@ impl SlotArm {
             reconnect: Arc::new(AtomicBool::new(false)),
             handoff: Mutex::new(None),
             adopt: Mutex::new(None),
+            swap: Mutex::new(None),
+            want_swap: Arc::new(AtomicBool::new(false)),
         })
     }
+}
+
+fn send_handoff_lean(
+    arm: &SlotArm,
+    lean: Option<Lean>,
+    uid: i32,
+    queue: &Arc<Mutex<LoginQueue>>,
+) {
+    if let Some(tx) = arm.handoff.lock().unwrap().take() {
+        if let Some(lean) = lean {
+            let _ = tx.send(lean);
+        }
+    }
+    queue.lock().unwrap().leave(uid);
+}
+
+fn send_handoff_client(
+    arm: &SlotArm,
+    client: &mut Client,
+    uid: i32,
+    queue: &Arc<Mutex<LoginQueue>>,
+) {
+    if let Some(tx) = arm.handoff.lock().unwrap().take() {
+        if let Some(lean) = Lean::from_client(client) {
+            let _ = tx.send(lean);
+        }
+    }
+    queue.lock().unwrap().leave(uid);
 }
 
 /// Whether the slot may start a login handshake: on the title (not ingame)
@@ -293,6 +336,7 @@ struct PendingTune {
     incoming_done: bool,
     park_done: bool,
     spawned_head: bool,
+    swap_placed: bool,
     input: Option<Arc<SlotInput>>,
     pixels: Option<Arc<PixelBuf>>,
 }
@@ -319,6 +363,11 @@ pub enum TuneError {
 }
 
 impl Play {
+    /// True while [`Play::retune`] is still handing off sockets.
+    pub fn tune_pending(&self) -> bool {
+        self.pending_tune.is_some()
+    }
+
     /// Snapshot of every slot's status.
     pub fn statuses(&self) -> Vec<SlotStatus> {
         self.statuses.lock().unwrap().clone()
@@ -529,17 +578,18 @@ impl Play {
         }
         let incoming_rx = self.begin_handoff(name);
         let prev = self.fat_head_name().filter(|p| p != name);
-        let park_rx = prev.as_ref().map(|p| self.begin_handoff(p));
+        // Keep the TV thread: park is an in-place swap, not begin_handoff.
         self.pending_tune = Some(PendingTune {
             name: name.to_string(),
             prev,
             incoming_rx,
-            park_rx,
+            park_rx: None,
             incoming: None,
             parked: None,
             incoming_done: false,
             park_done: false,
             spawned_head: false,
+            swap_placed: false,
             input,
             pixels,
         });
@@ -550,7 +600,18 @@ impl Play {
     /// Drive in-flight retune: take handed-off sockets and spawn the new
     /// fat head / parked lean. Never joins a slot thread.
     pub fn poll_tune(&mut self) {
-        let (spawn_head, name, incoming, input, pixels, prev, parked, done) = {
+        let (
+            spawn_head,
+            place_swap,
+            name,
+            incoming,
+            input,
+            pixels,
+            prev,
+            parked,
+            rekey,
+            done,
+        ) = {
             let Some(pending) = self.pending_tune.as_mut() else {
                 return;
             };
@@ -566,7 +627,12 @@ impl Play {
             }
             if !pending.park_done {
                 match pending.park_rx.as_ref() {
-                    None => pending.park_done = true,
+                    None if pending.prev.is_none() || pending.swap_placed => {
+                        if pending.prev.is_none() {
+                            pending.park_done = true;
+                        }
+                    }
+                    None => {}
                     Some(rx) => match rx.try_recv() {
                         Ok(lean) => {
                             pending.parked = Some(lean);
@@ -577,10 +643,20 @@ impl Play {
                     },
                 }
             }
-            let spawn_head = pending.incoming_done && !pending.spawned_head;
-            let name = pending.name.clone();
-            let incoming = if spawn_head {
+            let in_place = pending.prev.is_some();
+            let place_swap = in_place
+                && pending.incoming_done
+                && pending.incoming.is_some()
+                && !pending.swap_placed;
+            if place_swap {
+                pending.swap_placed = true;
+            }
+            let spawn_head = !in_place && pending.incoming_done && !pending.spawned_head;
+            if spawn_head {
                 pending.spawned_head = true;
+            }
+            let name = pending.name.clone();
+            let incoming = if place_swap || spawn_head {
                 pending.incoming.take()
             } else {
                 None
@@ -602,10 +678,49 @@ impl Play {
             } else {
                 None
             };
-            let done = pending.incoming_done && pending.park_done && pending.spawned_head;
-            (spawn_head, name, incoming, input, pixels, prev, parked, done)
+            let rekey = spawn_park;
+            let done = pending.incoming_done
+                && pending.park_done
+                && (pending.spawned_head || pending.swap_placed)
+                && (pending.prev.is_none() || spawn_park);
+            (
+                spawn_head,
+                place_swap,
+                name,
+                incoming,
+                input,
+                pixels,
+                prev,
+                parked,
+                rekey,
+                done,
+            )
         };
-        if spawn_head {
+        if place_swap {
+            if let (Some(prev), Some(lean), Some(profile)) = (
+                prev.clone(),
+                incoming,
+                self.profiles.get(&name).cloned(),
+            ) {
+                if let Some(arm) = self.arms.get(&prev).cloned() {
+                    let (park_tx, park_rx) = mpsc::channel();
+                    if let Some(pending) = self.pending_tune.as_mut() {
+                        pending.park_rx = Some(park_rx);
+                    }
+                    *arm.swap.lock().unwrap() = Some(HeadSwap {
+                        lean,
+                        username: profile.username.clone(),
+                        password: profile.password.clone(),
+                        uid: profile.uid,
+                        park: park_tx,
+                    });
+                    arm.want_swap.store(true, Ordering::Relaxed);
+                    if debug_enabled() {
+                        eprintln!("[host-play] retune in-place {prev} -> {name}");
+                    }
+                }
+            }
+        } else if spawn_head {
             if let Some(profile) = self.profiles.get(&name).cloned() {
                 let arm = SlotArm::new(profile.uid, true);
                 if incoming.is_some() {
@@ -617,6 +732,11 @@ impl Play {
                 self.spawn_slot(profile, input, pixels, Some(arm));
             }
         }
+        if rekey {
+            if let Some(prev) = prev.clone() {
+                self.rekey_fat(&prev, &name);
+            }
+        }
         if let (Some(prev), Some(parked)) = (prev, parked) {
             if let Some(p) = self.profiles.get(&prev).cloned() {
                 self.spawn_channel_from_lean(p, parked);
@@ -624,6 +744,25 @@ impl Play {
         }
         if done {
             self.pending_tune = None;
+        }
+    }
+
+    fn rekey_fat(&mut self, prev: &str, next: &str) {
+        if prev == next {
+            return;
+        }
+        if let Some(arm) = self.arms.remove(prev) {
+            self.arms.insert(next.to_string(), arm);
+        }
+        if let Some(handle) = self.handles.remove(prev) {
+            self.handles.insert(next.to_string(), handle);
+        }
+        self.spawned.remove(prev);
+        self.spawned.insert(next.to_string());
+        let mut all = self.statuses.lock().unwrap();
+        if let Some(s) = all.iter_mut().find(|s| s.username == prev && !s.lean) {
+            s.username = next.to_string();
+            s.lean = false;
         }
     }
 
@@ -808,11 +947,17 @@ pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize)
         channels: HashMap::new(),
         pending_tune: None,
     };
+    let tv_uid = profiles.first().map(|p| p.uid);
     for (i, profile) in profiles.into_iter().enumerate() {
         if i < heads {
             play.spawn_slot(profile, None, None, None);
         } else {
             play.spawn_channel(profile);
+        }
+    }
+    if heads >= 1 {
+        if let Some(uid) = tv_uid {
+            play.prefer_login(uid);
         }
     }
     play
@@ -828,6 +973,35 @@ fn bot_client_config(options: &PlayOptions, profile: &Profile) -> ClientConfig {
         cache_dir: options.cache_dir.clone(),
         members: true,
         lowmem: profile.settings.lowmem,
+    }
+}
+
+fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        if s.login_started.is_none() {
+            s.login_started = Some(Instant::now());
+        }
+        s.error = None;
+    }
+}
+
+fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
+    let msg = format!("code {}: {}", e.code, e.mes2);
+    if debug_enabled() {
+        eprintln!("[host-play] slot {name}: login {msg}");
+    }
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.error = Some(msg);
+    }
+}
+
+fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
+    match code {
+        16 => backoff.delay(),
+        5 => Duration::from_secs(60),
+        _ => Duration::from_secs(5),
     }
 }
 
@@ -887,182 +1061,156 @@ fn spawn_slot_thread(
                 }
             }
 
+            let uname = Arc::new(Mutex::new(username.clone()));
+            let mut password = password;
+            let mut uid = uid;
             let mut backoff = LoginBackoff::new();
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
-                    slot_queue.lock().unwrap().leave(uid);
+                    send_handoff_client(&arm, &mut client, uid, &slot_queue);
                     return;
                 }
-                if !should_handshake(&arm, client.ingame) {
-                    // Sit on the title: no permit request, no handshake, until
-                    // the arm wants a login (auto-login / Log in / Login all).
-                    thread::sleep(Duration::from_millis(20));
-                    continue;
-                }
-                wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
-                if arm.stop.load(Ordering::Relaxed) {
-                    slot_queue.lock().unwrap().leave(uid);
-                    return;
-                }
-                let login_started = Instant::now();
-                {
-                    let mut all = slot_statuses.lock().unwrap();
-                    if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                        // First attempt only: retries must not move the
-                        // handshake-start metric the harness asserts on.
-                        if s.login_started.is_none() {
-                            s.login_started = Some(login_started);
-                        }
-                        s.error = None;
-                    }
-                }
-                if let Some(lean) = arm.adopt.lock().unwrap().take() {
-                    client.stream = Some(lean.into_stream());
-                    client.baton = true;
-                    arm.reconnect.store(true, Ordering::Relaxed);
-                }
-                match client.login(
-                    &username,
-                    &password,
-                    arm.reconnect.load(Ordering::Relaxed),
-                ) {
-                    Ok(()) => {
-                        if arm.reconnect.load(Ordering::Relaxed) {
-                            // Response 15 keeps the previous session; a
-                            // channel change is a different account's scene.
+                if let Some(swap) = arm.swap.lock().unwrap().take() {
+                    arm.want_swap.store(false, Ordering::Relaxed);
+                    // Park A (TCP stays up as lean). Drop B's lean so the
+                    // server sees a DC, then opcode-18 on a *new* TCP —
+                    // 18 on the stolen live socket is RSA code 6.
+                    let parked = Lean::from_client(&mut client);
+                    let new_uid = swap.uid;
+                    let new_pass = swap.password.clone();
+                    let new_name = swap.username.clone();
+                    drop(swap.lean);
+                    client.login_uid = new_uid;
+                    eprintln!("[host-play] slot swap -> {new_name}: DC + opcode 18");
+                    match client.login(&new_name, &new_pass, true) {
+                        Ok(()) => {
+                            if let Some(parked) = parked {
+                                let _ = swap.park.send(parked);
+                            }
+                            uid = new_uid;
+                            password = new_pass;
+                            *uname.lock().unwrap() = new_name;
+                            arm.uid.store(uid, Ordering::Relaxed);
                             client.wipe_scene();
+                            backoff.reset();
+                            on_login_success(&arm);
                         }
-                        backoff.reset();
-                        // Auto-login slots stay armed so an unexpected DC
-                        // re-handshakes; a one-shot Log in / Login all disarms
-                        // until the next explicit arm.
-                        on_login_success(&arm);
-                        if debug_enabled() {
-                            eprintln!("[host-play] slot {username}: ingame");
+                        Err(e) => {
+                            if let Some(parked) = parked {
+                                client.stream = Some(parked.into_stream());
+                                client.baton = true;
+                            }
+                            let name = uname.lock().unwrap().clone();
+                            record_login_error(&slot_statuses, &name, &e);
+                            thread::sleep(login_retry_wait(&mut backoff, e.code));
+                            continue;
                         }
-                        let mut mainland_sent = false;
-                        Host::run_client(
-                            &mut client,
-                            &username,
-                            slot_input.clone(),
-                            slot_pixels.clone(),
-                            |c, name, run_sends| {
-                                slot_frame(c, name);
-                                if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
-                                    api::interact::mainland_hop(c);
-                                    mainland_sent = true;
-                                    if debug_enabled() {
-                                        eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
-                                    }
-                                }
-                                let mut all = slot_statuses.lock().unwrap();
-                                for s in all.iter_mut() {
-                                    if s.username == name {
-                                        s.ingame = c.ingame;
-                                        s.scene_state = c.scene_state;
-                                        s.runenergy = c.runenergy;
-                                        s.run_sends = run_sends;
-                                        s.main_modal_id = c.main_modal_id;
-                                        copy_stream_and_draw(c, s);
-                                        if let Some(lp) = &c.local_player {
-                                            let (tx, tz) = player_world_tile(
-                                                c.map_build_base_x,
-                                                c.map_build_base_z,
-                                                lp.route_x[0],
-                                                lp.route_z[0],
-                                            );
-                                            s.tile_x = tx;
-                                            s.tile_z = tz;
-                                            s.player = lp.name.clone().unwrap_or_default();
-                                        }
-                                    }
-                                }
-                                drop(all);
-                                if debug_enabled() && c.ingame && c.scene_state == 1 && c.loop_cycle % 100 == 0 {
-                                    let od = c
-                                        .on_demand
-                                        .as_ref()
-                                        .map(|od| {
-                                            format!(
-                                                "remaining={} fail={} msg={:?}",
-                                                od.remaining(),
-                                                od.fail_count,
-                                                od.message
-                                            )
-                                        })
-                                        .unwrap_or_else(|| "ondemand=none".into());
-                                    let ground = c
-                                        .map_build_ground_data
-                                        .iter()
-                                        .filter(|d| d.is_some())
-                                        .count();
-                                    let locs = c
-                                        .map_build_location_data
-                                        .iter()
-                                        .filter(|d| d.is_some())
-                                        .count();
-                                    eprintln!(
-                                        "[host-play] slot {name}: scene loading {od} \
-                                         ground={}/{} loc={}/{} await_pi={}",
-                                        ground,
-                                        c.map_build_ground_data.len(),
-                                        locs,
-                                        c.map_build_location_data.len(),
-                                        c.awaiting_player_info
-                                    );
-                                }
-                            },
-                            |c| {
-                                // Leave the 20 ms body on `stop`, or once the
-                                // client is back on the title (clean IF logout
-                                // / DC) so this control loop decides the next
-                                // handshake. `tick_flags` presses CC_LOGOUT
-                                // while the arm asks for a logout.
-                                tick_flags(c, &ifaces_template, &arm) || !c.ingame
-                            },
+                    }
+                } else if !client.ingame {
+                    if !should_handshake(&arm, client.ingame) {
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                    let name = uname.lock().unwrap().clone();
+                    wait_for_permit(&slot_queue, &slot_statuses, &name, uid, &arm.stop);
+                    if arm.stop.load(Ordering::Relaxed) {
+                        send_handoff_client(&arm, &mut client, uid, &slot_queue);
+                        return;
+                    }
+                    mark_login_started(&slot_statuses, &name);
+                    if let Some(lean) = arm.adopt.lock().unwrap().take() {
+                        client.stream = Some(lean.into_stream());
+                        client.baton = true;
+                        arm.reconnect.store(true, Ordering::Relaxed);
+                    }
+                    let reconnect = arm.reconnect.load(Ordering::Relaxed);
+                    if debug_enabled() {
+                        eprintln!(
+                            "[host-play] slot {name}: handshake begin reconnect={reconnect}"
                         );
-                        if let Some(tx) = arm.handoff.lock().unwrap().take() {
-                            if let Some(lean) = Lean::from_client(&mut client) {
-                                let _ = tx.send(lean);
+                    }
+                    match client.login(&name, &password, reconnect) {
+                        Ok(()) => {
+                            if arm.reconnect.load(Ordering::Relaxed) {
+                                client.wipe_scene();
                             }
-                            slot_queue.lock().unwrap().leave(uid);
-                            return;
+                            backoff.reset();
+                            on_login_success(&arm);
+                            if debug_enabled() {
+                                eprintln!("[host-play] slot {name}: handshake ok");
+                            }
                         }
-                        // The 20 ms body exits as soon as the client leaves the
-                        // game (clean IF logout / DC / stop); the last observe
-                        // ran before the exit, so record the title state here —
-                        // statuses, the rail traffic light, and the live
-                        // harness must see `!ingame`.
-                        {
-                            let mut all = slot_statuses.lock().unwrap();
-                            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                                s.ingame = client.ingame;
-                                s.scene_state = client.scene_state;
-                            }
+                        Err(e) => {
+                            record_login_error(&slot_statuses, &name, &e);
+                            thread::sleep(login_retry_wait(&mut backoff, e.code));
+                            continue;
                         }
                     }
-                    Err(e) => {
-                        let msg = format!("code {}: {}", e.code, e.mes2);
-                        if debug_enabled() {
-                            eprintln!("[host-play] slot {username}: login {msg}");
-                        }
-                        {
+                }
+                let mut mainland_sent = false;
+                let uname_obs = Arc::clone(&uname);
+                let arm_obs = Arc::clone(&arm);
+                let run_name = uname.lock().unwrap().clone();
+                Host::run_client(
+                    &mut client,
+                    &run_name,
+                    slot_input.clone(),
+                    slot_pixels.clone(),
+                    {
+                        let slot_frame = Arc::clone(&slot_frame);
+                        let slot_statuses = Arc::clone(&slot_statuses);
+                        move |c, _ignored, run_sends| {
+                            let name = uname_obs.lock().unwrap().clone();
+                            slot_frame(c, &name);
+                            if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
+                                api::interact::mainland_hop(c);
+                                mainland_sent = true;
+                                if debug_enabled() {
+                                    eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
+                                }
+                            }
                             let mut all = slot_statuses.lock().unwrap();
-                            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                                s.error = Some(msg);
+                            for s in all.iter_mut() {
+                                if s.username == name {
+                                    s.ingame = c.ingame;
+                                    s.scene_state = c.scene_state;
+                                    s.runenergy = c.runenergy;
+                                    s.run_sends = run_sends;
+                                    s.main_modal_id = c.main_modal_id;
+                                    copy_stream_and_draw(c, s);
+                                    if let Some(lp) = &c.local_player {
+                                        let (tx, tz) = player_world_tile(
+                                            c.map_build_base_x,
+                                            c.map_build_base_z,
+                                            lp.route_x[0],
+                                            lp.route_z[0],
+                                        );
+                                        s.tile_x = tx;
+                                        s.tile_z = tz;
+                                        s.player = lp.name.clone().unwrap_or_default();
+                                    }
+                                }
                             }
                         }
-                        // Response 16 (world full) escalates; response 5 is
-                        // the engine's login-limit message ("Try again in
-                        // 60 secs") and waits that long; other codes (wrong
-                        // credentials, RSA mismatch, ...) retry slower.
-                        let wait = match e.code {
-                            16 => backoff.delay(),
-                            5 => Duration::from_secs(60),
-                            _ => Duration::from_secs(5),
-                        };
-                        thread::sleep(wait);
-                    }
+                    },
+                    {
+                        let ifaces_template = ifaces_template.clone();
+                        move |c| {
+                            tick_flags(c, &ifaces_template, &arm_obs)
+                                || arm_obs.want_swap.load(Ordering::Relaxed)
+                                || !c.ingame
+                        }
+                    },
+                );
+                if arm.stop.load(Ordering::Relaxed) {
+                    send_handoff_client(&arm, &mut client, uid, &slot_queue);
+                    return;
+                }
+                let name = uname.lock().unwrap().clone();
+                let mut all = slot_statuses.lock().unwrap();
+                if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+                    s.ingame = client.ingame;
+                    s.scene_state = client.scene_state;
                 }
             }
             })
@@ -1119,7 +1267,7 @@ fn spawn_channel_thread(
                 }
                 loop {
                     if arm.stop.load(Ordering::Relaxed) {
-                        slot_queue.lock().unwrap().leave(uid);
+                        send_handoff_lean(&arm, None, uid, &slot_queue);
                         return;
                     }
                     if !should_handshake(&arm, false) {
@@ -1129,7 +1277,7 @@ fn spawn_channel_thread(
                     }
                     wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
                     if arm.stop.load(Ordering::Relaxed) {
-                        slot_queue.lock().unwrap().leave(uid);
+                        send_handoff_lean(&arm, None, uid, &slot_queue);
                         return;
                     }
                     let login_started = Instant::now();
@@ -1170,10 +1318,7 @@ fn spawn_channel_thread(
                             let mut seeded = false;
                             loop {
                                 if arm.stop.load(Ordering::Relaxed) {
-                                    if let Some(tx) = arm.handoff.lock().unwrap().take() {
-                                        let _ = tx.send(lean);
-                                    }
-                                    slot_queue.lock().unwrap().leave(uid);
+                                    send_handoff_lean(&arm, Some(lean), uid, &slot_queue);
                                     return;
                                 }
                                 let pump = lean.pump();

@@ -662,16 +662,16 @@ impl Session {
             p.settings.lowmem = !self.tube_sfx;
             play.remember_profile(p);
         }
-        let input = SlotInput::new();
-        let pixels = PixelBuf::new();
-        play.retune(
-            name,
-            Some(Arc::clone(&input)),
-            Some(Arc::clone(&pixels)),
-        )?;
-        self.slots.clear();
-        self.slots
-            .insert(name.to_string(), SlotIo { input, pixels });
+        // In-place retune reuses the one TV PixelBuf; do not allocate a
+        // second fat framebuffer or drop the tube during the hop.
+        let (input, pixels) = self
+            .slots
+            .values()
+            .next()
+            .map(|s| (Arc::clone(&s.input), Arc::clone(&s.pixels)))
+            .map(|(input, pixels)| (Some(input), Some(pixels)))
+            .unwrap_or((None, None));
+        play.retune(name, input, pixels)?;
         Ok(())
     }
 
