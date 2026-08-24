@@ -320,34 +320,35 @@ fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Op
     None
 }
 
-/// Headed watch: count `ingame && scene_state==2`; announce 1, 10, then 50.
-/// At 50 print PASS and stay open. Timeout 600s. Does **not** freeze-assert
-/// (operator may click). Does **not** fail on RSS magnitude.
+/// Headed watch: count channels that are up — fat Client `ingame &&
+/// scene_state==2`, lean extra `ingame` (lean never reaches scene 2).
+/// Announce 1, 10, then 50. At 50 print PASS and stay open. Timeout 600s.
+/// Does **not** freeze-assert (operator may click). Does **not** fail on
+/// RSS magnitude.
 fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -> Option<String> {
     if live.passed {
         return None;
     }
-    let n = statuses
-        .iter()
-        .filter(|s| s.ingame && s.scene_state == 2)
-        .count();
+    let n = statuses.iter().filter(|s| s.is_up()).count();
     if n >= 1 && live.last_announced < 1 {
-        println!("live stress50: 1/50 scene 2");
+        println!("live stress50: 1/50 up");
         live.last_announced = 1;
     }
     if n >= 10 && live.last_announced < 10 {
-        println!("live stress50: 10/50 scene 2");
+        println!("live stress50: 10/50 up");
         live.last_announced = 10;
     }
     if n >= 50 {
         let (rss, _) = sample_process();
-        println!("PASS: live stress50 rss={rss} ingame50");
+        let heads = statuses.iter().filter(|s| !s.lean).count();
+        let leanes = statuses.iter().filter(|s| s.lean).count();
+        println!("PASS: live stress50 rss={rss} up50 heads={heads} leanes={leanes}");
         live.last_announced = 50;
         live.passed = true;
         return None;
     }
     if live.started.elapsed() >= Duration::from_secs(600) {
-        return Some(format!("live stress50: {n}/50 scene 2 after 600s"));
+        return Some(format!("live stress50: {n}/50 up after 600s"));
     }
     None
 }
@@ -1830,8 +1831,22 @@ mod tests {
     fn live_stress_tick_timeout_before_50() {
         let mut live = stress_at(Instant::now() - Duration::from_secs(600));
         let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
-        assert_eq!(err, "live stress50: 1/50 scene 2 after 600s");
+        assert_eq!(err, "live stress50: 1/50 up after 600s");
         assert!(!live.passed);
         assert_eq!(live.last_announced, 1);
+    }
+
+    #[test]
+    fn live_stress_tick_counts_lean_ingame_without_scene_2() {
+        let mut live = stress_at(Instant::now());
+        let mut rows = vec![st("s00", true, 2, 1, 0)];
+        for i in 1..50 {
+            let mut s = st(&format!("s{i:02}"), true, 1, 0, 0);
+            s.lean = true;
+            rows.push(s);
+        }
+        assert_eq!(live_stress_tick(&mut live, &rows), None);
+        assert!(live.passed, "49 lean ingame + 1 fat scene 2 is 50 up");
+        assert_eq!(live.last_announced, 50);
     }
 }

@@ -90,6 +90,19 @@ pub struct SlotStatus {
     pub lean: bool,
 }
 
+impl SlotStatus {
+    /// Wall member is online: a fat Client has built the scene (`scene_state
+    /// == 2`); a lean channel only ever reaches `scene_state` 1 on
+    /// `REBUILD_NORMAL`, so login-granted (`ingame`) is enough.
+    pub fn is_up(&self) -> bool {
+        if self.lean {
+            self.ingame
+        } else {
+            self.ingame && self.scene_state == 2
+        }
+    }
+}
+
 /// Absolute world tile from the scene origin plus the local-player route
 /// head (`route_x[0]` / `route_z[0]`). Scene pixels (`lp.x` / `lp.z`) are
 /// 128× these; WalkTo and the picker need world tiles.
@@ -1450,6 +1463,35 @@ mod tests {
     fn slot_status_walk_defaults_cleared() {
         let s = SlotStatus::default();
         assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
+    }
+
+    #[test]
+    fn slot_status_is_up_lean_ingame_without_scene_2() {
+        let mut lean = SlotStatus {
+            username: "s01".into(),
+            ingame: true,
+            scene_state: 1,
+            lean: true,
+            ..SlotStatus::default()
+        };
+        assert!(lean.is_up());
+        lean.ingame = false;
+        assert!(!lean.is_up());
+        let fat = SlotStatus {
+            username: "s00".into(),
+            ingame: true,
+            scene_state: 1,
+            lean: false,
+            ..SlotStatus::default()
+        };
+        assert!(!fat.is_up(), "fat Client still loading is not up");
+        let fat_ready = SlotStatus {
+            username: "s00".into(),
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        };
+        assert!(fat_ready.is_up());
     }
 
     #[test]

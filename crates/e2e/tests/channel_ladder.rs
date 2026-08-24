@@ -60,10 +60,7 @@ fn wait_all_up(play: &Play, n: usize) {
     let deadline = Instant::now() + timeout;
     loop {
         let statuses = play.statuses();
-        let ready = statuses
-            .iter()
-            .filter(|s| if s.lean { s.ingame } else { s.ingame && s.scene_state == 2 })
-            .count();
+        let ready = statuses.iter().filter(|s| s.is_up()).count();
         if ready >= n {
             return;
         }
