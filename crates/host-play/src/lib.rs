@@ -330,6 +330,11 @@ impl Play {
         self.queue.lock().unwrap().prefer(uid);
     }
 
+    /// Snapshot of the login FIFO (front first). Panel tests pin TV-first.
+    pub fn login_queue_uids(&self) -> Vec<i32> {
+        self.queue.lock().unwrap().queued_uids()
+    }
+
     /// The unique fat `Client` on this play (the TV). `None` while every
     /// row is lean or the wall is empty.
     pub fn fat_head_name(&self) -> Option<String> {
@@ -731,6 +736,16 @@ fn spawn_slot_thread(
             .name(username.clone())
             .stack_size(THREAD_STACK)
             .spawn(move || {
+            {
+                // Publish the row before `prepare_client`/`maininit` (highmem
+                // TV can stall for seconds). Login all prefers this uid;
+                // lean extras must not claim the FIFO while the tube loads.
+                let mut all = slot_statuses.lock().unwrap();
+                all.push(SlotStatus {
+                    username: username.clone(),
+                    ..SlotStatus::default()
+                });
+            }
             let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
             #[cfg(test)]
             {
@@ -738,14 +753,6 @@ fn spawn_slot_thread(
                 // maininit's HTTP retry so `stop_slot`'s join returns fast
                 // (the client's own HTTP tests stub retries the same way).
                 client.fetch_retry_wait = Duration::from_millis(1);
-            }
-
-            {
-                let mut all = slot_statuses.lock().unwrap();
-                all.push(SlotStatus {
-                    username: username.clone(),
-                    ..SlotStatus::default()
-                });
             }
             if debug_enabled() {
                 eprintln!("[host-play] slot {username}: thread up");

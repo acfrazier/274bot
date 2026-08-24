@@ -554,6 +554,17 @@ impl Session {
         self.slots.values().next().map(|s| Arc::clone(&s.pixels))
     }
 
+    /// Username of the fat TV (`SlotIo` / PixelBuf owner). Independent of
+    /// whether the slot thread has published a status row yet.
+    pub fn tv_name(&self) -> Option<String> {
+        if self.slots.len() == 1 {
+            return self.slots.keys().next().cloned();
+        }
+        self.focused_name()
+            .filter(|n| self.slots.contains_key(n))
+            .or_else(|| self.slots.keys().next().cloned())
+    }
+
     fn focused_slot(&self) -> Option<&SlotIo> {
         let name = self.focused_name()?;
         self.slots.get(&name)
@@ -994,7 +1005,10 @@ impl Session {
     /// The fat TV head is moved to the front of the login FIFO so it is
     /// not stuck behind lean extras.
     pub fn login_all(&mut self) {
-        let head = self.play.as_ref().and_then(|p| p.fat_head_name());
+        // Prefer the SlotIo TV (pixels), not `fat_head_name()` from statuses:
+        // the highmem tube can still be inside `maininit` when Login all
+        // runs, so the status row is missing and prefer would be skipped.
+        let head = self.tv_name();
         if let (Some(play), Some(h)) = (self.play.as_ref(), head.as_ref()) {
             if let Some(arm) = play.arm(h) {
                 play.prefer_login(arm.uid.load(Ordering::Relaxed));
@@ -1834,6 +1848,14 @@ mod tests {
                 .want_login
                 .load(Ordering::Relaxed),
             "lean extras must not jump the login FIFO ahead of the TV"
+        );
+        s.select("alice");
+        s.login_all();
+        let front = s.play.as_ref().unwrap().login_queue_uids();
+        assert_eq!(
+            front.first().copied(),
+            Some(1),
+            "TV alice uid must be FIFO head, got {front:?}"
         );
         s.select("bob");
         assert!(

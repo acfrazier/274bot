@@ -99,6 +99,11 @@ impl LoginQueue {
         self.queue.push_front(uid);
     }
 
+    /// Front-first copy of the FIFO (tests / panel TV-first assert).
+    pub fn queued_uids(&self) -> Vec<i32> {
+        self.queue.iter().copied().collect()
+    }
+
     /// Longest unmet constraint for granting `uid` at `now`.
     fn blocked_for(&mut self, uid: i32, now: Instant) -> Option<Duration> {
         let mut wait = None;
