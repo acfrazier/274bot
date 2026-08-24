@@ -960,9 +960,9 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
 /// `active` = Running|Paused|Stopping: Start and Browse are disabled while
 /// a script holds the slot; Pause/Resume is enabled only while Running or
 /// Paused (label switches to "Resume"); Stop is enabled while active but
-/// not already Stopping. Browse lists `script::compiled_ids()` and
-/// selecting does not Start — Start is the section button. Load stays
-/// disabled until Task 10 (out-of-tree JS).
+/// not already Stopping. Browse lists the compiled ids then the loaded JS
+/// cards, and selecting does not Start — Start is the section button.
+/// Load opens a path modal; Start spawns the loaded card's isolate.
 fn script_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "script") {
         return;
@@ -971,7 +971,11 @@ fn script_section(ui: &Ui, session: &mut Session) {
     let active = script_active(state);
     let paused = state == script::RunState::Paused;
 
-    let name = session.script_sel.map(|id| id.0).unwrap_or("(none)");
+    let name = session
+        .script_sel
+        .as_ref()
+        .map(|sel| sel.label())
+        .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
     ui.same_line();
     let avail = ui.content_region_avail()[0];
@@ -985,15 +989,21 @@ fn script_section(ui: &Ui, session: &mut Session) {
         if ui.button_with_size("Browse…", [w, 0.0]) {
             session.script_browse_open = true;
         }
-        ui.set_item_tooltip("pick a compiled script");
+        ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
     }
     if !stack {
         ui.same_line();
     }
     {
-        let _load = ui.begin_disabled();
-        ui.button_with_size("Load", [w, 0.0]);
-        ui.set_item_tooltip("load a local JS script — not until Task 10");
+        let _load = if active {
+            Some(ui.begin_disabled())
+        } else {
+            None
+        };
+        if ui.button_with_size("Load", [w, 0.0]) {
+            session.script_load_open = true;
+        }
+        ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
     }
 
     let (sw, sstack) = button_row_layout(ui.content_region_avail()[0], SCRIPT_ROW.len());
@@ -1046,9 +1056,13 @@ fn script_section(ui: &Ui, session: &mut Session) {
 /// defeated by a per-frame reopen.
 static PREV_BROWSE: AtomicBool = AtomicBool::new(false);
 
-/// Browse picker: one row per compiled script (JS cards come in Task 10,
-/// tagged "JS"; compiled rows have no tag). Clicking a row only stores the
-/// selection — selecting never Starts.
+/// True while the script Load picker was wanted last frame (same rising-
+/// edge latch as the chooser and Browse).
+static PREV_LOAD: AtomicBool = AtomicBool::new(false);
+
+/// Browse picker: one row per compiled script, then one per loaded JS card
+/// (tagged "JS"). Clicking a row only stores the selection — selecting
+/// never Starts.
 fn browse_window(ui: &Ui, session: &mut Session) {
     let want = session.script_browse_open;
     let (open_popup, new_prev) =
@@ -1064,12 +1078,14 @@ fn browse_window(ui: &Ui, session: &mut Session) {
         .begin()
     {
         let ids = script::compiled_ids();
+        let cards = session.js.cards();
         let w = ui.content_region_avail()[0];
-        if ids.is_empty() {
-            ui.text_disabled("no compiled scripts");
+        if ids.is_empty() && cards.is_empty() {
+            ui.text_disabled("no scripts — Browse is empty");
         }
         for id in ids {
-            let selected = session.script_sel == Some(*id);
+            let selected = session.script_sel
+                == Some(script::ScriptSel::Compiled(*id));
             if ui
                 .selectable_config(id.0)
                 .selected(selected)
@@ -1077,7 +1093,20 @@ fn browse_window(ui: &Ui, session: &mut Session) {
                 .size([w, 0.0])
                 .build()
             {
-                session.script_sel = Some(*id);
+                session.script_sel = Some(script::ScriptSel::Compiled(*id));
+            }
+        }
+        for card in cards {
+            let selected = session.script_sel
+                == Some(script::ScriptSel::Loaded(card.name.clone()));
+            if ui
+                .selectable_config(format!("{}  (JS)", card.name))
+                .selected(selected)
+                .close_popups(false)
+                .size([w, 0.0])
+                .build()
+            {
+                session.script_sel = Some(script::ScriptSel::Loaded(card.name.clone()));
             }
         }
         ui.spacing();
@@ -1088,17 +1117,57 @@ fn browse_window(ui: &Ui, session: &mut Session) {
     session.script_browse_open = open;
 }
 
-/// parameters: uncollapses the selected script's default key/value rows
-/// (`script::defaults`; `(no parameters)` until ports fill a schema), then
-/// the Edit button — always gray until `edit_parameters_enabled` flips.
+/// Load modal: a filesystem path to an out-of-tree JS bot. Load registers
+/// the card (same name overwrites; compiled ids reserved), persists the
+/// store, and selects the card for Start. The isolate is spawned only on
+/// Start, never here.
+fn load_window(ui: &Ui, session: &mut Session) {
+    let want = session.script_load_open;
+    let (open_popup, new_prev) =
+        chooser_should_open_popup(want, PREV_LOAD.load(Ordering::Relaxed));
+    PREV_LOAD.store(new_prev, Ordering::Relaxed);
+    if open_popup {
+        ui.open_popup("274bot-load");
+    }
+    let mut open = want;
+    if let Some(_t) = ui
+        .begin_modal_popup_config("274bot-load")
+        .opened(&mut open)
+        .begin()
+    {
+        let w = ui.content_region_avail()[0];
+        ui.text("path to a JS bot file:");
+        ui.input_text("##load-path", &mut session.load_scratch)
+            .hint("e.g. ~/bot.js")
+            .build();
+        if ui.button_with_size("Load", [w / 2.0, 0.0]) {
+            let path = session.load_scratch.clone();
+            session.load_js(&path);
+            if session.error.is_none() {
+                ui.close_current_popup();
+            }
+        }
+        ui.same_line();
+        if ui.button_with_size("Cancel", [w / 2.0, 0.0]) {
+            session.load_scratch.clear();
+            ui.close_current_popup();
+        }
+    }
+    session.script_load_open = open;
+}
+
+/// parameters: uncollapses the selected compiled script's default key/value
+/// rows (`script::defaults`; `(no parameters)` until ports fill a schema),
+/// then the Edit button — always gray until `edit_parameters_enabled`
+/// flips. Loaded JS cards have no parameter schema.
 fn parameters_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "parameters") {
         return;
     }
-    let pairs = session
-        .script_sel
-        .map(script::defaults)
-        .unwrap_or_default();
+    let pairs = match &session.script_sel {
+        Some(script::ScriptSel::Compiled(id)) => script::defaults(*id),
+        _ => Vec::new(),
+    };
     if pairs.is_empty() {
         ui.text_disabled("(no parameters)");
     } else {
@@ -1693,6 +1762,7 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
             // the close so the next open is a fresh rising edge.
             chooser_window(ui, &mut state.session);
             browse_window(ui, &mut state.session);
+            load_window(ui, &mut state.session);
             render_all_warn_window(ui, &mut state.session);
         })
         .run()

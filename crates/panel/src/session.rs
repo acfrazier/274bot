@@ -213,11 +213,19 @@ pub struct Session {
     pub tube_sfx: bool,
     /// Persisted panel prefs (last focus + per-profile collapsed sections).
     pub ui: crate::ui_state::PanelUiState,
-    /// The compiled script picked in Browse; `None` until one is selected.
-    /// Selecting never Starts — Start is the section button.
-    pub script_sel: Option<script::CompiledId>,
+    /// The script picked in Browse (compiled id or loaded JS card);
+    /// `None` until one is selected. Selecting never Starts — Start is the
+    /// section button.
+    pub script_sel: Option<script::ScriptSel>,
     /// Browse picker open flag (the modal window in `app.rs`).
     pub script_browse_open: bool,
+    /// Load modal open flag (the path modal in `app.rs`).
+    pub script_load_open: bool,
+    /// The out-of-tree JS library (`~/.274bot/js-scripts.json`). Loaded
+    /// cards appear in Browse and Start spawns their isolate.
+    pub js: script::JsLibrary,
+    /// The Load modal's path scratch buffer.
+    pub load_scratch: String,
 }
 
 /// Keep each per-name panel log bounded.
@@ -286,6 +294,13 @@ impl Session {
             ui: crate::ui_state::load(),
             script_sel: None,
             script_browse_open: false,
+            script_load_open: false,
+            js: {
+                let mut js = script::JsLibrary::new(script::default_js_store());
+                let _ = js.restore(); // missing/broken store is not fatal here
+                js
+            },
+            load_scratch: String::new(),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -1392,26 +1407,54 @@ impl Session {
         self.play.as_ref()?.script_last_error(&name)
     }
 
-    /// Start the Browse-selected compiled script on the focused slot. The
-    /// rs2b0t rule is enforced here too: while the slot's script is active
-    /// the call is refused (the Start button is disabled, so this is the
-    /// no-call backstop). Errors set [`Session::error`].
+    /// Start the Browse-selected script (compiled or loaded JS) on the
+    /// focused slot. The rs2b0t rule is enforced here too: while the slot's
+    /// script is active the call is refused (the Start button is disabled,
+    /// so this is the no-call backstop). Errors set [`Session::error`].
     pub fn script_start_selected(&mut self) {
         let Some(name) = self.focused_name() else {
             self.error = Some("script: no focused profile".into());
             return;
         };
-        let Some(sel) = self.script_sel else {
+        let Some(sel) = self.script_sel.clone() else {
             self.error = Some("script: browse to pick one first".into());
             return;
         };
         if script_active(self.focused_script_state()) {
             return;
         }
-        match self.play.as_ref().map(|p| p.script_start(&name, sel)) {
-            Some(Ok(())) => self.error = None,
-            Some(Err(e)) => self.error = Some(format!("script: {e}")),
-            None => self.error = Some("script: no play".into()),
+        let result = match (self.play.as_ref(), sel) {
+            (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
+            (Some(play), script::ScriptSel::Loaded(card_name)) => {
+                match self.js.get(&card_name) {
+                    Some(card) => play.script_start_load(&name, card.source.clone(), card.shape),
+                    None => Err(format!("no loaded script: {card_name}")),
+                }
+            }
+            (None, _) => Err("no play".to_string()),
+        };
+        match result {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("script: {e}")),
+        }
+    }
+
+    /// Load a local JS file into the library (registers a picker card,
+    /// persists `~/.274bot/js-scripts.json`), select it for Start, and
+    /// clear the modal scratch. Errors set [`Session::error`].
+    pub fn load_js(&mut self, path: &str) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            self.error = Some("script: path required".into());
+            return;
+        }
+        match self.js.load(std::path::Path::new(trimmed)) {
+            Ok(card) => {
+                self.error = None;
+                self.script_sel = Some(script::ScriptSel::Loaded(card.name));
+                self.load_scratch.clear();
+            }
+            Err(e) => self.error = Some(format!("load: {e}")),
         }
     }
 
@@ -3089,17 +3132,63 @@ mod tests {
     }
 
     #[test]
-    fn script_start_selected_wires_focused_slot_and_reports_not_ported() {
+    fn script_start_selected_wires_focused_slot_and_starts_walk_to() {
         let mut s = Session::new();
         let mut play = empty_play();
         play.attach_arm("alice", SlotArm::new(42, false));
         s.play = Some(play);
         s.focus.lock().unwrap().focused = Some("alice".into());
-        s.script_sel = Some(script::CompiledId("WalkTo"));
+        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("WalkTo")));
+        s.script_start_selected();
+        assert_eq!(s.error, None, "WalkTo is ported since Task 8");
+        assert_eq!(s.focused_script_state(), script::RunState::Running);
+    }
+
+    #[test]
+    fn script_start_selected_unported_id_reports_not_ported() {
+        let mut s = Session::new();
+        let mut play = empty_play();
+        play.attach_arm("alice", SlotArm::new(42, false));
+        s.play = Some(play);
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("BoneBurier")));
         s.script_start_selected();
         let err = s.error.clone().expect("not-ported message");
         assert!(err.contains("not ported"), "{err}");
         assert_eq!(s.focused_script_state(), script::RunState::Idle);
+    }
+
+    #[test]
+    fn load_js_registers_card_selects_and_persists_to_the_session_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-session-load-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("js-scripts.json");
+        let path = dir.join("tickbot.js");
+        std::fs::write(&path, "export function tick(api) { api._n = (api._n||0)+1 }").unwrap();
+
+        let mut s = Session::new();
+        s.js = script::JsLibrary::new(store.clone());
+        s.load_js(path.to_str().unwrap());
+        assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
+        assert_eq!(
+            s.script_sel,
+            Some(script::ScriptSel::Loaded("tickbot".to_string()))
+        );
+        assert_eq!(s.js.cards().len(), 1);
+        assert_eq!(s.load_scratch, "", "success clears the modal scratch");
+        assert!(
+            store.exists(),
+            "the card is persisted to the session store"
+        );
+
+        // A path that is not a bot shape fails and keeps the error banner.
+        let bad = dir.join("plain.js");
+        std::fs::write(&bad, "const x = 1;").unwrap();
+        s.load_js(bad.to_str().unwrap());
+        assert!(s.error.as_deref().is_some_and(|e| e.contains("shape")));
     }
 
     #[test]
@@ -3114,7 +3203,7 @@ mod tests {
         let err = s.error.clone().expect("no-selection banner");
         assert!(err.contains("browse"), "{err}");
         s.error = None;
-        s.script_sel = Some(script::CompiledId("WalkTo"));
+        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("WalkTo")));
         s.script_start_selected();
         let err = s.error.clone().expect("no-play banner");
         assert!(err.contains("play"), "{err}");

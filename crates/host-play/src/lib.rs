@@ -506,6 +506,26 @@ impl Play {
             .start_compiled(make())
     }
 
+    /// Start a loaded JS bot on `name`'s slot: the isolate is spawned here,
+    /// on Start (never at Load). Same slot gating as
+    /// [`Play::script_start`].
+    pub fn script_start_load(
+        &self,
+        name: &str,
+        source: String,
+        shape: script::LoadShape,
+    ) -> Result<(), String> {
+        if !self.slot_active(name) {
+            return Err(format!("no slot: {name}"));
+        }
+        self.scripts
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_insert_with(SlotScript::new)
+            .start_load(source, shape)
+    }
+
     /// Pause `name`'s script (operator Pause; survives login until
     /// Resume re-arms it). No-op when the slot has no script.
     pub fn script_pause(&self, name: &str) {
@@ -2678,6 +2698,45 @@ mod tests {
             .script_start("alice", script::CompiledId("BoneBurier"))
             .unwrap_err();
         assert!(err.contains("not ported"), "err was {err}");
+    }
+
+    #[test]
+    fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        play.attach_arm("alice", SlotArm::new(7, false));
+        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        play.script_start_load("alice", src.clone(), script::LoadShape::NativeTick)
+            .unwrap();
+        assert_eq!(play.script_state("alice"), script::RunState::Running);
+
+        let err = play
+            .script_start_load("alice", src.clone(), script::LoadShape::NativeTick)
+            .unwrap_err();
+        assert!(err.contains("active"), "err was {err}");
+
+        play.script_stop("alice");
+        assert_eq!(play.script_state("alice"), script::RunState::Idle);
+
+        // Unknown slot: never creates an entry, and never a V8 runtime.
+        let err = play
+            .script_start_load("ghost", src, script::LoadShape::NativeTick)
+            .unwrap_err();
+        assert!(err.contains("no slot"), "err was {err}");
+        assert!(
+            !play.scripts.lock().unwrap().contains_key("ghost"),
+            "an unknown uid must never get a SlotScript entry"
+        );
     }
 
     #[test]

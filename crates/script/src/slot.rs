@@ -6,6 +6,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::ctx::{Script, ScriptCtx};
+#[cfg(feature = "load")]
+use crate::load::{LoadIsolate, LoadShape};
 
 /// Lifecycle of the script slot. `paused` covers both operator Pause and
 /// the not-`is_up` gate; `stopping` is the Load-join window (later task).
@@ -18,11 +20,14 @@ pub enum RunState {
     Error,
 }
 
-/// Per-uid runner. Compiled XOR (later) Load. This task: compiled only.
+/// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
     compiled: Option<Box<dyn Script>>,
+    /// JS Load isolate, spawned by `start_load` on Start (not on Load).
+    #[cfg(feature = "load")]
+    load: Option<LoadIsolate>,
     last_error: Option<String>,
     /// Dispatched game ticks since the last Start.
     ticks: u64,
@@ -34,9 +39,16 @@ impl SlotScript {
             want_run: false,
             state: RunState::Idle,
             compiled: None,
+            #[cfg(feature = "load")]
+            load: None,
             last_error: None,
             ticks: 0,
         }
+    }
+
+    /// True when either a compiled script or a JS isolate is installed.
+    fn has_instance(&self) -> bool {
+        self.compiled.is_some() || self.load_active()
     }
 
     /// Install a compiled script and start it. Refuses (no silent replace)
@@ -48,7 +60,33 @@ impl SlotScript {
                 Err("script already active: stop it first".to_string())
             }
             RunState::Idle | RunState::Error => {
+                if self.load_active() {
+                    return Err("loaded script active: stop it first".to_string());
+                }
                 self.compiled = Some(script);
+                self.want_run = true;
+                self.last_error = None;
+                self.ticks = 0;
+                self.state = RunState::Running;
+                Ok(())
+            }
+        }
+    }
+
+    /// Start a JS Load isolate (the isolate is spawned here, on Start, not
+    /// at Load). Same state gating as [`SlotScript::start_compiled`].
+    #[cfg(feature = "load")]
+    pub fn start_load(&mut self, source: String, shape: LoadShape) -> Result<(), String> {
+        match self.state {
+            RunState::Running | RunState::Paused | RunState::Stopping => {
+                Err("script already active: stop it first".to_string())
+            }
+            RunState::Idle | RunState::Error => {
+                if self.compiled.is_some() {
+                    return Err("compiled script active: stop it first".to_string());
+                }
+                let isolate = LoadIsolate::spawn(source, shape)?;
+                self.load = Some(isolate);
                 self.want_run = true;
                 self.last_error = None;
                 self.ticks = 0;
@@ -62,7 +100,11 @@ impl SlotScript {
     /// Resume. Instance kept. No-op when there is no instance.
     pub fn pause(&mut self) {
         self.want_run = false;
-        if self.compiled.is_some() && self.state == RunState::Running {
+        if self.has_instance() && self.state == RunState::Running {
+            #[cfg(feature = "load")]
+            if let Some(isolate) = &self.load {
+                isolate.pause();
+            }
             self.state = RunState::Paused;
         }
     }
@@ -72,13 +114,22 @@ impl SlotScript {
     /// no instance or the slot errored.
     pub fn resume(&mut self) {
         self.want_run = true;
-        if self.compiled.is_some() && self.state == RunState::Paused {
+        if self.has_instance() && self.state == RunState::Paused {
+            #[cfg(feature = "load")]
+            if let Some(isolate) = &self.load {
+                isolate.resume();
+            }
             self.state = RunState::Running;
         }
     }
 
-    /// Operator Stop: run the teardown hook, drop the instance, Idle.
+    /// Operator Stop: join the Load isolate, run the compiled teardown
+    /// hook, drop the instance, Idle.
     pub fn stop(&mut self) {
+        #[cfg(feature = "load")]
+        if let Some(isolate) = self.load.take() {
+            isolate.join();
+        }
         if let Some(mut script) = self.compiled.take() {
             script.on_stop();
         }
@@ -91,7 +142,7 @@ impl SlotScript {
     /// Paused. Without an instance the state is untouched (Idle, or Error
     /// after a panic — `is_up` must not resurrect or wipe an error).
     pub fn on_is_up(&mut self, up: bool) {
-        if self.compiled.is_none() {
+        if !self.has_instance() {
             return;
         }
         self.state = if up && self.want_run {
@@ -101,11 +152,17 @@ impl SlotScript {
         };
     }
 
-    /// Call only on observed server tick. Dispatches the script's `tick`
-    /// only while Running && want_run. A panic is caught: the slot goes
-    /// Error with the message, the instance is dropped, the run is over.
+    /// Call only on observed server tick. Dispatches the JS isolate's
+    /// `on_game_tick` (compiled path) only while Running && want_run. A
+    /// compiled panic is caught: the slot goes Error with the message, the
+    /// instance is dropped, the run is over.
     pub fn on_game_tick(&mut self, ctx: &mut ScriptCtx<'_>) {
         if self.state != RunState::Running || !self.want_run {
+            return;
+        }
+        #[cfg(feature = "load")]
+        if let Some(isolate) = &self.load {
+            isolate.on_game_tick(ctx.tick);
             return;
         }
         let Some(script) = self.compiled.as_mut() else {
@@ -127,6 +184,17 @@ impl SlotScript {
 
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
+    }
+
+    /// Whether a JS Load isolate is installed (feature-gated; always false
+    /// in a build without the `load` feature).
+    #[cfg(feature = "load")]
+    fn load_active(&self) -> bool {
+        self.load.is_some()
+    }
+    #[cfg(not(feature = "load"))]
+    fn load_active(&self) -> bool {
+        false
     }
 }
 
