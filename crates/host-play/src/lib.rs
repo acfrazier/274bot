@@ -663,9 +663,6 @@ impl Play {
                 && pending.incoming_done
                 && pending.incoming.is_some()
                 && !pending.swap_placed;
-            if place_swap {
-                pending.swap_placed = true;
-            }
             let spawn_head = !in_place && pending.incoming_done && !pending.spawned_head;
             if spawn_head {
                 pending.spawned_head = true;
@@ -742,9 +739,15 @@ impl Play {
                         park: park_tx,
                     });
                     arm.want_swap.store(true, Ordering::Relaxed);
+                    if let Some(pending) = self.pending_tune.as_mut() {
+                        pending.swap_placed = true;
+                    }
                     if debug_enabled() {
                         eprintln!("[host-play] retune in-place {prev} -> {name}");
                     }
+                } else {
+                    self.spawn_channel_from_lean(profile, lean);
+                    self.pending_tune = None;
                 }
             }
         } else if spawn_head {

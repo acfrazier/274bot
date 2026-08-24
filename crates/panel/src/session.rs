@@ -26,6 +26,12 @@ use vault::{Profile, Vault};
 use crate::focus::draw_for_slot;
 use crate::wall::Wall;
 
+/// Scatter / mainland hop only on a cold world, not after a channel-18 wipe
+/// (that would tele the newly tuned TV every cap-click).
+fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
+    last_login_reconnect != Some(true)
+}
+
 const DEFAULT_PORT: u16 = 43594;
 
 /// Vault path used by panel-play (`~/.274bot/vault`, the same file host-play
@@ -396,6 +402,7 @@ impl Session {
                 c.full_rate = tv.load(Ordering::Relaxed) && draw;
                 if c.ingame
                     && c.scene_state == 2
+                    && seed_on_first_world(c.last_login_reconnect)
                     && mainland_sent.lock().unwrap().insert(name.to_string())
                 {
                     if scatter.load(Ordering::Relaxed) {
@@ -603,9 +610,14 @@ impl Session {
         self.slots.values().next().map(|s| Arc::clone(&s.pixels))
     }
 
-    /// Username of the fat TV (`SlotIo` / PixelBuf owner). Independent of
-    /// whether the slot thread has published a status row yet.
+    /// Username of the fat TV. After a channel hop this is `fat_head_name`
+    /// (the PixelBuf map stays on the first spawn key).
     pub fn tv_name(&self) -> Option<String> {
+        if self.channel_head {
+            if let Some(h) = self.play.as_ref().and_then(|p| p.fat_head_name()) {
+                return Some(h);
+            }
+        }
         if self.slots.len() == 1 {
             return self.slots.keys().next().cloned();
         }
@@ -759,7 +771,13 @@ impl Session {
     }
 
     fn capture_on(&mut self, name: &str) {
-        if let Some(slot) = self.slots.get(name) {
+        // Channel-head: one PixelBuf on the tube, not per focused cap name.
+        let slot = if self.channel_head {
+            self.slots.values().next()
+        } else {
+            self.slots.get(name)
+        };
+        if let Some(slot) = slot {
             let (tx, rx) = mpsc::channel();
             slot.input.connect_rx(rx);
             slot.input.set_enabled(true);
@@ -1189,7 +1207,11 @@ impl Session {
         if let Some(play) = &mut self.play {
             play.stop_slot(name);
         }
-        self.slots.remove(name);
+        // Channel-head PixelBuf is the tube, keyed by the first spawn name.
+        // Removing a parked lean must not drop the TV framebuffer.
+        if !self.channel_head || self.wall.members.is_empty() {
+            self.slots.remove(name);
+        }
         self.sync_wall_focus();
         if focused.as_deref() == Some(name) {
             match neighbour {
@@ -1396,7 +1418,10 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{arm_login_all, combo_index, maybe_send_click, stream_capture, Session, SlotIo};
+    use super::{
+        arm_login_all, combo_index, maybe_send_click, seed_on_first_world, stream_capture, Session,
+        SlotIo,
+    };
     use host::{InputEv, PixelBuf, SlotInput};
     use host_play::{SlotArm, SlotStatus};
     use nav::grid::StepGrid;
@@ -1427,6 +1452,40 @@ mod tests {
             scene_state: scene,
             ..SlotStatus::default()
         }
+    }
+
+    #[test]
+    fn tv_name_follows_fat_head_after_tune() {
+        let mut s = Session::new();
+        s.channel_head = true;
+        s.slots.insert(
+            "s00".into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: PixelBuf::new(),
+            },
+        );
+        let play = empty_play();
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "s05".into(),
+            ingame: true,
+            scene_state: 2,
+            lean: false,
+            ..SlotStatus::default()
+        });
+        s.play = Some(play);
+        assert_eq!(
+            s.tv_name().as_deref(),
+            Some("s05"),
+            "Login all must prefer the tuned TV, not the first PixelBuf key"
+        );
+    }
+
+    #[test]
+    fn seed_on_first_world_skips_channel_18() {
+        assert!(seed_on_first_world(None));
+        assert!(seed_on_first_world(Some(false)));
+        assert!(!seed_on_first_world(Some(true)));
     }
 
     #[test]
