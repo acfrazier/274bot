@@ -15,7 +15,7 @@ use std::time::Duration;
 use api::interact::Driver;
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 use host_play::{
-    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
+    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus, TuneError,
 };
 use nav::grid::StepGrid;
 use nav::router::{find, NoPath};
@@ -168,6 +168,8 @@ pub struct Session {
     /// Channel-head wall: one fat Client (the TV); extras are lean sockets.
     /// Off for headed `null_raster` (two Clients). On for `stress50` / MultiBox.
     pub channel_head: bool,
+    /// Slot-thread view of [`Self::channel_head`] (the per-frame hook).
+    tv: Arc<AtomicBool>,
     /// Channel-head TV tube: `true` means highmem + SFX on the fat head
     /// (default). Independent of vault `ProfileSettings.lowmem`.
     pub tube_sfx: bool,
@@ -236,6 +238,7 @@ impl Session {
             wall: Wall::default(),
             multibox: false,
             channel_head: false,
+            tv: Arc::new(AtomicBool::new(false)),
             tube_sfx: true,
             ui: crate::ui_state::load(),
             options: PlayOptions {
@@ -290,7 +293,7 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.set_multibox(true);
-        self.channel_head = false;
+        self.set_channel_head(false);
         self.scatter.store(false, Ordering::Relaxed);
         // First MultiBox-on opens the chooser; live already loaded both
         // names. Leave the window usable (operator may click the rail).
@@ -326,7 +329,7 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.set_multibox(true);
-        self.channel_head = true;
+        self.set_channel_head(true);
         self.scatter.store(true, Ordering::Relaxed);
         // First MultiBox-on opens the chooser; live already loaded all
         // names. Leave the window usable (operator may click the rail).
@@ -350,6 +353,7 @@ impl Session {
         let mainland = Arc::clone(&self.mainland);
         let mainland_sent = Arc::clone(&self.mainland_sent);
         let scatter = Arc::clone(&self.scatter);
+        let tv = Arc::clone(&self.tv);
         let travellers = Arc::clone(&self.travellers);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
@@ -359,7 +363,15 @@ impl Session {
             Vec::new(),
             |_| (None, None),
             move |c, name| {
-                let draw = draw_for_slot(&focus.lock().unwrap(), name);
+                let f = focus.lock().unwrap();
+                let draw = if tv.load(Ordering::Relaxed) {
+                    // This hook only runs on the fat Client. The focused
+                    // name is the channel selector; keep the TV painting.
+                    f.game_pane_open && crate::focus::renderer_for(&f, name)
+                } else {
+                    draw_for_slot(&f, name)
+                };
+                drop(f);
                 c.set_draw(draw);
                 if c.ingame
                     && c.scene_state == 2
@@ -551,9 +563,63 @@ impl Session {
     /// channel-change. Capture follows the new focus when the single capture
     /// toggle is on (never two keyboards). The credentials fields follow.
     /// New slots inherit the vault profile's auto-login (and logout latch).
+    ///
+    /// Channel-head: the Game pane is the TV. Clicking a lean cap (or the
+    /// combo) opcode-18 retunes the fat Client onto that account.
     pub fn select(&mut self, name: &str) {
-        let arm = self.arm_for_profile(name);
-        self.ensure_slot(name, arm);
+        let one_tube = self.channel_head
+            && self
+                .focus
+                .lock()
+                .unwrap()
+                .only_render_selected;
+        if one_tube && self.play.is_some() {
+            let head = self.play.as_ref().and_then(|p| p.fat_head_name());
+            if head.is_none() {
+                let arm = self.arm_for_profile(name);
+                self.ensure_slot(name, arm);
+            } else if head.as_deref() != Some(name) {
+                if let Err(e) = self.tune_to(name) {
+                    self.error = Some(format!("tune {name}: {e:?}"));
+                }
+            }
+        } else {
+            let arm = self.arm_for_profile(name);
+            self.ensure_slot(name, arm);
+        }
+        self.apply_focus(name);
+    }
+
+    /// Opcode-18 retune: drop lean `name`, park the current TV as lean,
+    /// spawn `name` as the fat head. No-op when `name` is already the TV.
+    fn tune_to(&mut self, name: &str) -> Result<(), TuneError> {
+        let play = self.play.as_mut().expect("tune_to requires a play");
+        if play.fat_head_name().as_deref() == Some(name) {
+            return Ok(());
+        }
+        if let Some(mut p) = self
+            .vault
+            .as_ref()
+            .and_then(|v| v.get(name))
+            .cloned()
+        {
+            p.settings.lowmem = !self.tube_sfx;
+            play.remember_profile(p);
+        }
+        let input = SlotInput::new();
+        let pixels = PixelBuf::new();
+        play.retune(
+            name,
+            Some(Arc::clone(&input)),
+            Some(Arc::clone(&pixels)),
+        )?;
+        self.slots.clear();
+        self.slots
+            .insert(name.to_string(), SlotIo { input, pixels });
+        Ok(())
+    }
+
+    fn apply_focus(&mut self, name: &str) {
         {
             // Reload so an injected/disk collapsed map is not clobbered.
             let mut ui = crate::ui_state::load();
@@ -869,7 +935,9 @@ impl Session {
         } else {
             self.ensure_slot(name, self.arm_for_profile(name));
         }
-        self.select(name);
+        // Chooser / Load all spawn onto the rail; they must not opcode-18
+        // steal the TV. Cap-click / combo goes through [`select`].
+        self.apply_focus(name);
         self.sync_wall_focus();
         newly
     }
@@ -950,9 +1018,14 @@ impl Session {
     /// policy (`Focus.wall_open`), which stays true for rail **or** grid.
     /// Off: clear the grid and any open chooser and stop extra rasters
     /// (`wall_open = false`) without logging anyone out.
+    pub fn set_channel_head(&mut self, on: bool) {
+        self.channel_head = on;
+        self.tv.store(on, Ordering::Relaxed);
+    }
+
     pub fn set_multibox(&mut self, on: bool) {
         self.multibox = on;
-        self.channel_head = on;
+        self.set_channel_head(on);
         self.scatter.store(on, Ordering::Relaxed);
         if on {
             let running: Vec<String> = self
@@ -1718,7 +1791,7 @@ mod tests {
                 .upsert(profile(n, "pw", uid))
                 .unwrap();
         }
-        s.channel_head = true;
+        s.set_channel_head(true);
         s.select("alice");
         s.load("bob");
         s.load("carol");
@@ -1758,7 +1831,7 @@ mod tests {
             .unwrap()
             .upsert(profile("alice", "pw", 1))
             .unwrap();
-        s.channel_head = true;
+        s.set_channel_head(true);
         assert!(s.tube_sfx, "TV tube SFX on by default");
         assert!(
             !s.focused_lowmem(),
@@ -1792,7 +1865,7 @@ mod tests {
                 .upsert(profile(n, "pw", uid))
                 .unwrap();
         }
-        s.channel_head = true;
+        s.set_channel_head(true);
         s.focus.lock().unwrap().only_render_selected = false;
         s.select("alice");
         s.load("bob");

@@ -21,7 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use api::interact::Driver;
 use api::prot::Out;
-use client::client::{ClientConfig, LoginError, MiniMenuAction};
+use client::client::{Client, ClientConfig, LoginError, MiniMenuAction};
 use client::io::{ClientProt, ClientStream, Isaac, Packet, ServerProt, SERVER_PROT_SIZES};
 use client::util::JString;
 use client::{LOGIN_RSAE, LOGIN_RSAN};
@@ -155,6 +155,49 @@ impl Lean {
 
     pub fn snapshot(&self) -> &LeanSnapshot {
         &self.snapshot
+    }
+
+    /// Park baton: steal the fat Client's live socket + ISAAC + inbound
+    /// cursor. The Client must not write the game stream after this; drop
+    /// it or reuse it for another account. No TCP close.
+    pub fn from_client(client: &mut Client) -> Option<Self> {
+        let stream = client.stream.take()?;
+        let random_in = client
+            .random_in
+            .take()
+            .unwrap_or_else(|| Isaac::new(&[0; 4]));
+        let out = std::mem::replace(&mut client.out, Packet::alloc(1));
+        let incoming = std::mem::replace(&mut client.r#in, Packet::alloc(1));
+        let ptype = std::mem::replace(&mut client.ptype, -1);
+        let psize = std::mem::replace(&mut client.psize, 0);
+        Some(Lean {
+            stream,
+            random_in,
+            out,
+            menu_action: [0; 10],
+            menu_param_a: [0; 10],
+            menu_param_b: [0; 10],
+            menu_param_c: [0; 10],
+            obj_com_id: 0,
+            obj_selected_slot: 0,
+            obj_selected_com_id: 0,
+            target_com_id: 0,
+            incoming,
+            ptype,
+            psize,
+            snapshot: LeanSnapshot {
+                pid: client.self_slot,
+                tile_x: client.map_build_base_x,
+                tile_z: client.map_build_base_z,
+                scene_state: client.scene_state,
+            },
+        })
+    }
+
+    /// Reverse baton: the live socket, for a fat Client to opcode-18
+    /// reconnect in place (same TCP, server dumps region/player state).
+    pub fn into_stream(self) -> ClientStream {
+        self.stream
     }
 
     fn login_attempt(
@@ -926,6 +969,18 @@ mod tests {
         let mut enc = Isaac::new(&[0; 4]);
         let want = ClientProt::CLIENT_CHEAT.id.wrapping_add(enc.next_int()) as u8;
         assert_eq!(recv[0], want, "first byte is ISAAC-encrypted CLIENT_CHEAT");
+    }
+
+    #[test]
+    fn from_client_without_stream_is_none() {
+        let mut c = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        });
+        assert!(Lean::from_client(&mut c).is_none());
     }
 
     fn recv_flush(lean: &mut Lean, srv: &mut std::net::TcpStream) -> Vec<u8> {

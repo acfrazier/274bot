@@ -173,9 +173,13 @@ impl Host {
         client.mainloop();
         slot.loop_ns = slot.loop_ns.wrapping_add(t_loop.elapsed().as_nanos() as u64);
         let capture = input.map(|i| i.enabled()).unwrap_or(false);
+        // Channel-tune / first rebuild: TV static must re-roll every 20 ms,
+        // not the 1 fps watch cadence (otherwise the zap is one snow frame
+        // a second and looks like a frozen splash).
+        let zap = client.ingame && client.scene_state != 2;
         let paint = raster_this_tick(
             client.draw,
-            capture,
+            capture || zap,
             &mut slot.raster_n,
             &mut slot.raster_was_on,
         );
@@ -579,6 +583,7 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn raster_this_tick_watch_is_one_fps_capture_is_every_tick() {
         let mut n = 0;
         let mut on = false;
@@ -601,6 +606,8 @@ mod tests {
     fn watch_only_draw_copies_first_tick_then_one_fps() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         c.set_draw(true);
+        c.ingame = true;
+        c.scene_state = 2;
         let buf = PixelBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -612,6 +619,25 @@ mod tests {
         }
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 2);
+    }
+
+    #[test]
+    fn loading_scene_paints_every_tick_for_tv_static() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        c.set_draw(true);
+        c.ingame = true;
+        c.scene_state = 1;
+        let buf = PixelBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 1);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(
+            buf.generation(),
+            2,
+            "scene_state != 2 must re-roll static every 20 ms"
+        );
     }
 
     #[test]

@@ -494,7 +494,14 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
     }
     let (draw, capture) = {
         let focus = state.session.focus.lock().unwrap();
-        (should_draw(&focus), should_capture(&focus))
+        if state.session.channel_head {
+            // Game pane is the TV: keep painting even when a lean cap is
+            // the selected channel name.
+            let d = focus.game_pane_open && focus.renderer;
+            (d, d && focus.capture)
+        } else {
+            (should_draw(&focus), should_capture(&focus))
+        }
     };
     if draw {
         let buf = state.session.focused_pixels();

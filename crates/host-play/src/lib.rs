@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -170,6 +171,15 @@ pub struct SlotArm {
     /// so an unexpected DC re-handshakes; a panel one-shot arm disarms
     /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
+    /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
+    /// is 16; after a grant, or when parking/tuning, this is true.
+    pub reconnect: Arc<AtomicBool>,
+    /// Park/tune baton: the slot thread sends its live `Lean` here on stop
+    /// instead of dropping the TCP.
+    pub handoff: Mutex<Option<mpsc::Sender<Lean>>>,
+    /// Reverse baton: spawn_slot starts from this live socket and opcode-18
+    /// reconnects in place.
+    pub adopt: Mutex<Option<Lean>>,
 }
 
 impl SlotArm {
@@ -181,6 +191,9 @@ impl SlotArm {
             stop: Arc::new(AtomicBool::new(false)),
             latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
+            reconnect: Arc::new(AtomicBool::new(false)),
+            handoff: Mutex::new(None),
+            adopt: Mutex::new(None),
         })
     }
 }
@@ -199,6 +212,8 @@ fn on_login_success(arm: &SlotArm) {
         arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed),
         Ordering::Relaxed,
     );
+    // A later DC / tune / park is opcode 18, not a cold 16.
+    arm.reconnect.store(true, Ordering::Relaxed);
 }
 
 /// Per-frame arm handling in the 20 ms body: press the CC_LOGOUT iface when
@@ -288,6 +303,21 @@ impl Play {
     /// running. The panel flips the arm's flags to login/logout/stop.
     pub fn arm(&self, name: &str) -> Option<Arc<SlotArm>> {
         self.arms.get(name).cloned()
+    }
+
+    /// Keep vault credentials for a later [`Play::tune`] / [`Play::retune`].
+    pub fn remember_profile(&mut self, profile: Profile) {
+        self.profiles
+            .insert(profile.username.clone(), profile);
+    }
+
+    /// The unique fat `Client` on this play (the TV). `None` while every
+    /// row is lean or the wall is empty.
+    pub fn fat_head_name(&self) -> Option<String> {
+        self.statuses()
+            .into_iter()
+            .find(|s| !s.lean)
+            .map(|s| s.username)
     }
 
     /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
@@ -382,12 +412,98 @@ impl Play {
     /// opcode 16, no `Client`), then pump the stream at the host cadence.
     /// The status row is marked `lean`; no-op if the name is already running.
     pub fn spawn_channel(&mut self, profile: Profile) {
+        self.spawn_channel_with(profile, false);
+    }
+
+    /// Like [`spawn_channel`], but the handshake is opcode 18 (park after
+    /// the fat head's socket dropped).
+    pub fn spawn_channel_reconnect(&mut self, profile: Profile) {
+        self.spawn_channel_with(profile, true);
+    }
+
+    fn spawn_channel_with(&mut self, profile: Profile, reconnect: bool) {
         self.profiles
             .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
         let arm = SlotArm::new(profile.uid, true);
+        arm.reconnect.store(reconnect, Ordering::Relaxed);
+        self.arms.insert(profile.username.clone(), Arc::clone(&arm));
+        spawn_channel_thread(
+            &self.options,
+            profile,
+            arm,
+            Arc::clone(&self.queue),
+            Arc::clone(&self.statuses),
+            &mut self.handles,
+        );
+    }
+
+    /// Threaded channel-head tune: baton-pass lean `name` onto the fat
+    /// Client (opcode 18 on the same TCP), park the current fat as a lean
+    /// by stealing its socket. The panel passes the new head's IO.
+    pub fn retune(
+        &mut self,
+        name: &str,
+        input: Option<Arc<SlotInput>>,
+        pixels: Option<Arc<PixelBuf>>,
+    ) -> Result<(), TuneError> {
+        if self.fat_head_name().as_deref() == Some(name) {
+            return Ok(());
+        }
+        let profile = self
+            .profiles
+            .get(name)
+            .cloned()
+            .ok_or_else(|| TuneError::UnknownProfile(name.to_string()))?;
+        let incoming = self.take_live_lean(name);
+        let prev = self.fat_head_name();
+        if let Some(prev) = prev.filter(|p| p != name) {
+            if let Some(parked) = self.take_live_lean(&prev) {
+                if let Some(p) = self.profiles.get(&prev).cloned() {
+                    self.spawn_channel_from_lean(p, parked);
+                }
+            }
+        }
+        let arm = SlotArm::new(profile.uid, true);
+        let reconnect = incoming.is_some();
+        arm.reconnect.store(reconnect, Ordering::Relaxed);
+        if let Some(lean) = incoming {
+            *arm.adopt.lock().unwrap() = Some(lean);
+        }
+        self.spawn_slot(profile, input, pixels, Some(arm));
+        Ok(())
+    }
+
+    /// Steal a running slot's live socket as a Lean (thread handoff or the
+    /// in-process `channels` map). The TCP stays up.
+    fn take_live_lean(&mut self, name: &str) -> Option<Lean> {
+        if let Some(lean) = self.channels.remove(name) {
+            return Some(lean);
+        }
+        let (tx, rx) = mpsc::channel();
+        let arm = self.arms.get(name)?.clone();
+        *arm.handoff.lock().unwrap() = Some(tx);
+        arm.stop.store(true, Ordering::Relaxed);
+        self.spawned.remove(name);
+        self.statuses.lock().unwrap().retain(|s| s.username != name);
+        self.arms.remove(name);
+        if let Some(handle) = self.handles.remove(name) {
+            let _ = handle.join();
+        }
+        rx.recv_timeout(Duration::from_secs(5)).ok()
+    }
+
+    fn spawn_channel_from_lean(&mut self, profile: Profile, lean: Lean) {
+        self.profiles
+            .insert(profile.username.clone(), profile.clone());
+        if !self.spawned.insert(profile.username.clone()) {
+            return;
+        }
+        let arm = SlotArm::new(profile.uid, true);
+        arm.reconnect.store(true, Ordering::Relaxed);
+        *arm.adopt.lock().unwrap() = Some(lean);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         spawn_channel_thread(
             &self.options,
@@ -400,22 +516,17 @@ impl Play {
     }
 
     /// Tune the head to `name` (274bot channel head). Sequence:
-    /// 1. drop `name`'s lean channel if one is up (the server sees that
-    ///    account DC);
-    /// 2. park the current head: `Client::logout` then a `Lean::login`
-    ///    reconnect (opcode **18**, grant 15) so the previous account —
-    ///    whose head socket just dropped, a DC — stays ingame as a
-    ///    channel;
-    /// 3. reconnect the head as `name` with `login(..., reconnect = true)`
-    ///    (wrapper **18**, grant 15 — the server sees a valid lost_con
-    ///    reconnect for the account whose lean socket just dropped);
+    /// 1. Take `name`'s lean socket if one is up (baton, no DC);
+    /// 2. Park the current head: steal its live socket into a Lean
+    ///    (throw away World/ifaces/pixmaps) — no TCP close;
+    /// 3. Put `name`'s socket on the fat Client and opcode-**18** reconnect
+    ///    **in place** so the server dumps region/player state. No lean
+    ///    socket → fresh TCP 18 as before;
     /// 4. wipe the previous channel's scene (`scene_state = 0`, fresh
-    ///    `localPlayer`, cleared player/npc tables) — stock response 15
-    ///    keeps state for a *same-session* `lost_con`, which is the wrong
-    ///    story across accounts.
+    ///    `localPlayer`, cleared player/npc tables).
     ///
-    /// The first tune (no head yet) skips the park; the incoming handshake
-    /// is opcode 18 either way. Tuning the current head is a no-op.
+    /// The first tune (no head yet) skips the park. Tuning the current
+    /// head is a no-op.
     pub fn tune(&mut self, name: &str) -> Result<(), TuneError> {
         let profile = self
             .profiles
@@ -426,32 +537,19 @@ impl Play {
             return Ok(());
         }
 
-        // 1. The incoming account leaves the lean wall; the server sees
-        //    that connection drop, so the opcode-18 reconnect below is a
-        //    valid lost_con for the same account.
-        self.channels.remove(name);
+        // 1. Incoming lean: keep the TCP, hand the socket to the Client.
+        let incoming = self.channels.remove(name);
 
-        // 2. Park the current head: close its socket, then reconnect the
-        //    previous account as a lean channel (opcode 18, grant 15 —
-        //    the dropped head socket is a DC).
+        // 2. Park the current head: baton-pass the live socket into Lean.
         let mut client = if let Some(mut head) = self.head.take() {
             let prev_name = head.name.clone();
-            head.client.logout();
-            let prev = self
-                .profiles
-                .get(&prev_name)
-                .cloned()
-                .ok_or_else(|| TuneError::UnknownProfile(prev_name.clone()))?;
-            let config = bot_client_config(&self.options, &prev);
-            match Lean::login(&config, &prev.username, &prev.password, prev.uid, true) {
-                Ok(lean) => {
+            match Lean::from_client(&mut head.client) {
+                Some(lean) => {
                     self.channels.insert(prev_name, lean);
                 }
-                Err(e) => {
-                    // Park failed: restore the logged-out head so a retry
-                    // re-parks (a fresh connect) instead of re-logging in.
-                    self.head = Some(head);
-                    return Err(TuneError::Park(e));
+                None => {
+                    // No stream to steal (never logged in): leave parked
+                    // without a channel rather than a fake DC login.
                 }
             }
             head.client
@@ -464,10 +562,13 @@ impl Play {
             )
         };
 
-        // 3. Reconnect the head as `name` (wrapper opcode 18, grant 15).
-        //    The Client is reused across tunes, so its RSA login block must
-        //    carry `name`'s login uid, not the previous head's.
+        // 3. Opcode 18 on the adopted socket (or a fresh TCP if `name`
+        //    was not a lean channel). Same RSA block as a lost_con.
         client.login_uid = profile.uid;
+        if let Some(lean) = incoming {
+            client.stream = Some(lean.into_stream());
+            client.baton = true;
+        }
         client
             .login(name, &profile.password, true)
             .map_err(TuneError::Login)?;
@@ -656,8 +757,22 @@ fn spawn_slot_thread(
                         s.error = None;
                     }
                 }
-                match client.login(&username, &password, false) {
+                if let Some(lean) = arm.adopt.lock().unwrap().take() {
+                    client.stream = Some(lean.into_stream());
+                    client.baton = true;
+                    arm.reconnect.store(true, Ordering::Relaxed);
+                }
+                match client.login(
+                    &username,
+                    &password,
+                    arm.reconnect.load(Ordering::Relaxed),
+                ) {
                     Ok(()) => {
+                        if arm.reconnect.load(Ordering::Relaxed) {
+                            // Response 15 keeps the previous session; a
+                            // channel change is a different account's scene.
+                            client.wipe_scene();
+                        }
                         backoff.reset();
                         // Auto-login slots stay armed so an unexpected DC
                         // re-handshakes; a one-shot Log in / Login all disarms
@@ -747,6 +862,13 @@ fn spawn_slot_thread(
                                 tick_flags(c, &ifaces_template, &arm) || !c.ingame
                             },
                         );
+                        if let Some(tx) = arm.handoff.lock().unwrap().take() {
+                            if let Some(lean) = Lean::from_client(&mut client) {
+                                let _ = tx.send(lean);
+                            }
+                            slot_queue.lock().unwrap().leave(uid);
+                            return;
+                        }
                         // The 20 ms body exits as soon as the client leaves the
                         // game (clean IF logout / DC / stop); the last observe
                         // ran before the exit, so record the title state here —
@@ -821,6 +943,21 @@ fn spawn_channel_thread(
                         ..SlotStatus::default()
                     });
                 }
+                if let Some(mut lean) = arm.adopt.lock().unwrap().take() {
+                    loop {
+                        if arm.stop.load(Ordering::Relaxed) {
+                            if let Some(tx) = arm.handoff.lock().unwrap().take() {
+                                let _ = tx.send(lean);
+                            }
+                            slot_queue.lock().unwrap().leave(uid);
+                            return;
+                        }
+                        if lean.pump().is_err() {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
                 loop {
                     if arm.stop.load(Ordering::Relaxed) {
                         slot_queue.lock().unwrap().leave(uid);
@@ -843,8 +980,15 @@ fn spawn_channel_thread(
                             s.error = None;
                         }
                     }
-                    match Lean::login(&config, &username, &password, uid, false) {
+                    match Lean::login(
+                        &config,
+                        &username,
+                        &password,
+                        uid,
+                        arm.reconnect.load(Ordering::Relaxed),
+                    ) {
                         Ok(mut lean) => {
+                            arm.reconnect.store(true, Ordering::Relaxed);
                             if debug_enabled() {
                                 eprintln!("[host-play] channel {username}: ingame");
                             }
@@ -862,6 +1006,9 @@ fn spawn_channel_thread(
                             let mut seeded = false;
                             loop {
                                 if arm.stop.load(Ordering::Relaxed) {
+                                    if let Some(tx) = arm.handoff.lock().unwrap().take() {
+                                        let _ = tx.send(lean);
+                                    }
                                     slot_queue.lock().unwrap().leave(uid);
                                     return;
                                 }
@@ -1555,25 +1702,17 @@ mod tests {
         }
     }
 
-    /// Tune B (274bot Task 3): the head reconnects as B with wrapper opcode
-    /// **18** (a valid lost_con reconnect after B's lean channel is
-    /// dropped), the previous head A is parked as a **reconnect** lean
-    /// channel (opcode 18 — the dropped head socket is a DC), and the
-    /// response-15 grant is followed by a scene wipe (stock response 15
-    /// keeps state for a same-session `lost_con`; a channel change is a
-    /// different account's scene).
+    /// Tune B: park A is a socket baton (no extra login). B is not yet a
+    /// lean channel, so the head's 18 is a fresh TCP. Wrappers: A's 18,
+    /// B's 18 — not a third park-18.
     #[test]
     fn tune_b_handshake_is_18_and_parks_a_as_lean() {
-        // One fake server on the shared host:port; the connection order is
-        // deterministic: A's tune-in (18→15), A's park lean (18→15), B's
-        // tune-in (18→15). The wrapper opcode of each loginout block is
-        // recorded (buf[0]) so the test can pin the 18-not-16 contract.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let wrappers = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&wrappers);
         let server = thread::spawn(move || {
-            for _ in 0..3 {
+            for _ in 0..2 {
                 let (mut s, _) = listener.accept().unwrap();
                 let mut hdr = [0u8; 2];
                 s.read_exact(&mut hdr).unwrap();
@@ -1619,8 +1758,8 @@ mod tests {
             let w = wrappers.lock().unwrap();
             assert_eq!(
                 w.as_slice(),
-                &[18, 18, 18],
-                "tune-in and park are both opcode 18 reconnects"
+                &[18, 18],
+                "A tune-in and B tune-in are 18; park is a baton, not a third login"
             );
         }
         let head = play.head.as_ref().unwrap();
@@ -1657,6 +1796,78 @@ mod tests {
             "the tuned head is not a lean channel"
         );
         play.channels.get_mut("a").unwrap().pump().unwrap();
+        server.join().unwrap();
+    }
+
+    fn grant_login(s: &mut std::net::TcpStream, log: &Mutex<Vec<u8>>, code: u8) {
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14);
+        for _ in 0..8 {
+            s.write_all(&[0]).unwrap();
+        }
+        s.write_all(&[0]).unwrap();
+        s.write_all(&[0u8; 8]).unwrap();
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        log.lock().unwrap().push(buf[0]);
+        s.write_all(&[code]).unwrap();
+        if code == 2 {
+            s.write_all(&[0, 0]).unwrap(); // staff + mouse after grant 2
+        }
+    }
+
+    /// Reverse baton: B is already a lean channel. Tune B must opcode-18
+    /// on B's existing TCP (fake reconnect so the server dumps state),
+    /// not open a third socket. A is parked by stealing its socket.
+    #[test]
+    fn tune_reverse_baton_sends_18_on_the_lean_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let wrappers = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&wrappers);
+        let server = thread::spawn(move || {
+            let (mut a, _) = listener.accept().unwrap();
+            grant_login(&mut a, &log, 15);
+            let (mut b, _) = listener.accept().unwrap();
+            grant_login(&mut b, &log, 2);
+            grant_login(&mut b, &log, 15);
+            let _ = a;
+        });
+
+        let opts = PlayOptions {
+            host: "127.0.0.1".into(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        };
+        let mut play = run_with_io(&opts, vec![], |_| (None, None), |_, _| {});
+        play.profiles.insert("a".into(), profile("a", 1));
+        play.profiles.insert("b".into(), profile("b", 2));
+        play.tune("a").unwrap();
+
+        let cfg = ClientConfig {
+            host: "127.0.0.1".into(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        };
+        let lean = Lean::login(&cfg, "b", "pw", 2, false).unwrap();
+        play.channels.insert("b".into(), lean);
+        play.tune("b").unwrap();
+
+        assert_eq!(
+            wrappers.lock().unwrap().as_slice(),
+            &[18, 16, 18],
+            "A 18, B cold 16, B reverse-baton 18 on the same socket"
+        );
+        assert_eq!(play.head.as_ref().unwrap().name, "b");
+        assert!(play.channels.contains_key("a"));
+        assert!(!play.channels.contains_key("b"));
+        assert_eq!(play.head.as_ref().unwrap().client.scene_state, 0);
         server.join().unwrap();
     }
 }
