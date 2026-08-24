@@ -33,6 +33,10 @@ pub struct LeanSnapshot {
     pub tile_x: i32,
     pub tile_z: i32,
     pub scene_state: i32,
+    /// Inbound `PLAYER_INFO` frames the pump applied or skip-as-seen — the
+    /// lean channel's tick edge (fat scripts mirror it via
+    /// `slot::should_emit_tick`).
+    pub tick: u64,
 }
 
 /// Login response codes, socket failures, and malformed frames.
@@ -196,6 +200,7 @@ impl Lean {
                 tile_x: client.map_build_base_x,
                 tile_z: client.map_build_base_z,
                 scene_state: client.scene_state,
+                tick: 0,
             },
         })
     }
@@ -310,6 +315,7 @@ impl Lean {
                     tile_x: 0,
                     tile_z: 0,
                     scene_state: 0,
+                    tick: 0,
                 },
             });
         }
@@ -339,6 +345,7 @@ impl Lean {
                     tile_x: 0,
                     tile_z: 0,
                     scene_state: 0,
+                    tick: 0,
                 },
             });
         }
@@ -429,6 +436,13 @@ impl Lean {
                 self.snapshot.scene_state = 1;
                 self.snapshot.tile_x = (zone_x - 6) * 8;
                 self.snapshot.tile_z = (zone_z - 6) * 8;
+            }
+            ServerProt::PLAYER_INFO => {
+                // Count, do not decode: `read_frame` already consumed the
+                // blob by size, and the player-list decode (local-player
+                // tile, NPCs) is a later gap. One inbound PLAYER_INFO is
+                // the tick edge.
+                self.snapshot.tick += 1;
             }
             _ => {}
         }
@@ -821,6 +835,7 @@ mod tests {
                 tile_x: 0,
                 tile_z: 0,
                 scene_state: 0,
+                tick: 0,
             },
         };
         (lean, srv)

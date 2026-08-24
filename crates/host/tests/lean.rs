@@ -9,8 +9,10 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use std::time::Duration;
 
 use client::client::ClientConfig;
+use client::io::{Isaac, ServerProt};
 use host::lean::{Lean, LeanError};
 
 fn cfg(addr: &std::net::SocketAddr) -> ClientConfig {
@@ -122,4 +124,65 @@ fn lean_login_maps_server_response_codes() {
     };
     assert_eq!(e.code, 6);
     assert_eq!(e.mes1, "RuneScape has been updated!");
+}
+
+/// The lean tick edge: each inbound `PLAYER_INFO` frame bumps
+/// `LeanSnapshot.tick` by one even though the blob is skip-as-seen (no
+/// player-list decode yet); the packets a lean channel does apply leave
+/// the tick alone. The grant-on-the-probe path never exchanges a seed, so
+/// both sides use the zero inbound Isaac (the channel `Lean::login` builds
+/// when `response == 2` without a seed round-trip).
+#[test]
+fn lean_snapshot_tick_counts_player_info_frames() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14); // login server probe
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[2]).unwrap(); // grant on the probe: no seed exchange
+        s.write_all(&[0, 0]).unwrap(); // staff level, mouse tracking
+
+        let mut enc = Isaac::new(&[0; 4]);
+        // UPDATE_PID (133, size 3): pid 7.
+        let frame = vec![ServerProt::UPDATE_PID.wrapping_add(enc.next_int()) as u8, 0, 7, 1];
+        s.write_all(&frame).unwrap();
+        // REBUILD_NORMAL (231, size 4): zone (48, 49).
+        let frame = vec![
+            ServerProt::REBUILD_NORMAL.wrapping_add(enc.next_int()) as u8,
+            0,
+            48,
+            0,
+            49,
+        ];
+        s.write_all(&frame).unwrap();
+        // PLAYER_INFO (167, size -2): 2-byte length prefix + a 1-byte blob.
+        let frame = vec![
+            ServerProt::PLAYER_INFO.wrapping_add(enc.next_int()) as u8,
+            0,
+            1,
+            0,
+        ];
+        s.write_all(&frame).unwrap();
+    });
+
+    let mut lean = Lean::login(&cfg(&addr), "bob", "pw", 1, false).unwrap();
+    assert_eq!(lean.snapshot().tick, 0, "no frame pumped yet");
+    for _ in 0..100 {
+        if lean.snapshot().tick == 1 {
+            break;
+        }
+        lean.pump().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(lean.snapshot().tick, 1, "one PLAYER_INFO frame counted");
+    assert_eq!(lean.snapshot().pid, 7, "UPDATE_PID still applies");
+    assert_eq!(lean.snapshot().scene_state, 1);
+    assert_eq!(lean.snapshot().tile_x, 336);
+    assert_eq!(lean.snapshot().tile_z, 344);
+    server.join().unwrap();
 }
