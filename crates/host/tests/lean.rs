@@ -100,19 +100,23 @@ fn lean_login_reconnect_uses_18_and_accepts_15() {
 }
 
 /// Server responses other than 2 map to the Java title lines; the stream
-/// is closed and the caller can retry.
+/// is closed and the caller can retry. Task 11: code 6 refreshes the login
+/// modulus and retries once, so a persistent code 6 needs two responses
+/// before the error surfaces.
 #[test]
 fn lean_login_maps_server_response_codes() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        let (mut s, _) = listener.accept().unwrap();
-        let mut hdr = [0u8; 2];
-        let _ = s.read_exact(&mut hdr);
-        for _ in 0..8 {
-            let _ = s.write_all(&[0]);
+        for _ in 0..2 {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut hdr = [0u8; 2];
+            let _ = s.read_exact(&mut hdr);
+            for _ in 0..8 {
+                let _ = s.write_all(&[0]);
+            }
+            let _ = s.write_all(&[6]); // "RuneScape has been updated!"
         }
-        let _ = s.write_all(&[6]); // "RuneScape has been updated!"
     });
 
     let err = match Lean::login(&cfg(&addr), "bob", "pw", 1, false) {

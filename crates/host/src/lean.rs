@@ -24,7 +24,7 @@ use api::prot::Out;
 use client::client::{Client, ClientConfig, LoginError, MiniMenuAction};
 use client::io::{ClientProt, ClientStream, Isaac, Packet, ServerProt, SERVER_PROT_SIZES};
 use client::util::JString;
-use client::{LOGIN_RSAE, LOGIN_RSAN};
+use client::login_rsa::{login_modulus, LOGIN_RSAE};
 use num_bigint::BigUint;
 
 /// What a lean channel knows about the game after login / pump.
@@ -109,7 +109,9 @@ impl Lean {
     /// head socket dropped — a DC) sends wrapper opcode **18** and accepts
     /// a response-**15** grant. No `Client`, no cache unpack, no
     /// `prepare_game`. Response 1 retries on a fresh connection after
-    /// Java's 2 s wait, up to [`LOGIN_RETRIES`] times.
+    /// Java's 2 s wait, up to [`LOGIN_RETRIES`] times. Response 6
+    /// ("RuneScape has been updated!") refreshes the login modulus from the
+    /// web origin and retries **once** (rs2b0t `loginKey.ts`).
     pub fn login(
         config: &ClientConfig,
         user: &str,
@@ -118,12 +120,22 @@ impl Lean {
         reconnect: bool,
     ) -> Result<Self, LeanError> {
         let mut attempts = 0;
+        let mut key_retries = 1;
         loop {
             match Self::login_attempt(config, user, pass, uid, reconnect) {
                 Ok(lean) => return Ok(lean),
                 Err(LeanError::Login(ref e)) if e.code == 1 && attempts < LOGIN_RETRIES => {
                     attempts += 1;
                     thread::sleep(Duration::from_millis(2000));
+                }
+                Err(LeanError::Login(ref e)) if e.code == 6 && key_retries > 0 => {
+                    key_retries -= 1;
+                    let (scheme, port) = client::login_rsa::login_key_origin(&config.host, 80);
+                    if let Some(n) =
+                        client::login_rsa::fetch_login_modulus(&config.host, port, scheme)
+                    {
+                        let _ = client::login_rsa::set_login_modulus(&n);
+                    }
                 }
                 Err(e) => return Err(e),
             }
@@ -260,7 +272,7 @@ impl Lean {
             out.p4(uid);
             out.pjstr(user);
             out.pjstr(pass);
-            let n = BigUint::from_str(LOGIN_RSAN).unwrap();
+            let n = BigUint::from_str(&login_modulus()).unwrap();
             let e = BigUint::from_str(LOGIN_RSAE).unwrap();
             out.rsaenc(&n, &e);
 

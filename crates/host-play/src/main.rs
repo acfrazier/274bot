@@ -61,6 +61,11 @@ fn parse_args() -> Args {
         lowmem: true,
         mainland: env::var("BOT_MAINLAND").as_deref() == Ok("1"),
     };
+    // `TARGET=live` bake: default to the rs2b2t live world (port stays the
+    // 43594 TCP the local engine uses); `--host` still overrides.
+    if env::var("TARGET").as_deref() == Ok("live") {
+        args.host = "w1.rs2b2t.com".into();
+    }
     let mut it = env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
