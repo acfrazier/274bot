@@ -9,7 +9,8 @@ tick and the encrypted vault.
 - [nav.md](nav.md) — baked nav pack, A* router, per-tick traveller, WalkTo picker
 - [login.md](login.md) — login FIFO throttle numbers
 - [vault.md](vault.md) — encrypted profile vault, `BOT_VAULT_PASS` / `--vault-pass`
-- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox wall (rail/grid/chooser), renderer vs capture, mocks
+- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox wall (rail/grid/chooser), renderer vs capture, scripts
+- [script.md](script.md) — compiled `tick` vs Load isolate; picker; PLAYER_INFO wake
 
 ## Layout
 
@@ -20,7 +21,8 @@ tick and the encrypted vault.
 | `host` | One OS thread per client slot; drains gens per frame; snapshot/settle/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM) |
 | `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |
-| `panel` | Native dear-app/ImGui UI (`panel-play`): profile combo, credentials, status/log, game renderer, capture, MultiBox wall (rail/grid/chooser) |
+| `script` | Compiled `Script` trait + Load isolate (`rustyscript`); picker ids |
+| `panel` | Native dear-app/ImGui UI (`panel-play`): profile combo, credentials, script Browse/Start/Pause/Stop, MultiBox wall |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)
@@ -40,9 +42,9 @@ the tick edge instead:
    (energy can move on `UPDATE_RUNENERGY` without `PLAYER_INFO`).
 
 `player_info` true ⇔ `gens.player` moved since the last drain — that is the
-**server-tick** edge (scripts that must think once per cycle use it). A drain
-with only e.g. `NPC_INFO` marks families dirty and still rebuilds/settles,
-but is not a player-tick.
+**server-tick** edge (compiled scripts `tick` here; lean counts inbound
+`PLAYER_INFO` on `LeanSnapshot.tick`). A drain with only e.g. `NPC_INFO`
+marks families dirty and still rebuilds/settles, but is not a player-tick.
 
 ## Auto-run
 

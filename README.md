@@ -20,7 +20,10 @@ game blit, click-through capture, MultiBox rail/grid, `--live` harness.
 
 ## What it does not (yet)
 
-- Not **scripts** — script/parameter chrome stays mocked (campaign 5).
+- Script **ports** are still thin: compiled picker cards exist; **WalkTo
+  Start is `not ported`** until `ctx.walk` is wired. Load’d JS is isolate +
+  a stub `@rs2b0t` prelude, not a full rs2b0t ABI. Parameters **Edit** is
+  gray (`not in v1`).
 - The **wall is in** (campaign 4). Unlocking the vault starts the **first**
   profile as a live slot; other vault rows stay parked until selected (or
   loaded onto the wall). MultiBox raises the running set as a sidecar rail
@@ -49,11 +52,24 @@ cd 274bot
 ```
 
 You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the
-pack cache. Bake the client RSA public half from the engine's `private.pem`
-the same way Fairy Ring does (`vendor/fr-client-rust/tools/redeploy.sh`, or
-`LOGIN_RSAN` / `LOGIN_RSAE` when compiling `client`). Default cache path if
-unset: `$HOME/experiments/Server/engine/data/pack/client` (override with
-`--cache`).
+pack cache. Default cache path if unset:
+`$HOME/experiments/Server/engine/data/pack/client` (override with `--cache`).
+
+**RSA bake:** cargo’s `TARGET` is the rustc triple, so the live/prod switch
+is **`BOT_TARGET`**. Local (default) still uses `LOGIN_RSAN` / `LOGIN_RSAE`
+or `vendor/fr-client-rust/tools/redeploy.sh` from the engine `private.pem`.
+Live rs2b2t is **not** that pem — scrape the public modulus from the served
+client (same as rs2b0t `b0t.sh`):
+
+```bash
+MOD=$(curl -s --max-time 15 https://w1.rs2b2t.com/client/client.js \
+  | grep -oE '[0-9]+' | awk 'length($0) >= 250 { print; exit }')
+BOT_TARGET=live LIVE_RSAN="$MOD" cargo build -p client
+# host-play live host: TARGET=live (runtime env, not the bake triple)
+```
+
+Login response **6** retries once after `/loginkey` then that `client.js`
+scrape. `prod` bake requires `PROD_RSAN`. TCP `w1.rs2b2t.com:43594` — no WSS.
 
 ```bash
 export BOT_VAULT_PASS=bot
@@ -83,7 +99,16 @@ the next time the profile starts. Highmem/midi code stays in bothost
 # 50-bot MultiBox wall watch (temp vault s00…s49; 10 min timeout; local engine)
 cargo run --release -p panel --bin panel-play -- --live stress50
 # or BOT_LIVE=stress50; FIFO login takes minutes; does not fail on RSS size
+
+# Unit tests (no engine). CI: fmt + clippy --no-deps + cargo test (no LIVE=1)
+cargo test -p script --offline
 ```
+
+**Scripts (campaign 5 kernel):** panel **Browse / Start / Pause / Stop** are
+live. Compiled cards tick on the **PLAYER_INFO** edge (not every 20 ms). Idle
+slots have no V8. **Load** a `.ts`/`.js` to add a picker card tagged JS
+(same name overwrites; compiled names like WalkTo are reserved). V8 starts
+only when you Start that card. Persist: `~/.274bot/js-scripts.json`.
 
 `--release` matters: Pix3D is a CPU 3D painter. A debug `cargo run` will
 look frozen and show a gigabyte-class Activity Monitor spike (and `cargo`

@@ -219,13 +219,14 @@ profile's vault setting.
 not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
-Script and parameters stay mocked (campaign 5). Unwired controls are
-**disabled** with a per-item `campaign 5` tooltip (`SetItemTooltip`, not
-one window for every mock). Text and buttons wrap or equal-width-squish —
-**no horizontal scroll**. `chrome.rs` keeps the section inventory
-(`wired: bool`). Title (MultiBox is a live toggle), dim build line,
-banner, profile, status key/value rows, rendering, and input fill out the
-strip.
+**Script** Browse / Start / Pause / Stop are wired ([script.md](script.md)).
+Load is enabled except while a script is active. Parameters **Edit** stays
+disabled (`not in v1`); uncollapse shows schema defaults (empty until a
+port fills them). Remaining mocks: Global / Nav / Loadouts. Text and
+buttons wrap or equal-width-squish — **no horizontal scroll**. `chrome.rs`
+keeps the section inventory (`wired: bool`). Title (MultiBox is a live
+toggle), dim build line, banner, profile, status key/value rows,
+rendering, and input fill out the strip.
 
 ## Headless proof
 
