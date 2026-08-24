@@ -1,13 +1,15 @@
 //! Lean channel: a socket + Isaac + packet buffer that cold-logins
-//! (opcode 16) and drains the server stream without a `Client`, a World,
-//! caches, or ifaces. The host runs one per extra bot; snapshot decode is
-//! intentionally thin (pid, scene state, REBUILD_NORMAL origin tile).
+//! (opcode 16) or reconnects (opcode 18) and drains the server stream
+//! without a `Client`, a World, caches, or ifaces. The host runs one per
+//! extra bot; snapshot decode is intentionally thin (pid, scene state,
+//! REBUILD_NORMAL origin tile).
 //!
-//! The handshake is the 274 cold-login path verbatim minus the client
-//! shell: probe 14 + login-server byte, server seed, RSA login block, then
-//! a response-2 grant. [`Lean::pump`] consumes whatever frames are buffered
-//! by `SERVER_PROT_SIZES` and skips the opcodes a lean channel does not
-//! understand; it never blocks and never sends a keepalive.
+//! The handshake is the 274 login path verbatim minus the client shell:
+//! probe 14 + login-server byte, server seed, RSA login block, then a
+//! response-2 (cold) or response-15 (reconnect) grant. [`Lean::pump`]
+//! consumes whatever frames are buffered by `SERVER_PROT_SIZES` and skips
+//! the opcodes a lean channel does not understand; it never blocks and
+//! never sends a keepalive.
 
 use std::io;
 use std::str::FromStr;
@@ -83,19 +85,24 @@ pub struct Lean {
 }
 
 impl Lean {
-    /// Cold-login handshake (opcode 16): probe 14 + login-server byte,
-    /// seed, RSA login block, then a response-2 grant. No `Client`, no
-    /// cache unpack, no `prepare_game`. Response 1 retries on a fresh
-    /// connection after Java's 2 s wait, up to [`LOGIN_RETRIES`] times.
+    /// Login handshake: probe 14 + login-server byte, seed, RSA login
+    /// block, then a grant. A cold login (the channel's first ever session
+    /// for an account) sends wrapper opcode 16 and gets a response-2
+    /// grant; a reconnect (`reconnect = true`, the 274bot park after the
+    /// head socket dropped — a DC) sends wrapper opcode **18** and accepts
+    /// a response-**15** grant. No `Client`, no cache unpack, no
+    /// `prepare_game`. Response 1 retries on a fresh connection after
+    /// Java's 2 s wait, up to [`LOGIN_RETRIES`] times.
     pub fn login(
         config: &ClientConfig,
         user: &str,
         pass: &str,
         uid: i32,
+        reconnect: bool,
     ) -> Result<Self, LeanError> {
         let mut attempts = 0;
         loop {
-            match Self::login_attempt(config, user, pass, uid) {
+            match Self::login_attempt(config, user, pass, uid, reconnect) {
                 Ok(lean) => return Ok(lean),
                 Err(LeanError::Login(ref e)) if e.code == 1 && attempts < LOGIN_RETRIES => {
                     attempts += 1;
@@ -128,6 +135,7 @@ impl Lean {
         user: &str,
         pass: &str,
         uid: i32,
+        reconnect: bool,
     ) -> Result<Lean, LeanError> {
         let mut stream = ClientStream::connect(&config.host, config.port).map_err(LeanError::Io)?;
         let userhash = JString::to_userhash(user);
@@ -176,7 +184,11 @@ impl Lean {
             out.rsaenc(&n, &e);
 
             let mut loginout = Packet::alloc(1);
-            loginout.p1(16);
+            if reconnect {
+                loginout.p1(18);
+            } else {
+                loginout.p1(16);
+            }
             loginout.p1((out.pos + 36 + 1 + 1 + 2) as i32);
             loginout.p1(255);
             loginout.p2(CLIENT_VERSION);
@@ -201,6 +213,26 @@ impl Lean {
         if response == 2 {
             let _ = stream.read().map_err(LeanError::Io)?; // staff level
             let _ = stream.read().map_err(LeanError::Io)?; // mouse tracking
+            return Ok(Lean {
+                stream,
+                random_in,
+                out,
+                incoming,
+                ptype: -1,
+                psize: 0,
+                snapshot: LeanSnapshot {
+                    pid: 0,
+                    tile_x: 0,
+                    tile_z: 0,
+                    scene_state: 0,
+                },
+            });
+        }
+
+        if response == 15 {
+            // Reconnect grant (Java `Client.java` 3737): no staff/mouse
+            // bytes after 15 (unlike 2); the snapshot is thin anyway, so a
+            // reconnect channel just starts from the same zeroed defaults.
             return Ok(Lean {
                 stream,
                 random_in,

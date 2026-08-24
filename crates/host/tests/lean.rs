@@ -1,8 +1,10 @@
 //! Task 1: the lean channel cold-logins (opcode 16) and pumps inbound
-//! packets without constructing a `Client`. Listener mirror of
-//! `client/tests/login.rs`: probe 14, seed, encrypted login block, then a
-//! response-2 grant. No `Client`, no cache unpack, no `prepare_game` —
-//! there is no `Client` anywhere in this test binary.
+//! packets without constructing a `Client`. Task 3 fix: a reconnect
+//! (`reconnect = true`, the 274bot park after a head socket DC) sends
+//! wrapper opcode 18 and accepts a response-15 grant. Listener mirror of
+//! `client/tests/login.rs`: probe 14, seed, encrypted login block, then
+//! the grant. No `Client`, no cache unpack, no `prepare_game` — there is
+//! no `Client` anywhere in this test binary.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -59,8 +61,38 @@ fn lean_login_does_not_construct_a_client() {
         s.write_all(&[2, 0, 0]).unwrap(); // response 2, staff=0, mouseTrack=0
     });
 
-    let lean = Lean::login(&cfg(&addr), "bob", "pw", 1).unwrap();
+    let lean = Lean::login(&cfg(&addr), "bob", "pw", 1, false).unwrap();
     assert!(lean.snapshot().pid >= 0 || lean.snapshot().scene_state == 0);
+    assert_eq!(lean.snapshot().scene_state, 0);
+    server.join().unwrap();
+}
+
+/// 274bot park: the head socket dropped (a DC), so the lean reconnect
+/// sends wrapper opcode **18** and accepts a response-**15** grant (the
+/// same lost_con grant a fat `Client` reconnects with). The snapshot still
+/// starts zeroed — a lean channel has no scene to keep.
+#[test]
+fn lean_login_reconnect_uses_18_and_accepts_15() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14); // login server probe
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[0]).unwrap(); // response 0 → send seed
+        s.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap(); // g8 seed
+        let mut buf = [0u8; 512];
+        let n = s.read(&mut buf).unwrap();
+        assert!(n > 0);
+        assert_eq!(buf[0], 18); // reconnect wrapper
+        s.write_all(&[15]).unwrap(); // reconnect grant
+    });
+
+    let lean = Lean::login(&cfg(&addr), "bob", "pw", 1, true).unwrap();
     assert_eq!(lean.snapshot().scene_state, 0);
     server.join().unwrap();
 }
@@ -81,7 +113,7 @@ fn lean_login_maps_server_response_codes() {
         let _ = s.write_all(&[6]); // "RuneScape has been updated!"
     });
 
-    let err = match Lean::login(&cfg(&addr), "bob", "pw", 1) {
+    let err = match Lean::login(&cfg(&addr), "bob", "pw", 1, false) {
         Ok(_) => panic!("response 6 must reject the login"),
         Err(e) => e,
     };
