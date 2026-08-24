@@ -176,7 +176,8 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
 /// `(x, z, level)` when the body decoded one (the walk hook stays `None`
 /// until a slot traveller is wired — WalkTo then errors instead of faking
 /// arrival). Returns whether the driver's out buffer was written (the lean
-/// pump flushes; the fat `Client` sends on its next mainloop pass).
+/// pump flushes; the fat `Client` sends on its next mainloop pass). A slot
+/// whose script is Idle/Paused publishes nothing — no dispatch, no flush.
 fn script_observe(
     driver: &mut dyn Driver,
     name: &str,
@@ -192,7 +193,8 @@ fn script_observe(
         let mut all = scripts.lock().unwrap();
         if let Some(slot) = all.get_mut(name) {
             slot.on_is_up(up);
-            if tick_edge {
+            // skip script snapshot unless SlotScript is Running.
+            if tick_edge && slot.state() == script::RunState::Running {
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
@@ -2857,6 +2859,50 @@ mod tests {
             &mut c, "alice", true, true, 3, None, &scripts, &cheats
         ));
         assert_eq!(*count.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
+        // Task 12: an Idle SlotScript must not publish a script snapshot —
+        // no dispatch and no driver write, so the lean pump skips its flush.
+        let scripts = Arc::new(Mutex::new(HashMap::new()));
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        let count = Arc::new(Mutex::new(0));
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            vec![],
+        );
+        // Never started: no SlotScript entry (Idle). Edge + up publishes
+        // nothing — the driver's out buffer stays empty.
+        assert!(!script_observe(
+            &mut c, "alice", true, true, 1, None, &scripts, &cheats
+        ));
+        assert_eq!(c.out.pos, 0, "no script bytes on the driver");
+        // Started then stopped: Idle again, same skip.
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_insert_with(SlotScript::new)
+            .start_compiled(Box::new(TickCounter(Arc::clone(&count))))
+            .unwrap();
+        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
+        assert_eq!(
+            scripts.lock().unwrap().get("alice").unwrap().state(),
+            script::RunState::Idle
+        );
+        assert!(!script_observe(
+            &mut c, "alice", true, true, 2, None, &scripts, &cheats
+        ));
+        assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
 
     #[test]
