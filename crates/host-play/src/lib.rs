@@ -27,6 +27,10 @@ pub use host::Host;
 mod rss;
 mod scatter;
 use host::{should_emit_tick, PixelBuf, Pump, SlotInput};
+use nav::grid::StepGrid;
+use nav::router::find;
+use nav::tile::Tile;
+use nav::traveller::{NavStatus, Traveller};
 pub use rss::sample_process;
 pub use scatter::{scatter_tile_for, tele_args};
 
@@ -69,8 +73,8 @@ pub struct SlotStatus {
     pub player: String,
     /// `Client.main_modal_id` (open modal interface, -1 when none).
     pub main_modal_id: i32,
-    /// Queued walk target tile, -1 when idle (filled from the slot's
-    /// traveller when one is wired; Task 8+).
+    /// Queued walk target tile, -1 when idle (mirrored from the slot's
+    /// traveller by the pump's per-uid nav step each observe).
     pub walk_x: i32,
     pub walk_z: i32,
     pub walk_level: i32,
@@ -119,6 +123,18 @@ pub fn player_world_tile(
     route_z: i32,
 ) -> (i32, i32) {
     (map_build_base_x + route_x, map_build_base_z + route_z)
+}
+
+/// Nav pack path: `$NAV_PACK`, else `~/.274bot/274bot.navpack` (same rule
+/// as the panel picker; host-play must not depend on panel).
+pub fn default_pack_path() -> std::path::PathBuf {
+    match std::env::var("NAV_PACK") {
+        Ok(p) => std::path::PathBuf::from(p),
+        Err(_) => match std::env::var("HOME") {
+            Ok(home) => std::path::PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
+            Err(_) => std::path::PathBuf::from(".274bot/274bot.navpack"),
+        },
+    }
 }
 
 /// Defaults match the derived `Default` for every field except the queued
@@ -177,10 +193,12 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
 /// [`SlotScript::on_is_up`], dispatch [`SlotScript::on_game_tick`] on the
 /// PLAYER_INFO edge, then run any cheats the panel queued. `driver` is the
 /// slot body's own `Client`/`Lean`; `here` is the local player's world tile
-/// `(x, z, level)` when the body decoded one, else `None` (the walk hook
-/// stays `None` until a slot traveller is wired, and `factory(WalkTo)`
-/// reports "not ported" until then — a Start that would panic on the first
-/// tick must not succeed). Returns whether the driver's out buffer was
+/// `(x, z, level)` when the body decoded one, else `None` (then the walk
+/// hook refuses to arm). `travellers`/`grid` back the `ctx.walk` closure:
+/// A* from `here` to the requested tile on the host grid, arming the
+/// uid's traveller when a route exists (a Start that would panic on the
+/// first tick must not succeed when no route can arm). Returns whether the
+/// driver's out buffer was
 /// written (the lean pump flushes; the fat `Client` sends on its next
 /// mainloop pass). A slot whose script is Idle/Paused publishes nothing —
 /// no dispatch, no flush.
@@ -198,6 +216,8 @@ fn script_observe(
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    travellers: &Arc<Mutex<HashMap<String, Traveller>>>,
+    grid: &Option<Arc<StepGrid>>,
 ) -> bool {
     let mut wrote = false;
     {
@@ -206,11 +226,36 @@ fn script_observe(
             slot.on_is_up(up);
             // skip script snapshot unless SlotScript is Running.
             if tick_edge && slot.state() == script::RunState::Running {
+                let mut walk = {
+                    let grid = grid.clone();
+                    let travellers = Arc::clone(travellers);
+                    let name = name.to_string();
+                    move |x: i32, z: i32, level: i32| -> bool {
+                        let Some((hx, hz, hl)) = here else {
+                            return false;
+                        };
+                        let Some(grid) = grid.as_deref() else {
+                            return false;
+                        };
+                        let from = Tile { x: hx, z: hz, level: hl };
+                        let to = Tile { x, z, level };
+                        let Ok(route) = find(grid, from, to) else {
+                            return false;
+                        };
+                        travellers
+                            .lock()
+                            .unwrap()
+                            .entry(name.clone())
+                            .or_default()
+                            .arm(route);
+                        true
+                    }
+                };
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
                     here,
-                    walk: None,
+                    walk: Some(&mut walk),
                     inv,
                     obj_names,
                 });
@@ -229,6 +274,12 @@ fn script_observe(
     wrote
 }
 
+/// Per-slot nav latch key: the `(player gen / lean tick, here)` pair the
+/// pump last stepped. The step is skipped until either half changes, so a
+/// hop is sent once per server tick, not every 20 ms frame (panel
+/// `tick_latch`).
+type NavStepKey = (u64, Option<(i32, i32, i32)>);
+
 /// True when `name`'s slot script is Running — the only state that builds
 /// the per-observe inventory view (the observe re-checks the gate inside).
 fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str) -> bool {
@@ -237,6 +288,52 @@ fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str)
         .unwrap()
         .get(name)
         .is_some_and(|s| s.state() == script::RunState::Running)
+}
+
+/// One pump step of a uid's traveller: drive the armed route one hop
+/// through `driver`. `here` is the player's absolute tile when the body
+/// decoded one (else the traveller stands still) and `door_open` the
+/// door's live state (the fat observe reads the loc typecode; the lean
+/// pump passes `false` — see gaps.md). Mirrors the traveller's queued
+/// dest into the status row's `walk_*` fields (`-1` when idle). Returns
+/// the traveller's [`NavStatus`] so callers can tell whether the hop
+/// wrote the driver.
+fn step_traveller<D: Driver>(
+    driver: &mut D,
+    name: &str,
+    here: Option<(i32, i32, i32)>,
+    door_open: bool,
+    travellers: &Arc<Mutex<HashMap<String, Traveller>>>,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+) -> NavStatus {
+    let Some((hx, hz, hl)) = here else {
+        return NavStatus::Idle;
+    };
+    let here = Tile { x: hx, z: hz, level: hl };
+    let (status, queued) = {
+        let mut all = travellers.lock().unwrap();
+        let Some(t) = all.get_mut(name) else {
+            return NavStatus::Idle;
+        };
+        let status = t.tick(driver, here, door_open);
+        (status, t.queued())
+    };
+    let mut rows = statuses.lock().unwrap();
+    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
+        match queued {
+            Some(q) => {
+                s.walk_x = q.x;
+                s.walk_z = q.z;
+                s.walk_level = q.level;
+            }
+            None => {
+                s.walk_x = -1;
+                s.walk_z = -1;
+                s.walk_level = -1;
+            }
+        }
+    }
+    status
 }
 
 /// The fat Client's inventory `(obj_id, count)` slots, zipped from the
@@ -416,6 +513,14 @@ pub struct Play {
     /// Per-slot cheat commands the panel queued; each slot thread runs
     /// `api::interact::cheat` on its own Driver and flushes the socket.
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    /// Per-uid nav travellers: `ctx.walk` arms a route into the uid's
+    /// traveller and the slot pump steps it one hop per observe. One
+    /// struct per bot on the pump — no per-bot nav thread.
+    travellers: Arc<Mutex<HashMap<String, Traveller>>>,
+    /// Host-scope nav grid baked from the pack at construction (see
+    /// [`default_pack_path`]); `None` when no pack loads, and `ctx.walk`
+    /// then refuses to arm.
+    grid: Option<Arc<StepGrid>>,
 }
 
 /// Handoffs in flight for [`Play::retune`]: receivers are polled from
@@ -701,6 +806,8 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.travellers),
+            self.grid.clone(),
             Arc::clone(&self.obj_names),
             Arc::clone(&self.per_frame),
             &mut self.handles,
@@ -745,6 +852,8 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.travellers),
+            self.grid.clone(),
             Arc::clone(&self.obj_names),
             self.ifaces.clone(),
             &mut self.handles,
@@ -1032,6 +1141,8 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.travellers),
+            self.grid.clone(),
             Arc::clone(&self.obj_names),
             self.ifaces.clone(),
             &mut self.handles,
@@ -1151,6 +1262,8 @@ where
         pending_tune: None,
         scripts: Arc::new(Mutex::new(HashMap::new())),
         cheats: Arc::new(Mutex::new(HashMap::new())),
+        travellers: Arc::new(Mutex::new(HashMap::new())),
+        grid: nav::pack::load_pack(&default_pack_path()).ok().map(Arc::new),
     };
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
@@ -1185,6 +1298,8 @@ pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize)
         pending_tune: None,
         scripts: Arc::new(Mutex::new(HashMap::new())),
         cheats: Arc::new(Mutex::new(HashMap::new())),
+        travellers: Arc::new(Mutex::new(HashMap::new())),
+        grid: nav::pack::load_pack(&default_pack_path()).ok().map(Arc::new),
     };
     let tv_uid = profiles.first().map(|p| p.uid);
     for (i, profile) in profiles.into_iter().enumerate() {
@@ -1259,6 +1374,8 @@ fn spawn_slot_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_travellers: Arc<Mutex<HashMap<String, Traveller>>>,
+    slot_grid: Option<Arc<StepGrid>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
     slot_frame: SlotFrame,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
@@ -1415,8 +1532,14 @@ fn spawn_slot_thread(
                         let slot_scripts = Arc::clone(&slot_scripts);
                         let slot_cheats = Arc::clone(&slot_cheats);
                         let slot_obj_names = Arc::clone(&slot_obj_names);
+                        let slot_travellers = Arc::clone(&slot_travellers);
+                        let slot_grid = slot_grid.clone();
                         let mut pump = Pump::new();
                         let mut script_tick: u64 = 0;
+                        // Last `(player gen, here)` the traveller stepped:
+                        // skip until either changes so the hop budget counts
+                        // server ticks, not 20 ms frames (panel `tick_latch`).
+                        let mut last_nav_step: Option<NavStepKey> = None;
                         move |c, _ignored, run_sends| {
                             let name = uname_obs.lock().unwrap().clone();
                             slot_frame(c, &name);
@@ -1486,7 +1609,42 @@ fn spawn_slot_thread(
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
                                 &slot_cheats,
+                                &slot_travellers,
+                                &slot_grid,
                             );
+                            // Per-uid nav step on the pump, gated on the
+                            // player-gen/tile latch like the panel's WalkTo
+                            // hook so a hop is sent once per server tick,
+                            // not re-sent every 20 ms frame. Door state is
+                            // read live from the fat client's loc typecode.
+                            let nav_key = (c.gens.player, here);
+                            if last_nav_step != Some(nav_key) {
+                                last_nav_step = Some(nav_key);
+                                let door_open = {
+                                    let all = slot_travellers.lock().unwrap();
+                                    match all.get(&name).and_then(|t| {
+                                        here.and_then(|(hx, hz, hl)| {
+                                            t.current_door(Tile { x: hx, z: hz, level: hl })
+                                        })
+                                    }) {
+                                        Some((loc, closed_id)) => {
+                                            let (bx, bz) = c.build_base();
+                                            c.loc_typecode(loc.x - bx, loc.z - bz)
+                                                .map(|tc| (tc >> 14) & 0x7fff)
+                                                != Some(closed_id)
+                                        }
+                                        None => false,
+                                    }
+                                };
+                                step_traveller(
+                                    c,
+                                    &name,
+                                    here,
+                                    door_open,
+                                    &slot_travellers,
+                                    &slot_statuses,
+                                );
+                            }
                         }
                     },
                     {
@@ -1533,6 +1691,8 @@ fn run_lean_pump(
     slot_statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_travellers: &Arc<Mutex<HashMap<String, Traveller>>>,
+    slot_grid: &Option<Arc<StepGrid>>,
     slot_obj_names: &Arc<api::obj_names::ObjNames>,
     ifaces: &[Option<IfType>],
     seed: bool,
@@ -1553,6 +1713,9 @@ fn run_lean_pump(
     let mut seeded = !seed;
     let mut last_ka = Instant::now();
     let mut logging_out = false;
+    // Last `(tick, here)` the traveller stepped: skip until either changes
+    // so the hop budget counts PLAYER_INFOs, not 20 ms frames.
+    let mut last_nav_step: Option<NavStepKey> = None;
     loop {
         if arm.stop.load(Ordering::Relaxed) {
             send_handoff_lean(arm, Some(lean), uid, slot_queue);
@@ -1575,11 +1738,10 @@ fn run_lean_pump(
         let mut up = false;
         let mut tick_edge = false;
         let mut tick = 0u64;
-        // The lean snapshot only decodes the build-area origin
-        // (REBUILD_NORMAL zone), never the local player tile: `here` stays
-        // `None` until a lean player-tile decode exists (see gaps.md) — a
-        // script must not read the origin as its tile.
-        let here = None;
+        // The lean snapshot's `here` is the local player tile from the
+        // PLAYER_INFO teleport branch; it only moves on teleport/rebuild
+        // (walk-run tracking is a later gap — see gaps.md).
+        let mut here = None;
         {
             let mut all = slot_statuses.lock().unwrap();
             if let Some(s) = all.iter_mut().find(|s| s.username == username) {
@@ -1592,6 +1754,7 @@ fn run_lean_pump(
                         tick_edge = snap.tick != last_tick;
                         last_tick = snap.tick;
                         tick = snap.tick;
+                        here = snap.here;
                         s.scene_state = scene_state;
                         s.tile_x = snap.tile_x;
                         s.tile_z = snap.tile_z;
@@ -1639,7 +1802,7 @@ fn run_lean_pump(
         } else {
             None
         };
-        let wrote = script_observe(
+        let mut wrote = script_observe(
             &mut lean,
             username,
             up,
@@ -1650,7 +1813,22 @@ fn run_lean_pump(
             Some(slot_obj_names.as_ref()),
             slot_scripts,
             slot_cheats,
+            slot_travellers,
+            slot_grid,
         );
+        // Per-uid nav step on the pump, gated on the tick/tile latch like
+        // the fat path. Lean has no loc typecode decode, so every door leg
+        // is worked as closed (`door_open = false`; see gaps.md).
+        let nav_key = (tick, here);
+        if last_nav_step != Some(nav_key) {
+            last_nav_step = Some(nav_key);
+            if matches!(
+                step_traveller(&mut lean, username, here, false, slot_travellers, slot_statuses),
+                NavStatus::Walking | NavStatus::Door
+            ) {
+                wrote = true;
+            }
+        }
         if wrote && !died {
             if let Err(e) = lean.flush() {
                 let mut all = slot_statuses.lock().unwrap();
@@ -1682,6 +1860,8 @@ fn spawn_channel_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_travellers: Arc<Mutex<HashMap<String, Traveller>>>,
+    slot_grid: Option<Arc<StepGrid>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
     ifaces: Vec<Option<IfType>>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
@@ -1725,6 +1905,8 @@ fn spawn_channel_thread(
                         &slot_statuses,
                         &slot_scripts,
                         &slot_cheats,
+                        &slot_travellers,
+                        &slot_grid,
                         &slot_obj_names,
                         &ifaces,
                         false,
@@ -1781,6 +1963,8 @@ fn spawn_channel_thread(
                                 &slot_statuses,
                                 &slot_scripts,
                                 &slot_cheats,
+                                &slot_travellers,
+                                &slot_grid,
                                 &slot_obj_names,
                                 &ifaces,
                                 true,
@@ -2897,6 +3081,13 @@ mod tests {
         }
     }
 
+    /// Empty nav rig for observe tests that never touch `ctx.walk`: no
+    /// travellers and no grid (the walk hook would refuse anyway).
+    #[allow(clippy::type_complexity)]
+    fn empty_nav() -> (Arc<Mutex<HashMap<String, Traveller>>>, Option<Arc<StepGrid>>) {
+        (Arc::new(Mutex::new(HashMap::new())), None)
+    }
+
     #[test]
     fn script_observe_ticks_only_on_player_edge_while_up() {
         let ScriptWiring {
@@ -2904,6 +3095,7 @@ mod tests {
             cheats,
             count,
         } = script_wiring();
+        let (travellers, grid) = empty_nav();
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -2917,17 +3109,17 @@ mod tests {
             vec![],
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
-        script_observe(&mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats);
+        script_observe(&mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats, &travellers, &grid);
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
-        script_observe(&mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats);
+        script_observe(&mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &travellers, &grid);
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
-        script_observe(&mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats);
+        script_observe(&mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &travellers, &grid);
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (lean flush cue).
         assert!(script_observe(
-            &mut c, "alice", true, true, 3, None, None, None, &scripts, &cheats
+            &mut c, "alice", true, true, 3, None, None, None, &scripts, &cheats, &travellers, &grid
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -2939,6 +3131,7 @@ mod tests {
         let scripts = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         let count = Arc::new(Mutex::new(0));
+        let (travellers, grid) = empty_nav();
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -2954,7 +3147,7 @@ mod tests {
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, None, None, None, &scripts, &cheats
+            &mut c, "alice", true, true, 1, None, None, None, &scripts, &cheats, &travellers, &grid
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
@@ -2971,7 +3164,7 @@ mod tests {
             script::RunState::Idle
         );
         assert!(!script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats
+            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &travellers, &grid
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
@@ -2983,6 +3176,7 @@ mod tests {
             cheats,
             count,
         } = script_wiring();
+        let (travellers, grid) = empty_nav();
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -3001,7 +3195,9 @@ mod tests {
             .get_mut("alice")
             .unwrap()
             .push_back("setvar tutorial 1000".into());
-        let wrote = script_observe(&mut c, "alice", true, false, 0, None, None, None, &scripts, &cheats);
+        let wrote = script_observe(
+            &mut c, "alice", true, false, 0, None, None, None, &scripts, &cheats, &travellers, &grid,
+        );
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
             c.out.data()[0],
@@ -3048,6 +3244,7 @@ mod tests {
             Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let (travellers, grid) = empty_nav();
         scripts
             .lock()
             .unwrap()
@@ -3079,11 +3276,284 @@ mod tests {
             Some(&names),
             &scripts,
             &cheats,
+            &travellers,
+            &grid,
         );
         assert_eq!(
             *seen.lock().unwrap(),
             Some((true, true, true)),
             "a Running script sees the inventory view and resolves names"
+        );
+    }
+
+    /// Test script that queues one walk to a (mutable) target each tick and
+    /// records what `ctx.walk` returned.
+    struct WalkProbe(Arc<Mutex<Option<bool>>>, Arc<Mutex<(i32, i32, i32)>>);
+
+    impl script::Script for WalkProbe {
+        fn name(&self) -> &str {
+            "WalkProbe"
+        }
+        fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
+            let (x, z, level) = *self.1.lock().unwrap();
+            let ok = match ctx.walk.as_mut() {
+                Some(w) => w(x, z, level),
+                None => false,
+            };
+            *self.0.lock().unwrap() = Some(ok);
+        }
+    }
+
+    /// Recording driver: captures the last accepted walk target. `route`
+    /// is `(0,0)` and `build_base` `(0,0)`, so absolute world tiles equal
+    /// scene tiles and `api::walk` resolves a route origin.
+    #[derive(Default)]
+    struct NavRec {
+        walked: Option<(i32, i32)>,
+        sink: Sink,
+    }
+
+    impl Driver for NavRec {
+        fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
+        fn do_action(&mut self, _slot: i32) -> bool {
+            true
+        }
+        fn try_move(
+            &mut self,
+            _src_x: i32,
+            _src_z: i32,
+            dx: i32,
+            dz: i32,
+            _try_nearest: bool,
+            _loc_width: i32,
+            _loc_length: i32,
+            _loc_angle: i32,
+            _loc_shape: i32,
+            _forceapproach: i32,
+            _ty: i32,
+        ) -> bool {
+            self.walked = Some((dx, dz));
+            true
+        }
+        fn local_route(&self) -> Option<(i32, i32)> {
+            Some((0, 0))
+        }
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
+        }
+        fn out(&mut self) -> &mut dyn api::prot::Out {
+            &mut self.sink
+        }
+        fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+            true
+        }
+    }
+
+    /// Minimal outbound sink: the recording driver never writes packets.
+    #[derive(Default)]
+    struct Sink;
+
+    impl api::prot::Out for Sink {
+        fn p1_enc(&mut self, _opcode: i32) {}
+        fn p1(&mut self, _value: i32) {}
+        fn p2(&mut self, _value: i32) {}
+        fn p4(&mut self, _value: i32) {}
+        fn pjstr(&mut self, _s: &str) {}
+    }
+
+    /// Walk-hook rig: a started `WalkProbe` for "alice" (target `(2,0,0)`),
+    /// an empty travellers map, the open-3×3 fixture grid, and a status row.
+    struct NavRig {
+        scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+        cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+        travellers: Arc<Mutex<HashMap<String, Traveller>>>,
+        grid: Option<Arc<StepGrid>>,
+        statuses: Arc<Mutex<Vec<SlotStatus>>>,
+        walk_ret: Arc<Mutex<Option<bool>>>,
+        walk_target: Arc<Mutex<(i32, i32, i32)>>,
+    }
+
+    fn nav_rig() -> NavRig {
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let travellers: Arc<Mutex<HashMap<String, Traveller>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let grid = Some(Arc::new(StepGrid::fixture_open_3x3()));
+        let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(Vec::new()));
+        let walk_ret = Arc::new(Mutex::new(None));
+        let walk_target = Arc::new(Mutex::new((2, 0, 0)));
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_compiled(Box::new(WalkProbe(
+                Arc::clone(&walk_ret),
+                Arc::clone(&walk_target),
+            )))
+            .unwrap();
+        statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        });
+        NavRig {
+            scripts,
+            cheats,
+            travellers,
+            grid,
+            statuses,
+            walk_ret,
+            walk_target,
+        }
+    }
+
+    #[test]
+    fn script_observe_walk_arms_route_and_pump_steps_traveller() {
+        let NavRig {
+            scripts,
+            cheats,
+            travellers,
+            grid,
+            statuses,
+            walk_ret,
+            ..
+        } = nav_rig();
+        let mut d = NavRec::default();
+
+        // The observe dispatches the script tick with the walk hook; the
+        // hook A*s from the observed `here` and arms the uid's traveller.
+        assert!(script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            Some((0, 0, 0)),
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &travellers,
+            &grid,
+        ));
+        assert_eq!(
+            *walk_ret.lock().unwrap(),
+            Some(true),
+            "ctx.walk returned true for an armed route"
+        );
+        assert_eq!(
+            travellers.lock().unwrap().get("alice").and_then(|t| t.queued()),
+            Some(Tile { x: 2, z: 0, level: 0 }),
+            "the armed route queues the requested dest"
+        );
+
+        // The pump's per-uid nav step sends one hop toward the dest and
+        // mirrors the queued target into the status row.
+        assert_eq!(
+            step_traveller(&mut d, "alice", Some((0, 0, 0)), false, &travellers, &statuses),
+            NavStatus::Walking,
+        );
+        assert_eq!(d.walked, Some((2, 0)), "the hop targets the dest tile");
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].walk_x, 2, "status mirrors the queued target");
+            assert_eq!(rows[0].walk_z, 0);
+            assert_eq!(rows[0].walk_level, 0);
+        }
+
+        // Standing on the dest reports Arrived and clears the route.
+        assert_eq!(
+            step_traveller(&mut d, "alice", Some((2, 0, 0)), false, &travellers, &statuses),
+            NavStatus::Arrived,
+        );
+        assert_eq!(
+            travellers.lock().unwrap().get("alice").and_then(|t| t.queued()),
+            None,
+            "arrival clears the armed route"
+        );
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].walk_x, -1, "idle traveller reports no target");
+        }
+    }
+
+    #[test]
+    fn script_observe_walk_is_false_without_here_grid_or_path() {
+        let NavRig {
+            scripts,
+            cheats,
+            travellers,
+            grid,
+            walk_ret,
+            walk_target,
+            ..
+        } = nav_rig();
+        let no_grid: Option<Arc<StepGrid>> = None;
+        let mut d = NavRec::default();
+
+        // No observed tile: the hook refuses before any grid lookup.
+        script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &travellers,
+            &grid,
+        );
+        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → no arm");
+
+        // No grid: nothing to route on.
+        script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            2,
+            Some((0, 0, 0)),
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &travellers,
+            &no_grid,
+        );
+        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no grid → no arm");
+
+        // A dest the grid cannot reach: NoPath.
+        *walk_target.lock().unwrap() = (5, 5, 0);
+        script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            3,
+            Some((0, 0, 0)),
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &travellers,
+            &grid,
+        );
+        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no path → no arm");
+        assert!(
+            travellers
+                .lock()
+                .unwrap()
+                .get("alice")
+                .and_then(|t| t.queued())
+                .is_none(),
+            "nothing was armed across the refusals"
         );
     }
 }
