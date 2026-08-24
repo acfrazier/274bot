@@ -407,7 +407,8 @@ fn login_random() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use client::io::ClientProt;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -512,5 +513,51 @@ mod tests {
         // An empty stream is a no-op, not an error.
         lean.pump().unwrap();
         assert_eq!(lean.snapshot().scene_state, 1);
+    }
+
+    #[test]
+    fn lean_pump_does_not_emit_no_timeout() {
+        let (mut lean, mut srv) = lean_pair();
+        // Mirror post-login state: the outbound Isaac (raw seed; inbound
+        // is +50) so a game_loop-style keepalive would be deterministic
+        // on the wire and provably absent below.
+        lean.out.random = Some(Isaac::new(&[0; 4]));
+
+        for _ in 0..80 {
+            lean.pump().unwrap();
+        }
+
+        // Writes drain through the ClientStream writer thread; poll a
+        // moment so a mistaken keepalive cannot hide in the queue.
+        let mut recv = Vec::new();
+        srv.set_nonblocking(true).unwrap();
+        for _ in 0..20 {
+            let mut buf = [0u8; 1024];
+            loop {
+                match srv.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => recv.extend_from_slice(&buf[..n]),
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => panic!("server read failed: {e}"),
+                }
+            }
+            if !recv.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+
+        // The frame a game_loop keepalive puts on the wire: p1_enc of
+        // NO_TIMEOUT with the outbound Isaac above.
+        let mut enc = Isaac::new(&[0; 4]);
+        let no_timeout = ClientProt::NO_TIMEOUT.id.wrapping_add(enc.next_int()) as u8;
+        assert!(
+            !recv.contains(&no_timeout),
+            "pump sent a NO_TIMEOUT frame: {recv:?}"
+        );
+        assert!(
+            recv.is_empty(),
+            "pump must be read-only without host-supplied out bytes: {recv:?}"
+        );
     }
 }
