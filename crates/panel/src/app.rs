@@ -506,7 +506,13 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
     };
     if draw {
         let buf = state.session.focused_pixels();
-        let name = state.session.focused_name().unwrap_or_default();
+        // Channel-head: key the upload on the PixelBuf generation, not the
+        // focused cap name (that name is a lean extra with no framebuffer).
+        let name = if state.session.channel_head {
+            String::from("tv")
+        } else {
+            state.session.focused_name().unwrap_or_default()
+        };
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {

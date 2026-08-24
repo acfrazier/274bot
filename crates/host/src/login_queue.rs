@@ -92,6 +92,13 @@ impl LoginQueue {
         self.queue.retain(|&u| u != uid);
     }
 
+    /// Put `uid` at the front of the FIFO (TV head logs in first). If it
+    /// was already queued, it is moved; if not, it is inserted.
+    pub fn prefer(&mut self, uid: i32) {
+        self.queue.retain(|&u| u != uid);
+        self.queue.push_front(uid);
+    }
+
     /// Longest unmet constraint for granting `uid` at `now`.
     fn blocked_for(&mut self, uid: i32, now: Instant) -> Option<Duration> {
         let mut wait = None;
@@ -222,6 +229,20 @@ mod tests {
             })
             .max()
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn prefer_moves_uid_to_the_front() {
+        let mut q = LoginQueue::default();
+        let now = Instant::now();
+        assert!(matches!(q.request_permit(2, now), Permit::Grant));
+        // spacing blocks a second grant; 2 re-queues, then 3 and 1 line up.
+        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
+        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
+        assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+        q.prefer(1);
+        assert_eq!(q.queue.front(), Some(&1));
+        assert_eq!(q.status(1).unwrap().position, 1);
     }
 
     #[test]

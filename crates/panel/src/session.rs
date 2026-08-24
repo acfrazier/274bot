@@ -365,9 +365,10 @@ impl Session {
             move |c, name| {
                 let f = focus.lock().unwrap();
                 let draw = if tv.load(Ordering::Relaxed) {
-                    // This hook only runs on the fat Client. The focused
-                    // name is the channel selector; keep the TV painting.
-                    f.game_pane_open && crate::focus::renderer_for(&f, name)
+                    // This hook only runs on the fat Client. Do not key
+                    // off the focused cap name (that is the channel
+                    // selector) or a per-name renderer_by miss.
+                    f.game_pane_open && f.renderer
                 } else {
                     draw_for_slot(&f, name)
                 };
@@ -791,7 +792,7 @@ impl Session {
             self.channel_head && self.play.is_some() && !self.slots.is_empty() && !allow_many_fat;
         if extras_are_lean {
             if let Some(play) = &mut self.play {
-                play.spawn_channel(profile);
+                play.spawn_channel_with_arm(profile, arm);
             }
             return;
         }
@@ -990,8 +991,21 @@ impl Session {
     /// Log in every wall member: clear their latches and arm a login so
     /// title-screen slots handshake. One-shot unless the profile's
     /// auto-login is set (which keeps the arm armed after the handshake).
+    /// The fat TV head is moved to the front of the login FIFO so it is
+    /// not stuck behind lean extras.
     pub fn login_all(&mut self) {
-        for name in self.wall.members.clone() {
+        let head = self.play.as_ref().and_then(|p| p.fat_head_name());
+        if let (Some(play), Some(h)) = (self.play.as_ref(), head.as_ref()) {
+            if let Some(arm) = play.arm(h) {
+                play.prefer_login(arm.uid.load(Ordering::Relaxed));
+            }
+        }
+        let mut names = self.wall.members.clone();
+        if let Some(h) = &head {
+            names.retain(|n| n != h);
+            names.insert(0, h.clone());
+        }
+        for name in names {
             self.wall.clear_latch(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
                 arm_login_all(&arm);
@@ -1811,6 +1825,16 @@ mod tests {
         assert_eq!(s.slots.len(), 1, "only the TV head owns a PixelBuf");
         assert_eq!(fat, 1, "one fat Client");
         assert_eq!(lean, 2, "two lean channels");
+        assert!(
+            !s.play
+                .as_ref()
+                .unwrap()
+                .arm("bob")
+                .unwrap()
+                .want_login
+                .load(Ordering::Relaxed),
+            "lean extras must not jump the login FIFO ahead of the TV"
+        );
         s.select("bob");
         assert!(
             s.focused_pixels().is_some(),

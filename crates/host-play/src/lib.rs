@@ -324,6 +324,12 @@ impl Play {
             .insert(profile.username.clone(), profile);
     }
 
+    /// Move `uid` to the front of the login FIFO so the TV head handshakes
+    /// before lean extras that already queued.
+    pub fn prefer_login(&self, uid: i32) {
+        self.queue.lock().unwrap().prefer(uid);
+    }
+
     /// The unique fat `Client` on this play (the TV). `None` while every
     /// row is lean or the wall is empty.
     pub fn fat_head_name(&self) -> Option<String> {
@@ -424,23 +430,36 @@ impl Play {
     /// Spawn one lean channel slot on this play's FIFO: `Lean::login` (cold,
     /// opcode 16, no `Client`), then pump the stream at the host cadence.
     /// The status row is marked `lean`; no-op if the name is already running.
+    /// `None` arm logs in immediately (CLI/e2e); the panel passes a real
+    /// arm so extras sit on the title until Login all.
     pub fn spawn_channel(&mut self, profile: Profile) {
-        self.spawn_channel_with(profile, false);
+        self.spawn_channel_with(profile, None, false);
+    }
+
+    /// Like [`spawn_channel`], with a panel control arm (auto-login / latch).
+    pub fn spawn_channel_with_arm(&mut self, profile: Profile, arm: Option<Arc<SlotArm>>) {
+        self.spawn_channel_with(profile, arm, false);
     }
 
     /// Like [`spawn_channel`], but the handshake is opcode 18 (park after
     /// the fat head's socket dropped).
     pub fn spawn_channel_reconnect(&mut self, profile: Profile) {
-        self.spawn_channel_with(profile, true);
+        self.spawn_channel_with(profile, None, true);
     }
 
-    fn spawn_channel_with(&mut self, profile: Profile, reconnect: bool) {
+    fn spawn_channel_with(
+        &mut self,
+        profile: Profile,
+        arm: Option<Arc<SlotArm>>,
+        reconnect: bool,
+    ) {
         self.profiles
             .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
-        let arm = SlotArm::new(profile.uid, true);
+        let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
+        arm.uid.store(profile.uid, Ordering::Relaxed);
         arm.reconnect.store(reconnect, Ordering::Relaxed);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         spawn_channel_thread(
@@ -975,6 +994,11 @@ fn spawn_channel_thread(
                     if arm.stop.load(Ordering::Relaxed) {
                         slot_queue.lock().unwrap().leave(uid);
                         return;
+                    }
+                    if !should_handshake(&arm, false) {
+                        // Sit idle until Login all / auto-login arms a handshake.
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
                     }
                     wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
                     if arm.stop.load(Ordering::Relaxed) {
