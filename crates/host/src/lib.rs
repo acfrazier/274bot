@@ -1,6 +1,7 @@
 //! 274 bot host: one OS thread per client slot.
 
 mod auto_run;
+pub mod lean;
 pub mod login_queue;
 mod slot;
 mod slot_io;
