@@ -6,7 +6,7 @@
 
 use api::interact::Driver;
 use api::prot::Out;
-use script::ported::walk_to::{Tile, WalkToBot, DEFAULT_RADIUS, DEFAULT_TARGET};
+use script::ported::walk_to::{Tile, WalkToBot, DEFAULT_RADIUS};
 use script::{CompiledId, Script, ScriptCtx};
 
 /// Outbound writes a driver receives, as recorded by the stub.
@@ -210,21 +210,17 @@ fn walk_rejected_retries_the_request_next_tick() {
 }
 
 #[test]
-fn factory_walk_to_is_some_and_walks_the_default_destination() {
-    let make = script::factory(CompiledId("WalkTo")).expect("WalkTo is ported");
-    let mut bot = make();
+fn factory_walk_to_is_not_registered_until_the_traveller_hook_exists() {
+    // The port itself is real, but `registry::factory` must not expose it:
+    // Start would succeed and then panic on the first tick because the host
+    // sets `ctx.walk = None`. A "not ported" Start is the honest surface
+    // until host-play/panel wire a traveller into the ctx.
+    assert!(
+        script::factory(CompiledId("WalkTo")).is_none(),
+        "WalkTo must not be startable while ctx.walk is always None"
+    );
+    // The constructor is still directly usable by the port's own tests.
+    let bot = script::ported::walk_to::factory();
     assert_eq!(bot.name(), "WalkTo");
     assert_eq!(DEFAULT_RADIUS, 3, "rs2b0t arriveRadius default");
-    let mut got = None;
-    let mut d = Rec::default();
-    let mut walk = |x: i32, z: i32, _l: i32| {
-        got = Some((x, z));
-        true
-    };
-    bot.tick(&mut ctx_with(
-        &mut d,
-        Some((DEFAULT_TARGET.x - 20, DEFAULT_TARGET.z, 0)),
-        Some(&mut walk),
-    ));
-    assert_eq!(got, Some((DEFAULT_TARGET.x, DEFAULT_TARGET.z)));
 }

@@ -1,8 +1,11 @@
 //! Compiled registry: the picker id list and the `factory` that starts
-//! scripts once they are ported. `WalkTo` is the first ported script; every
-//! other listed id still returns `None` from `factory` (Start errors "not
-//! ported" in the panel task). Whales are recognized but never listed;
-//! `Counter` is a test fixture, never listed either.
+//! scripts once they are ported. No id has a constructor yet: `WalkTo` is
+//! ported in code (`ported::walk_to`) but its `factory` stays `None` until
+//! the host wires a traveller into `ctx.walk` — a Start that would error on
+//! its first tick ("Traversal/nav not on ctx") must not succeed. Every
+//! listed id returns `None` from `factory` (Start errors "not ported" in
+//! the panel task). Whales are recognized but never listed; `Counter` is a
+//! test fixture, never listed either.
 
 use crate::ctx::Script;
 
@@ -71,11 +74,14 @@ pub fn is_whale(name: &str) -> bool {
 }
 
 /// Start a compiled script by picker id. `None` until the script is
-/// ported; `WalkTo` is the first ported constructor. The `Counter` test
-/// fixture exists only under `cfg(test)` (never in `compiled_ids`).
+/// ported AND wired (host `ctx.walk` hook); `WalkTo` has a port but no
+/// constructor until the traveller hook exists. The `Counter` test fixture
+/// exists only under `cfg(test)` (never in `compiled_ids`).
 pub fn factory(id: CompiledId) -> Option<fn() -> Box<dyn Script>> {
     match id.0 {
-        "WalkTo" => Some(crate::ported::walk_to::factory),
+        // `WalkTo` is ported in code; its `factory` returns `None` until
+        // host-play/panel wire a traveller into `ctx.walk` (a Start that
+        // would panic on the first tick must report "not ported" instead).
         #[cfg(test)]
         "Counter" => Some(counter_factory),
         _ => None,

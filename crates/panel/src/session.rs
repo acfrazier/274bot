@@ -3126,7 +3126,7 @@ mod tests {
     }
 
     #[test]
-    fn script_start_selected_wires_focused_slot_and_starts_walk_to() {
+    fn script_start_selected_reports_not_ported_until_ctx_walk_is_wired() {
         let mut s = Session::new();
         let mut play = empty_play();
         play.attach_arm("alice", SlotArm::new(42, false));
@@ -3134,8 +3134,12 @@ mod tests {
         s.focus.lock().unwrap().focused = Some("alice".into());
         s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("WalkTo")));
         s.script_start_selected();
-        assert_eq!(s.error, None, "WalkTo is ported since Task 8");
-        assert_eq!(s.focused_script_state(), script::RunState::Running);
+        // WalkTo is ported in code, but the host sets `ctx.walk = None`
+        // until a traveller is wired, so Start must not succeed only to
+        // panic on the first tick ("Traversal/nav not on ctx").
+        let err = s.error.clone().expect("WalkTo is not startable yet");
+        assert!(err.contains("not ported"), "{err}");
+        assert_eq!(s.focused_script_state(), script::RunState::Idle);
     }
 
     #[test]

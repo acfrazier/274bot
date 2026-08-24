@@ -268,6 +268,54 @@ fn isolate_logs_tick_errors() {
     iso.join();
 }
 
+// (5f) A runaway tick is interrupted by the budget terminate (armed, never
+// cancelled from the host), and the isolate stays usable afterwards.
+#[test]
+fn slow_tick_is_interrupted_and_isolate_survives() {
+    // The first tick spins forever; later ticks count.
+    let src = "export function tick(api) { api._n = (api._n||0)+1; if (api._n === 1) { while(true){} } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
+    iso.on_game_tick(1);
+    // Let the thread enter the spin; pause then arms a terminate for the
+    // over-budget tick (no immediate cancel), and resume re-arms dispatch.
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    iso.pause();
+    iso.resume();
+    // The interrupted tick unwinds on the thread; this tick and the probe
+    // round-trip only when the terminate was cleared after the tick's
+    // frames unwound (a host-side cancel would race and never interrupt).
+    iso.on_game_tick(2);
+    let n = iso
+        .probe("__rs_api._n")
+        .expect("isolate must stay usable after an interrupted tick");
+    assert_eq!(n, 2, "the post-interrupt tick reached the JS");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("interrupted slow tick")),
+        "the budget interrupt must be logged: {logs:?}"
+    );
+    iso.join();
+}
+
+// (5g) A tight `while(true){}` tick cannot hang Stop: `join` is bounded
+// and returns even if the interrupt were somehow not delivered.
+#[test]
+fn join_bounds_a_runaway_tick() {
+    let iso = LoadIsolate::spawn(
+        "export function tick(api) { while(true){} }".to_string(),
+        LoadShape::NativeTick,
+    )
+    .expect("spawn runaway isolate");
+    iso.on_game_tick(1);
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let t0 = std::time::Instant::now();
+    iso.join();
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(10),
+        "join must be bounded on a runaway tick"
+    );
+}
+
 // (6) SlotScript: the isolate is spawned only by the Start helper
 // (`start_load`); `stop` joins the thread. Dispatch goes through the normal
 // `on_game_tick` pump path.

@@ -44,8 +44,12 @@ impl WalkToBot {
     }
 }
 
-/// Registry factory for the picker's `WalkTo` card: start toward the
-/// default destination.
+/// Registry constructor for the picker's `WalkTo` card: start toward the
+/// default destination. **Not registered in `registry::factory` yet** —
+/// the host does not wire `ctx.walk` to a traveller, so a Start through
+/// the registry would succeed and then panic on the first tick. The
+/// constructor is public for the port tests; Start stays "not ported"
+/// until the traveller hook exists.
 pub fn factory() -> Box<dyn Script> {
     Box::new(WalkToBot::new(DEFAULT_TARGET, DEFAULT_RADIUS))
 }

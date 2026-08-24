@@ -235,6 +235,9 @@ mod isolate {
     const SLOW_TICK: Duration = Duration::from_millis(50);
     /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
     const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
+    /// How long `join` waits for the isolate thread after Stop + terminate
+    /// before abandoning it: a stuck isolate must never freeze the caller.
+    const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
     /// Heap cap for the isolate (~64 MB, the brief's number).
     const MAX_HEAP: usize = 64 * 1024 * 1024;
 
@@ -262,7 +265,9 @@ mod isolate {
         logs: Mutex<Vec<String>>,
         handle: Option<JoinHandle<()>>,
         /// Thread-safe handle used to terminate a runaway tick from this
-        /// side of the channel.
+        /// side of the channel. The terminate stays armed until the isolate
+        /// thread has returned from the tick and clears it there (a cancel
+        /// from this side would race the interrupt and make it a no-op).
         terminate: v8::IsolateHandle,
         /// The tick currently being dispatched and when it was sent; the
         /// thread clears it when the tick completes.
@@ -303,19 +308,27 @@ mod isolate {
         /// skipped.
         pub fn on_game_tick(&self, snap_tick: u64) {
             self.pump_logs();
-            {
+            let interrupted = {
                 let mut in_flight = self.in_flight.lock().unwrap();
-                if let Some((tick, started)) = *in_flight {
-                    if started.elapsed() > SLOW_TICK {
-                        self.terminate.terminate_execution();
-                        self.terminate.cancel_terminate_execution();
-                        self.logs.lock().unwrap().push(format!(
-                            "interrupted slow tick {tick} ({:?})",
-                            started.elapsed()
-                        ));
-                    }
-                }
+                // The previous tick is still in flight (no `Completed`
+                // folded yet) past the budget: interrupt it.
+                let over = in_flight
+                    .as_ref()
+                    .filter(|(_, started)| started.elapsed() > SLOW_TICK)
+                    .map(|(tick, started)| (*tick, started.elapsed()));
                 *in_flight = Some((snap_tick, Instant::now()));
+                over
+            };
+            if let Some((tick, elapsed)) = interrupted {
+                // Leave the terminate armed until the isolate thread has
+                // returned from the tick (it cancels there); an immediate
+                // cancel would race the interrupt and make this a no-op.
+                self.terminate.terminate_execution();
+                // `in_flight` was released before this lock, so the lock
+                // order (never `in_flight` -> `logs`) holds everywhere.
+                self.logs.lock().unwrap().push(format!(
+                    "interrupted slow tick {tick} ({elapsed:?})"
+                ));
             }
             let _ = self.tx.send(IsolateCmd::Tick(snap_tick));
         }
@@ -331,8 +344,9 @@ mod isolate {
                 .map(|(_, started)| started.elapsed() > SLOW_TICK)
                 .unwrap_or(false);
             if over {
+                // No cancel here: the isolate thread clears the terminate
+                // itself once it has returned from the interrupted tick.
                 self.terminate.terminate_execution();
-                self.terminate.cancel_terminate_execution();
             }
             let _ = self.tx.send(IsolateCmd::Pause);
         }
@@ -362,17 +376,30 @@ mod isolate {
 
         /// Stop the isolate: tell the thread to exit, interrupt any running
         /// JS so the join cannot hang, and wait for the thread (the Runtime
-        /// is dropped there).
+        /// is dropped there). The wait is bounded by [`Self::JOIN_TIMEOUT`]:
+        /// a stuck isolate is abandoned (thread detached) so Stop can never
+        /// freeze the panel.
         pub fn join(mut self) {
             let _ = self.tx.send(IsolateCmd::Stop);
             self.terminate.terminate_execution();
-            self.terminate.cancel_terminate_execution();
             if let Some(handle) = self.handle.take() {
-                let _ = handle.join();
+                let deadline = Instant::now() + JOIN_TIMEOUT;
+                while !handle.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                if handle.is_finished() {
+                    let _ = handle.join();
+                }
+                // else: abandoned — dropping the handle detaches the thread,
+                // which exits on its own once the interrupt lands.
             }
         }
 
         /// Fold completed ticks and thread log lines into local state.
+        /// `logs` and `in_flight` are never held together: the thread also
+        /// takes them in this same order (`logs` -> `in_flight` would let a
+        /// slow-tick interrupt deadlock against `on_game_tick`), so each
+        /// message is folded under its own lock.
         fn pump_logs(&self) {
             let mut msgs = Vec::new();
             {
@@ -381,16 +408,19 @@ mod isolate {
                     msgs.push(msg);
                 }
             }
-            let mut logs = self.logs.lock().unwrap();
+            let mut clear_through: Option<u64> = None;
             for msg in msgs {
                 match msg {
-                    ThreadMsg::Log(line) => logs.push(line),
+                    ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
                     ThreadMsg::Completed(up_to) => {
-                        let mut in_flight = self.in_flight.lock().unwrap();
-                        if in_flight.map(|(t, _)| t <= up_to).unwrap_or(false) {
-                            *in_flight = None;
-                        }
+                        clear_through = Some(clear_through.map_or(up_to, |c| c.max(up_to)));
                     }
+                }
+            }
+            if let Some(up_to) = clear_through {
+                let mut in_flight = self.in_flight.lock().unwrap();
+                if in_flight.map(|(t, _)| t <= up_to).unwrap_or(false) {
+                    *in_flight = None;
                 }
             }
         }
@@ -399,10 +429,11 @@ mod isolate {
     impl Drop for LoadIsolate {
         fn drop(&mut self) {
             // Best-effort: unblock a stuck tick and close the channel; the
-            // thread exits and drops its Runtime by itself (no join here).
+            // thread exits and drops its Runtime by itself (no join here,
+            // and no cancel — the thread clears the terminate once the tick
+            // has returned).
             let _ = self.tx.send(IsolateCmd::Stop);
             self.terminate.terminate_execution();
-            self.terminate.cancel_terminate_execution();
         }
     }
 
@@ -541,6 +572,15 @@ globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { in
                     let start = Instant::now();
                     let result: Result<serde_json::Value, rustyscript::Error> =
                         runtime.call_function(None, "__rs_tick", json_args!(n));
+                    // The host may have armed `terminate_execution` to
+                    // interrupt a slow tick; clear it now that the tick's
+                    // JS frames have fully unwound. This is the only cancel
+                    // point — canceling from the host would race the
+                    // interrupt and make it a no-op.
+                    runtime
+                        .deno_runtime()
+                        .v8_isolate()
+                        .cancel_terminate_execution();
                     let elapsed = start.elapsed();
                     if let Err(e) = result {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));

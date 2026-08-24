@@ -74,17 +74,15 @@ fn compiled_ids_are_exactly_the_v1_smoke_names() {
 }
 
 #[test]
-fn factory_some_only_for_ported_ids() {
-    // Task 8: WalkTo is the first ported script; every other picker id
-    // still has no constructor until its port lands.
+fn factory_none_for_all_ids_until_wired() {
+    // `WalkTo` is ported in code, but the host does not wire a traveller
+    // into `ctx.walk` yet, so no picker id has a constructor: Start must
+    // report "not ported" rather than succeed and panic on the first tick.
     for id in script::compiled_ids() {
-        let ported = id.0 == "WalkTo";
-        assert_eq!(
-            script::factory(*id).is_some(),
-            ported,
-            "{} must {} be startable",
-            id.0,
-            if ported { "" } else { "not " }
+        assert!(
+            script::factory(*id).is_none(),
+            "{} must not be startable until its host hook is wired",
+            id.0
         );
     }
 }

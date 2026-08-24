@@ -176,11 +176,13 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
 /// [`SlotScript::on_is_up`], dispatch [`SlotScript::on_game_tick`] on the
 /// PLAYER_INFO edge, then run any cheats the panel queued. `driver` is the
 /// slot body's own `Client`/`Lean`; `here` is the local player's world tile
-/// `(x, z, level)` when the body decoded one (the walk hook stays `None`
-/// until a slot traveller is wired — WalkTo then errors instead of faking
-/// arrival). Returns whether the driver's out buffer was written (the lean
-/// pump flushes; the fat `Client` sends on its next mainloop pass). A slot
-/// whose script is Idle/Paused publishes nothing — no dispatch, no flush.
+/// `(x, z, level)` when the body decoded one, else `None` (the walk hook
+/// stays `None` until a slot traveller is wired, and `factory(WalkTo)`
+/// reports "not ported" until then — a Start that would panic on the first
+/// tick must not succeed). Returns whether the driver's out buffer was
+/// written (the lean pump flushes; the fat `Client` sends on its next
+/// mainloop pass). A slot whose script is Idle/Paused publishes nothing —
+/// no dispatch, no flush.
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
 #[allow(clippy::too_many_arguments)]
@@ -1517,7 +1519,11 @@ fn run_lean_pump(
         let mut up = false;
         let mut tick_edge = false;
         let mut tick = 0u64;
-        let mut here = None;
+        // The lean snapshot only decodes the build-area origin
+        // (REBUILD_NORMAL zone), never the local player tile: `here` stays
+        // `None` until a lean player-tile decode exists (see gaps.md) — a
+        // script must not read the origin as its tile.
+        let here = None;
         {
             let mut all = slot_statuses.lock().unwrap();
             if let Some(s) = all.iter_mut().find(|s| s.username == username) {
@@ -1533,9 +1539,6 @@ fn run_lean_pump(
                         s.scene_state = scene_state;
                         s.tile_x = snap.tile_x;
                         s.tile_z = snap.tile_z;
-                        // Tile level is not decoded on either body yet (see
-                        // gaps.md).
-                        here = Some((snap.tile_x, snap.tile_z, 0));
                         s.ingame = true;
                         up = s.is_up();
                         if !seeded && scene_state != 0 {
