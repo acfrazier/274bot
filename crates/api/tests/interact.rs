@@ -147,7 +147,7 @@ struct OutSink(Vec<OutByte>);
 struct Recorder {
     menus: Vec<(i32, i32, i32, i32, i32)>,
     actions: Vec<i32>,
-    moves: Vec<(i32, i32, i32, i32, bool, i32, i32, i32, i32, i32, i32)>,
+    moves: Vec<WalkMove>,
     out: OutSink,
     logins: usize,
     route: Option<(i32, i32)>,
@@ -155,6 +155,9 @@ struct Recorder {
     /// Packed scene typecode at the loc tile; `None` falls back to loc id.
     scene_typecode: Option<i32>,
 }
+
+/// One `try_move` call: `(src_x, src_z, dx, dz, forceapproach, ...)`.
+type WalkMove = (i32, i32, i32, i32, bool, i32, i32, i32, i32, i32, i32);
 
 impl Driver for Recorder {
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
@@ -581,8 +584,10 @@ fn logout_presses_cc_logout_iface_and_missing_is_false() {
     assert!(rec.menus.is_empty());
 
     let mut ifaces: Vec<Option<IfType>> = vec![None; 10];
-    let mut com = IfType::default();
-    com.client_code = CC_LOGOUT;
+    let com = IfType {
+        client_code: CC_LOGOUT,
+        ..Default::default()
+    };
     ifaces[7] = Some(com);
     let mut rec = Recorder::default();
     assert!(logout(&mut rec, &ifaces));

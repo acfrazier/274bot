@@ -4,11 +4,9 @@
 use crate::registry::CompiledId;
 
 /// Default parameter rows for `id`, in display order.
-pub fn defaults(id: CompiledId) -> Vec<(String, String)> {
-    match id.0 {
-        // No port ships a schema yet: every compiled id defaults to nothing.
-        _ => Vec::new(),
-    }
+pub fn defaults(_id: CompiledId) -> Vec<(String, String)> {
+    // No port ships a schema yet: every compiled id defaults to nothing.
+    Vec::new()
 }
 
 #[cfg(test)]

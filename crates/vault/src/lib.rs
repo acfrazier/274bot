@@ -43,7 +43,10 @@ pub struct ProfileSettings {
 
 impl Default for ProfileSettings {
     fn default() -> Self {
-        Self { lowmem: true, auto_login: false }
+        Self {
+            lowmem: true,
+            auto_login: false,
+        }
     }
 }
 
@@ -272,7 +275,10 @@ mod tests {
             username: username.into(),
             password: password.into(),
             uid: 42,
-            settings: ProfileSettings { lowmem: false, auto_login: false },
+            settings: ProfileSettings {
+                lowmem: false,
+                auto_login: false,
+            },
         }
     }
 
@@ -285,7 +291,10 @@ mod tests {
             username: "a".into(),
             password: "a".into(),
             uid: 1,
-            settings: ProfileSettings { lowmem: true, auto_login: false },
+            settings: ProfileSettings {
+                lowmem: true,
+                auto_login: false,
+            },
         })
         .unwrap();
         drop(v);

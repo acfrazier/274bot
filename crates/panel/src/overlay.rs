@@ -62,9 +62,7 @@ fn points_for(session: &Session, min: [f32; 2], size: [f32; 2]) -> Vec<[f32; 2]>
     let Some(traveller) = session.travellers.lock().unwrap().get(&name).cloned() else {
         return Vec::new();
     };
-    let here = session
-        .focused_tile()
-        .map(|(x, z)| Tile { x, z, level: 0 });
+    let here = session.focused_tile().map(|(x, z)| Tile { x, z, level: 0 });
     let tiles = traveller.lock().unwrap().remaining_walk_tiles(here);
     if tiles.is_empty() {
         return Vec::new();
@@ -218,7 +216,22 @@ mod tests {
     #[test]
     fn overlay_tile_to_image_roundtrip() {
         // tile 0,0 in a 3x3 at image [0,0]-[90,90] → center of cell
-        let p = tile_to_local(Tile { x: 0, z: 0, level: 0 }, Tile { x: 0, z: 0, level: 0 }, 3, 3, 90.0, 90.0);
+        let p = tile_to_local(
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            3,
+            3,
+            90.0,
+            90.0,
+        );
         assert!(p[0] >= 0.0 && p[0] <= 30.0);
     }
 
@@ -226,8 +239,16 @@ mod tests {
     fn tile_to_local_centers_cells_from_origin() {
         // origin (1,1): tile (2,2) is the image centre of a 3x3 grid.
         let p = tile_to_local(
-            Tile { x: 2, z: 2, level: 0 },
-            Tile { x: 1, z: 1, level: 0 },
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
             3,
             3,
             90.0,
@@ -242,8 +263,16 @@ mod tests {
         // Cells follow the image aspect: a 2x2 grid in a 100x60 image has
         // 50x30 cells, so tile (1,1) centres at (75,45).
         let p = tile_to_local(
-            Tile { x: 1, z: 1, level: 0 },
-            Tile { x: 0, z: 0, level: 0 },
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             2,
             2,
             100.0,
@@ -272,7 +301,19 @@ mod tests {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
         let g = StepGrid::fixture_open_3x3();
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 2, z: 2, level: 0 });
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        );
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-test").build(|| {
             overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
@@ -315,7 +356,19 @@ mod tests {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
         let g = StepGrid::fixture_open_3x3();
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 1, z: 1, level: 0 });
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        );
         let mut overlay = PathOverlay::new();
         {
             let ui = ctx.frame();
@@ -329,7 +382,19 @@ mod tests {
         // Re-arm a longer route: the new generation must rebuild now. Both
         // routes start on the same tile so the first point is stable, but
         // the line must reach the new dest.
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 2, z: 2, level: 0 });
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        );
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                 .renderer_has_textures(),
@@ -380,7 +445,11 @@ mod tests {
         ctx.render();
         assert_eq!(
             overlay.queue_lines,
-            vec!["AUTO-LOGIN QUEUE".to_string(), "1 of 2".to_string(), "0 bots in front".to_string()]
+            vec![
+                "AUTO-LOGIN QUEUE".to_string(),
+                "1 of 2".to_string(),
+                "0 bots in front".to_string()
+            ]
         );
     }
 
@@ -412,8 +481,7 @@ mod tests {
         });
         ctx.render();
         assert_eq!(
-            overlay.queue_lines[1],
-            "1 of 49",
+            overlay.queue_lines[1], "1 of 49",
             "after the TV grants, the card steps k of n for the next lean"
         );
     }

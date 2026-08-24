@@ -142,7 +142,10 @@ mod tests {
         match traffic_from_delta(2048, 2.0, 2) {
             Metric::Available(s) => {
                 assert!(s.contains("/s"), "{s}");
-                assert!(!s.starts_with('0') || s.contains("KB") || s.contains("B"), "{s}");
+                assert!(
+                    !s.starts_with('0') || s.contains("KB") || s.contains("B"),
+                    "{s}"
+                );
             }
             other => panic!("{other:?}"),
         }

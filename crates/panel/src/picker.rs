@@ -50,7 +50,8 @@ pub fn default_pack_path() -> PathBuf {
 }
 
 fn pack() -> Option<&'static StepGrid> {
-    PACK.get_or_init(|| load_pack(&default_pack_path()).ok()).as_ref()
+    PACK.get_or_init(|| load_pack(&default_pack_path()).ok())
+        .as_ref()
 }
 
 /// Levels 0..=3 that contain at least one walkable tile in `grid`. A pack
@@ -149,22 +150,16 @@ fn picker_map_window(ui: &Ui, session: &mut Session, grid: &StepGrid, open: &mut
                 .iter()
                 .position(|l| *l == LEVEL.load(Ordering::Relaxed))
                 .unwrap_or(0);
-            if ui.combo(
-                "##walkto-level",
-                &mut lvl_idx,
-                &levels,
-                |l: &i32| Cow::Owned(format!("level {l}")),
-            ) {
+            if ui.combo("##walkto-level", &mut lvl_idx, &levels, |l: &i32| {
+                Cow::Owned(format!("level {l}"))
+            }) {
                 LEVEL.store(levels[lvl_idx], Ordering::Relaxed);
             }
             ui.same_line();
             let mut zoom = ZOOM.load(Ordering::Relaxed) as usize;
-            if ui.combo(
-                "##walkto-zoom",
-                &mut zoom,
-                &ZOOMS,
-                |z: &f32| Cow::Owned(format!("{z:.0}px/tile")),
-            ) {
+            if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
+                Cow::Owned(format!("{z:.0}px/tile"))
+            }) {
                 ZOOM.store(zoom as i32, Ordering::Relaxed);
             }
             ui.same_line();
@@ -212,14 +207,8 @@ fn draw_canvas(ui: &Ui, session: &mut Session, grid: &StepGrid) {
             );
             let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
             // Only draw tiles inside the visible window.
-            let (wx0, wx1) = (
-                cx - size[0] / 2.0 / scale,
-                cx + size[0] / 2.0 / scale,
-            );
-            let (wz0, wz1) = (
-                cz - size[1] / 2.0 / scale,
-                cz + size[1] / 2.0 / scale,
-            );
+            let (wx0, wx1) = (cx - size[0] / 2.0 / scale, cx + size[0] / 2.0 / scale);
+            let (wz0, wz1) = (cz - size[1] / 2.0 / scale, cz + size[1] / 2.0 / scale);
             // Screen origin of tile (0,0) for this view.
             let ox = min[0] + size[0] / 2.0 - cx * scale;
             let oz = min[1] + size[1] / 2.0 - cz * scale;
@@ -298,7 +287,14 @@ mod tests {
     fn snap_click_to_nearest_walkable() {
         let g = StepGrid::fixture_open_3x3();
         let t = snap(&g, 1.4, 1.4, 0).unwrap();
-        assert_eq!(t, Tile { x: 1, z: 1, level: 0 });
+        assert_eq!(
+            t,
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0
+            }
+        );
     }
 
     #[test]
@@ -307,7 +303,14 @@ mod tests {
         // Chebyshev/Manhattan tie over (3,0) by iteration order.
         let g = StepGrid::fixture_door_corridor();
         let t = snap(&g, 2.2, 0.1, 0).unwrap();
-        assert_eq!(t, Tile { x: 1, z: 0, level: 0 });
+        assert_eq!(
+            t,
+            Tile {
+                x: 1,
+                z: 0,
+                level: 0
+            }
+        );
     }
 
     #[test]
@@ -327,10 +330,24 @@ mod tests {
         let g = StepGrid::fixture_open_3x3();
         // Canvas centre is the centre tile.
         let t = click_to_tile(&g, (1, 1), 10.0, [50.0, 50.0], [100.0, 100.0], 0).unwrap();
-        assert_eq!(t, Tile { x: 1, z: 1, level: 0 });
+        assert_eq!(
+            t,
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0
+            }
+        );
         // 14px right of centre at 10px/tile -> (2.4, 1.4) -> snaps to (2,1).
         let t = click_to_tile(&g, (1, 1), 10.0, [64.0, 50.0], [100.0, 100.0], 0).unwrap();
-        assert_eq!(t, Tile { x: 2, z: 1, level: 0 });
+        assert_eq!(
+            t,
+            Tile {
+                x: 2,
+                z: 1,
+                level: 0
+            }
+        );
     }
 
     #[test]

@@ -24,16 +24,15 @@ fn parse_n() -> usize {
         Some("2") => 2,
         Some("4") => 4,
         Some("50") => 50,
-        Some(other) => fail(&format!("channel_walk: CHANNEL_N must be 2, 4, or 50 (got {other})")),
+        Some(other) => fail(&format!(
+            "channel_walk: CHANNEL_N must be 2, 4, or 50 (got {other})"
+        )),
     }
 }
 
 fn walk_profiles(n: usize) -> Vec<Profile> {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-channel-walk-{}-{}",
-        std::process::id(),
-        n
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("274bot-channel-walk-{}-{}", std::process::id(), n));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
     if path.exists() {
@@ -110,13 +109,18 @@ fn live_channel_walk_retunes_every_head() {
     }
     let n = parse_n();
     let names: Vec<String> = (0..n).map(|i| format!("r{i}")).collect();
-    println!("channel_walk: spawn n={n} (1 TV + {} lean)", n.saturating_sub(1));
+    println!(
+        "channel_walk: spawn n={n} (1 TV + {} lean)",
+        n.saturating_sub(1)
+    );
     let mut play = run_channels(&options(), walk_profiles(n), 1);
     wait_up(&play, n, Duration::from_secs(600), "channel_walk login");
     dump(&play, "all-up");
     let fats = play.statuses().iter().filter(|s| !s.lean).count();
     if fats != 1 {
-        fail(&format!("channel_walk: expected 1 fat after login, got {fats}"));
+        fail(&format!(
+            "channel_walk: expected 1 fat after login, got {fats}"
+        ));
     }
     wait_fat(
         &mut play,
@@ -141,13 +145,14 @@ fn live_channel_walk_retunes_every_head() {
             Duration::from_secs(120),
             &format!("hop-{name}"),
         );
-        println!(
-            "channel_walk: hop {name} ok in {:?}",
-            t0.elapsed()
-        );
+        println!("channel_walk: hop {name} ok in {:?}", t0.elapsed());
     }
     dump(&play, "done");
-    let lean_up = play.statuses().iter().filter(|s| s.lean && s.ingame).count();
+    let lean_up = play
+        .statuses()
+        .iter()
+        .filter(|s| s.lean && s.ingame)
+        .count();
     if lean_up != n - 1 {
         fail(&format!(
             "channel_walk: parked leanes dropped ({lean_up}/{} ingame)",

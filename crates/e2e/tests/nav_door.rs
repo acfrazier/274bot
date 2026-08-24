@@ -72,6 +72,7 @@ struct Shared {
     last_here: Option<Tile>,
 }
 
+#[derive(Default)]
 struct Slot {
     last_gen: u64,
     here: Option<Tile>,
@@ -97,20 +98,6 @@ impl Default for Shared {
             failed: None,
             same_tile_ticks: 0,
             last_here: None,
-        }
-    }
-}
-
-impl Default for Slot {
-    fn default() -> Self {
-        Self {
-            last_gen: 0,
-            here: None,
-            scene_state: 0,
-            base: (0, 0),
-            scene2_seen: false,
-            tele_sent: false,
-            tried_1530: false,
         }
     }
 }
@@ -160,28 +147,24 @@ fn nav_door() {
             println!("PASS: nav_door walker arrived at {DEST:?} in {elapsed:?} (here={here:?})");
             return;
         }
-        if !s.dest_armed {
-            if s.walker.scene_state == 2 {
-                if let Some(here) = s.walker.here {
-                    if at_catherby(here) && outside_ready(here) {
-                        let start = if grid.walkable(here) {
-                            here
-                        } else {
-                            OUTSIDE_PACK
-                        };
-                        match find(&grid, start, DEST) {
-                            Ok(route) => {
-                                s.traveller.arm(route);
-                                s.dest_armed = true;
-                                started = Some(Instant::now());
-                                println!(
-                                    "nav_door: armed dest {start:?} -> {DEST:?} (here={here:?})"
-                                );
-                            }
-                            Err(_) => fail(&format!(
-                                "nav_door: no pack path from {start:?} to {DEST:?} (here={here:?})"
-                            )),
+        if !s.dest_armed && s.walker.scene_state == 2 {
+            if let Some(here) = s.walker.here {
+                if at_catherby(here) && outside_ready(here) {
+                    let start = if grid.walkable(here) {
+                        here
+                    } else {
+                        OUTSIDE_PACK
+                    };
+                    match find(&grid, start, DEST) {
+                        Ok(route) => {
+                            s.traveller.arm(route);
+                            s.dest_armed = true;
+                            started = Some(Instant::now());
+                            println!("nav_door: armed dest {start:?} -> {DEST:?} (here={here:?})");
                         }
+                        Err(_) => fail(&format!(
+                            "nav_door: no pack path from {start:?} to {DEST:?} (here={here:?})"
+                        )),
                     }
                 }
             }

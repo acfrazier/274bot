@@ -20,7 +20,8 @@ use script::{CompiledId, SlotScript};
 const NATIVE_TICK: &str = "export function tick(api) { api._n = (api._n||0)+1 }";
 
 // The brief's compat fixture: defineBot config with a `create()` bot.
-const COMPAT_FIXTURE: &str = r#"export default defineBot({ name: "t", create() { return new (class { loop() {} }) } })"#;
+const COMPAT_FIXTURE: &str =
+    r#"export default defineBot({ name: "t", create() { return new (class { loop() {} }) } })"#;
 
 /// Accept-everything driver stub (same shape as the other script tests:
 /// the crate's `test_support` module is unit-test-only, so integration
@@ -304,7 +305,8 @@ fn slot_start_load_ticks_and_stop_joins() {
 #[test]
 fn slot_start_load_refuses_while_active() {
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
+    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+        .unwrap();
     let err = slot
         .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
         .expect_err("already active");
@@ -328,7 +330,8 @@ fn slot_load_and_compiled_are_xor() {
         fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
     }
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
+    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+        .unwrap();
     assert!(slot.start_compiled(Box::new(Noop)).is_err());
     slot.stop();
 

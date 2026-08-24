@@ -46,23 +46,24 @@ use crate::theme::{
 /// Default dear-app `RedrawMode::Poll` spins the UI thread and starves the
 /// 20 ms slot; WaitUntil matches the client tick.
 pub fn runner_config() -> dear_app::RunnerConfig {
-    let mut cfg = dear_app::RunnerConfig::default();
-    cfg.window_title = "274bot".into();
-    cfg.window_size = (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64);
-    cfg.clear_color = BG;
-    cfg.theme = Some(Theme::Dark);
-    cfg.redraw = RedrawMode::WaitUntil { fps: 50.0 };
-    cfg.ini_filename = Some(PathBuf::from("274bot-panel.ini"));
-    cfg.restore_previous_geometry = false;
-    cfg.docking = dear_app::DockingConfig {
-        enable: true,
-        auto_dockspace: false,
-        dockspace_flags: DockNodeFlags::AUTO_HIDE_TAB_BAR,
-        ..Default::default()
-    };
     // Viewports stay off: dear-app renders into the single main viewport only.
-    cfg.io_config_flags = Some(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
-    cfg
+    dear_app::RunnerConfig {
+        window_title: "274bot".into(),
+        window_size: (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64),
+        clear_color: BG,
+        theme: Some(Theme::Dark),
+        redraw: RedrawMode::WaitUntil { fps: 50.0 },
+        ini_filename: Some(PathBuf::from("274bot-panel.ini")),
+        restore_previous_geometry: false,
+        docking: dear_app::DockingConfig {
+            enable: true,
+            auto_dockspace: false,
+            dockspace_flags: DockNodeFlags::AUTO_HIDE_TAB_BAR,
+            ..Default::default()
+        },
+        io_config_flags: Some(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE),
+        ..Default::default()
+    }
 }
 
 /// Scale all ImGui style sizes for a window DPI. Held for Task 7: dear-app runs
@@ -579,8 +580,8 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
     };
-    let only_selected = state.session.channel_head
-        || state.session.focus.lock().unwrap().only_render_selected;
+    let only_selected =
+        state.session.channel_head || state.session.focus.lock().unwrap().only_render_selected;
     let statuses = state.session.statuses();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
@@ -782,7 +783,7 @@ fn title_row(ui: &Ui, session: &mut Session) {
 
 fn banner(ui: &Ui, session: &Session) {
     if let Some(err) = &session.error {
-        ui.text_colored(ERROR, format!("{err}"));
+        ui.text_colored(ERROR, err);
     }
 }
 
@@ -1084,8 +1085,7 @@ fn browse_window(ui: &Ui, session: &mut Session) {
             ui.text_disabled("no scripts — Browse is empty");
         }
         for id in ids {
-            let selected = session.script_sel
-                == Some(script::ScriptSel::Compiled(*id));
+            let selected = session.script_sel == Some(script::ScriptSel::Compiled(*id));
             if ui
                 .selectable_config(id.0)
                 .selected(selected)
@@ -1097,8 +1097,7 @@ fn browse_window(ui: &Ui, session: &mut Session) {
             }
         }
         for card in cards {
-            let selected = session.script_sel
-                == Some(script::ScriptSel::Loaded(card.name.clone()));
+            let selected = session.script_sel == Some(script::ScriptSel::Loaded(card.name.clone()));
             if ui
                 .selectable_config(format!("{}  (JS)", card.name))
                 .selected(selected)
@@ -1123,8 +1122,7 @@ fn browse_window(ui: &Ui, session: &mut Session) {
 /// Start, never here.
 fn load_window(ui: &Ui, session: &mut Session) {
     let want = session.script_load_open;
-    let (open_popup, new_prev) =
-        chooser_should_open_popup(want, PREV_LOAD.load(Ordering::Relaxed));
+    let (open_popup, new_prev) = chooser_should_open_popup(want, PREV_LOAD.load(Ordering::Relaxed));
     PREV_LOAD.store(new_prev, Ordering::Relaxed);
     if open_popup {
         ui.open_popup("274bot-load");
@@ -1440,8 +1438,8 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
-    let only_selected = state.session.channel_head
-        || state.session.focus.lock().unwrap().only_render_selected;
+    let only_selected =
+        state.session.channel_head || state.session.focus.lock().unwrap().only_render_selected;
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
         let light = traffic_light(
@@ -1971,13 +1969,14 @@ mod tests {
         game_draw: u64,
         title: u64,
     ) -> host_play::SlotStatus {
-        let mut s = host_play::SlotStatus::default();
-        s.username = name.into();
-        s.ingame = ingame;
-        s.scene_state = scene;
-        s.game_draw_enters = game_draw;
-        s.title_screen_draw_enters = title;
-        s
+        host_play::SlotStatus {
+            username: name.into(),
+            ingame,
+            scene_state: scene,
+            game_draw_enters: game_draw,
+            title_screen_draw_enters: title,
+            ..Default::default()
+        }
     }
 
     fn live_at(started: Instant) -> LiveNull {

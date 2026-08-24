@@ -11,9 +11,9 @@ pub mod registry;
 pub mod slot;
 
 pub use ctx::{Script, ScriptCtx};
-pub use load::{JsCard, JsLibrary, LoadShape, ScriptSel, default_js_store, detect_shape};
+pub use load::{default_js_store, detect_shape, JsCard, JsLibrary, LoadShape, ScriptSel};
 pub use params::defaults;
-pub use registry::{CompiledId, compiled_ids, factory, is_whale};
+pub use registry::{compiled_ids, factory, is_whale, CompiledId};
 pub use slot::{RunState, SlotScript};
 
 #[cfg(feature = "load")]

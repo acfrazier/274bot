@@ -6,7 +6,7 @@
 
 use api::interact::Driver;
 use api::prot::Out;
-use script::ported::walk_to::{DEFAULT_RADIUS, DEFAULT_TARGET, Tile, WalkToBot};
+use script::ported::walk_to::{Tile, WalkToBot, DEFAULT_RADIUS, DEFAULT_TARGET};
 use script::{CompiledId, Script, ScriptCtx};
 
 /// Outbound writes a driver receives, as recorded by the stub.
@@ -101,7 +101,14 @@ fn ctx_with<'a>(
 
 #[test]
 fn walk_to_requests_target_until_inside_radius() {
-    let mut bot = WalkToBot::new(Tile { x: 10, z: 10, level: 0 }, 3);
+    let mut bot = WalkToBot::new(
+        Tile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        3,
+    );
     let mut got = None;
     let mut d = Rec::default();
     let mut walk = |x: i32, z: i32, _l: i32| {
@@ -114,7 +121,14 @@ fn walk_to_requests_target_until_inside_radius() {
 
 #[test]
 fn walk_to_noops_inside_radius() {
-    let mut bot = WalkToBot::new(Tile { x: 10, z: 10, level: 0 }, 3);
+    let mut bot = WalkToBot::new(
+        Tile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        3,
+    );
     let mut called = 0;
     let mut d = Rec::default();
     let mut walk = |_x: i32, _z: i32, _l: i32| {
@@ -128,7 +142,14 @@ fn walk_to_noops_inside_radius() {
 
 #[test]
 fn walk_to_waits_until_here_is_observed() {
-    let mut bot = WalkToBot::new(Tile { x: 10, z: 10, level: 0 }, 3);
+    let mut bot = WalkToBot::new(
+        Tile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        3,
+    );
     let mut called = 0;
     let mut d = Rec::default();
     let mut walk = |_x: i32, _z: i32, _l: i32| {
@@ -142,7 +163,14 @@ fn walk_to_waits_until_here_is_observed() {
 
 #[test]
 fn walk_to_without_walk_errors_instead_of_faking_arrival() {
-    let mut bot = WalkToBot::new(Tile { x: 10, z: 10, level: 0 }, 3);
+    let mut bot = WalkToBot::new(
+        Tile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        3,
+    );
     let mut d = Rec::default();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         bot.tick(&mut ctx_with(&mut d, Some((0, 0, 0)), None));
@@ -161,7 +189,14 @@ fn walk_to_without_walk_errors_instead_of_faking_arrival() {
 
 #[test]
 fn walk_rejected_retries_the_request_next_tick() {
-    let mut bot = WalkToBot::new(Tile { x: 10, z: 10, level: 0 }, 3);
+    let mut bot = WalkToBot::new(
+        Tile {
+            x: 10,
+            z: 10,
+            level: 0,
+        },
+        3,
+    );
     let mut calls = 0;
     let mut d = Rec::default();
     let mut walk = |x: i32, z: i32, _l: i32| {

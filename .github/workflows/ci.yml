@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # Bot crates only: --all would also format the vendored client submodule
+      # (separate workspace, intentionally not reformatted).
+      - name: Check formatting (bot crates)
+        run: cargo fmt -p host -p vault -p api -p host-play -p e2e -p panel -p nav -p script -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The vendored client is a workspace member but carries its own lint
+      # debt; skip it and lint every 274bot crate with warnings denied.
+      - name: Clippy (bot crates, warnings denied)
+        run: cargo clippy --workspace --exclude client --all-targets -- -D warnings

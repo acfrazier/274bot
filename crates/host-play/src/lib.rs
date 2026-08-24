@@ -28,6 +28,9 @@ mod scatter;
 use host::{should_emit_tick, PixelBuf, Pump, SlotInput};
 pub use rss::sample_process;
 pub use scatter::{scatter_tile_for, tele_args};
+
+/// Per-slot hook invoked by the slot thread after every mainloop pass.
+type SlotFrame = Arc<dyn Fn(&mut Client, &str) + Send + Sync>;
 use script::{ScriptCtx, SlotScript};
 use vault::{Profile, Vault, VaultError};
 
@@ -178,6 +181,9 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
 /// arrival). Returns whether the driver's out buffer was written (the lean
 /// pump flushes; the fat `Client` sends on its next mainloop pass). A slot
 /// whose script is Idle/Paused publishes nothing — no dispatch, no flush.
+// Slot threads pass the same shared handles everywhere; a context struct
+// would churn every call site, so the arg count is allowed on purpose.
+#[allow(clippy::too_many_arguments)]
 fn script_observe(
     driver: &mut dyn Driver,
     name: &str,
@@ -275,12 +281,7 @@ impl SlotArm {
     }
 }
 
-fn send_handoff_lean(
-    arm: &SlotArm,
-    lean: Option<Lean>,
-    uid: i32,
-    queue: &Arc<Mutex<LoginQueue>>,
-) {
+fn send_handoff_lean(arm: &SlotArm, lean: Option<Lean>, uid: i32, queue: &Arc<Mutex<LoginQueue>>) {
     if let Some(tx) = arm.handoff.lock().unwrap().take() {
         if let Some(lean) = lean {
             let _ = tx.send(lean);
@@ -358,7 +359,7 @@ pub struct Play {
     cache: Arc<Cache>,
     ifaces: Vec<Option<IfType>>,
     queue: Arc<Mutex<LoginQueue>>,
-    per_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
+    per_frame: SlotFrame,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
     /// Vault profiles keyed by username (`tune` looks up the incoming
@@ -448,8 +449,7 @@ impl Play {
 
     /// Keep vault credentials for a later [`Play::tune`] / [`Play::retune`].
     pub fn remember_profile(&mut self, profile: Profile) {
-        self.profiles
-            .insert(profile.username.clone(), profile);
+        self.profiles.insert(profile.username.clone(), profile);
     }
 
     /// Move `uid` to the front of the login FIFO so the TV head handshakes
@@ -504,7 +504,7 @@ impl Play {
             .lock()
             .unwrap()
             .entry(name.to_string())
-            .or_insert_with(SlotScript::new)
+            .or_default()
             .start_compiled(make())
     }
 
@@ -524,7 +524,7 @@ impl Play {
             .lock()
             .unwrap()
             .entry(name.to_string())
-            .or_insert_with(SlotScript::new)
+            .or_default()
             .start_load(source, shape)
     }
 
@@ -690,12 +690,7 @@ impl Play {
         self.spawn_channel_with(profile, None, true);
     }
 
-    fn spawn_channel_with(
-        &mut self,
-        profile: Profile,
-        arm: Option<Arc<SlotArm>>,
-        reconnect: bool,
-    ) {
+    fn spawn_channel_with(&mut self, profile: Profile, arm: Option<Arc<SlotArm>>, reconnect: bool) {
         self.profiles
             .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
@@ -862,26 +857,14 @@ impl Play {
                 None
             };
             (
-                spawn_head,
-                place_swap,
-                name,
-                incoming,
-                input,
-                pixels,
-                prev,
-                parked,
-                rekey,
-                done,
-                queued,
-                failed,
+                spawn_head, place_swap, name, incoming, input, pixels, prev, parked, rekey, done,
+                queued, failed,
             )
         };
         if place_swap {
-            if let (Some(prev), Some(lean), Some(profile)) = (
-                prev.clone(),
-                incoming,
-                self.profiles.get(&name).cloned(),
-            ) {
+            if let (Some(prev), Some(lean), Some(profile)) =
+                (prev.clone(), incoming, self.profiles.get(&name).cloned())
+            {
                 if let Some(arm) = self.arms.get(&prev).cloned() {
                     let (park_tx, park_rx) = mpsc::channel();
                     if let Some(pending) = self.pending_tune.as_mut() {
@@ -1216,6 +1199,9 @@ fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
     }
 }
 
+/// Every profile spawns one slot thread; shared handles are threaded through
+/// because the closure moves most of them (allowed: see `script_observe`).
+#[allow(clippy::too_many_arguments)]
 fn spawn_slot_thread(
     options: &PlayOptions,
     profile: Profile,
@@ -1228,7 +1214,7 @@ fn spawn_slot_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    slot_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
+    slot_frame: SlotFrame,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
     let username = profile.username.clone();
@@ -1257,7 +1243,7 @@ fn spawn_slot_thread(
                 .lock()
                 .unwrap()
                 .entry(username.clone())
-                .or_insert_with(SlotScript::new);
+                .or_default();
             slot_cheats
                 .lock()
                 .unwrap()
@@ -1278,10 +1264,8 @@ fn spawn_slot_thread(
             // Jag/anim/model/map prefetch (mirrors client-play; the scene
             // cannot reach scene_state 2 until the loc models are in).
             client.maininit();
-            if client.error_loading {
-                if debug_enabled() {
-                    eprintln!("[host-play] slot {username}: maininit failed");
-                }
+            if client.error_loading && debug_enabled() {
+                eprintln!("[host-play] slot {username}: maininit failed");
             }
 
             let uname = Arc::new(Mutex::new(username.clone()));
@@ -1482,6 +1466,7 @@ enum LeanPump {
 
 /// Pump a live lean: mark `ingame`, host `NO_TIMEOUT` once a second, update
 /// the snapshot. Adopt (parked TV) uses `seed = false`.
+#[allow(clippy::too_many_arguments)]
 fn run_lean_pump(
     mut lean: Lean,
     arm: &SlotArm,
@@ -1619,6 +1604,7 @@ fn run_lean_pump(
 /// (wrapper opcode 16), then pumps inbound frames at the host cadence —
 /// no `maininit`, no `Client`, no pixels. Host writes `NO_TIMEOUT` so
 /// parked extras stay logged in. The row mirrors the thin `LeanSnapshot`.
+#[allow(clippy::too_many_arguments)]
 fn spawn_channel_thread(
     options: &PlayOptions,
     profile: Profile,
@@ -1653,7 +1639,7 @@ fn spawn_channel_thread(
                     .lock()
                     .unwrap()
                     .entry(username.clone())
-                    .or_insert_with(SlotScript::new);
+                    .or_default();
                 slot_cheats
                     .lock()
                     .unwrap()
@@ -2043,7 +2029,7 @@ mod tests {
         assert!(arm.stop.load(Ordering::Relaxed));
         assert!(!play.spawned.contains("alice"));
         assert!(play.handles.is_empty());
-        assert!(play.arms.get("alice").is_none(), "stop_slot drops the arm");
+        assert!(!play.arms.contains_key("alice"), "stop_slot drops the arm");
         assert!(
             play.statuses().iter().all(|s| s.username != "alice"),
             "stop_slot drops the status row"
@@ -2281,8 +2267,10 @@ mod tests {
             lowmem: true,
         };
         let mut ifaces = vec![None; 10];
-        let mut com = IfType::default();
-        com.client_code = api::interact::CC_LOGOUT;
+        let com = IfType {
+            client_code: api::interact::CC_LOGOUT,
+            ..Default::default()
+        };
         ifaces[7] = Some(com);
         let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), ifaces.clone());
         client.ingame = true;
@@ -2670,7 +2658,7 @@ mod tests {
         // `script::factory` returns `None` for every picker id until the
         // script is ported (WalkTo is the first port; BoneBurier is not
         // yet); Start must surface that, never a dummy.
-        let play = run_with_io(
+        let _play = run_with_io(
             &PlayOptions {
                 host: "127.0.0.1".into(),
                 port: 43594,
@@ -2810,16 +2798,19 @@ mod tests {
 
     /// One fat/lean `script_observe` wiring rig: a started slot script for
     /// "alice" plus its (empty) cheat queue.
-    fn script_wiring() -> (
-        Arc<Mutex<HashMap<String, SlotScript>>>,
-        Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-        Arc<Mutex<u32>>,
-    ) {
-        let scripts = Arc::new(Mutex::new(HashMap::new()));
-        let cheats = Arc::new(Mutex::new(HashMap::new()));
+    struct ScriptWiring {
+        scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+        cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+        count: Arc<Mutex<u32>>,
+    }
+
+    fn script_wiring() -> ScriptWiring {
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let count = Arc::new(Mutex::new(0));
         let mut all = scripts.lock().unwrap();
-        let slot = all.entry("alice".into()).or_insert_with(SlotScript::new);
+        let slot = all.entry("alice".into()).or_default();
         slot.start_compiled(Box::new(TickCounter(Arc::clone(&count))))
             .unwrap();
         drop(all);
@@ -2827,12 +2818,20 @@ mod tests {
             .lock()
             .unwrap()
             .insert("alice".into(), VecDeque::new());
-        (scripts, cheats, count)
+        ScriptWiring {
+            scripts,
+            cheats,
+            count,
+        }
     }
 
     #[test]
     fn script_observe_ticks_only_on_player_edge_while_up() {
-        let (scripts, cheats, count) = script_wiring();
+        let ScriptWiring {
+            scripts,
+            cheats,
+            count,
+        } = script_wiring();
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -2891,7 +2890,7 @@ mod tests {
             .lock()
             .unwrap()
             .entry("alice".into())
-            .or_insert_with(SlotScript::new)
+            .or_default()
             .start_compiled(Box::new(TickCounter(Arc::clone(&count))))
             .unwrap();
         scripts.lock().unwrap().get_mut("alice").unwrap().stop();
@@ -2907,7 +2906,11 @@ mod tests {
 
     #[test]
     fn script_observe_drains_queued_cheat_onto_driver() {
-        let (scripts, cheats, count) = script_wiring();
+        let ScriptWiring {
+            scripts,
+            cheats,
+            count,
+        } = script_wiring();
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),

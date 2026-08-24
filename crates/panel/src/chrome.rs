@@ -9,14 +9,46 @@ pub struct Section {
 /// Static inventory of rs2b0t chrome sections.
 pub fn sections() -> &'static [Section] {
     &[
-        Section { id: "profile", wired: true, campaign_hint: None },
-        Section { id: "credentials", wired: true, campaign_hint: None },
-        Section { id: "script", wired: true, campaign_hint: None },
-        Section { id: "parameters", wired: false, campaign_hint: Some("campaign 5") },
-        Section { id: "status", wired: true, campaign_hint: None },
-        Section { id: "log", wired: true, campaign_hint: None },
-        Section { id: "rendering", wired: true, campaign_hint: None },
-        Section { id: "input", wired: true, campaign_hint: None },
+        Section {
+            id: "profile",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
+            id: "credentials",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
+            id: "script",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
+            id: "parameters",
+            wired: false,
+            campaign_hint: Some("campaign 5"),
+        },
+        Section {
+            id: "status",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
+            id: "log",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
+            id: "rendering",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
+            id: "input",
+            wired: true,
+            campaign_hint: None,
+        },
     ]
 }
 
@@ -70,15 +102,24 @@ pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
 #[cfg(test)]
 mod tests {
     use crate::chrome::{
-        button_row_layout, equal_button_width, multibox_tooltip, GPU_LATER, MOCK_BUTTONS, PARAM_ROW,
-        SCRIPT_ROW, sections, BUTTON_GAP, MIN_BUTTON,
+        button_row_layout, equal_button_width, multibox_tooltip, sections, BUTTON_GAP, GPU_LATER,
+        MIN_BUTTON, MOCK_BUTTONS, PARAM_ROW, SCRIPT_ROW,
     };
-    use crate::theme::{apply_amber, ACCENT, PANEL_WIDTH, integer_ui_scale};
+    use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
 
     #[test]
     fn sections_contains_all_section_ids() {
         let ids: Vec<&str> = sections().iter().map(|s| s.id).collect();
-        for id in ["profile", "credentials", "script", "parameters", "status", "log", "rendering", "input"] {
+        for id in [
+            "profile",
+            "credentials",
+            "script",
+            "parameters",
+            "status",
+            "log",
+            "rendering",
+            "input",
+        ] {
             assert!(ids.contains(&id), "missing section id {id:?}");
         }
     }
@@ -86,8 +127,12 @@ mod tests {
     #[test]
     fn accent_is_amber_not_green() {
         assert_eq!(ACCENT[0], 1.0);
-        assert!(ACCENT[1] > 0.6, "amber G must exceed 0.6");
-        assert!(ACCENT[0] > ACCENT[1], "amber is red-dominant, never green");
+        const {
+            assert!(ACCENT[1] > 0.6, "amber G must exceed 0.6");
+        }
+        const {
+            assert!(ACCENT[0] > ACCENT[1], "amber is red-dominant, never green");
+        }
     }
 
     #[test]
@@ -108,10 +153,16 @@ mod tests {
             "MultiBox is a live toggle; only parameter chrome stays mocked"
         );
         for b in ["Global settings", "Nav settings", "Loadouts"] {
-            assert!(MOCK_BUTTONS.contains(&b), "param mock {b:?} must still be listed");
+            assert!(
+                MOCK_BUTTONS.contains(&b),
+                "param mock {b:?} must still be listed"
+            );
         }
         for b in ["Browse…", "Start", "Pause", "Stop"] {
-            assert!(!MOCK_BUTTONS.contains(&b), "script {b:?} is wired, not a mock");
+            assert!(
+                !MOCK_BUTTONS.contains(&b),
+                "script {b:?} is wired, not a mock"
+            );
         }
     }
 
@@ -156,7 +207,9 @@ mod tests {
         assert_eq!(w, 40.0);
         let (_, stack) = button_row_layout(avail, 3);
         assert!(!stack, "Start/Pause/Stop fit the 330px strip");
-        assert!(MIN_BUTTON > 0.0);
+        const {
+            assert!(MIN_BUTTON > 0.0);
+        }
         assert_eq!(SCRIPT_ROW.len(), 3);
         assert_eq!(PARAM_ROW.len(), 3);
     }
@@ -185,7 +238,9 @@ mod tests {
             hover[1] < 0.5,
             "hover fill must stay dark so #ddd text is readable on amber"
         );
-        let check_bg = ctx.style().color(dear_imgui_rs::StyleColor::CheckboxSelectedBg);
+        let check_bg = ctx
+            .style()
+            .color(dear_imgui_rs::StyleColor::CheckboxSelectedBg);
         assert!(
             check_bg[2] < 0.2,
             "checkbox fill must not be default imgui blue"

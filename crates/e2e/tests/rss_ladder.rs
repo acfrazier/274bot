@@ -24,11 +24,7 @@ fn parse_rss_n_from(raw: Option<&str>) -> Result<usize, &'static str> {
 }
 
 fn ladder_profiles(n: usize) -> Vec<Profile> {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-rss-ladder-{}-{}",
-        std::process::id(),
-        n
-    ));
+    let dir = std::env::temp_dir().join(format!("274bot-rss-ladder-{}-{}", std::process::id(), n));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
     if path.exists() {
@@ -92,9 +88,12 @@ fn live_rss_ladder_all_null() {
         Ok(n) => n,
         Err(msg) => fail(msg),
     };
-    let play = run_with_io(&options(), ladder_profiles(n), |_| (None, None), |c, _| {
-        c.set_draw(false)
-    });
+    let play = run_with_io(
+        &options(),
+        ladder_profiles(n),
+        |_| (None, None),
+        |c, _| c.set_draw(false),
+    );
     wait_all_scene2(&play, n);
     let snap0: HashMap<String, u64> = play
         .statuses()

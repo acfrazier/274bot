@@ -96,7 +96,11 @@ fn live_channel_ladder_lean_wall() {
     }
     let heads = rows.iter().filter(|s| !s.lean).count();
     let leanes = rows.iter().filter(|s| s.lean).count();
-    let lean_paint_sum = rows.iter().filter(|s| s.lean).map(|s| s.paint_n).sum::<u64>();
+    let lean_paint_sum = rows
+        .iter()
+        .filter(|s| s.lean)
+        .map(|s| s.paint_n)
+        .sum::<u64>();
     if lean_paint_sum > 0 {
         fail("channel_ladder: lean channels painted");
     }

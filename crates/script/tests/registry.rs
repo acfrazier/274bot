@@ -50,13 +50,19 @@ fn picker_lists_smoke_not_whales() {
     let names: Vec<_> = script::compiled_ids().iter().map(|i| i.0).collect();
     assert!(names.contains(&"WalkTo"));
     assert!(names.contains(&"BoneBurier"));
-    assert!(!names.iter().any(|n| *n == "GatheringBot" || *n == "AIOQuester"));
+    assert!(!names
+        .iter()
+        .any(|n| *n == "GatheringBot" || *n == "AIOQuester"));
 }
 
 #[test]
 fn compiled_ids_are_exactly_the_v1_smoke_names() {
     let names: Vec<_> = script::compiled_ids().iter().map(|i| i.0).collect();
-    assert_eq!(names, SMOKES.to_vec(), "picker list must be the 14 v1 smoke names");
+    assert_eq!(
+        names,
+        SMOKES.to_vec(),
+        "picker list must be the 14 v1 smoke names"
+    );
     assert!(
         !names.iter().any(|n| WHALES.contains(n)),
         "whale names must not appear in compiled_ids"

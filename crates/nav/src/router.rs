@@ -8,8 +8,15 @@ use crate::tile::{chebyshev, Tile};
 
 /// One leg of a route: a walk segment or a door crossing.
 pub enum Leg {
-    Walk { tiles: Vec<Tile> },
-    Door { loc: Tile, loc_id: i32, from: Tile, to: Tile },
+    Walk {
+        tiles: Vec<Tile>,
+    },
+    Door {
+        loc: Tile,
+        loc_id: i32,
+        from: Tile,
+        to: Tile,
+    },
 }
 
 /// A route from an origin to `dest`, split into legs.
@@ -128,16 +135,32 @@ enum Back {
 }
 
 fn north(t: Tile) -> Tile {
-    Tile { x: t.x, z: t.z + 1, level: t.level }
+    Tile {
+        x: t.x,
+        z: t.z + 1,
+        level: t.level,
+    }
 }
 fn east(t: Tile) -> Tile {
-    Tile { x: t.x + 1, z: t.z, level: t.level }
+    Tile {
+        x: t.x + 1,
+        z: t.z,
+        level: t.level,
+    }
 }
 fn south(t: Tile) -> Tile {
-    Tile { x: t.x, z: t.z - 1, level: t.level }
+    Tile {
+        x: t.x,
+        z: t.z - 1,
+        level: t.level,
+    }
 }
 fn west(t: Tile) -> Tile {
-    Tile { x: t.x - 1, z: t.z, level: t.level }
+    Tile {
+        x: t.x - 1,
+        z: t.z,
+        level: t.level,
+    }
 }
 
 /// Heap entry; `Ord` is reversed so the smallest f pops first, with tile
@@ -180,9 +203,31 @@ mod tests {
     #[test]
     fn find_across_open_3x3_is_a_walk_leg() {
         let g = StepGrid::fixture_open_3x3();
-        let r = find(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 2, z: 2, level: 0 }).unwrap();
-        assert_eq!(r.dest, Tile { x: 2, z: 2, level: 0 });
-        let Leg::Walk { tiles } = &r.legs[0] else { panic!() };
+        let r = find(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            r.dest,
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0
+            }
+        );
+        let Leg::Walk { tiles } = &r.legs[0] else {
+            panic!()
+        };
         assert_eq!(tiles.first().unwrap().x, 0);
         assert_eq!(tiles.last(), Some(&r.dest));
     }
@@ -190,37 +235,126 @@ mod tests {
     #[test]
     fn find_through_wall_is_no_path() {
         let mut g = StepGrid::fixture_open_3x3();
-        g.set_walkable(Tile { x: 1, z: 0, level: 0 }, false);
-        g.set_walkable(Tile { x: 1, z: 1, level: 0 }, false);
-        g.set_walkable(Tile { x: 1, z: 2, level: 0 }, false);
-        assert!(find(&g, Tile { x: 0, z: 1, level: 0 }, Tile { x: 2, z: 1, level: 0 }).is_err());
+        g.set_walkable(
+            Tile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            false,
+        );
+        g.set_walkable(
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            false,
+        );
+        g.set_walkable(
+            Tile {
+                x: 1,
+                z: 2,
+                level: 0,
+            },
+            false,
+        );
+        assert!(find(
+            &g,
+            Tile {
+                x: 0,
+                z: 1,
+                level: 0
+            },
+            Tile {
+                x: 2,
+                z: 1,
+                level: 0
+            }
+        )
+        .is_err());
     }
 
     #[test]
     fn find_uses_door_edge_across_a_wall() {
         let g = StepGrid::fixture_door_corridor();
-        let r = find(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 4, z: 0, level: 0 }).unwrap();
-        assert!(r.legs.iter().any(|l| matches!(l, Leg::Door { loc_id: 1530, .. })));
+        let r = find(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        )
+        .unwrap();
+        assert!(r
+            .legs
+            .iter()
+            .any(|l| matches!(l, Leg::Door { loc_id: 1530, .. })));
     }
 
     #[test]
     fn door_route_splits_into_walk_door_walk_legs() {
         let g = StepGrid::fixture_door_corridor();
-        let r = find(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 4, z: 0, level: 0 }).unwrap();
+        let r = find(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { tiles: w0 },
-            Leg::Door { loc, loc_id, from, to },
+            Leg::Door {
+                loc,
+                loc_id,
+                from,
+                to,
+            },
             Leg::Walk { tiles: w1 },
         ) = (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Door, Walk legs");
         };
-        assert_eq!(w0.first(), Some(&Tile { x: 0, z: 0, level: 0 }));
+        assert_eq!(
+            w0.first(),
+            Some(&Tile {
+                x: 0,
+                z: 0,
+                level: 0
+            })
+        );
         assert_eq!(w0.last(), Some(from));
         assert_eq!(w1.first(), Some(to));
-        assert_eq!(w1.last(), Some(&Tile { x: 4, z: 0, level: 0 }));
+        assert_eq!(
+            w1.last(),
+            Some(&Tile {
+                x: 4,
+                z: 0,
+                level: 0
+            })
+        );
         assert_eq!(loc_id, &1530);
-        assert_eq!(loc, &Tile { x: 2, z: 0, level: 0 });
+        assert_eq!(
+            loc,
+            &Tile {
+                x: 2,
+                z: 0,
+                level: 0
+            }
+        );
     }
 }

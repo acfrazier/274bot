@@ -106,8 +106,14 @@ pub fn apply_amber(style: &mut Style) {
     style.set_color(StyleColor::TabSelectedOverline, ACCENT);
     style.set_color(StyleColor::TabDimmed, BG_DEEP);
     style.set_color(StyleColor::TabDimmedSelected, [0.16, 0.11, 0.02, 1.0]);
-    style.set_color(StyleColor::DockingPreview, [ACCENT[0], ACCENT[1], ACCENT[2], 0.45]);
+    style.set_color(
+        StyleColor::DockingPreview,
+        [ACCENT[0], ACCENT[1], ACCENT[2], 0.45],
+    );
     style.set_color(StyleColor::DockingEmptyBg, BG_DEEP);
-    style.set_color(StyleColor::TextSelectedBg, [ACCENT[0], ACCENT[1], ACCENT[2], 0.35]);
+    style.set_color(
+        StyleColor::TextSelectedBg,
+        [ACCENT[0], ACCENT[1], ACCENT[2], 0.35],
+    );
     style.set_color(StyleColor::NavCursor, ACCENT);
 }

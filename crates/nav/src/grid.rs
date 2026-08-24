@@ -87,7 +87,11 @@ impl StepGrid {
             walk: vec![1; 9],
             width: 3,
             height: 3,
-            origin: Tile { x: 0, z: 0, level: 0 },
+            origin: Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             doors: vec![],
         }
     }
@@ -100,7 +104,11 @@ impl StepGrid {
             walk: vec![1; 40],
             width: 40,
             height: 1,
-            origin: Tile { x: 0, z: 0, level: 0 },
+            origin: Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             doors: vec![],
         }
     }
@@ -115,12 +123,28 @@ impl StepGrid {
             walk,
             width: 5,
             height: 1,
-            origin: Tile { x: 0, z: 0, level: 0 },
+            origin: Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             doors: vec![DoorEdge {
-                loc: Tile { x: 2, z: 0, level: 0 },
+                loc: Tile {
+                    x: 2,
+                    z: 0,
+                    level: 0,
+                },
                 loc_id: 1530,
-                from: Tile { x: 1, z: 0, level: 0 },
-                to: Tile { x: 3, z: 0, level: 0 },
+                from: Tile {
+                    x: 1,
+                    z: 0,
+                    level: 0,
+                },
+                to: Tile {
+                    x: 3,
+                    z: 0,
+                    level: 0,
+                },
             }],
         }
     }

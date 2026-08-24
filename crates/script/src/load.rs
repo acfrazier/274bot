@@ -30,7 +30,9 @@ pub enum LoadShape {
 pub fn detect_shape(source: &str) -> LoadShape {
     if source.contains("defineBot(") || source.contains("__rs2b0tManifest") {
         LoadShape::CompatDefineBot
-    } else if source.contains("export function tick") || source.contains("export async function tick") {
+    } else if source.contains("export function tick")
+        || source.contains("export async function tick")
+    {
         LoadShape::NativeTick
     } else {
         LoadShape::Reject
@@ -118,8 +120,8 @@ impl JsLibrary {
     /// (dropped before this returns), then registers and persists. A second
     /// load with the same name replaces the previous card.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
-        let source = std::fs::read_to_string(path)
-            .map_err(|e| format!("load {}: {e}", path.display()))?;
+        let source =
+            std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -194,7 +196,8 @@ impl JsLibrary {
         if let Some(parent) = self.store.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("js-scripts.json: {e}"))?;
         }
-        let json = serde_json::to_string_pretty(entries).map_err(|e| format!("js-scripts.json: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(entries).map_err(|e| format!("js-scripts.json: {e}"))?;
         std::fs::write(&self.store, json).map_err(|e| format!("js-scripts.json: {e}"))
     }
 }
@@ -558,9 +561,8 @@ globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { in
                             }
                         }
                         if latest != n {
-                            let _ = out.send(ThreadMsg::Log(format!(
-                                "skipped stale ticks -> {latest}"
-                            )));
+                            let _ = out
+                                .send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
                         }
                         let _ = out.send(ThreadMsg::Completed(latest));
                     } else {

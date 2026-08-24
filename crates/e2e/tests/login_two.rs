@@ -17,7 +17,10 @@ fn login_two() {
     if !live() {
         return;
     }
-    let play = run(&options(), profiles(&[("test", "test"), ("test2", "test2")]));
+    let play = run(
+        &options(),
+        profiles(&[("test", "test"), ("test2", "test2")]),
+    );
     wait_ingame(&play, 2, Duration::from_secs(150), "login_two");
 
     let starts = login_starts(&play.statuses());

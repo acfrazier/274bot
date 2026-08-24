@@ -39,7 +39,7 @@ pub fn load() -> PanelUiState {
     {
         // Per-test-thread isolation so parallel `select` calls do not race
         // on a shared temp file or the operator's real prefs.
-        return TEST_STATE.with(|s| s.borrow().clone());
+        TEST_STATE.with(|s| s.borrow().clone())
     }
     #[cfg(not(test))]
     load_at(&path())
@@ -49,7 +49,6 @@ pub fn save(state: &PanelUiState) {
     #[cfg(test)]
     {
         TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
-        return;
     }
     #[cfg(not(test))]
     save_at(&path(), state);
@@ -112,8 +111,10 @@ mod tests {
         let p = dir.join("panel-ui.json");
         let _ = std::fs::remove_file(&p);
 
-        let mut state = PanelUiState::default();
-        state.last_focus = Some("bob".into());
+        let mut state = PanelUiState {
+            last_focus: Some("bob".into()),
+            ..Default::default()
+        };
         state
             .collapsed
             .insert("bob".into(), HashMap::from([("nav".into(), true)]));
@@ -121,7 +122,7 @@ mod tests {
 
         let loaded = load_at(&p);
         assert_eq!(loaded.last_focus.as_deref(), Some("bob"));
-        assert_eq!(loaded.collapsed["bob"]["nav"], true);
+        assert!(loaded.collapsed["bob"]["nav"]);
     }
 
     #[test]
@@ -139,8 +140,10 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip_via_default_api() {
-        let mut state = PanelUiState::default();
-        state.last_focus = Some("carol".into());
+        let state = PanelUiState {
+            last_focus: Some("carol".into()),
+            ..Default::default()
+        };
         save(&state);
         assert_eq!(load().last_focus.as_deref(), Some("carol"));
     }

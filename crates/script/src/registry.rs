@@ -4,7 +4,10 @@
 //! ported" in the panel task). Whales are recognized but never listed;
 //! `Counter` is a test fixture, never listed either.
 
-use crate::ctx::{Script, ScriptCtx};
+use crate::ctx::Script;
+
+#[cfg(test)]
+use crate::ctx::ScriptCtx;
 
 /// A picker id: the exact string the picker shows and Start keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

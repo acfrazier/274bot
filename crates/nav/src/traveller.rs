@@ -272,7 +272,9 @@ impl Traveller {
                 self.last_walk_ok = Some(accepted);
                 self.status = NavStatus::Walking;
             }
-            Leg::Door { loc, loc_id, to, .. } => {
+            Leg::Door {
+                loc, loc_id, to, ..
+            } => {
                 if !door_open {
                     // Closed: OP_LOC1 the packed typecode (opens 1530).
                     self.last_op_ok = Some(op_loc(d, loc.x, loc.z, *loc_id));
@@ -310,7 +312,15 @@ mod tests {
         let mut t = Traveller::new();
         let mut r = Rec::default();
         assert_eq!(
-            t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false),
+            t.tick(
+                &mut r,
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                },
+                false
+            ),
             NavStatus::Idle
         );
     }
@@ -327,14 +337,36 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
         let tiles = t.remaining_walk_tiles(None);
-        assert_eq!(tiles.first(), Some(&Tile { x: 0, z: 0, level: 0 }));
-        assert_eq!(tiles.last(), Some(&Tile { x: 2, z: 2, level: 0 }));
+        assert_eq!(
+            tiles.first(),
+            Some(&Tile {
+                x: 0,
+                z: 0,
+                level: 0
+            })
+        );
+        assert_eq!(
+            tiles.last(),
+            Some(&Tile {
+                x: 2,
+                z: 2,
+                level: 0
+            })
+        );
     }
 
     #[test]
@@ -343,13 +375,25 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
         assert!(t
-            .remaining_walk_tiles(Some(Tile { x: 2, z: 2, level: 0 }))
+            .remaining_walk_tiles(Some(Tile {
+                x: 2,
+                z: 2,
+                level: 0
+            }))
             .is_empty());
     }
 
@@ -359,19 +403,43 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_door_corridor(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 4, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
         // Standing on the door's from-tile: the first walk leg is done and
         // the door connects straight to the far walk leg (no duplicate
         // crossing tile).
-        let tiles = t.remaining_walk_tiles(Some(Tile { x: 1, z: 0, level: 0 }));
+        let tiles = t.remaining_walk_tiles(Some(Tile {
+            x: 1,
+            z: 0,
+            level: 0,
+        }));
         let expected = vec![
-            Tile { x: 1, z: 0, level: 0 },
-            Tile { x: 3, z: 0, level: 0 },
-            Tile { x: 4, z: 0, level: 0 },
+            Tile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 3,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
         ];
         assert_eq!(tiles, expected);
     }
@@ -382,16 +450,42 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_1x40(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 39, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 39,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
         // Mid-leg: the line starts at the player's tile, not the leg start.
-        let tiles = t.remaining_walk_tiles(Some(Tile { x: 15, z: 0, level: 0 }));
-        assert_eq!(tiles.first(), Some(&Tile { x: 15, z: 0, level: 0 }));
+        let tiles = t.remaining_walk_tiles(Some(Tile {
+            x: 15,
+            z: 0,
+            level: 0,
+        }));
+        assert_eq!(
+            tiles.first(),
+            Some(&Tile {
+                x: 15,
+                z: 0,
+                level: 0
+            })
+        );
         assert_eq!(tiles.len(), 25);
-        assert_eq!(tiles.last(), Some(&Tile { x: 39, z: 0, level: 0 }));
+        assert_eq!(
+            tiles.last(),
+            Some(&Tile {
+                x: 39,
+                z: 0,
+                level: 0
+            })
+        );
     }
 
     #[test]
@@ -400,12 +494,27 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
-        assert_eq!(t.queued(), Some(Tile { x: 2, z: 2, level: 0 }));
+        assert_eq!(
+            t.queued(),
+            Some(Tile {
+                x: 2,
+                z: 2,
+                level: 0
+            })
+        );
         t.clear();
         assert_eq!(t.queued(), None);
     }
@@ -416,8 +525,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -426,7 +543,15 @@ mod tests {
             ..Rec::default()
         };
         assert_eq!(
-            t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false),
+            t.tick(
+                &mut r,
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                },
+                false
+            ),
             NavStatus::Walking
         );
         assert!(r.walked.is_some());
@@ -438,8 +563,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_1x40(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 39, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 39,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -447,7 +580,15 @@ mod tests {
             route: Some((0, 0)),
             ..Rec::default()
         };
-        t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false);
+        t.tick(
+            &mut r,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            false,
+        );
         // Far end is 39 away (> 20): hop to a tile ~15 steps ahead.
         let (x, z) = r.walked.expect("walk sent");
         assert!((10..=20).contains(&x), "hop target x was {x}");
@@ -460,8 +601,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_1x40(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 39, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 39,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -471,7 +620,15 @@ mod tests {
         };
         // Second hop from 15 tiles in: the target must stay ahead of
         // `here`, not point back toward the leg start.
-        t.tick(&mut r, Tile { x: 15, z: 0, level: 0 }, false);
+        t.tick(
+            &mut r,
+            Tile {
+                x: 15,
+                z: 0,
+                level: 0,
+            },
+            false,
+        );
         let (x, z) = r.walked.expect("walk sent");
         assert!((25..=35).contains(&x), "second-hop target x was {x}");
         assert_eq!(z, 0);
@@ -483,14 +640,30 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
         let mut r = Rec::default();
         assert_eq!(
-            t.tick(&mut r, Tile { x: 2, z: 2, level: 0 }, false),
+            t.tick(
+                &mut r,
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0
+                },
+                false
+            ),
             NavStatus::Arrived
         );
         assert_eq!(t.queued(), None);
@@ -502,8 +675,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_door_corridor(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 4, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -513,7 +694,15 @@ mod tests {
         };
         // skip to door by standing on from-tile; door already open
         assert_eq!(
-            t.tick(&mut r, Tile { x: 1, z: 0, level: 0 }, true),
+            t.tick(
+                &mut r,
+                Tile {
+                    x: 1,
+                    z: 0,
+                    level: 0
+                },
+                true
+            ),
             NavStatus::Door
         );
         assert!(r.walked.is_some(), "open door walks through");
@@ -526,16 +715,42 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_door_corridor(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 4, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
         assert_eq!(
-            t.current_door(Tile { x: 1, z: 0, level: 0 }),
-            Some((Tile { x: 2, z: 0, level: 0 }, 1530))
+            t.current_door(Tile {
+                x: 1,
+                z: 0,
+                level: 0
+            }),
+            Some((
+                Tile {
+                    x: 2,
+                    z: 0,
+                    level: 0
+                },
+                1530
+            ))
         );
-        assert_eq!(t.current_door(Tile { x: 0, z: 0, level: 0 }), None);
+        assert_eq!(
+            t.current_door(Tile {
+                x: 0,
+                z: 0,
+                level: 0
+            }),
+            None
+        );
     }
 
     #[test]
@@ -544,8 +759,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_door_corridor(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 4, z: 0, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -554,7 +777,15 @@ mod tests {
             ..Rec::default()
         };
         assert_eq!(
-            t.tick(&mut r, Tile { x: 1, z: 0, level: 0 }, false),
+            t.tick(
+                &mut r,
+                Tile {
+                    x: 1,
+                    z: 0,
+                    level: 0
+                },
+                false
+            ),
             NavStatus::Door
         );
         assert!(r.locs >= 1);
@@ -567,8 +798,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -578,7 +817,15 @@ mod tests {
         };
         let mut status = NavStatus::Walking;
         for _ in 0..61 {
-            status = t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false);
+            status = t.tick(
+                &mut r,
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                false,
+            );
         }
         assert_eq!(status, NavStatus::Budget);
         assert_eq!(t.queued(), None);
@@ -590,8 +837,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -601,12 +856,28 @@ mod tests {
         };
         let mut status;
         for _ in 0..59 {
-            status = t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false);
+            status = t.tick(
+                &mut r,
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                false,
+            );
             assert_eq!(status, NavStatus::Walking);
         }
         // The 60th tick moves off the stuck tile: the clock restarts, so
         // the traveller keeps walking instead of tripping the budget.
-        status = t.tick(&mut r, Tile { x: 1, z: 0, level: 0 }, false);
+        status = t.tick(
+            &mut r,
+            Tile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            false,
+        );
         assert_eq!(status, NavStatus::Walking);
     }
 
@@ -616,8 +887,16 @@ mod tests {
         t.arm(
             find(
                 &StepGrid::fixture_open_3x3(),
-                Tile { x: 0, z: 0, level: 0 },
-                Tile { x: 2, z: 2, level: 0 },
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
             )
             .unwrap(),
         );
@@ -629,7 +908,15 @@ mod tests {
         // The leg far end (2,2) is 2 away and the driver rejects it; the
         // traveller retries the adjacent tile so the hop still goes out.
         assert_eq!(
-            t.tick(&mut r, Tile { x: 0, z: 0, level: 0 }, false),
+            t.tick(
+                &mut r,
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                },
+                false
+            ),
             NavStatus::Walking
         );
         assert!(r.walked.is_some(), "adjacent fallback hop was sent");

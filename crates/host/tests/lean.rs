@@ -153,7 +153,12 @@ fn lean_snapshot_tick_counts_player_info_frames() {
 
         let mut enc = Isaac::new(&[0; 4]);
         // UPDATE_PID (133, size 3): pid 7.
-        let frame = vec![ServerProt::UPDATE_PID.wrapping_add(enc.next_int()) as u8, 0, 7, 1];
+        let frame = vec![
+            ServerProt::UPDATE_PID.wrapping_add(enc.next_int()) as u8,
+            0,
+            7,
+            1,
+        ];
         s.write_all(&frame).unwrap();
         // REBUILD_NORMAL (231, size 4): zone (48, 49).
         let frame = vec![

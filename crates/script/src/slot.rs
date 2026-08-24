@@ -33,6 +33,12 @@ pub struct SlotScript {
     ticks: u64,
 }
 
+impl Default for SlotScript {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SlotScript {
     pub fn new() -> Self {
         SlotScript {
@@ -238,19 +244,39 @@ mod tests {
         let mut s = SlotScript::new();
         s.start_compiled(Box::new(Noop)).unwrap();
         let mut d = NullDriver::default();
-        s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 1, here: None, walk: None });
-        s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 2, here: None, walk: None });
+        s.on_game_tick(&mut ScriptCtx {
+            driver: &mut d,
+            tick: 1,
+            here: None,
+            walk: None,
+        });
+        s.on_game_tick(&mut ScriptCtx {
+            driver: &mut d,
+            tick: 2,
+            here: None,
+            walk: None,
+        });
         assert_eq!(s.ticks, 2);
 
         // Paused ticks do not count.
         s.pause();
-        s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 3, here: None, walk: None });
+        s.on_game_tick(&mut ScriptCtx {
+            driver: &mut d,
+            tick: 3,
+            here: None,
+            walk: None,
+        });
         assert_eq!(s.ticks, 2);
 
         // A fresh Start resets the counter.
         s.stop();
         s.start_compiled(Box::new(Noop)).unwrap();
-        s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 4, here: None, walk: None });
+        s.on_game_tick(&mut ScriptCtx {
+            driver: &mut d,
+            tick: 4,
+            here: None,
+            walk: None,
+        });
         assert_eq!(s.ticks, 1);
     }
 }

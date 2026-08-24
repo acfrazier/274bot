@@ -76,7 +76,14 @@ impl Host {
                 eprintln!("[host] slot {}: thread up", profile.username);
             }
 
-            Self::run_client(&mut client, &profile.username, None, None, |_, _, _| {}, |_| false);
+            Self::run_client(
+                &mut client,
+                &profile.username,
+                None,
+                None,
+                |_, _, _| {},
+                |_| false,
+            );
         })
     }
 
@@ -171,7 +178,9 @@ impl Host {
         client.shell.latch_click();
         let t_loop = std::time::Instant::now();
         client.mainloop();
-        slot.loop_ns = slot.loop_ns.wrapping_add(t_loop.elapsed().as_nanos() as u64);
+        slot.loop_ns = slot
+            .loop_ns
+            .wrapping_add(t_loop.elapsed().as_nanos() as u64);
         let capture = input.map(|i| i.enabled()).unwrap_or(false);
         // Channel-tune / first rebuild: TV static must re-roll every 20 ms,
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
@@ -196,7 +205,7 @@ impl Host {
         client.paint_n = slot.paint_n;
         client.skip_n = slot.skip_n;
         slot.log_n = slot.log_n.wrapping_add(1);
-        if debug_enabled() && slot.log_n % 50 == 0 {
+        if debug_enabled() && slot.log_n.is_multiple_of(50) {
             eprintln!(
                 "[host] slot {username}: loop_us={} raster_us={} paints={} skips={} game_draw={} title={}",
                 slot.loop_ns / 1000,
@@ -245,7 +254,7 @@ fn raster_this_tick(draw: bool, capture: bool, n: &mut u32, was_on: &mut bool) -
         return true;
     }
     *n = n.wrapping_add(1);
-    *n % WATCH_RASTER_TICKS == 0
+    (*n).is_multiple_of(WATCH_RASTER_TICKS)
 }
 
 /// Per-slot post-drain state: snapshot, settle, auto-run.
@@ -467,7 +476,12 @@ mod tests {
         let inp = SlotInput::new();
         let (tx, rx) = std::sync::mpsc::channel();
         inp.connect_rx(rx);
-        tx.send(InputEv::Down { button: 1, x: 20, y: 20 }).unwrap();
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 20,
+            y: 20,
+        })
+        .unwrap();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         inp.set_enabled(false);
@@ -583,12 +597,14 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn raster_this_tick_watch_is_one_fps_capture_is_every_tick() {
         let mut n = 0;
         let mut on = false;
         assert!(!raster_this_tick(false, false, &mut n, &mut on));
-        assert!(raster_this_tick(true, false, &mut n, &mut on), "rising edge paints now");
+        assert!(
+            raster_this_tick(true, false, &mut n, &mut on),
+            "rising edge paints now"
+        );
         for _ in 0..(WATCH_RASTER_TICKS - 1) {
             assert!(!raster_this_tick(true, false, &mut n, &mut on));
         }

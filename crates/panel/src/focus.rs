@@ -57,11 +57,20 @@ pub fn should_capture(f: &Focus) -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{Focus, draw_for_slot, should_capture, should_draw};
+    use super::{draw_for_slot, should_capture, should_draw, Focus};
 
     #[test]
     fn draw_requires_focus_pane_and_renderer() {
-        let mut f = Focus { focused: Some("test".into()), renderer: true, game_pane_open: true, capture: false, only_render_selected: true, wall_open: false, wall: vec![], renderer_by: HashMap::new() };
+        let mut f = Focus {
+            focused: Some("test".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: true,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::new(),
+        };
         assert!(should_draw(&f));
         assert!(!should_capture(&f));
         f.renderer = false;
@@ -73,23 +82,68 @@ mod tests {
 
     #[test]
     fn capture_implies_draw() {
-        let f = Focus { focused: Some("a".into()), renderer: true, game_pane_open: true, capture: true, only_render_selected: true, wall_open: false, wall: vec![], renderer_by: HashMap::new() };
+        let f = Focus {
+            focused: Some("a".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: true,
+            only_render_selected: true,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::new(),
+        };
         assert!(should_capture(&f));
-        let f = Focus { focused: Some("a".into()), renderer: false, game_pane_open: true, capture: true, only_render_selected: true, wall_open: false, wall: vec![], renderer_by: HashMap::new() };
+        let f = Focus {
+            focused: Some("a".into()),
+            renderer: false,
+            game_pane_open: true,
+            capture: true,
+            only_render_selected: true,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::new(),
+        };
         assert!(!should_capture(&f));
     }
 
     #[test]
     fn draw_for_slot_requires_this_slot_to_be_focused() {
-        let f = Focus { focused: Some("a".into()), renderer: true, game_pane_open: true, capture: false, only_render_selected: true, wall_open: false, wall: vec![], renderer_by: HashMap::new() };
+        let f = Focus {
+            focused: Some("a".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: true,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::new(),
+        };
         assert!(draw_for_slot(&f, "a"));
         assert!(!draw_for_slot(&f, "b"));
         assert!(!draw_for_slot(&f, ""));
         // No focus: no slot draws.
-        let f = Focus { focused: None, renderer: true, game_pane_open: true, capture: false, only_render_selected: true, wall_open: false, wall: vec![], renderer_by: HashMap::new() };
+        let f = Focus {
+            focused: None,
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: true,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::new(),
+        };
         assert!(!draw_for_slot(&f, "a"));
         // Renderer off: the focused slot does not draw either.
-        let f = Focus { focused: Some("a".into()), renderer: false, game_pane_open: true, capture: false, only_render_selected: true, wall_open: false, wall: vec![], renderer_by: HashMap::new() };
+        let f = Focus {
+            focused: Some("a".into()),
+            renderer: false,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: true,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::new(),
+        };
         assert!(!draw_for_slot(&f, "a"));
     }
 

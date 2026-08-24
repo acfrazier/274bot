@@ -23,8 +23,8 @@ use api::interact::Driver;
 use api::prot::Out;
 use client::client::{Client, ClientConfig, LoginError, MiniMenuAction};
 use client::io::{ClientProt, ClientStream, Isaac, Packet, ServerProt, SERVER_PROT_SIZES};
-use client::util::JString;
 use client::login_rsa::{login_modulus, LOGIN_RSAE};
+use client::util::JString;
 use num_bigint::BigUint;
 
 /// What a lean channel knows about the game after login / pump.
@@ -159,7 +159,7 @@ impl Lean {
 
     /// Write queued outbound bytes to the socket and reset `out.pos`.
     pub fn flush(&mut self) -> Result<(), LeanError> {
-        if self.out.pos <= 0 {
+        if self.out.pos == 0 {
             return Ok(());
         }
         self.stream

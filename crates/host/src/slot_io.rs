@@ -46,7 +46,12 @@ pub enum InputEv {
     Key { down: bool, ch: i32 },
 }
 
-pub fn map_image_to_applet(local_x: f32, local_y: f32, image_w: f32, image_h: f32) -> Option<(i32, i32)> {
+pub fn map_image_to_applet(
+    local_x: f32,
+    local_y: f32,
+    image_w: f32,
+    image_h: f32,
+) -> Option<(i32, i32)> {
     if image_w <= 0.0 || image_h <= 0.0 {
         return None;
     }
@@ -89,7 +94,9 @@ impl SlotInput {
             return;
         }
         let mut g = self.rx.lock().unwrap();
-        let Some(rx) = g.as_mut() else { return; };
+        let Some(rx) = g.as_mut() else {
+            return;
+        };
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 InputEv::Move { x, y } => shell.apply_mouse_move(x, y),
@@ -140,7 +147,10 @@ mod tests {
     #[test]
     fn map_image_to_applet_scales_and_rejects_outside() {
         assert_eq!(map_image_to_applet(0.0, 0.0, 1530.0, 1006.0), Some((0, 0)));
-        assert_eq!(map_image_to_applet(1530.0, 1006.0, 1530.0, 1006.0), Some((764, 502)));
+        assert_eq!(
+            map_image_to_applet(1530.0, 1006.0, 1530.0, 1006.0),
+            Some((764, 502))
+        );
         assert_eq!(map_image_to_applet(-1.0, 10.0, 765.0, 503.0), None);
     }
 
@@ -150,7 +160,12 @@ mod tests {
         let inp = SlotInput::new();
         let (tx, rx) = mpsc::channel();
         inp.connect_rx(rx);
-        tx.send(InputEv::Down { button: 1, x: 10, y: 10 }).unwrap();
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 10,
+            y: 10,
+        })
+        .unwrap();
         let mut shell = client::client::GameShell::new();
         inp.set_enabled(false);
         inp.drain(&mut shell);

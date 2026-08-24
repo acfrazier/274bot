@@ -9,6 +9,6 @@ pub fn npc_by_index(npcs: &[NpcView], index: usize) -> Option<&NpcView> {
 }
 
 /// Live views standing on a tile.
-pub fn npcs_at<'a>(npcs: &'a [NpcView], x: i32, z: i32) -> impl Iterator<Item = &'a NpcView> {
+pub fn npcs_at(npcs: &[NpcView], x: i32, z: i32) -> impl Iterator<Item = &NpcView> {
     npcs.iter().filter(move |view| view.x == x && view.z == z)
 }

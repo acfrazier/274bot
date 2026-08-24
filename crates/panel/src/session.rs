@@ -79,6 +79,9 @@ pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, 
 
 /// Stream one hovered capture frame: `Move` first, then `Down` (left=1,
 /// right=2), then `Up`, then keys. No-op when `tx` is `None` (capture off).
+// All capture state arrives flattened from the applet; a param struct would
+// only shuffle names across the one call site.
+#[allow(clippy::too_many_arguments)]
 pub fn stream_capture(
     tx: &Option<Sender<InputEv>>,
     lx: f32,
@@ -720,12 +723,7 @@ impl Session {
         if play.fat_head_name().as_deref() == Some(name) {
             return Ok(());
         }
-        if let Some(mut p) = self
-            .vault
-            .as_ref()
-            .and_then(|v| v.get(name))
-            .cloned()
-        {
+        if let Some(mut p) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() {
             p.settings.lowmem = !self.tube_sfx;
             play.remember_profile(p);
         }
@@ -921,8 +919,7 @@ impl Session {
         };
         // Channel-head: exactly one fat Client (the TV). Every later wall
         // member is lean — no second Client, no render-all escape hatch.
-        let extras_are_lean =
-            self.channel_head && self.play.is_some() && !self.slots.is_empty();
+        let extras_are_lean = self.channel_head && self.play.is_some() && !self.slots.is_empty();
         if extras_are_lean {
             if let Some(play) = &mut self.play {
                 play.spawn_channel_with_arm(profile, arm);
@@ -1425,12 +1422,10 @@ impl Session {
         }
         let result = match (self.play.as_ref(), sel) {
             (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
-            (Some(play), script::ScriptSel::Loaded(card_name)) => {
-                match self.js.get(&card_name) {
-                    Some(card) => play.script_start_load(&name, card.source.clone(), card.shape),
-                    None => Err(format!("no loaded script: {card_name}")),
-                }
-            }
+            (Some(play), script::ScriptSel::Loaded(card_name)) => match self.js.get(&card_name) {
+                Some(card) => play.script_start_load(&name, card.source.clone(), card.shape),
+                None => Err(format!("no loaded script: {card_name}")),
+            },
             (None, _) => Err("no play".to_string()),
         };
         match result {
@@ -2349,15 +2344,14 @@ mod tests {
         });
         let mut s = Session::new();
         s.live_prepare_stress(2).expect("prepare");
-        assert!(
-            !s.play
-                .as_ref()
-                .unwrap()
-                .arm("s01")
-                .unwrap()
-                .want_login
-                .load(Ordering::Relaxed)
-        );
+        assert!(!s
+            .play
+            .as_ref()
+            .unwrap()
+            .arm("s01")
+            .unwrap()
+            .want_login
+            .load(Ordering::Relaxed));
         {
             let mut rows = s.play.as_ref().unwrap().statuses.lock().unwrap();
             if let Some(tv) = rows.iter_mut().find(|r| r.username == "s00") {
@@ -2780,7 +2774,7 @@ mod tests {
         s.set_renderer(false);
         let f = s.focus.lock().unwrap();
         assert!(f.renderer, "TV tube stays on; no per-profile raster");
-        assert!(f.renderer_by.get("alice").is_none());
+        assert!(!f.renderer_by.contains_key("alice"));
     }
 
     #[test]
@@ -3151,7 +3145,9 @@ mod tests {
         play.attach_arm("alice", SlotArm::new(42, false));
         s.play = Some(play);
         s.focus.lock().unwrap().focused = Some("alice".into());
-        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("BoneBurier")));
+        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId(
+            "BoneBurier",
+        )));
         s.script_start_selected();
         let err = s.error.clone().expect("not-ported message");
         assert!(err.contains("not ported"), "{err}");
@@ -3160,14 +3156,16 @@ mod tests {
 
     #[test]
     fn load_js_registers_card_selects_and_persists_to_the_session_store() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-session-load-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-session-load-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let store = dir.join("js-scripts.json");
         let path = dir.join("tickbot.js");
-        std::fs::write(&path, "export function tick(api) { api._n = (api._n||0)+1 }").unwrap();
+        std::fs::write(
+            &path,
+            "export function tick(api) { api._n = (api._n||0)+1 }",
+        )
+        .unwrap();
 
         let mut s = Session::new();
         s.js = script::JsLibrary::new(store.clone());
@@ -3179,10 +3177,7 @@ mod tests {
         );
         assert_eq!(s.js.cards().len(), 1);
         assert_eq!(s.load_scratch, "", "success clears the modal scratch");
-        assert!(
-            store.exists(),
-            "the card is persisted to the session store"
-        );
+        assert!(store.exists(), "the card is persisted to the session store");
 
         // A path that is not a bot shape fails and keeps the error banner.
         let bad = dir.join("plain.js");

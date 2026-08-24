@@ -51,7 +51,10 @@ fn reject_fixture_is_reject() {
 #[test]
 fn native_marker_variants() {
     // Plain `export function tick` and the async variant both count.
-    assert_eq!(detect_shape("export function tick() {}"), LoadShape::NativeTick);
+    assert_eq!(
+        detect_shape("export function tick() {}"),
+        LoadShape::NativeTick
+    );
     assert_eq!(
         detect_shape("export async function tick() { await ctx.delay(1); }"),
         LoadShape::NativeTick
@@ -62,7 +65,10 @@ fn native_marker_variants() {
 
 #[test]
 fn compat_marker_variants() {
-    assert_eq!(detect_shape("defineBot({ name: 'A' });"), LoadShape::CompatDefineBot);
+    assert_eq!(
+        detect_shape("defineBot({ name: 'A' });"),
+        LoadShape::CompatDefineBot
+    );
     assert_eq!(
         detect_shape("export const __rs2b0tManifest = { api: '1.0' };"),
         LoadShape::CompatDefineBot
