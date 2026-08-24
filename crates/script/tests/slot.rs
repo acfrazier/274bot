@@ -104,7 +104,7 @@ fn idle_has_no_script_and_tick_is_noop() {
     assert!(!s.want_run);
     assert!(s.last_error().is_none());
     let mut d = Rec::default();
-    let mut ctx = ScriptCtx { driver: &mut d, tick: 0 };
+    let mut ctx = ScriptCtx { driver: &mut d, tick: 0, here: None, walk: None };
     s.on_game_tick(&mut ctx);
     assert_eq!(s.state(), RunState::Idle);
 }
@@ -146,7 +146,7 @@ fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
     assert_eq!(s.state(), RunState::Paused);
     assert!(s.want_run, "offline pause is the is_up gate, not operator Pause");
     let mut d = Rec::default();
-    let mut ctx = ScriptCtx { driver: &mut d, tick: 1 };
+    let mut ctx = ScriptCtx { driver: &mut d, tick: 1, here: None, walk: None };
     s.on_game_tick(&mut ctx); // must not panic; skip
     s.on_is_up(true);
     assert_eq!(s.state(), RunState::Running);
@@ -187,22 +187,22 @@ fn game_tick_dispatches_only_while_running() {
         .unwrap();
     let mut d = Rec::default();
 
-    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 1 });
+    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 1, here: None, walk: None });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 1);
 
     // Operator Pause: tick skipped, instance kept.
     s.pause();
-    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 2 });
+    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 2, here: None, walk: None });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 1);
 
     // Resume: tick dispatched again.
     s.resume();
-    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 3 });
+    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 3, here: None, walk: None });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 2);
 
     // Stop: instance gone, tick skipped.
     s.stop();
-    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 4 });
+    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 4, here: None, walk: None });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 2);
 
     // The stub received no outbound writes.
@@ -227,7 +227,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
     let mut s = SlotScript::new();
     s.start_compiled(Box::new(Panic)).unwrap();
     let mut d = Rec::default();
-    let mut ctx = ScriptCtx { driver: &mut d, tick: 1 };
+    let mut ctx = ScriptCtx { driver: &mut d, tick: 1, here: None, walk: None };
     s.on_game_tick(&mut ctx);
 
     assert_eq!(s.state(), RunState::Error);
@@ -238,7 +238,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
     // Instance is gone: is_up cannot resurrect, and further ticks no-op.
     s.on_is_up(true);
     assert_eq!(s.state(), RunState::Error);
-    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 2 });
+    s.on_game_tick(&mut ScriptCtx { driver: &mut d, tick: 2, here: None, walk: None });
     assert_eq!(s.state(), RunState::Error);
 
     // Start from Error is allowed and clears the error.

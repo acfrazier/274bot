@@ -68,17 +68,17 @@ fn compiled_ids_are_exactly_the_v1_smoke_names() {
 }
 
 #[test]
-fn factory_none_until_ported() {
-    assert!(script::factory(script::CompiledId("WalkTo")).is_none());
-}
-
-#[test]
-fn factory_none_for_every_picker_id() {
+fn factory_some_only_for_ported_ids() {
+    // Task 8: WalkTo is the first ported script; every other picker id
+    // still has no constructor until its port lands.
     for id in script::compiled_ids() {
-        assert!(
-            script::factory(*id).is_none(),
-            "{} must not be startable until ported",
-            id.0
+        let ported = id.0 == "WalkTo";
+        assert_eq!(
+            script::factory(*id).is_some(),
+            ported,
+            "{} must {} be startable",
+            id.0,
+            if ported { "" } else { "not " }
         );
     }
 }

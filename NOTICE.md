@@ -16,6 +16,7 @@ Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,
 
 - **API shape:** snapshot → query → interact → settle is a **borrowed idea** from m8aq-style bot APIs. This is not a file port of m8aq (or any other bot framework).
 - **Product:** a Rust-first **rewrite** of the rs2b0t *idea* (many headless 274 clients, login queue, live harnesses). It is **not** a port of the rs2b0t TypeScript tree.
+- Script TS under `scripts/rs2b0t/` is a **reference copy** of rs2b0t bots for hand-ports, not a runtime.
 
 ## AI use (explicit)
 

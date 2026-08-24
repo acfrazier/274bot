@@ -1,8 +1,8 @@
-//! Compiled registry: the picker id list and the `factory` that will start
-//! scripts once they are ported. This task ships the id list only — every
-//! listed script still returns `None` from `factory` (Start errors "not
-//! ported" in the later panel task). Whales are recognized but never
-//! listed; `Counter` is a test fixture, never listed either.
+//! Compiled registry: the picker id list and the `factory` that starts
+//! scripts once they are ported. `WalkTo` is the first ported script; every
+//! other listed id still returns `None` from `factory` (Start errors "not
+//! ported" in the panel task). Whales are recognized but never listed;
+//! `Counter` is a test fixture, never listed either.
 
 use crate::ctx::{Script, ScriptCtx};
 
@@ -68,10 +68,11 @@ pub fn is_whale(name: &str) -> bool {
 }
 
 /// Start a compiled script by picker id. `None` until the script is
-/// ported; the only constructor is the `Counter` test fixture, and it
-/// exists only under `cfg(test)` (never in `compiled_ids`).
+/// ported; `WalkTo` is the first ported constructor. The `Counter` test
+/// fixture exists only under `cfg(test)` (never in `compiled_ids`).
 pub fn factory(id: CompiledId) -> Option<fn() -> Box<dyn Script>> {
     match id.0 {
+        "WalkTo" => Some(crate::ported::walk_to::factory),
         #[cfg(test)]
         "Counter" => Some(counter_factory),
         _ => None,
@@ -112,7 +113,12 @@ mod tests {
         let mut script = make();
         assert_eq!(script.name(), "Counter");
         let mut driver = crate::ctx::test_support::NullDriver::default();
-        script.tick(&mut ScriptCtx { driver: &mut driver, tick: 1 });
+        script.tick(&mut ScriptCtx {
+            driver: &mut driver,
+            tick: 1,
+            here: None,
+            walk: None,
+        });
         assert_eq!(script.name(), "Counter");
     }
 }

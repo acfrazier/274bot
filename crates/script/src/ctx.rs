@@ -13,11 +13,19 @@ pub trait Script: Send {
     fn on_stop(&mut self) {}
 }
 
-/// What one observed game-tick gives a script: the send-side driver and
-/// the tick number from the pump's PLAYER_INFO edge.
+/// What one observed game-tick gives a script: the send-side driver, the
+/// tick number from the pump's PLAYER_INFO edge, the local player's tile,
+/// and the walk hook. `here` and `walk` are filled by the host's observe;
+/// `walk` is `None` until the slot wires a traveller.
 pub struct ScriptCtx<'a> {
     pub driver: &'a mut dyn Driver,
     pub tick: u64,
+    /// The local player's absolute world tile `(x, z, level)` on this
+    /// observed tick, when the body has decoded one.
+    pub here: Option<(i32, i32, i32)>,
+    /// Queue one walk toward an absolute world tile `(x, z, level)` through
+    /// the slot's traveller. Returns true iff the driver accepted the send.
+    pub walk: Option<&'a mut dyn FnMut(i32, i32, i32) -> bool>,
 }
 
 /// Accept-everything driver used by in-crate unit tests. Integration

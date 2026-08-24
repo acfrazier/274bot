@@ -172,15 +172,18 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
 /// One observe of a slot's script wiring (fat and lean share it): gate
 /// [`SlotScript::on_is_up`], dispatch [`SlotScript::on_game_tick`] on the
 /// PLAYER_INFO edge, then run any cheats the panel queued. `driver` is the
-/// slot body's own `Client`/`Lean`. Returns whether the driver's out buffer
-/// was written (the lean pump flushes; the fat `Client` sends on its next
-/// mainloop pass).
+/// slot body's own `Client`/`Lean`; `here` is the local player's world tile
+/// `(x, z, level)` when the body decoded one (the walk hook stays `None`
+/// until a slot traveller is wired — WalkTo then errors instead of faking
+/// arrival). Returns whether the driver's out buffer was written (the lean
+/// pump flushes; the fat `Client` sends on its next mainloop pass).
 fn script_observe(
     driver: &mut dyn Driver,
     name: &str,
     up: bool,
     tick_edge: bool,
     tick: u64,
+    here: Option<(i32, i32, i32)>,
     scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
 ) -> bool {
@@ -190,7 +193,12 @@ fn script_observe(
         if let Some(slot) = all.get_mut(name) {
             slot.on_is_up(up);
             if tick_edge {
-                slot.on_game_tick(&mut ScriptCtx { driver, tick });
+                slot.on_game_tick(&mut ScriptCtx {
+                    driver,
+                    tick,
+                    here,
+                    walk: None,
+                });
                 wrote = true;
             }
         }
@@ -1375,9 +1383,10 @@ fn spawn_slot_thread(
                             if tick_edge {
                                 script_tick = script_tick.wrapping_add(1);
                             }
-                            let up = {
+                            let (up, here) = {
                                 let mut all = slot_statuses.lock().unwrap();
                                 let mut up = false;
+                                let mut here = None;
                                 for s in all.iter_mut() {
                                     if s.username == name {
                                         s.ingame = c.ingame;
@@ -1395,12 +1404,15 @@ fn spawn_slot_thread(
                                             );
                                             s.tile_x = tx;
                                             s.tile_z = tz;
+                                            // Tile level is not decoded on
+                                            // either body yet (see gaps.md).
+                                            here = Some((tx, tz, 0));
                                             s.player = lp.name.clone().unwrap_or_default();
                                         }
                                         up = s.is_up();
                                     }
                                 }
-                                up
+                                (up, here)
                             };
                             script_observe(
                                 c,
@@ -1408,6 +1420,7 @@ fn spawn_slot_thread(
                                 up,
                                 tick_edge,
                                 script_tick,
+                                here,
                                 &slot_scripts,
                                 &slot_cheats,
                             );
@@ -1497,6 +1510,7 @@ fn run_lean_pump(
         let mut up = false;
         let mut tick_edge = false;
         let mut tick = 0u64;
+        let mut here = None;
         {
             let mut all = slot_statuses.lock().unwrap();
             if let Some(s) = all.iter_mut().find(|s| s.username == username) {
@@ -1512,6 +1526,9 @@ fn run_lean_pump(
                         s.scene_state = scene_state;
                         s.tile_x = snap.tile_x;
                         s.tile_z = snap.tile_z;
+                        // Tile level is not decoded on either body yet (see
+                        // gaps.md).
+                        here = Some((snap.tile_x, snap.tile_z, 0));
                         s.ingame = true;
                         up = s.is_up();
                         if !seeded && scene_state != 0 {
@@ -1554,6 +1571,7 @@ fn run_lean_pump(
             up,
             tick_edge,
             tick,
+            here,
             slot_scripts,
             slot_cheats,
         );
@@ -2628,7 +2646,8 @@ mod tests {
     #[test]
     fn script_start_unknown_compiled_id_errors_without_v8() {
         // `script::factory` returns `None` for every picker id until the
-        // script is ported; Start must surface that, never a dummy.
+        // script is ported (WalkTo is the first port; BoneBurier is not
+        // yet); Start must surface that, never a dummy.
         let play = run_with_io(
             &PlayOptions {
                 host: "127.0.0.1".into(),
@@ -2656,7 +2675,7 @@ mod tests {
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let err = play
-            .script_start("alice", script::CompiledId("WalkTo"))
+            .script_start("alice", script::CompiledId("BoneBurier"))
             .unwrap_err();
         assert!(err.contains("not ported"), "err was {err}");
     }
@@ -2766,17 +2785,17 @@ mod tests {
             vec![],
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
-        script_observe(&mut c, "alice", false, true, 1, &scripts, &cheats);
+        script_observe(&mut c, "alice", false, true, 1, None, &scripts, &cheats);
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
-        script_observe(&mut c, "alice", true, true, 2, &scripts, &cheats);
+        script_observe(&mut c, "alice", true, true, 2, None, &scripts, &cheats);
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
-        script_observe(&mut c, "alice", true, false, 2, &scripts, &cheats);
+        script_observe(&mut c, "alice", true, false, 2, None, &scripts, &cheats);
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (lean flush cue).
         assert!(script_observe(
-            &mut c, "alice", true, true, 3, &scripts, &cheats
+            &mut c, "alice", true, true, 3, None, &scripts, &cheats
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -2802,7 +2821,7 @@ mod tests {
             .get_mut("alice")
             .unwrap()
             .push_back("setvar tutorial 1000".into());
-        let wrote = script_observe(&mut c, "alice", true, false, 0, &scripts, &cheats);
+        let wrote = script_observe(&mut c, "alice", true, false, 0, None, &scripts, &cheats);
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
             c.out.data()[0],
