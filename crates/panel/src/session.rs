@@ -511,6 +511,35 @@ impl Session {
         }
         self.statuses = current;
         self.sync_walk_status();
+        self.arm_lean_extras_after_tv();
+    }
+
+    /// Channel-head Login all arms only the TV. Once the tube is
+    /// `ingame && scene_state==2`, arm the lean extras so they handshake
+    /// one-by-one (k of n) instead of overlapping the highmem login.
+    fn arm_lean_extras_after_tv(&mut self) {
+        if !self.channel_head {
+            return;
+        }
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let tv_up = self.statuses.iter().any(|s| !s.lean && s.is_up());
+        if !tv_up {
+            return;
+        }
+        let head = self.tv_name();
+        for name in self.wall.members.clone() {
+            if head.as_deref() == Some(name.as_str()) {
+                continue;
+            }
+            if self.wall.latch.contains(&name) {
+                continue;
+            }
+            if let Some(arm) = play.arm(&name) {
+                arm_login_all(&arm);
+            }
+        }
     }
 
     /// Copy each slot's traveller `queued()` into `walk_*` (−1 if none) and
@@ -1024,6 +1053,10 @@ impl Session {
     /// auto-login is set (which keeps the arm armed after the handshake).
     /// The fat TV head is moved to the front of the login FIFO so it is
     /// not stuck behind lean extras.
+    ///
+    /// Channel-head: arm **only** the TV. Lean extras wait until the tube
+    /// is up (`arm_lean_extras_after_tv` from [`Session::pump_status`]) so
+    /// the operator sees login 1, then k of n, then the next.
     pub fn login_all(&mut self) {
         // Prefer the SlotIo TV (pixels), not `fat_head_name()` from statuses:
         // the highmem tube can still be inside `maininit` when Login all
@@ -1039,8 +1072,12 @@ impl Session {
             names.retain(|n| n != h);
             names.insert(0, h.clone());
         }
+        let extras_wait = self.channel_head;
         for name in names {
             self.wall.clear_latch(&name);
+            if extras_wait && head.as_deref() != Some(name.as_str()) {
+                continue;
+            }
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
                 arm_login_all(&arm);
             }
@@ -1237,6 +1274,20 @@ impl Session {
             .iter()
             .find(|s| s.username == name)
             .filter(|s| s.queue_position >= 1)
+            .map(|s| (s.queue_position, s.queue_total))
+    }
+
+    /// Queue card place: the focused slot if it is waiting, else the FIFO
+    /// head among every waiting wall member. Channel-head keeps showing
+    /// *k of n* on the TV after the tube has granted and extras remain.
+    pub fn queue_place(&self) -> Option<(i32, i32)> {
+        if let Some(q) = self.focused_queue() {
+            return Some(q);
+        }
+        self.statuses
+            .iter()
+            .filter(|s| s.queue_position >= 1)
+            .min_by_key(|s| s.queue_position)
             .map(|s| (s.queue_position, s.queue_total))
     }
 
@@ -1996,9 +2047,97 @@ mod tests {
             Some(274_000_100),
             "s00 uid must be FIFO head, got {front:?}"
         );
+        assert!(
+            s.play
+                .as_ref()
+                .unwrap()
+                .arm("s00")
+                .unwrap()
+                .want_login
+                .load(Ordering::Relaxed),
+            "TV arms immediately"
+        );
+        assert!(
+            !s.play
+                .as_ref()
+                .unwrap()
+                .arm("s01")
+                .unwrap()
+                .want_login
+                .load(Ordering::Relaxed),
+            "lean extras wait until the TV is up"
+        );
         for n in ["s00", "s01", "s02"] {
             s.play.as_mut().unwrap().stop_slot(n);
         }
+    }
+
+    #[test]
+    fn channel_head_arms_extras_only_after_tv_is_up() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_stress(2).expect("prepare");
+        assert!(
+            !s.play
+                .as_ref()
+                .unwrap()
+                .arm("s01")
+                .unwrap()
+                .want_login
+                .load(Ordering::Relaxed)
+        );
+        {
+            let mut rows = s.play.as_ref().unwrap().statuses.lock().unwrap();
+            if let Some(tv) = rows.iter_mut().find(|r| r.username == "s00") {
+                tv.ingame = true;
+                tv.scene_state = 2;
+                tv.lean = false;
+            }
+        }
+        s.pump_status();
+        assert!(
+            s.play
+                .as_ref()
+                .unwrap()
+                .arm("s01")
+                .unwrap()
+                .want_login
+                .load(Ordering::Relaxed),
+            "once the tube is scene 2, extras handshake (k of n)"
+        );
+        s.play.as_mut().unwrap().stop_slot("s00");
+        s.play.as_mut().unwrap().stop_slot("s01");
+    }
+
+    #[test]
+    fn queue_place_falls_back_to_fifo_head_when_focus_already_granted() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("s00".into());
+        s.statuses.push(SlotStatus {
+            username: "s00".into(),
+            queue_position: -1,
+            queue_total: -1,
+            ..SlotStatus::default()
+        });
+        s.statuses.push(SlotStatus {
+            username: "s01".into(),
+            lean: true,
+            queue_position: 1,
+            queue_total: 49,
+            ..SlotStatus::default()
+        });
+        s.statuses.push(SlotStatus {
+            username: "s02".into(),
+            lean: true,
+            queue_position: 2,
+            queue_total: 49,
+            ..SlotStatus::default()
+        });
+        assert_eq!(s.focused_queue(), None);
+        assert_eq!(s.queue_place(), Some((1, 49)), "TV pane still shows k of n");
     }
 
     #[test]

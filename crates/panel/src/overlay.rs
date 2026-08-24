@@ -135,7 +135,7 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
 /// when the focused slot is not queued, so the card disappears the moment
 /// the grant lands.
 pub fn draw_focused_queue_card(ui: &Ui, session: &Session, min: [f32; 2]) {
-    let lines = queue_card_lines(session.focused_queue());
+    let lines = queue_card_lines(session.queue_place());
     if !lines.is_empty() {
         draw_queue_card(ui, min, &lines);
     }
@@ -188,7 +188,7 @@ impl PathOverlay {
                 .thickness(2.0)
                 .build();
         }
-        let queue = session.focused_queue();
+        let queue = session.queue_place();
         if queue != self.queue {
             self.queue = queue;
             self.queue_lines = queue_card_lines(queue);
@@ -381,6 +381,40 @@ mod tests {
         assert_eq!(
             overlay.queue_lines,
             vec!["AUTO-LOGIN QUEUE".to_string(), "1 of 2".to_string(), "0 bots in front".to_string()]
+        );
+    }
+
+    #[test]
+    fn overlay_queue_card_follows_fifo_head_when_focus_already_granted() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("s00".into());
+        s.statuses.push(host_play::SlotStatus {
+            username: "s00".into(),
+            ..host_play::SlotStatus::default()
+        });
+        s.statuses.push(host_play::SlotStatus {
+            username: "s01".into(),
+            lean: true,
+            queue_position: 1,
+            queue_total: 49,
+            ..host_play::SlotStatus::default()
+        });
+        let mut overlay = PathOverlay::new();
+        ui.window("##overlay-queue-fifo-test").build(|| {
+            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+        });
+        ctx.render();
+        assert_eq!(
+            overlay.queue_lines[1],
+            "1 of 49",
+            "after the TV grants, the card steps k of n for the next lean"
         );
     }
 

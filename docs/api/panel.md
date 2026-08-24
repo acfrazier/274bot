@@ -187,7 +187,9 @@ LIVE=1 RSS_N=4 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1
 Fifty-slot channel-head wall watch (temp vault `s00`…`s49`, password =
 username). TV latched at init: `s00` is the one fat Client (highmem tube),
 extras are lean. Chooser closed, only-render-selected, focus `s00`, then
-`login_all`. Timeout **600s** (10 minutes). Announces at 1/50 and 10/50
+`login_all` (TV first). Lean extras wait until the tube is scene 2, then
+handshake one-by-one (queue card *k of n*). Timeout **600s** (10 minutes).
+Announces at 1/50 and 10/50
 up (fat `ingame && scene_state==2`, lean `ingame`); at 50 prints
 `PASS: live stress50 rss=… up50 heads=… leanes=…` and **keeps the
 window up**. Does **not** fail on RSS size. FIFO login will take minutes.

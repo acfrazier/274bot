@@ -345,9 +345,22 @@ impl Play {
     }
 
     /// Move `uid` to the front of the login FIFO so the TV head handshakes
-    /// before lean extras that already queued.
+    /// before lean extras that already queued. Mirrors the place onto the
+    /// status row so the queue card can show *k of n* during maininit
+    /// (the slot has not entered [`wait_for_permit`] yet).
     pub fn prefer_login(&self, uid: i32) {
-        self.queue.lock().unwrap().prefer(uid);
+        let mut q = self.queue.lock().unwrap();
+        q.prefer(uid);
+        let pos = q.status(uid);
+        drop(q);
+        let name = self
+            .arms
+            .iter()
+            .find(|(_, arm)| arm.uid.load(Ordering::Relaxed) == uid)
+            .map(|(n, _)| n.clone());
+        if let Some(name) = name {
+            apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
+        }
     }
 
     /// Snapshot of the login FIFO (front first). Panel tests pin TV-first.
@@ -1893,6 +1906,37 @@ mod tests {
             "retune must not join a slot thread"
         );
         play.stop_slot("ghost");
+    }
+
+    #[test]
+    fn prefer_login_mirrors_k_of_n_onto_the_status_row() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        let arm = SlotArm::new(7, false);
+        play.attach_arm("alice", Arc::clone(&arm));
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        });
+        play.prefer_login(7);
+        let row = play
+            .statuses()
+            .into_iter()
+            .find(|s| s.username == "alice")
+            .unwrap();
+        assert_eq!(row.queue_position, 1);
+        assert_eq!(row.queue_total, 1);
+        assert_eq!(play.login_queue_uids(), vec![7]);
     }
 
     #[test]
