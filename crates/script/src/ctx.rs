@@ -26,7 +26,11 @@ pub struct ScriptCtx<'a> {
     /// observed tick, when the body has decoded one.
     pub here: Option<(i32, i32, i32)>,
     /// Queue one walk toward an absolute world tile `(x, z, level)` through
-    /// the slot's traveller. Returns true iff the driver accepted the send.
+    /// the slot's traveller. Returns true iff the walk was queued: the
+    /// route is found and armed off-pump on a short-lived worker, so
+    /// "true" does not mean a path exists yet. False when no player tile
+    /// is known, the host grid is missing, or the uid already has a route
+    /// queued.
     pub walk: Option<&'a mut dyn FnMut(i32, i32, i32) -> bool>,
     /// The observed inventory `(obj_id, count)` slots, when the body has
     /// decoded one. `None` until an inventory lands (see `has_item`).

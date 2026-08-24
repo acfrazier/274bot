@@ -195,9 +195,11 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
 /// slot body's own `Client`/`Lean`; `here` is the local player's world tile
 /// `(x, z, level)` when the body decoded one, else `None` (then the walk
 /// hook refuses to arm). `travellers`/`grid` back the `ctx.walk` closure:
-/// A* from `here` to the requested tile on the host grid, arming the
-/// uid's traveller when a route exists (a Start that would panic on the
-/// first tick must not succeed when no route can arm). Returns whether the
+/// the closure refuses synchronously only when there is no tile, no grid,
+/// or a route already queued; `find` runs off-pump on a short-lived worker
+/// per request, arming the uid's traveller when a route exists (a Start
+/// that would panic on the first tick must not succeed when no route can
+/// arm). Returns whether the
 /// driver's out buffer was
 /// written (the lean pump flushes; the fat `Client` sends on its next
 /// mainloop pass). A slot whose script is Idle/Paused publishes nothing —
@@ -234,21 +236,42 @@ fn script_observe(
                         let Some((hx, hz, hl)) = here else {
                             return false;
                         };
-                        let Some(grid) = grid.as_deref() else {
+                        let Some(grid) = grid.as_ref() else {
                             return false;
                         };
-                        let from = Tile { x: hx, z: hz, level: hl };
-                        let to = Tile { x, z, level };
-                        let Ok(route) = find(grid, from, to) else {
-                            return false;
-                        };
-                        travellers
+                        // One route in flight per uid: a script spamming
+                        // walk every tick must not spawn a worker each tick.
+                        if travellers
                             .lock()
                             .unwrap()
-                            .entry(name.clone())
-                            .or_default()
-                            .arm(route);
-                        true
+                            .get(&name)
+                            .and_then(|t| t.queued())
+                            .is_some()
+                        {
+                            return false;
+                        }
+                        let from = Tile { x: hx, z: hz, level: hl };
+                        let to = Tile { x, z, level };
+                        let grid = Arc::clone(grid);
+                        let travellers = Arc::clone(&travellers);
+                        let name = name.clone();
+                        // A* is the expensive part: run `find` off-pump on
+                        // a short-lived worker. The worker is detached and
+                        // exits right after arming; it never touches the
+                        // scripts map (lock order stays scripts → travellers).
+                        thread::Builder::new()
+                            .name(format!("nav-find-{name}"))
+                            .spawn(move || {
+                                if let Ok(route) = find(&grid, from, to) {
+                                    travellers
+                                        .lock()
+                                        .unwrap()
+                                        .entry(name)
+                                        .or_default()
+                                        .arm(route);
+                                }
+                            })
+                            .is_ok()
                     }
                 };
                 slot.on_game_tick(&mut ScriptCtx {
@@ -3088,6 +3111,19 @@ mod tests {
         (Arc::new(Mutex::new(HashMap::new())), None)
     }
 
+    /// Poll `cond` for up to `ms` milliseconds. The route-arming worker is
+    /// detached, so tests wait on the effect instead of joining it.
+    fn wait_until(ms: u64, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        cond()
+    }
+
     #[test]
     fn script_observe_ticks_only_on_player_edge_while_up() {
         let ScriptWiring {
@@ -3425,7 +3461,8 @@ mod tests {
         let mut d = NavRec::default();
 
         // The observe dispatches the script tick with the walk hook; the
-        // hook A*s from the observed `here` and arms the uid's traveller.
+        // hook queues the request from the observed `here` and the worker
+        // arms the uid's traveller off-pump.
         assert!(script_observe(
             &mut d,
             "alice",
@@ -3443,12 +3480,18 @@ mod tests {
         assert_eq!(
             *walk_ret.lock().unwrap(),
             Some(true),
-            "ctx.walk returned true for an armed route"
+            "ctx.walk queued the route request"
         );
-        assert_eq!(
-            travellers.lock().unwrap().get("alice").and_then(|t| t.queued()),
-            Some(Tile { x: 2, z: 0, level: 0 }),
-            "the armed route queues the requested dest"
+        assert!(
+            wait_until(100, || {
+                travellers
+                    .lock()
+                    .unwrap()
+                    .get("alice")
+                    .and_then(|t| t.queued())
+                    == Some(Tile { x: 2, z: 0, level: 0 })
+            }),
+            "the worker armed the queued route"
         );
 
         // The pump's per-uid nav step sends one hop toward the dest and
@@ -3482,7 +3525,7 @@ mod tests {
     }
 
     #[test]
-    fn script_observe_walk_is_false_without_here_grid_or_path() {
+    fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         let NavRig {
             scripts,
             cheats,
@@ -3494,8 +3537,11 @@ mod tests {
         } = nav_rig();
         let no_grid: Option<Arc<StepGrid>> = None;
         let mut d = NavRec::default();
+        fn queued(travellers: &Arc<Mutex<HashMap<String, Traveller>>>) -> Option<Tile> {
+            travellers.lock().unwrap().get("alice").and_then(|t| t.queued())
+        }
 
-        // No observed tile: the hook refuses before any grid lookup.
+        // No observed tile: synchronous refusal before any grid lookup.
         script_observe(
             &mut d,
             "alice",
@@ -3510,9 +3556,9 @@ mod tests {
             &travellers,
             &grid,
         );
-        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → no arm");
+        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 
-        // No grid: nothing to route on.
+        // No grid: synchronous refusal, no worker.
         script_observe(
             &mut d,
             "alice",
@@ -3527,9 +3573,11 @@ mod tests {
             &travellers,
             &no_grid,
         );
-        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no grid → no arm");
+        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no grid → refuse");
 
-        // A dest the grid cannot reach: NoPath.
+        // A request the grid cannot satisfy is still queued (true) but
+        // never arms: the worker's find fails and it exits without
+        // touching the map.
         *walk_target.lock().unwrap() = (5, 5, 0);
         script_observe(
             &mut d,
@@ -3545,15 +3593,65 @@ mod tests {
             &travellers,
             &grid,
         );
-        assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no path → no arm");
+        assert_eq!(
+            *walk_ret.lock().unwrap(),
+            Some(true),
+            "a no-path request is queued, not found synchronously"
+        );
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(queued(&travellers), None, "NoPath never arms a route");
+
+        // A reachable request arms asynchronously on the worker.
+        *walk_target.lock().unwrap() = (2, 0, 0);
+        script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            4,
+            Some((0, 0, 0)),
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &travellers,
+            &grid,
+        );
+        assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
-            travellers
-                .lock()
-                .unwrap()
-                .get("alice")
-                .and_then(|t| t.queued())
-                .is_none(),
-            "nothing was armed across the refusals"
+            wait_until(
+                100,
+                || queued(&travellers) == Some(Tile { x: 2, z: 0, level: 0 })
+            ),
+            "the worker armed the queued route"
+        );
+
+        // A second walk while a route is queued refuses synchronously, so
+        // a script spamming walk every tick spawns no worker per tick.
+        *walk_target.lock().unwrap() = (1, 0, 0);
+        script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            5,
+            Some((0, 0, 0)),
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &travellers,
+            &grid,
+        );
+        assert_eq!(
+            *walk_ret.lock().unwrap(),
+            Some(false),
+            "already-queued → refuse, no worker spawn"
+        );
+        assert_eq!(
+            queued(&travellers),
+            Some(Tile { x: 2, z: 0, level: 0 }),
+            "the armed route is untouched"
         );
     }
 }
