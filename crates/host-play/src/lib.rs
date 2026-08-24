@@ -475,10 +475,20 @@ impl Play {
             .map(|s| s.username)
     }
 
-    /// Start a compiled script on `name`'s slot. `Err` when the picker id
-    /// has no ported script yet (`script::factory` returned `None`) or the
-    /// slot already runs one; the slot thread gates it on `is_up`.
+    /// Whether `name` is a slot this play controls (spawned or armed), so
+    /// script control can never create an entry no thread drives.
+    fn slot_active(&self, name: &str) -> bool {
+        self.spawned.contains(name) || self.arms.contains_key(name)
+    }
+
+    /// Start a compiled script on `name`'s slot. `Err("no slot: {name}")`
+    /// when no running slot owns that name, `Err("not ported: {id}")` when
+    /// the picker id has no ported script yet, or `Err` when the slot
+    /// already runs one. The slot thread gates it on `is_up`.
     pub fn script_start(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
+        if !self.slot_active(name) {
+            return Err(format!("no slot: {name}"));
+        }
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
         self.scripts
             .lock()
@@ -2622,10 +2632,49 @@ mod tests {
             |_| (None, None),
             |_, _| {},
         );
+        // alice is a real (armed) slot, so the error is about the picker id.
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        play.attach_arm("alice", SlotArm::new(7, false));
         let err = play
             .script_start("alice", script::CompiledId("WalkTo"))
             .unwrap_err();
         assert!(err.contains("not ported"), "err was {err}");
+    }
+
+    #[test]
+    fn script_start_unknown_slot_errors_without_phantom_entry() {
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        let err = play
+            .script_start("ghost", script::CompiledId("WalkTo"))
+            .unwrap_err();
+        assert!(err.contains("no slot"), "err was {err}");
+        assert_eq!(play.script_state("ghost"), script::RunState::Idle);
+        assert!(
+            !play.scripts.lock().unwrap().contains_key("ghost"),
+            "an unknown uid must never get a SlotScript entry"
+        );
     }
 
     #[test]
