@@ -263,6 +263,17 @@ impl Session {
     /// Only the focused profile is spawned as a slot; other vault rows stay
     /// parked until selected (channel-change keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
+        if self.start_vault(path, pass) {
+            self.focus_first_profile();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Open the vault and attach an empty [`Play`]. Does **not** spawn a
+    /// slot — headed stress50 latches TV first, then loads `s00` as the tube.
+    fn start_vault(&mut self, path: &Path, pass: &str) -> bool {
         match open_vault(path, pass) {
             Ok(vault) => {
                 self.error = None;
@@ -309,13 +320,20 @@ impl Session {
     }
 
     /// Live `stress50` setup: temp vault `s00`…`s49` (password = username,
-    /// uids `274_000_100 + i`), multibox wall of all 50, chooser closed,
-    /// only-render-selected + focus `s00`, renderer on, then `login_all`.
+    /// uids `274_000_100 + i`), TV latched **before** any spawn, `s00` is
+    /// the highmem tube, extras lean, chooser closed, only-render-selected,
+    /// then `login_all`.
     pub fn live_prepare_stress50(&mut self) -> Result<(), String> {
-        let names: Vec<(String, String)> = (0..50)
+        self.live_prepare_stress(50)
+    }
+
+    /// Headed channel-head wall of `n` profiles (`s00`…`s{n-1}`).
+    fn live_prepare_stress(&mut self, n: usize) -> Result<(), String> {
+        let n = n.max(1);
+        let names: Vec<(String, String)> = (0..n)
             .map(|i| {
-                let n = format!("s{i:02}");
-                (n.clone(), n)
+                let name = format!("s{i:02}");
+                (name.clone(), name)
             })
             .collect();
         let entries: Vec<(&str, &str)> = names
@@ -323,25 +341,25 @@ impl Session {
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
         let path = temp_live_vault_from(&entries, 274_000_100);
-        if !self.unlock_at(&path, "bot") {
+        // Empty Play first: do not spawn last_focus as a lowmem fat before
+        // the TV latch (that was the headed-50 black tube).
+        if !self.start_vault(&path, "bot") {
             return Err(self
                 .error
                 .clone()
-                .unwrap_or_else(|| "unlock_at failed".into()));
+                .unwrap_or_else(|| "start_vault failed".into()));
         }
-        self.set_multibox(true);
         self.set_channel_head(true);
+        self.set_multibox(true);
         self.scatter.store(true, Ordering::Relaxed);
-        // First MultiBox-on opens the chooser; live already loaded all
-        // names. Leave the window usable (operator may click the rail).
         self.wall.chooser_open = false;
-        for (name, _) in &names {
+        self.focus.lock().unwrap().only_render_selected = true;
+        // Tube first so every later load is lean.
+        self.load(&names[0].0);
+        for (name, _) in names.iter().skip(1) {
             self.load(name);
         }
-        self.focus.lock().unwrap().only_render_selected = true;
-        // Each load() selects; last would be s49. Focus s00.
-        self.select("s00");
-        self.set_renderer(true);
+        self.select(&names[0].0);
         self.login_all();
         Ok(())
     }
@@ -436,7 +454,6 @@ impl Session {
         self.play = Some(play);
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         self.vault = Some(vault);
-        self.focus_first_profile();
     }
 
     /// After unlock/`spawn_all`: restore `last_focus` when it is still a
@@ -1941,6 +1958,47 @@ mod tests {
         assert_eq!(lean, 1);
         s.play.as_mut().unwrap().stop_slot("alice");
         s.play.as_mut().unwrap().stop_slot("bob");
+    }
+
+    #[test]
+    fn headed_stress_spawns_s00_as_tv_despite_last_focus() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: Some("s02".into()),
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_stress(3).expect("prepare");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut fat = 0;
+        let mut lean = 0;
+        let mut fat_name = String::new();
+        while std::time::Instant::now() < deadline {
+            let st = s.play.as_ref().unwrap().statuses();
+            fat = st.iter().filter(|r| !r.lean).count();
+            lean = st.iter().filter(|r| r.lean).count();
+            if let Some(h) = st.iter().find(|r| !r.lean) {
+                fat_name = h.username.clone();
+            }
+            if fat == 1 && lean == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(s.slots.len(), 1, "one PixelBuf (the TV)");
+        assert_eq!(fat, 1);
+        assert_eq!(lean, 2);
+        assert_eq!(fat_name, "s00", "TV must be s00, not last_focus s02");
+        assert_eq!(s.focused_name().as_deref(), Some("s00"));
+        assert_eq!(s.tv_name().as_deref(), Some("s00"));
+        let front = s.play.as_ref().unwrap().login_queue_uids();
+        assert_eq!(
+            front.first().copied(),
+            Some(274_000_100),
+            "s00 uid must be FIFO head, got {front:?}"
+        );
+        for n in ["s00", "s01", "s02"] {
+            s.play.as_mut().unwrap().stop_slot(n);
+        }
     }
 
     #[test]
