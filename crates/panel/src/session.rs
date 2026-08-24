@@ -580,12 +580,7 @@ impl Session {
     /// Channel-head: the Game pane is the TV. Clicking a lean cap (or the
     /// combo) opcode-18 retunes the fat Client onto that account.
     pub fn select(&mut self, name: &str) {
-        let one_tube = self.channel_head
-            && self
-                .focus
-                .lock()
-                .unwrap()
-                .only_render_selected;
+        let one_tube = self.channel_head;
         if one_tube && self.play.is_some() {
             let head = self.play.as_ref().and_then(|p| p.fat_head_name());
             if head.is_none() {
@@ -799,9 +794,10 @@ impl Session {
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
             return;
         };
-        let allow_many_fat = !self.focus.lock().unwrap().only_render_selected;
+        // Channel-head: exactly one fat Client (the TV). Every later wall
+        // member is lean — no second Client, no render-all escape hatch.
         let extras_are_lean =
-            self.channel_head && self.play.is_some() && !self.slots.is_empty() && !allow_many_fat;
+            self.channel_head && self.play.is_some() && !self.slots.is_empty();
         if extras_are_lean {
             if let Some(play) = &mut self.play {
                 play.spawn_channel_with_arm(profile, arm);
@@ -1901,8 +1897,8 @@ mod tests {
     }
 
     #[test]
-    fn channel_head_second_fat_requires_render_all_warning() {
-        let path = tmp_vault("tv-many-fat.vault");
+    fn channel_head_never_spawns_a_second_fat() {
+        let path = tmp_vault("tv-no-second-fat.vault");
         let mut s = Session::new();
         assert!(s.unlock_at(&path, "bot"));
         for (n, uid) in [("alice", 1), ("bob", 2)] {
@@ -1918,22 +1914,19 @@ mod tests {
         s.load("bob");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut fat = 0;
+        let mut lean = 0;
         while std::time::Instant::now() < deadline {
-            fat = s
-                .play
-                .as_ref()
-                .unwrap()
-                .statuses()
-                .iter()
-                .filter(|r| !r.lean)
-                .count();
-            if fat == 2 {
+            let st = s.play.as_ref().unwrap().statuses();
+            fat = st.iter().filter(|r| !r.lean).count();
+            lean = st.iter().filter(|r| r.lean).count();
+            if fat == 1 && lean == 1 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert_eq!(s.slots.len(), 2, "warning accepted: extras may be fat");
-        assert_eq!(fat, 2);
+        assert_eq!(s.slots.len(), 1, "exactly one PixelBuf (the TV)");
+        assert_eq!(fat, 1, "no second fat Client");
+        assert_eq!(lean, 1);
         s.play.as_mut().unwrap().stop_slot("alice");
         s.play.as_mut().unwrap().stop_slot("bob");
     }

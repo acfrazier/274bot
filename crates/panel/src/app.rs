@@ -574,7 +574,8 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
     };
-    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
+    let only_selected = state.session.channel_head
+        || state.session.focus.lock().unwrap().only_render_selected;
     let statuses = state.session.statuses();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
@@ -1133,13 +1134,16 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     if ui.button_with_size("Logout all", [w, 0.0]) {
         state.session.logout_all();
     }
-    let current = state.session.focus.lock().unwrap().only_render_selected;
-    let mut only = current;
-    if ui.checkbox("only render selected", &mut only) {
-        let (next, open_warn) = apply_only_render_selected(current, only);
-        state.session.focus.lock().unwrap().only_render_selected = next;
-        if open_warn {
-            state.session.wall.render_all_warn_open = true;
+    // Channel-head is one TV + lean caps: no second fat Client.
+    if !state.session.channel_head {
+        let current = state.session.focus.lock().unwrap().only_render_selected;
+        let mut only = current;
+        if ui.checkbox("only render selected", &mut only) {
+            let (next, open_warn) = apply_only_render_selected(current, only);
+            state.session.focus.lock().unwrap().only_render_selected = next;
+            if open_warn {
+                state.session.wall.render_all_warn_open = true;
+            }
         }
     }
 }
@@ -1214,7 +1218,8 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
-    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
+    let only_selected = state.session.channel_head
+        || state.session.focus.lock().unwrap().only_render_selected;
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
         let light = traffic_light(
