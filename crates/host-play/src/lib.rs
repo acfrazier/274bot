@@ -12,9 +12,11 @@ use std::time::{Duration, Instant};
 
 use client::client::Client;
 use client::client::ClientConfig;
+use client::client::LoginError;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
 pub use host::debug_enabled;
+use host::lean::{Lean, LeanError};
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
 pub use host::set_debug;
@@ -218,6 +220,11 @@ fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> 
 ///
 /// [`Play::spawn_slot`] can add a profile after the initial [`run_with_io`]
 /// call; later slots share the same login FIFO, cache, and per-frame hook.
+///
+/// Channel-head (4.7): `head` is the one fat `Client` (the tuned profile)
+/// and `channels` are the lean sessions for every other profile;
+/// [`Play::tune`] moves the head between profiles. `profiles` keeps the
+/// vault credentials every tune and lean park needs.
 pub struct Play {
     /// Shared status rows; panel tests push fakes here for `pump_status`.
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
@@ -229,6 +236,32 @@ pub struct Play {
     per_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
+    /// Vault profiles keyed by username (`tune` looks up the incoming
+    /// password/uid; the park needs the outgoing one too).
+    profiles: HashMap<String, Profile>,
+    /// The tuned profile's fat `Client`; every other profile is a lean
+    /// channel. `None` until the first [`Play::tune`].
+    head: Option<Head>,
+    /// Lean channels for every profile that is not currently the head.
+    channels: HashMap<String, Lean>,
+}
+
+/// The tuned profile's fat `Client`. Exactly one head: `tune` parks the
+/// previous one as a lean channel and reconnects this one (opcode 18).
+struct Head {
+    name: String,
+    client: Client,
+}
+
+/// Errors from [`Play::tune`].
+#[derive(Debug)]
+pub enum TuneError {
+    /// `tune` was asked for a name that is not a known profile.
+    UnknownProfile(String),
+    /// Parking the previous head as a lean channel (opcode 16) failed.
+    Park(LeanError),
+    /// The incoming channel's reconnect login (wrapper opcode 18) failed.
+    Login(LoginError),
 }
 
 impl Play {
@@ -314,6 +347,9 @@ impl Play {
         pixels: Option<Arc<PixelBuf>>,
         arm: Option<Arc<SlotArm>>,
     ) {
+        // Keep the vault credentials on the wall: `tune` parks the
+        // outgoing head and reconnects the incoming one from this map.
+        self.profiles.insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
@@ -336,6 +372,84 @@ impl Play {
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
+    }
+
+    /// Tune the head to `name` (274bot channel head). Sequence:
+    /// 1. drop `name`'s lean channel if one is up (the server sees that
+    ///    account DC);
+    /// 2. park the current head: `Client::logout` then a `Lean::login`
+    ///    (opcode 16) so the previous account stays ingame as a channel;
+    /// 3. reconnect the head as `name` with `login(..., reconnect = true)`
+    ///    (wrapper **18**, grant 15 — the server sees a valid lost_con
+    ///    reconnect for the account whose lean socket just dropped);
+    /// 4. wipe the previous channel's scene (`scene_state = 0`, fresh
+    ///    `localPlayer`, cleared player/npc tables) — stock response 15
+    ///    keeps state for a *same-session* `lost_con`, which is the wrong
+    ///    story across accounts.
+    ///
+    /// The first tune (no head yet) skips the park; the incoming handshake
+    /// is opcode 18 either way. Tuning the current head is a no-op.
+    pub fn tune(&mut self, name: &str) -> Result<(), TuneError> {
+        let profile = self
+            .profiles
+            .get(name)
+            .cloned()
+            .ok_or_else(|| TuneError::UnknownProfile(name.to_string()))?;
+        if self.head.as_ref().is_some_and(|h| h.name == name) {
+            return Ok(());
+        }
+
+        // 1. The incoming account leaves the lean wall; the server sees
+        //    that connection drop, so the opcode-18 reconnect below is a
+        //    valid lost_con for the same account.
+        self.channels.remove(name);
+
+        // 2. Park the current head: close its socket, then cold-login the
+        //    previous account as a lean channel (opcode 16).
+        let mut client = if let Some(mut head) = self.head.take() {
+            let prev_name = head.name.clone();
+            head.client.logout();
+            let prev = self
+                .profiles
+                .get(&prev_name)
+                .cloned()
+                .ok_or_else(|| TuneError::UnknownProfile(prev_name.clone()))?;
+            let config = bot_client_config(&self.options, &prev);
+            match Lean::login(&config, &prev.username, &prev.password, prev.uid) {
+                Ok(lean) => {
+                    self.channels.insert(prev_name, lean);
+                }
+                Err(e) => {
+                    // Park failed: restore the logged-out head so a retry
+                    // re-parks (a fresh connect) instead of re-logging in.
+                    self.head = Some(head);
+                    return Err(TuneError::Park(e));
+                }
+            }
+            head.client
+        } else {
+            prepare_client(
+                bot_client_config(&self.options, &profile),
+                profile.uid,
+                Arc::clone(&self.cache),
+                self.ifaces.clone(),
+            )
+        };
+
+        // 3. Reconnect the head as `name`: wrapper opcode 18, grant 15.
+        client
+            .login(name, &profile.password, true)
+            .map_err(TuneError::Login)?;
+
+        // 4. Response 15 keeps the previous session's state; a channel
+        //    change is a different account's scene, so wipe it.
+        client.wipe_scene();
+
+        self.head = Some(Head {
+            name: name.to_string(),
+            client,
+        });
+        Ok(())
     }
 }
 
@@ -373,6 +487,9 @@ where
         per_frame: Arc::new(per_frame),
         spawned: HashSet::new(),
         arms: HashMap::new(),
+        profiles: HashMap::new(),
+        head: None,
+        channels: HashMap::new(),
     };
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
@@ -708,9 +825,12 @@ fn wait_for_permit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::Arc;
+    use std::thread;
 
-    use client::client::ClientConfig;
+    use client::client::{ClientConfig, ClientNpc, ClientPlayer};
     use client::config::Cache;
     use vault::ProfileSettings;
 
@@ -1120,5 +1240,113 @@ mod tests {
             (22 * 128, 20 * 128),
             "must not report scene pixels"
         );
+    }
+
+    fn profile(name: &str, uid: i32) -> Profile {
+        Profile {
+            username: name.into(),
+            password: "pw".into(),
+            uid,
+            settings: ProfileSettings {
+                lowmem: true,
+                auto_login: false,
+            },
+        }
+    }
+
+    /// Tune B (274bot Task 3): the head reconnects as B with wrapper opcode
+    /// **18** (a valid lost_con reconnect after B's lean channel is
+    /// dropped), the previous head A is parked as a lean channel (opcode
+    /// 16, response 2), and the response-15 grant is followed by a scene
+    /// wipe (stock response 15 keeps state for a same-session `lost_con`;
+    /// a channel change is a different account's scene).
+    #[test]
+    fn tune_b_handshake_is_18_and_parks_a_as_lean() {
+        // One fake server on the shared host:port; the connection order is
+        // deterministic: A's tune-in (18→15), A's park lean (16→2), B's
+        // tune-in (18→15). The wrapper opcode of each loginout block is
+        // recorded (buf[0]) so the test can pin the 18-not-16 contract.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let wrappers = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&wrappers);
+        let server = thread::spawn(move || {
+            let grants: [&[u8]; 3] = [&[15], &[2, 0, 0], &[15]];
+            for grant in grants {
+                let (mut s, _) = listener.accept().unwrap();
+                let mut hdr = [0u8; 2];
+                s.read_exact(&mut hdr).unwrap();
+                assert_eq!(hdr[0], 14); // login server probe
+                for _ in 0..8 {
+                    s.write_all(&[0]).unwrap();
+                }
+                s.write_all(&[0]).unwrap(); // response 0 → send seed
+                s.write_all(&[0u8; 8]).unwrap(); // g8 seed
+                let mut buf = [0u8; 512];
+                let n = s.read(&mut buf).unwrap();
+                assert!(n > 0);
+                log.lock().unwrap().push(buf[0]);
+                s.write_all(grant).unwrap();
+            }
+        });
+
+        let opts = PlayOptions {
+            host: "127.0.0.1".into(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        };
+        let mut play = run_with_io(&opts, vec![], |_| (None, None), |_, _| {});
+        play.profiles.insert("a".into(), profile("a", 1));
+        play.profiles.insert("b".into(), profile("b", 2));
+
+        play.tune("a").unwrap(); // establish the head (still opcode 18)
+        // A's scene is live; tune("b") must wipe it, not keep it.
+        let head = play.head.as_mut().unwrap();
+        head.client.scene_state = 1;
+        head.client.player_count = 1;
+        head.client.players[123] = Some(ClientPlayer::at(3, 4));
+        head.client.npc_count = 1;
+        head.client.npc[7] = Some(ClientNpc::default());
+        head.client.local_player.as_mut().unwrap().y = 77;
+
+        play.tune("b").unwrap();
+
+        {
+            let w = wrappers.lock().unwrap();
+            assert_eq!(
+                w.as_slice(),
+                &[18, 16, 18],
+                "tune handshake is 18, park lean is 16"
+            );
+        }
+        let head = play.head.as_ref().unwrap();
+        assert_eq!(head.name, "b");
+        assert_eq!(head.client.login_user, "b");
+        assert!(head.client.ingame);
+        assert_eq!(head.client.last_login_reconnect, Some(true));
+        assert_eq!(
+            head.client.scene_state, 0,
+            "tune wipes the previous channel's scene"
+        );
+        assert_eq!(
+            head.client.local_player.as_ref().unwrap().y, 0,
+            "tune wipes the previous channel's local player"
+        );
+        assert!(head.client.players[123].is_none(), "previous players cleared");
+        assert!(head.client.npc[7].is_none(), "previous npcs cleared");
+        assert_eq!(head.client.player_count, 0);
+        assert_eq!(head.client.npc_count, 0);
+        assert!(
+            play.channels.contains_key("a"),
+            "parked A stays ingame as a lean channel"
+        );
+        assert!(
+            !play.channels.contains_key("b"),
+            "the tuned head is not a lean channel"
+        );
+        play.channels.get_mut("a").unwrap().pump().unwrap();
+        server.join().unwrap();
     }
 }
