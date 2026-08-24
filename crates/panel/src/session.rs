@@ -163,6 +163,9 @@ pub struct Session {
     /// Channel-head wall: one fat Client (the TV); extras are lean sockets.
     /// Off for headed `null_raster` (two Clients). On for `stress50` / MultiBox.
     pub channel_head: bool,
+    /// Channel-head TV tube: `true` means highmem + SFX on the fat head
+    /// (default). Independent of vault `ProfileSettings.lowmem`.
+    pub tube_sfx: bool,
     /// Persisted panel prefs (last focus + per-profile collapsed sections).
     pub ui: crate::ui_state::PanelUiState,
 }
@@ -227,6 +230,7 @@ impl Session {
             wall: Wall::default(),
             multibox: false,
             channel_head: false,
+            tube_sfx: true,
             ui: crate::ui_state::load(),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
@@ -701,12 +705,20 @@ impl Session {
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
             return;
         };
-        let extras_are_lean = self.channel_head && self.play.is_some() && !self.slots.is_empty();
+        let allow_many_fat = !self.focus.lock().unwrap().only_render_selected;
+        let extras_are_lean = self.channel_head
+            && self.play.is_some()
+            && !self.slots.is_empty()
+            && !allow_many_fat;
         if extras_are_lean {
             if let Some(play) = &mut self.play {
                 play.spawn_channel(profile);
             }
             return;
+        }
+        let mut profile = profile;
+        if self.channel_head && self.slots.is_empty() {
+            profile.settings.lowmem = !self.tube_sfx;
         }
         let input = SlotInput::new();
         let pixels = PixelBuf::new();
@@ -776,9 +788,13 @@ impl Session {
         true
     }
 
-    /// The focused profile's `settings.lowmem`; `true` (the default) when
-    /// no profile is focused or the vault is locked.
+    /// Lowmem for the Music/SFX checkbox. Channel-head uses the TV tube
+    /// flag (default highmem). Otherwise the focused vault profile, or
+    /// `true` when nothing is focused.
     pub fn focused_lowmem(&self) -> bool {
+        if self.channel_head {
+            return !self.tube_sfx;
+        }
         self.focused_name()
             .and_then(|n| self.vault.as_ref().and_then(|v| v.get(&n)))
             .map(|p| p.settings.lowmem)
@@ -790,6 +806,11 @@ impl Session {
     /// spawn; a live slot is not torn down or restarted. Returns whether
     /// the write landed; failures set [`Session::error`].
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
+        if self.channel_head {
+            self.tube_sfx = !lowmem;
+            self.error = None;
+            return true;
+        }
         let Some(name) = self.focused_name() else {
             self.error = Some("music/sfx: no focused profile".into());
             return false;
@@ -1608,6 +1629,70 @@ mod tests {
         s.play.as_mut().unwrap().stop_slot("alice");
         s.play.as_mut().unwrap().stop_slot("bob");
         s.play.as_mut().unwrap().stop_slot("carol");
+    }
+
+    #[test]
+    fn channel_head_tv_defaults_to_sfx_and_does_not_write_vault() {
+        let path = tmp_vault("tv-tube-sfx.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 1))
+            .unwrap();
+        s.channel_head = true;
+        assert!(s.tube_sfx, "TV tube SFX on by default");
+        assert!(
+            !s.focused_lowmem(),
+            "Music/SFX checkbox follows the tube, not vault"
+        );
+        assert!(s.set_focused_lowmem(true));
+        assert!(!s.tube_sfx);
+        assert!(
+            s.vault.as_ref().unwrap().get("alice").unwrap().settings.lowmem,
+            "tube toggle must not rewrite the vault profile"
+        );
+        assert!(s.set_focused_lowmem(false));
+        assert!(s.tube_sfx);
+    }
+
+    #[test]
+    fn channel_head_second_fat_requires_render_all_warning() {
+        let path = tmp_vault("tv-many-fat.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        for (n, uid) in [("alice", 1), ("bob", 2)] {
+            s.vault
+                .as_mut()
+                .unwrap()
+                .upsert(profile(n, "pw", uid))
+                .unwrap();
+        }
+        s.channel_head = true;
+        s.focus.lock().unwrap().only_render_selected = false;
+        s.select("alice");
+        s.load("bob");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut fat = 0;
+        while std::time::Instant::now() < deadline {
+            fat = s
+                .play
+                .as_ref()
+                .unwrap()
+                .statuses()
+                .iter()
+                .filter(|r| !r.lean)
+                .count();
+            if fat == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(s.slots.len(), 2, "warning accepted: extras may be fat");
+        assert_eq!(fat, 2);
+        s.play.as_mut().unwrap().stop_slot("alice");
+        s.play.as_mut().unwrap().stop_slot("bob");
     }
 
     #[test]
