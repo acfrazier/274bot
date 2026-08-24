@@ -42,6 +42,11 @@ pub struct LeanSnapshot {
     pub inv: Vec<(i32, i32)>,
     /// Component id of [`LeanSnapshot::inv`].
     pub inv_com: i32,
+    /// Local player's absolute world tile `(x, z, level)` from the
+    /// `PLAYER_INFO` teleport branch; `None` until such an update lands.
+    /// Walk/run tracking (`move_code`) is a later gap, so `here` only
+    /// moves on teleport/rebuild.
+    pub here: Option<(i32, i32, i32)>,
 }
 
 /// Login response codes, socket failures, and malformed frames.
@@ -220,6 +225,7 @@ impl Lean {
                 tick: 0,
                 inv: Vec::new(),
                 inv_com: 0,
+                here: None,
             },
         })
     }
@@ -337,6 +343,7 @@ impl Lean {
                     tick: 0,
                     inv: Vec::new(),
                     inv_com: 0,
+                    here: None,
                 },
             });
         }
@@ -369,6 +376,7 @@ impl Lean {
                     tick: 0,
                     inv: Vec::new(),
                     inv_com: 0,
+                    here: None,
                 },
             });
         }
@@ -461,11 +469,29 @@ impl Lean {
                 self.snapshot.tile_z = (zone_z - 6) * 8;
             }
             ServerProt::PLAYER_INFO => {
-                // Count, do not decode: `read_frame` already consumed the
-                // blob by size, and the player-list decode (local-player
-                // tile, NPCs) is a later gap. One inbound PLAYER_INFO is
-                // the tick edge.
+                // One inbound PLAYER_INFO is the tick edge. The blob is
+                // already fully buffered by size in `read_frame`, so only
+                // the leading local-player bits are read here (other
+                // players / NPCs / appearance stay skip-as-seen).
                 self.snapshot.tick += 1;
+                self.incoming.gbit_start();
+                if self.incoming.gbit(1) != 0 {
+                    let op = self.incoming.gbit(2);
+                    if op == 3 {
+                        // Teleport: absolute world tile = build base +
+                        // scene coords. op 0/1/2 (full / walk / run) are
+                        // a later gap — walk-run tracking needs move_code.
+                        let level = self.incoming.gbit(2);
+                        let lx = self.incoming.gbit(7);
+                        let lz = self.incoming.gbit(7);
+                        let _jump = self.incoming.gbit(1);
+                        self.snapshot.here = Some((
+                            self.snapshot.tile_x + lx,
+                            self.snapshot.tile_z + lz,
+                            level,
+                        ));
+                    }
+                }
             }
             ServerProt::UPDATE_INV_FULL => {
                 // g2 com, g1 size, then (g2 id, g1 count) per slot. No
@@ -878,6 +904,7 @@ mod tests {
                 tick: 0,
                 inv: Vec::new(),
                 inv_com: 0,
+                here: None,
             },
         };
         (lean, srv)
@@ -919,6 +946,96 @@ mod tests {
         assert_eq!(lean.snapshot().tile_x, 336);
         assert_eq!(lean.snapshot().tile_z, 344);
         assert_eq!(lean.snapshot().pid, 0);
+    }
+
+    /// Mirror `Packet::gbit`: pack `value`'s low `n` bits into `out`
+    /// MSB-first, byte-sequential; `at` is the next free bit position in
+    /// the stream (0 = MSB of byte 0).
+    fn push_bits(out: &mut Vec<u8>, at: &mut usize, value: i32, n: usize) {
+        for i in 0..n {
+            let bit = ((value >> (n - 1 - i)) & 1) as u8;
+            let idx = *at;
+            let byte = idx / 8;
+            if byte >= out.len() {
+                out.push(0);
+            }
+            out[byte] |= bit << (7 - (idx % 8));
+            *at += 1;
+        }
+    }
+
+    /// Encode a size-`-2` frame (PLAYER_INFO etc.): the wire header is the
+    /// ISAAC'd opcode byte then a g2 length prefix, unlike fixed-size
+    /// [`encode`].
+    fn encode_var(ptype: i32, payload: &[u8], enc: &mut Isaac) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(3 + payload.len());
+        frame.push(ptype.wrapping_add(enc.next_int()) as u8);
+        frame.push(((payload.len() as i32) >> 8) as u8);
+        frame.push(payload.len() as u8);
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn pump_player_info_sets_local_tile() {
+        let (mut lean, mut srv) = lean_pair();
+        let mut enc = Isaac::new(&[50; 4]);
+
+        // Build base first: zone (48, 49) → origin tiles (336, 344).
+        srv.write_all(&encode(ServerProt::REBUILD_NORMAL, &[0, 48, 0, 49], &mut enc))
+            .unwrap();
+        pump_until(&mut lean, |s| s.scene_state == 1);
+        assert_eq!(lean.snapshot().here, None, "no PLAYER_INFO yet");
+
+        // Local-player teleport (op 3): info=1, op=3, level=2, lx=7,
+        // lz=9, jump=0 → absolute tile (336+7, 344+9, 2).
+        let mut payload = Vec::new();
+        let mut at = 0;
+        push_bits(&mut payload, &mut at, 1, 1); // local-player update present
+        push_bits(&mut payload, &mut at, 3, 2); // op = teleport
+        push_bits(&mut payload, &mut at, 2, 2); // level
+        push_bits(&mut payload, &mut at, 7, 7); // scene-relative x
+        push_bits(&mut payload, &mut at, 9, 7); // scene-relative z
+        push_bits(&mut payload, &mut at, 0, 1); // jump
+        assert_eq!(payload, vec![0xf0, 0x71, 0x20], "pins the client's bit layout");
+        srv.write_all(&encode_var(ServerProt::PLAYER_INFO, &payload, &mut enc))
+            .unwrap();
+
+        pump_until(&mut lean, |s| s.here == Some((343, 353, 2)));
+        assert_eq!(lean.snapshot().here, Some((343, 353, 2)));
+        assert_eq!(lean.snapshot().tick, 1, "PLAYER_INFO still ticks");
+
+        // A second teleport moves `here`; the tick keeps counting.
+        let mut payload = Vec::new();
+        let mut at = 0;
+        push_bits(&mut payload, &mut at, 1, 1);
+        push_bits(&mut payload, &mut at, 3, 2);
+        push_bits(&mut payload, &mut at, 0, 2); // level 0
+        push_bits(&mut payload, &mut at, 50, 7);
+        push_bits(&mut payload, &mut at, 12, 7);
+        push_bits(&mut payload, &mut at, 1, 1); // jump
+        srv.write_all(&encode_var(ServerProt::PLAYER_INFO, &payload, &mut enc))
+            .unwrap();
+
+        pump_until(&mut lean, |s| s.here == Some((386, 356, 0)));
+        assert_eq!(lean.snapshot().tick, 2);
+    }
+
+    #[test]
+    fn pump_player_info_without_local_update_keeps_here() {
+        let (mut lean, mut srv) = lean_pair();
+        let mut enc = Isaac::new(&[50; 4]);
+
+        // info = 0: no local-player update in the blob; `here` stays None.
+        let mut payload = Vec::new();
+        let mut at = 0;
+        push_bits(&mut payload, &mut at, 0, 1);
+        srv.write_all(&encode_var(ServerProt::PLAYER_INFO, &payload, &mut enc))
+            .unwrap();
+
+        pump_until(&mut lean, |s| s.tick == 1);
+        assert_eq!(lean.snapshot().here, None);
+        assert_eq!(lean.snapshot().tick, 1);
     }
 
     #[test]
