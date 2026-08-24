@@ -81,6 +81,10 @@ pub struct SlotStatus {
     pub raster_ns: u64,
     pub paint_n: u64,
     pub skip_n: u64,
+    /// True for a lean channel row (`host::lean::Lean`, no `Client`, no
+    /// World); false for a full `Client` slot. The live channel ladder
+    /// counts leanes against the one head.
+    pub lean: bool,
 }
 
 /// Absolute world tile from the scene origin plus the local-player route
@@ -124,6 +128,7 @@ impl Default for SlotStatus {
             raster_ns: 0,
             paint_n: 0,
             skip_n: 0,
+            lean: false,
         }
     }
 }
@@ -375,6 +380,26 @@ impl Play {
         );
     }
 
+    /// Spawn one lean channel slot on this play's FIFO: `Lean::login` (cold,
+    /// opcode 16, no `Client`), then pump the stream at the host cadence.
+    /// The status row is marked `lean`; no-op if the name is already running.
+    pub fn spawn_channel(&mut self, profile: Profile) {
+        self.profiles.insert(profile.username.clone(), profile.clone());
+        if !self.spawned.insert(profile.username.clone()) {
+            return;
+        }
+        let arm = SlotArm::new(profile.uid, true);
+        self.arms.insert(profile.username.clone(), Arc::clone(&arm));
+        spawn_channel_thread(
+            &self.options,
+            profile,
+            arm,
+            Arc::clone(&self.queue),
+            Arc::clone(&self.statuses),
+            &mut self.handles,
+        );
+    }
+
     /// Tune the head to `name` (274bot channel head). Sequence:
     /// 1. drop `name`'s lean channel if one is up (the server sees that
     ///    account DC);
@@ -501,6 +526,37 @@ where
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
         play.spawn_slot(profile, slot_input, slot_pixels, None);
+    }
+    play
+}
+
+/// Channel-head wall spawn: the first `heads` profiles (0 or 1) are fat
+/// `Client` slots and every other profile is a lean channel — no World, no
+/// ifaces, no caches (`host::lean::Lean`). The head stays draw-off like a
+/// wall slot; only the live channel ladder uses this today, so the panel
+/// `stress50` full-`Client` path through [`run_with_io`] is untouched.
+pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize) -> Play {
+    let (cache, ifaces) = load_template(&options.cache_dir);
+    let mut play = Play {
+        statuses: Arc::new(Mutex::new(Vec::new())),
+        handles: HashMap::new(),
+        options: options.clone(),
+        cache: Arc::new(cache),
+        ifaces,
+        queue: Arc::new(Mutex::new(LoginQueue::default())),
+        per_frame: Arc::new(|c: &mut Client, _: &str| c.set_draw(false)),
+        spawned: HashSet::new(),
+        arms: HashMap::new(),
+        profiles: HashMap::new(),
+        head: None,
+        channels: HashMap::new(),
+    };
+    for (i, profile) in profiles.into_iter().enumerate() {
+        if i < heads {
+            play.spawn_slot(profile, None, None, None);
+        } else {
+            play.spawn_channel(profile);
+        }
     }
     play
 }
@@ -734,6 +790,156 @@ fn spawn_slot_thread(
     );
 }
 
+/// Spawn one lean channel thread. The channel waits for a login-queue
+/// permit (shared FIFO with the head), cold-logins with `Lean::login`
+/// (wrapper opcode 16), then pumps inbound frames at the host cadence —
+/// no `maininit`, no `Client`, no pixels, no keepalive. The row mirrors
+/// the thin `LeanSnapshot`; `lean` is true so the ladder counts it.
+fn spawn_channel_thread(
+    options: &PlayOptions,
+    profile: Profile,
+    arm: Arc<SlotArm>,
+    slot_queue: Arc<Mutex<LoginQueue>>,
+    slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    handles: &mut HashMap<String, thread::JoinHandle<()>>,
+) {
+    let username = profile.username.clone();
+    let uid = profile.uid;
+    let password = profile.password.clone();
+    let config = bot_client_config(options, &profile);
+
+    handles.insert(
+        username.clone(),
+        thread::Builder::new()
+            .name(format!("{username}-lean"))
+            .stack_size(THREAD_STACK)
+            .spawn(move || {
+                {
+                    let mut all = slot_statuses.lock().unwrap();
+                    all.push(SlotStatus {
+                        username: username.clone(),
+                        lean: true,
+                        ..SlotStatus::default()
+                    });
+                }
+                loop {
+                    if arm.stop.load(Ordering::Relaxed) {
+                        slot_queue.lock().unwrap().leave(uid);
+                        return;
+                    }
+                    wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
+                    if arm.stop.load(Ordering::Relaxed) {
+                        slot_queue.lock().unwrap().leave(uid);
+                        return;
+                    }
+                    let login_started = Instant::now();
+                    {
+                        let mut all = slot_statuses.lock().unwrap();
+                        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                            // First attempt only: retries must not move the
+                            // handshake-start metric the harness polls.
+                            if s.login_started.is_none() {
+                                s.login_started = Some(login_started);
+                            }
+                            s.error = None;
+                        }
+                    }
+                    match Lean::login(&config, &username, &password, uid, false) {
+                        Ok(mut lean) => {
+                            if debug_enabled() {
+                                eprintln!("[host-play] channel {username}: ingame");
+                            }
+                            {
+                                let mut all = slot_statuses.lock().unwrap();
+                                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                                    s.ingame = true;
+                                }
+                            }
+                            // Pump inbound frames at the host cadence until the
+                            // connection dies or the arm stops; a dead channel
+                            // falls back to the permit + login retry above.
+                            loop {
+                                if arm.stop.load(Ordering::Relaxed) {
+                                    slot_queue.lock().unwrap().leave(uid);
+                                    return;
+                                }
+                                let pump = lean.pump();
+                                let mut died = false;
+                                {
+                                    let mut all = slot_statuses.lock().unwrap();
+                                    if let Some(s) =
+                                        all.iter_mut().find(|s| s.username == username)
+                                    {
+                                        match pump {
+                                            Ok(()) => {
+                                                let snap = lean.snapshot();
+                                                s.scene_state = snap.scene_state;
+                                                s.tile_x = snap.tile_x;
+                                                s.tile_z = snap.tile_z;
+                                            }
+                                            Err(e) => {
+                                                s.error = Some(match &e {
+                                                    LeanError::Login(le) => format!(
+                                                        "code {}: {}",
+                                                        le.code, le.mes2
+                                                    ),
+                                                    LeanError::Io(io) => format!("io: {io}"),
+                                                    LeanError::FrameTooLarge { ptype, psize } => {
+                                                        format!(
+                                                            "frame too large ptype={ptype} \
+                                                             psize={psize}"
+                                                        )
+                                                    }
+                                                });
+                                                s.ingame = false;
+                                                died = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                if died {
+                                    break;
+                                }
+                                thread::sleep(Duration::from_millis(20));
+                            }
+                        }
+                        Err(e) => {
+                            let msg = match &e {
+                                LeanError::Login(le) => format!("code {}: {}", le.code, le.mes2),
+                                LeanError::Io(io) => format!("io: {io}"),
+                                LeanError::FrameTooLarge { ptype, psize } => {
+                                    format!("frame too large ptype={ptype} psize={psize}")
+                                }
+                            };
+                            if debug_enabled() {
+                                eprintln!("[host-play] channel {username}: login {msg}");
+                            }
+                            {
+                                let mut all = slot_statuses.lock().unwrap();
+                                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                                    s.error = Some(msg);
+                                }
+                            }
+                            // A rejected lean login retries after the same
+                            // codes as the fat slots (world full / login
+                            // limit / wrong credentials).
+                            let wait = match &e {
+                                LeanError::Login(le) => match le.code {
+                                    16 => Duration::from_secs(20),
+                                    5 => Duration::from_secs(60),
+                                    _ => Duration::from_secs(5),
+                                },
+                                _ => Duration::from_secs(5),
+                            };
+                            thread::sleep(wait);
+                        }
+                    }
+                }
+            })
+            .expect("failed to spawn channel thread"),
+    );
+}
+
 /// Unlock `path`, or create it (and parent dirs) when missing. Any other
 /// unlock error (`WrongPassphrase`, `Corrupt`, `EmptyPassphrase`) is
 /// returned as-is so the CLI can print it instead of falling through to
@@ -908,6 +1114,33 @@ mod tests {
             |_, _| {},
         );
         assert!(play.statuses().is_empty());
+    }
+
+    #[test]
+    fn run_channels_empty_profiles_starts_no_slots() {
+        let play = run_channels(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            1,
+        );
+        assert!(play.statuses().is_empty());
+    }
+
+    #[test]
+    fn channel_rows_default_to_fat_and_channel_rows_mark_lean() {
+        let mut s = SlotStatus {
+            username: "t".into(),
+            ..SlotStatus::default()
+        };
+        assert!(!s.lean, "default row is a full Client slot");
+        s.lean = true;
+        assert!(s.lean, "a lean channel row carries the flag");
     }
 
     #[test]
