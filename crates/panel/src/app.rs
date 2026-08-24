@@ -14,7 +14,9 @@ use dear_imgui_rs::{
     WindowClass, WindowFlags,
 };
 
-use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
+use crate::chrome::{
+    button_row_layout, multibox_tooltip, BUTTON_GAP, GPU_LATER, PARAM_ROW, SCRIPT_ROW,
+};
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
 use crate::grid::grid_cells;
@@ -756,17 +758,19 @@ fn title_row(ui: &Ui, session: &mut Session) {
     if !stack {
         ui.same_line();
     }
-    // Grid is a MultiBox submode: hide the rail, Game pane lays members
-    // (cells land in Task 12). Unreachable until MultiBox is on.
-    let _grid_disabled = if session.multibox {
-        None
-    } else {
+    // Grid is a MultiBox submode: hide the rail, Game pane lays members.
+    // TV mode is one tube — extra rasters are not supported (gpu later).
+    let _grid_disabled = if session.channel_head || !session.multibox {
         Some(ui.begin_disabled())
+    } else {
+        None
     };
     if ui.button_with_size("Grid", [w, 0.0]) {
         session.set_grid(!session.wall.grid);
     }
-    ui.set_item_tooltip(if session.multibox {
+    ui.set_item_tooltip(if session.channel_head {
+        GPU_LATER
+    } else if session.multibox {
         "grid mode — hide rail"
     } else {
         "enable MultiBox first"
@@ -1048,14 +1052,20 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
     }
     let on = session.focus.lock().unwrap().renderer;
     let mut cur = on;
-    if ui.checkbox("game renderer", &mut cur) {
+    if session.channel_head {
+        let _d = ui.begin_disabled_with_cond(true);
+        let _ = ui.checkbox("game renderer", &mut cur);
+        ui.set_item_tooltip(GPU_LATER);
+    } else if ui.checkbox("game renderer", &mut cur) {
         session.set_renderer(cur);
     }
-    ui.text_wrapped(if on {
-        "1 fps rail (CPU). Capture raises it to 50 fps. Never pauses the bot."
-    } else {
-        "renderer off — bot still runs."
-    });
+    if !session.channel_head {
+        ui.text_wrapped(if on {
+            "1 fps rail (CPU). Capture raises it to 50 fps. Never pauses the bot."
+        } else {
+            "renderer off — bot still runs."
+        });
+    }
     // Music / SFX: in channel-head mode this is the TV tube (default on).
     // Otherwise the focused profile's vault lowmem. Next spawn.
     let mut music = !session.focused_lowmem();
@@ -1134,16 +1144,17 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     if ui.button_with_size("Logout all", [w, 0.0]) {
         state.session.logout_all();
     }
-    // Channel-head is one TV + lean caps: no second fat Client.
-    if !state.session.channel_head {
-        let current = state.session.focus.lock().unwrap().only_render_selected;
-        let mut only = current;
-        if ui.checkbox("only render selected", &mut only) {
-            let (next, open_warn) = apply_only_render_selected(current, only);
-            state.session.focus.lock().unwrap().only_render_selected = next;
-            if open_warn {
-                state.session.wall.render_all_warn_open = true;
-            }
+    let current = state.session.focus.lock().unwrap().only_render_selected;
+    let mut only = current;
+    if state.session.channel_head {
+        let _d = ui.begin_disabled_with_cond(true);
+        let _ = ui.checkbox("only render selected", &mut only);
+        ui.set_item_tooltip(GPU_LATER);
+    } else if ui.checkbox("only render selected", &mut only) {
+        let (next, open_warn) = apply_only_render_selected(current, only);
+        state.session.focus.lock().unwrap().only_render_selected = next;
+        if open_warn {
+            state.session.wall.render_all_warn_open = true;
         }
     }
 }

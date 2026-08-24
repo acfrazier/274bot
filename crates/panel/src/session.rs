@@ -166,7 +166,8 @@ pub struct Session {
     /// mirrors this so extra rasters only run while the wall is visible.
     pub multibox: bool,
     /// Channel-head wall: one fat Client (the TV); extras are lean sockets.
-    /// Off for headed `null_raster` (two Clients). On for `stress50` / MultiBox.
+    /// Latched on first MultiBox-on (`stress50`). Hiding the rail does not
+    /// unset it. Off only via explicit [`Session::set_channel_head`] (`null_raster`).
     pub channel_head: bool,
     /// Slot-thread view of [`Self::channel_head`] (the per-frame hook).
     tv: Arc<AtomicBool>,
@@ -452,9 +453,10 @@ impl Session {
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
-        let Some(play) = &self.play else {
+        let Some(play) = self.play.as_mut() else {
             return;
         };
+        play.poll_tune();
         let current = play.statuses();
         {
             let mut log_by = self.log_by.lock().unwrap();
@@ -668,7 +670,11 @@ impl Session {
     /// Renderer checkbox. Writes both the focused checkbox (`Focus.renderer`)
     /// and `renderer_by[focused]` so per-slot draw policy stays in sync.
     /// Slot threads apply `set_draw` from the focus in their per-frame hook.
+    /// Channel-head: no-op — one TV tube, no per-profile raster.
     pub fn set_renderer(&mut self, on: bool) {
+        if self.channel_head {
+            return;
+        }
         let mut focus = self.focus.lock().unwrap();
         focus.renderer = on;
         if let Some(name) = focus.focused.clone() {
@@ -1043,6 +1049,10 @@ impl Session {
     /// policy (`Focus.wall_open`), which stays true for rail **or** grid.
     /// Off: clear the grid and any open chooser and stop extra rasters
     /// (`wall_open = false`) without logging anyone out.
+    ///
+    /// First MultiBox-on latches channel-head (TV). Hiding the rail does
+    /// not unset it — TV mode is init-only. `null_raster` calls
+    /// [`Session::set_channel_head`]`(false)` after this.
     pub fn set_channel_head(&mut self, on: bool) {
         self.channel_head = on;
         self.tv.store(on, Ordering::Relaxed);
@@ -1050,7 +1060,9 @@ impl Session {
 
     pub fn set_multibox(&mut self, on: bool) {
         self.multibox = on;
-        self.set_channel_head(on);
+        if on {
+            self.set_channel_head(true);
+        }
         self.scatter.store(on, Ordering::Relaxed);
         if on {
             let running: Vec<String> = self
@@ -1080,10 +1092,10 @@ impl Session {
         self.sync_wall_focus();
     }
 
-    /// Grid submode of MultiBox: hides the rail in the Game pane (the grid
-    /// cells themselves land in Task 12). A no-op while MultiBox is off.
+    /// Grid submode of MultiBox: hides the rail in the Game pane. A no-op
+    /// while MultiBox is off or channel-head is latched (one TV tube).
     pub fn set_grid(&mut self, on: bool) {
-        if self.multibox {
+        if self.multibox && !self.channel_head {
             self.wall.grid = on;
         }
     }
@@ -2259,6 +2271,7 @@ mod tests {
             s.focus.lock().unwrap().wall_open,
             "rail or grid: wall is open"
         );
+        s.set_channel_head(false);
         s.set_grid(true);
         assert!(s.wall.grid);
         assert!(
@@ -2276,6 +2289,32 @@ mod tests {
         let mut s = Session::new();
         s.set_grid(true);
         assert!(!s.wall.grid);
+    }
+
+    #[test]
+    fn tv_mode_latches_on_first_multibox_and_survives_hide() {
+        let mut s = Session::new();
+        assert!(!s.channel_head);
+        s.set_multibox(true);
+        assert!(s.channel_head, "first MultiBox-on is TV init");
+        s.set_grid(true);
+        assert!(!s.wall.grid, "TV mode does not support grid");
+        s.set_multibox(false);
+        assert!(
+            s.channel_head,
+            "hiding the rail must not drop the latched TV"
+        );
+    }
+
+    #[test]
+    fn set_renderer_is_noop_in_channel_head() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.set_channel_head(true);
+        s.set_renderer(false);
+        let f = s.focus.lock().unwrap();
+        assert!(f.renderer, "TV tube stays on; no per-profile raster");
+        assert!(f.renderer_by.get("alice").is_none());
     }
 
     #[test]

@@ -277,6 +277,24 @@ pub struct Play {
     head: Option<Head>,
     /// Lean channels for every profile that is not currently the head.
     channels: HashMap<String, Lean>,
+    /// In-flight threaded retune (UI must not join slot threads).
+    pending_tune: Option<PendingTune>,
+}
+
+/// Handoffs in flight for [`Play::retune`]: receivers are polled from
+/// [`Play::poll_tune`] so the panel thread never `join`s a login/draw.
+struct PendingTune {
+    name: String,
+    prev: Option<String>,
+    incoming_rx: mpsc::Receiver<Lean>,
+    park_rx: Option<mpsc::Receiver<Lean>>,
+    incoming: Option<Lean>,
+    parked: Option<Lean>,
+    incoming_done: bool,
+    park_done: bool,
+    spawned_head: bool,
+    input: Option<Arc<SlotInput>>,
+    pixels: Option<Arc<PixelBuf>>,
 }
 
 /// The tuned profile's fat `Client`. Exactly one head: `tune` parks the
@@ -296,6 +314,8 @@ pub enum TuneError {
     Park(LeanError),
     /// The incoming channel's reconnect login (wrapper opcode 18) failed.
     Login(LoginError),
+    /// A previous retune is still handing off sockets.
+    Busy,
 }
 
 impl Play {
@@ -477,9 +497,8 @@ impl Play {
         );
     }
 
-    /// Threaded channel-head tune: baton-pass lean `name` onto the fat
-    /// Client (opcode 18 on the same TCP), park the current fat as a lean
-    /// by stealing its socket. The panel passes the new head's IO.
+    /// Threaded channel-head tune: signal baton-pass (no UI `join`). The
+    /// panel must call [`Play::poll_tune`] each frame to finish spawn.
     pub fn retune(
         &mut self,
         name: &str,
@@ -489,47 +508,133 @@ impl Play {
         if self.fat_head_name().as_deref() == Some(name) {
             return Ok(());
         }
-        let profile = self
-            .profiles
-            .get(name)
-            .cloned()
-            .ok_or_else(|| TuneError::UnknownProfile(name.to_string()))?;
-        let incoming = self.take_live_lean(name);
-        let prev = self.fat_head_name();
-        if let Some(prev) = prev.filter(|p| p != name) {
-            if let Some(parked) = self.take_live_lean(&prev) {
-                if let Some(p) = self.profiles.get(&prev).cloned() {
-                    self.spawn_channel_from_lean(p, parked);
-                }
-            }
+        if self.pending_tune.is_some() {
+            return Err(TuneError::Busy);
         }
-        let arm = SlotArm::new(profile.uid, true);
-        let reconnect = incoming.is_some();
-        arm.reconnect.store(reconnect, Ordering::Relaxed);
-        if let Some(lean) = incoming {
-            *arm.adopt.lock().unwrap() = Some(lean);
+        if !self.profiles.contains_key(name) {
+            return Err(TuneError::UnknownProfile(name.to_string()));
         }
-        self.spawn_slot(profile, input, pixels, Some(arm));
+        let incoming_rx = self.begin_handoff(name);
+        let prev = self.fat_head_name().filter(|p| p != name);
+        let park_rx = prev.as_ref().map(|p| self.begin_handoff(p));
+        self.pending_tune = Some(PendingTune {
+            name: name.to_string(),
+            prev,
+            incoming_rx,
+            park_rx,
+            incoming: None,
+            parked: None,
+            incoming_done: false,
+            park_done: false,
+            spawned_head: false,
+            input,
+            pixels,
+        });
+        self.poll_tune();
         Ok(())
     }
 
-    /// Steal a running slot's live socket as a Lean (thread handoff or the
-    /// in-process `channels` map). The TCP stays up.
-    fn take_live_lean(&mut self, name: &str) -> Option<Lean> {
+    /// Drive in-flight retune: take handed-off sockets and spawn the new
+    /// fat head / parked lean. Never joins a slot thread.
+    pub fn poll_tune(&mut self) {
+        let (spawn_head, name, incoming, input, pixels, prev, parked, done) = {
+            let Some(pending) = self.pending_tune.as_mut() else {
+                return;
+            };
+            if !pending.incoming_done {
+                match pending.incoming_rx.try_recv() {
+                    Ok(lean) => {
+                        pending.incoming = Some(lean);
+                        pending.incoming_done = true;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => pending.incoming_done = true,
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+            }
+            if !pending.park_done {
+                match pending.park_rx.as_ref() {
+                    None => pending.park_done = true,
+                    Some(rx) => match rx.try_recv() {
+                        Ok(lean) => {
+                            pending.parked = Some(lean);
+                            pending.park_done = true;
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => pending.park_done = true,
+                        Err(mpsc::TryRecvError::Empty) => {}
+                    },
+                }
+            }
+            let spawn_head = pending.incoming_done && !pending.spawned_head;
+            let name = pending.name.clone();
+            let incoming = if spawn_head {
+                pending.spawned_head = true;
+                pending.incoming.take()
+            } else {
+                None
+            };
+            let input = if spawn_head {
+                pending.input.take()
+            } else {
+                None
+            };
+            let pixels = if spawn_head {
+                pending.pixels.take()
+            } else {
+                None
+            };
+            let spawn_park = pending.park_done && pending.parked.is_some();
+            let prev = pending.prev.clone();
+            let parked = if spawn_park {
+                pending.parked.take()
+            } else {
+                None
+            };
+            let done = pending.incoming_done && pending.park_done && pending.spawned_head;
+            (spawn_head, name, incoming, input, pixels, prev, parked, done)
+        };
+        if spawn_head {
+            if let Some(profile) = self.profiles.get(&name).cloned() {
+                let arm = SlotArm::new(profile.uid, true);
+                if incoming.is_some() {
+                    arm.reconnect.store(true, Ordering::Relaxed);
+                }
+                if let Some(lean) = incoming {
+                    *arm.adopt.lock().unwrap() = Some(lean);
+                }
+                self.spawn_slot(profile, input, pixels, Some(arm));
+            }
+        }
+        if let (Some(prev), Some(parked)) = (prev, parked) {
+            if let Some(p) = self.profiles.get(&prev).cloned() {
+                self.spawn_channel_from_lean(p, parked);
+            }
+        }
+        if done {
+            self.pending_tune = None;
+        }
+    }
+
+    /// Signal a slot to hand off its live socket. Does not join.
+    fn begin_handoff(&mut self, name: &str) -> mpsc::Receiver<Lean> {
         if let Some(lean) = self.channels.remove(name) {
-            return Some(lean);
+            let (tx, rx) = mpsc::channel();
+            let _ = tx.send(lean);
+            return rx;
         }
         let (tx, rx) = mpsc::channel();
-        let arm = self.arms.get(name)?.clone();
-        *arm.handoff.lock().unwrap() = Some(tx);
-        arm.stop.store(true, Ordering::Relaxed);
-        self.spawned.remove(name);
-        self.statuses.lock().unwrap().retain(|s| s.username != name);
-        self.arms.remove(name);
-        if let Some(handle) = self.handles.remove(name) {
-            let _ = handle.join();
+        if let Some(arm) = self.arms.get(name).cloned() {
+            *arm.handoff.lock().unwrap() = Some(tx);
+            arm.stop.store(true, Ordering::Relaxed);
+            self.spawned.remove(name);
+            self.statuses.lock().unwrap().retain(|s| s.username != name);
+            self.arms.remove(name);
+            if let Some(handle) = self.handles.remove(name) {
+                thread::spawn(move || {
+                    let _ = handle.join();
+                });
+            }
         }
-        rx.recv_timeout(Duration::from_secs(5)).ok()
+        rx
     }
 
     fn spawn_channel_from_lean(&mut self, profile: Profile, lean: Lean) {
@@ -659,6 +764,7 @@ where
         profiles: HashMap::new(),
         head: None,
         channels: HashMap::new(),
+        pending_tune: None,
     };
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
@@ -687,6 +793,7 @@ pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize)
         profiles: HashMap::new(),
         head: None,
         channels: HashMap::new(),
+        pending_tune: None,
     };
     for (i, profile) in profiles.into_iter().enumerate() {
         if i < heads {
@@ -1250,7 +1357,17 @@ fn wait_for_permit(
                 }
             }
         };
-        thread::sleep(wait);
+        let deadline = Instant::now() + wait;
+        while Instant::now() < deadline {
+            if stop.load(Ordering::Relaxed) {
+                queue.lock().unwrap().leave(uid);
+                let mut all = statuses.lock().unwrap();
+                apply_queue_wait(&mut all, username, None);
+                return;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            thread::sleep(left.min(Duration::from_millis(20)));
+        }
     }
 }
 
@@ -1748,6 +1865,34 @@ mod tests {
             }
         });
         assert!(play.wait_until_not_ingame("alice", Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn retune_unknown_profile_is_error() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        assert!(matches!(
+            play.retune("ghost", None, None),
+            Err(TuneError::UnknownProfile(n)) if n == "ghost"
+        ));
+        play.remember_profile(profile("ghost", 1));
+        let t0 = Instant::now();
+        play.retune("ghost", None, None).unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_millis(250),
+            "retune must not join a slot thread"
+        );
+        play.stop_slot("ghost");
     }
 
     #[test]

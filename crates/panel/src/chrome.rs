@@ -55,6 +55,10 @@ pub fn multibox_tooltip(on: bool) -> &'static str {
     }
 }
 
+/// Hover copy for TV-mode controls that would spawn extra rasters
+/// (per-profile renderer, render-all, grid). Channel-head is one tube.
+pub const GPU_LATER: &str = "gpu later or opti yourself";
+
 /// Global/Nav/Loadouts are controls inside parameters, still listed.
 /// MultiBox was a title-row mock before campaign 4; it is now wired.
 pub const MOCK_BUTTONS: &[&str] = &[
@@ -73,7 +77,7 @@ pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
 #[cfg(test)]
 mod tests {
     use crate::chrome::{
-        button_row_layout, equal_button_width, multibox_tooltip, MOCK_BUTTONS, PARAM_ROW,
+        button_row_layout, equal_button_width, multibox_tooltip, GPU_LATER, MOCK_BUTTONS, PARAM_ROW,
         SCRIPT_ROW, sections, BUTTON_GAP, MIN_BUTTON,
     };
     use crate::theme::{apply_amber, ACCENT, PANEL_WIDTH, integer_ui_scale};
@@ -97,6 +101,11 @@ mod tests {
     fn multibox_tooltip_matches_the_plan_copy() {
         assert_eq!(multibox_tooltip(true), "hide rail — slots keep running");
         assert_eq!(multibox_tooltip(false), "sidecar wall");
+    }
+
+    #[test]
+    fn gpu_later_is_the_tv_mode_hover() {
+        assert_eq!(GPU_LATER, "gpu later or opti yourself");
     }
 
     #[test]
