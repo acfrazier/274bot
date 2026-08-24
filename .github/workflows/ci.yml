@@ -37,7 +37,21 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # The vendored client is a workspace member but carries its own lint
-      # debt; skip it and lint every 274bot crate with warnings denied.
+      # The vendored client is a path dependency with its own lint debt; clippy
+      # lints path deps even when excluded, so --no-deps keeps the pass on the
+      # 274bot crates only.
       - name: Clippy (bot crates, warnings denied)
-        run: cargo clippy --workspace --exclude client --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude client --all-targets --no-deps -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # No LIVE=1: the live harness tests stay #[ignore]d.
+      - name: Test (bot crates)
+        run: cargo test --workspace --exclude client
