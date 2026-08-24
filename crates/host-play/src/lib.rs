@@ -337,6 +337,8 @@ struct PendingTune {
     park_done: bool,
     spawned_head: bool,
     swap_placed: bool,
+    /// Latest cap-click while this hop is in flight; started when we finish.
+    queued: Option<String>,
     input: Option<Arc<SlotInput>>,
     pixels: Option<Arc<PixelBuf>>,
 }
@@ -555,6 +557,7 @@ impl Play {
             arm,
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
+            self.ifaces.clone(),
             &mut self.handles,
         );
     }
@@ -570,11 +573,16 @@ impl Play {
         if self.fat_head_name().as_deref() == Some(name) {
             return Ok(());
         }
-        if self.pending_tune.is_some() {
-            return Err(TuneError::Busy);
-        }
         if !self.profiles.contains_key(name) {
             return Err(TuneError::UnknownProfile(name.to_string()));
+        }
+        if let Some(pending) = self.pending_tune.as_mut() {
+            // Cap-click during a hop: keep the in-flight steal, remember
+            // the latest target. Do not Busy the UI.
+            if pending.name != name {
+                pending.queued = Some(name.to_string());
+            }
+            return Ok(());
         }
         let incoming_rx = self.begin_handoff(name);
         let prev = self.fat_head_name().filter(|p| p != name);
@@ -590,6 +598,7 @@ impl Play {
             park_done: false,
             spawned_head: false,
             swap_placed: false,
+            queued: None,
             input,
             pixels,
         });
@@ -611,6 +620,8 @@ impl Play {
             parked,
             rekey,
             done,
+            queued,
+            failed,
         ) = {
             let Some(pending) = self.pending_tune.as_mut() else {
                 return;
@@ -644,6 +655,10 @@ impl Play {
                 }
             }
             let in_place = pending.prev.is_some();
+            let steal_failed = in_place
+                && pending.incoming_done
+                && pending.incoming.is_none()
+                && !pending.swap_placed;
             let place_swap = in_place
                 && pending.incoming_done
                 && pending.incoming.is_some()
@@ -683,6 +698,16 @@ impl Play {
                 && pending.park_done
                 && (pending.spawned_head || pending.swap_placed)
                 && (pending.prev.is_none() || spawn_park);
+            let queued = if done || steal_failed {
+                pending.queued.take()
+            } else {
+                None
+            };
+            let failed = if steal_failed {
+                Some(pending.name.clone())
+            } else {
+                None
+            };
             (
                 spawn_head,
                 place_swap,
@@ -694,6 +719,8 @@ impl Play {
                 parked,
                 rekey,
                 done,
+                queued,
+                failed,
             )
         };
         if place_swap {
@@ -742,8 +769,18 @@ impl Play {
                 self.spawn_channel_from_lean(p, parked);
             }
         }
-        if done {
+        if done || failed.is_some() {
             self.pending_tune = None;
+        }
+        if let Some(name) = failed {
+            if let Some(p) = self.profiles.get(&name).cloned() {
+                self.spawn_channel_reconnect(p);
+            }
+        }
+        if let Some(next) = queued {
+            if self.fat_head_name().as_deref() != Some(next.as_str()) {
+                let _ = self.retune(&next, None, None);
+            }
         }
     }
 
@@ -805,6 +842,7 @@ impl Play {
             arm,
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
+            self.ifaces.clone(),
             &mut self.handles,
         );
     }
@@ -1234,6 +1272,7 @@ fn run_lean_pump(
     uid: i32,
     slot_queue: &Arc<Mutex<LoginQueue>>,
     slot_statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    ifaces: &[Option<IfType>],
     seed: bool,
 ) -> LeanPump {
     {
@@ -1249,12 +1288,21 @@ fn run_lean_pump(
     }
     let mut seeded = !seed;
     let mut last_ka = Instant::now();
+    let mut logging_out = false;
     loop {
         if arm.stop.load(Ordering::Relaxed) {
             send_handoff_lean(arm, Some(lean), uid, slot_queue);
             return LeanPump::Stopped;
         }
-        if last_ka.elapsed() >= Duration::from_secs(1) {
+        if arm.want_logout.load(Ordering::Relaxed) {
+            let _ = api::interact::logout(&mut lean, ifaces);
+            let _ = lean.flush();
+            arm.want_logout.store(false, Ordering::Relaxed);
+            arm.latch.store(true, Ordering::Relaxed);
+            arm.want_login.store(false, Ordering::Relaxed);
+            logging_out = true;
+        }
+        if !logging_out && last_ka.elapsed() >= Duration::from_secs(1) {
             lean.write_no_timeout();
             last_ka = Instant::now();
         }
@@ -1321,6 +1369,7 @@ fn spawn_channel_thread(
     arm: Arc<SlotArm>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    ifaces: Vec<Option<IfType>>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
     let username = profile.username.clone();
@@ -1350,6 +1399,7 @@ fn spawn_channel_thread(
                         uid,
                         &slot_queue,
                         &slot_statuses,
+                        &ifaces,
                         false,
                     ) {
                         LeanPump::Stopped => return,
@@ -1402,6 +1452,7 @@ fn spawn_channel_thread(
                                 uid,
                                 &slot_queue,
                                 &slot_statuses,
+                                &ifaces,
                                 true,
                             ) {
                                 LeanPump::Stopped => return,
@@ -2079,6 +2130,40 @@ mod tests {
             "retune must not join a slot thread"
         );
         play.stop_slot("ghost");
+    }
+
+    #[test]
+    fn retune_queues_latest_instead_of_busy() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        play.remember_profile(profile("a", 1));
+        play.remember_profile(profile("b", 2));
+        play.remember_profile(profile("c", 3));
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "a".into(),
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        });
+        let arm_b = SlotArm::new(2, false);
+        play.attach_arm("b", Arc::clone(&arm_b));
+        play.retune("b", None, None).unwrap();
+        assert!(play.tune_pending(), "steal of b has no thread yet");
+        play.retune("c", None, None).unwrap();
+        assert!(
+            play.tune_pending(),
+            "a later cap-click must queue, not Busy"
+        );
     }
 
     #[test]

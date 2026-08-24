@@ -636,7 +636,9 @@ impl Session {
                 self.ensure_slot(name, arm);
             } else if head.as_deref() != Some(name) {
                 if let Err(e) = self.tune_to(name) {
-                    self.error = Some(format!("tune {name}: {e:?}"));
+                    if !matches!(e, TuneError::Busy) {
+                        self.error = Some(format!("tune {name}: {e:?}"));
+                    }
                 }
             }
         } else {
@@ -1089,7 +1091,15 @@ impl Session {
     /// `want_login` is cleared too so a title-screen member does not
     /// handshake right back in.
     pub fn logout_all(&mut self) {
-        for name in self.wall.members.clone() {
+        let mut names = self.wall.members.clone();
+        if let Some(play) = &self.play {
+            for s in play.statuses() {
+                if !names.iter().any(|n| n == &s.username) {
+                    names.push(s.username);
+                }
+            }
+        }
+        for name in names {
             self.wall.latch_logout(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
                 arm.want_logout.store(true, Ordering::Relaxed);
@@ -2007,6 +2017,55 @@ mod tests {
         assert_eq!(s.slots.len(), 1, "exactly one PixelBuf (the TV)");
         assert_eq!(fat, 1, "no second fat Client");
         assert_eq!(lean, 1);
+        s.play.as_mut().unwrap().stop_slot("alice");
+        s.play.as_mut().unwrap().stop_slot("bob");
+    }
+
+    #[test]
+    fn logout_all_arms_lean_extras_not_only_the_tv() {
+        let path = tmp_vault("logout-all-lean.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        for (n, uid) in [("alice", 1), ("bob", 2)] {
+            s.vault
+                .as_mut()
+                .unwrap()
+                .upsert(profile(n, "pw", uid))
+                .unwrap();
+        }
+        s.set_channel_head(true);
+        s.select("alice");
+        s.load("bob");
+        s.wall.load("alice");
+        s.wall.load("bob");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if s.play.as_ref().unwrap().arm("bob").is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        s.logout_all();
+        assert!(
+            s.play
+                .as_ref()
+                .unwrap()
+                .arm("alice")
+                .unwrap()
+                .want_logout
+                .load(Ordering::Relaxed),
+            "TV must logout"
+        );
+        assert!(
+            s.play
+                .as_ref()
+                .unwrap()
+                .arm("bob")
+                .unwrap()
+                .want_logout
+                .load(Ordering::Relaxed),
+            "lean extras must logout, not only the TV"
+        );
         s.play.as_mut().unwrap().stop_slot("alice");
         s.play.as_mut().unwrap().stop_slot("bob");
     }
