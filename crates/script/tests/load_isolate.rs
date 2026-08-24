@@ -332,12 +332,16 @@ fn slot_start_load_ticks_and_stop_joins() {
         tick: 7,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut driver,
         tick: 8,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
 
     slot.pause();

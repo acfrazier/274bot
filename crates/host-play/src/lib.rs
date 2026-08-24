@@ -15,6 +15,7 @@ use api::interact::Driver;
 use client::client::Client;
 use client::client::ClientConfig;
 use client::client::LoginError;
+use client::config::if_type::ComponentType;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
 pub use host::debug_enabled;
@@ -193,6 +194,8 @@ fn script_observe(
     tick_edge: bool,
     tick: u64,
     here: Option<(i32, i32, i32)>,
+    inv: Option<&[(i32, i32)]>,
+    obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
 ) -> bool {
@@ -208,6 +211,8 @@ fn script_observe(
                     tick,
                     here,
                     walk: None,
+                    inv,
+                    obj_names,
                 });
                 wrote = true;
             }
@@ -222,6 +227,31 @@ fn script_observe(
         wrote = true;
     }
     wrote
+}
+
+/// True when `name`'s slot script is Running — the only state that builds
+/// the per-observe inventory view (the observe re-checks the gate inside).
+fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str) -> bool {
+    scripts
+        .lock()
+        .unwrap()
+        .get(name)
+        .is_some_and(|s| s.state() == script::RunState::Running)
+}
+
+/// The fat Client's inventory `(obj_id, count)` slots, zipped from the
+/// TYPE_INV iface's linked obj ids/numbers (the server's `UPDATE_INV_FULL`
+/// fills them each frame). Short-lived: rebuilt per observe while the slot
+/// script is Running; `None` when no TYPE_INV iface is loaded yet.
+fn inventory_from_ifaces(ifaces: &[Option<IfType>]) -> Option<Vec<(i32, i32)>> {
+    let inv = ifaces
+        .iter()
+        .flatten()
+        .find(|f| f.r#type == ComponentType::TYPE_INV)?;
+    let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
+        return None;
+    };
+    Some(ids.iter().zip(counts).map(|(id, n)| (*id, *n)).collect())
 }
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
@@ -359,6 +389,10 @@ pub struct Play {
     handles: HashMap<String, thread::JoinHandle<()>>,
     options: PlayOptions,
     cache: Arc<Cache>,
+    /// The shared obj-id → name table every script ctx resolves `has_item`
+    /// against (built once from `cache.objs`; lean channels never load
+    /// their own cache).
+    obj_names: Arc<api::obj_names::ObjNames>,
     ifaces: Vec<Option<IfType>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
@@ -667,6 +701,7 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.obj_names),
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
@@ -710,6 +745,7 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.obj_names),
             self.ifaces.clone(),
             &mut self.handles,
         );
@@ -996,6 +1032,7 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.obj_names),
             self.ifaces.clone(),
             &mut self.handles,
         );
@@ -1095,11 +1132,14 @@ where
     G: Fn(&mut Client, &str) + Send + Sync + 'static,
 {
     let (cache, ifaces) = load_template(&options.cache_dir);
+    let cache = Arc::new(cache);
+    let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
     let mut play = Play {
         statuses: Arc::new(Mutex::new(Vec::new())),
         handles: HashMap::new(),
         options: options.clone(),
-        cache: Arc::new(cache),
+        cache,
+        obj_names,
         ifaces,
         queue: Arc::new(Mutex::new(LoginQueue::default())),
         per_frame: Arc::new(per_frame),
@@ -1126,11 +1166,14 @@ where
 /// `stress50` full-`Client` path through [`run_with_io`] is untouched.
 pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize) -> Play {
     let (cache, ifaces) = load_template(&options.cache_dir);
+    let cache = Arc::new(cache);
+    let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
     let mut play = Play {
         statuses: Arc::new(Mutex::new(Vec::new())),
         handles: HashMap::new(),
         options: options.clone(),
-        cache: Arc::new(cache),
+        cache,
+        obj_names,
         ifaces,
         queue: Arc::new(Mutex::new(LoginQueue::default())),
         per_frame: Arc::new(|c: &mut Client, _: &str| c.set_draw(false)),
@@ -1216,6 +1259,7 @@ fn spawn_slot_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_obj_names: Arc<api::obj_names::ObjNames>,
     slot_frame: SlotFrame,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1370,6 +1414,7 @@ fn spawn_slot_thread(
                         let slot_statuses = Arc::clone(&slot_statuses);
                         let slot_scripts = Arc::clone(&slot_scripts);
                         let slot_cheats = Arc::clone(&slot_cheats);
+                        let slot_obj_names = Arc::clone(&slot_obj_names);
                         let mut pump = Pump::new();
                         let mut script_tick: u64 = 0;
                         move |c, _ignored, run_sends| {
@@ -1422,6 +1467,14 @@ fn spawn_slot_thread(
                                 }
                                 (up, here)
                             };
+                            // Inventory view: zip the TYPE_INV iface's obj
+                            // ids/counts, rebuilt each observe while the
+                            // script is Running (the idle-skip gate).
+                            let inv = if script_running(&slot_scripts, &name) {
+                                inventory_from_ifaces(&c.ifaces)
+                            } else {
+                                None
+                            };
                             script_observe(
                                 c,
                                 &name,
@@ -1429,6 +1482,8 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 script_tick,
                                 here,
+                                inv.as_deref(),
+                                Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
                                 &slot_cheats,
                             );
@@ -1478,6 +1533,7 @@ fn run_lean_pump(
     slot_statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_obj_names: &Arc<api::obj_names::ObjNames>,
     ifaces: &[Option<IfType>],
     seed: bool,
 ) -> LeanPump {
@@ -1575,6 +1631,14 @@ fn run_lean_pump(
         }
         // Script wiring runs every observe, dead or not: a downed channel
         // re-gates `on_is_up(false)` so the script pauses while it is out.
+        // Inventory view: clone the snapshot's inv slots, only while the
+        // script is Running (same idle-skip gate as the fat path). The
+        // clone is owned so the `&mut lean` driver borrow below is free.
+        let inv: Option<Vec<(i32, i32)>> = if script_running(slot_scripts, username) {
+            Some(lean.snapshot().inv.clone())
+        } else {
+            None
+        };
         let wrote = script_observe(
             &mut lean,
             username,
@@ -1582,6 +1646,8 @@ fn run_lean_pump(
             tick_edge,
             tick,
             here,
+            inv.as_deref(),
+            Some(slot_obj_names.as_ref()),
             slot_scripts,
             slot_cheats,
         );
@@ -1616,6 +1682,7 @@ fn spawn_channel_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_obj_names: Arc<api::obj_names::ObjNames>,
     ifaces: Vec<Option<IfType>>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1658,6 +1725,7 @@ fn spawn_channel_thread(
                         &slot_statuses,
                         &slot_scripts,
                         &slot_cheats,
+                        &slot_obj_names,
                         &ifaces,
                         false,
                     ) {
@@ -1713,6 +1781,7 @@ fn spawn_channel_thread(
                                 &slot_statuses,
                                 &slot_scripts,
                                 &slot_cheats,
+                                &slot_obj_names,
                                 &ifaces,
                                 true,
                             ) {
@@ -2848,17 +2917,17 @@ mod tests {
             vec![],
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
-        script_observe(&mut c, "alice", false, true, 1, None, &scripts, &cheats);
+        script_observe(&mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats);
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
-        script_observe(&mut c, "alice", true, true, 2, None, &scripts, &cheats);
+        script_observe(&mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats);
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
-        script_observe(&mut c, "alice", true, false, 2, None, &scripts, &cheats);
+        script_observe(&mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats);
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (lean flush cue).
         assert!(script_observe(
-            &mut c, "alice", true, true, 3, None, &scripts, &cheats
+            &mut c, "alice", true, true, 3, None, None, None, &scripts, &cheats
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -2885,7 +2954,7 @@ mod tests {
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, None, &scripts, &cheats
+            &mut c, "alice", true, true, 1, None, None, None, &scripts, &cheats
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
@@ -2902,7 +2971,7 @@ mod tests {
             script::RunState::Idle
         );
         assert!(!script_observe(
-            &mut c, "alice", true, true, 2, None, &scripts, &cheats
+            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
@@ -2932,7 +3001,7 @@ mod tests {
             .get_mut("alice")
             .unwrap()
             .push_back("setvar tutorial 1000".into());
-        let wrote = script_observe(&mut c, "alice", true, false, 0, None, &scripts, &cheats);
+        let wrote = script_observe(&mut c, "alice", true, false, 0, None, None, None, &scripts, &cheats);
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
             c.out.data()[0],
@@ -2946,6 +3015,75 @@ mod tests {
             *count.lock().unwrap(),
             0,
             "no tick edge → the script must not run"
+        );
+    }
+
+    /// Records what a dispatched tick's ctx exposed: whether the inventory
+    /// view and the shared name table reached the script, and the resolved
+    /// `has_item` answer for "Bones".
+    #[derive(Default)]
+    struct InvProbe(Arc<Mutex<Option<(bool, bool, bool)>>>);
+
+    impl script::Script for InvProbe {
+        fn name(&self) -> &str {
+            "InvProbe"
+        }
+        fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
+            *self.0.lock().unwrap() = Some((
+                ctx.inv.is_some(),
+                ctx.obj_names.is_some(),
+                ctx.has_item("Bones"),
+            ));
+        }
+    }
+
+    #[test]
+    fn script_observe_passes_inventory_when_running() {
+        let mut objs = vec![client::config::ObjType::default(); 2];
+        objs[1].id = 1;
+        objs[1].name = "Bones".into();
+        let names = api::obj_names::ObjNames::from_objs(&objs);
+        let seen = Arc::new(Mutex::new(None));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_compiled(Box::new(InvProbe(Arc::clone(&seen))))
+            .unwrap();
+        let inv: Vec<(i32, i32)> = vec![(1, 3), (0, 0)];
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            vec![],
+        );
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            None,
+            Some(&inv),
+            Some(&names),
+            &scripts,
+            &cheats,
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((true, true, true)),
+            "a Running script sees the inventory view and resolves names"
         );
     }
 }

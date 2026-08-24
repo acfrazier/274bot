@@ -15,8 +15,10 @@ pub trait Script: Send {
 
 /// What one observed game-tick gives a script: the send-side driver, the
 /// tick number from the pump's PLAYER_INFO edge, the local player's tile,
-/// and the walk hook. `here` and `walk` are filled by the host's observe;
-/// `walk` is `None` until the slot wires a traveller.
+/// the walk hook, and the thin inventory view. `here`, `walk`, `inv` and
+/// `obj_names` are filled by the host's observe; `walk` is `None` until
+/// the slot wires a traveller and `inv`/`obj_names` are `None` until a
+/// body decodes an inventory.
 pub struct ScriptCtx<'a> {
     pub driver: &'a mut dyn Driver,
     pub tick: u64,
@@ -26,6 +28,29 @@ pub struct ScriptCtx<'a> {
     /// Queue one walk toward an absolute world tile `(x, z, level)` through
     /// the slot's traveller. Returns true iff the driver accepted the send.
     pub walk: Option<&'a mut dyn FnMut(i32, i32, i32) -> bool>,
+    /// The observed inventory `(obj_id, count)` slots, when the body has
+    /// decoded one. `None` until an inventory lands (see `has_item`).
+    pub inv: Option<&'a [(i32, i32)]>,
+    /// The shared obj-id → name table (one per `Play`), resolved by
+    /// [`ScriptCtx::has_item`].
+    pub obj_names: Option<&'a api::obj_names::ObjNames>,
+}
+
+impl ScriptCtx<'_> {
+    /// Whether the observed inventory holds an object whose resolved name
+    /// equals `name` (case-insensitive). `false` when the body has not
+    /// decoded an inventory (`inv` or `obj_names` is `None`) — never a
+    /// panic on an unwired observe.
+    pub fn has_item(&self, name: &str) -> bool {
+        let (Some(inv), Some(names)) = (self.inv, self.obj_names) else {
+            return false;
+        };
+        inv.iter().any(|(id, _count)| {
+            names
+                .name(*id)
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+    }
 }
 
 /// Accept-everything driver used by in-crate unit tests. Integration
@@ -88,5 +113,31 @@ pub mod test_support {
         fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_item_resolves_inventory_by_name() {
+        let mut objs = vec![client::config::ObjType::default(); 3];
+        objs[1].id = 1;
+        objs[1].name = "Bones".into();
+        let names = api::obj_names::ObjNames::from_objs(&objs);
+        let inv: Vec<(i32, i32)> = vec![(1, 3)];
+        let mut d = test_support::NullDriver::default();
+        let ctx = ScriptCtx {
+            driver: &mut d,
+            tick: 0,
+            here: None,
+            walk: None,
+            inv: Some(&inv),
+            obj_names: Some(&names),
+        };
+        assert!(ctx.has_item("Bones"));
+        assert!(ctx.has_item("bones")); // case-insensitive
+        assert!(!ctx.has_item("Vial"));
     }
 }

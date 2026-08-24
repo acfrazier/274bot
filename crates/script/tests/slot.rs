@@ -109,6 +109,8 @@ fn idle_has_no_script_and_tick_is_noop() {
         tick: 0,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     };
     s.on_game_tick(&mut ctx);
     assert_eq!(s.state(), RunState::Idle);
@@ -171,6 +173,8 @@ fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
         tick: 1,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     };
     s.on_game_tick(&mut ctx); // must not panic; skip
     s.on_is_up(true);
@@ -222,6 +226,8 @@ fn game_tick_dispatches_only_while_running() {
         tick: 1,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 1);
 
@@ -232,6 +238,8 @@ fn game_tick_dispatches_only_while_running() {
         tick: 2,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 1);
 
@@ -242,6 +250,8 @@ fn game_tick_dispatches_only_while_running() {
         tick: 3,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 2);
 
@@ -252,6 +262,8 @@ fn game_tick_dispatches_only_while_running() {
         tick: 4,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 2);
 
@@ -282,6 +294,8 @@ fn panicking_tick_sets_error_and_drops_instance() {
         tick: 1,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     };
     s.on_game_tick(&mut ctx);
 
@@ -298,6 +312,8 @@ fn panicking_tick_sets_error_and_drops_instance() {
         tick: 2,
         here: None,
         walk: None,
+        inv: None,
+        obj_names: None,
     });
     assert_eq!(s.state(), RunState::Error);
 

@@ -249,12 +249,16 @@ mod tests {
             tick: 1,
             here: None,
             walk: None,
+            inv: None,
+            obj_names: None,
         });
         s.on_game_tick(&mut ScriptCtx {
             driver: &mut d,
             tick: 2,
             here: None,
             walk: None,
+            inv: None,
+            obj_names: None,
         });
         assert_eq!(s.ticks, 2);
 
@@ -265,6 +269,8 @@ mod tests {
             tick: 3,
             here: None,
             walk: None,
+            inv: None,
+            obj_names: None,
         });
         assert_eq!(s.ticks, 2);
 
@@ -276,6 +282,8 @@ mod tests {
             tick: 4,
             here: None,
             walk: None,
+            inv: None,
+            obj_names: None,
         });
         assert_eq!(s.ticks, 1);
     }

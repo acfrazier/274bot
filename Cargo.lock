@@ -3807,6 +3807,7 @@ name = "script"
 version = "0.1.0"
 dependencies = [
  "api",
+ "client",
  "rustyscript",
  "serde",
  "serde_json",
