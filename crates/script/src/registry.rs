@@ -1,11 +1,7 @@
-//! Compiled registry: the picker id list and the `factory` that starts
-//! scripts once they are ported. No id has a constructor yet: `WalkTo` is
-//! ported in code (`ported::walk_to`) but its `factory` stays `None` until
-//! the host wires a traveller into `ctx.walk` — a Start that would error on
-//! its first tick ("Traversal/nav not on ctx") must not succeed. Every
-//! listed id returns `None` from `factory` (Start errors "not ported" in
-//! the panel task). Whales are recognized but never listed; `Counter` is a
-//! test fixture, never listed either.
+//! Compiled registry: rust-first rewrite cards on 274bot `api`.
+//! WalkTo is **host nav** (panel picker + traveller), not a script card.
+//! `factory` is `None` until a rewrite is wired. Whales are recognized but
+//! never listed; `Counter` is a test fixture, never listed.
 
 use crate::ctx::Script;
 
@@ -19,7 +15,6 @@ pub struct CompiledId(pub &'static str);
 /// v1 smoke names in picker order. Whales and the `Counter` fixture are
 /// deliberately absent.
 const COMPILED_IDS: &[CompiledId] = &[
-    CompiledId("WalkTo"),
     CompiledId("BoneBurier"),
     CompiledId("HerbCleaner"),
     CompiledId("FlaxPicker"),
@@ -73,15 +68,10 @@ pub fn is_whale(name: &str) -> bool {
     WHALE_IDS.contains(&name)
 }
 
-/// Start a compiled script by picker id. `None` until the script is
-/// ported AND wired (host `ctx.walk` hook); `WalkTo` has a port but no
-/// constructor until the traveller hook exists. The `Counter` test fixture
-/// exists only under `cfg(test)` (never in `compiled_ids`).
+/// Start a compiled rewrite by picker id. `None` until that rewrite is
+/// wired. WalkTo is not a card (host nav). `Counter` is `cfg(test)` only.
 pub fn factory(id: CompiledId) -> Option<fn() -> Box<dyn Script>> {
     match id.0 {
-        // `WalkTo` is ported in code; its `factory` returns `None` until
-        // host-play/panel wire a traveller into `ctx.walk` (a Start that
-        // would panic on the first tick must report "not ported" instead).
         #[cfg(test)]
         "Counter" => Some(counter_factory),
         _ => None,

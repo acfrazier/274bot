@@ -37,6 +37,11 @@ pub struct LeanSnapshot {
     /// lean channel's tick edge (fat scripts mirror it via
     /// `slot::should_emit_tick`).
     pub tick: u64,
+    /// Last `UPDATE_INV_FULL` slots `(obj_id, count)`. Thin — no names,
+    /// no iface tree. Empty until that packet lands.
+    pub inv: Vec<(i32, i32)>,
+    /// Component id of [`LeanSnapshot::inv`].
+    pub inv_com: i32,
 }
 
 /// Login response codes, socket failures, and malformed frames.
@@ -213,6 +218,8 @@ impl Lean {
                 tile_z: client.map_build_base_z,
                 scene_state: client.scene_state,
                 tick: 0,
+                inv: Vec::new(),
+                inv_com: 0,
             },
         })
     }
@@ -328,6 +335,8 @@ impl Lean {
                     tile_z: 0,
                     scene_state: 0,
                     tick: 0,
+                    inv: Vec::new(),
+                    inv_com: 0,
                 },
             });
         }
@@ -358,6 +367,8 @@ impl Lean {
                     tile_z: 0,
                     scene_state: 0,
                     tick: 0,
+                    inv: Vec::new(),
+                    inv_com: 0,
                 },
             });
         }
@@ -455,6 +466,23 @@ impl Lean {
                 // tile, NPCs) is a later gap. One inbound PLAYER_INFO is
                 // the tick edge.
                 self.snapshot.tick += 1;
+            }
+            ServerProt::UPDATE_INV_FULL => {
+                // g2 com, g1 size, then (g2 id, g1 count) per slot. No
+                // names, no iface tree.
+                let com = self.incoming.g2();
+                let n = self.incoming.g1().max(0) as usize;
+                let mut slots = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let id = self.incoming.g2();
+                    let mut count = self.incoming.g1();
+                    if count == 255 {
+                        count = self.incoming.g4();
+                    }
+                    slots.push((id, count));
+                }
+                self.snapshot.inv_com = com;
+                self.snapshot.inv = slots;
             }
             _ => {}
         }
@@ -848,6 +876,8 @@ mod tests {
                 tile_z: 0,
                 scene_state: 0,
                 tick: 0,
+                inv: Vec::new(),
+                inv_com: 0,
             },
         };
         (lean, srv)

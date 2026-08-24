@@ -1,8 +1,9 @@
 # Scripts (`crates/script`)
 
-Campaign 5 **kernel**. Panel Browse/Start/Pause/Stop drive a per-uid
-`SlotScript` on `Play`. Smoke **ports** (BoneBurier, live `--live script_*`)
-are a follow-on plan.
+Campaign 5 **kernel**. Compiled cards are **rust-first rewrites** on
+274bot `api`, not rs2b0t ports. The Load/`@rs2b0t` shim is for
+out-of-tree / non-technical authors. WalkTo is **host nav** (panel picker),
+not a script card.
 
 ## Two runners
 
@@ -21,13 +22,15 @@ Load registers a picker card tagged **JS** (`~/.274bot/js-scripts.json`
 A `while(true)` tick is interrupted via `terminate_execution`; Stop join is
 bounded so the panel cannot hang forever.
 
-## WalkTo
+## Nav vs scripts
 
-The port exists under `crates/script/src/ported/walk_to.rs` for tests.
-`factory(WalkTo)` is **`None`** until `ScriptCtx.walk` is wired to the
-existing traveller — Start reports `not ported` (no lying Start). Lean
-`here` is `None` until a real player tile is decoded (build origin is not
-the player).
+WalkTo stays the panel **WalkTo** button + traveller. `factory(WalkTo)` is
+not a picker id. Lean `here` is `None` until a real player tile is decoded.
+
+**Thread split:** one baked pack + `nav::router::find` at **host** scope
+(A* can run on a short-lived worker so a long path does not hitch the 20 ms
+pump). **Traveller** is one per uid, ticked on that slot’s pump with the
+`Driver` — it goes Idle when Arrived; it does **not** own an OS thread.
 
 ## Hard no
 

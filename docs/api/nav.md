@@ -31,6 +31,16 @@ format: magic `b"274N"`, version 1, origin/width/height, one walk byte per
 tile (row-major z then x), then door entries (see
 `crates/nav/src/pack.rs`).
 
+## Scope (host vs bot)
+
+- **Router / pack:** one `StepGrid` per process (host scope). `find` is
+  A*; a long route should not run on the 20 ms slot pump — spawn a worker
+  for `find`, join, then arm the traveller. One shared pack, not one copy
+  per bot.
+- **Traveller:** one per uid, lives on the **slot pump** next to `Driver`
+  (same thread as script `tick`). When Arrived/Idle it holds no extra
+  thread. Do not spawn an OS thread per hop.
+
 ## Router
 
 `nav::router::find(grid, from, to)` is A* over the 4-neighbour grid

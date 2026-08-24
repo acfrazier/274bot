@@ -4,7 +4,6 @@
 // the `Counter` test fixture must never appear in `compiled_ids`.
 
 const SMOKES: &[&str] = &[
-    "WalkTo",
     "BoneBurier",
     "HerbCleaner",
     "FlaxPicker",
@@ -48,8 +47,8 @@ const WHALES: &[&str] = &[
 #[test]
 fn picker_lists_smoke_not_whales() {
     let names: Vec<_> = script::compiled_ids().iter().map(|i| i.0).collect();
-    assert!(names.contains(&"WalkTo"));
     assert!(names.contains(&"BoneBurier"));
+    assert!(!names.contains(&"WalkTo"));
     assert!(!names
         .iter()
         .any(|n| *n == "GatheringBot" || *n == "AIOQuester"));
@@ -61,7 +60,7 @@ fn compiled_ids_are_exactly_the_v1_smoke_names() {
     assert_eq!(
         names,
         SMOKES.to_vec(),
-        "picker list must be the 14 v1 smoke names"
+        "picker list must be the rust-first rewrite cards (no WalkTo)"
     );
     assert!(
         !names.iter().any(|n| WHALES.contains(n)),
@@ -75,9 +74,6 @@ fn compiled_ids_are_exactly_the_v1_smoke_names() {
 
 #[test]
 fn factory_none_for_all_ids_until_wired() {
-    // `WalkTo` is ported in code, but the host does not wire a traveller
-    // into `ctx.walk` yet, so no picker id has a constructor: Start must
-    // report "not ported" rather than succeed and panic on the first tick.
     for id in script::compiled_ids() {
         assert!(
             script::factory(*id).is_none(),

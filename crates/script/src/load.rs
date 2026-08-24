@@ -204,7 +204,7 @@ impl JsLibrary {
 
 /// True when `name` collides with a compiled picker id (reserved at Load).
 fn is_reserved(name: &str) -> bool {
-    compiled_ids().iter().any(|id| id.0 == name)
+    compiled_ids().iter().any(|id| id.0 == name) || name == "WalkTo"
 }
 
 /// A picker selection: a compiled id or a loaded JS card (by name).

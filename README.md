@@ -20,10 +20,10 @@ game blit, click-through capture, MultiBox rail/grid, `--live` harness.
 
 ## What it does not (yet)
 
-- Script **ports** are still thin: compiled picker cards exist; **WalkTo
-  Start is `not ported`** until `ctx.walk` is wired. Load’d JS is isolate +
-  a stub `@rs2b0t` prelude, not a full rs2b0t ABI. Parameters **Edit** is
-  gray (`not in v1`).
+- Compiled scripts are **rust-first rewrites** on 274bot `api` (not rs2b0t
+  ports). WalkTo is host nav, not a script card. Load’d JS is isolate + a
+  stub prelude for out-of-tree authors. Parameters **Edit** is gray
+  (`not in v1`). Lean snapshot is still thin (tick + last inv full).
 - The **wall is in** (campaign 4). Unlocking the vault starts the **first**
   profile as a live slot; other vault rows stay parked until selected (or
   loaded onto the wall). MultiBox raises the running set as a sidecar rail

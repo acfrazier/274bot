@@ -3126,23 +3126,6 @@ mod tests {
     }
 
     #[test]
-    fn script_start_selected_reports_not_ported_until_ctx_walk_is_wired() {
-        let mut s = Session::new();
-        let mut play = empty_play();
-        play.attach_arm("alice", SlotArm::new(42, false));
-        s.play = Some(play);
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("WalkTo")));
-        s.script_start_selected();
-        // WalkTo is ported in code, but the host sets `ctx.walk = None`
-        // until a traveller is wired, so Start must not succeed only to
-        // panic on the first tick ("Traversal/nav not on ctx").
-        let err = s.error.clone().expect("WalkTo is not startable yet");
-        assert!(err.contains("not ported"), "{err}");
-        assert_eq!(s.focused_script_state(), script::RunState::Idle);
-    }
-
-    #[test]
     fn script_start_selected_unported_id_reports_not_ported() {
         let mut s = Session::new();
         let mut play = empty_play();
@@ -3202,7 +3185,9 @@ mod tests {
         let err = s.error.clone().expect("no-selection banner");
         assert!(err.contains("browse"), "{err}");
         s.error = None;
-        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId("WalkTo")));
+        s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId(
+            "BoneBurier",
+        )));
         s.script_start_selected();
         let err = s.error.clone().expect("no-play banner");
         assert!(err.contains("play"), "{err}");

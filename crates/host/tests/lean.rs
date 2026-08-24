@@ -195,3 +195,48 @@ fn lean_snapshot_tick_counts_player_info_frames() {
     assert_eq!(lean.snapshot().tile_z, 344);
     server.join().unwrap();
 }
+
+/// `UPDATE_INV_FULL` (106, size -2): g2 com, g1 n, then (g2 id, g1 count).
+#[test]
+fn lean_snapshot_inv_from_update_inv_full() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut hdr = [0u8; 2];
+        s.read_exact(&mut hdr).unwrap();
+        assert_eq!(hdr[0], 14);
+        for _ in 0..8 {
+            let _ = s.write_all(&[0]);
+        }
+        s.write_all(&[2]).unwrap();
+        s.write_all(&[0, 0]).unwrap();
+
+        let mut enc = Isaac::new(&[0; 4]);
+        // payload: com 3214, 1 slot, obj 526 count 5. len = 6.
+        let frame = vec![
+            ServerProt::UPDATE_INV_FULL.wrapping_add(enc.next_int()) as u8,
+            0,
+            6,
+            12,
+            142, // 3214
+            1,
+            2,
+            14, // 526
+            5,
+        ];
+        s.write_all(&frame).unwrap();
+    });
+
+    let mut lean = Lean::login(&cfg(&addr), "bob", "pw", 1, false).unwrap();
+    for _ in 0..100 {
+        if !lean.snapshot().inv.is_empty() {
+            break;
+        }
+        lean.pump().unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(lean.snapshot().inv_com, 3214);
+    assert_eq!(lean.snapshot().inv, vec![(526, 5)]);
+    server.join().unwrap();
+}
