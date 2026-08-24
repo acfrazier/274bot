@@ -1218,11 +1218,103 @@ fn spawn_slot_thread(
     );
 }
 
+enum LeanPump {
+    /// Arm `stop` / handoff — the thread should exit.
+    Stopped,
+    /// Socket died; caller may reconnect.
+    Died,
+}
+
+/// Pump a live lean: mark `ingame`, host `NO_TIMEOUT` once a second, update
+/// the snapshot. Adopt (parked TV) uses `seed = false`.
+fn run_lean_pump(
+    mut lean: Lean,
+    arm: &SlotArm,
+    username: &str,
+    uid: i32,
+    slot_queue: &Arc<Mutex<LoginQueue>>,
+    slot_statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    seed: bool,
+) -> LeanPump {
+    {
+        let snap = lean.snapshot();
+        let mut all = slot_statuses.lock().unwrap();
+        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+            s.ingame = true;
+            s.error = None;
+            s.scene_state = snap.scene_state;
+            s.tile_x = snap.tile_x;
+            s.tile_z = snap.tile_z;
+        }
+    }
+    let mut seeded = !seed;
+    let mut last_ka = Instant::now();
+    loop {
+        if arm.stop.load(Ordering::Relaxed) {
+            send_handoff_lean(arm, Some(lean), uid, slot_queue);
+            return LeanPump::Stopped;
+        }
+        if last_ka.elapsed() >= Duration::from_secs(1) {
+            lean.write_no_timeout();
+            last_ka = Instant::now();
+        }
+        let pump = lean.pump();
+        let mut died = false;
+        {
+            let mut all = slot_statuses.lock().unwrap();
+            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                match pump {
+                    Ok(()) => {
+                        let snap = lean.snapshot();
+                        let scene_state = snap.scene_state;
+                        s.scene_state = scene_state;
+                        s.tile_x = snap.tile_x;
+                        s.tile_z = snap.tile_z;
+                        s.ingame = true;
+                        if !seeded && scene_state != 0 {
+                            let t = scatter_tile_for(uid);
+                            api::interact::seed_at(&mut lean, t.level, t.x, t.z);
+                            if let Err(e) = lean.flush() {
+                                s.error = Some(format!("seed: {e:?}"));
+                                s.ingame = false;
+                                died = true;
+                            } else {
+                                seeded = true;
+                                if debug_enabled() {
+                                    eprintln!(
+                                        "[host-play] channel {username}: seed {} {} {}",
+                                        t.level, t.x, t.z
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        s.error = Some(match &e {
+                            LeanError::Login(le) => format!("code {}: {}", le.code, le.mes2),
+                            LeanError::Io(io) => format!("io: {io}"),
+                            LeanError::FrameTooLarge { ptype, psize } => {
+                                format!("frame too large ptype={ptype} psize={psize}")
+                            }
+                        });
+                        s.ingame = false;
+                        died = true;
+                    }
+                }
+            }
+        }
+        if died {
+            return LeanPump::Died;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Spawn one lean channel thread. The channel waits for a login-queue
 /// permit (shared FIFO with the head), cold-logins with `Lean::login`
 /// (wrapper opcode 16), then pumps inbound frames at the host cadence —
-/// no `maininit`, no `Client`, no pixels, no keepalive. The row mirrors
-/// the thin `LeanSnapshot`; `lean` is true so the ladder counts it.
+/// no `maininit`, no `Client`, no pixels. Host writes `NO_TIMEOUT` so
+/// parked extras stay logged in. The row mirrors the thin `LeanSnapshot`.
 fn spawn_channel_thread(
     options: &PlayOptions,
     profile: Profile,
@@ -1250,19 +1342,18 @@ fn spawn_channel_thread(
                         ..SlotStatus::default()
                     });
                 }
-                if let Some(mut lean) = arm.adopt.lock().unwrap().take() {
-                    loop {
-                        if arm.stop.load(Ordering::Relaxed) {
-                            if let Some(tx) = arm.handoff.lock().unwrap().take() {
-                                let _ = tx.send(lean);
-                            }
-                            slot_queue.lock().unwrap().leave(uid);
-                            return;
-                        }
-                        if lean.pump().is_err() {
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(20));
+                if let Some(lean) = arm.adopt.lock().unwrap().take() {
+                    match run_lean_pump(
+                        lean,
+                        &arm,
+                        &username,
+                        uid,
+                        &slot_queue,
+                        &slot_statuses,
+                        false,
+                    ) {
+                        LeanPump::Stopped => return,
+                        LeanPump::Died => {}
                     }
                 }
                 loop {
@@ -1299,85 +1390,22 @@ fn spawn_channel_thread(
                         uid,
                         arm.reconnect.load(Ordering::Relaxed),
                     ) {
-                        Ok(mut lean) => {
+                        Ok(lean) => {
                             arm.reconnect.store(true, Ordering::Relaxed);
                             if debug_enabled() {
                                 eprintln!("[host-play] channel {username}: ingame");
                             }
-                            {
-                                let mut all = slot_statuses.lock().unwrap();
-                                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                                    s.ingame = true;
-                                }
-                            }
-                            // Pump inbound frames at the host cadence until the
-                            // connection dies or the arm stops; a dead channel
-                            // falls back to the permit + login retry above.
-                            // First REBUILD_NORMAL → `::tele` a shuffled
-                            // walkable tile so the 50-box wall is not a stack.
-                            let mut seeded = false;
-                            loop {
-                                if arm.stop.load(Ordering::Relaxed) {
-                                    send_handoff_lean(&arm, Some(lean), uid, &slot_queue);
-                                    return;
-                                }
-                                let pump = lean.pump();
-                                let mut died = false;
-                                {
-                                    let mut all = slot_statuses.lock().unwrap();
-                                    if let Some(s) = all.iter_mut().find(|s| s.username == username)
-                                    {
-                                        match pump {
-                                            Ok(()) => {
-                                                let snap = lean.snapshot();
-                                                let scene_state = snap.scene_state;
-                                                s.scene_state = scene_state;
-                                                s.tile_x = snap.tile_x;
-                                                s.tile_z = snap.tile_z;
-                                                if !seeded && scene_state != 0 {
-                                                    let t = scatter_tile_for(uid);
-                                                    api::interact::seed_at(
-                                                        &mut lean, t.level, t.x, t.z,
-                                                    );
-                                                    if let Err(e) = lean.flush() {
-                                                        s.error = Some(format!("seed: {e:?}"));
-                                                        s.ingame = false;
-                                                        died = true;
-                                                    } else {
-                                                        seeded = true;
-                                                        if debug_enabled() {
-                                                            eprintln!(
-                                                                "[host-play] channel {username}: \
-                                                                 seed {} {} {}",
-                                                                t.level, t.x, t.z
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                s.error = Some(match &e {
-                                                    LeanError::Login(le) => {
-                                                        format!("code {}: {}", le.code, le.mes2)
-                                                    }
-                                                    LeanError::Io(io) => format!("io: {io}"),
-                                                    LeanError::FrameTooLarge { ptype, psize } => {
-                                                        format!(
-                                                            "frame too large ptype={ptype} \
-                                                             psize={psize}"
-                                                        )
-                                                    }
-                                                });
-                                                s.ingame = false;
-                                                died = true;
-                                            }
-                                        }
-                                    }
-                                }
-                                if died {
-                                    break;
-                                }
-                                thread::sleep(Duration::from_millis(20));
+                            match run_lean_pump(
+                                lean,
+                                &arm,
+                                &username,
+                                uid,
+                                &slot_queue,
+                                &slot_statuses,
+                                true,
+                            ) {
+                                LeanPump::Stopped => return,
+                                LeanPump::Died => {}
                             }
                         }
                         Err(e) => {

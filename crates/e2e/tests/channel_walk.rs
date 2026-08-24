@@ -85,9 +85,11 @@ fn wait_fat(play: &mut Play, want: &str, lean_want: usize, timeout: Duration, ta
         let fat = rows.iter().find(|s| !s.lean);
         let ok = fat.is_some_and(|s| s.username == want && s.is_up());
         let fats = rows.iter().filter(|s| !s.lean).count();
-        let leanes = rows.iter().filter(|s| s.lean).count();
-        if ok && fats == 1 && leanes == lean_want && !play.tune_pending() {
-            println!("channel_walk: TV is {want} (up) leanes={leanes}");
+        let lean_rows = rows.iter().filter(|s| s.lean).count();
+        let lean_up = rows.iter().filter(|s| s.lean && s.ingame).count();
+        if ok && fats == 1 && lean_rows == lean_want && lean_up == lean_want && !play.tune_pending()
+        {
+            println!("channel_walk: TV is {want} (up) lean_up={lean_up}/{lean_rows}");
             return;
         }
         if Instant::now() >= deadline {
@@ -145,8 +147,15 @@ fn live_channel_walk_retunes_every_head() {
         );
     }
     dump(&play, "done");
+    let lean_up = play.statuses().iter().filter(|s| s.lean && s.ingame).count();
+    if lean_up != n - 1 {
+        fail(&format!(
+            "channel_walk: parked leanes dropped ({lean_up}/{} ingame)",
+            n - 1
+        ));
+    }
     println!(
-        "PASS: channel_walk n={n} last={}",
+        "PASS: channel_walk n={n} last={} lean_up={lean_up}",
         play.fat_head_name().unwrap_or_default()
     );
 }

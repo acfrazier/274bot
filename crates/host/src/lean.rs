@@ -157,6 +157,12 @@ impl Lean {
         &self.snapshot
     }
 
+    /// Host-driven idle keepalive (`NO_TIMEOUT`). `pump` never writes this
+    /// on its own; the wall calls it so parked leanes do not idle-logout.
+    pub fn write_no_timeout(&mut self) {
+        self.out.p1_enc(ClientProt::NO_TIMEOUT.id);
+    }
+
     /// Park baton: steal the fat Client's live socket + ISAAC + inbound
     /// cursor. The Client must not write the game stream after this; drop
     /// it or reuse it for another account. No TCP close.
@@ -940,6 +946,36 @@ mod tests {
         assert!(
             recv.is_empty(),
             "pump must be read-only without host-supplied out bytes: {recv:?}"
+        );
+    }
+
+    #[test]
+    fn lean_write_no_timeout_flushes_keepalive() {
+        let (mut lean, mut srv) = lean_pair();
+        lean.out.random = Some(Isaac::new(&[0; 4]));
+        lean.write_no_timeout();
+        lean.pump().unwrap();
+        let mut recv = Vec::new();
+        srv.set_nonblocking(true).unwrap();
+        for _ in 0..40 {
+            let mut buf = [0u8; 1024];
+            match srv.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => recv.extend_from_slice(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if !recv.is_empty() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
+        let mut enc = Isaac::new(&[0; 4]);
+        let no_timeout = ClientProt::NO_TIMEOUT.id.wrapping_add(enc.next_int()) as u8;
+        assert!(
+            recv.contains(&no_timeout),
+            "expected NO_TIMEOUT byte {no_timeout}, got {recv:?}"
         );
     }
 
