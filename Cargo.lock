@@ -1065,6 +1065,7 @@ dependencies = [
  "host",
  "libc",
  "nav",
+ "script",
  "vault",
 ]
 

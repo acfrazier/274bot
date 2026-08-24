@@ -2,7 +2,7 @@
 //! unlocks a vault and runs the named profiles; the `e2e` harness links
 //! this library so it can poll per-slot state instead of scraping logs.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use api::interact::Driver;
 use client::client::Client;
 use client::client::ClientConfig;
 use client::client::LoginError;
@@ -24,9 +25,10 @@ pub use host::set_debug;
 pub use host::Host;
 mod rss;
 mod scatter;
-use host::{PixelBuf, SlotInput};
+use host::{should_emit_tick, PixelBuf, Pump, SlotInput};
 pub use rss::sample_process;
 pub use scatter::{scatter_tile_for, tele_args};
+use script::{ScriptCtx, SlotScript};
 use vault::{Profile, Vault, VaultError};
 
 /// Slot thread stack: 1 MiB (the Java client thread default).
@@ -165,6 +167,43 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
         .unwrap_or((0, 0));
     s.bytes_in = bi;
     s.bytes_out = bo;
+}
+
+/// One observe of a slot's script wiring (fat and lean share it): gate
+/// [`SlotScript::on_is_up`], dispatch [`SlotScript::on_game_tick`] on the
+/// PLAYER_INFO edge, then run any cheats the panel queued. `driver` is the
+/// slot body's own `Client`/`Lean`. Returns whether the driver's out buffer
+/// was written (the lean pump flushes; the fat `Client` sends on its next
+/// mainloop pass).
+fn script_observe(
+    driver: &mut dyn Driver,
+    name: &str,
+    up: bool,
+    tick_edge: bool,
+    tick: u64,
+    scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+) -> bool {
+    let mut wrote = false;
+    {
+        let mut all = scripts.lock().unwrap();
+        if let Some(slot) = all.get_mut(name) {
+            slot.on_is_up(up);
+            if tick_edge {
+                slot.on_game_tick(&mut ScriptCtx { driver, tick });
+                wrote = true;
+            }
+        }
+    }
+    let cmds = {
+        let mut all = cheats.lock().unwrap();
+        all.get_mut(name).map(std::mem::take).unwrap_or_default()
+    };
+    for cmd in cmds {
+        api::interact::cheat(driver, &cmd);
+        wrote = true;
+    }
+    wrote
 }
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
@@ -322,6 +361,14 @@ pub struct Play {
     channels: HashMap<String, Lean>,
     /// In-flight threaded retune (UI must not join slot threads).
     pending_tune: Option<PendingTune>,
+    /// Per-slot compiled scripts: the slot threads drive `on_is_up` /
+    /// `on_game_tick` on each drain, the panel arms them via the
+    /// [`Play::script_start`] family. Keyed by username (the identity the
+    /// status rows and arms use).
+    scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+    /// Per-slot cheat commands the panel queued; each slot thread runs
+    /// `api::interact::cheat` on its own Driver and flushes the socket.
+    cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
 }
 
 /// Handoffs in flight for [`Play::retune`]: receivers are polled from
@@ -428,6 +475,60 @@ impl Play {
             .map(|s| s.username)
     }
 
+    /// Start a compiled script on `name`'s slot. `Err` when the picker id
+    /// has no ported script yet (`script::factory` returned `None`) or the
+    /// slot already runs one; the slot thread gates it on `is_up`.
+    pub fn script_start(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
+        let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
+        self.scripts
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_insert_with(SlotScript::new)
+            .start_compiled(make())
+    }
+
+    /// Pause `name`'s script (operator Pause; survives login until
+    /// Resume re-arms it). No-op when the slot has no script.
+    pub fn script_pause(&self, name: &str) {
+        if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
+            slot.pause();
+        }
+    }
+
+    /// Resume `name`'s script; the next `on_is_up` re-gates it.
+    pub fn script_resume(&self, name: &str) {
+        if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
+            slot.resume();
+        }
+    }
+
+    /// Stop `name`'s script: teardown hook, instance dropped, Idle.
+    pub fn script_stop(&self, name: &str) {
+        if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
+            slot.stop();
+        }
+    }
+
+    /// `name`'s script lifecycle state; `Idle` when the slot has none.
+    pub fn script_state(&self, name: &str) -> script::RunState {
+        self.scripts
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|slot| slot.state())
+            .unwrap_or(script::RunState::Idle)
+    }
+
+    /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread
+    /// writes `CLIENT_CHEAT` through the slot's Driver and flushes. No-op
+    /// when the user is not a running slot.
+    pub fn cheat(&self, user: &str, cmd: &str) {
+        if let Some(q) = self.cheats.lock().unwrap().get_mut(user) {
+            q.push_back(cmd.to_string());
+        }
+    }
+
     /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
     /// place immediately (a queued slot must not keep later slots behind
     /// it even if the thread is still blocked in `wait_for_permit`),
@@ -446,6 +547,8 @@ impl Play {
         self.spawned.remove(name);
         self.statuses.lock().unwrap().retain(|s| s.username != name);
         self.arms.remove(name);
+        self.scripts.lock().unwrap().remove(name);
+        self.cheats.lock().unwrap().remove(name);
         if let Some(handle) = self.handles.remove(name) {
             let _ = handle.join();
         }
@@ -511,6 +614,8 @@ impl Play {
             self.ifaces.clone(),
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
+            Arc::clone(&self.scripts),
+            Arc::clone(&self.cheats),
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
@@ -557,6 +662,8 @@ impl Play {
             arm,
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
+            Arc::clone(&self.scripts),
+            Arc::clone(&self.cheats),
             self.ifaces.clone(),
             &mut self.handles,
         );
@@ -799,6 +906,14 @@ impl Play {
         }
         self.spawned.remove(prev);
         self.spawned.insert(next.to_string());
+        // The renamed thread looks its script/cheat slots up by its new
+        // username; keep the per-uid state with it across the tune.
+        if let Some(slot) = self.scripts.lock().unwrap().remove(prev) {
+            self.scripts.lock().unwrap().insert(next.to_string(), slot);
+        }
+        if let Some(q) = self.cheats.lock().unwrap().remove(prev) {
+            self.cheats.lock().unwrap().insert(next.to_string(), q);
+        }
         let mut all = self.statuses.lock().unwrap();
         if let Some(s) = all.iter_mut().find(|s| s.username == prev && !s.lean) {
             s.username = next.to_string();
@@ -845,6 +960,8 @@ impl Play {
             arm,
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
+            Arc::clone(&self.scripts),
+            Arc::clone(&self.cheats),
             self.ifaces.clone(),
             &mut self.handles,
         );
@@ -958,6 +1075,8 @@ where
         head: None,
         channels: HashMap::new(),
         pending_tune: None,
+        scripts: Arc::new(Mutex::new(HashMap::new())),
+        cheats: Arc::new(Mutex::new(HashMap::new())),
     };
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
@@ -987,6 +1106,8 @@ pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize)
         head: None,
         channels: HashMap::new(),
         pending_tune: None,
+        scripts: Arc::new(Mutex::new(HashMap::new())),
+        cheats: Arc::new(Mutex::new(HashMap::new())),
     };
     let tv_uid = profiles.first().map(|p| p.uid);
     for (i, profile) in profiles.into_iter().enumerate() {
@@ -1056,6 +1177,8 @@ fn spawn_slot_thread(
     ifaces_template: Vec<Option<IfType>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+    slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_frame: Arc<dyn Fn(&mut Client, &str) + Send + Sync>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1081,6 +1204,16 @@ fn spawn_slot_thread(
                     ..SlotStatus::default()
                 });
             }
+            slot_scripts
+                .lock()
+                .unwrap()
+                .entry(username.clone())
+                .or_insert_with(SlotScript::new);
+            slot_cheats
+                .lock()
+                .unwrap()
+                .entry(username.clone())
+                .or_default();
             let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
             #[cfg(test)]
             {
@@ -1200,6 +1333,10 @@ fn spawn_slot_thread(
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);
+                        let slot_scripts = Arc::clone(&slot_scripts);
+                        let slot_cheats = Arc::clone(&slot_cheats);
+                        let mut pump = Pump::new();
+                        let mut script_tick: u64 = 0;
                         move |c, _ignored, run_sends| {
                             let name = uname_obs.lock().unwrap().clone();
                             slot_frame(c, &name);
@@ -1210,28 +1347,51 @@ fn spawn_slot_thread(
                                     eprintln!("[host-play] slot {name}: queued mainland tele+setvar (scene 2)");
                                 }
                             }
-                            let mut all = slot_statuses.lock().unwrap();
-                            for s in all.iter_mut() {
-                                if s.username == name {
-                                    s.ingame = c.ingame;
-                                    s.scene_state = c.scene_state;
-                                    s.runenergy = c.runenergy;
-                                    s.run_sends = run_sends;
-                                    s.main_modal_id = c.main_modal_id;
-                                    copy_stream_and_draw(c, s);
-                                    if let Some(lp) = &c.local_player {
-                                        let (tx, tz) = player_world_tile(
-                                            c.map_build_base_x,
-                                            c.map_build_base_z,
-                                            lp.route_x[0],
-                                            lp.route_z[0],
-                                        );
-                                        s.tile_x = tx;
-                                        s.tile_z = tz;
-                                        s.player = lp.name.clone().unwrap_or_default();
+                            // The host's own pump diffs gens inside
+                            // `client_frame` (after this observe); diff the
+                            // previous frame's gens here so scripts see one
+                            // edge per PLAYER_INFO (same `should_emit_tick`).
+                            let drain = pump.drain(c.gens);
+                            let tick_edge = should_emit_tick(drain.player_info);
+                            if tick_edge {
+                                script_tick = script_tick.wrapping_add(1);
+                            }
+                            let up = {
+                                let mut all = slot_statuses.lock().unwrap();
+                                let mut up = false;
+                                for s in all.iter_mut() {
+                                    if s.username == name {
+                                        s.ingame = c.ingame;
+                                        s.scene_state = c.scene_state;
+                                        s.runenergy = c.runenergy;
+                                        s.run_sends = run_sends;
+                                        s.main_modal_id = c.main_modal_id;
+                                        copy_stream_and_draw(c, s);
+                                        if let Some(lp) = &c.local_player {
+                                            let (tx, tz) = player_world_tile(
+                                                c.map_build_base_x,
+                                                c.map_build_base_z,
+                                                lp.route_x[0],
+                                                lp.route_z[0],
+                                            );
+                                            s.tile_x = tx;
+                                            s.tile_z = tz;
+                                            s.player = lp.name.clone().unwrap_or_default();
+                                        }
+                                        up = s.is_up();
                                     }
                                 }
-                            }
+                                up
+                            };
+                            script_observe(
+                                c,
+                                &name,
+                                up,
+                                tick_edge,
+                                script_tick,
+                                &slot_scripts,
+                                &slot_cheats,
+                            );
                         }
                     },
                     {
@@ -1275,11 +1435,15 @@ fn run_lean_pump(
     uid: i32,
     slot_queue: &Arc<Mutex<LoginQueue>>,
     slot_statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    slot_scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
+    slot_cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     ifaces: &[Option<IfType>],
     seed: bool,
 ) -> LeanPump {
+    let mut last_tick: u64;
     {
         let snap = lean.snapshot();
+        last_tick = snap.tick;
         let mut all = slot_statuses.lock().unwrap();
         if let Some(s) = all.iter_mut().find(|s| s.username == username) {
             s.ingame = true;
@@ -1311,6 +1475,9 @@ fn run_lean_pump(
         }
         let pump = lean.pump();
         let mut died = false;
+        let mut up = false;
+        let mut tick_edge = false;
+        let mut tick = 0u64;
         {
             let mut all = slot_statuses.lock().unwrap();
             if let Some(s) = all.iter_mut().find(|s| s.username == username) {
@@ -1318,10 +1485,16 @@ fn run_lean_pump(
                     Ok(()) => {
                         let snap = lean.snapshot();
                         let scene_state = snap.scene_state;
+                        // The snapshot's PLAYER_INFO count is the lean
+                        // channel's tick edge (mirrors fat `should_emit_tick`).
+                        tick_edge = snap.tick != last_tick;
+                        last_tick = snap.tick;
+                        tick = snap.tick;
                         s.scene_state = scene_state;
                         s.tile_x = snap.tile_x;
                         s.tile_z = snap.tile_z;
                         s.ingame = true;
+                        up = s.is_up();
                         if !seeded && scene_state != 0 {
                             let t = scatter_tile_for(uid);
                             api::interact::seed_at(&mut lean, t.level, t.x, t.z);
@@ -1354,6 +1527,27 @@ fn run_lean_pump(
                 }
             }
         }
+        // Script wiring runs every observe, dead or not: a downed channel
+        // re-gates `on_is_up(false)` so the script pauses while it is out.
+        let wrote = script_observe(
+            &mut lean,
+            username,
+            up,
+            tick_edge,
+            tick,
+            slot_scripts,
+            slot_cheats,
+        );
+        if wrote && !died {
+            if let Err(e) = lean.flush() {
+                let mut all = slot_statuses.lock().unwrap();
+                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
+                    s.error = Some(format!("script flush: {e:?}"));
+                    s.ingame = false;
+                }
+                died = true;
+            }
+        }
         if died {
             return LeanPump::Died;
         }
@@ -1372,6 +1566,8 @@ fn spawn_channel_thread(
     arm: Arc<SlotArm>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+    slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     ifaces: Vec<Option<IfType>>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1394,6 +1590,16 @@ fn spawn_channel_thread(
                         ..SlotStatus::default()
                     });
                 }
+                slot_scripts
+                    .lock()
+                    .unwrap()
+                    .entry(username.clone())
+                    .or_insert_with(SlotScript::new);
+                slot_cheats
+                    .lock()
+                    .unwrap()
+                    .entry(username.clone())
+                    .or_default();
                 if let Some(lean) = arm.adopt.lock().unwrap().take() {
                     match run_lean_pump(
                         lean,
@@ -1402,6 +1608,8 @@ fn spawn_channel_thread(
                         uid,
                         &slot_queue,
                         &slot_statuses,
+                        &slot_scripts,
+                        &slot_cheats,
                         &ifaces,
                         false,
                     ) {
@@ -1455,6 +1663,8 @@ fn spawn_channel_thread(
                                 uid,
                                 &slot_queue,
                                 &slot_statuses,
+                                &slot_scripts,
+                                &slot_cheats,
                                 &ifaces,
                                 true,
                             ) {
@@ -2392,5 +2602,161 @@ mod tests {
         assert!(!play.channels.contains_key("b"));
         assert_eq!(play.head.as_ref().unwrap().client.scene_state, 0);
         server.join().unwrap();
+    }
+
+    // --- Task 5: per-uid compiled scripts ---
+
+    #[test]
+    fn script_start_unknown_compiled_id_errors_without_v8() {
+        // `script::factory` returns `None` for every picker id until the
+        // script is ported; Start must surface that, never a dummy.
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        let err = play
+            .script_start("alice", script::CompiledId("WalkTo"))
+            .unwrap_err();
+        assert!(err.contains("not ported"), "err was {err}");
+    }
+
+    #[test]
+    fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        assert_eq!(play.script_state("ghost"), script::RunState::Idle);
+        play.script_pause("ghost");
+        play.script_resume("ghost");
+        play.script_stop("ghost");
+        assert_eq!(play.script_state("ghost"), script::RunState::Idle);
+        play.cheat("ghost", "tele 0,50,50,20,20");
+        assert!(
+            play.cheats.lock().unwrap().is_empty(),
+            "unknown uid cheat is a no-op"
+        );
+    }
+
+    /// Test script that counts ticks into a shared cell (the panel cannot
+    /// read a running script's internals, so the wiring tests observe the
+    /// side effect instead).
+    #[derive(Default)]
+    struct TickCounter(Arc<Mutex<u32>>);
+
+    impl script::Script for TickCounter {
+        fn name(&self) -> &str {
+            "TickCounter"
+        }
+        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+            *self.0.lock().unwrap() += 1;
+        }
+    }
+
+    /// One fat/lean `script_observe` wiring rig: a started slot script for
+    /// "alice" plus its (empty) cheat queue.
+    fn script_wiring() -> (
+        Arc<Mutex<HashMap<String, SlotScript>>>,
+        Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+        Arc<Mutex<u32>>,
+    ) {
+        let scripts = Arc::new(Mutex::new(HashMap::new()));
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        let count = Arc::new(Mutex::new(0));
+        let mut all = scripts.lock().unwrap();
+        let slot = all.entry("alice".into()).or_insert_with(SlotScript::new);
+        slot.start_compiled(Box::new(TickCounter(Arc::clone(&count))))
+            .unwrap();
+        drop(all);
+        cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        (scripts, cheats, count)
+    }
+
+    #[test]
+    fn script_observe_ticks_only_on_player_edge_while_up() {
+        let (scripts, cheats, count) = script_wiring();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            vec![],
+        );
+        // Not up: the edge must not dispatch (the is_up pause gate).
+        script_observe(&mut c, "alice", false, true, 1, &scripts, &cheats);
+        assert_eq!(*count.lock().unwrap(), 0);
+        // Up + edge: exactly one tick.
+        script_observe(&mut c, "alice", true, true, 2, &scripts, &cheats);
+        assert_eq!(*count.lock().unwrap(), 1);
+        // Up but no edge: nothing.
+        script_observe(&mut c, "alice", true, false, 2, &scripts, &cheats);
+        assert_eq!(*count.lock().unwrap(), 1);
+        // A dispatched tick wrote the driver's out buffer (lean flush cue).
+        assert!(script_observe(
+            &mut c, "alice", true, true, 3, &scripts, &cheats
+        ));
+        assert_eq!(*count.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn script_observe_drains_queued_cheat_onto_driver() {
+        let (scripts, cheats, count) = script_wiring();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            vec![],
+        );
+        cheats
+            .lock()
+            .unwrap()
+            .get_mut("alice")
+            .unwrap()
+            .push_back("setvar tutorial 1000".into());
+        let wrote = script_observe(&mut c, "alice", true, false, 0, &scripts, &cheats);
+        assert!(wrote, "the cheat wrote the driver's out buffer");
+        assert_eq!(
+            c.out.data()[0],
+            client::io::ClientProt::CLIENT_CHEAT.id as u8
+        );
+        assert!(
+            cheats.lock().unwrap().get("alice").unwrap().is_empty(),
+            "a drained queue stays for the next panel push"
+        );
+        assert_eq!(
+            *count.lock().unwrap(),
+            0,
+            "no tick edge → the script must not run"
+        );
     }
 }

@@ -9,5 +9,6 @@ api = { path = "../api" }
 client = { workspace = true }
 host = { path = "../host" }
 nav = { path = "../nav" }
+script = { path = "../script" }
 libc = "0.2"
 vault = { path = "../vault" }
