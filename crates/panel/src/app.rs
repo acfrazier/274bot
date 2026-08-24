@@ -1088,15 +1088,36 @@ fn browse_window(ui: &Ui, session: &mut Session) {
     session.script_browse_open = open;
 }
 
-/// parameters: mocked until campaign 5.
+/// parameters: uncollapses the selected script's default key/value rows
+/// (`script::defaults`; `(no parameters)` until ports fill a schema), then
+/// the Edit button — always gray until `edit_parameters_enabled` flips.
 fn parameters_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "parameters") {
         return;
     }
-    ui.text_disabled("(no parameters)");
+    let pairs = session
+        .script_sel
+        .map(script::defaults)
+        .unwrap_or_default();
+    if pairs.is_empty() {
+        ui.text_disabled("(no parameters)");
+    } else {
+        for (k, v) in pairs {
+            kv_row(ui, &k, &v);
+        }
+    }
     let w = ui.content_region_avail()[0];
-    mock_button(ui, "Edit parameters", "campaign 5", [w, 0.0]);
+    if edit_parameters_enabled() {
+        ui.button_with_size("Edit parameters", [w, 0.0]);
+    } else {
+        mock_button(ui, "Edit parameters", "not in v1", [w, 0.0]);
+    }
     mock_button_row(ui, PARAM_ROW, "campaign 5");
+}
+
+/// Parameter editing is a v1 gap: always `false` until a params modal ships.
+fn edit_parameters_enabled() -> bool {
+    false
 }
 
 /// status: rs2b0t key/value rows (state, player, tile, modals), wrapped.
@@ -1684,9 +1705,9 @@ mod tests {
     use dear_imgui_rs::ConfigFlags;
 
     use super::{
-        apply_only_render_selected, apply_ui_scale, chooser_should_open_popup, live_null_tick,
-        live_stress_tick, parse_live_args, runner_config, LiveNull, LiveStress, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE,
+        apply_only_render_selected, apply_ui_scale, chooser_should_open_popup,
+        edit_parameters_enabled, live_null_tick, live_stress_tick, parse_live_args, runner_config,
+        LiveNull, LiveStress, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
@@ -1718,6 +1739,11 @@ mod tests {
         assert!(!prev, "prev must track the close so + add can reopen");
         let (open, _np) = chooser_should_open_popup(true, prev);
         assert!(open, "the next + add bot reopens the chooser");
+    }
+
+    #[test]
+    fn edit_parameters_is_a_v1_gap() {
+        assert!(!edit_parameters_enabled(), "no params modal in v1");
     }
 
     #[test]

@@ -3,9 +3,11 @@
 //! task. This task: compiled only.
 
 pub mod ctx;
+pub mod params;
 pub mod registry;
 pub mod slot;
 
 pub use ctx::{Script, ScriptCtx};
+pub use params::defaults;
 pub use registry::{CompiledId, compiled_ids, factory, is_whale};
 pub use slot::{RunState, SlotScript};
