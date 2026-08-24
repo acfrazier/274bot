@@ -179,7 +179,7 @@ impl Host {
         let zap = client.ingame && client.scene_state != 2;
         let paint = raster_this_tick(
             client.draw,
-            capture || zap,
+            capture || zap || client.full_rate,
             &mut slot.raster_n,
             &mut slot.raster_was_on,
         );
@@ -619,6 +619,26 @@ mod tests {
         }
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 2);
+    }
+
+    #[test]
+    fn full_rate_paints_every_tick_after_scene_ready() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        c.set_draw(true);
+        c.ingame = true;
+        c.scene_state = 2;
+        c.full_rate = true;
+        let buf = PixelBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 1);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(
+            buf.generation(),
+            2,
+            "TV full_rate must redraw 2D+3D every 20 ms, not 1 fps watch"
+        );
     }
 
     #[test]

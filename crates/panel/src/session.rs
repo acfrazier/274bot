@@ -374,6 +374,7 @@ impl Session {
                 };
                 drop(f);
                 c.set_draw(draw);
+                c.full_rate = tv.load(Ordering::Relaxed) && draw;
                 if c.ingame
                     && c.scene_state == 2
                     && mainland_sent.lock().unwrap().insert(name.to_string())
