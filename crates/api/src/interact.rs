@@ -216,6 +216,25 @@ pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
     cheat(driver, "setvar tutorial 1000");
 }
 
+/// `::tele` argument for an absolute world tile (`level,mx,mz,lx,lz`).
+pub fn tele_args(level: i32, x: i32, z: i32) -> String {
+    format!(
+        "tele {},{},{},{},{}",
+        level,
+        x.div_euclid(64),
+        z.div_euclid(64),
+        x.rem_euclid(64),
+        z.rem_euclid(64)
+    )
+}
+
+/// Skip tutorial and `::tele` to an absolute tile. Lean and Client both
+/// send this through [`cheat`]; the host flushes after.
+pub fn seed_at<D: Driver + ?Sized>(driver: &mut D, level: i32, x: i32, z: i32) {
+    cheat(driver, "setvar tutorial 1000");
+    cheat(driver, &tele_args(level, x, z));
+}
+
 /// Queue a login through the driver's handshake.
 pub fn login<D: Driver + ?Sized>(
     driver: &mut D,

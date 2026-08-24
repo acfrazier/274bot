@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dear_app::{AddOns, RedrawMode, Theme};
@@ -21,7 +21,9 @@ use crate::grid::grid_cells;
 use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
-use crate::rail::{traffic_light, Light, RAIL_W, TILE_H, TILE_W};
+use crate::rail::{
+    os_window_size, traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+};
 use host::debug_enabled;
 
 use crate::resource::{
@@ -41,7 +43,7 @@ use crate::theme::{
 pub fn runner_config() -> dear_app::RunnerConfig {
     let mut cfg = dear_app::RunnerConfig::default();
     cfg.window_title = "274bot".into();
-    cfg.window_size = (1120.0, 580.0);
+    cfg.window_size = (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64);
     cfg.clear_color = BG;
     cfg.theme = Some(Theme::Dark);
     cfg.redraw = RedrawMode::WaitUntil { fps: 50.0 };
@@ -114,6 +116,11 @@ struct PanelState {
     last_traffic: Option<(Instant, u64, usize)>,
     /// Headed `--live` watch (`null_raster` or `stress50`); `None` interactive.
     live: Option<LiveHarness>,
+    /// winit window cloned from `on_gpu_init` so MultiBox can grow/shrink
+    /// the OS inner size by [`RAIL_W`] without shrinking the Game pane.
+    os_window: Option<std::sync::Arc<winit::window::Window>>,
+    /// Last `request_inner_size` rail-open flag; skip no-op resizes.
+    rail_window_applied: Option<bool>,
 }
 
 /// Headed live harness: null_raster (2 slots) or stress50 (50 slots).
@@ -233,6 +240,8 @@ impl Default for PanelState {
             res_draw: Metric::Measuring,
             last_traffic: None,
             live: None,
+            os_window: None,
+            rail_window_applied: None,
         }
     }
 }
@@ -350,18 +359,38 @@ fn single_bot_window_class() -> WindowClass {
         .docking_always_tab_bar(false)
 }
 
+/// Grow/shrink the OS window with the sidecar rail. Game pane width is
+/// unchanged: the extra pixels are the rail.
+fn sync_os_window_size(state: &mut PanelState, rail_open: bool) {
+    if state.rail_window_applied == Some(rail_open) {
+        return;
+    }
+    let Some(window) = state.os_window.as_ref() else {
+        return;
+    };
+    let (w, h) = os_window_size(rail_open);
+    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w as f64, h as f64));
+    state.rail_window_applied = Some(rail_open);
+}
+
 /// Fullscreen dock host: game fills the left, 330px-class panel on the right.
-/// MultiBox (rail mode) splits an extra `RAIL_W` node on the far right.
-///
-/// OS-grow note: dear-app's `AddOns` does **not** expose the winit window
-/// (no `set_inner_size` on `AddOns`/`GpuApi`/`DockingApi`), so the plan's
-/// fallback path landed: the rail is split inside the current window and
-/// the game/panel shrink by `RAIL_W`. A later dear-app release that exposes
-/// the window could swap this for `window.set_inner_size` + `RAIL_W`.
+/// MultiBox (rail mode) splits an extra `RAIL_W` node on the far right and
+/// grows the OS window by that width so the Game pane stays 765×503.
 fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
     let viewport = ui.main_viewport();
     let pos = viewport.pos();
-    let size = viewport.size();
+    let rail_open = state.session.multibox && !state.session.wall.grid;
+    sync_os_window_size(state, rail_open);
+    let (want_w, want_h) = os_window_size(rail_open);
+    let vs = viewport.size();
+    // Prefer the live viewport once winit has applied the resize; otherwise
+    // split against the target so the first rail frame does not steal Game
+    // width.
+    let size = if (vs[0] - want_w).abs() < 16.0 {
+        vs
+    } else {
+        [want_w, want_h]
+    };
     ui.window("##274bot-dockhost")
         .flags(
             WindowFlags::NO_TITLE_BAR
@@ -1124,7 +1153,9 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
         .opened(&mut open)
         .begin()
     {
-        ui.text_wrapped("This is unoptimized. Drawing every wall client will likely thrash this machine.");
+        ui.text_wrapped(
+            "This is unoptimized. Drawing every wall client will likely thrash this machine.",
+        );
         ui.spacing();
         let mut understood = session.wall.render_all_understood;
         if ui.checkbox("I understand", &mut understood) {
@@ -1443,6 +1474,8 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
     }
 
     let cfg = runner_config();
+    let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
+    let os_window_init = Arc::clone(&os_window);
     dear_app::AppBuilder::new()
         .with_config(cfg)
         .on_style(amber_style)
@@ -1451,8 +1484,12 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
                 integer_ui_scale(window.scale_factor() as f32).to_bits(),
                 Ordering::Relaxed,
             );
+            *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         })
         .on_frame(move |ui, addons| {
+            if state.os_window.is_none() {
+                state.os_window = os_window.lock().unwrap().clone();
+            }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             state.session.pump_status();
             let statuses = state.session.statuses();
@@ -1496,7 +1533,8 @@ mod tests {
 
     use super::{
         apply_only_render_selected, apply_ui_scale, chooser_should_open_popup, live_null_tick,
-        live_stress_tick, parse_live_args, runner_config, LiveNull, LiveStress, LIVE_USAGE,
+        live_stress_tick, parse_live_args, runner_config, LiveNull, LiveStress, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
@@ -1560,6 +1598,7 @@ mod tests {
         assert!(flags.contains(ConfigFlags::DOCKING_ENABLE));
         assert!(!flags.contains(ConfigFlags::VIEWPORTS_ENABLE));
         assert!(matches!(c.redraw, RedrawMode::WaitUntil { fps } if (fps - 50.0).abs() < 0.01));
+        assert_eq!(c.window_size, (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64));
     }
 
     #[test]

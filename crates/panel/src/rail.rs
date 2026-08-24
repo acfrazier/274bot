@@ -6,6 +6,19 @@ pub const RAIL_W: f32 = 264.0;
 /// Cap-body tile draw size inside the rail (rs2b0t ~236×155).
 pub const TILE_W: f32 = 236.0;
 pub const TILE_H: f32 = 155.0;
+/// Default OS window without the rail (game + 330 chrome).
+pub const BASE_WINDOW_W: f32 = 1120.0;
+/// Default OS window height.
+pub const BASE_WINDOW_H: f32 = 580.0;
+
+/// OS inner size: rail-open grows width by [`RAIL_W`] so the Game pane
+/// stays the same; grid / MultiBox-off restore the base.
+pub fn os_window_size(rail_open: bool) -> (f32, f32) {
+    (
+        BASE_WINDOW_W + if rail_open { RAIL_W } else { 0.0 },
+        BASE_WINDOW_H,
+    )
+}
 
 /// Cap dot state: error red wins, then ingame amber, then FIFO-queue warn,
 /// else grey (title screen, nothing pending).
@@ -44,7 +57,9 @@ pub fn traffic_light(ingame: bool, error: bool, queued: bool) -> Light {
 
 #[cfg(test)]
 mod tests {
-    use super::{traffic_light, Light, RAIL_W, TILE_H, TILE_W};
+    use super::{
+        os_window_size, traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+    };
 
     #[test]
     fn rail_constants_match_the_plan() {
@@ -52,6 +67,15 @@ mod tests {
         assert_eq!(TILE_W, 236.0);
         assert_eq!(TILE_H, 155.0);
         assert_eq!(crate::theme::RAIL_WINDOW, "274bot-rail");
+    }
+
+    #[test]
+    fn os_window_grows_by_rail_width_and_keeps_height() {
+        assert_eq!(os_window_size(false), (BASE_WINDOW_W, BASE_WINDOW_H));
+        assert_eq!(
+            os_window_size(true),
+            (BASE_WINDOW_W + RAIL_W, BASE_WINDOW_H)
+        );
     }
 
     #[test]

@@ -1064,6 +1064,7 @@ dependencies = [
  "client",
  "host",
  "libc",
+ "nav",
  "vault",
 ]
 
@@ -1862,6 +1863,7 @@ dependencies = [
  "serde_json",
  "vault",
  "wgpu",
+ "winit",
 ]
 
 [[package]]

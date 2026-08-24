@@ -9,7 +9,9 @@
 //! response-2 (cold) or response-15 (reconnect) grant. [`Lean::pump`]
 //! consumes whatever frames are buffered by `SERVER_PROT_SIZES` and skips
 //! the opcodes a lean channel does not understand; it never blocks and
-//! never sends a keepalive.
+//! never sends a keepalive. Outbound is host-driven: [`Driver`] writes
+//! every `ClientProt` through the ISAAC `out` buffer, and [`Lean::flush`]
+//! (also the first step of `pump`) puts those bytes on the socket.
 
 use std::io;
 use std::str::FromStr;
@@ -17,8 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use client::client::{ClientConfig, LoginError};
-use client::io::{ClientStream, Isaac, Packet, ServerProt, SERVER_PROT_SIZES};
+use api::interact::Driver;
+use api::prot::Out;
+use client::client::{ClientConfig, LoginError, MiniMenuAction};
+use client::io::{ClientProt, ClientStream, Isaac, Packet, ServerProt, SERVER_PROT_SIZES};
 use client::util::JString;
 use client::{LOGIN_RSAE, LOGIN_RSAN};
 use num_bigint::BigUint;
@@ -70,10 +74,19 @@ pub struct Lean {
     /// Isaac for inbound ptype decode, seeded with the login seed + 50
     /// (the outbound seed + 50 the server encrypts with).
     random_in: Isaac,
-    /// Outbound packet builder; unused by the pump (sends are a later
-    /// task) but kept so the handshake state the channel needs is here.
-    #[allow(dead_code)] // held for the send path (Task 2+)
+    /// Outbound ISAAC packet builder; [`Lean::flush`] / [`Lean::pump`]
+    /// write `pos` bytes to the stream (the bot host drives every prot).
     out: Packet,
+    menu_action: [i32; 10],
+    menu_param_a: [i32; 10],
+    menu_param_b: [i32; 10],
+    menu_param_c: [i32; 10],
+    /// Use-item / spell-target ids the menu arms stash (same roles as
+    /// `Client::{obj_com_id,obj_selected_slot,obj_selected_com_id,target_com_id}`).
+    obj_com_id: i32,
+    obj_selected_slot: i32,
+    obj_selected_com_id: i32,
+    target_com_id: i32,
     /// 5000-byte read buffer; the header byte lives at data[0] and is
     /// overwritten by the payload, exactly like `Client::in`.
     incoming: Packet,
@@ -116,14 +129,28 @@ impl Lean {
     /// Drain every complete frame currently buffered: Isaac-decode `ptype`,
     /// size it from `SERVER_PROT_SIZES`, skip unknown opcodes, and update
     /// the snapshot for the packets a lean channel understands. Partial
-    /// frames resume on the next call; nothing blocks.
+    /// frames resume on the next call; nothing blocks. Pending outbound
+    /// (kernel `Driver` writes) flush first, like `Client::game_loop`.
     pub fn pump(&mut self) -> Result<(), LeanError> {
+        self.flush()?;
         loop {
             let Some(ptype) = self.read_frame()? else {
                 return Ok(());
             };
             self.apply_packet(ptype);
         }
+    }
+
+    /// Write queued outbound bytes to the socket and reset `out.pos`.
+    pub fn flush(&mut self) -> Result<(), LeanError> {
+        if self.out.pos <= 0 {
+            return Ok(());
+        }
+        self.stream
+            .write(self.out.data(), self.out.pos)
+            .map_err(LeanError::Io)?;
+        self.out.pos = 0;
+        Ok(())
     }
 
     pub fn snapshot(&self) -> &LeanSnapshot {
@@ -213,10 +240,19 @@ impl Lean {
         if response == 2 {
             let _ = stream.read().map_err(LeanError::Io)?; // staff level
             let _ = stream.read().map_err(LeanError::Io)?; // mouse tracking
+            out.pos = 0;
             return Ok(Lean {
                 stream,
                 random_in,
                 out,
+                menu_action: [0; 10],
+                menu_param_a: [0; 10],
+                menu_param_b: [0; 10],
+                menu_param_c: [0; 10],
+                obj_com_id: 0,
+                obj_selected_slot: 0,
+                obj_selected_com_id: 0,
+                target_com_id: 0,
                 incoming,
                 ptype: -1,
                 psize: 0,
@@ -233,10 +269,19 @@ impl Lean {
             // Reconnect grant (Java `Client.java` 3737): no staff/mouse
             // bytes after 15 (unlike 2); the snapshot is thin anyway, so a
             // reconnect channel just starts from the same zeroed defaults.
+            out.pos = 0;
             return Ok(Lean {
                 stream,
                 random_in,
                 out,
+                menu_action: [0; 10],
+                menu_param_a: [0; 10],
+                menu_param_b: [0; 10],
+                menu_param_c: [0; 10],
+                obj_com_id: 0,
+                obj_selected_slot: 0,
+                obj_selected_com_id: 0,
+                target_com_id: 0,
                 incoming,
                 ptype: -1,
                 psize: 0,
@@ -338,6 +383,259 @@ impl Lean {
             }
             _ => {}
         }
+    }
+
+    /// Menu dispatch: same `ClientProt` writes as `Client::doAction`, minus
+    /// World / iface / chat side effects. The host bot path is this plus
+    /// [`Driver::out`] for cheats and any other legal send.
+    fn write_action(&mut self, mut action: i32, a: i32, b: i32, c: i32) -> bool {
+        if action >= MiniMenuAction::_PRIORITY {
+            action -= MiniMenuAction::_PRIORITY;
+        }
+        let (bx, bz) = (self.snapshot.tile_x, self.snapshot.tile_z);
+        let loc_id = {
+            let packed = (a >> 14) & 0x7fff;
+            if packed != 0 {
+                packed
+            } else {
+                a
+            }
+        };
+        match action {
+            MiniMenuAction::IF_BUTTON
+            | MiniMenuAction::TOGGLE_BUTTON
+            | MiniMenuAction::SELECT_BUTTON => {
+                api::prot::Send::if_button(c).write(&mut self.out);
+                true
+            }
+            MiniMenuAction::CLOSE_BUTTON => {
+                api::prot::Send::close_modal().write(&mut self.out);
+                true
+            }
+            MiniMenuAction::PAUSE_BUTTON => {
+                self.out.p1_enc(ClientProt::RESUME_PAUSEBUTTON.id);
+                self.out.p2(c);
+                true
+            }
+            MiniMenuAction::WALK => {
+                self.out.p1_enc(ClientProt::MOVE_GAMECLICK.id);
+                self.out.p1(3);
+                self.out.p1(0);
+                self.out.p2(b + bx);
+                self.out.p2(c + bz);
+                true
+            }
+            MiniMenuAction::USEHELD_START => {
+                self.obj_com_id = a;
+                self.obj_selected_slot = b;
+                self.obj_selected_com_id = c;
+                true
+            }
+            MiniMenuAction::TGT_BUTTON => {
+                self.target_com_id = c;
+                true
+            }
+            MiniMenuAction::OP_OBJ1 => self.write_obj(ClientProt::OPOBJ1.id, a, b, c, bx, bz),
+            MiniMenuAction::OP_OBJ2 => self.write_obj(ClientProt::OPOBJ2.id, a, b, c, bx, bz),
+            MiniMenuAction::OP_OBJ3 => self.write_obj(ClientProt::OPOBJ3.id, a, b, c, bx, bz),
+            MiniMenuAction::OP_OBJ4 => self.write_obj(ClientProt::OPOBJ4.id, a, b, c, bx, bz),
+            MiniMenuAction::OP_OBJ5 => self.write_obj(ClientProt::OPOBJ5.id, a, b, c, bx, bz),
+            MiniMenuAction::TGT_OBJ => {
+                self.write_obj(ClientProt::OPOBJT.id, a, b, c, bx, bz);
+                self.out.p2(self.target_com_id);
+                true
+            }
+            MiniMenuAction::USEHELD_ONOBJ => {
+                self.write_obj(ClientProt::OPOBJU.id, a, b, c, bx, bz);
+                self.write_useheld_tail();
+                true
+            }
+            MiniMenuAction::OP_NPC1 => self.write_npc(ClientProt::OPNPC1.id, a),
+            MiniMenuAction::OP_NPC2 => self.write_npc(ClientProt::OPNPC2.id, a),
+            MiniMenuAction::OP_NPC3 => self.write_npc(ClientProt::OPNPC3.id, a),
+            MiniMenuAction::OP_NPC4 => self.write_npc(ClientProt::OPNPC4.id, a),
+            MiniMenuAction::OP_NPC5 => self.write_npc(ClientProt::OPNPC5.id, a),
+            MiniMenuAction::TGT_NPC => {
+                self.write_npc(ClientProt::OPNPCT.id, a);
+                self.out.p2(self.target_com_id);
+                true
+            }
+            MiniMenuAction::USEHELD_ONNPC => {
+                self.write_npc(ClientProt::OPNPCU.id, a);
+                self.write_useheld_tail();
+                true
+            }
+            MiniMenuAction::OP_LOC1 => self.write_loc(ClientProt::OPLOC1.id, loc_id, b, c, bx, bz),
+            MiniMenuAction::OP_LOC2 => self.write_loc(ClientProt::OPLOC2.id, loc_id, b, c, bx, bz),
+            MiniMenuAction::OP_LOC3 => self.write_loc(ClientProt::OPLOC3.id, loc_id, b, c, bx, bz),
+            MiniMenuAction::OP_LOC4 => self.write_loc(ClientProt::OPLOC4.id, loc_id, b, c, bx, bz),
+            MiniMenuAction::OP_LOC5 => self.write_loc(ClientProt::OPLOC5.id, loc_id, b, c, bx, bz),
+            MiniMenuAction::TGT_LOC => {
+                self.write_loc(ClientProt::OPLOCT.id, loc_id, b, c, bx, bz);
+                self.out.p2(self.target_com_id);
+                true
+            }
+            MiniMenuAction::USEHELD_ONLOC => {
+                self.write_loc(ClientProt::OPLOCU.id, loc_id, b, c, bx, bz);
+                self.write_useheld_tail();
+                true
+            }
+            MiniMenuAction::OP_PLAYER1 | MiniMenuAction::ACCEPT_DUELREQ => {
+                self.write_player(ClientProt::OPPLAYER1.id, a)
+            }
+            MiniMenuAction::OP_PLAYER2 => self.write_player(ClientProt::OPPLAYER2.id, a),
+            MiniMenuAction::OP_PLAYER3 => self.write_player(ClientProt::OPPLAYER3.id, a),
+            MiniMenuAction::OP_PLAYER4 | MiniMenuAction::ACCEPT_TRADEREQ => {
+                self.write_player(ClientProt::OPPLAYER4.id, a)
+            }
+            MiniMenuAction::OP_PLAYER5 => self.write_player(ClientProt::OPPLAYER5.id, a),
+            MiniMenuAction::TGT_PLAYER => {
+                self.write_player(ClientProt::OPPLAYERT.id, a);
+                self.out.p2(self.target_com_id);
+                true
+            }
+            MiniMenuAction::USEHELD_ONPLAYER => {
+                self.write_player(ClientProt::OPPLAYERU.id, a);
+                self.write_useheld_tail();
+                true
+            }
+            MiniMenuAction::OP_HELD1 => self.write_held(ClientProt::OPHELD1.id, a, b, c),
+            MiniMenuAction::OP_HELD2 => self.write_held(ClientProt::OPHELD2.id, a, b, c),
+            MiniMenuAction::OP_HELD3 => self.write_held(ClientProt::OPHELD3.id, a, b, c),
+            MiniMenuAction::OP_HELD4 => self.write_held(ClientProt::OPHELD4.id, a, b, c),
+            MiniMenuAction::OP_HELD5 => self.write_held(ClientProt::OPHELD5.id, a, b, c),
+            MiniMenuAction::TGT_HELD => {
+                self.write_held(ClientProt::OPHELDT.id, a, b, c);
+                self.out.p2(self.target_com_id);
+                true
+            }
+            MiniMenuAction::USEHELD_ONHELD => {
+                self.write_held(ClientProt::OPHELDU.id, a, b, c);
+                self.write_useheld_tail();
+                true
+            }
+            MiniMenuAction::INV_BUTTON1 => self.write_held(ClientProt::INV_BUTTON1.id, a, b, c),
+            MiniMenuAction::INV_BUTTON2 => self.write_held(ClientProt::INV_BUTTON2.id, a, b, c),
+            MiniMenuAction::INV_BUTTON3 => self.write_held(ClientProt::INV_BUTTON3.id, a, b, c),
+            MiniMenuAction::INV_BUTTON4 => self.write_held(ClientProt::INV_BUTTON4.id, a, b, c),
+            MiniMenuAction::INV_BUTTON5 => self.write_held(ClientProt::INV_BUTTON5.id, a, b, c),
+            _ => false,
+        }
+    }
+
+    fn write_obj(&mut self, opcode: i32, a: i32, b: i32, c: i32, bx: i32, bz: i32) -> bool {
+        self.out.p1_enc(opcode);
+        self.out.p2(b + bx);
+        self.out.p2(c + bz);
+        self.out.p2(a);
+        true
+    }
+
+    fn write_npc(&mut self, opcode: i32, a: i32) -> bool {
+        self.out.p1_enc(opcode);
+        self.out.p2(a);
+        true
+    }
+
+    fn write_player(&mut self, opcode: i32, a: i32) -> bool {
+        self.out.p1_enc(opcode);
+        self.out.p2(a);
+        true
+    }
+
+    fn write_loc(&mut self, opcode: i32, loc_id: i32, b: i32, c: i32, bx: i32, bz: i32) -> bool {
+        self.out.p1_enc(opcode);
+        self.out.p2(b + bx);
+        self.out.p2(c + bz);
+        self.out.p2(loc_id);
+        true
+    }
+
+    fn write_held(&mut self, opcode: i32, a: i32, b: i32, c: i32) -> bool {
+        self.out.p1_enc(opcode);
+        self.out.p2(a);
+        self.out.p2(b);
+        self.out.p2(c);
+        true
+    }
+
+    fn write_useheld_tail(&mut self) {
+        self.out.p2(self.obj_com_id);
+        self.out.p2(self.obj_selected_slot);
+        self.out.p2(self.obj_selected_com_id);
+    }
+}
+
+impl Driver for Lean {
+    fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
+        let i = slot as usize;
+        if i >= self.menu_action.len() {
+            return;
+        }
+        self.menu_action[i] = action;
+        self.menu_param_a[i] = a;
+        self.menu_param_b[i] = b;
+        self.menu_param_c[i] = c;
+    }
+
+    fn do_action(&mut self, slot: i32) -> bool {
+        let i = slot as usize;
+        if i >= self.menu_action.len() {
+            return false;
+        }
+        self.write_action(
+            self.menu_action[i],
+            self.menu_param_a[i],
+            self.menu_param_b[i],
+            self.menu_param_c[i],
+        )
+    }
+
+    fn try_move(
+        &mut self,
+        _src_x: i32,
+        _src_z: i32,
+        dx: i32,
+        dz: i32,
+        _try_nearest: bool,
+        _loc_width: i32,
+        _loc_length: i32,
+        _loc_angle: i32,
+        _loc_shape: i32,
+        _forceapproach: i32,
+        r#type: i32,
+    ) -> bool {
+        let (bx, bz) = self.build_base();
+        self.out.p1_enc(match r#type {
+            1 => ClientProt::MOVE_MINIMAPCLICK.id,
+            2 => ClientProt::MOVE_OPCLICK.id,
+            _ => ClientProt::MOVE_GAMECLICK.id,
+        });
+        self.out.p1(3);
+        self.out.p1(0);
+        self.out.p2(dx + bx);
+        self.out.p2(dz + bz);
+        true
+    }
+
+    fn local_route(&self) -> Option<(i32, i32)> {
+        Some((0, 0))
+    }
+
+    fn build_base(&self) -> (i32, i32) {
+        (self.snapshot.tile_x, self.snapshot.tile_z)
+    }
+
+    fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+        None
+    }
+
+    fn out(&mut self) -> &mut dyn Out {
+        &mut self.out
+    }
+
+    fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+        false
     }
 }
 
@@ -458,6 +756,14 @@ mod tests {
             stream,
             random_in: Isaac::new(&[50; 4]),
             out: Packet::alloc(1),
+            menu_action: [0; 10],
+            menu_param_a: [0; 10],
+            menu_param_b: [0; 10],
+            menu_param_c: [0; 10],
+            obj_com_id: 0,
+            obj_selected_slot: 0,
+            obj_selected_com_id: 0,
+            target_com_id: 0,
             incoming: Packet::alloc(1),
             ptype: -1,
             psize: 0,
@@ -532,7 +838,8 @@ mod tests {
         srv.write_all(&rebuild[..3]).unwrap();
         lean.pump().unwrap();
         assert_eq!(
-            lean.snapshot().scene_state, 0,
+            lean.snapshot().scene_state,
+            0,
             "partial frame must not apply"
         );
 
@@ -590,6 +897,94 @@ mod tests {
         assert!(
             recv.is_empty(),
             "pump must be read-only without host-supplied out bytes: {recv:?}"
+        );
+    }
+
+    #[test]
+    fn lean_driver_flush_sends_cheat() {
+        let (mut lean, mut srv) = lean_pair();
+        lean.out.random = Some(Isaac::new(&[0; 4]));
+        api::interact::cheat(&mut lean, "tele 0,50,50,20,20");
+        lean.flush().unwrap();
+        srv.set_nonblocking(true).unwrap();
+        let mut recv = Vec::new();
+        for _ in 0..40 {
+            let mut buf = [0u8; 1024];
+            match srv.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => recv.extend_from_slice(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if !recv.is_empty() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
+        assert!(!recv.is_empty(), "cheat must hit the wire after flush");
+        let mut enc = Isaac::new(&[0; 4]);
+        let want = ClientProt::CLIENT_CHEAT.id.wrapping_add(enc.next_int()) as u8;
+        assert_eq!(recv[0], want, "first byte is ISAAC-encrypted CLIENT_CHEAT");
+    }
+
+    fn recv_flush(lean: &mut Lean, srv: &mut std::net::TcpStream) -> Vec<u8> {
+        lean.flush().unwrap();
+        srv.set_nonblocking(true).unwrap();
+        let mut recv = Vec::new();
+        for _ in 0..40 {
+            let mut buf = [0u8; 1024];
+            match srv.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => recv.extend_from_slice(&buf[..n]),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if !recv.is_empty() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
+        recv
+    }
+
+    #[test]
+    fn lean_do_action_writes_oploc_opnpc_and_if_button() {
+        let (mut lean, mut srv) = lean_pair();
+        lean.out.random = Some(Isaac::new(&[0; 4]));
+        api::interact::op_loc(&mut lean, 10, 20, 1234);
+        api::interact::press(&mut lean, 153);
+        lean.set_menu(0, MiniMenuAction::OP_NPC1, 7, 0, 0);
+        lean.do_action(0);
+        let recv = recv_flush(&mut lean, &mut srv);
+        assert!(!recv.is_empty());
+        let mut enc = Isaac::new(&[0; 4]);
+        let oploc = ClientProt::OPLOC1.id.wrapping_add(enc.next_int()) as u8;
+        assert_eq!(recv[0], oploc, "OP_LOC1 is first");
+    }
+
+    #[test]
+    fn lean_out_can_write_every_legal_send() {
+        let (mut lean, mut srv) = lean_pair();
+        lean.out.random = Some(Isaac::new(&[0; 4]));
+        for row in api::prot::LEGAL_SEND {
+            lean.out.p1_enc(row.id);
+            if row.length > 0 {
+                for _ in 0..row.length {
+                    lean.out.p1(0);
+                }
+            } else {
+                lean.out.p1(1);
+                lean.out.p1(0);
+            }
+        }
+        let recv = recv_flush(&mut lean, &mut srv);
+        assert!(
+            recv.len() >= api::prot::LEGAL_SEND.len(),
+            "every LEGAL_SEND row must hit the wire, got {} bytes for {} rows",
+            recv.len(),
+            api::prot::LEGAL_SEND.len()
         );
     }
 }

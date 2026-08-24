@@ -22,8 +22,10 @@ use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
 mod rss;
-pub use rss::sample_process;
+mod scatter;
 use host::{PixelBuf, SlotInput};
+pub use rss::sample_process;
+pub use scatter::{scatter_tile_for, tele_args};
 use vault::{Profile, Vault, VaultError};
 
 /// Slot thread stack: 1 MiB (the Java client thread default).
@@ -186,9 +188,7 @@ impl SlotArm {
 /// Whether the slot may start a login handshake: on the title (not ingame)
 /// and the arm wants a login that is not latched by an intentional logout.
 fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
-    !ingame
-        && arm.want_login.load(Ordering::Relaxed)
-        && !arm.latch.load(Ordering::Relaxed)
+    !ingame && arm.want_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed)
 }
 
 /// After a successful handshake: stay armed only when this slot was spawned
@@ -306,10 +306,7 @@ impl Play {
                 .leave(arm.uid.load(Ordering::Relaxed));
         }
         self.spawned.remove(name);
-        self.statuses
-            .lock()
-            .unwrap()
-            .retain(|s| s.username != name);
+        self.statuses.lock().unwrap().retain(|s| s.username != name);
         self.arms.remove(name);
         if let Some(handle) = self.handles.remove(name) {
             let _ = handle.join();
@@ -355,7 +352,8 @@ impl Play {
     ) {
         // Keep the vault credentials on the wall: `tune` parks the
         // outgoing head and reconnects the incoming one from this map.
-        self.profiles.insert(profile.username.clone(), profile.clone());
+        self.profiles
+            .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
@@ -384,7 +382,8 @@ impl Play {
     /// opcode 16, no `Client`), then pump the stream at the host cadence.
     /// The status row is marked `lean`; no-op if the name is already running.
     pub fn spawn_channel(&mut self, profile: Profile) {
-        self.profiles.insert(profile.username.clone(), profile.clone());
+        self.profiles
+            .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return;
         }
@@ -858,6 +857,9 @@ fn spawn_channel_thread(
                             // Pump inbound frames at the host cadence until the
                             // connection dies or the arm stops; a dead channel
                             // falls back to the permit + login retry above.
+                            // First REBUILD_NORMAL → `::tele` a shuffled
+                            // walkable tile so the 50-box wall is not a stack.
+                            let mut seeded = false;
                             loop {
                                 if arm.stop.load(Ordering::Relaxed) {
                                     slot_queue.lock().unwrap().leave(uid);
@@ -867,22 +869,41 @@ fn spawn_channel_thread(
                                 let mut died = false;
                                 {
                                     let mut all = slot_statuses.lock().unwrap();
-                                    if let Some(s) =
-                                        all.iter_mut().find(|s| s.username == username)
+                                    if let Some(s) = all.iter_mut().find(|s| s.username == username)
                                     {
                                         match pump {
                                             Ok(()) => {
                                                 let snap = lean.snapshot();
-                                                s.scene_state = snap.scene_state;
+                                                let scene_state = snap.scene_state;
+                                                s.scene_state = scene_state;
                                                 s.tile_x = snap.tile_x;
                                                 s.tile_z = snap.tile_z;
+                                                if !seeded && scene_state != 0 {
+                                                    let t = scatter_tile_for(uid);
+                                                    api::interact::seed_at(
+                                                        &mut lean, t.level, t.x, t.z,
+                                                    );
+                                                    if let Err(e) = lean.flush() {
+                                                        s.error = Some(format!("seed: {e:?}"));
+                                                        s.ingame = false;
+                                                        died = true;
+                                                    } else {
+                                                        seeded = true;
+                                                        if debug_enabled() {
+                                                            eprintln!(
+                                                                "[host-play] channel {username}: \
+                                                                 seed {} {} {}",
+                                                                t.level, t.x, t.z
+                                                            );
+                                                        }
+                                                    }
+                                                }
                                             }
                                             Err(e) => {
                                                 s.error = Some(match &e {
-                                                    LeanError::Login(le) => format!(
-                                                        "code {}: {}",
-                                                        le.code, le.mes2
-                                                    ),
+                                                    LeanError::Login(le) => {
+                                                        format!("code {}: {}", le.code, le.mes2)
+                                                    }
                                                     LeanError::Io(io) => format!("io: {io}"),
                                                     LeanError::FrameTooLarge { ptype, psize } => {
                                                         format!(
@@ -1074,13 +1095,19 @@ mod tests {
             username: "a".into(),
             password: "a".into(),
             uid: 1,
-            settings: ProfileSettings { lowmem: true, auto_login: false },
+            settings: ProfileSettings {
+                lowmem: true,
+                auto_login: false,
+            },
         };
         let loud = Profile {
             username: "b".into(),
             password: "b".into(),
             uid: 2,
-            settings: ProfileSettings { lowmem: false, auto_login: false },
+            settings: ProfileSettings {
+                lowmem: false,
+                auto_login: false,
+            },
         };
         assert!(bot_client_config(&opt, &lean).lowmem);
         assert!(!bot_client_config(&opt, &loud).lowmem);
@@ -1183,7 +1210,10 @@ mod tests {
         {
             let mut q = play.queue.lock().unwrap();
             assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
-            assert!(matches!(q.request_permit(7, Instant::now()), Permit::Wait(_)));
+            assert!(matches!(
+                q.request_permit(7, Instant::now()),
+                Permit::Wait(_)
+            ));
         }
 
         play.statuses.lock().unwrap().push(SlotStatus {
@@ -1228,7 +1258,10 @@ mod tests {
         {
             let mut q = play.queue.lock().unwrap();
             assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
-            assert!(matches!(q.request_permit(42, Instant::now()), Permit::Wait(_)));
+            assert!(matches!(
+                q.request_permit(42, Instant::now()),
+                Permit::Wait(_)
+            ));
         }
         play.spawn_slot(
             Profile {
@@ -1329,10 +1362,27 @@ mod tests {
     #[test]
     fn apply_queue_wait_writes_k_of_n_and_grant_clears() {
         let mut rows = vec![
-            SlotStatus { username: "a".into(), queue_position: -1, queue_total: -1, ..SlotStatus::default() },
-            SlotStatus { username: "b".into(), queue_position: -1, queue_total: -1, ..SlotStatus::default() },
+            SlotStatus {
+                username: "a".into(),
+                queue_position: -1,
+                queue_total: -1,
+                ..SlotStatus::default()
+            },
+            SlotStatus {
+                username: "b".into(),
+                queue_position: -1,
+                queue_total: -1,
+                ..SlotStatus::default()
+            },
         ];
-        apply_queue_wait(&mut rows, "b", Some(host::login_queue::QueuePos { position: 2, total: 2 }));
+        apply_queue_wait(
+            &mut rows,
+            "b",
+            Some(host::login_queue::QueuePos {
+                position: 2,
+                total: 2,
+            }),
+        );
         assert_eq!(rows[1].queue_position, 2);
         assert_eq!(rows[1].queue_total, 2);
         apply_queue_wait(&mut rows, "b", None);
@@ -1468,7 +1518,11 @@ mod tests {
         let statuses = Arc::clone(&play.statuses);
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(30));
-            if let Some(s) = statuses.lock().unwrap().iter_mut().find(|s| s.username == "alice")
+            if let Some(s) = statuses
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|s| s.username == "alice")
             {
                 s.ingame = false;
             }
@@ -1583,10 +1637,14 @@ mod tests {
             "tune wipes the previous channel's scene"
         );
         assert_eq!(
-            head.client.local_player.as_ref().unwrap().y, 0,
+            head.client.local_player.as_ref().unwrap().y,
+            0,
             "tune wipes the previous channel's local player"
         );
-        assert!(head.client.players[123].is_none(), "previous players cleared");
+        assert!(
+            head.client.players[123].is_none(),
+            "previous players cleared"
+        );
         assert!(head.client.npc[7].is_none(), "previous npcs cleared");
         assert_eq!(head.client.player_count, 0);
         assert_eq!(head.client.npc_count, 0);

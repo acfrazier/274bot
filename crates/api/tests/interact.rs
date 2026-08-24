@@ -5,8 +5,8 @@
 // `client/tests/gens.rs` — no network).
 
 use api::interact::{
-    answer_count, cheat, close_modal, interact, login, mainland_hop, op_loc, press, set_run, walk,
-    Driver, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
+    answer_count, cheat, close_modal, interact, login, mainland_hop, op_loc, press, seed_at,
+    set_run, tele_args, walk, Driver, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
 };
 use api::prot::{LegalSend, LEGAL_SEND};
 use api::settle::{item_delta, modal_delta, xp_gained, Settle};
@@ -317,10 +317,7 @@ fn op_loc_translates_absolute_loc_into_scene_coords() {
     };
     assert!(op_loc(&mut r, 3230, 3222, 1530));
     assert_eq!(r.actions, vec![0]);
-    assert_eq!(
-        r.menus,
-        vec![(0, MiniMenuAction::OP_LOC1, 1530, 30, 22)]
-    );
+    assert_eq!(r.menus, vec![(0, MiniMenuAction::OP_LOC1, 1530, 30, 22)]);
 }
 
 /// Live `interact_with_loc` matches `a` to `wall.typecode` via `type_code2`.
@@ -371,6 +368,29 @@ fn mainland_hop_queues_tele_and_tutorial_setvar() {
             OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
             OutByte::P1(("setvar tutorial 1000".len() + 1) as i32),
             OutByte::Jstr("setvar tutorial 1000".into()),
+        ]
+    );
+}
+
+#[test]
+fn tele_args_splits_world_tile_into_mapsquare() {
+    assert_eq!(tele_args(0, 3220, 3218), "tele 0,50,50,20,18");
+}
+
+#[test]
+fn seed_at_sends_tutorial_setvar_then_tele() {
+    let mut r = Recorder::default();
+    seed_at(&mut r, 0, 3220, 3218);
+    let tele = tele_args(0, 3220, 3218);
+    assert_eq!(
+        r.out.0,
+        vec![
+            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
+            OutByte::P1(("setvar tutorial 1000".len() + 1) as i32),
+            OutByte::Jstr("setvar tutorial 1000".into()),
+            OutByte::Enc(ClientProt::CLIENT_CHEAT.id),
+            OutByte::P1((tele.len() + 1) as i32),
+            OutByte::Jstr(tele),
         ]
     );
 }

@@ -15,6 +15,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 vault = { path = "../vault" }
 wgpu = "29"
+winit = "0.30"
 
 [[bin]]
 name = "panel-play"

@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use api::interact::Driver;
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
-use host_play::{open_vault, run_with_io, Play, PlayOptions, SlotArm, SlotStatus};
+use host_play::{
+    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
+};
 use nav::grid::StepGrid;
 use nav::router::{find, NoPath};
 use nav::tile::Tile;
@@ -153,6 +155,9 @@ pub struct Session {
     /// 1 s raster cadence.
     route_gen: u64,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
+    /// Channel-head scatter: after scene 2, `::tele` the fat TV to a
+    /// shuffled walkable tile (lean extras seed themselves).
+    scatter: Arc<AtomicBool>,
     options: PlayOptions,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
     /// it for the chooser and rail; [`Session`] methods drive it.
@@ -227,6 +232,7 @@ impl Session {
             picker_sel: None,
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
+            scatter: Arc::new(AtomicBool::new(false)),
             wall: Wall::default(),
             multibox: false,
             channel_head: false,
@@ -285,6 +291,7 @@ impl Session {
         }
         self.set_multibox(true);
         self.channel_head = false;
+        self.scatter.store(false, Ordering::Relaxed);
         // First MultiBox-on opens the chooser; live already loaded both
         // names. Leave the window usable (operator may click the rail).
         self.wall.chooser_open = false;
@@ -320,6 +327,7 @@ impl Session {
         }
         self.set_multibox(true);
         self.channel_head = true;
+        self.scatter.store(true, Ordering::Relaxed);
         // First MultiBox-on opens the chooser; live already loaded all
         // names. Leave the window usable (operator may click the rail).
         self.wall.chooser_open = false;
@@ -341,6 +349,7 @@ impl Session {
         let log_by = Arc::clone(&self.log_by);
         let mainland = Arc::clone(&self.mainland);
         let mainland_sent = Arc::clone(&self.mainland_sent);
+        let scatter = Arc::clone(&self.scatter);
         let travellers = Arc::clone(&self.travellers);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
@@ -352,17 +361,26 @@ impl Session {
             move |c, name| {
                 let draw = draw_for_slot(&focus.lock().unwrap(), name);
                 c.set_draw(draw);
-                if mainland.load(Ordering::Relaxed)
-                    && c.ingame
+                if c.ingame
                     && c.scene_state == 2
                     && mainland_sent.lock().unwrap().insert(name.to_string())
                 {
-                    api::interact::mainland_hop(c);
-                    push_log(
-                        &mut log_by.lock().unwrap(),
-                        name,
-                        format!("{name}: mainland hop queued"),
-                    );
+                    if scatter.load(Ordering::Relaxed) {
+                        let t = scatter_tile_for(c.login_uid);
+                        api::interact::seed_at(c, t.level, t.x, t.z);
+                        push_log(
+                            &mut log_by.lock().unwrap(),
+                            name,
+                            format!("{name}: scatter seed {} {} {}", t.level, t.x, t.z),
+                        );
+                    } else if mainland.load(Ordering::Relaxed) {
+                        api::interact::mainland_hop(c);
+                        push_log(
+                            &mut log_by.lock().unwrap(),
+                            name,
+                            format!("{name}: mainland hop queued"),
+                        );
+                    }
                 }
 
                 let (rx, rz) = match &c.local_player {
@@ -441,10 +459,7 @@ impl Session {
                             push_log(
                                 &mut log_by,
                                 name,
-                                format!(
-                                    "{name}: login {}",
-                                    s.error.as_deref().unwrap_or_default()
-                                ),
+                                format!("{name}: login {}", s.error.as_deref().unwrap_or_default()),
                             );
                         }
                         if !p.ingame && s.ingame {
@@ -706,10 +721,8 @@ impl Session {
             return;
         };
         let allow_many_fat = !self.focus.lock().unwrap().only_render_selected;
-        let extras_are_lean = self.channel_head
-            && self.play.is_some()
-            && !self.slots.is_empty()
-            && !allow_many_fat;
+        let extras_are_lean =
+            self.channel_head && self.play.is_some() && !self.slots.is_empty() && !allow_many_fat;
         if extras_are_lean {
             if let Some(play) = &mut self.play {
                 play.spawn_channel(profile);
@@ -940,6 +953,7 @@ impl Session {
     pub fn set_multibox(&mut self, on: bool) {
         self.multibox = on;
         self.channel_head = on;
+        self.scatter.store(on, Ordering::Relaxed);
         if on {
             let running: Vec<String> = self
                 .play
@@ -956,8 +970,7 @@ impl Session {
             };
             if need {
                 let last = crate::ui_state::load().last_focus;
-                if let Some(name) =
-                    crate::ui_state::pick_focus(&self.wall.members, last.as_deref())
+                if let Some(name) = crate::ui_state::pick_focus(&self.wall.members, last.as_deref())
                 {
                     self.select(&name);
                 }
@@ -1198,10 +1211,10 @@ mod tests {
     use super::{arm_login_all, combo_index, maybe_send_click, stream_capture, Session, SlotIo};
     use host::{InputEv, PixelBuf, SlotInput};
     use host_play::{SlotArm, SlotStatus};
-    use std::sync::atomic::Ordering;
-    use std::sync::Arc;
     use nav::grid::StepGrid;
     use nav::tile::Tile;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use vault::{Profile, ProfileSettings, Vault};
 
     fn empty_play() -> host_play::Play {
@@ -1233,10 +1246,10 @@ mod tests {
         // two SlotStatus rows, pump twice with transitions; log_by["alice"] does not contain bob lines
         let mut s = Session::new();
         let play = empty_play();
-        play.statuses.lock().unwrap().extend([
-            status("alice", false, 0),
-            status("bob", false, 0),
-        ]);
+        play.statuses
+            .lock()
+            .unwrap()
+            .extend([status("alice", false, 0), status("bob", false, 0)]);
         s.play = Some(play);
 
         s.pump_status();
@@ -1275,11 +1288,14 @@ mod tests {
         assert!(bob.iter().any(|l| l.contains("ingame")));
         assert!(bob.iter().any(|l| l.contains("scene 1")));
         assert!(
-            alice.iter().all(|l| !l.contains("bob") && !l.contains("scene 1")),
+            alice
+                .iter()
+                .all(|l| !l.contains("bob") && !l.contains("scene 1")),
             "alice must not see bob lines: {alice:?}"
         );
         assert!(
-            bob.iter().all(|l| !l.contains("alice") && !l.contains("scene 2")),
+            bob.iter()
+                .all(|l| !l.contains("alice") && !l.contains("scene 2")),
             "bob must not see alice lines: {bob:?}"
         );
     }
@@ -1329,7 +1345,11 @@ mod tests {
     #[test]
     fn picker_select_does_not_arm_until_confirm() {
         let mut s = Session::new();
-        let dest = Tile { x: 2, z: 2, level: 0 };
+        let dest = Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
         s.picker_sel = Some(dest);
         assert_eq!(s.walk_status_text(), "—");
         assert!(s.confirm_picker_walk(&StepGrid::fixture_open_3x3()));
@@ -1341,7 +1361,11 @@ mod tests {
     #[test]
     fn arm_walk_sets_queued_text() {
         let mut s = Session::new();
-        s.arm_walk(Tile { x: 3222, z: 3222, level: 0 });
+        s.arm_walk(Tile {
+            x: 3222,
+            z: 3222,
+            level: 0,
+        });
         assert!(s.walk_status_text().contains("3222"));
     }
 
@@ -1350,8 +1374,20 @@ mod tests {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
         let g = StepGrid::fixture_open_3x3();
-        let dest = Tile { x: 2, z: 2, level: 0 };
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
+        let dest = Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            dest,
+        );
         assert_eq!(s.walk_dest, Some(dest), "dest stays stored on success");
         assert!(s.error.is_none(), "a found route clears the error banner");
         let queued = s
@@ -1371,20 +1407,56 @@ mod tests {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
         let mut g = StepGrid::fixture_open_3x3();
-        g.set_walkable(Tile { x: 1, z: 0, level: 0 }, false);
-        g.set_walkable(Tile { x: 1, z: 1, level: 0 }, false);
-        g.set_walkable(Tile { x: 1, z: 2, level: 0 }, false);
-        let dest = Tile { x: 2, z: 1, level: 0 };
-        s.arm_walk_on(&g, Tile { x: 0, z: 1, level: 0 }, dest);
+        g.set_walkable(
+            Tile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            false,
+        );
+        g.set_walkable(
+            Tile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            false,
+        );
+        g.set_walkable(
+            Tile {
+                x: 1,
+                z: 2,
+                level: 0,
+            },
+            false,
+        );
+        let dest = Tile {
+            x: 2,
+            z: 1,
+            level: 0,
+        };
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 1,
+                level: 0,
+            },
+            dest,
+        );
         assert_eq!(s.walk_dest, Some(dest), "dest stays stored on NoPath");
         let err = s.error.clone().expect("no-path message set");
-        assert!(err.contains("no path"), "short no-path message, got {err:?}");
         assert!(
-            s.travellers
+            err.contains("no path"),
+            "short no-path message, got {err:?}"
+        );
+        assert!(
+            s.travellers.lock().unwrap().get("alice").is_none_or(|t| t
                 .lock()
                 .unwrap()
-                .get("alice")
-                .is_none_or(|t| t.lock().unwrap().queued().is_none()),
+                .queued()
+                .is_none()),
             "no route must be armed when find fails"
         );
     }
@@ -1393,8 +1465,20 @@ mod tests {
     fn arm_walk_on_without_focus_skips_route_but_stores_dest() {
         let mut s = Session::new();
         let g = StepGrid::fixture_open_3x3();
-        let dest = Tile { x: 2, z: 2, level: 0 };
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
+        let dest = Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            dest,
+        );
         assert_eq!(s.walk_dest, Some(dest));
         assert!(
             s.travellers.lock().unwrap().is_empty(),
@@ -1408,7 +1492,19 @@ mod tests {
         s.focus.lock().unwrap().focused = Some("alice".into());
         let g = StepGrid::fixture_open_3x3();
         assert_eq!(s.route_gen(), 0);
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, Tile { x: 2, z: 2, level: 0 });
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        );
         assert_ne!(s.route_gen(), 0, "a new arm must bump the overlay gen");
     }
 
@@ -1421,11 +1517,27 @@ mod tests {
             ..SlotStatus::default()
         });
         let g = StepGrid::fixture_open_3x3();
-        let dest = Tile { x: 2, z: 2, level: 0 };
-        s.arm_walk_on(&g, Tile { x: 0, z: 0, level: 0 }, dest);
+        let dest = Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        s.arm_walk_on(
+            &g,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            dest,
+        );
         s.sync_walk_status();
         assert_eq!(
-            (s.statuses[0].walk_x, s.statuses[0].walk_z, s.statuses[0].walk_level),
+            (
+                s.statuses[0].walk_x,
+                s.statuses[0].walk_z,
+                s.statuses[0].walk_level
+            ),
             (2, 2, 0)
         );
         s.travellers
@@ -1436,11 +1548,16 @@ mod tests {
             .lock()
             .unwrap()
             .clear();
-        s.walk_clear.store(true, std::sync::atomic::Ordering::Relaxed);
+        s.walk_clear
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         s.sync_walk_status();
         assert_eq!(s.walk_status_text(), "—");
         assert_eq!(
-            (s.statuses[0].walk_x, s.statuses[0].walk_z, s.statuses[0].walk_level),
+            (
+                s.statuses[0].walk_x,
+                s.statuses[0].walk_z,
+                s.statuses[0].walk_level
+            ),
             (-1, -1, -1)
         );
     }
@@ -1650,7 +1767,13 @@ mod tests {
         assert!(s.set_focused_lowmem(true));
         assert!(!s.tube_sfx);
         assert!(
-            s.vault.as_ref().unwrap().get("alice").unwrap().settings.lowmem,
+            s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .lowmem,
             "tube toggle must not rewrite the vault profile"
         );
         assert!(s.set_focused_lowmem(false));
@@ -2019,7 +2142,10 @@ mod tests {
         assert!(!s.focus.lock().unwrap().wall_open);
         s.set_multibox(true);
         assert!(s.multibox);
-        assert!(s.focus.lock().unwrap().wall_open, "rail or grid: wall is open");
+        assert!(
+            s.focus.lock().unwrap().wall_open,
+            "rail or grid: wall is open"
+        );
         s.set_grid(true);
         assert!(s.wall.grid);
         assert!(
@@ -2051,12 +2177,24 @@ mod tests {
             .unwrap();
         assert!(s.set_auto_login("alice", true));
         assert!(
-            s.vault.as_ref().unwrap().get("alice").unwrap().settings.auto_login
+            s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .auto_login
         );
         assert!(s.slots.is_empty(), "set_auto_login must not spawn a slot");
         assert!(s.set_auto_login("alice", false));
         assert!(
-            !s.vault.as_ref().unwrap().get("alice").unwrap().settings.auto_login
+            !s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .auto_login
         );
     }
 
@@ -2075,12 +2213,24 @@ mod tests {
         assert!(s.focused_lowmem(), "fresh profile defaults to lowmem");
         assert!(s.set_focused_lowmem(false));
         assert!(
-            !s.vault.as_ref().unwrap().get("alice").unwrap().settings.lowmem
+            !s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .lowmem
         );
         assert!(!s.focused_lowmem(), "focused profile reflects the setting");
         assert!(s.set_focused_lowmem(true));
         assert!(
-            s.vault.as_ref().unwrap().get("alice").unwrap().settings.lowmem
+            s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .lowmem
         );
     }
 
@@ -2171,7 +2321,10 @@ mod tests {
         assert!(s.wall.latch.contains("alice"), "intentional logout latches");
         assert!(!s.wall.should_auto_login("alice", true));
         s.login_all();
-        assert!(!s.wall.latch.contains("alice"), "Login all clears the latch");
+        assert!(
+            !s.wall.latch.contains("alice"),
+            "Login all clears the latch"
+        );
     }
 
     #[test]
@@ -2296,10 +2449,7 @@ mod tests {
         s.load("alice");
         let added = s.load_all();
         assert_eq!(added, 1, "only bob is new");
-        assert_eq!(
-            s.wall.members,
-            vec!["alice".to_string(), "bob".to_string()]
-        );
+        assert_eq!(s.wall.members, vec!["alice".to_string(), "bob".to_string()]);
         assert_eq!(s.focus.lock().unwrap().wall, s.wall.members);
     }
 
