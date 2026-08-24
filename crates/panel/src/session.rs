@@ -111,6 +111,37 @@ pub fn stream_capture(
     }
 }
 
+/// rs2b0t disable rule: a script is active while it holds the slot, so
+/// Start and Browse (and Load) are disabled for those states.
+pub fn script_active(state: script::RunState) -> bool {
+    matches!(
+        state,
+        script::RunState::Running | script::RunState::Paused | script::RunState::Stopping
+    )
+}
+
+/// Pause/Resume enable rule: enabled only while Running (Pause) or Paused
+/// (Resume); the button label switches to "Resume" when paused.
+pub fn script_pause_enabled(state: script::RunState) -> bool {
+    matches!(state, script::RunState::Running | script::RunState::Paused)
+}
+
+/// Stop enable rule: enabled while active, but not while already Stopping.
+pub fn script_stop_enabled(state: script::RunState) -> bool {
+    script_active(state) && state != script::RunState::Stopping
+}
+
+/// The script status-row text for a lifecycle state.
+pub fn script_status_text(state: script::RunState) -> &'static str {
+    match state {
+        script::RunState::Idle => "idle",
+        script::RunState::Running => "running",
+        script::RunState::Paused => "paused",
+        script::RunState::Stopping => "stopping",
+        script::RunState::Error => "error",
+    }
+}
+
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
@@ -182,6 +213,11 @@ pub struct Session {
     pub tube_sfx: bool,
     /// Persisted panel prefs (last focus + per-profile collapsed sections).
     pub ui: crate::ui_state::PanelUiState,
+    /// The compiled script picked in Browse; `None` until one is selected.
+    /// Selecting never Starts — Start is the section button.
+    pub script_sel: Option<script::CompiledId>,
+    /// Browse picker open flag (the modal window in `app.rs`).
+    pub script_browse_open: bool,
 }
 
 /// Keep each per-name panel log bounded.
@@ -248,6 +284,8 @@ impl Session {
             tv: Arc::new(AtomicBool::new(false)),
             tube_sfx: true,
             ui: crate::ui_state::load(),
+            script_sel: None,
+            script_browse_open: false,
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -1334,6 +1372,75 @@ impl Session {
             .any(|s| s.username == name && s.ingame)
     }
 
+    /// The focused slot's script lifecycle state; `Idle` when nothing is
+    /// focused or the slot has no script. The script section's disable
+    /// rules key off this.
+    pub fn focused_script_state(&self) -> script::RunState {
+        let Some(name) = self.focused_name() else {
+            return script::RunState::Idle;
+        };
+        self.play
+            .as_ref()
+            .map(|p| p.script_state(&name))
+            .unwrap_or(script::RunState::Idle)
+    }
+
+    /// The focused slot's script `last_error`; `None` when the slot has no
+    /// script error (or nothing is focused).
+    pub fn focused_script_last_error(&self) -> Option<String> {
+        let name = self.focused_name()?;
+        self.play.as_ref()?.script_last_error(&name)
+    }
+
+    /// Start the Browse-selected compiled script on the focused slot. The
+    /// rs2b0t rule is enforced here too: while the slot's script is active
+    /// the call is refused (the Start button is disabled, so this is the
+    /// no-call backstop). Errors set [`Session::error`].
+    pub fn script_start_selected(&mut self) {
+        let Some(name) = self.focused_name() else {
+            self.error = Some("script: no focused profile".into());
+            return;
+        };
+        let Some(sel) = self.script_sel else {
+            self.error = Some("script: browse to pick one first".into());
+            return;
+        };
+        if script_active(self.focused_script_state()) {
+            return;
+        }
+        match self.play.as_ref().map(|p| p.script_start(&name, sel)) {
+            Some(Ok(())) => self.error = None,
+            Some(Err(e)) => self.error = Some(format!("script: {e}")),
+            None => self.error = Some("script: no play".into()),
+        }
+    }
+
+    /// Pause the focused slot's script, or Resume when it is Paused (the
+    /// button label follows [`script_pause_enabled`]).
+    pub fn script_toggle_pause(&mut self) {
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        if play.script_state(&name) == script::RunState::Paused {
+            play.script_resume(&name);
+        } else {
+            play.script_pause(&name);
+        }
+    }
+
+    /// Stop the focused slot's script (teardown hook, instance dropped).
+    pub fn script_stop(&mut self) {
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        if let Some(play) = self.play.as_ref() {
+            play.script_stop(&name);
+        }
+    }
+
     /// Overlay generation for the path overlay's rising-edge refresh.
     pub fn route_gen(&self) -> u64 {
         self.route_gen
@@ -1419,7 +1526,8 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        arm_login_all, combo_index, maybe_send_click, seed_on_first_world, stream_capture, Session,
+        arm_login_all, combo_index, maybe_send_click, script_active, script_pause_enabled,
+        script_status_text, script_stop_enabled, seed_on_first_world, stream_capture, Session,
         SlotIo,
     };
     use host::{InputEv, PixelBuf, SlotInput};
@@ -2946,5 +3054,70 @@ mod tests {
             s.focus.lock().unwrap().wall.contains(&"alice".to_string()),
             "Focus.wall still lists the member"
         );
+    }
+
+    #[test]
+    fn script_active_matches_rs2b0t() {
+        assert!(script_active(script::RunState::Running));
+        assert!(script_active(script::RunState::Paused));
+        assert!(script_active(script::RunState::Stopping));
+        assert!(!script_active(script::RunState::Idle));
+        assert!(!script_active(script::RunState::Error));
+    }
+
+    #[test]
+    fn script_pause_resume_stop_enable_rules() {
+        assert!(script_pause_enabled(script::RunState::Running));
+        assert!(script_pause_enabled(script::RunState::Paused));
+        assert!(!script_pause_enabled(script::RunState::Idle));
+        assert!(!script_pause_enabled(script::RunState::Stopping));
+        assert!(!script_pause_enabled(script::RunState::Error));
+        assert!(script_stop_enabled(script::RunState::Running));
+        assert!(script_stop_enabled(script::RunState::Paused));
+        assert!(!script_stop_enabled(script::RunState::Stopping));
+        assert!(!script_stop_enabled(script::RunState::Idle));
+        assert!(!script_stop_enabled(script::RunState::Error));
+    }
+
+    #[test]
+    fn script_status_text_matches_rs2b0t_labels() {
+        assert_eq!(script_status_text(script::RunState::Idle), "idle");
+        assert_eq!(script_status_text(script::RunState::Running), "running");
+        assert_eq!(script_status_text(script::RunState::Paused), "paused");
+        assert_eq!(script_status_text(script::RunState::Stopping), "stopping");
+        assert_eq!(script_status_text(script::RunState::Error), "error");
+    }
+
+    #[test]
+    fn script_start_selected_wires_focused_slot_and_reports_not_ported() {
+        let mut s = Session::new();
+        let mut play = empty_play();
+        play.attach_arm("alice", SlotArm::new(42, false));
+        s.play = Some(play);
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.script_sel = Some(script::CompiledId("WalkTo"));
+        s.script_start_selected();
+        let err = s.error.clone().expect("not-ported message");
+        assert!(err.contains("not ported"), "{err}");
+        assert_eq!(s.focused_script_state(), script::RunState::Idle);
+    }
+
+    #[test]
+    fn script_start_selected_refuses_without_selection_or_play() {
+        let mut s = Session::new();
+        s.script_start_selected();
+        let err = s.error.clone().expect("no-focus banner");
+        assert!(err.contains("focused"), "{err}");
+        s.error = None;
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.script_start_selected();
+        let err = s.error.clone().expect("no-selection banner");
+        assert!(err.contains("browse"), "{err}");
+        s.error = None;
+        s.script_sel = Some(script::CompiledId("WalkTo"));
+        s.script_start_selected();
+        let err = s.error.clone().expect("no-play banner");
+        assert!(err.contains("play"), "{err}");
+        assert_eq!(s.focused_script_state(), script::RunState::Idle);
     }
 }

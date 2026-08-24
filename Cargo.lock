@@ -1860,6 +1860,7 @@ dependencies = [
  "host",
  "host-play",
  "nav",
+ "script",
  "serde",
  "serde_json",
  "vault",

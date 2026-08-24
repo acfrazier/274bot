@@ -32,7 +32,10 @@ use crate::resource::{
     cpu_from_delta, draw_metric, format_bots, format_rss_caption, sample_process,
     traffic_from_samples, Metric,
 };
-use crate::session::{combo_index, stream_capture, Session, PROCESS};
+use crate::session::{
+    combo_index, script_active, script_pause_enabled, script_status_text, script_stop_enabled,
+    stream_capture, Session, PROCESS,
+};
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
     BUILD_LINE, ERROR, PANEL_WINDOW, RAIL_WINDOW, TEXT_DIM, TITLE,
@@ -953,18 +956,136 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
     ui.set_item_tooltip("open tile picker");
 }
 
-/// script: mocked until campaign 5. Layout matches BotPanel (name+Browse,
-/// then Start/Pause/Stop, then a status row).
+/// script: real Browse/Start/Pause/Stop with the rs2b0t disable rules.
+/// `active` = Running|Paused|Stopping: Start and Browse are disabled while
+/// a script holds the slot; Pause/Resume is enabled only while Running or
+/// Paused (label switches to "Resume"); Stop is enabled while active but
+/// not already Stopping. Browse lists `script::compiled_ids()` and
+/// selecting does not Start — Start is the section button. Load stays
+/// disabled until Task 10 (out-of-tree JS).
 fn script_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "script") {
         return;
     }
-    ui.text_colored(ACCENT, "(none)");
+    let state = session.focused_script_state();
+    let active = script_active(state);
+    let paused = state == script::RunState::Paused;
+
+    let name = session.script_sel.map(|id| id.0).unwrap_or("(none)");
+    ui.text_colored(ACCENT, name);
     ui.same_line();
-    let rest = ui.content_region_avail()[0];
-    mock_button(ui, "Browse…", "campaign 5", [rest.max(1.0), 0.0]);
-    mock_button_row(ui, SCRIPT_ROW, "campaign 5");
-    kv_row(ui, "status", "idle");
+    let avail = ui.content_region_avail()[0];
+    let (w, stack) = button_row_layout(avail, 2);
+    {
+        let _browse = if active {
+            Some(ui.begin_disabled())
+        } else {
+            None
+        };
+        if ui.button_with_size("Browse…", [w, 0.0]) {
+            session.script_browse_open = true;
+        }
+        ui.set_item_tooltip("pick a compiled script");
+    }
+    if !stack {
+        ui.same_line();
+    }
+    {
+        let _load = ui.begin_disabled();
+        ui.button_with_size("Load", [w, 0.0]);
+        ui.set_item_tooltip("load a local JS script — not until Task 10");
+    }
+
+    let (sw, sstack) = button_row_layout(ui.content_region_avail()[0], SCRIPT_ROW.len());
+    {
+        let _start = if active {
+            Some(ui.begin_disabled())
+        } else {
+            None
+        };
+        if ui.button_with_size("Start", [sw, 0.0]) {
+            session.script_start_selected();
+        }
+    }
+    if !sstack {
+        ui.same_line();
+    }
+    {
+        let _pause = if script_pause_enabled(state) {
+            None
+        } else {
+            Some(ui.begin_disabled())
+        };
+        if ui.button_with_size(if paused { "Resume" } else { "Pause" }, [sw, 0.0]) {
+            session.script_toggle_pause();
+        }
+    }
+    if !sstack {
+        ui.same_line();
+    }
+    {
+        let _stop = if script_stop_enabled(state) {
+            None
+        } else {
+            Some(ui.begin_disabled())
+        };
+        if ui.button_with_size("Stop", [sw, 0.0]) {
+            session.script_stop();
+        }
+    }
+
+    let status = script_status_text(state);
+    match session.focused_script_last_error() {
+        Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
+        None => kv_row(ui, "status", status),
+    }
+}
+
+/// True while the script Browse picker was wanted last frame; drives the
+/// rising-edge `open_popup` (same latch as the chooser) so Esc cannot be
+/// defeated by a per-frame reopen.
+static PREV_BROWSE: AtomicBool = AtomicBool::new(false);
+
+/// Browse picker: one row per compiled script (JS cards come in Task 10,
+/// tagged "JS"; compiled rows have no tag). Clicking a row only stores the
+/// selection — selecting never Starts.
+fn browse_window(ui: &Ui, session: &mut Session) {
+    let want = session.script_browse_open;
+    let (open_popup, new_prev) =
+        chooser_should_open_popup(want, PREV_BROWSE.load(Ordering::Relaxed));
+    PREV_BROWSE.store(new_prev, Ordering::Relaxed);
+    if open_popup {
+        ui.open_popup("274bot-browse");
+    }
+    let mut open = want;
+    if let Some(_t) = ui
+        .begin_modal_popup_config("274bot-browse")
+        .opened(&mut open)
+        .begin()
+    {
+        let ids = script::compiled_ids();
+        let w = ui.content_region_avail()[0];
+        if ids.is_empty() {
+            ui.text_disabled("no compiled scripts");
+        }
+        for id in ids {
+            let selected = session.script_sel == Some(*id);
+            if ui
+                .selectable_config(id.0)
+                .selected(selected)
+                .close_popups(false)
+                .size([w, 0.0])
+                .build()
+            {
+                session.script_sel = Some(*id);
+            }
+        }
+        ui.spacing();
+        if ui.button_with_size("Close", [w, 0.0]) {
+            ui.close_current_popup();
+        }
+    }
+    session.script_browse_open = open;
 }
 
 /// parameters: mocked until campaign 5.
@@ -1550,6 +1671,7 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
             // Every frame, not only while open: the prev latches must track
             // the close so the next open is a fresh rising edge.
             chooser_window(ui, &mut state.session);
+            browse_window(ui, &mut state.session);
             render_all_warn_window(ui, &mut state.session);
         })
         .run()

@@ -11,7 +11,7 @@ pub fn sections() -> &'static [Section] {
     &[
         Section { id: "profile", wired: true, campaign_hint: None },
         Section { id: "credentials", wired: true, campaign_hint: None },
-        Section { id: "script", wired: false, campaign_hint: Some("campaign 5") },
+        Section { id: "script", wired: true, campaign_hint: None },
         Section { id: "parameters", wired: false, campaign_hint: Some("campaign 5") },
         Section { id: "status", wired: true, campaign_hint: None },
         Section { id: "log", wired: true, campaign_hint: None },
@@ -61,15 +61,8 @@ pub const GPU_LATER: &str = "gpu later or opti yourself";
 
 /// Global/Nav/Loadouts are controls inside parameters, still listed.
 /// MultiBox was a title-row mock before campaign 4; it is now wired.
-pub const MOCK_BUTTONS: &[&str] = &[
-    "Browse…",
-    "Start",
-    "Pause",
-    "Stop",
-    "Global settings",
-    "Nav settings",
-    "Loadouts",
-];
+/// Script chrome (Browse…/Start/Pause/Stop) is wired as of campaign 5.
+pub const MOCK_BUTTONS: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
 pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
@@ -112,12 +105,30 @@ mod tests {
     fn multibox_is_wired_not_a_mock() {
         assert!(
             !MOCK_BUTTONS.contains(&"MultiBox"),
-            "MultiBox is a live toggle; only script chrome stays mocked"
+            "MultiBox is a live toggle; only parameter chrome stays mocked"
         );
-        for b in ["Browse…", "Start", "Pause", "Stop", "Global settings", "Nav settings", "Loadouts"]
-        {
-            assert!(MOCK_BUTTONS.contains(&b), "script mock {b:?} must still be listed");
+        for b in ["Global settings", "Nav settings", "Loadouts"] {
+            assert!(MOCK_BUTTONS.contains(&b), "param mock {b:?} must still be listed");
         }
+        for b in ["Browse…", "Start", "Pause", "Stop"] {
+            assert!(!MOCK_BUTTONS.contains(&b), "script {b:?} is wired, not a mock");
+        }
+    }
+
+    #[test]
+    fn browse_start_stop_are_not_mocks() {
+        assert!(!MOCK_BUTTONS.contains(&"Browse…"));
+        assert!(!MOCK_BUTTONS.contains(&"Start"));
+        assert!(!MOCK_BUTTONS.contains(&"Pause"));
+        assert!(!MOCK_BUTTONS.contains(&"Stop"));
+    }
+
+    #[test]
+    fn script_section_is_wired() {
+        assert!(
+            sections().iter().any(|s| s.id == "script" && s.wired),
+            "the script section is un-mocked this task"
+        );
     }
 
     #[test]

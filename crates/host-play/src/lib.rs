@@ -530,6 +530,15 @@ impl Play {
             .unwrap_or(script::RunState::Idle)
     }
 
+    /// `name`'s script `last_error`; `None` when the slot has none.
+    pub fn script_last_error(&self, name: &str) -> Option<String> {
+        self.scripts
+            .lock()
+            .unwrap()
+            .get(name)
+            .and_then(|slot| slot.last_error().map(str::to_string))
+    }
+
     /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread
     /// writes `CLIENT_CHEAT` through the slot's Driver and flushes. No-op
     /// when the user is not a running slot.
@@ -2692,6 +2701,7 @@ mod tests {
             |_, _| {},
         );
         assert_eq!(play.script_state("ghost"), script::RunState::Idle);
+        assert_eq!(play.script_last_error("ghost"), None);
         play.script_pause("ghost");
         play.script_resume("ghost");
         play.script_stop("ghost");
