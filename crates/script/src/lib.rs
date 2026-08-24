@@ -3,12 +3,14 @@
 //! task. This task: compiled only.
 
 pub mod ctx;
+pub mod load;
 pub mod params;
 pub mod ported;
 pub mod registry;
 pub mod slot;
 
 pub use ctx::{Script, ScriptCtx};
+pub use load::{detect_shape, LoadShape};
 pub use params::defaults;
 pub use registry::{CompiledId, compiled_ids, factory, is_whale};
 pub use slot::{RunState, SlotScript};
