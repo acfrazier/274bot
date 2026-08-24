@@ -513,7 +513,9 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
 
 /// MultiBox grid-mode Game pane: one cell per wall member, row-major from
 /// [`grid_cells`]. Clicking a cell selects the member; capture reaches
-/// only the focused cell; the queue card overlays the focused cell.
+/// only the focused cell; the queue card overlays the focused cell. While
+/// `only_render_selected` is on (the safe default) each cell collapses to
+/// a cap row (dot, name, ✕) with no preview body.
 fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 2]) {
     let members = state.session.wall.members.clone();
     if members.is_empty() {
@@ -529,11 +531,29 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
     };
+    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
+    let statuses = state.session.statuses();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
         let is_focused = focused.as_deref() == Some(name.as_str());
-        let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
         ui.set_cursor_pos([cx, cy]);
+        if only_selected {
+            // Collapsed cell: cap row only, no preview body.
+            let status = statuses.iter().find(|s| &s.username == name);
+            let light = traffic_light(
+                status.is_some_and(|s| s.ingame),
+                status.is_some_and(|s| s.error.is_some()),
+                status.is_some_and(|s| s.queue_position >= 1),
+            );
+            let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref(), cw);
+            if cap_remove {
+                state.session.rail_remove(name);
+            } else if cap_select {
+                state.session.select(name);
+            }
+            continue;
+        }
+        let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
         let clicked = cell_body(ui, addons, state, name, [cw, ch], draw);
         // Capture only on the focused cell; a click on another cell is a
         // select, not a click-through.
@@ -1019,9 +1039,10 @@ fn input_section(ui: &Ui, session: &mut Session) {
 }
 
 /// Sidecar rail window: only while MultiBox is on and Grid is off. Bulk
-/// Login all / Logout all, the only-render-selected checkbox, one tile per
-/// wall member (cap + 1 fps body or renderer-off placeholder), `+ add bot`,
-/// and the 1 Hz resource card.
+/// Login all / Logout all, the only-render-selected checkbox (unchecking
+/// needs the render-all confirm), one tile per wall member (cap only while
+/// only-render-selected, else cap + 1 fps body or renderer-off
+/// placeholder), `+ add bot`, and the 1 Hz resource card.
 fn rail_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     state.sample_resources();
     ui.window(RAIL_WINDOW)
@@ -1034,8 +1055,24 @@ fn rail_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
         });
 }
 
+/// Apply an "only render selected" checkbox change: re-checking on is
+/// immediate; unchecking keeps the safe default and opens the scary
+/// confirm instead. Returns `(new_only_render_selected, open_warn)`.
+pub fn apply_only_render_selected(current: bool, checked: bool) -> (bool, bool) {
+    if checked && !current {
+        // user just checked "only render selected" — apply immediately
+        return (true, false);
+    }
+    if !checked && current {
+        // user just unchecked — do not apply; open warning
+        return (true, true);
+    }
+    (current, false)
+}
+
 /// Sticky bulk row: Login all / Logout all, then the only-render-selected
-/// checkbox that writes `Focus.only_render_selected` (slot threads apply
+/// checkbox. Unchecking does not write `false` until the render-all
+/// warning is accepted; re-checking on is immediate (slot threads apply
 /// `set_draw` from it every frame).
 fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     let avail = ui.content_region_avail()[0];
@@ -1049,17 +1086,77 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     if ui.button_with_size("Logout all", [w, 0.0]) {
         state.session.logout_all();
     }
-    let mut only = state.session.focus.lock().unwrap().only_render_selected;
+    let current = state.session.focus.lock().unwrap().only_render_selected;
+    let mut only = current;
     if ui.checkbox("only render selected", &mut only) {
-        state.session.focus.lock().unwrap().only_render_selected = only;
+        let (next, open_warn) = apply_only_render_selected(current, only);
+        state.session.focus.lock().unwrap().only_render_selected = next;
+        if open_warn {
+            state.session.wall.render_all_warn_open = true;
+        }
+    }
+}
+
+/// True while the render-all warning was wanted last frame; drives the
+/// rising-edge `open_popup` (same latch as the chooser) so Esc cannot be
+/// defeated by a per-frame reopen.
+static PREV_RENDER_ALL_WARN: AtomicBool = AtomicBool::new(false);
+
+/// Scary confirm before "only render selected" can be unchecked: OK stays
+/// disabled until "I understand" is ticked, then writes
+/// `only_render_selected = false`. Cancel/Esc keep the safe default; the
+/// box that triggered this stays checked either way.
+fn render_all_warn_window(ui: &Ui, session: &mut Session) {
+    let want = session.wall.render_all_warn_open;
+    let (open_popup, new_prev) =
+        chooser_should_open_popup(want, PREV_RENDER_ALL_WARN.load(Ordering::Relaxed));
+    PREV_RENDER_ALL_WARN.store(new_prev, Ordering::Relaxed);
+    if open_popup {
+        ui.open_popup("Render all wall members?");
+    }
+    let mut open = want;
+    if let Some(_t) = ui
+        .begin_modal_popup_config("Render all wall members?")
+        .opened(&mut open)
+        .begin()
+    {
+        ui.text_wrapped("This is unoptimized. Drawing every wall client will likely thrash this machine.");
+        ui.spacing();
+        let mut understood = session.wall.render_all_understood;
+        if ui.checkbox("I understand", &mut understood) {
+            session.wall.render_all_understood = understood;
+        }
+        ui.spacing();
+        let avail = ui.content_region_avail()[0];
+        let (w, stack) = button_row_layout(avail, 2);
+        let ok_clicked = {
+            let _disabled = ui.begin_disabled_with_cond(!understood);
+            ui.button_with_size("OK", [w, 0.0])
+        };
+        if ok_clicked && understood {
+            session.focus.lock().unwrap().only_render_selected = false;
+            ui.close_current_popup();
+        }
+        if !stack {
+            ui.same_line();
+        }
+        if ui.button_with_size("Cancel", [w, 0.0]) {
+            ui.close_current_popup();
+        }
+    }
+    session.wall.render_all_warn_open = open;
+    if !open {
+        session.wall.render_all_understood = false;
     }
 }
 
 /// One tile per wall member, in wall order: cap (traffic-light dot, name,
 /// ✕) then a `TILE_W`×`TILE_H` body. The body blits the slot's `PixelBuf`
 /// when `draw_for_slot` says this member paints, else the renderer-off
-/// placeholder. Clicking the name or the body focuses the member; the ✕
-/// (a sibling button, never part of the name click) removes it.
+/// placeholder. While `only_render_selected` is on (the safe default) the
+/// strip is collapsed: cap only, no body. Clicking the name or the body
+/// focuses the member; the ✕ (a sibling button, never part of the name
+/// click) removes it.
 fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
@@ -1068,6 +1165,7 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
+    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
         let light = traffic_light(
@@ -1079,8 +1177,14 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
             let focus = state.session.focus.lock().unwrap();
             (focus.focused.clone(), draw_for_slot(&focus, name))
         };
-        let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref());
-        let body_clicked = rail_body(ui, addons, state, name, draw);
+        let avail = ui.content_region_avail()[0];
+        let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref(), avail);
+        let body_clicked = if only_selected {
+            // Collapsed strip: no preview body until "render all" is accepted.
+            false
+        } else {
+            rail_body(ui, addons, state, name, draw)
+        };
         if cap_remove {
             state.session.rail_remove(name);
         } else if cap_select || body_clicked {
@@ -1092,9 +1196,9 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
 
 /// Cap row: the traffic-light dot, the member's name (click selects), and
 /// a small ✕ (rail remove: logout arm then `stop_slot`, never `vault`).
+/// `width` is the strip the row must fit (rail avail or grid cell width).
 /// Returns `(selected, removed)`.
-fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>) -> (bool, bool) {
-    let avail = ui.content_region_avail()[0];
+fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32) -> (bool, bool) {
     const X_W: f32 = 24.0;
     const DOT_W: f32 = 16.0;
     ui.text_colored(light.rgb(), "●");
@@ -1103,7 +1207,7 @@ fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>) -> (bool, 
     let clicked = ui
         .selectable_config(name)
         .selected(selected)
-        .size([(avail - X_W - DOT_W).max(10.0), 0.0])
+        .size([(width - X_W - DOT_W).max(10.0), 0.0])
         .build();
     ui.same_line();
     let removed = ui.button_with_size(format!("✕##{name}"), [X_W, 0.0]);
@@ -1372,9 +1476,10 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
                 ui.set_next_window_class(&class);
                 rail_window(ui, addons, &mut state);
             }
-            // Every frame, not only while open: the prev latch must track
-            // the close so the next `+ add bot` is a fresh rising edge.
+            // Every frame, not only while open: the prev latches must track
+            // the close so the next open is a fresh rising edge.
             chooser_window(ui, &mut state.session);
+            render_all_warn_window(ui, &mut state.session);
         })
         .run()
 }
@@ -1386,8 +1491,8 @@ mod tests {
     use dear_imgui_rs::ConfigFlags;
 
     use super::{
-        apply_ui_scale, chooser_should_open_popup, live_null_tick, live_stress_tick,
-        parse_live_args, runner_config, LiveNull, LiveStress, LIVE_USAGE,
+        apply_only_render_selected, apply_ui_scale, chooser_should_open_popup, live_null_tick,
+        live_stress_tick, parse_live_args, runner_config, LiveNull, LiveStress, LIVE_USAGE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
@@ -1419,6 +1524,18 @@ mod tests {
         assert!(!prev, "prev must track the close so + add can reopen");
         let (open, _np) = chooser_should_open_popup(true, prev);
         assert!(open, "the next + add bot reopens the chooser");
+    }
+
+    #[test]
+    fn apply_only_render_selected_warns_before_unchecking() {
+        // Checking "only render selected" on is immediate, no dialog.
+        assert_eq!(apply_only_render_selected(false, true), (true, false));
+        // Unchecking does not apply: keeps the safe default, opens the
+        // warning instead.
+        assert_eq!(apply_only_render_selected(true, false), (true, true));
+        // No-op rows: the box already matches the flag.
+        assert_eq!(apply_only_render_selected(true, true), (true, false));
+        assert_eq!(apply_only_render_selected(false, false), (false, false));
     }
 
     #[test]

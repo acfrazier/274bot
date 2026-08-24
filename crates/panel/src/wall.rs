@@ -14,6 +14,11 @@ pub struct Wall {
     pub opened_once: bool,
     pub grid: bool,
     pub latch: HashSet<String>,
+    /// Scary "render all" confirm: wanted while the user has unchecked
+    /// "only render selected" but not yet accepted (OK) or backed out.
+    pub render_all_warn_open: bool,
+    /// "I understand" checkbox state inside that confirm.
+    pub render_all_understood: bool,
 }
 
 impl Wall {
@@ -38,10 +43,12 @@ impl Wall {
         }
     }
 
-    /// Multibox off: drop the grid overlay and any open chooser.
+    /// Multibox off: drop the grid overlay and any open chooser or
+    /// render-all warning.
     pub fn on_multibox_off(&mut self) {
         self.grid = false;
         self.chooser_open = false;
+        self.render_all_warn_open = false;
     }
 
     /// Add a member. Returns false when it is already a member; selection
@@ -171,9 +178,11 @@ mod tests {
         let mut w = Wall::default();
         w.on_multibox_on(&["a".into()]);
         w.grid = true;
+        w.render_all_warn_open = true;
         w.on_multibox_off();
         assert!(!w.grid);
         assert!(!w.chooser_open);
+        assert!(!w.render_all_warn_open);
         assert_eq!(w.members, vec!["a".to_string()]);
     }
 
