@@ -93,6 +93,11 @@ pub fn map_image_to_applet(
 
 pub struct SlotInput {
     enabled: AtomicBool,
+    /// 50 fps frame-cadence latch: the panel's sidecar-50 pref sets this
+    /// so a draw-on wall/grid member stays on the 20 ms loop and paints
+    /// every tick (host-side; the old `SlotLoop::full_rate` stub moved
+    /// here so the panel can reach it).
+    full_rate: AtomicBool,
     rx: Mutex<Option<Receiver<InputEv>>>,
 }
 
@@ -100,6 +105,7 @@ impl SlotInput {
     pub fn new() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             enabled: AtomicBool::new(false),
+            full_rate: AtomicBool::new(false),
             rx: Mutex::new(None),
         })
     }
@@ -108,6 +114,12 @@ impl SlotInput {
     }
     pub fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+    pub fn set_full_rate(&self, on: bool) {
+        self.full_rate.store(on, Ordering::Relaxed);
+    }
+    pub fn full_rate(&self) -> bool {
+        self.full_rate.load(Ordering::Relaxed)
     }
     pub fn connect_rx(&self, rx: Receiver<InputEv>) {
         *self.rx.lock().unwrap() = Some(rx);

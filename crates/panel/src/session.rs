@@ -17,10 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::interact::Driver;
+use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
+use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
@@ -30,7 +32,7 @@ use nav::tile::Tile;
 use nav::traveller::{NavStatus, Traveller};
 use vault::{Profile, Vault};
 
-use crate::focus::draw_for_slot;
+use crate::focus::{draw_for_slot, full_rate_for};
 use crate::wall::Wall;
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -38,6 +40,10 @@ use crate::wall::Wall;
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
+
+/// Cooldown between cpal open retries after a device failure: a machine
+/// without an audio device must not re-open (and re-log) every 20 ms frame.
+const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
 
 const DEFAULT_PORT: u16 = 43594;
 
@@ -234,6 +240,10 @@ pub struct Session {
     /// `Client`), the UI frame reads its status/evidence. `None` when no
     /// scenario is live.
     pub scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
+    /// Focused-slot speaker gate: at most one cpal speaker, owned by the
+    /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
+    /// off) never opens cpal; slot threads reconcile on their frame loop.
+    audio: Arc<AudioGate<AudioOut>>,
 }
 
 /// Keep each per-name panel log bounded.
@@ -268,6 +278,7 @@ impl Session {
                 game_pane_open: true,
                 capture: false,
                 only_render_selected: true,
+                sidecar_50: false,
                 wall_open: false,
                 wall: Vec::new(),
                 renderer_by: HashMap::new(),
@@ -307,6 +318,7 @@ impl Session {
             },
             load_scratch: String::new(),
             scenario: Arc::new(Mutex::new(None)),
+            audio: Arc::new(AudioGate::new()),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -479,6 +491,10 @@ impl Session {
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
         let scenario = Arc::clone(&self.scenario);
+        let audio = Arc::clone(&self.audio);
+        // Last failed device-open `(slot, when)`; a machine without an
+        // audio device must not re-open cpal (or re-log) every frame.
+        let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
         let options = self.options.clone();
         let play = run_with_io(
             &options,
@@ -488,10 +504,47 @@ impl Session {
                 // Flat model: every slot is a full Client; draw gates the
                 // slot's renderer per the wall policy (focused always,
                 // members when only-render-selected is off).
-                let f = focus.lock().unwrap();
-                let draw = draw_for_slot(&f, name);
-                drop(f);
+                let (focused, draw) = {
+                    let f = focus.lock().unwrap();
+                    (f.focused.clone(), draw_for_slot(&f, name))
+                };
                 c.set_draw(draw);
+                // Focused-slot speaker: at most one cpal speaker, fed by
+                // this slot's Client audio state (midi/waves/fade), gated
+                // on focus + the Music/SFX toggle — `lowmem` (toggle off)
+                // never opens cpal. The gate reconciles every frame; the
+                // open closure runs on this slot's thread.
+                let change = audio.frame(name, focused.as_deref(), || {
+                    let now = Instant::now();
+                    if let Some((who, at)) = audio_fail.lock().unwrap().as_ref() {
+                        if who == name && now.duration_since(*at) < AUDIO_OPEN_RETRY {
+                            return None;
+                        }
+                    }
+                    match AudioOut::try_open(c.midi.clone(), c.waves.clone(), c.fade.clone()) {
+                        Ok(out) => {
+                            *audio_fail.lock().unwrap() = None;
+                            push_log(
+                                &mut log_by.lock().unwrap(),
+                                name,
+                                format!("audio: speaker open ({} Hz)", out.sample_rate),
+                            );
+                            Some(out)
+                        }
+                        Err(e) => {
+                            *audio_fail.lock().unwrap() = Some((name.to_string(), now));
+                            push_log(&mut log_by.lock().unwrap(), name, format!("audio: {e}"));
+                            None
+                        }
+                    }
+                });
+                if change == AudioChange::Closed {
+                    push_log(
+                        &mut log_by.lock().unwrap(),
+                        name,
+                        "audio: speaker closed".into(),
+                    );
+                }
                 if c.ingame
                     && c.scene_state == 2
                     && seed_on_first_world(c.last_login_reconnect)
@@ -580,6 +633,15 @@ impl Session {
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
+        // Per-frame mirrors that must not lag a focus/renderer/wall change:
+        // the sidecar-50 cadence latch, and the speaker teardown when the
+        // owning slot is no longer running.
+        self.sync_sidecar_cadence();
+        if let Some(owner) = self.audio.owner() {
+            if !self.slots.contains_key(&owner) {
+                self.audio.release(&owner);
+            }
+        }
         let Some(play) = self.play.as_mut() else {
             return;
         };
@@ -782,6 +844,26 @@ impl Session {
         }
     }
 
+    /// Sidecar-50 pref: wall/grid members render at 50 fps instead of the
+    /// 1 fps watch cadence (a render-cadence knob, not the idle park).
+    /// `pump_status` mirrors it onto each slot's frame-loop latch within a
+    /// frame; kick the parked members so the raise is not held up by the
+    /// 1 s watch bound.
+    pub fn set_sidecar_50(&mut self, on: bool) {
+        self.focus.lock().unwrap().sidecar_50 = on;
+        self.wake_all_slots();
+    }
+
+    /// Mirror the sidecar-50 pref onto every slot's frame-cadence latch
+    /// (`SlotInput::set_full_rate`). Runs every UI frame so a focus,
+    /// renderer, or wall-policy change lands within a frame.
+    fn sync_sidecar_cadence(&mut self) {
+        let focus = self.focus.lock().unwrap();
+        for (name, slot) in &self.slots {
+            slot.input.set_full_rate(full_rate_for(&focus, name));
+        }
+    }
+
     /// Game window `.build()` Some/None. Closing the pane turns capture off
     /// (`set_enabled(false)` + drop tx); reopening does not re-enable it.
     pub fn set_game_pane_open(&mut self, open: bool) {
@@ -921,6 +1003,9 @@ impl Session {
         };
         let input = SlotInput::new();
         let pixels = FrameBuf::new();
+        // The speaker gate mirrors the profile's lowmem at spawn: a
+        // default lowmem slot starts with Music/SFX off (no cpal).
+        self.audio.set_music(username, !profile.settings.lowmem);
         if let Some(play) = &mut self.play {
             play.spawn_slot(
                 profile,
@@ -1002,9 +1087,10 @@ impl Session {
     }
 
     /// Persist the focused profile's lowmem setting to the vault
-    /// (`ProfileSettings.lowmem`). Takes effect on the profile's next
-    /// spawn; a live slot is not torn down or restarted. Returns whether
-    /// the write landed; failures set [`Session::error`].
+    /// (`ProfileSettings.lowmem`) and retarget the focused slot's speaker
+    /// gate live: Music/SFX on (highmem) opens cpal on the focused slot,
+    /// off (lowmem) tears it down. Returns whether the write landed;
+    /// failures set [`Session::error`].
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
         let Some(name) = self.focused_name() else {
             self.error = Some("music/sfx: no focused profile".into());
@@ -1020,13 +1106,22 @@ impl Session {
         };
         profile.settings.lowmem = lowmem;
         match vault.upsert(profile) {
-            Ok(()) => self.error = None,
+            Ok(()) => {
+                self.error = None;
+                self.audio.set_music(&name, !lowmem);
+                // The gate reconciles on the slot's frame loop; kick a
+                // parked focused slot so the open/teardown lands within a
+                // frame, not at the 1 s watch bound.
+                if let Some(play) = self.play.as_ref() {
+                    play.wake(&name);
+                }
+                true
+            }
             Err(e) => {
                 self.error = Some(format!("music/sfx: {e}"));
-                return false;
+                false
             }
         }
-        true
     }
 
     /// Load a wall member: ensure its slot and select it. Auto-login
@@ -1248,6 +1343,7 @@ impl Session {
         }
         // Flat model: each member owns its own framebuffer; stop means drop.
         self.slots.remove(name);
+        self.audio.release(name);
         self.sync_wall_focus();
         if focused.as_deref() == Some(name) {
             match neighbour {
@@ -1681,6 +1777,70 @@ mod tests {
                 .all(|l| !l.contains("alice") && !l.contains("scene 2")),
             "bob must not see alice lines: {bob:?}"
         );
+    }
+
+    #[test]
+    fn music_toggle_mirrors_onto_the_audio_gate_live() {
+        let path = tmp_vault("audio-toggle.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        // The default lowmem slot starts with Music/SFX off: no cpal.
+        assert!(s.focused_lowmem());
+        s.select("alice");
+        assert!(
+            !s.audio.music_on("alice"),
+            "default lowmem must not arm music"
+        );
+        // Toggle on (highmem): the gate arms the focused slot's speaker.
+        assert!(s.set_focused_lowmem(false));
+        assert!(s.audio.music_on("alice"));
+        assert!(!s.focused_lowmem());
+        // Toggle off (lowmem): the gate tears the speaker down.
+        assert!(s.set_focused_lowmem(true));
+        assert!(!s.audio.music_on("alice"));
+    }
+
+    #[test]
+    fn sidecar_cadence_sync_raises_members_not_focus() {
+        let mut s = Session::new();
+        let a_in = SlotInput::new();
+        let b_in = SlotInput::new();
+        s.slots.insert(
+            "a".into(),
+            SlotIo {
+                input: Arc::clone(&a_in),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.slots.insert(
+            "b".into(),
+            SlotIo {
+                input: Arc::clone(&b_in),
+                pixels: FrameBuf::new(),
+            },
+        );
+        {
+            let mut f = s.focus.lock().unwrap();
+            f.focused = Some("a".into());
+            f.only_render_selected = false;
+            f.wall_open = true;
+            f.wall = vec!["a".into(), "b".into()];
+            f.renderer_by =
+                std::collections::HashMap::from([("a".into(), true), ("b".into(), true)]);
+            f.sidecar_50 = true;
+        }
+        s.sync_sidecar_cadence();
+        assert!(!a_in.full_rate(), "the focused slot keeps its capture path");
+        assert!(b_in.full_rate(), "the sidecar pref raises a drawing member");
+        // Pref off returns the 1 fps watch cadence.
+        s.set_sidecar_50(false);
+        s.sync_sidecar_cadence();
+        assert!(!b_in.full_rate());
     }
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {

@@ -2,6 +2,8 @@
 //! unlocks a vault and runs the named profiles; the `e2e` harness links
 //! this library so it can poll per-slot state instead of scraping logs.
 
+pub mod audio;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;

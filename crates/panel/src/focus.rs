@@ -12,6 +12,9 @@ pub struct Focus {
     pub capture: bool,
     /// When false, wall members also draw (wall policy below).
     pub only_render_selected: bool,
+    /// Sidecar-50 pref: wall/grid members render at 50 fps instead of the
+    /// 1 fps watch cadence.
+    pub sidecar_50: bool,
     /// Whether the wall draw policy is active.
     pub wall_open: bool,
     /// Wall members eligible to draw when `only_render_selected` is off.
@@ -48,6 +51,14 @@ pub fn draw_for_slot(f: &Focus, name: &str) -> bool {
     !f.only_render_selected && f.wall_open && f.wall.iter().any(|n| n == name)
 }
 
+/// Whether this slot runs at the 50 fps frame cadence instead of the
+/// 1 fps watch cadence: the sidecar-50 pref is on and the slot is a
+/// drawing wall/grid member. The focused slot's own 50 fps is the capture
+/// path (capture raises it), not this pref.
+pub fn full_rate_for(f: &Focus, name: &str) -> bool {
+    f.sidecar_50 && f.focused.as_deref() != Some(name) && draw_for_slot(f, name)
+}
+
 /// Capture (the focused bot's capture checkbox) additionally requires draw.
 pub fn should_capture(f: &Focus) -> bool {
     should_draw(f) && f.capture
@@ -57,7 +68,7 @@ pub fn should_capture(f: &Focus) -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{draw_for_slot, should_capture, should_draw, Focus};
+    use super::{draw_for_slot, full_rate_for, should_capture, should_draw, Focus};
 
     #[test]
     fn draw_requires_focus_pane_and_renderer() {
@@ -67,6 +78,7 @@ mod tests {
             game_pane_open: true,
             capture: false,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -88,6 +100,7 @@ mod tests {
             game_pane_open: true,
             capture: true,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -99,6 +112,7 @@ mod tests {
             game_pane_open: true,
             capture: true,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -114,6 +128,7 @@ mod tests {
             game_pane_open: true,
             capture: false,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -128,6 +143,7 @@ mod tests {
             game_pane_open: true,
             capture: false,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -140,6 +156,7 @@ mod tests {
             game_pane_open: true,
             capture: false,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -155,6 +172,7 @@ mod tests {
             game_pane_open: true,
             capture: false,
             only_render_selected: true,
+            sidecar_50: false,
             wall_open: true,
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
@@ -168,5 +186,39 @@ mod tests {
         f.wall_open = true;
         f.renderer_by.insert("b".into(), false);
         assert!(!draw_for_slot(&f, "b"));
+    }
+
+    #[test]
+    fn full_rate_for_pref_raises_drawing_members_only() {
+        let mut f = Focus {
+            focused: Some("a".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: false,
+            sidecar_50: true,
+            wall_open: true,
+            wall: vec!["a".into(), "b".into()],
+            renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
+        };
+        // The pref targets wall/grid members, never the focused slot (the
+        // focused slot's 50 fps is the capture path).
+        assert!(full_rate_for(&f, "b"), "drawing member runs at 50 fps");
+        assert!(!full_rate_for(&f, "a"), "focused slot keeps its own path");
+        // Pref off keeps the 1 fps watch cadence.
+        f.sidecar_50 = false;
+        assert!(!full_rate_for(&f, "b"));
+        // Collapsed rail (only render selected): members do not draw, so
+        // the pref cannot raise them.
+        f.sidecar_50 = true;
+        f.only_render_selected = true;
+        assert!(!full_rate_for(&f, "b"));
+        f.only_render_selected = false;
+        // Wall closed or per-slot renderer off: no draw, no raise.
+        f.wall_open = false;
+        assert!(!full_rate_for(&f, "b"));
+        f.wall_open = true;
+        f.renderer_by.insert("b".into(), false);
+        assert!(!full_rate_for(&f, "b"));
     }
 }

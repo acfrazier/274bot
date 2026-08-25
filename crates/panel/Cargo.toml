@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 api = { path = "../api" }
-client = { workspace = true }
+client = { workspace = true, features = ["audio"] }
 dear-app = "0.15.1"
 dear-imgui-rs = "0.15"
 host = { path = "../host" }

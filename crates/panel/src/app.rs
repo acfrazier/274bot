@@ -1307,16 +1307,24 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
         session.set_renderer(cur);
     }
     ui.text_wrapped(if on {
-        "1 fps rail (CPU). Capture raises it to 50 fps. Never pauses the bot."
+        "1 fps watch; capture raises the focused slot to 50 fps. Never pauses the bot."
     } else {
         "renderer off — bot still runs."
     });
-    // Music / SFX: the focused profile's vault lowmem. Next spawn.
+    // Sidecar 50 fps: a render-cadence pref for wall/grid members (the
+    // focused slot's 50 fps is the capture path, not this knob).
+    let mut sidecar = session.focus.lock().unwrap().sidecar_50;
+    if ui.checkbox("sidecar 50 fps", &mut sidecar) {
+        session.set_sidecar_50(sidecar);
+    }
+    ui.text_wrapped("wall/grid members repaint every 20 ms, not 1 s");
+    // Music / SFX: the focused profile's vault lowmem. The toggle
+    // retargets the focused slot's cpal speaker live.
     let mut music = !session.focused_lowmem();
     if ui.checkbox("Music / SFX", &mut music) {
         session.set_focused_lowmem(!music);
     }
-    ui.text_wrapped("highmem audio; applies the next time this profile starts");
+    ui.text_wrapped("highmem audio; the focused slot's speaker opens live");
 }
 
 /// input: per-focused-bot capture toggle. Off = watch-only, zero input work.
@@ -1422,7 +1430,8 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
         .begin()
     {
         ui.text_wrapped(
-            "This is unoptimized. Drawing every wall client will likely thrash this machine.",
+            "This runs a GPU renderer for every client. Much lighter than the old CPU path, \
+             but a full wall still drives real GPU load on this machine.",
         );
         ui.spacing();
         let mut understood = session.wall.render_all_understood;

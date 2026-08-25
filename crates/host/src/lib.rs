@@ -159,7 +159,7 @@ impl Host {
             if probe(client) {
                 return;
             }
-            if frame_cadence(client, input.as_deref(), &slot) || busy {
+            if frame_cadence(client, input.as_deref()) || busy {
                 socket_stalled = false;
                 let start = std::time::Instant::now();
                 busy = Self::client_tick(
@@ -186,7 +186,7 @@ impl Host {
             let before = stream_bytes(client);
             let timeout = if socket_stalled {
                 STALL_PARK_MS
-            } else if watch_only(client, input.as_deref(), &slot) {
+            } else if watch_only(client, input.as_deref()) {
                 WATCH_PARK_MS
             } else {
                 IDLE_PARK_MS
@@ -266,12 +266,14 @@ impl Host {
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
         // a second and looks like a frozen splash).
         let zap = client.ingame && client.scene_state != 2;
-        // `client.draw` is the renderer switch the panel latches via
-        // `Client::set_draw`; `full_rate` is slot-local for now.
-        // TODO(Task 2): wire `full_rate` from the panel/TV control path.
+        // The 50 fps cadence latch: `client.draw` is the renderer switch
+        // the panel latches via `Client::set_draw`; `full_rate` is the
+        // per-slot knob the panel's sidecar-50 pref drives through the
+        // shared `SlotInput`.
+        let full_rate = input.map(|i| i.full_rate()).unwrap_or(false);
         let paint = raster_this_tick(
             client.draw,
-            capture || zap || slot.full_rate,
+            capture || zap || full_rate,
             t_loop,
             &mut slot.raster_last,
             &mut slot.raster_was_on,
@@ -334,23 +336,26 @@ impl Host {
 }
 
 /// Frame-loop cadence: a slot that captures input, is still loading (TV
-/// static re-rolls every 20 ms), or runs full-rate TV keeps the fixed
-/// 20 ms loop — that loop *is* the render cadence (50 fps) and the input
-/// drain cadence. Draw-on but not capture/full-rate is **watch-only 1 fps**:
-/// the picture only refreshes once a second, so the slot parks on the 1 s
-/// wall-clock bound instead of holding the 20 ms sim loop for a 1 fps
-/// sidecar. `busy` (script/cheat/nav work from the observe hook) also
-/// keeps a slot on the frame loop.
-fn frame_cadence(client: &Client, input: Option<&SlotInput>, slot: &SlotLoop) -> bool {
+/// static re-rolls every 20 ms), or runs full-rate (the panel's sidecar-50
+/// pref, or the TV full-rate latch) keeps the fixed 20 ms loop — that loop
+/// *is* the render cadence (50 fps) and the input drain cadence. Draw-on
+/// but not capture/full-rate is **watch-only 1 fps**: the picture only
+/// refreshes once a second, so the slot parks on the 1 s wall-clock bound
+/// instead of holding the 20 ms sim loop for a 1 fps sidecar. `busy`
+/// (script/cheat/nav work from the observe hook) also keeps a slot on the
+/// frame loop.
+fn frame_cadence(client: &Client, input: Option<&SlotInput>) -> bool {
     input.map(|i| i.enabled()).unwrap_or(false)
-        || (client.draw && (slot.full_rate || (client.ingame && client.scene_state != 2)))
+        || (client.draw
+            && (input.map(|i| i.full_rate()).unwrap_or(false)
+                || (client.ingame && client.scene_state != 2)))
 }
 
 /// A watch-only 1 fps sidecar: the renderer is on but nothing needs the
 /// 20 ms loop (no capture, no full-rate, not still loading) — it parks on
 /// the 1 s wall-clock repaint bound.
-fn watch_only(client: &Client, input: Option<&SlotInput>, slot: &SlotLoop) -> bool {
-    client.draw && !frame_cadence(client, input, slot)
+fn watch_only(client: &Client, input: Option<&SlotInput>) -> bool {
+    client.draw && !frame_cadence(client, input)
 }
 
 /// Payload bytes the client's stream has consumed; 0 when no stream.
@@ -483,10 +488,6 @@ struct SlotLoop {
     run_on: bool,
     run_sends: u32,
     last_modal: Option<i32>,
-    /// TV full-rate latch: focused+input-on slots paint every tick even
-    /// after the scene is ready.
-    /// TODO(Task 2): wire this from the panel/TV control path.
-    full_rate: bool,
     renderer: Option<Renderer>,
     /// `Instant` of the last paint of any kind; the watch-only 1 fps
     /// decision repaints when this is ≥1 s old.
@@ -508,7 +509,6 @@ impl SlotLoop {
             run_on: false,
             run_sends: 0,
             last_modal: None,
-            full_rate: false,
             renderer: None,
             raster_last: None,
             raster_was_on: false,
@@ -965,16 +965,27 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
-        slot.full_rate = true;
+        // The sidecar-50 pref drives the frame cadence through the shared
+        // SlotInput, not a slot-local field.
+        let inp = SlotInput::new();
+        inp.set_full_rate(true);
         c.ingame = true;
         c.scene_state = 2;
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 1);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
         assert_eq!(
             buf.generation(),
             2,
             "TV full_rate must redraw 2D+3D every 20 ms, not 1 fps watch"
+        );
+        // Clearing the latch drops back to the 1 fps watch cadence.
+        inp.set_full_rate(false);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        assert_eq!(
+            buf.generation(),
+            2,
+            "full_rate off must not paint sub-second"
         );
     }
 
