@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use common::{fail, live, options, profiles, wait_ingame};
 use host::{FrameBuf, InputEv, SlotInput};
 use host_play::run_with_io;
+use client::render::backend::FrameOutput;
 
 /// 3D view is 4,4–516,338 in applet coords; (256,167) is its center.
 const VIEWPORT_CLICK_X: i32 = 256;
@@ -69,11 +70,28 @@ fn live_draw_area_and_capture_walk() {
 
     // Renderer proof: with draw on and scene 2, the buffer must carry a
     // non-zero frame within 10 s (an empty buffer means the set_draw/pixel
-    // path never painted).
+    // path never painted). The mailbox is single-consumer: `take` the
+    // stored frame and count non-zero pixels on either variant — the GPU
+    // backend's `Texture` reads back through the client device, the CPU
+    // backend's `PixMap` packs directly.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let snap = pixels.snapshot();
-        let non_zero = snap.iter().filter(|&&p| p != 0).count();
+        let non_zero = match pixels.take() {
+            Some(FrameOutput::PixMap(pix)) => {
+                pix.pixels.iter().filter(|&&p| p != 0).count()
+            }
+            Some(FrameOutput::Texture(handle)) => {
+                let width = handle.width as usize;
+                let height = handle.height as usize;
+                handle
+                    .read_back()
+                    .iter()
+                    .take(width * height)
+                    .filter(|&&p| p != 0)
+                    .count()
+            }
+            None => 0,
+        };
         if non_zero > 0 {
             println!(
                 "PASS: panel_view renderer: non-zero draw_area frame (scene 2, draw on; {non_zero} px)"

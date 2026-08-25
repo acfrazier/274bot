@@ -235,9 +235,10 @@ impl Host {
     /// click, run one `mainloop` pass, render the frame (the slot's
     /// optional `Renderer` — `client.draw` gates the paint; a drawing
     /// slot stores the rendered `FrameOutput` into the optional mailbox,
-    /// mirroring `Client::run`), then drain gens. The panel samples the
-    /// mailbox: `FrameBuf::snapshot` packs the `PixMap` CPU path, and
-    /// Task 4c binds `FrameOutput::Texture` directly. `run_sends` is
+    /// mirroring `Client::run`), then drain gens. The panel takes the
+    /// mailbox: `FrameBuf::take` hands the whole `FrameOutput` off (the
+    /// `Texture` binds / reads back at the panel, the `PixMap` packs via
+    /// [`FrameBuf::snapshot`]). `run_sends` is
     /// overwritten with the slot's running count of accepted auto-run
     /// sends.
     /// `SlotLoop` stays module-private (tests live in this module); the
@@ -283,7 +284,18 @@ impl Host {
             let t_r = std::time::Instant::now();
             let renderer = slot
                 .renderer
-                .get_or_insert_with(|| Renderer::new(client.config.lowmem));
+                .get_or_insert_with(|| {
+                    // GPU-first (the host default): the slot's renderer
+                    // prefers the wgpu backend, with `CpuBackend` as the
+                    // fallback on wgpu init failure (`Renderer::new`
+                    // selects, `Renderer::backend_kind` reports). The
+                    // preference is process-wide and idempotent, so the
+                    // first paint of any slot opts the process in;
+                    // `BOT_CPU=1` forces the CPU fidelity path.
+                    let cpu = std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false);
+                    Renderer::set_prefer_gpu(!cpu);
+                    Renderer::new(client.config.lowmem)
+                });
             // `mainredraw` is the fidelity seam: it runs the `check_minimap`
             // render half (loading splash + minimap image) and
             // `follow_camera` before dispatching game/title draw.
@@ -308,11 +320,10 @@ impl Host {
             eprintln!("[host] slot {username}: tick");
         }
         // The whole `FrameOutput` lands in the mailbox, not just the
-        // packed pixels: Task 4c stores `FrameOutput::Texture` here and
-        // the panel binds it directly. The GPU backend still composites
-        // its scene to CPU, so today the mailbox only ever carries a
-        // `PixMap`; `FrameBuf::snapshot` keeps the panel's CPU upload
-        // path unchanged.
+        // packed pixels: the panel takes the `FrameOutput::Texture` (GPU
+        // backend) or packs the `PixMap` (CPU backend) at its consume
+        // site, and `FrameBuf::snapshot` keeps the CPU packing path for
+        // the tests.
         if let Some(frame) = frame {
             if let Some(mailbox) = mailbox {
                 mailbox.store(frame);
@@ -592,7 +603,23 @@ mod tests {
     use super::*;
     use api::interact::RUN_ORB_IFACE;
     use client::io::ClientProt;
+    use std::sync::OnceLock;
     use std::time::Instant;
+
+    /// Force the wgpu backend's process-wide init to fail so every
+    /// renderer this test process constructs lands on `CpuBackend` (the
+    /// client's documented `R274_TEST_FORCE_NO_GPU` test hook): the host's
+    /// GPU-first default must not open a real device inside
+    /// `cargo test -p host`. Once set, the client caches the failure, so
+    /// the first renderer construction wins — call before any test
+    /// constructs one.
+    static FORCE_CPU_BACKEND: OnceLock<()> = OnceLock::new();
+    fn force_cpu_backend() {
+        FORCE_CPU_BACKEND.get_or_init(|| {
+            std::env::set_var("R274_TEST_FORCE_NO_GPU", "1");
+            Renderer::set_prefer_gpu(true);
+        });
+    }
 
     fn cfg() -> ClientConfig {
         ClientConfig {
@@ -711,6 +738,7 @@ mod tests {
 
     #[test]
     fn client_frame_skips_frame_store_when_draw_off() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -765,6 +793,7 @@ mod tests {
 
     #[test]
     fn client_frame_draw_on_paints_this_tick() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -776,6 +805,7 @@ mod tests {
 
     #[test]
     fn mainredraw_runs_check_minimap_on_a_paint_tick() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -805,6 +835,7 @@ mod tests {
 
     #[test]
     fn client_tick_observe_runs_before_the_frame_paint() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -907,6 +938,7 @@ mod tests {
 
     #[test]
     fn watch_only_paints_first_tick_then_once_per_second() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -927,6 +959,7 @@ mod tests {
 
     #[test]
     fn full_rate_paints_every_tick_after_scene_ready() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -947,6 +980,7 @@ mod tests {
 
     #[test]
     fn loading_scene_paints_every_tick_for_tv_static() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -966,6 +1000,7 @@ mod tests {
 
     #[test]
     fn capture_draw_copies_every_tick() {
+        force_cpu_backend();
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let inp = SlotInput::new();
@@ -1065,6 +1100,7 @@ mod tests {
 
     #[test]
     fn focused_slot_keeps_the_twenty_ms_cadence() {
+        force_cpu_backend();
         let (mirror, seen) = seen();
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
@@ -1155,6 +1191,7 @@ mod tests {
 
     #[test]
     fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
+        force_cpu_backend();
         let (wake, park) = crate::slot_io::wake_channel();
         let (mirror, seen) = seen();
         let buf = FrameBuf::new();
@@ -1234,6 +1271,7 @@ mod tests {
 
     #[test]
     fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
+        force_cpu_backend();
         let (wake, park) = crate::slot_io::wake_channel();
         let (mirror, seen) = seen();
         let inp = SlotInput::new();

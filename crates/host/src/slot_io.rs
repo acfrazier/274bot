@@ -9,10 +9,11 @@ use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
 
 /// Per-slot frame mailbox: the slot thread stores each rendered
-/// [`FrameOutput`] into [`FrameBuf::store`]; the panel samples the latest
-/// `PixMap` (the CPU upload path, [`FrameBuf::snapshot`]) and, in Task 4c,
-/// binds the `Texture` variant directly. Replaces the old packed-pixels
-/// byte buffer.
+/// [`FrameOutput`] into [`FrameBuf::store`]; the panel hands it to the
+/// frame consumer with [`FrameBuf::take`] (one consumer per mailbox — a
+/// `FrameOutput::Texture` hands its wgpu view off once, no Clone).
+/// [`FrameBuf::snapshot`] stays for the CPU packing path and the tests.
+/// Replaces the old packed-pixels byte buffer.
 pub struct FrameBuf {
     inner: Mutex<Option<FrameOutput>>,
     gen: AtomicU64,
@@ -26,11 +27,18 @@ impl FrameBuf {
         })
     }
     /// Store the latest frame and bump the generation. The full
-    /// [`FrameOutput`] is kept so Task 4c can hand a `FrameOutput::Texture`
-    /// to the panel; today the backend always yields a `PixMap`.
+    /// [`FrameOutput`] is kept so the panel can bind a
+    /// `FrameOutput::Texture` or pack a `PixMap`.
     pub fn store(&self, frame: FrameOutput) {
         *self.inner.lock().unwrap() = Some(frame);
         self.gen.fetch_add(1, Ordering::Relaxed);
+    }
+    /// Move the stored frame out and clear the mailbox: the single
+    /// consumer's handoff (a `FrameOutput::Texture` is single-consumer, no
+    /// Clone). `None` when nothing was stored since the last take. The
+    /// generation is untouched — only [`FrameBuf::store`] bumps it.
+    pub fn take(&self) -> Option<FrameOutput> {
+        self.inner.lock().unwrap().take()
     }
     /// CPU path: pack the latest `PixMap`'s pixels via `pack_rgb` (765×503,
     /// same shape the panel's texture upload expects). Empty when nothing
@@ -183,7 +191,7 @@ impl SlotPark {
 mod tests {
     use super::{map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput};
     use client::graphics::PixMap;
-    use client::render::backend::{FrameOutput, TextureHandle};
+    use client::render::backend::FrameOutput;
 
     fn applet_pixmap(pixels: Vec<i32>) -> FrameOutput {
         FrameOutput::PixMap(PixMap {
@@ -229,10 +237,34 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_of_texture_is_empty() {
+    fn snapshot_of_texture_frame_is_empty_and_take_hands_it_off() {
+        // A real `TextureHandle` needs a wgpu device (client-side); the
+        // panel's `frame_pixels` read-back test covers the texture pixels.
+        // Here the mailbox contract: a stored frame of any variant is taken
+        // out whole, and `snapshot` (the CPU packing view) never sees it.
         let buf = FrameBuf::new();
-        buf.store(FrameOutput::Texture(TextureHandle));
-        assert!(buf.snapshot().is_empty());
+        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        assert!(!buf.snapshot().is_empty());
+        let frame = buf.take();
+        assert!(matches!(frame, Some(FrameOutput::PixMap(_))));
+        assert!(buf.take().is_none(), "a second take must be empty");
+        assert!(buf.snapshot().is_empty(), "the stored frame was moved out");
+        assert_eq!(
+            buf.generation(),
+            1,
+            "take must not bump the generation (only store does)"
+        );
+    }
+
+    #[test]
+    fn take_is_empty_until_a_store_lands() {
+        let buf = FrameBuf::new();
+        assert!(buf.take().is_none());
+        assert_eq!(buf.generation(), 0);
+        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        assert!(buf.take().is_some());
+        assert!(buf.take().is_none());
+        assert_eq!(buf.generation(), 1);
     }
 
     #[test]

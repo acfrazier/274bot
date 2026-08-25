@@ -3154,6 +3154,7 @@ dependencies = [
  "host",
  "host-play",
  "nav",
+ "pollster",
  "scenario",
  "script",
  "serde",

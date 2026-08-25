@@ -18,7 +18,7 @@ use crate::chrome::{
     button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW,
 };
 use crate::focus::{draw_for_slot, should_capture, should_draw};
-use crate::game_view::{game_pixels, GameView};
+use crate::game_view::{frame_pixels, GameView};
 use crate::grid::grid_cells;
 use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
@@ -158,11 +158,10 @@ struct LiveScript {
     last_step: Option<(usize, usize)>,
 }
 
-/// One rail tile's GPU texture plus the slot `FrameBuf` generation last
-/// uploaded, so uploads happen only when the slot repaints.
+/// One rail/grid tile's GPU texture (uploaded when the slot's `FrameBuf`
+/// hands a new frame to `take`).
 struct TileView {
     view: GameView,
-    gen: u64,
 }
 
 impl PanelState {
@@ -556,18 +555,22 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
     };
     if draw {
         let buf = state.session.focused_pixels();
-        // TODO(4c): match the mailbox's stored `FrameOutput` here and bind
-        // `FrameOutput::Texture` directly (no upload); the `PixMap` arm
-        // below is the CPU fallback. The GPU backend still composites to
-        // CPU, so today only the `PixMap` arm can run.
-        // Key the upload on the focused slot's FrameBuf generation.
+        // One consumer per `FrameBuf`: `take` moves the stored frame out
+        // (a `FrameOutput::Texture` hands its view off once, no Clone),
+        // and `frame_pixels` packs either variant — the `Texture` arm
+        // reads the GPU frame back through the client's device, the
+        // `PixMap` arm packs the CPU pixels. `take` returning `None` is
+        // "no new frame since the last upload", the same skip the old
+        // snapshot path gave.
         let name = state.session.focused_name().unwrap_or_default();
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
-            let pixels = game_pixels(&buf);
-            if let Some(view) = state.game_view.as_mut() {
-                view.upload(&addons.gpu, &pixels);
+            if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
+                let pixels = frame_pixels(frame);
+                if let Some(view) = state.game_view.as_mut() {
+                    view.upload(&addons.gpu, &pixels);
+                }
             }
             state.last_upload = Some((name, gen));
         }
@@ -1518,9 +1521,9 @@ fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32
 }
 
 /// Tile body: the member's `FrameBuf` blitted into a `size` box via a
-/// cached [`GameView`] per name (uploaded only when the slot repaints),
-/// or the renderer-off placeholder. Returns whether the box was clicked
-/// (the grid cell / rail tile select path).
+/// cached [`GameView`] per name (uploaded when the mailbox hands a new
+/// frame to `take`), or the renderer-off placeholder. Returns whether the
+/// box was clicked (the grid cell / rail tile select path).
 fn cell_body(
     ui: &Ui,
     addons: &mut AddOns,
@@ -1535,31 +1538,41 @@ fn cell_body(
             .size(size)
             .build();
     }
-    let gen = state
-        .session
-        .slots
-        .get(name)
-        .map(|s| s.pixels.generation())
-        .unwrap_or(0);
     let tv = state
         .views
         .entry(name.to_string())
         .or_insert_with(|| TileView {
             view: GameView::init(&mut addons.gpu),
-            gen: u64::MAX,
         });
-    if tv.gen != gen {
-        // TODO(4c): match on the mailbox's stored `FrameOutput` and bind
-        // the `Texture` handle directly; the `PixMap` snapshot below is
-        // the CPU fallback (the only variant the backend yields today).
-        let pixels = state
+    // One consumer per `FrameBuf`: in rail mode the Game pane draws the
+    // focused slot (or the first spawned slot when nothing is focused), so
+    // that member's tile must not take the same frame too (grid mode has
+    // no Game pane — the focused cell owns its frame).
+    let game_pane_owns = if state.session.wall.grid {
+        false
+    } else {
+        match state.session.focused_pixels() {
+            Some(buf) => state
+                .session
+                .slots
+                .get(name)
+                .map(|s| Arc::ptr_eq(&s.pixels, &buf))
+                .unwrap_or(false),
+            None => false,
+        }
+    };
+    if !game_pane_owns {
+        // `take` moves the stored frame out; `frame_pixels` packs the
+        // `PixMap` (CPU) or reads the wgpu frame back (`Texture`).
+        if let Some(frame) = state
             .session
             .slots
             .get(name)
-            .map(|s| s.pixels.snapshot())
-            .unwrap_or_default();
-        tv.view.upload(&addons.gpu, &pixels);
-        tv.gen = gen;
+            .and_then(|s| s.pixels.take())
+        {
+            let pixels = frame_pixels(frame);
+            tv.view.upload(&addons.gpu, &pixels);
+        }
     }
     ui.image(tv.view.tex_id, size);
     ui.is_item_clicked_with_button(MouseButton::Left)

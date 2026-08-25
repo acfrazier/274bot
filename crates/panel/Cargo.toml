@@ -23,3 +23,6 @@ winit = "0.30"
 [[bin]]
 name = "panel-play"
 path = "src/main.rs"
+
+[dev-dependencies]
+pollster = "0.4"

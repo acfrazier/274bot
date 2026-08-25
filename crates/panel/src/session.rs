@@ -58,9 +58,9 @@ fn default_cache_dir() -> String {
 }
 
 /// Panel-side per-slot IO: the frame mailbox the slot stores each rendered
-/// `FrameOutput` into while its renderer is on (the panel uploads the CPU
-/// `PixMap`; Task 4c binds the `Texture` variant instead), and the input
-/// channel it drains only while capture is on.
+/// `FrameOutput` into while its renderer is on (the panel `take`s it and
+/// packs the `PixMap` or reads the `Texture` back at the consume site),
+/// and the input channel it drains only while capture is on.
 pub struct SlotIo {
     pub input: Arc<SlotInput>,
     pub pixels: Arc<FrameBuf>,
