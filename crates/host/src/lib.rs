@@ -95,7 +95,7 @@ impl Host {
     /// so the panel can latch slot state (draw/focus) before the paint
     /// decision for **this** tick, then drains input, latches the click,
     /// runs `mainloop`, and renders (via the slot's optional `Renderer`)
-    /// only while the slot's `draw` switch is on. Dirty snapshot families
+    /// only while `client.draw` is on. Dirty snapshot families
     /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
     /// drain); settle runs when a family gen moved; think (auto-run) reads
     /// energy from the snapshot stat view when it has been rebuilt. The
@@ -158,8 +158,8 @@ impl Host {
 
     /// One 20 ms frame: drain optional input into the shell, latch the
     /// click, run one `mainloop` pass, render the frame (the slot's
-    /// optional `Renderer` — the slot `draw` switch gates the paint; a
-    /// drawing slot fills `PixelBuf` from the rendered `PixMap`, mirroring
+    /// optional `Renderer` — `client.draw` gates the paint; a drawing
+    /// slot fills `PixelBuf` from the rendered `PixMap`, mirroring
     /// `Client::run`), drain gens, then copy the redraw into optional
     /// pixels. `run_sends` is overwritten with the slot's running count of
     /// accepted auto-run sends.
@@ -188,8 +188,11 @@ impl Host {
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
         // a second and looks like a frozen splash).
         let zap = client.ingame && client.scene_state != 2;
+        // `client.draw` is the renderer switch the panel latches via
+        // `Client::set_draw`; `full_rate` is slot-local for now.
+        // TODO(Task 2): wire `full_rate` from the panel/TV control path.
         let paint = raster_this_tick(
-            slot.draw,
+            client.draw,
             capture || zap || slot.full_rate,
             &mut slot.raster_n,
             &mut slot.raster_was_on,
@@ -203,16 +206,10 @@ impl Host {
             let renderer = slot
                 .renderer
                 .get_or_insert_with(|| Renderer::new(client.config.lowmem));
-            // The renderer's internals gate a couple of draw-only bits on
-            // `client.draw`; mirror the slot's switch while painting.
-            client.draw = slot.draw;
-            if client.ingame {
-                slot.game_draw_enters = slot.game_draw_enters.wrapping_add(1);
-                frame = Some(renderer.game_draw(client));
-            } else {
-                slot.title_screen_draw_enters = slot.title_screen_draw_enters.wrapping_add(1);
-                frame = Some(renderer.title_screen_draw(client));
-            }
+            // `mainredraw` is the fidelity seam: it runs the `check_minimap`
+            // render half (loading splash + minimap image) and
+            // `follow_camera` before dispatching game/title draw.
+            frame = Some(renderer.mainredraw(client));
             slot.raster_ns = slot.raster_ns.wrapping_add(t_r.elapsed().as_nanos() as u64);
             slot.paint_n = slot.paint_n.wrapping_add(1);
         } else {
@@ -221,13 +218,11 @@ impl Host {
         slot.log_n = slot.log_n.wrapping_add(1);
         if debug_enabled() && slot.log_n.is_multiple_of(50) {
             eprintln!(
-                "[host] slot {username}: loop_us={} raster_us={} paints={} skips={} game_draw={} title={}",
+                "[host] slot {username}: loop_us={} raster_us={} paints={} skips={}",
                 slot.loop_ns / 1000,
                 slot.raster_ns / 1000,
                 slot.paint_n,
-                slot.skip_n,
-                slot.game_draw_enters,
-                slot.title_screen_draw_enters
+                slot.skip_n
             );
         }
         let result = slot.after_drain(client);
@@ -268,8 +263,8 @@ fn raster_this_tick(draw: bool, capture: bool, n: &mut u32, was_on: &mut bool) -
     (*n).is_multiple_of(WATCH_RASTER_TICKS)
 }
 
-/// Per-slot post-drain state: snapshot, settle, auto-run, the draw/
-/// full-rate switches, and the optional `Renderer` a drawing slot owns.
+/// Per-slot post-drain state: snapshot, settle, auto-run, the full-rate
+/// switch, and the optional `Renderer` a drawing slot owns.
 struct SlotLoop {
     pump: Pump,
     snapshot: GameSnapshot,
@@ -277,11 +272,9 @@ struct SlotLoop {
     run_on: bool,
     run_sends: u32,
     last_modal: Option<i32>,
-    /// Renderer switch: gates the paint cadence (`raster_this_tick`) and
-    /// lazily constructs the slot's `Renderer` on the first paint.
-    draw: bool,
     /// TV full-rate latch: focused+input-on slots paint every tick even
     /// after the scene is ready.
+    /// TODO(Task 2): wire this from the panel/TV control path.
     full_rate: bool,
     renderer: Option<Renderer>,
     raster_n: u32,
@@ -290,8 +283,6 @@ struct SlotLoop {
     raster_ns: u64,
     paint_n: u64,
     skip_n: u64,
-    game_draw_enters: u64,
-    title_screen_draw_enters: u64,
     log_n: u32,
 }
 
@@ -304,7 +295,6 @@ impl SlotLoop {
             run_on: false,
             run_sends: 0,
             last_modal: None,
-            draw: false,
             full_rate: false,
             renderer: None,
             raster_n: 0,
@@ -313,8 +303,6 @@ impl SlotLoop {
             raster_ns: 0,
             paint_n: 0,
             skip_n: 0,
-            game_draw_enters: 0,
-            title_screen_draw_enters: 0,
             log_n: 0,
         }
     }
@@ -525,14 +513,14 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         // Renderer off: no frame is rendered and nothing is copied.
-        slot.draw = false;
+        c.set_draw(false);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert!(buf.snapshot().is_empty(), "draw off must not copy pixels");
         // Renderer on: the first (rising-edge) tick paints a full applet
         // into the buffer (with no title assets in this test the paint is
         // empty, but the frame still copies a full applet; the non-zero
         // paint is proven live by the panel_view e2e).
-        slot.draw = true;
+        c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(
             buf.snapshot().len(),
@@ -546,7 +534,7 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         let constructed = Renderer::constructed();
-        slot.draw = false;
+        // `client.draw` defaults false: a headless slot never paints.
         for _ in 0..3 {
             Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         }
@@ -555,8 +543,6 @@ mod tests {
             constructed,
             "draw off must not construct a Renderer"
         );
-        assert_eq!(slot.game_draw_enters, 0);
-        assert_eq!(slot.title_screen_draw_enters, 0);
         assert_eq!(slot.skip_n, 3);
         assert_eq!(slot.paint_n, 0);
         assert!(slot.loop_ns > 0, "mainloop still ran");
@@ -567,7 +553,7 @@ mod tests {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        slot.draw = false;
+        c.set_draw(false);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         assert_eq!(slot.skip_n, 1);
         assert_eq!(slot.paint_n, 0);
@@ -575,15 +561,43 @@ mod tests {
     }
 
     #[test]
-    fn client_frame_draw_on_increments_title_and_paint_n() {
+    fn client_frame_draw_on_paints_this_tick() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        slot.draw = true;
+        c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
-        assert!(slot.title_screen_draw_enters >= 1);
-        assert_eq!(slot.game_draw_enters, 0);
         assert_eq!(slot.paint_n, 1);
+        assert_eq!(slot.skip_n, 0);
+    }
+
+    #[test]
+    fn mainredraw_runs_check_minimap_on_a_paint_tick() {
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let buf = PixelBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        c.ingame = true;
+        c.scene_state = 2;
+        // A fresh client starts with `minimap_level = -1` (reset by login)
+        // while `minusedlevel` is 0. Only `Renderer::mainredraw`'s
+        // `check_minimap` render half brings `minimap_level` up to
+        // `minusedlevel`; the raw `game_draw` stage does not, so this
+        // pins the render dispatch to `mainredraw`.
+        assert_eq!(c.minimap_level, -1);
+        assert_ne!(c.minimap_level, c.minusedlevel);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(
+            c.minimap_level,
+            c.minusedlevel,
+            "mainredraw must run the check_minimap render half"
+        );
+        assert_eq!(slot.paint_n, 1);
+        assert_eq!(
+            buf.snapshot().len(),
+            (client::client::APPLET_W * client::client::APPLET_H) as usize
+        );
     }
 
     #[test]
@@ -592,10 +606,10 @@ mod tests {
         let buf = PixelBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        assert!(!slot.draw, "slots start with the renderer off");
+        assert!(!c.draw, "slots start with the renderer off");
         // A drawing slot paints this tick; an observe-after-frame would
         // skip it, so observe-before must run first.
-        slot.draw = true;
+        c.set_draw(true);
         let observed = AtomicBool::new(false);
         Host::client_tick(
             &mut c,
@@ -614,7 +628,7 @@ mod tests {
             (client::client::APPLET_W * client::client::APPLET_H) as usize
         );
         let gen = buf.generation();
-        slot.draw = false;
+        c.set_draw(false);
         Host::client_tick(
             &mut c,
             &mut slot,
@@ -624,7 +638,7 @@ mod tests {
             &mut sends,
             &mut |_, _, _| {},
         );
-        assert!(!slot.draw);
+        assert!(!c.draw);
         assert_eq!(
             buf.generation(),
             gen,
@@ -660,7 +674,7 @@ mod tests {
         let buf = PixelBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        slot.draw = true;
+        c.set_draw(true);
         c.ingame = true;
         c.scene_state = 2;
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
@@ -679,7 +693,7 @@ mod tests {
         let buf = PixelBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        slot.draw = true;
+        c.set_draw(true);
         slot.full_rate = true;
         c.ingame = true;
         c.scene_state = 2;
@@ -699,7 +713,7 @@ mod tests {
         let buf = PixelBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        slot.draw = true;
+        c.set_draw(true);
         c.ingame = true;
         c.scene_state = 1;
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
@@ -720,7 +734,7 @@ mod tests {
         inp.set_enabled(true);
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        slot.draw = true;
+        c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 2);
