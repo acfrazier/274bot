@@ -20,9 +20,8 @@ fn short_status(statuses: &[SlotStatus]) -> String {
         .iter()
         .map(|s| {
             format!(
-                "{} lean={} in={} sc={} q={}/{} err={:?}",
+                "{} in={} sc={} q={}/{} err={:?}",
                 s.username,
-                s.lean,
                 s.ingame,
                 s.scene_state,
                 s.queue_position,
@@ -106,7 +105,8 @@ pub fn options() -> PlayOptions {
     }
 }
 
-/// Poll until `want` channels are up (fat: scene 2, lean: ingame).
+/// Poll until `want` slots are up (every slot is a full `Client`:
+/// `ingame && scene_state == 2`, no lean special case).
 pub fn wait_up(play: &Play, want: usize, timeout: Duration, case: &str) {
     let deadline = Instant::now() + timeout;
     loop {

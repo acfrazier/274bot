@@ -1,5 +1,5 @@
-//! Live: N wall channels — at most one head (fat `Client`), every other
-//! slot a lean channel (`Lean`, no World). Print peak process RSS.
+//! Live: N wall `Client` slots (flat model — no lean, no baton). Print
+//! peak process RSS.
 //!
 //! One N per process (peak RSS is process-lifetime):
 //! `LIVE=1 RSS_N=1 cargo test -p e2e --test channel_ladder -- --ignored --test-threads=1 --nocapture`
@@ -51,10 +51,9 @@ fn ladder_profiles(n: usize) -> Vec<Profile> {
     out
 }
 
-/// Poll until every channel is up: the one head must be `ingame` with
-/// scene 2 (it builds a real scene); a lean channel counts once its cold
-/// login granted (`ingame` — the thin snapshot only ever reaches
-/// `scene_state` 1 on REBUILD_NORMAL, never 2).
+/// Poll until every slot is up. Every slot is a full `Client` building a
+/// real scene, so up means `ingame && scene_state == 2` (no lean
+/// special case).
 fn wait_all_up(play: &Play, n: usize) {
     let timeout = Duration::from_secs(300);
     let deadline = Instant::now() + timeout;
@@ -66,7 +65,7 @@ fn wait_all_up(play: &Play, n: usize) {
         }
         if Instant::now() >= deadline {
             fail(&format!(
-                "channel_ladder: {ready}/{n} channel(s) up after 300s; \
+                "channel_ladder: {ready}/{n} slot(s) up after 300s; \
                  statuses: {statuses:?}"
             ));
         }
@@ -76,7 +75,7 @@ fn wait_all_up(play: &Play, n: usize) {
 
 #[test]
 #[ignore = "requires a local 274 engine and LIVE=1"]
-fn live_channel_ladder_lean_wall() {
+fn live_channel_ladder_client_wall() {
     if !live() {
         return;
     }
@@ -84,29 +83,16 @@ fn live_channel_ladder_lean_wall() {
         Ok(n) => n,
         Err(msg) => fail(msg),
     };
-    // At most one head: r0 is the fat Client, r1..r{n-1} are lean channels.
+    // Every profile spawns one full Client slot.
     let play = run_channels(&options(), ladder_profiles(n), 1);
     wait_all_up(&play, n);
     // Give the wall a beat to settle before sampling peak RSS.
     thread::sleep(Duration::from_secs(10));
-    let rows = play.statuses();
     let (rss, _) = sample_process();
     if rss == 0 {
         fail("channel_ladder: rss=0");
     }
-    let heads = rows.iter().filter(|s| !s.lean).count();
-    let leanes = rows.iter().filter(|s| s.lean).count();
-    let lean_paint_sum = rows
-        .iter()
-        .filter(|s| s.lean)
-        .map(|s| s.paint_n)
-        .sum::<u64>();
-    if lean_paint_sum > 0 {
-        fail("channel_ladder: lean channels painted");
-    }
-    println!(
-        "channel_ladder n={n} rss={rss} heads={heads} leanes={leanes} lean_paint_sum={lean_paint_sum}"
-    );
+    println!("channel_ladder n={n} rss={rss}");
     println!("PASS: channel_ladder n={n} rss={rss}");
 }
 

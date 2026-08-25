@@ -1,7 +1,9 @@
-//! Live: headed wall of N channels (1 fat TV + N-1 lean). After everyone
-//! is up, retune the TV through the list in order (`r0` → `r1` → …).
-//! Each hop must land as the unique fat head at `ingame && scene_state==2`
-//! without spawning a second Client.
+//! Live: headed wall of N `Client` slots (flat model — no lean, no baton).
+//! After everyone is up, walk the focus through the list in order
+//! (`r0` → `r1` → …): `play.focus(name)` selects which slot is the TV.
+//! Each hop must land as the focused slot at `ingame && scene_state == 2`,
+//! and every slot must stay up across the swap (focus is pure
+//! bookkeeping — switching it never touches a socket).
 //!
 //! `LIVE=1 CHANNEL_N=2 cargo test -p e2e --test channel_walk -- --ignored --test-threads=1 --nocapture`
 //! Default `CHANNEL_N=50` (or `RSS_N`).
@@ -54,47 +56,50 @@ fn walk_profiles(n: usize) -> Vec<Profile> {
     out
 }
 
+/// Snapshot the wall for a FAIL dump: the focused slot plus every slot's
+/// up state.
 fn dump(play: &Play, tag: &str) {
     let rows = play.statuses();
-    let fat = rows
+    let up = rows
         .iter()
-        .filter(|s| !s.lean)
         .map(|s| {
             format!(
-                "{} ingame={} scene={} err={:?}",
-                s.username, s.ingame, s.scene_state, s.error
+                "{} up={} ingame={} scene={} player={} err={:?}",
+                s.username,
+                s.is_up(),
+                s.ingame,
+                s.scene_state,
+                s.player,
+                s.error
             )
         })
         .collect::<Vec<_>>();
-    let lean_up = rows.iter().filter(|s| s.lean && s.ingame).count();
-    let lean_n = rows.iter().filter(|s| s.lean).count();
     println!(
-        "channel_walk {tag}: pending={} fat_head={:?} fat=[{}] lean_up={lean_up}/{lean_n}",
-        play.tune_pending(),
-        play.fat_head_name(),
-        fat.join("; ")
+        "channel_walk {tag}: focused={:?} slots=[{}]",
+        play.focused(),
+        up.join("; ")
     );
 }
 
-fn wait_fat(play: &mut Play, want: &str, lean_want: usize, timeout: Duration, tag: &str) {
+/// Poll until `want` is the focused slot and reports up with a local
+/// player (a full `Client` in a built scene — the flat-model TV proof).
+/// Focus is bookkeeping, so there is no baton to poll.
+fn wait_focused(play: &Play, want: &str, timeout: Duration, tag: &str) {
     let deadline = Instant::now() + timeout;
     loop {
-        play.poll_tune();
-        let rows = play.statuses();
-        let fat = rows.iter().find(|s| !s.lean);
-        let ok = fat.is_some_and(|s| s.username == want && s.is_up());
-        let fats = rows.iter().filter(|s| !s.lean).count();
-        let lean_rows = rows.iter().filter(|s| s.lean).count();
-        let lean_up = rows.iter().filter(|s| s.lean && s.ingame).count();
-        if ok && fats == 1 && lean_rows == lean_want && lean_up == lean_want && !play.tune_pending()
-        {
-            println!("channel_walk: TV is {want} (up) lean_up={lean_up}/{lean_rows}");
+        let ok = play.focused().as_deref() == Some(want)
+            && play
+                .statuses()
+                .iter()
+                .any(|s| s.username == want && s.is_up() && !s.player.is_empty());
+        if ok {
+            println!("channel_walk: TV is {want} (up)");
             return;
         }
         if Instant::now() >= deadline {
             dump(play, tag);
             fail(&format!(
-                "channel_walk: {tag}: want fat {want} + {lean_want} lean after {timeout:?}"
+                "channel_walk: {tag}: want focused {want} up after {timeout:?}"
             ));
         }
         thread::sleep(Duration::from_millis(50));
@@ -103,65 +108,49 @@ fn wait_fat(play: &mut Play, want: &str, lean_want: usize, timeout: Duration, ta
 
 #[test]
 #[ignore = "requires a local 274 engine and LIVE=1"]
-fn live_channel_walk_retunes_every_head() {
+fn live_channel_walk_focuses_every_slot() {
     if !live() {
         return;
     }
     let n = parse_n();
     let names: Vec<String> = (0..n).map(|i| format!("r{i}")).collect();
-    println!(
-        "channel_walk: spawn n={n} (1 TV + {} lean)",
-        n.saturating_sub(1)
-    );
+    println!("channel_walk: spawn n={n} Client slots");
     let mut play = run_channels(&options(), walk_profiles(n), 1);
     wait_up(&play, n, Duration::from_secs(600), "channel_walk login");
     dump(&play, "all-up");
-    let fats = play.statuses().iter().filter(|s| !s.lean).count();
-    if fats != 1 {
-        fail(&format!(
-            "channel_walk: expected 1 fat after login, got {fats}"
-        ));
-    }
-    wait_fat(
-        &mut play,
-        &names[0],
-        n - 1,
-        Duration::from_secs(120),
-        "initial-tv",
-    );
 
+    // Initial TV: r0 focused, up at scene 2.
+    play.focus(&names[0]);
+    wait_focused(&play, &names[0], Duration::from_secs(120), "initial-tv");
+
+    // Walk the focus through the rest of the wall. Each hop must land the
+    // new slot as the focused TV while every slot stays up — the flat
+    // model's "no second Client, no dropped channel" guarantee.
     for (i, name) in names.iter().enumerate().skip(1) {
-        let prev = play.fat_head_name();
+        let prev = play.focused();
         println!("channel_walk: hop {}/{} {:?} -> {name}", i, n - 1, prev);
         let t0 = Instant::now();
-        if let Err(e) = play.retune(name, None, None) {
-            dump(&play, "retune-err");
-            fail(&format!("channel_walk: retune {name}: {e:?}"));
-        }
-        wait_fat(
-            &mut play,
+        play.focus(name);
+        wait_focused(
+            &play,
             name,
-            n - 1,
             Duration::from_secs(120),
             &format!("hop-{name}"),
         );
         println!("channel_walk: hop {name} ok in {:?}", t0.elapsed());
     }
     dump(&play, "done");
-    let lean_up = play
-        .statuses()
-        .iter()
-        .filter(|s| s.lean && s.ingame)
-        .count();
-    if lean_up != n - 1 {
+
+    // No slot may have dropped while focus walked the wall.
+    let up = play.statuses().iter().filter(|s| s.is_up()).count();
+    if up != n {
         fail(&format!(
-            "channel_walk: parked leanes dropped ({lean_up}/{} ingame)",
-            n - 1
+            "channel_walk: slots dropped during focus walk ({up}/{n} up)"
         ));
     }
     println!(
-        "PASS: channel_walk n={n} last={} lean_up={lean_up}",
-        play.fat_head_name().unwrap_or_default()
+        "PASS: channel_walk n={n} last={}",
+        play.focused().unwrap_or_default()
     );
 }
 
