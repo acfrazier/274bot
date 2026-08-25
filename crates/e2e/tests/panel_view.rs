@@ -1,9 +1,9 @@
 //! Live: the panel path proven headless — `host_play::run_with_io` with a
-//! per-slot `PixelBuf` + `SlotInput`, no dear-app window. The per-frame
-//! hook applies `set_draw(true)` (the panel's focus switch), the renderer
-//! proof is a non-zero pixel snapshot, then capture goes on and a click at
-//! the 3D-view center must walk the local player (operator wants live
-//! proof: a missing walk is a default FAIL, not a SOFT skip).
+//! per-slot `FrameBuf` mailbox + `SlotInput`, no dear-app window. The
+//! per-frame hook applies `set_draw(true)` (the panel's focus switch), the
+//! renderer proof is a non-zero pixel snapshot, then capture goes on and a
+//! click at the 3D-view center must walk the local player (operator wants
+//! live proof: a missing walk is a default FAIL, not a SOFT skip).
 //!
 //! Run with the engine up:
 //! `LIVE=1 cargo test -p e2e --test panel_view -- --ignored --test-threads=1 --nocapture`
@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use common::{fail, live, options, profiles, wait_ingame};
-use host::{InputEv, PixelBuf, SlotInput};
+use host::{FrameBuf, InputEv, SlotInput};
 use host_play::run_with_io;
 
 /// 3D view is 4,4–516,338 in applet coords; (256,167) is its center.
@@ -32,9 +32,9 @@ fn live_draw_area_and_capture_walk() {
     }
 
     // The same per-slot channels the panel builds in `Session::spawn_all`:
-    // one `PixelBuf` (painted while `set_draw` is on) and one `SlotInput`
-    // (drained only while capture is enabled).
-    let pixels = PixelBuf::new();
+    // one `FrameBuf` mailbox (filled while `set_draw` is on) and one
+    // `SlotInput` (drained only while capture is enabled).
+    let pixels = FrameBuf::new();
     let input = SlotInput::new();
     // Debug field: whether the capture Down actually reached the shell
     // (`apply_mouse_down` keeps mouse_x/y/button until a move/up). This

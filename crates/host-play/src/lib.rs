@@ -24,7 +24,7 @@ pub use host::set_debug;
 pub use host::Host;
 mod rss;
 mod scatter;
-use host::{should_emit_tick, PixelBuf, Pump, SlotInput};
+use host::{should_emit_tick, FrameBuf, Pump, SlotInput};
 use nav::grid::StepGrid;
 use nav::router::find;
 use nav::tile::Tile;
@@ -715,7 +715,7 @@ impl Play {
         &mut self,
         profile: Profile,
         input: Option<Arc<SlotInput>>,
-        pixels: Option<Arc<PixelBuf>>,
+        mailbox: Option<Arc<FrameBuf>>,
         arm: Option<Arc<SlotArm>>,
     ) {
         // Keep the vault credentials on the wall for later spawns and
@@ -735,7 +735,7 @@ impl Play {
             &self.options,
             profile,
             input,
-            pixels,
+            mailbox,
             arm,
             Arc::clone(&self.cache),
             self.ifaces.clone(),
@@ -756,16 +756,16 @@ impl Play {
 /// Spawn one slot thread per profile. Each slot waits for a login-queue
 /// permit, sends the handshake, then drives `mainloop` at the host cadence
 /// while mirroring its state into the shared status list. Slots run with no
-/// input and no pixel output; [`run_with_io`] adds per-slot channels.
+/// input and no frame mailbox; [`run_with_io`] adds per-slot channels.
 pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
     run_with_io(options, profiles, |_| (None, None), |_, _| {})
 }
 
-/// Like [`run`], but each slot gets the `SlotInput`/`PixelBuf` returned by
-/// `per_slot` (called synchronously, keyed by username), and `per_frame`
-/// runs inside the observe hook on every 20 ms frame so callers can mirror
-/// panel state (e.g. `client.set_draw`) into the slot thread. The FIFO
-/// login queue and mainland hop are shared by every slot.
+/// Like [`run`], but each slot gets the `SlotInput`/`FrameBuf` mailbox
+/// returned by `per_slot` (called synchronously, keyed by username), and
+/// `per_frame` runs inside the observe hook on every 20 ms frame so callers
+/// can mirror panel state (e.g. `client.set_draw`) into the slot thread.
+/// The FIFO login queue and mainland hop are shared by every slot.
 pub fn run_with_io<F, G>(
     options: &PlayOptions,
     profiles: Vec<Profile>,
@@ -773,14 +773,14 @@ pub fn run_with_io<F, G>(
     per_frame: G,
 ) -> Play
 where
-    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<PixelBuf>>),
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str) + Send + Sync + 'static,
 {
     let mut play = Play::new(options);
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {
-        let (slot_input, slot_pixels) = per_slot(&profile.username);
-        play.spawn_slot(profile, slot_input, slot_pixels, None);
+        let (slot_input, slot_mailbox) = per_slot(&profile.username);
+        play.spawn_slot(profile, slot_input, slot_mailbox, None);
     }
     play
 }
@@ -851,7 +851,7 @@ fn spawn_slot_thread(
     options: &PlayOptions,
     profile: Profile,
     slot_input: Option<Arc<SlotInput>>,
-    slot_pixels: Option<Arc<PixelBuf>>,
+    slot_mailbox: Option<Arc<FrameBuf>>,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
     ifaces_template: Vec<Option<IfType>>,
@@ -964,7 +964,7 @@ fn spawn_slot_thread(
                     &mut client,
                     &username,
                     slot_input.clone(),
-                    slot_pixels.clone(),
+                    slot_mailbox.clone(),
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);

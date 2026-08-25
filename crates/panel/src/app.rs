@@ -146,7 +146,7 @@ struct LiveStress {
     passed: bool,
 }
 
-/// One rail tile's GPU texture plus the slot `PixelBuf` generation last
+/// One rail tile's GPU texture plus the slot `FrameBuf` generation last
 /// uploaded, so uploads happen only when the slot repaints.
 struct TileView {
     view: GameView,
@@ -488,7 +488,11 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
     };
     if draw {
         let buf = state.session.focused_pixels();
-        // Key the upload on the focused slot's PixelBuf generation.
+        // TODO(4c): match the mailbox's stored `FrameOutput` here and bind
+        // `FrameOutput::Texture` directly (no upload); the `PixMap` arm
+        // below is the CPU fallback. The GPU backend still composites to
+        // CPU, so today only the `PixMap` arm can run.
+        // Key the upload on the focused slot's FrameBuf generation.
         let name = state.session.focused_name().unwrap_or_default();
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
@@ -1376,7 +1380,7 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
 }
 
 /// One tile per wall member, in wall order: cap (traffic-light dot, name,
-/// ✕) then a `TILE_W`×`TILE_H` body. The body blits the slot's `PixelBuf`
+/// ✕) then a `TILE_W`×`TILE_H` body. The body blits the slot's `FrameBuf`
 /// when `draw_for_slot` says this member paints, else the renderer-off
 /// placeholder. While `only_render_selected` is on (the safe default) the
 /// strip is collapsed: cap only, no body. Clicking the name or the body
@@ -1439,7 +1443,7 @@ fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32
     (clicked, removed)
 }
 
-/// Tile body: the member's `PixelBuf` blitted into a `size` box via a
+/// Tile body: the member's `FrameBuf` blitted into a `size` box via a
 /// cached [`GameView`] per name (uploaded only when the slot repaints),
 /// or the renderer-off placeholder. Returns whether the box was clicked
 /// (the grid cell / rail tile select path).
@@ -1471,6 +1475,9 @@ fn cell_body(
             gen: u64::MAX,
         });
     if tv.gen != gen {
+        // TODO(4c): match on the mailbox's stored `FrameOutput` and bind
+        // the `Texture` handle directly; the `PixMap` snapshot below is
+        // the CPU fallback (the only variant the backend yields today).
         let pixels = state
             .session
             .slots

@@ -3,36 +3,51 @@ use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
+use client::render::backend::FrameOutput;
 
-pub struct PixelBuf {
-    inner: Mutex<Vec<u32>>,
+/// Per-slot frame mailbox: the slot thread stores each rendered
+/// [`FrameOutput`] into [`FrameBuf::store`]; the panel samples the latest
+/// `PixMap` (the CPU upload path, [`FrameBuf::snapshot`]) and, in Task 4c,
+/// binds the `Texture` variant directly. Replaces the old packed-pixels
+/// byte buffer.
+pub struct FrameBuf {
+    inner: Mutex<Option<FrameOutput>>,
     gen: AtomicU64,
 }
 
-impl PixelBuf {
+impl FrameBuf {
     pub fn new() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
-            inner: Mutex::new(Vec::new()),
+            inner: Mutex::new(None),
             gen: AtomicU64::new(0),
         })
     }
-    pub fn copy_from(&self, pix: &[i32], w: i32, h: i32) {
-        if w != APPLET_W || h != APPLET_H || pix.len() < (APPLET_W * APPLET_H) as usize {
-            return;
-        }
-        let n = (APPLET_W * APPLET_H) as usize;
-        let mut g = self.inner.lock().unwrap();
-        g.resize(n, 0);
-        for (dst, src) in g.iter_mut().zip(pix.iter().take(n)) {
-            *dst = pack_rgb(*src);
-        }
+    /// Store the latest frame and bump the generation. The full
+    /// [`FrameOutput`] is kept so Task 4c can hand a `FrameOutput::Texture`
+    /// to the panel; today the backend always yields a `PixMap`.
+    pub fn store(&self, frame: FrameOutput) {
+        *self.inner.lock().unwrap() = Some(frame);
         self.gen.fetch_add(1, Ordering::Relaxed);
     }
+    /// CPU path: pack the latest `PixMap`'s pixels via `pack_rgb` (765×503,
+    /// same shape the panel's texture upload expects). Empty when nothing
+    /// was stored yet, the frame is `FrameOutput::Texture`, or the `PixMap`
+    /// is not full-applet sized.
     pub fn snapshot(&self) -> Vec<u32> {
-        self.inner.lock().unwrap().clone()
+        let n = (APPLET_W * APPLET_H) as usize;
+        let inner = self.inner.lock().unwrap();
+        let mut out = Vec::with_capacity(n);
+        if let Some(FrameOutput::PixMap(pix)) = &*inner {
+            if pix.width == APPLET_W && pix.height == APPLET_H && pix.pixels.len() >= n {
+                for src in pix.pixels.iter().take(n) {
+                    out.push(pack_rgb(*src));
+                }
+            }
+        }
+        out
     }
-    /// Bumps on every successful [`copy_from`]. The panel skips GPU uploads
-    /// while this stays unchanged (dear-app would otherwise Poll-spin).
+    /// Bumps on every [`FrameBuf::store`]. The panel skips uploads while
+    /// this stays unchanged (dear-app would otherwise Poll-spin).
     pub fn generation(&self) -> u64 {
         self.gen.load(Ordering::Relaxed)
     }
@@ -110,16 +125,26 @@ impl SlotInput {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
+    use super::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
+    use client::graphics::PixMap;
+    use client::render::backend::{FrameOutput, TextureHandle};
+
+    fn applet_pixmap(pixels: Vec<i32>) -> FrameOutput {
+        FrameOutput::PixMap(PixMap {
+            width: 765,
+            height: 503,
+            pixels,
+        })
+    }
 
     #[test]
-    fn copy_from_packs_rgb_and_is_765_by_503() {
+    fn store_packs_pixmap_rgb_and_is_765_by_503() {
         use client::client::present::pack_rgb;
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut pix = vec![0i32; 765 * 503];
         pix[0] = 0x00aa_bbcc;
         pix[1] = 0x0011_2233;
-        buf.copy_from(&pix, 765, 503);
+        buf.store(applet_pixmap(pix));
         let out = buf.snapshot();
         assert_eq!(out.len(), 765 * 503);
         assert_eq!(out[0], pack_rgb(0x00aa_bbcc));
@@ -127,20 +152,40 @@ mod tests {
     }
 
     #[test]
-    fn copy_from_wrong_len_is_ignored() {
-        let buf = PixelBuf::new();
-        buf.copy_from(&[1, 2, 3], 2, 2);
+    fn snapshot_is_empty_until_a_pixmap_lands() {
+        let buf = FrameBuf::new();
         assert!(buf.snapshot().is_empty());
         assert_eq!(buf.generation(), 0);
     }
 
     #[test]
-    fn copy_from_bumps_generation() {
-        let buf = PixelBuf::new();
-        assert_eq!(buf.generation(), 0);
-        buf.copy_from(&vec![0i32; 765 * 503], 765, 503);
+    fn snapshot_of_wrong_shape_pixmap_is_empty() {
+        let buf = FrameBuf::new();
+        buf.store(FrameOutput::PixMap(PixMap {
+            width: 2,
+            height: 2,
+            pixels: vec![1, 2, 3],
+        }));
+        assert!(buf.snapshot().is_empty());
+        // The frame is still stored and the generation bumped; only the
+        // CPU packing is shape-gated.
         assert_eq!(buf.generation(), 1);
-        buf.copy_from(&vec![1i32; 765 * 503], 765, 503);
+    }
+
+    #[test]
+    fn snapshot_of_texture_is_empty() {
+        let buf = FrameBuf::new();
+        buf.store(FrameOutput::Texture(TextureHandle));
+        assert!(buf.snapshot().is_empty());
+    }
+
+    #[test]
+    fn store_bumps_generation() {
+        let buf = FrameBuf::new();
+        assert_eq!(buf.generation(), 0);
+        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        assert_eq!(buf.generation(), 1);
+        buf.store(applet_pixmap(vec![1i32; 765 * 503]));
         assert_eq!(buf.generation(), 2);
     }
 

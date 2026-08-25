@@ -1,11 +1,11 @@
 //! Live: two slots, only `test` set_draw; `test2` stays draw-off.
 //!
-//! The draw-off guard is asserted through the per-slot `PixelBuf`
+//! The draw-off guard is asserted through the per-slot `FrameBuf`
 //! generation (the old `game_draw_enters`/`title_screen_draw_enters`
 //! counters are gone from `SlotStatus`, M2). The mechanism:
 //! `raster_this_tick` gates on `client.draw`, so a draw-off slot never
-//! dispatches the renderer, never produces a `PixMap`, and never reaches
-//! `PixelBuf::copy_from` — its generation stays 0. The draw-on slot
+//! dispatches the renderer, never produces a `FrameOutput`, and never
+//! reaches `FrameBuf::store` — its generation stays 0. The draw-on slot
 //! rasters at the 1 fps watch cadence (no capture, no full-rate in this
 //! harness), so its generation grows. `per_frame` applies the focus
 //! `set_draw` switch exactly as the panel does; the per-frame hook
@@ -22,7 +22,7 @@ use std::thread;
 use std::time::Duration;
 
 use common::{fail, live, options, profiles, wait_ingame};
-use host::PixelBuf;
+use host::FrameBuf;
 use host_play::run_with_io;
 
 #[test]
@@ -31,9 +31,9 @@ fn live_draw_off_never_paints() {
     if !live() {
         return;
     }
-    // One `PixelBuf` per slot; a paint bumps its generation.
-    let test_pixels = PixelBuf::new();
-    let test2_pixels = PixelBuf::new();
+    // One `FrameBuf` per slot; a stored frame bumps its generation.
+    let test_pixels = FrameBuf::new();
+    let test2_pixels = FrameBuf::new();
     // Per-slot hook frame counter (per_frame wiring liveness).
     let frames = Arc::new(Mutex::new(HashMap::new()));
     let play = run_with_io(

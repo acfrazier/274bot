@@ -21,7 +21,7 @@ use client::render::Renderer;
 use vault::Profile;
 
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
-pub use slot_io::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
+pub use slot_io::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 
 /// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
 /// via [`debug_enabled`] regardless.
@@ -105,7 +105,7 @@ impl Host {
         client: &mut Client,
         username: &str,
         input: Option<Arc<SlotInput>>,
-        pixels: Option<Arc<PixelBuf>>,
+        mailbox: Option<Arc<FrameBuf>>,
         mut observe: F,
         mut probe: P,
     ) where
@@ -124,7 +124,7 @@ impl Host {
                 &mut slot,
                 username,
                 input.as_deref(),
-                pixels.as_deref(),
+                mailbox.as_deref(),
                 &mut run_sends,
                 &mut observe,
             );
@@ -146,23 +146,25 @@ impl Host {
         slot: &mut SlotLoop,
         username: &str,
         input: Option<&SlotInput>,
-        pixels: Option<&PixelBuf>,
+        mailbox: Option<&FrameBuf>,
         run_sends: &mut u32,
         observe: &mut F,
     ) where
         F: FnMut(&mut Client, &str, u32),
     {
         observe(client, username, *run_sends);
-        Self::client_frame(client, slot, username, input, pixels, run_sends);
+        Self::client_frame(client, slot, username, input, mailbox, run_sends);
     }
 
     /// One 20 ms frame: drain optional input into the shell, latch the
     /// click, run one `mainloop` pass, render the frame (the slot's
     /// optional `Renderer` — `client.draw` gates the paint; a drawing
-    /// slot fills `PixelBuf` from the rendered `PixMap`, mirroring
-    /// `Client::run`), drain gens, then copy the redraw into optional
-    /// pixels. `run_sends` is overwritten with the slot's running count of
-    /// accepted auto-run sends.
+    /// slot stores the rendered `FrameOutput` into the optional mailbox,
+    /// mirroring `Client::run`), then drain gens. The panel samples the
+    /// mailbox: `FrameBuf::snapshot` packs the `PixMap` CPU path, and
+    /// Task 4c binds `FrameOutput::Texture` directly. `run_sends` is
+    /// overwritten with the slot's running count of accepted auto-run
+    /// sends.
     /// `SlotLoop` stays module-private (tests live in this module); the
     /// pub surface exists so `run_client` and the tests share the frame.
     #[allow(private_interfaces)]
@@ -171,7 +173,7 @@ impl Host {
         slot: &mut SlotLoop,
         username: &str,
         input: Option<&SlotInput>,
-        pixels: Option<&PixelBuf>,
+        mailbox: Option<&FrameBuf>,
         run_sends: &mut u32,
     ) {
         if let Some(inp) = input {
@@ -229,10 +231,15 @@ impl Host {
         if should_emit_tick(result.player_info) && debug_enabled() {
             eprintln!("[host] slot {username}: tick");
         }
-        // `FrameOutput::Texture` is ignored: no GPU backend this task.
-        if let Some(FrameOutput::PixMap(pix)) = frame {
-            if let Some(px) = pixels {
-                px.copy_from(&pix.pixels, pix.width, pix.height);
+        // The whole `FrameOutput` lands in the mailbox, not just the
+        // packed pixels: Task 4c stores `FrameOutput::Texture` here and
+        // the panel binds it directly. The GPU backend still composites
+        // its scene to CPU, so today the mailbox only ever carries a
+        // `PixMap`; `FrameBuf::snapshot` keeps the panel's CPU upload
+        // path unchanged.
+        if let Some(frame) = frame {
+            if let Some(mailbox) = mailbox {
+                mailbox.store(frame);
             }
         }
         *run_sends = slot.run_sends;
@@ -507,18 +514,18 @@ mod tests {
     }
 
     #[test]
-    fn client_frame_skips_pixel_copy_when_draw_off() {
+    fn client_frame_skips_frame_store_when_draw_off() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        // Renderer off: no frame is rendered and nothing is copied.
+        // Renderer off: no frame is rendered and nothing is stored.
         c.set_draw(false);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
-        assert!(buf.snapshot().is_empty(), "draw off must not copy pixels");
+        assert!(buf.snapshot().is_empty(), "draw off must not store pixels");
         // Renderer on: the first (rising-edge) tick paints a full applet
         // into the buffer (with no title assets in this test the paint is
-        // empty, but the frame still copies a full applet; the non-zero
+        // empty, but the frame still packs a full applet; the non-zero
         // paint is proven live by the panel_view e2e).
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
@@ -574,7 +581,7 @@ mod tests {
     #[test]
     fn mainredraw_runs_check_minimap_on_a_paint_tick() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -603,7 +610,7 @@ mod tests {
     #[test]
     fn client_tick_observe_runs_before_the_frame_paint() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         assert!(!c.draw, "slots start with the renderer off");
@@ -642,7 +649,7 @@ mod tests {
         assert_eq!(
             buf.generation(),
             gen,
-            "renderer off must not copy pixels this tick"
+            "renderer off must not store a frame this tick"
         );
     }
 
@@ -671,7 +678,7 @@ mod tests {
     #[test]
     fn watch_only_draw_copies_first_tick_then_one_fps() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -690,7 +697,7 @@ mod tests {
     #[test]
     fn full_rate_paints_every_tick_after_scene_ready() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -710,7 +717,7 @@ mod tests {
     #[test]
     fn loading_scene_paints_every_tick_for_tv_static() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -729,7 +736,7 @@ mod tests {
     #[test]
     fn capture_draw_copies_every_tick() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
-        let buf = PixelBuf::new();
+        let buf = FrameBuf::new();
         let inp = SlotInput::new();
         inp.set_enabled(true);
         let mut slot = SlotLoop::new();

@@ -1,13 +1,13 @@
 //! Panel session: owns the unlocked vault, the running slot map, the shared
-//! `Focus`, and per-slot pixel/input channels. The dear-app frame reads
+//! `Focus`, and per-slot frame/input channels. The dear-app frame reads
 //! `Session`; slot threads stay in `host_play` (spawned via `run_with_io`
-//! with per-profile `PixelBuf`/`SlotInput`, keeping the login FIFO and the
-//! mainland hop).
+//! with per-profile `FrameBuf` mailbox/`SlotInput`, keeping the login FIFO
+//! and the mainland hop).
 //!
 //! Flat slot model (M2 Task 2b): every wall member is its own full `Client`
 //! on its own slot thread — there is no channel head and no lean baton.
 //! Clicking a member is [`Session::select`], which is pure `focus` bookkeeping:
-//! the Game pane samples that slot's `PixelBuf`. The single-client boot still
+//! the Game pane samples that slot's `FrameBuf`. The single-client boot still
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use api::interact::Driver;
-use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
+use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
@@ -57,11 +57,13 @@ fn default_cache_dir() -> String {
     }
 }
 
-/// Panel-side per-slot IO: the pixel buffer the slot paints into while its
-/// renderer is on, and the input channel it drains only while capture is on.
+/// Panel-side per-slot IO: the frame mailbox the slot stores each rendered
+/// `FrameOutput` into while its renderer is on (the panel uploads the CPU
+/// `PixMap`; Task 4c binds the `Texture` variant instead), and the input
+/// channel it drains only while capture is on.
 pub struct SlotIo {
     pub input: Arc<SlotInput>,
-    pub pixels: Arc<PixelBuf>,
+    pub pixels: Arc<FrameBuf>,
 }
 
 /// Combo highlight: `None` when nothing is focused so the widget cannot
@@ -614,10 +616,10 @@ impl Session {
         self.focus.lock().unwrap().focused.clone()
     }
 
-    /// Pixels for the Game pane (the focused slot's framebuffer). Every
-    /// wall member owns its own `PixelBuf` in the flat model; fall back to
+    /// Frames for the Game pane (the focused slot's mailbox). Every
+    /// wall member owns its own `FrameBuf` in the flat model; fall back to
     /// the first spawned slot when nothing is focused.
-    pub fn focused_pixels(&self) -> Option<Arc<PixelBuf>> {
+    pub fn focused_pixels(&self) -> Option<Arc<FrameBuf>> {
         if let Some(slot) = self.focused_slot() {
             return Some(Arc::clone(&slot.pixels));
         }
@@ -644,7 +646,7 @@ impl Session {
     /// New slots inherit the vault profile's auto-login (and logout latch).
     ///
     /// Flat model: clicking a member is pure focus — the Game pane samples
-    /// that slot's `PixelBuf`. No socket is swapped (the channel-head baton
+    /// that slot's `FrameBuf`. No socket is swapped (the channel-head baton
     /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
         let arm = self.arm_for_profile(name);
@@ -829,7 +831,7 @@ impl Session {
             return;
         };
         let input = SlotInput::new();
-        let pixels = PixelBuf::new();
+        let pixels = FrameBuf::new();
         if let Some(play) = &mut self.play {
             play.spawn_slot(
                 profile,
@@ -1434,7 +1436,7 @@ mod tests {
         script_status_text, script_stop_enabled, seed_on_first_world, stream_capture, Session,
         SlotIo,
     };
-    use host::{InputEv, PixelBuf, SlotInput};
+    use host::{FrameBuf, InputEv, SlotInput};
     use host_play::{SlotArm, SlotStatus};
     use nav::grid::StepGrid;
     use nav::tile::Tile;
@@ -1474,21 +1476,21 @@ mod tests {
             "s00".into(),
             SlotIo {
                 input: SlotInput::new(),
-                pixels: PixelBuf::new(),
+                pixels: FrameBuf::new(),
             },
         );
         s.slots.insert(
             "s05".into(),
             SlotIo {
                 input: SlotInput::new(),
-                pixels: PixelBuf::new(),
+                pixels: FrameBuf::new(),
             },
         );
         s.select("s05");
         assert_eq!(
             s.tv_name().as_deref(),
             Some("s05"),
-            "Login all must prefer the focused slot, not the first PixelBuf key"
+            "Login all must prefer the focused slot, not the first FrameBuf key"
         );
         assert_eq!(
             s.play.as_ref().unwrap().focused().as_deref(),
@@ -1993,7 +1995,7 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert_eq!(s.slots.len(), 3, "every wall member owns a PixelBuf slot");
+        assert_eq!(s.slots.len(), 3, "every wall member owns a FrameBuf slot");
         assert_eq!(
             s.play.as_ref().unwrap().statuses().len(),
             3,
@@ -2452,7 +2454,7 @@ mod tests {
             "alice".into(),
             SlotIo {
                 input: SlotInput::new(),
-                pixels: PixelBuf::new(),
+                pixels: FrameBuf::new(),
             },
         );
         s.cred_user = "alice".into();

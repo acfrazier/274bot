@@ -1,4 +1,4 @@
-//! Game Image: RGBA8 765×503 texture filled from `PixelBuf` snapshots.
+//! Game Image: RGBA8 765×503 texture filled from `FrameBuf` snapshots.
 //!
 //! The client paints a 765×503 applet (`client::APPLET_W/H`); the panel keeps
 //! the texture at exactly that size and lets the Image widget scale it.
@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use dear_app::GpuApi;
 use dear_imgui_rs::TextureId;
-use host::PixelBuf;
+use host::FrameBuf;
 
 /// Applet draw size the client always paints (never DPI-scaled).
 pub const APPLET_W: u32 = 765;
@@ -50,7 +50,7 @@ impl GameView {
         }
     }
 
-    /// Upload packed `0x00RRGGBB` pixels (a `PixelBuf` snapshot) into the
+    /// Upload packed `0x00RRGGBB` pixels (a `FrameBuf` snapshot) into the
     /// texture. dear-app's `GpuApi` exposes no per-texture sampler choice, so
     /// the Image samples with the renderer's default rather than a pixelated
     /// one. Reuses an RGBA scratch buffer so Poll-rate frames don't allocate.
@@ -80,9 +80,10 @@ impl GameView {
     }
 }
 
-/// Snapshot for the game image: the slot's `PixelBuf` when wired, else a
-/// black applet (real slot pixels arrive in Task 8).
-pub fn game_pixels(pixels: &Option<Arc<PixelBuf>>) -> Vec<u32> {
+/// Snapshot for the game image: the slot's `FrameBuf` when wired, else a
+/// black applet. CPU path only — the mailbox's `PixMap`; Task 4c binds
+/// `FrameOutput::Texture` at the call site instead of uploading.
+pub fn game_pixels(pixels: &Option<Arc<FrameBuf>>) -> Vec<u32> {
     match pixels {
         Some(p) => p.snapshot(),
         None => vec![0; (APPLET_W * APPLET_H) as usize],
