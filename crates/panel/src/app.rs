@@ -15,7 +15,7 @@ use dear_imgui_rs::{
 };
 
 use crate::chrome::{
-    button_row_layout, multibox_tooltip, BUTTON_GAP, GPU_LATER, PARAM_ROW, SCRIPT_ROW,
+    button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW,
 };
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::{game_pixels, GameView};
@@ -29,8 +29,7 @@ use crate::rail::{
 use host::debug_enabled;
 
 use crate::resource::{
-    cpu_from_delta, draw_metric, format_bots, format_rss_caption, sample_process,
-    traffic_from_samples, Metric,
+    cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
 };
 use crate::session::{
     combo_index, script_active, script_pause_enabled, script_status_text, script_stop_enabled,
@@ -115,8 +114,6 @@ struct PanelState {
     res_ram: Metric,
     /// Cached 1 Hz traffic metric for the resource card.
     res_traffic: Metric,
-    /// Cached 1 Hz draw/paint metric for the focused slot.
-    res_draw: Metric,
     /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
     /// first 1 Hz pass (first rate needs two samples).
     last_traffic: Option<(Instant, u64, usize)>,
@@ -194,13 +191,6 @@ impl PanelState {
         }
         self.last_traffic = Some((now, sum, n));
 
-        let focused = self.session.focused_name();
-        self.res_draw = draw_metric(
-            statuses
-                .iter()
-                .find(|s| Some(s.username.as_str()) == focused.as_deref()),
-        );
-
         let (rss, cpu) = sample_process();
         if debug_enabled() {
             eprintln!("[panel] rss={} traffic_sum={}", rss, sum);
@@ -243,7 +233,6 @@ impl Default for PanelState {
             res_cpu: Metric::Measuring,
             res_ram: Metric::Measuring,
             res_traffic: Metric::Measuring,
-            res_draw: Metric::Measuring,
             last_traffic: None,
             live: None,
             os_window: None,
@@ -310,27 +299,23 @@ fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Op
     };
     println!("live null_raster: rss={rss}");
     println!(
-        "live null_raster test2 game_draw={} title={} bytes={}/{}",
-        test2.game_draw_enters, test2.title_screen_draw_enters, test2.bytes_in, test2.bytes_out
+        "live null_raster test2 bytes={}/{}",
+        test2.bytes_in, test2.bytes_out
     );
     println!(
-        "live null_raster test  game_draw={} title={} bytes={}/{}",
-        test.game_draw_enters, test.title_screen_draw_enters, test.bytes_in, test.bytes_out
+        "live null_raster test  bytes={}/{}",
+        test.bytes_in, test.bytes_out
     );
-    if test.game_draw_enters == 0 {
-        return Some("live null_raster: focused test never entered game_draw".into());
-    }
     println!("PASS: live null_raster");
     live.saw_scene2 = true;
     live.passed = true;
     None
 }
 
-/// Headed watch: count channels that are up — fat Client `ingame &&
-/// scene_state==2`, lean extra `ingame` (lean never reaches scene 2).
-/// Announce 1, 10, then 50. At 50 print PASS and stay open. Timeout 600s.
-/// Does **not** freeze-assert (operator may click). Does **not** fail on
-/// RSS magnitude.
+/// Headed watch: count Clients that are up — every slot is a full Client,
+/// so "up" is `ingame && scene_state==2` for all of them. Announce 1, 10,
+/// then 50. At 50 print PASS and stay open. Timeout 600s. Does **not**
+/// freeze-assert (operator may click). Does **not** fail on RSS magnitude.
 fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -> Option<String> {
     if live.passed {
         return None;
@@ -346,9 +331,7 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
     }
     if n >= 50 {
         let (rss, _) = sample_process();
-        let heads = statuses.iter().filter(|s| !s.lean).count();
-        let leanes = statuses.iter().filter(|s| s.lean).count();
-        println!("PASS: live stress50 rss={rss} up50 heads={heads} leanes={leanes}");
+        println!("PASS: live stress50 rss={rss} up50");
         live.last_announced = 50;
         live.passed = true;
         return None;
@@ -501,24 +484,12 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
     }
     let (draw, capture) = {
         let focus = state.session.focus.lock().unwrap();
-        if state.session.channel_head {
-            // Game pane is the TV: keep painting even when a lean cap is
-            // the selected channel name.
-            let d = focus.game_pane_open && focus.renderer;
-            (d, d && focus.capture)
-        } else {
-            (should_draw(&focus), should_capture(&focus))
-        }
+        (should_draw(&focus), should_capture(&focus))
     };
     if draw {
         let buf = state.session.focused_pixels();
-        // Channel-head: key the upload on the PixelBuf generation, not the
-        // focused cap name (that name is a lean extra with no framebuffer).
-        let name = if state.session.channel_head {
-            String::from("tv")
-        } else {
-            state.session.focused_name().unwrap_or_default()
-        };
+        // Key the upload on the focused slot's PixelBuf generation.
+        let name = state.session.focused_name().unwrap_or_default();
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
@@ -580,8 +551,7 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
     };
-    let only_selected =
-        state.session.channel_head || state.session.focus.lock().unwrap().only_render_selected;
+    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     let statuses = state.session.statuses();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
@@ -763,8 +733,7 @@ fn title_row(ui: &Ui, session: &mut Session) {
         ui.same_line();
     }
     // Grid is a MultiBox submode: hide the rail, Game pane lays members.
-    // TV mode is one tube — extra rasters are not supported (gpu later).
-    let _grid_disabled = if session.channel_head || !session.multibox {
+    let _grid_disabled = if !session.multibox {
         Some(ui.begin_disabled())
     } else {
         None
@@ -772,9 +741,7 @@ fn title_row(ui: &Ui, session: &mut Session) {
     if ui.button_with_size("Grid", [w, 0.0]) {
         session.set_grid(!session.wall.grid);
     }
-    ui.set_item_tooltip(if session.channel_head {
-        GPU_LATER
-    } else if session.multibox {
+    ui.set_item_tooltip(if session.multibox {
         "grid mode — hide rail"
     } else {
         "enable MultiBox first"
@@ -1261,31 +1228,20 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
     }
     let on = session.focus.lock().unwrap().renderer;
     let mut cur = on;
-    if session.channel_head {
-        let _d = ui.begin_disabled_with_cond(true);
-        let _ = ui.checkbox("game renderer", &mut cur);
-        ui.set_item_tooltip(GPU_LATER);
-    } else if ui.checkbox("game renderer", &mut cur) {
+    if ui.checkbox("game renderer", &mut cur) {
         session.set_renderer(cur);
     }
-    if !session.channel_head {
-        ui.text_wrapped(if on {
-            "1 fps rail (CPU). Capture raises it to 50 fps. Never pauses the bot."
-        } else {
-            "renderer off — bot still runs."
-        });
-    }
-    // Music / SFX: in channel-head mode this is the TV tube (default on).
-    // Otherwise the focused profile's vault lowmem. Next spawn.
+    ui.text_wrapped(if on {
+        "1 fps rail (CPU). Capture raises it to 50 fps. Never pauses the bot."
+    } else {
+        "renderer off — bot still runs."
+    });
+    // Music / SFX: the focused profile's vault lowmem. Next spawn.
     let mut music = !session.focused_lowmem();
     if ui.checkbox("Music / SFX", &mut music) {
         session.set_focused_lowmem(!music);
     }
-    ui.text_wrapped(if session.channel_head {
-        "TV tube audio (highmem); applies the next time the head starts"
-    } else {
-        "highmem audio; applies the next time this profile starts"
-    });
+    ui.text_wrapped("highmem audio; applies the next time this profile starts");
 }
 
 /// input: per-focused-bot capture toggle. Off = watch-only, zero input work.
@@ -1355,11 +1311,7 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     }
     let current = state.session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
-    if state.session.channel_head {
-        let _d = ui.begin_disabled_with_cond(true);
-        let _ = ui.checkbox("only render selected", &mut only);
-        ui.set_item_tooltip(GPU_LATER);
-    } else if ui.checkbox("only render selected", &mut only) {
+    if ui.checkbox("only render selected", &mut only) {
         let (next, open_warn) = apply_only_render_selected(current, only);
         state.session.focus.lock().unwrap().only_render_selected = next;
         if open_warn {
@@ -1438,8 +1390,7 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
-    let only_selected =
-        state.session.channel_head || state.session.focus.lock().unwrap().only_render_selected;
+    let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
         let light = traffic_light(
@@ -1548,10 +1499,11 @@ fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     }
 }
 
-/// Resource card at the rail bottom: bots, CPU/RAM, focused draw/paint,
-/// and traffic from ClientStream byte counters (1 Hz). First CPU/traffic/
-/// draw sample reads "measuring…"; a failed process sampler shows error
-/// for CPU/RAM only.
+/// Resource card at the rail bottom: bots, CPU/RAM, and traffic from
+/// ClientStream byte counters (1 Hz). First CPU/traffic sample reads
+/// "measuring…"; a failed process sampler shows error for CPU/RAM only.
+/// The draw/paint counters moved off the slot status row (M2 Task 1), so
+/// the draw row is gone until Task 4's per-slot renderer metrics.
 fn resource_card(ui: &Ui, state: &mut PanelState) {
     ui.spacing();
     ui.text_disabled("resource");
@@ -1570,12 +1522,6 @@ fn resource_card(ui: &Ui, state: &mut PanelState) {
         Metric::Available(s) => kv_row(ui, "ram", s),
         Metric::Unavailable(r) => kv_row(ui, "ram", r),
         Metric::Error(e) => kv_row(ui, "ram", e),
-    }
-    match &state.res_draw {
-        Metric::Measuring => kv_row(ui, "draw", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "draw", s),
-        Metric::Unavailable(r) => kv_row(ui, "draw", r),
-        Metric::Error(e) => kv_row(ui, "draw", e),
     }
     match &state.res_traffic {
         Metric::Measuring => kv_row(ui, "traffic", "measuring…"),
@@ -1962,19 +1908,11 @@ mod tests {
         assert_eq!(parse_live_args(["-h"], None), Err((0, LIVE_USAGE.into())));
     }
 
-    fn st(
-        name: &str,
-        ingame: bool,
-        scene: i32,
-        game_draw: u64,
-        title: u64,
-    ) -> host_play::SlotStatus {
+    fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
         host_play::SlotStatus {
             username: name.into(),
             ingame,
             scene_state: scene,
-            game_draw_enters: game_draw,
-            title_screen_draw_enters: title,
             ..Default::default()
         }
     }
@@ -1990,7 +1928,7 @@ mod tests {
     #[test]
     fn live_null_tick_waits_until_two_scene2() {
         let mut live = live_at(Instant::now());
-        let statuses = [st("test", true, 1, 0, 0), st("test2", false, 0, 0, 0)];
+        let statuses = [st("test", true, 1), st("test2", false, 0)];
         assert_eq!(live_null_tick(&mut live, &statuses), None);
         assert!(!live.saw_scene2);
     }
@@ -1998,7 +1936,7 @@ mod tests {
     #[test]
     fn live_null_tick_timeout_before_scene2() {
         let mut live = live_at(Instant::now() - Duration::from_secs(120));
-        let statuses = [st("test", true, 2, 0, 0)];
+        let statuses = [st("test", true, 2)];
         let err = live_null_tick(&mut live, &statuses).expect("timeout");
         assert!(err.contains("1/2"), "{err}");
         assert!(err.contains("120s"), "{err}");
@@ -2007,23 +1945,11 @@ mod tests {
     #[test]
     fn live_null_tick_passes_at_scene2_without_freeze() {
         let mut live = live_at(Instant::now());
-        let scene2 = [st("test", true, 2, 4, 1), st("test2", true, 2, 1, 3)];
+        let scene2 = [st("test", true, 2), st("test2", true, 2)];
         assert_eq!(live_null_tick(&mut live, &scene2), None);
         assert!(live.passed);
         assert!(live.saw_scene2);
         assert_eq!(live_null_tick(&mut live, &scene2), None, "stay passed");
-    }
-
-    #[test]
-    fn live_null_tick_fails_if_focused_never_drew() {
-        let mut live = live_at(Instant::now());
-        let blank = [st("test", true, 2, 0, 0), st("test2", true, 2, 0, 0)];
-        let err = live_null_tick(&mut live, &blank).expect("no draw");
-        assert!(
-            err.contains("focused test never entered game_draw"),
-            "{err}"
-        );
-        assert!(!live.passed);
     }
 
     fn stress_at(started: Instant) -> LiveStress {
@@ -2036,7 +1962,7 @@ mod tests {
 
     fn ready_n(n: usize) -> Vec<host_play::SlotStatus> {
         (0..n)
-            .map(|i| st(&format!("s{i:02}"), true, 2, 0, 0))
+            .map(|i| st(&format!("s{i:02}"), true, 2))
             .collect()
     }
 
@@ -2076,16 +2002,22 @@ mod tests {
     }
 
     #[test]
-    fn live_stress_tick_counts_lean_ingame_without_scene_2() {
+    fn live_stress_tick_counts_full_clients_up() {
         let mut live = stress_at(Instant::now());
-        let mut rows = vec![st("s00", true, 2, 1, 0)];
+        // Every member is a full Client: "up" requires scene 2, so loading
+        // slots do not count toward the 50.
+        let mut rows = vec![st("s00", true, 2)];
         for i in 1..50 {
-            let mut s = st(&format!("s{i:02}"), true, 1, 0, 0);
-            s.lean = true;
-            rows.push(s);
+            rows.push(st(&format!("s{i:02}"), true, 1));
         }
         assert_eq!(live_stress_tick(&mut live, &rows), None);
-        assert!(live.passed, "49 lean ingame + 1 fat scene 2 is 50 up");
+        assert!(!live.passed, "49 loading Clients are not 50 up");
+        assert_eq!(live.last_announced, 1);
+        for r in rows.iter_mut() {
+            r.scene_state = 2;
+        }
+        assert_eq!(live_stress_tick(&mut live, &rows), None);
+        assert!(live.passed, "50 scene-2 Clients pass");
         assert_eq!(live.last_announced, 50);
     }
 }

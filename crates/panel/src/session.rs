@@ -3,6 +3,13 @@
 //! `Session`; slot threads stay in `host_play` (spawned via `run_with_io`
 //! with per-profile `PixelBuf`/`SlotInput`, keeping the login FIFO and the
 //! mainland hop).
+//!
+//! Flat slot model (M2 Task 2b): every wall member is its own full `Client`
+//! on its own slot thread — there is no channel head and no lean baton.
+//! Clicking a member is [`Session::select`], which is pure `focus` bookkeeping:
+//! the Game pane samples that slot's `PixelBuf`. The single-client boot still
+//! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
+//! the rest.
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -15,7 +22,7 @@ use std::time::Duration;
 use api::interact::Driver;
 use host::{map_image_to_applet, InputEv, PixelBuf, SlotInput};
 use host_play::{
-    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus, TuneError,
+    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::grid::StepGrid;
 use nav::router::{find, NoPath};
@@ -26,8 +33,8 @@ use vault::{Profile, Vault};
 use crate::focus::draw_for_slot;
 use crate::wall::Wall;
 
-/// Scatter / mainland hop only on a cold world, not after a channel-18 wipe
-/// (that would tele the newly tuned TV every cap-click).
+/// Scatter / mainland hop only on a cold world, not after a `lostCon`
+/// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
@@ -195,8 +202,8 @@ pub struct Session {
     /// 1 s raster cadence.
     route_gen: u64,
     mainland_sent: Arc<Mutex<HashSet<String>>>,
-    /// Channel-head scatter: after scene 2, `::tele` the fat TV to a
-    /// shuffled walkable tile (lean extras seed themselves).
+    /// Flat-model scatter: after scene 2, `::tele` each slot to a shuffled
+    /// walkable tile (every slot is a full Client and seeds itself).
     scatter: Arc<AtomicBool>,
     options: PlayOptions,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
@@ -205,15 +212,6 @@ pub struct Session {
     /// MultiBox toggle: rail (or grid) policy is up. `Focus.wall_open`
     /// mirrors this so extra rasters only run while the wall is visible.
     pub multibox: bool,
-    /// Channel-head wall: one fat Client (the TV); extras are lean sockets.
-    /// Latched on first MultiBox-on (`stress50`). Hiding the rail does not
-    /// unset it. Off only via explicit [`Session::set_channel_head`] (`null_raster`).
-    pub channel_head: bool,
-    /// Slot-thread view of [`Self::channel_head`] (the per-frame hook).
-    tv: Arc<AtomicBool>,
-    /// Channel-head TV tube: `true` means highmem + SFX on the fat head
-    /// (default). Independent of vault `ProfileSettings.lowmem`.
-    pub tube_sfx: bool,
     /// Persisted panel prefs (last focus + per-profile collapsed sections).
     pub ui: crate::ui_state::PanelUiState,
     /// The script picked in Browse (compiled id or loaded JS card);
@@ -291,9 +289,6 @@ impl Session {
             scatter: Arc::new(AtomicBool::new(false)),
             wall: Wall::default(),
             multibox: false,
-            channel_head: false,
-            tv: Arc::new(AtomicBool::new(false)),
-            tube_sfx: true,
             ui: crate::ui_state::load(),
             script_sel: None,
             script_browse_open: false,
@@ -323,7 +318,7 @@ impl Session {
 
     /// Unlock (or first-run create) the vault at `path` and start the play.
     /// Only the focused profile is spawned as a slot; other vault rows stay
-    /// parked until selected (channel-change keeps a slot once it has run).
+    /// parked until selected (select keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
         if self.start_vault(path, pass) {
             self.focus_first_profile();
@@ -334,7 +329,8 @@ impl Session {
     }
 
     /// Open the vault and attach an empty [`Play`]. Does **not** spawn a
-    /// slot — headed stress50 latches TV first, then loads `s00` as the tube.
+    /// slot — the boot spawns the focused profile after this; MultiBox
+    /// spawns the wall members.
     fn start_vault(&mut self, path: &Path, pass: &str) -> bool {
         match open_vault(path, pass) {
             Ok(vault) => {
@@ -367,7 +363,6 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.set_multibox(true);
-        self.set_channel_head(false);
         self.scatter.store(false, Ordering::Relaxed);
         // First MultiBox-on opens the chooser; live already loaded both
         // names. Leave the window usable (operator may click the rail).
@@ -382,14 +377,14 @@ impl Session {
     }
 
     /// Live `stress50` setup: temp vault `s00`…`s49` (password = username,
-    /// uids `274_000_100 + i`), TV latched **before** any spawn, `s00` is
-    /// the highmem tube, extras lean, chooser closed, only-render-selected,
-    /// then `login_all`.
+    /// uids `274_000_100 + i`), every member spawns one full `Client`
+    /// (no lean extras), `s00` is the focused slot, chooser closed,
+    /// only-render-selected, then `login_all`.
     pub fn live_prepare_stress50(&mut self) -> Result<(), String> {
         self.live_prepare_stress(50)
     }
 
-    /// Headed channel-head wall of `n` profiles (`s00`…`s{n-1}`).
+    /// Headed flat wall of `n` profiles (`s00`…`s{n-1}`).
     fn live_prepare_stress(&mut self, n: usize) -> Result<(), String> {
         let n = n.max(1);
         let names: Vec<(String, String)> = (0..n)
@@ -403,20 +398,18 @@ impl Session {
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
         let path = temp_live_vault_from(&entries, 274_000_100);
-        // Empty Play first: do not spawn last_focus as a lowmem fat before
-        // the TV latch (that was the headed-50 black tube).
+        // Empty Play first: do not spawn last_focus before s00 focuses.
         if !self.start_vault(&path, "bot") {
             return Err(self
                 .error
                 .clone()
                 .unwrap_or_else(|| "start_vault failed".into()));
         }
-        self.set_channel_head(true);
         self.set_multibox(true);
         self.scatter.store(true, Ordering::Relaxed);
         self.wall.chooser_open = false;
         self.focus.lock().unwrap().only_render_selected = true;
-        // Tube first so every later load is lean.
+        // s00 loads first so it is the focused slot and FIFO head.
         self.load(&names[0].0);
         for (name, _) in names.iter().skip(1) {
             self.load(name);
@@ -434,7 +427,6 @@ impl Session {
         let mainland = Arc::clone(&self.mainland);
         let mainland_sent = Arc::clone(&self.mainland_sent);
         let scatter = Arc::clone(&self.scatter);
-        let tv = Arc::clone(&self.tv);
         let travellers = Arc::clone(&self.travellers);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
@@ -444,18 +436,13 @@ impl Session {
             Vec::new(),
             |_| (None, None),
             move |c, name| {
+                // Flat model: every slot is a full Client; draw gates the
+                // slot's renderer per the wall policy (focused always,
+                // members when only-render-selected is off).
                 let f = focus.lock().unwrap();
-                let draw = if tv.load(Ordering::Relaxed) {
-                    // This hook only runs on the fat Client. Do not key
-                    // off the focused cap name (that is the channel
-                    // selector) or a per-name renderer_by miss.
-                    f.game_pane_open && f.renderer
-                } else {
-                    draw_for_slot(&f, name)
-                };
+                let draw = draw_for_slot(&f, name);
                 drop(f);
                 c.set_draw(draw);
-                c.full_rate = tv.load(Ordering::Relaxed) && draw;
                 if c.ingame
                     && c.scene_state == 2
                     && seed_on_first_world(c.last_login_reconnect)
@@ -536,7 +523,6 @@ impl Session {
         let Some(play) = self.play.as_mut() else {
             return;
         };
-        play.poll_tune();
         let current = play.statuses();
         {
             let mut log_by = self.log_by.lock().unwrap();
@@ -574,35 +560,6 @@ impl Session {
         }
         self.statuses = current;
         self.sync_walk_status();
-        self.arm_lean_extras_after_tv();
-    }
-
-    /// Channel-head Login all arms only the TV. Once the tube is
-    /// `ingame && scene_state==2`, arm the lean extras so they handshake
-    /// one-by-one (k of n) instead of overlapping the highmem login.
-    fn arm_lean_extras_after_tv(&mut self) {
-        if !self.channel_head {
-            return;
-        }
-        let Some(play) = self.play.as_ref() else {
-            return;
-        };
-        let tv_up = self.statuses.iter().any(|s| !s.lean && s.is_up());
-        if !tv_up {
-            return;
-        }
-        let head = self.tv_name();
-        for name in self.wall.members.clone() {
-            if head.as_deref() == Some(name.as_str()) {
-                continue;
-            }
-            if self.wall.latch.contains(&name) {
-                continue;
-            }
-            if let Some(arm) = play.arm(&name) {
-                arm_login_all(&arm);
-            }
-        }
     }
 
     /// Copy each slot's traveller `queued()` into `walk_*` (−1 if none) and
@@ -657,8 +614,9 @@ impl Session {
         self.focus.lock().unwrap().focused.clone()
     }
 
-    /// Pixels for the Game pane (the TV). Lean channel members have no
-    /// framebuffer; fall back to the unique fat head slot.
+    /// Pixels for the Game pane (the focused slot's framebuffer). Every
+    /// wall member owns its own `PixelBuf` in the flat model; fall back to
+    /// the first spawned slot when nothing is focused.
     pub fn focused_pixels(&self) -> Option<Arc<PixelBuf>> {
         if let Some(slot) = self.focused_slot() {
             return Some(Arc::clone(&slot.pixels));
@@ -666,17 +624,9 @@ impl Session {
         self.slots.values().next().map(|s| Arc::clone(&s.pixels))
     }
 
-    /// Username of the fat TV. After a channel hop this is `fat_head_name`
-    /// (the PixelBuf map stays on the first spawn key).
+    /// Username of the focused slot (the sampled one, the old TV). Falls
+    /// back to the first spawned slot when the focus has no slot yet.
     pub fn tv_name(&self) -> Option<String> {
-        if self.channel_head {
-            if let Some(h) = self.play.as_ref().and_then(|p| p.fat_head_name()) {
-                return Some(h);
-            }
-        }
-        if self.slots.len() == 1 {
-            return self.slots.keys().next().cloned();
-        }
         self.focused_name()
             .filter(|n| self.slots.contains_key(n))
             .or_else(|| self.slots.keys().next().cloned())
@@ -689,55 +639,17 @@ impl Session {
 
     /// Switch the focused profile. A parked vault name is spawned on first
     /// select (login FIFO); already-running slots stay up so the combo can
-    /// channel-change. Capture follows the new focus when the single capture
+    /// change focus. Capture follows the new focus when the single capture
     /// toggle is on (never two keyboards). The credentials fields follow.
     /// New slots inherit the vault profile's auto-login (and logout latch).
     ///
-    /// Channel-head: the Game pane is the TV. Clicking a lean cap (or the
-    /// combo) opcode-18 retunes the fat Client onto that account.
+    /// Flat model: clicking a member is pure focus — the Game pane samples
+    /// that slot's `PixelBuf`. No socket is swapped (the channel-head baton
+    /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
-        let one_tube = self.channel_head;
-        if one_tube && self.play.is_some() {
-            let head = self.play.as_ref().and_then(|p| p.fat_head_name());
-            if head.is_none() {
-                let arm = self.arm_for_profile(name);
-                self.ensure_slot(name, arm);
-            } else if head.as_deref() != Some(name) {
-                if let Err(e) = self.tune_to(name) {
-                    if !matches!(e, TuneError::Busy) {
-                        self.error = Some(format!("tune {name}: {e:?}"));
-                    }
-                }
-            }
-        } else {
-            let arm = self.arm_for_profile(name);
-            self.ensure_slot(name, arm);
-        }
+        let arm = self.arm_for_profile(name);
+        self.ensure_slot(name, arm);
         self.apply_focus(name);
-    }
-
-    /// Opcode-18 retune: drop lean `name`, park the current TV as lean,
-    /// spawn `name` as the fat head. No-op when `name` is already the TV.
-    fn tune_to(&mut self, name: &str) -> Result<(), TuneError> {
-        let play = self.play.as_mut().expect("tune_to requires a play");
-        if play.fat_head_name().as_deref() == Some(name) {
-            return Ok(());
-        }
-        if let Some(mut p) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() {
-            p.settings.lowmem = !self.tube_sfx;
-            play.remember_profile(p);
-        }
-        // In-place retune reuses the one TV PixelBuf; do not allocate a
-        // second fat framebuffer or drop the tube during the hop.
-        let (input, pixels) = self
-            .slots
-            .values()
-            .next()
-            .map(|s| (Arc::clone(&s.input), Arc::clone(&s.pixels)))
-            .map(|(input, pixels)| (Some(input), Some(pixels)))
-            .unwrap_or((None, None));
-        play.retune(name, input, pixels)?;
-        Ok(())
     }
 
     fn apply_focus(&mut self, name: &str) {
@@ -756,6 +668,11 @@ impl Session {
         focus.focused = Some(name.to_string());
         let capture = focus.capture;
         drop(focus);
+        // Mirror onto the play: which slot the panel samples (host-play
+        // keeps it as pure bookkeeping — no socket adopt/park).
+        if let Some(play) = self.play.as_mut() {
+            play.focus(name);
+        }
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.
         self.route_gen += 1;
@@ -781,11 +698,7 @@ impl Session {
     /// Renderer checkbox. Writes both the focused checkbox (`Focus.renderer`)
     /// and `renderer_by[focused]` so per-slot draw policy stays in sync.
     /// Slot threads apply `set_draw` from the focus in their per-frame hook.
-    /// Channel-head: no-op — one TV tube, no per-profile raster.
     pub fn set_renderer(&mut self, on: bool) {
-        if self.channel_head {
-            return;
-        }
         let mut focus = self.focus.lock().unwrap();
         focus.renderer = on;
         if let Some(name) = focus.focused.clone() {
@@ -822,13 +735,7 @@ impl Session {
     }
 
     fn capture_on(&mut self, name: &str) {
-        // Channel-head: one PixelBuf on the tube, not per focused cap name.
-        let slot = if self.channel_head {
-            self.slots.values().next()
-        } else {
-            self.slots.get(name)
-        };
-        if let Some(slot) = slot {
+        if let Some(slot) = self.slots.get(name) {
             let (tx, rx) = mpsc::channel();
             slot.input.connect_rx(rx);
             slot.input.set_enabled(true);
@@ -903,6 +810,10 @@ impl Session {
     /// filled so focus can attach. `arm` carries the spawn's login intent:
     /// `None` logs in immediately (CLI/e2e); panel paths pass
     /// [`Session::arm_for_profile`] so auto-login / latch are respected.
+    ///
+    /// Flat model: every profile spawns **one** full `Client` slot with its
+    /// own input + framebuffer (no lean channel, no render-all guard — a
+    /// headless member just has its draw off).
     fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>) {
         if self.slots.contains_key(username) {
             return;
@@ -917,19 +828,6 @@ impl Session {
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
             return;
         };
-        // Channel-head: exactly one fat Client (the TV). Every later wall
-        // member is lean — no second Client, no render-all escape hatch.
-        let extras_are_lean = self.channel_head && self.play.is_some() && !self.slots.is_empty();
-        if extras_are_lean {
-            if let Some(play) = &mut self.play {
-                play.spawn_channel_with_arm(profile, arm);
-            }
-            return;
-        }
-        let mut profile = profile;
-        if self.channel_head && self.slots.is_empty() {
-            profile.settings.lowmem = !self.tube_sfx;
-        }
         let input = SlotInput::new();
         let pixels = PixelBuf::new();
         if let Some(play) = &mut self.play {
@@ -998,13 +896,9 @@ impl Session {
         true
     }
 
-    /// Lowmem for the Music/SFX checkbox. Channel-head uses the TV tube
-    /// flag (default highmem). Otherwise the focused vault profile, or
+    /// Lowmem for the Music/SFX checkbox: the focused vault profile, or
     /// `true` when nothing is focused.
     pub fn focused_lowmem(&self) -> bool {
-        if self.channel_head {
-            return !self.tube_sfx;
-        }
         self.focused_name()
             .and_then(|n| self.vault.as_ref().and_then(|v| v.get(&n)))
             .map(|p| p.settings.lowmem)
@@ -1016,11 +910,6 @@ impl Session {
     /// spawn; a live slot is not torn down or restarted. Returns whether
     /// the write landed; failures set [`Session::error`].
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
-        if self.channel_head {
-            self.tube_sfx = !lowmem;
-            self.error = None;
-            return true;
-        }
         let Some(name) = self.focused_name() else {
             self.error = Some("music/sfx: no focused profile".into());
             return false;
@@ -1066,8 +955,8 @@ impl Session {
         } else {
             self.ensure_slot(name, self.arm_for_profile(name));
         }
-        // Chooser / Load all spawn onto the rail; they must not opcode-18
-        // steal the TV. Cap-click / combo goes through [`select`].
+        // Load all / chooser rows spawn onto the rail and focus the member
+        // (the flat model's "click" — the Game pane samples this slot).
         self.apply_focus(name);
         self.sync_wall_focus();
         newly
@@ -1121,16 +1010,12 @@ impl Session {
     /// Log in every wall member: clear their latches and arm a login so
     /// title-screen slots handshake. One-shot unless the profile's
     /// auto-login is set (which keeps the arm armed after the handshake).
-    /// The fat TV head is moved to the front of the login FIFO so it is
-    /// not stuck behind lean extras.
-    ///
-    /// Channel-head: arm **only** the TV. Lean extras wait until the tube
-    /// is up (`arm_lean_extras_after_tv` from [`Session::pump_status`]) so
-    /// the operator sees login 1, then k of n, then the next.
+    /// The focused slot is moved to the front of the login FIFO so it is
+    /// not stuck behind members that queued first.
     pub fn login_all(&mut self) {
-        // Prefer the SlotIo TV (pixels), not `fat_head_name()` from statuses:
-        // the highmem tube can still be inside `maininit` when Login all
-        // runs, so the status row is missing and prefer would be skipped.
+        // Prefer the focused SlotIo (pixels), not the status row: the
+        // focused slot can still be inside `maininit` when Login all runs,
+        // so the status row is missing and prefer would be skipped.
         let head = self.tv_name();
         if let (Some(play), Some(h)) = (self.play.as_ref(), head.as_ref()) {
             if let Some(arm) = play.arm(h) {
@@ -1142,12 +1027,8 @@ impl Session {
             names.retain(|n| n != h);
             names.insert(0, h.clone());
         }
-        let extras_wait = self.channel_head;
         for name in names {
             self.wall.clear_latch(&name);
-            if extras_wait && head.as_deref() != Some(name.as_str()) {
-                continue;
-            }
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
                 arm_login_all(&arm);
             }
@@ -1181,20 +1062,8 @@ impl Session {
     /// policy (`Focus.wall_open`), which stays true for rail **or** grid.
     /// Off: clear the grid and any open chooser and stop extra rasters
     /// (`wall_open = false`) without logging anyone out.
-    ///
-    /// First MultiBox-on latches channel-head (TV). Hiding the rail does
-    /// not unset it — TV mode is init-only. `null_raster` calls
-    /// [`Session::set_channel_head`]`(false)` after this.
-    pub fn set_channel_head(&mut self, on: bool) {
-        self.channel_head = on;
-        self.tv.store(on, Ordering::Relaxed);
-    }
-
     pub fn set_multibox(&mut self, on: bool) {
         self.multibox = on;
-        if on {
-            self.set_channel_head(true);
-        }
         self.scatter.store(on, Ordering::Relaxed);
         if on {
             let running: Vec<String> = self
@@ -1225,9 +1094,9 @@ impl Session {
     }
 
     /// Grid submode of MultiBox: hides the rail in the Game pane. A no-op
-    /// while MultiBox is off or channel-head is latched (one TV tube).
+    /// while MultiBox is off.
     pub fn set_grid(&mut self, on: bool) {
-        if self.multibox && !self.channel_head {
+        if self.multibox {
             self.wall.grid = on;
         }
     }
@@ -1257,11 +1126,8 @@ impl Session {
         if let Some(play) = &mut self.play {
             play.stop_slot(name);
         }
-        // Channel-head PixelBuf is the tube, keyed by the first spawn name.
-        // Removing a parked lean must not drop the TV framebuffer.
-        if !self.channel_head || self.wall.members.is_empty() {
-            self.slots.remove(name);
-        }
+        // Flat model: each member owns its own framebuffer; stop means drop.
+        self.slots.remove(name);
         self.sync_wall_focus();
         if focused.as_deref() == Some(name) {
             match neighbour {
@@ -1360,8 +1226,8 @@ impl Session {
     }
 
     /// Queue card place: the focused slot if it is waiting, else the FIFO
-    /// head among every waiting wall member. Channel-head keeps showing
-    /// *k of n* on the TV after the tube has granted and extras remain.
+    /// head among every waiting wall member. Keeps showing *k of n* once
+    /// the focused slot has granted and later members remain queued.
     pub fn queue_place(&self) -> Option<(i32, i32)> {
         if let Some(q) = self.focused_queue() {
             return Some(q);
@@ -1601,9 +1467,9 @@ mod tests {
     }
 
     #[test]
-    fn tv_name_follows_fat_head_after_tune() {
+    fn tv_name_follows_the_focused_slot() {
         let mut s = Session::new();
-        s.channel_head = true;
+        s.play = Some(empty_play());
         s.slots.insert(
             "s00".into(),
             SlotIo {
@@ -1611,24 +1477,28 @@ mod tests {
                 pixels: PixelBuf::new(),
             },
         );
-        let play = empty_play();
-        play.statuses.lock().unwrap().push(SlotStatus {
-            username: "s05".into(),
-            ingame: true,
-            scene_state: 2,
-            lean: false,
-            ..SlotStatus::default()
-        });
-        s.play = Some(play);
+        s.slots.insert(
+            "s05".into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: PixelBuf::new(),
+            },
+        );
+        s.select("s05");
         assert_eq!(
             s.tv_name().as_deref(),
             Some("s05"),
-            "Login all must prefer the tuned TV, not the first PixelBuf key"
+            "Login all must prefer the focused slot, not the first PixelBuf key"
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().focused().as_deref(),
+            Some("s05"),
+            "select mirrors the sampled slot onto the play (pure bookkeeping)"
         );
     }
 
     #[test]
-    fn seed_on_first_world_skips_channel_18() {
+    fn seed_on_first_world_skips_after_reconnect() {
         assert!(seed_on_first_world(None));
         assert!(seed_on_first_world(Some(false)));
         assert!(!seed_on_first_world(Some(true)));
@@ -2100,8 +1970,8 @@ mod tests {
     }
 
     #[test]
-    fn channel_head_spawns_extras_as_lean() {
-        let path = tmp_vault("channel-head-lean.vault");
+    fn flat_model_spawns_every_member_as_a_client() {
+        let path = tmp_vault("flat-spawn.vault");
         let mut s = Session::new();
         assert!(s.unlock_at(&path, "bot"));
         for (n, uid) in [("alice", 1), ("bob", 2), ("carol", 3)] {
@@ -2111,89 +1981,54 @@ mod tests {
                 .upsert(profile(n, "pw", uid))
                 .unwrap();
         }
-        s.set_channel_head(true);
         s.select("alice");
         s.load("bob");
         s.load("carol");
-        // spawn_channel_thread pushes the lean row before it attempts TCP.
+        // ensure_slot registers the IO map synchronously; wait only for the
+        // slot threads to publish their status rows.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut fat = 0;
-        let mut lean = 0;
         while std::time::Instant::now() < deadline {
-            let st = s.play.as_ref().unwrap().statuses();
-            fat = st.iter().filter(|r| !r.lean).count();
-            lean = st.iter().filter(|r| r.lean).count();
-            if fat == 1 && lean == 2 {
+            if s.play.as_ref().unwrap().statuses().len() == 3 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert_eq!(s.slots.len(), 1, "only the TV head owns a PixelBuf");
-        assert_eq!(fat, 1, "one fat Client");
-        assert_eq!(lean, 2, "two lean channels");
-        assert!(
-            !s.play
-                .as_ref()
-                .unwrap()
-                .arm("bob")
-                .unwrap()
-                .want_login
-                .load(Ordering::Relaxed),
-            "lean extras must not jump the login FIFO ahead of the TV"
-        );
-        s.select("alice");
-        s.login_all();
-        let front = s.play.as_ref().unwrap().login_queue_uids();
+        assert_eq!(s.slots.len(), 3, "every wall member owns a PixelBuf slot");
         assert_eq!(
-            front.first().copied(),
-            Some(1),
-            "TV alice uid must be FIFO head, got {front:?}"
+            s.play.as_ref().unwrap().statuses().len(),
+            3,
+            "one full Client slot per profile — no lean channels"
         );
-        s.select("bob");
         assert!(
-            s.focused_pixels().is_some(),
-            "Game pane keeps the head framebuffer when focus is a lean cap"
-        );
-        s.play.as_mut().unwrap().stop_slot("alice");
-        s.play.as_mut().unwrap().stop_slot("bob");
-        s.play.as_mut().unwrap().stop_slot("carol");
-    }
-
-    #[test]
-    fn channel_head_tv_defaults_to_sfx_and_does_not_write_vault() {
-        let path = tmp_vault("tv-tube-sfx.vault");
-        let mut s = Session::new();
-        s.vault = Some(Vault::create(&path, "bot").unwrap());
-        s.vault
-            .as_mut()
-            .unwrap()
-            .upsert(profile("alice", "pw", 1))
-            .unwrap();
-        s.set_channel_head(true);
-        assert!(s.tube_sfx, "TV tube SFX on by default");
-        assert!(
-            !s.focused_lowmem(),
-            "Music/SFX checkbox follows the tube, not vault"
-        );
-        assert!(s.set_focused_lowmem(true));
-        assert!(!s.tube_sfx);
-        assert!(
-            s.vault
+            s.play
                 .as_ref()
                 .unwrap()
-                .get("alice")
-                .unwrap()
-                .settings
-                .lowmem,
-            "tube toggle must not rewrite the vault profile"
+                .arm("carol")
+                .is_some(),
+            "every member has a control arm"
         );
-        assert!(s.set_focused_lowmem(false));
-        assert!(s.tube_sfx);
+        // Focus is pure bookkeeping: selecting bob redirects the sampled
+        // slot without touching a socket.
+        s.select("bob");
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert_eq!(
+            s.play.as_ref().unwrap().focused().as_deref(),
+            Some("bob")
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().statuses().len(),
+            3,
+            "focus does not swap sockets; every slot stays up"
+        );
+        // No `stop_slot` joins here: the slot threads sit in `maininit`'s
+        // bounded HTTP retry (host-play shrinks it only under its own
+        // `#[cfg(test)]`), so a join would block the suite for minutes.
+        // The threads are detached and die at process exit.
     }
 
     #[test]
-    fn channel_head_never_spawns_a_second_fat() {
-        let path = tmp_vault("tv-no-second-fat.vault");
+    fn logout_all_arms_every_wall_member() {
+        let path = tmp_vault("logout-all-flat.vault");
         let mut s = Session::new();
         assert!(s.unlock_at(&path, "bot"));
         for (n, uid) in [("alice", 1), ("bob", 2)] {
@@ -2203,42 +2038,6 @@ mod tests {
                 .upsert(profile(n, "pw", uid))
                 .unwrap();
         }
-        s.set_channel_head(true);
-        s.focus.lock().unwrap().only_render_selected = false;
-        s.select("alice");
-        s.load("bob");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut fat = 0;
-        let mut lean = 0;
-        while std::time::Instant::now() < deadline {
-            let st = s.play.as_ref().unwrap().statuses();
-            fat = st.iter().filter(|r| !r.lean).count();
-            lean = st.iter().filter(|r| r.lean).count();
-            if fat == 1 && lean == 1 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert_eq!(s.slots.len(), 1, "exactly one PixelBuf (the TV)");
-        assert_eq!(fat, 1, "no second fat Client");
-        assert_eq!(lean, 1);
-        s.play.as_mut().unwrap().stop_slot("alice");
-        s.play.as_mut().unwrap().stop_slot("bob");
-    }
-
-    #[test]
-    fn logout_all_arms_lean_extras_not_only_the_tv() {
-        let path = tmp_vault("logout-all-lean.vault");
-        let mut s = Session::new();
-        assert!(s.unlock_at(&path, "bot"));
-        for (n, uid) in [("alice", 1), ("bob", 2)] {
-            s.vault
-                .as_mut()
-                .unwrap()
-                .upsert(profile(n, "pw", uid))
-                .unwrap();
-        }
-        s.set_channel_head(true);
         s.select("alice");
         s.load("bob");
         s.wall.load("alice");
@@ -2259,7 +2058,7 @@ mod tests {
                 .unwrap()
                 .want_logout
                 .load(Ordering::Relaxed),
-            "TV must logout"
+            "the focused member must logout"
         );
         assert!(
             s.play
@@ -2269,14 +2068,14 @@ mod tests {
                 .unwrap()
                 .want_logout
                 .load(Ordering::Relaxed),
-            "lean extras must logout, not only the TV"
+            "every wall member must logout"
         );
-        s.play.as_mut().unwrap().stop_slot("alice");
-        s.play.as_mut().unwrap().stop_slot("bob");
+        // No `stop_slot` joins: the slot threads stay in `maininit`'s
+        // bounded HTTP retry (see `flat_model_spawns_every_member_as_a_client`).
     }
 
     #[test]
-    fn headed_stress_spawns_s00_as_tv_despite_last_focus() {
+    fn headed_stress_spawns_every_member_and_focuses_s00() {
         crate::ui_state::save(&crate::ui_state::PanelUiState {
             last_focus: Some("s02".into()),
             ..Default::default()
@@ -2284,26 +2083,18 @@ mod tests {
         let mut s = Session::new();
         s.live_prepare_stress(3).expect("prepare");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut fat = 0;
-        let mut lean = 0;
-        let mut fat_name = String::new();
         while std::time::Instant::now() < deadline {
-            let st = s.play.as_ref().unwrap().statuses();
-            fat = st.iter().filter(|r| !r.lean).count();
-            lean = st.iter().filter(|r| r.lean).count();
-            if let Some(h) = st.iter().find(|r| !r.lean) {
-                fat_name = h.username.clone();
-            }
-            if fat == 1 && lean == 2 {
+            if s.play.as_ref().unwrap().statuses().len() == 3 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert_eq!(s.slots.len(), 1, "one PixelBuf (the TV)");
-        assert_eq!(fat, 1);
-        assert_eq!(lean, 2);
-        assert_eq!(fat_name, "s00", "TV must be s00, not last_focus s02");
-        assert_eq!(s.focused_name().as_deref(), Some("s00"));
+        assert_eq!(s.slots.len(), 3, "every member owns its own Client slot");
+        assert_eq!(
+            s.focused_name().as_deref(),
+            Some("s00"),
+            "focused slot must be s00, not last_focus s02"
+        );
         assert_eq!(s.tv_name().as_deref(), Some("s00"));
         let front = s.play.as_ref().unwrap().login_queue_uids();
         assert_eq!(
@@ -2319,48 +2110,20 @@ mod tests {
                 .unwrap()
                 .want_login
                 .load(Ordering::Relaxed),
-            "TV arms immediately"
+            "the focused slot arms immediately"
         );
-        assert!(
-            !s.play
-                .as_ref()
-                .unwrap()
-                .arm("s01")
-                .unwrap()
-                .want_login
-                .load(Ordering::Relaxed),
-            "lean extras wait until the TV is up"
-        );
-        for n in ["s00", "s01", "s02"] {
-            s.play.as_mut().unwrap().stop_slot(n);
-        }
+        // No `stop_slot` joins: the slot threads stay in `maininit`'s
+        // bounded HTTP retry (see `flat_model_spawns_every_member_as_a_client`).
     }
 
     #[test]
-    fn channel_head_arms_extras_only_after_tv_is_up() {
+    fn login_all_arms_every_wall_member() {
         crate::ui_state::save(&crate::ui_state::PanelUiState {
             last_focus: None,
             ..Default::default()
         });
         let mut s = Session::new();
         s.live_prepare_stress(2).expect("prepare");
-        assert!(!s
-            .play
-            .as_ref()
-            .unwrap()
-            .arm("s01")
-            .unwrap()
-            .want_login
-            .load(Ordering::Relaxed));
-        {
-            let mut rows = s.play.as_ref().unwrap().statuses.lock().unwrap();
-            if let Some(tv) = rows.iter_mut().find(|r| r.username == "s00") {
-                tv.ingame = true;
-                tv.scene_state = 2;
-                tv.lean = false;
-            }
-        }
-        s.pump_status();
         assert!(
             s.play
                 .as_ref()
@@ -2369,10 +2132,9 @@ mod tests {
                 .unwrap()
                 .want_login
                 .load(Ordering::Relaxed),
-            "once the tube is scene 2, extras handshake (k of n)"
+            "login all arms every member immediately (the FIFO serializes)"
         );
-        s.play.as_mut().unwrap().stop_slot("s00");
-        s.play.as_mut().unwrap().stop_slot("s01");
+        // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
     }
 
     #[test]
@@ -2387,20 +2149,22 @@ mod tests {
         });
         s.statuses.push(SlotStatus {
             username: "s01".into(),
-            lean: true,
             queue_position: 1,
             queue_total: 49,
             ..SlotStatus::default()
         });
         s.statuses.push(SlotStatus {
             username: "s02".into(),
-            lean: true,
             queue_position: 2,
             queue_total: 49,
             ..SlotStatus::default()
         });
         assert_eq!(s.focused_queue(), None);
-        assert_eq!(s.queue_place(), Some((1, 49)), "TV pane still shows k of n");
+        assert_eq!(
+            s.queue_place(),
+            Some((1, 49)),
+            "Game pane still shows k of n"
+        );
     }
 
     #[test]
@@ -2731,7 +2495,6 @@ mod tests {
             s.focus.lock().unwrap().wall_open,
             "rail or grid: wall is open"
         );
-        s.set_channel_head(false);
         s.set_grid(true);
         assert!(s.wall.grid);
         assert!(
@@ -2752,29 +2515,13 @@ mod tests {
     }
 
     #[test]
-    fn tv_mode_latches_on_first_multibox_and_survives_hide() {
+    fn multibox_on_never_latches_a_tv_mode() {
         let mut s = Session::new();
-        assert!(!s.channel_head);
         s.set_multibox(true);
-        assert!(s.channel_head, "first MultiBox-on is TV init");
         s.set_grid(true);
-        assert!(!s.wall.grid, "TV mode does not support grid");
+        assert!(s.wall.grid, "every member is a full Client; grid works");
         s.set_multibox(false);
-        assert!(
-            s.channel_head,
-            "hiding the rail must not drop the latched TV"
-        );
-    }
-
-    #[test]
-    fn set_renderer_is_noop_in_channel_head() {
-        let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        s.set_channel_head(true);
-        s.set_renderer(false);
-        let f = s.focus.lock().unwrap();
-        assert!(f.renderer, "TV tube stays on; no per-profile raster");
-        assert!(!f.renderer_by.contains_key("alice"));
+        assert!(!s.wall.grid);
     }
 
     #[test]

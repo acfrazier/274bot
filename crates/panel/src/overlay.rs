@@ -470,7 +470,6 @@ mod tests {
         });
         s.statuses.push(host_play::SlotStatus {
             username: "s01".into(),
-            lean: true,
             queue_position: 1,
             queue_total: 49,
             ..host_play::SlotStatus::default()
@@ -482,7 +481,7 @@ mod tests {
         ctx.render();
         assert_eq!(
             overlay.queue_lines[1], "1 of 49",
-            "after the TV grants, the card steps k of n for the next lean"
+            "after the focused slot grants, the card steps k of n for the next queued member"
         );
     }
 

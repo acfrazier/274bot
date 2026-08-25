@@ -46,18 +46,6 @@ pub fn traffic_from_samples(
     traffic_from_delta(sum.wrapping_sub(sum0), dt_secs, n_slots)
 }
 
-/// None → Measuring. Some → `draw {game_draw_enters}  paint {paint_n}/{paint_n+skip_n}`.
-pub fn draw_metric(focused: Option<&host_play::SlotStatus>) -> Metric {
-    let Some(s) = focused else {
-        return Metric::Measuring;
-    };
-    let total = s.paint_n + s.skip_n;
-    Metric::Available(format!(
-        "draw {}  paint {}/{}",
-        s.game_draw_enters, s.paint_n, total
-    ))
-}
-
 /// macos: `format_rss(bytes) + " peak"`; other: `format_rss(bytes)`.
 pub fn format_rss_caption(bytes: u64) -> String {
     let base = format_rss(bytes);
@@ -182,31 +170,6 @@ mod tests {
         }
         match traffic_from_samples(200, 100, 1.0, 2, 2) {
             Metric::Available(s) => assert!(s.contains("/s"), "{s}"),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn draw_metric_measuring_without_focus() {
-        match draw_metric(None) {
-            Metric::Measuring => {}
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn draw_metric_formats_focused_slot() {
-        let s = host_play::SlotStatus {
-            game_draw_enters: 4,
-            paint_n: 4,
-            skip_n: 46,
-            ..Default::default()
-        };
-        match draw_metric(Some(&s)) {
-            Metric::Available(label) => {
-                assert!(label.contains("4"), "{label}");
-                assert!(label.contains("paint"), "{label}");
-            }
             other => panic!("{other:?}"),
         }
     }
