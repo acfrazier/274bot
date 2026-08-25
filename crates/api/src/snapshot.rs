@@ -3,6 +3,7 @@
 //! rebuild instead of deep-copying the world on every read.
 
 use client::client::{Client, ClientGens, ClientNpc};
+use client::config::if_type::ComponentType;
 
 /// A family of world state, mirroring the `ClientGens` counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,22 @@ pub struct GameSnapshot {
     gens: ClientGens,
     npc: Vec<NpcView>,
     runenergy: i32,
+    /// The scene origin (`map_build_base_x/z`); `None` before a world
+    /// build. The mainland-seed gate reads it (the tutorial island build
+    /// origin stays below 3000).
+    base: Option<(i32, i32)>,
+    /// The local player's world tile `(x, z, level)`; `None` before the
+    /// first `PLAYER_INFO`. Tile level is not decoded on the body yet
+    /// (gaps.md), so this is always level 0.
+    tile: Option<(i32, i32, i32)>,
+    /// Inventory `(obj id, count)` from the TYPE_INV iface, rebuilt when
+    /// the inv gen moves (the server's `UPDATE_INV_FULL` fills it each
+    /// frame). Empty before the inv iface loads.
+    inv: Vec<(i32, i32)>,
+    /// The most recent chat line (`chat_text[0]` is the ring head).
+    chat: Option<String>,
+    ingame: bool,
+    scene_state: i32,
 }
 
 impl GameSnapshot {
@@ -76,13 +93,27 @@ impl GameSnapshot {
     pub fn rebuild_family(&mut self, client: &Client, family: Family) -> bool {
         match family {
             Family::Npc => self.rebuild_npcs(client),
-            Family::Player => track(client.gens.player, &mut self.gens.player),
-            Family::Inv => track(client.gens.inv, &mut self.gens.inv),
+            Family::Player => self.rebuild_player(client),
+            Family::Inv => self.rebuild_inv(client),
             Family::Varp => track(client.gens.varp, &mut self.gens.varp),
             Family::Stat => self.rebuild_stat(client),
-            Family::Chat => track(client.gens.chat, &mut self.gens.chat),
-            Family::Scene => track(client.gens.scene, &mut self.gens.scene),
+            Family::Chat => self.rebuild_chat(client),
+            Family::Scene => self.rebuild_scene(client),
         }
+    }
+
+    /// Rebuild every family whose gen moved (the harness "one snapshot
+    /// per tick" read). Returns true iff any family gen moved.
+    pub fn rebuild(&mut self, client: &Client) -> bool {
+        let mut dirty = false;
+        dirty |= self.rebuild_family(client, Family::Npc);
+        dirty |= self.rebuild_family(client, Family::Player);
+        dirty |= self.rebuild_family(client, Family::Inv);
+        dirty |= self.rebuild_family(client, Family::Varp);
+        dirty |= self.rebuild_family(client, Family::Stat);
+        dirty |= self.rebuild_family(client, Family::Chat);
+        dirty |= self.rebuild_family(client, Family::Scene);
+        dirty
     }
 
     /// NPC views from the last npc rebuild, in `npc_ids` order (not sorted
@@ -96,12 +127,115 @@ impl GameSnapshot {
         self.runenergy
     }
 
+    /// The world build origin `(x, z)` from the last player-family
+    /// rebuild; `None` before any world built.
+    pub fn base(&self) -> Option<(i32, i32)> {
+        self.base
+    }
+
+    /// The local player's world tile `(x, z, level)` from the last
+    /// player-family rebuild.
+    pub fn tile(&self) -> Option<(i32, i32, i32)> {
+        self.tile
+    }
+
+    /// The inventory view `(obj id, count)` from the last inv rebuild.
+    pub fn inv(&self) -> &[(i32, i32)] {
+        &self.inv
+    }
+
+    /// The stacked count of `id` across inventory slots (0 when absent).
+    pub fn inv_count(&self, id: i32) -> i32 {
+        self.inv
+            .iter()
+            .filter(|(oid, _)| *oid == id)
+            .map(|(_, n)| *n)
+            .sum()
+    }
+
+    /// The most recent chat line from the last chat rebuild.
+    pub fn chat(&self) -> Option<&str> {
+        self.chat.as_deref()
+    }
+
+    /// `Client.ingame` from the last scene rebuild.
+    pub fn ingame(&self) -> bool {
+        self.ingame
+    }
+
+    /// `Client.scene_state` from the last scene rebuild.
+    pub fn scene_state(&self) -> i32 {
+        self.scene_state
+    }
+
     fn rebuild_stat(&mut self, client: &Client) -> bool {
         if !track(client.gens.stat, &mut self.gens.stat) {
             return false;
         }
         self.runenergy = client.runenergy;
         true
+    }
+
+    /// Player-family rebuild: the scene origin and the local player's
+    /// world tile (base + route head). `REBUILD_NORMAL` bumps every gen,
+    /// so a new world origin re-arms this too.
+    fn rebuild_player(&mut self, client: &Client) -> bool {
+        if !track(client.gens.player, &mut self.gens.player) {
+            return false;
+        }
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        self.base = Some(base);
+        self.tile = client.local_player.as_ref().map(|lp| {
+            (
+                base.0 + lp.route_x[0],
+                base.1 + lp.route_z[0],
+                0, // tile level is not decoded on the body yet (gaps.md)
+            )
+        });
+        true
+    }
+
+    /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts (the
+    /// same view `host-play` hands a running script).
+    fn rebuild_inv(&mut self, client: &Client) -> bool {
+        if !track(client.gens.inv, &mut self.gens.inv) {
+            return false;
+        }
+        self.inv.clear();
+        if let Some(inv) = client
+            .ifaces
+            .iter()
+            .flatten()
+            .find(|f| f.r#type == ComponentType::TYPE_INV)
+        {
+            if let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) {
+                self.inv = ids.iter().zip(counts).map(|(id, n)| (*id, *n)).collect();
+            }
+        }
+        true
+    }
+
+    /// Chat-family rebuild: the ring head (`chat_text[0]`) is the most
+    /// recent message.
+    fn rebuild_chat(&mut self, client: &Client) -> bool {
+        if !track(client.gens.chat, &mut self.gens.chat) {
+            return false;
+        }
+        let latest = client.chat_text[0].clone();
+        self.chat = (!latest.is_empty()).then_some(latest);
+        true
+    }
+
+    /// Scene-family rebuild: `ingame` + `scene_state`. These flip locally
+    /// (`check_scene` sets `scene_state = 2` on the SIM loop with no gen
+    /// bump), so always copy the cheap fields — a gen-gated copy would
+    /// pin the snapshot in a stale "loading" state. The return value
+    /// still tracks the gen for the harness's dirty/tick semantics.
+    fn rebuild_scene(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.scene, &mut self.gens.scene);
+        self.ingame = client.ingame;
+        self.scene_state = client.scene_state;
+        moved
     }
 
     fn rebuild_npcs(&mut self, client: &Client) -> bool {

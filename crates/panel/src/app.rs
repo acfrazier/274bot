@@ -126,10 +126,12 @@ struct PanelState {
     rail_window_applied: Option<bool>,
 }
 
-/// Headed live harness: null_raster (2 slots) or stress50 (50 slots).
+/// Headed live harness: null_raster (2 slots), stress50 (50 slots), or a
+/// shared scenario (`script_<name>`).
 enum LiveHarness {
     Null(LiveNull),
     Stress(LiveStress),
+    Script(LiveScript),
 }
 
 /// Headed `null_raster` harness state. `started` is the 120s login clock.
@@ -144,6 +146,16 @@ struct LiveStress {
     started: Instant,
     last_announced: u8,
     passed: bool,
+}
+
+/// Headed `script_<name>` watch. The shared `ScenarioRunner` lives on the
+/// `Session` (the slot thread ticks it); this struct only mirrors the
+/// last-reported step for progress lines and latches the terminal state.
+struct LiveScript {
+    name: String,
+    passed: bool,
+    failed: Option<String>,
+    last_step: Option<(usize, usize)>,
 }
 
 /// One rail tile's GPU texture plus the slot `FrameBuf` generation last
@@ -241,7 +253,7 @@ impl Default for PanelState {
     }
 }
 
-const LIVE_USAGE: &str = "usage: panel-play [--live null_raster|stress50]";
+const LIVE_USAGE: &str = "usage: panel-play [--live null_raster|stress50|script_<name>]";
 
 /// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored.
 /// Unknown flags/names → `Err((2, msg))`; `--help`/`-h` → `Err((0, usage))`.
@@ -264,7 +276,10 @@ pub fn parse_live_args(
         }
     }
     if let Some(name) = live.as_deref() {
-        if name != "null_raster" && name != "stress50" {
+        let script_ok = name
+            .strip_prefix("script_")
+            .is_some_and(|n| scenario::get(n).is_some());
+        if name != "null_raster" && name != "stress50" && !script_ok {
             return Err((2, LIVE_USAGE.into()));
         }
     }
@@ -340,6 +355,59 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
         return Some(format!("live stress50: {n}/50 up after 600s"));
     }
     None
+}
+
+/// Headed script watch: mirror the shared `ScenarioRunner` each frame.
+/// PASS prints the JSON evidence record and keeps the window open (visual
+/// debug); FAIL prints the record and returns the message (the caller
+/// exits 1, the existing live FAIL contract).
+fn live_script_tick(live: &mut LiveScript, session: &mut Session) -> Option<String> {
+    if live.passed || live.failed.is_some() {
+        return None;
+    }
+    let (status, evidence) = {
+        let guard = session.scenario.lock().unwrap();
+        (
+            guard.as_ref().map(|r| r.status()),
+            guard.as_ref().and_then(|r| r.evidence().cloned()),
+        )
+    };
+    let record = |evidence: &Option<scenario::Evidence>| {
+        evidence
+            .as_ref()
+            .map(|ev| ev.to_json())
+            .unwrap_or_default()
+    };
+    match status {
+        Some(scenario::RunnerStatus::Passed) => {
+            println!("PASS: live {} {}", live.name, record(&evidence));
+            live.passed = true;
+            None
+        }
+        Some(scenario::RunnerStatus::Failed(msg)) => {
+            eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+            live.failed = Some(msg.clone());
+            Some(msg)
+        }
+        Some(scenario::RunnerStatus::Seeding) => None,
+        Some(scenario::RunnerStatus::Running { step, total }) => {
+            if live.last_step != Some((step, total)) {
+                live.last_step = Some((step, total));
+                if step >= total {
+                    println!("live {}: proving proof predicate", live.name);
+                } else {
+                    println!(
+                        "live {}: running step {}/{}",
+                        live.name,
+                        step + 1,
+                        total
+                    );
+                }
+            }
+            None
+        }
+        None => None,
+    }
 }
 
 /// Leaf dock nodes hide the tab bar while they host a single window.
@@ -1657,6 +1725,23 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
                 passed: false,
             }));
         }
+        Some(name) if name.starts_with("script_") => {
+            let scenario_name = &name["script_".len()..];
+            let Some(scenario) = scenario::get(scenario_name) else {
+                eprintln!("FAIL: unknown scenario {scenario_name}");
+                std::process::exit(1);
+            };
+            if let Err(e) = state.session.live_prepare_script(scenario) {
+                eprintln!("FAIL: {e}");
+                std::process::exit(1);
+            }
+            state.live = Some(LiveHarness::Script(LiveScript {
+                name: name.to_string(),
+                passed: false,
+                failed: None,
+                last_step: None,
+            }));
+        }
         _ => {
             if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
                 // Interactive/headless env flow: unlock before the window so slots
@@ -1695,6 +1780,7 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
                 let fail = match live {
                     LiveHarness::Null(n) => live_null_tick(n, &statuses),
                     LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
+                    LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session),
                 };
                 if let Some(msg) = fail {
                     eprintln!("FAIL: {msg}");
@@ -1733,8 +1819,9 @@ mod tests {
 
     use super::{
         apply_only_render_selected, apply_ui_scale, chooser_should_open_popup,
-        edit_parameters_enabled, live_null_tick, live_stress_tick, parse_live_args, runner_config,
-        LiveNull, LiveStress, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
+        edit_parameters_enabled, live_null_tick, live_script_tick, live_stress_tick,
+        parse_live_args, runner_config, LiveNull, LiveScript, LiveStress, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use dear_app::RedrawMode;
@@ -1919,6 +2006,150 @@ mod tests {
             Err((0, LIVE_USAGE.into()))
         );
         assert_eq!(parse_live_args(["-h"], None), Err((0, LIVE_USAGE.into())));
+    }
+
+    #[test]
+    fn parse_live_args_script_walk_accepted() {
+        assert_eq!(
+            parse_live_args(["--live", "script_walk"], None),
+            Ok(Some("script_walk".into()))
+        );
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("script_walk")),
+            Ok(Some("script_walk".into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_unknown_script_rejected() {
+        assert_eq!(
+            parse_live_args(["--live", "script_nope"], None),
+            Err((2, LIVE_USAGE.into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "script_"], None),
+            Err((2, LIVE_USAGE.into()))
+        );
+    }
+
+    /// A synthetic client that has already seeded: ingame, scene 2, a
+    /// mainland build base, and bumped family gens (same trick as the
+    /// scenario crate's own tests — no live server).
+    fn script_client() -> client::client::Client {
+        let mut c = host::prepare_client(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            std::sync::Arc::new(client::config::Cache::default()),
+            vec![],
+        );
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(20, 20));
+        for prot in [
+            client::io::ServerProt::PLAYER_INFO,
+            client::io::ServerProt::REBUILD_NORMAL,
+            client::io::ServerProt::UPDATE_STAT,
+        ] {
+            c.bump_gens(prot);
+        }
+        c
+    }
+
+    /// Headed contract: PASS keeps the window open (returns `None`),
+    /// FAIL returns the message the caller turns into exit 1.
+    #[test]
+    fn live_script_tick_keeps_window_open_on_pass_and_reports_fail() {
+        use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Seed, Step, StepKind, Wait};
+
+        let mut s = crate::session::Session::new();
+        // A runnable micro-scenario: the send sets run energy, the arm
+        // waits for it, the proof asserts it.
+        let pass = Scenario {
+            name: "t",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 5;
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 5 },
+                    budget_ticks: 5,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 5 },
+        };
+        let mut runner = ScenarioRunner::new(pass);
+        {
+            let mut c = script_client();
+            runner.tick(&mut c);
+            c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+            runner.tick(&mut c);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        *s.scenario.lock().unwrap() = Some(runner);
+        let mut live = LiveScript {
+            name: "script_t".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s),
+            None,
+            "PASS keeps the window open"
+        );
+        assert!(live.passed);
+
+        // FAIL: a never-satisfiable arm within a 1-tick budget.
+        let fail_scenario = Scenario {
+            name: "f",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "never",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 999 },
+                    budget_ticks: 1,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 999 },
+        };
+        let mut runner = ScenarioRunner::new(fail_scenario);
+        {
+            let mut c = script_client();
+            runner.tick(&mut c);
+        }
+        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+        *s.scenario.lock().unwrap() = Some(runner);
+        let mut live = LiveScript {
+            name: "script_f".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+        };
+        let msg = live_script_tick(&mut live, &mut s).expect("FAIL returns the message");
+        assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
+        assert!(live.failed.is_some());
     }
 
     fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {

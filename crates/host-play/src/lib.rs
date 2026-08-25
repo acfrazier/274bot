@@ -542,6 +542,13 @@ impl Play {
         self.statuses.lock().unwrap().clone()
     }
 
+    /// The shared obj-id → name table (built from the cache once per
+    /// `Play`). Harness evidence and scripts resolve item names through
+    /// it.
+    pub fn obj_names(&self) -> Arc<api::obj_names::ObjNames> {
+        Arc::clone(&self.obj_names)
+    }
+
     /// Blocks until every slot thread exits (slot threads run forever, so
     /// this only returns if a slot panicked).
     pub fn join(self) {
@@ -1359,6 +1366,29 @@ mod tests {
             |_, _| {},
         );
         assert!(play.statuses().is_empty());
+    }
+
+    #[test]
+    fn obj_names_getter_shares_the_play_table() {
+        // A cache-less temp dir falls back to `Cache::default()` (empty
+        // objs), so the table is empty but still shared and queryable.
+        let dir = std::env::temp_dir().join(format!("274bot-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: dir.display().to_string(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        assert!(play.obj_names().name(526).is_none());
+        assert!(play.obj_names().by_name("Bones").is_none());
     }
 
     #[test]

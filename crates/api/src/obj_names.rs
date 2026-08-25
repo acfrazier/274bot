@@ -36,4 +36,15 @@ impl ObjNames {
         }
         self.names.get(id as usize).and_then(|n| n.as_deref())
     }
+
+    /// The obj id whose name is exactly `name`, `None` when no loaded obj
+    /// matches (the inverse of [`ObjNames::name`], for `has_item("Bones")`
+    /// style lookups). Scans the id table on each call; callers resolve
+    /// once and keep the id.
+    pub fn by_name(&self, name: &str) -> Option<i32> {
+        self.names
+            .iter()
+            .position(|n| n.as_deref() == Some(name))
+            .map(|id| id as i32)
+    }
 }

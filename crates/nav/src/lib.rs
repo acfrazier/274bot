@@ -39,4 +39,29 @@ mod tests {
             2
         );
     }
+
+    #[test]
+    fn contains_is_bounds_and_level_only() {
+        let g = StepGrid::fixture_open_3x3();
+        assert!(g.contains(Tile {
+            x: 0,
+            z: 0,
+            level: 0
+        }));
+        assert!(g.contains(Tile {
+            x: 2,
+            z: 2,
+            level: 0
+        }));
+        assert!(!g.contains(Tile {
+            x: 3,
+            z: 0,
+            level: 0
+        }));
+        assert!(!g.contains(Tile {
+            x: 0,
+            z: 0,
+            level: 1
+        }));
+    }
 }

@@ -62,6 +62,18 @@ impl StepGrid {
         self.walk[z * self.width + x] == 1
     }
 
+    /// True if `t` is inside this grid's bounds on its level (walkable or
+    /// not): a tile the router can start from, such as a loc-blocked tele
+    /// landing. Off-grid tiles (another map) are outside.
+    pub fn contains(&self, t: Tile) -> bool {
+        if t.level != self.origin.level {
+            return false;
+        }
+        let x = t.x - self.origin.x;
+        let z = t.z - self.origin.z;
+        x >= 0 && z >= 0 && x < self.width as i32 && z < self.height as i32
+    }
+
     /// Mark tile `t` walkable or blocked. Tiles outside the grid or on
     /// another level are ignored.
     pub fn set_walkable(&mut self, t: Tile, walkable: bool) {
@@ -92,6 +104,19 @@ impl StepGrid {
                 z: 0,
                 level: 0,
             },
+            doors: vec![],
+        }
+    }
+
+    /// A fully-walkable `width × height` rectangle on `origin.level`, no
+    /// doors. Test grids with a controllable origin (the harness seed
+    /// gate checks grid bounds, so the origin must cover the test tile).
+    pub fn fixture_rect_at(origin: Tile, width: usize, height: usize) -> Self {
+        Self {
+            walk: vec![1; width * height],
+            width,
+            height,
+            origin,
             doors: vec![],
         }
     }

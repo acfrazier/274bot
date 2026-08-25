@@ -5,6 +5,8 @@
 use api::query::{npc_by_index, npcs_at};
 use api::snapshot::{Family, GameSnapshot};
 use client::client::{Client, ClientConfig, ClientNpc};
+use client::config::if_type::{ComponentType, IfType};
+use client::dash3d::ClientPlayer;
 use client::io::ServerProt;
 
 fn cfg() -> ClientConfig {
@@ -174,4 +176,120 @@ fn queries_borrow_by_index_and_tile() {
 
     assert_eq!(npcs_at(snap.npcs(), 100, 200).count(), 1);
     assert_eq!(npcs_at(snap.npcs(), 0, 0).count(), 1);
+}
+
+/// Player-family rebuild: the world build origin and the local player's
+/// world tile (base + route head). No player decode yet → tile `None`.
+#[test]
+fn player_rebuild_records_base_and_tile() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&c, Family::Player));
+    assert_eq!(snap.base(), Some((3200, 3200)));
+    assert_eq!(snap.tile(), None, "no local player decoded yet");
+
+    c.local_player = Some(ClientPlayer::at(20, 12));
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&c, Family::Player));
+    assert_eq!(snap.tile(), Some((3220, 3212, 0)));
+
+    assert!(!snap.rebuild_family(&c, Family::Player));
+}
+
+/// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts.
+#[test]
+fn inv_rebuild_reads_the_type_inv_iface() {
+    let mut c = client_with_npc();
+    match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
+        Some(inv) => {
+            inv.link_obj_type = Some(vec![526, 995]);
+            inv.link_obj_number = Some(vec![1, 100]);
+        }
+        None => c.ifaces.push(Some(IfType {
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![526, 995]),
+            link_obj_number: Some(vec![1, 100]),
+            ..Default::default()
+        })),
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&c, Family::Inv));
+    assert_eq!(snap.inv(), &[(526, 1), (995, 100)]);
+    assert_eq!(snap.inv_count(526), 1);
+    assert_eq!(snap.inv_count(995), 100);
+    assert_eq!(snap.inv_count(0), 0);
+    assert!(!snap.rebuild_family(&c, Family::Inv));
+}
+
+/// Chat-family rebuild: the ring head (`chat_text[0]`) is the latest line.
+#[test]
+fn chat_rebuild_reads_the_ring_head() {
+    let mut c = client_with_npc();
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&c, Family::Chat));
+    assert_eq!(snap.chat(), None, "empty ring head reads as none");
+
+    c.chat_text[0] = "Welcome to RuneScape".into();
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&c, Family::Chat));
+    assert_eq!(snap.chat(), Some("Welcome to RuneScape"));
+}
+
+/// Scene-family rebuild: `ingame` + `scene_state`.
+#[test]
+fn scene_rebuild_records_ingame_and_scene_state() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    assert!(snap.rebuild_family(&c, Family::Scene));
+    assert!(snap.ingame());
+    assert_eq!(snap.scene_state(), 2);
+    assert!(!snap.rebuild_family(&c, Family::Scene));
+}
+
+/// `GameSnapshot::rebuild` (the harness read) rebuilds every family and
+/// reports whether any gen moved.
+#[test]
+fn rebuild_all_families_reports_dirty_once() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(20, 12));
+    c.runenergy = 20;
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    assert_eq!(snap.tile(), Some((3220, 3212, 0)));
+    assert_eq!(snap.runenergy(), 20);
+    assert!(!snap.rebuild(&c), "unchanged gens are not dirty again");
+}
+
+/// `check_scene` flips `scene_state = 2` on the SIM loop with no scene
+/// gen bump; the snapshot must still see it (a gen-gated copy would pin
+/// the harness in a stale "loading" state forever).
+#[test]
+fn scene_status_is_always_fresh_without_a_gen_bump() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 1;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert_eq!(snap.scene_state(), 1);
+
+    // The scene completes with no packet behind it: no gen moves, but
+    // the snapshot must read the live state.
+    c.scene_state = 2;
+    assert!(!snap.rebuild(&c), "no gen moved");
+    assert_eq!(snap.scene_state(), 2, "scene status is always fresh");
+    assert!(snap.ingame());
 }

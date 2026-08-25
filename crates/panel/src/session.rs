@@ -229,6 +229,11 @@ pub struct Session {
     pub js: script::JsLibrary,
     /// The Load modal's path scratch buffer.
     pub load_scratch: String,
+    /// Shared `--live script_*` harness runner (Task 6): the slot thread
+    /// ticks it from the per-frame hook (sends go through the slot's own
+    /// `Client`), the UI frame reads its status/evidence. `None` when no
+    /// scenario is live.
+    pub scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
 }
 
 /// Keep each per-name panel log bounded.
@@ -301,6 +306,7 @@ impl Session {
                 js
             },
             load_scratch: String::new(),
+            scenario: Arc::new(Mutex::new(None)),
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -421,6 +427,46 @@ impl Session {
         Ok(())
     }
 
+    /// Live `script_<name>` setup: temp vault with the scenario's seed
+    /// profiles, mainland hop per the seed, single-client boot, and the
+    /// shared [`scenario::ScenarioRunner`] installed for the slot thread's
+    /// per-frame hook. The UI frame reads the runner's status/evidence.
+    pub fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+        let entries: Vec<(&str, &str)> = scenario
+            .seed
+            .profiles
+            .iter()
+            .map(|(u, p)| (*u, *p))
+            .collect();
+        let path = temp_live_vault(&entries);
+        if !self.unlock_at(&path, "bot") {
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| "unlock_at failed".into()));
+        }
+        self.mainland.store(scenario.seed.mainland, Ordering::Relaxed);
+        self.scatter.store(false, Ordering::Relaxed);
+        self.wall.chooser_open = false;
+        let names: Vec<String> = scenario
+            .seed
+            .profiles
+            .iter()
+            .map(|(u, _)| u.to_string())
+            .collect();
+        for name in &names {
+            self.load(name);
+        }
+        self.select(&names[0]);
+        let mut runner = scenario::ScenarioRunner::new(scenario);
+        if let Some(play) = &self.play {
+            runner.set_obj_names(play.obj_names());
+        }
+        *self.scenario.lock().unwrap() = Some(runner);
+        self.login_all();
+        Ok(())
+    }
+
     /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
     /// first focused profile only. Parked names are started from [`select`].
     fn start_play(&mut self, vault: Vault) {
@@ -432,6 +478,7 @@ impl Session {
         let travellers = Arc::clone(&self.travellers);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
+        let scenario = Arc::clone(&self.scenario);
         let options = self.options.clone();
         let play = run_with_io(
             &options,
@@ -465,6 +512,17 @@ impl Session {
                             name,
                             format!("{name}: mainland hop queued"),
                         );
+                    }
+                }
+
+                // Shared `--live script_*` runner: tick only the
+                // scenario's profile slot, before the local-player gate
+                // (seeding must observe frames with no player decode yet).
+                // The slot thread drives sends through its own `Client`;
+                // the UI frame only reads the runner's status/evidence.
+                if let Some(runner) = scenario.lock().unwrap().as_mut() {
+                    if runner.drives(name) {
+                        runner.tick(c);
                     }
                 }
 
@@ -2195,6 +2253,34 @@ mod tests {
                 .want_login
                 .load(Ordering::Relaxed),
             "login all arms every member immediately (the FIFO serializes)"
+        );
+        // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        let scenario = scenario::get("walk").expect("walk scenario in registry");
+        s.live_prepare_script(scenario).expect("prepare");
+        let play = s.play.as_ref().expect("play started");
+        assert!(
+            play.arm("test").unwrap().want_login.load(Ordering::Relaxed),
+            "login all arms the seed profile's handshake"
+        );
+        let runner = s.scenario.lock().unwrap();
+        let runner = runner.as_ref().expect("scenario runner installed");
+        assert_eq!(runner.profile_name(), "test");
+        assert!(
+            matches!(runner.status(), scenario::RunnerStatus::Seeding),
+            "a fresh runner holds in seeding until ingame scene 2"
+        );
+        assert!(
+            runner.drives("test") && !runner.drives("test2"),
+            "the runner ticks only its seed profile's slot"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
     }
