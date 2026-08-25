@@ -21,7 +21,7 @@ use client::render::Renderer;
 use vault::Profile;
 
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
-pub use slot_io::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
+pub use slot_io::{map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake};
 
 /// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
 /// via [`debug_enabled`] regardless.
@@ -42,6 +42,17 @@ pub fn debug_enabled() -> bool {
 
 /// The 274 client's frame time: one `mainloop` pass every 20 ms.
 const FRAME_MS: Duration = Duration::from_millis(20);
+
+/// Park bound for an idle slot: the 274 server's game-tick cadence
+/// (`PLAYER_INFO` every ~600 ms), so a missed/absent packet never leaves a
+/// parked slot asleep past one tick.
+const IDLE_PARK_MS: Duration = Duration::from_millis(600);
+
+/// Park bound while the client socket is stalled (a wake consumed no bytes:
+/// EOF, or a packet still mid-flight). Shorter than the tick bound so the
+/// game-loop watchdog still notices a dead server, but long enough that a
+/// permanently-readable socket cannot busy-spin the slot.
+const STALL_PARK_MS: Duration = Duration::from_millis(200);
 
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
@@ -82,15 +93,16 @@ impl Host {
                 &profile.username,
                 None,
                 None,
-                |_, _, _| {},
+                None,
+                |_, _, _| false,
                 |_| false,
             );
         })
     }
 
-    /// Drive one client's `mainloop` at 20 ms until `probe` returns true
-    /// (checked before every tick, so the slot thread can stop a rail ✕
-    /// or return to its control loop within one frame). Each
+    /// Drive one client's `mainloop` at the slot cadence until `probe`
+    /// returns true (checked before every tick, so the slot thread can stop
+    /// a rail ✕ or return to its control loop within one frame). Each
     /// tick [`Host::client_tick`] runs `observe` **before** [`Host::client_frame`]
     /// so the panel can latch slot state (draw/focus) before the paint
     /// decision for **this** tick, then drains input, latches the click,
@@ -100,26 +112,75 @@ impl Host {
     /// drain); settle runs when a family gen moved; think (auto-run) reads
     /// energy from the snapshot stat view when it has been rebuilt. The
     /// third observe arg is the count of accepted auto-run `set_run(true)`
-    /// sends (from the previous tick).
+    /// sends (from the previous tick); observe's return is whether the slot
+    /// has script/cheat/nav work, which keeps a busy slot on the frame loop.
+    ///
+    /// The scheduler is event-driven: a slot that draws or captures input
+    /// keeps the fixed 20 ms [`FRAME_MS`] loop — that loop *is* the render
+    /// cadence. Everything else parks on `poll(2)` over the client socket's
+    /// readability, the `ctl` control wake (focus/draw/stop/spawn), and the
+    /// game-tick timeout ([`IDLE_PARK_MS`]), waking once per park to drain
+    /// the socket and re-evaluate. Packets are never dropped: a readable
+    /// socket wakes the park, and `mainloop` is the first thing that drains
+    /// it. A wake that consumed no bytes (EOF, partial packet) skips the
+    /// socket on the next park so it cannot busy-spin.
     pub fn run_client<F, P>(
         client: &mut Client,
         username: &str,
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
+        ctl: Option<Arc<SlotPark>>,
         mut observe: F,
         mut probe: P,
     ) where
-        F: FnMut(&mut Client, &str, u32),
+        F: FnMut(&mut Client, &str, u32) -> bool,
         P: FnMut(&mut Client) -> bool,
     {
         let mut slot = SlotLoop::new();
         let mut run_sends = 0u32;
+        // Prime busy so the first pass runs one tick: the cadence decision
+        // must see the observe hook's draw/capture/busy mirror, which only
+        // exists after a tick has run.
+        let mut busy = true;
+        // A socket wake that consumed no bytes leaves the socket readable,
+        // so re-polling it would busy-spin; skip the socket until a tick
+        // consumes bytes again.
+        let mut socket_stalled = false;
         loop {
             if probe(client) {
                 return;
             }
-            let start = std::time::Instant::now();
-            Self::client_tick(
+            if frame_cadence(client, input.as_deref()) || busy {
+                socket_stalled = false;
+                let start = std::time::Instant::now();
+                busy = Self::client_tick(
+                    client,
+                    &mut slot,
+                    username,
+                    input.as_deref(),
+                    mailbox.as_deref(),
+                    &mut run_sends,
+                    &mut observe,
+                );
+                // Java GameShell sleeps the leftover of 20 ms *after* the work.
+                // A fixed sleep *before* the tick made the period 20 ms + Pix3D
+                // (slow picture, extra idle). If the tick overruns, skip sleep.
+                if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
+                    thread::sleep(rest);
+                }
+                continue;
+            }
+            // Idle: park until a packet, a control kick, or the game-tick
+            // bound, then run one tick (drain the socket / apply the panel's
+            // `set_draw`) and re-evaluate.
+            let before = stream_bytes(client);
+            let timeout = if socket_stalled {
+                STALL_PARK_MS
+            } else {
+                IDLE_PARK_MS
+            };
+            let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
+            busy = Self::client_tick(
                 client,
                 &mut slot,
                 username,
@@ -128,18 +189,18 @@ impl Host {
                 &mut run_sends,
                 &mut observe,
             );
-            // Java GameShell sleeps the leftover of 20 ms *after* the work.
-            // A fixed sleep *before* the tick made the period 20 ms + Pix3D
-            // (slow picture, extra idle). If the tick overruns, skip sleep.
-            if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
-                thread::sleep(rest);
+            if stream_bytes(client) != before {
+                socket_stalled = false;
+            } else if reason == ParkWake::Socket {
+                socket_stalled = true;
             }
         }
     }
 
     /// One host tick: `observe` first (the panel latches slot state), then
     /// one [`Host::client_frame`]. Unfocused / renderer-off slots skip the
-    /// paint on this tick, not the next.
+    /// paint on this tick, not the next. Returns observe's busy flag (the
+    /// slot has script/cheat/nav work and must not be parked).
     #[allow(private_interfaces)]
     pub fn client_tick<F>(
         client: &mut Client,
@@ -149,11 +210,13 @@ impl Host {
         mailbox: Option<&FrameBuf>,
         run_sends: &mut u32,
         observe: &mut F,
-    ) where
-        F: FnMut(&mut Client, &str, u32),
+    ) -> bool
+    where
+        F: FnMut(&mut Client, &str, u32) -> bool,
     {
-        observe(client, username, *run_sends);
+        let busy = observe(client, username, *run_sends);
         Self::client_frame(client, slot, username, input, mailbox, run_sends);
+        busy
     }
 
     /// One 20 ms frame: drain optional input into the shell, latch the
@@ -244,6 +307,97 @@ impl Host {
         }
         *run_sends = slot.run_sends;
     }
+}
+
+/// Frame-loop cadence: a slot that draws or captures input keeps the fixed
+/// 20 ms loop — that loop *is* the render cadence (50 fps) and the input
+/// drain cadence. Everything else (draw off, no capture) may park on
+/// socket-read unless the observe hook reported script/cheat/nav work.
+fn frame_cadence(client: &Client, input: Option<&SlotInput>) -> bool {
+    client.draw || input.map(|i| i.enabled()).unwrap_or(false)
+}
+
+/// Payload bytes the client's stream has consumed; 0 when no stream.
+fn stream_bytes(client: &Client) -> u64 {
+    client
+        .stream
+        .as_ref()
+        .map(|s| s.bytes_in())
+        .unwrap_or(0)
+}
+
+/// Why a park returned.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ParkWake {
+    /// The client socket became readable (data, EOF, or a socket error).
+    Socket,
+    /// A control kick landed (focus/draw/stop/spawn).
+    Control,
+    /// The park timeout (game-tick bound, or the stall bound) elapsed.
+    Timeout,
+}
+
+/// Block until the client socket is readable, a control wake lands, or
+/// `timeout` elapses. The socket is polled only when `poll_socket` — a
+/// previous no-consumption wake (EOF or a packet still mid-flight) leaves
+/// the socket permanently readable, so re-polling it would busy-spin.
+/// No socket and no control channel falls back to sleeping the timeout.
+#[allow(unsafe_code)]
+fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Duration) -> ParkWake {
+    let mut fds = [libc::pollfd {
+        fd: -1,
+        events: 0,
+        revents: 0,
+    }; 2];
+    let mut n = 0usize;
+    if let Some(ctl) = ctl {
+        fds[n] = libc::pollfd {
+            fd: ctl.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        n += 1;
+    }
+    let socket = if poll_socket {
+        client.stream.as_ref().map(|stream| {
+            fds[n] = libc::pollfd {
+                fd: stream.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let idx = n;
+            n += 1;
+            idx
+        })
+    } else {
+        None
+    };
+    if n == 0 {
+        thread::sleep(timeout);
+        return ParkWake::Timeout;
+    }
+    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    let rc = unsafe { libc::poll(fds.as_mut_ptr(), n as libc::nfds_t, ms) };
+    if rc > 0 {
+        let fired = |i: usize| {
+            fds[i].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+        };
+        let control_fired = ctl.is_some() && fired(0);
+        if control_fired {
+            // Consume the kick bytes: an undrained control fd stays
+            // readable and would re-fire every park (busy loop).
+            ctl.unwrap().drain();
+        }
+        if let Some(i) = socket {
+            if fired(i) {
+                return ParkWake::Socket;
+            }
+        }
+        if control_fired {
+            return ParkWake::Control;
+        }
+    }
+    ParkWake::Timeout
 }
 
 /// rs2b0t rail: watch-only is **1 fps** (every 50 ticks of 20 ms). The first
@@ -397,6 +551,7 @@ mod tests {
     use super::*;
     use api::interact::RUN_ORB_IFACE;
     use client::io::ClientProt;
+    use std::time::Instant;
 
     fn cfg() -> ClientConfig {
         ClientConfig {
@@ -540,14 +695,14 @@ mod tests {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        let constructed = Renderer::constructed();
-        // `client.draw` defaults false: a headless slot never paints.
+        // `client.draw` defaults false: a headless slot never paints. The
+        // check is slot-local (not the global `Renderer::constructed()`
+        // counter, which other tests' renderers bump concurrently).
         for _ in 0..3 {
             Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         }
-        assert_eq!(
-            Renderer::constructed(),
-            constructed,
+        assert!(
+            slot.renderer.is_none(),
             "draw off must not construct a Renderer"
         );
         assert_eq!(slot.skip_n, 3);
@@ -627,6 +782,7 @@ mod tests {
             &mut sends,
             &mut |_, _, _| {
                 observed.store(true, Ordering::Relaxed);
+                false
             },
         );
         assert!(observed.load(Ordering::Relaxed));
@@ -643,7 +799,7 @@ mod tests {
             None,
             Some(&buf),
             &mut sends,
-            &mut |_, _, _| {},
+            &mut |_, _, _| false,
         );
         assert!(!c.draw);
         assert_eq!(
@@ -745,5 +901,302 @@ mod tests {
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 2);
+    }
+
+    /// Observe mirror: the shared handle the slot thread's observe hook
+    /// updates, so a `run_client` thread is observable without owning the
+    /// client. `(loop_cycle, reboot_timer)` for packet tests.
+    type Seen = std::sync::Arc<std::sync::Mutex<(i32, i32)>>;
+
+    fn seen() -> (Seen, Seen) {
+        let s = std::sync::Arc::new(std::sync::Mutex::new((0, 0)));
+        (std::sync::Arc::clone(&s), s)
+    }
+
+    // `Client` is !Send (its `present` target is a `Box<dyn PresentTarget>`),
+    // so like host-play's slot threads the tests build the client *inside*
+    // the spawned closure and only move Send handles across the boundary.
+
+    #[test]
+    fn idle_slot_parks_between_packets_and_wakes_on_one() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (wake, park) = crate::slot_io::wake_channel();
+        let (mirror, seen) = seen();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            let stream =
+                client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+            c.stream = Some(stream);
+            c.ingame = true;
+            // The login handshake leaves the packet decoder mid-frame
+            // (`ptype == -1` → read the next header byte); without it a
+            // fresh client misreads the first socket byte as a header.
+            c.ptype = -1;
+            Host::run_client(
+                &mut c,
+                "idle",
+                None,
+                None,
+                Some(Arc::new(park)),
+                |c, _, _| {
+                    let mut v = mirror.lock().unwrap();
+                    v.0 = c.loop_cycle;
+                    v.1 = c.reboot_timer;
+                    false
+                },
+                |_| stop2.load(Ordering::Relaxed),
+            );
+            done_tx.send(()).unwrap();
+        });
+        let (mut server, _) = listener.accept().unwrap();
+
+        // First park happens after the opening tick; a quiet window must
+        // not advance mainloop at all (no packet, no control, no timer yet).
+        thread::sleep(Duration::from_millis(120));
+        let before = *seen.lock().unwrap();
+        thread::sleep(Duration::from_millis(120));
+        let after = *seen.lock().unwrap();
+        assert_eq!(
+            after, before,
+            "idle slot must not call mainloop between packet arrivals"
+        );
+
+        // A server packet (UPDATE_REBOOT_TIMER, two payload bytes) must
+        // wake the park and apply within a frame.
+        server.write_all(&[89, 0, 10]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let (_, reboot) = *seen.lock().unwrap();
+            if reboot > 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "packet never applied");
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        wake.wake();
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("stop control must return a parked slot");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn focused_slot_keeps_the_twenty_ms_cadence() {
+        let (mirror, seen) = seen();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            c.set_draw(true);
+            Host::run_client(
+                &mut c,
+                "focused",
+                None,
+                None,
+                None,
+                |c, _, _| {
+                    mirror.lock().unwrap().0 = c.loop_cycle;
+                    false
+                },
+                |_| stop2.load(Ordering::Relaxed),
+            );
+        });
+        // Gate on the count, not a fixed sleep: a parked slot (600 ms
+        // timeout, no socket/control) manages ≤8 ticks in 5 s, so reaching
+        // 12 proves the frame loop is running no matter how contended the
+        // test machine is.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let cycles = seen.lock().unwrap().0;
+            if cycles >= 12 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "focused slot never entered the frame loop, {cycles} ticks in 5 s"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Then the rate: the 20 ms cadence yields dozens per 300 ms; a
+        // parked slot would yield ≤1.
+        let t1 = seen.lock().unwrap().0;
+        thread::sleep(Duration::from_millis(300));
+        let t2 = seen.lock().unwrap().0;
+        assert!(
+            t2 >= t1 + 3,
+            "focused slot must tick at ~20 ms, {t1} -> {t2} over 300 ms"
+        );
+        stop.store(true, Ordering::Relaxed);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn busy_observe_keeps_the_slot_on_the_frame_loop() {
+        let (mirror, seen) = seen();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            Host::run_client(
+                &mut c,
+                "scripted",
+                None,
+                None,
+                None,
+                |c, _, _| {
+                    mirror.lock().unwrap().0 = c.loop_cycle;
+                    true // script/cheat/nav work due: never park
+                },
+                |_| stop2.load(Ordering::Relaxed),
+            );
+        });
+        // Same gate as the focused test: ≥12 ticks in 5 s is unreachable
+        // for a parked slot (≤8), so this proves a busy slot never parks.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let cycles = seen.lock().unwrap().0;
+            if cycles >= 12 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a busy (scripted) slot must keep ticking, {cycles} ticks in 5 s"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        stop.store(true, Ordering::Relaxed);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn stop_control_wakes_a_parked_slot_and_returns() {
+        let (wake, park) = crate::slot_io::wake_channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            Host::run_client(
+                &mut c,
+                "parked",
+                None,
+                None,
+                Some(Arc::new(park)),
+                |_, _, _| false,
+                |_| stop2.load(Ordering::Relaxed),
+            );
+            done_tx.send(()).unwrap();
+        });
+        // Let the slot park, then stop + kick must return it promptly.
+        thread::sleep(Duration::from_millis(100));
+        stop.store(true, Ordering::Relaxed);
+        wake.wake();
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("a stop control must wake a parked slot");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
+        let (wake, park) = crate::slot_io::wake_channel();
+        let (mirror, seen) = seen();
+        let want_draw = Arc::new(AtomicBool::new(false));
+        let want_draw2 = Arc::clone(&want_draw);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            Host::run_client(
+                &mut c,
+                "kicked",
+                None,
+                None,
+                Some(Arc::new(park)),
+                // The panel mirrors focus into the slot thread via the
+                // observe hook (per_frame → set_draw), reading the shared
+                // intent like `run_with_io`'s per_frame reads the Focus.
+                |c, _, _| {
+                    c.set_draw(want_draw2.load(Ordering::Relaxed));
+                    mirror.lock().unwrap().0 = c.loop_cycle;
+                    false
+                },
+                |_| stop2.load(Ordering::Relaxed),
+            );
+        });
+        // Opening tick, then parked (draw off): a quiet window must not
+        // advance the tick count.
+        thread::sleep(Duration::from_millis(80));
+        let before = seen.lock().unwrap().0;
+        assert!(before <= 1, "draw-off slot must park, got {before} ticks");
+        // The panel flips its draw intent and kicks the parked thread.
+        want_draw.store(true, Ordering::Relaxed);
+        wake.wake();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let t = seen.lock().unwrap().0;
+            if t >= before + 8 {
+                break; // the ~20 ms cadence resumed after the kick
+            }
+            assert!(
+                Instant::now() < deadline,
+                "kicked slot never resumed the frame loop"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        stop.store(true, Ordering::Relaxed);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn spurious_kick_does_not_busy_loop_a_parked_slot() {
+        let (wake, park) = crate::slot_io::wake_channel();
+        let (mirror, seen) = seen();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            Host::run_client(
+                &mut c,
+                "kicked-idle",
+                None,
+                None,
+                Some(Arc::new(park)),
+                |c, _, _| {
+                    mirror.lock().unwrap().0 = c.loop_cycle;
+                    false // stays idle after the kick
+                },
+                |_| stop2.load(Ordering::Relaxed),
+            );
+            done_tx.send(()).unwrap();
+        });
+        thread::sleep(Duration::from_millis(80));
+        let before = seen.lock().unwrap().0;
+        // Two kicks while the slot stays idle: each must wake it once and
+        // re-park — an undrained control fd would re-fire every park and
+        // spin the thread.
+        wake.wake();
+        wake.wake();
+        thread::sleep(Duration::from_millis(120));
+        let after = seen.lock().unwrap().0;
+        assert!(
+            after <= before + 2,
+            "a spurious kick must not busy-loop a parked slot, ticks {before} -> {after}"
+        );
+        stop.store(true, Ordering::Relaxed);
+        wake.wake();
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("stop must still return the slot");
+        handle.join().unwrap();
     }
 }

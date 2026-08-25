@@ -7,5 +7,6 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 client = { workspace = true }
+libc = "0.2"
 num-bigint = "0.4"
 vault = { path = "../vault" }

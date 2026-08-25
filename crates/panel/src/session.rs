@@ -674,6 +674,13 @@ impl Session {
         // keeps it as pure bookkeeping — no socket adopt/park).
         if let Some(play) = self.play.as_mut() {
             play.focus(name);
+            // The draw state of both the outgoing and incoming slot can
+            // change (draw_for_slot follows the focus); kick both so a
+            // parked thread re-reads it within a frame, not at the next
+            // game-tick park timeout.
+            if let Some(old) = old.as_deref() {
+                play.wake(old);
+            }
         }
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.
@@ -703,8 +710,17 @@ impl Session {
     pub fn set_renderer(&mut self, on: bool) {
         let mut focus = self.focus.lock().unwrap();
         focus.renderer = on;
-        if let Some(name) = focus.focused.clone() {
-            focus.renderer_by.insert(name, on);
+        let name = focus.focused.clone();
+        if let Some(name) = &name {
+            focus.renderer_by.insert(name.clone(), on);
+        }
+        drop(focus);
+        // The focused slot's draw state flips with the checkbox; kick it so
+        // a parked thread applies `set_draw` within a frame.
+        if let Some(name) = name {
+            if let Some(play) = self.play.as_ref() {
+                play.wake(&name);
+            }
         }
     }
 
@@ -714,9 +730,17 @@ impl Session {
         let mut focus = self.focus.lock().unwrap();
         let was = focus.game_pane_open;
         focus.game_pane_open = open;
+        let name = focus.focused.clone();
         drop(focus);
         if was && !open {
             self.set_capture(false);
+        }
+        // draw_for_slot gates on the pane; kick the focused slot so a
+        // parked thread sees the change within a frame.
+        if let Some(name) = name {
+            if let Some(play) = self.play.as_ref() {
+                play.wake(&name);
+            }
         }
     }
 
@@ -725,14 +749,21 @@ impl Session {
     /// cannot enqueue (the slot thread does no `try_recv` while disabled).
     pub fn set_capture(&mut self, on: bool) {
         self.focus.lock().unwrap().capture = on;
+        let name = self.focused_name();
         if on {
-            let name = self.focused_name();
-            match name {
-                Some(name) => self.capture_on(&name),
+            match name.as_deref() {
+                Some(name) => self.capture_on(name),
                 None => self.capture_tx = None,
             }
         } else {
             self.capture_off();
+        }
+        // Capture flips the slot's idle classification (capture → frame
+        // loop); kick it so the change lands within a frame.
+        if let Some(name) = name {
+            if let Some(play) = self.play.as_ref() {
+                play.wake(&name);
+            }
         }
     }
 
@@ -869,6 +900,11 @@ impl Session {
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
             arm.want_login.store(false, Ordering::Relaxed);
             arm.want_logout.store(true, Ordering::Relaxed);
+        }
+        // The logout press lives in the probe (per-tick); kick a parked
+        // slot so the clean logout goes out within a frame.
+        if let Some(play) = self.play.as_ref() {
+            play.wake(name);
         }
     }
 
@@ -1009,6 +1045,15 @@ impl Session {
         self.focus.lock().unwrap().wall = members;
     }
 
+    /// Kick every slot thread after a wall-policy change (`only render
+    /// selected` toggling flips every member's draw state; a parked thread
+    /// must re-read it within a frame, not at the game-tick timeout).
+    pub fn wake_all_slots(&self) {
+        if let Some(play) = self.play.as_ref() {
+            play.wake_all();
+        }
+    }
+
     /// Log in every wall member: clear their latches and arm a login so
     /// title-screen slots handshake. One-shot unless the profile's
     /// auto-login is set (which keeps the arm armed after the handshake).
@@ -1035,6 +1080,9 @@ impl Session {
                 arm_login_all(&arm);
             }
         }
+        if let Some(play) = self.play.as_ref() {
+            play.wake_all();
+        }
     }
 
     /// Log out every wall member: record the latch (blocks auto-login
@@ -1056,6 +1104,9 @@ impl Session {
                 arm.want_logout.store(true, Ordering::Relaxed);
                 arm.want_login.store(false, Ordering::Relaxed);
             }
+        }
+        if let Some(play) = self.play.as_ref() {
+            play.wake_all();
         }
     }
 
@@ -1093,6 +1144,11 @@ impl Session {
         }
         self.focus.lock().unwrap().wall_open = on;
         self.sync_wall_focus();
+        // The wall policy change flips every member's draw state; kick all
+        // so parked threads re-read it within a frame.
+        if let Some(play) = self.play.as_ref() {
+            play.wake_all();
+        }
     }
 
     /// Grid submode of MultiBox: hides the rail in the Game pane. A no-op
@@ -1122,6 +1178,10 @@ impl Session {
                     // Clean logout only — do not set stop until !ingame.
                     arm.want_logout.store(true, Ordering::Relaxed);
                 }
+                // The logout press lives in the probe; kick a parked slot
+                // so the clean logout is pressed instead of waiting on the
+                // game-tick park timeout.
+                play.wake(name);
                 play.wait_until_not_ingame(name, Duration::from_secs(10));
             }
         }

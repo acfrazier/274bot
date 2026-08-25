@@ -1321,6 +1321,9 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
         if open_warn {
             state.session.wall.render_all_warn_open = true;
         }
+        // The policy flips every wall member's draw state; kick the slots
+        // so parked threads apply the change within a frame.
+        state.session.wake_all_slots();
     }
 }
 
@@ -1364,6 +1367,9 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
         };
         if ok_clicked && understood {
             session.focus.lock().unwrap().only_render_selected = false;
+            // Every member now draws; kick the parked slots so the
+            // renderers start within a frame.
+            session.wake_all_slots();
             ui.close_current_popup();
         }
         if !stack {

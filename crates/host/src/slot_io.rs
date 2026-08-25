@@ -1,6 +1,9 @@
+use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
@@ -123,9 +126,62 @@ impl SlotInput {
     }
 }
 
+/// Per-slot control wake: the panel/host-play side holds [`SlotWake`] ends
+/// and `wake()`s a parked slot thread (focus/draw/stop/spawn); the slot
+/// thread hands the [`SlotPark`] end to [`Host::run_client`], which polls
+/// its fd next to the client socket inside the idle park. A Unix socketpair
+/// rather than std `mpsc` because `poll(2)` needs an fd; the payload is an
+/// empty kick — the parker re-reads the shared state (`client.draw`,
+/// capture, the probe's stop flag) after waking.
+#[derive(Clone)]
+pub struct SlotWake {
+    tx: Arc<UnixStream>,
+}
+
+/// The slot-thread end of the control channel. Not shared: one per parked
+/// thread, polled by [`Host::run_client`].
+pub struct SlotPark {
+    rx: UnixStream,
+}
+
+/// Create a control-wake channel pair. A [`SlotWake::wake`] writes a byte
+/// that fires a `poll(2)` on [`SlotPark::fd`].
+pub fn wake_channel() -> (SlotWake, SlotPark) {
+    let (tx, rx) = UnixStream::pair().expect("socketpair for slot wake");
+    let _ = tx.set_nonblocking(true);
+    let _ = rx.set_nonblocking(true);
+    (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
+}
+
+impl SlotWake {
+    /// Wake a parked slot thread: one byte on the socketpair. Nonblocking
+    /// and best-effort — a full wake buffer (only possible if the parker
+    /// stopped draining) or a dead slot just drops the kick.
+    pub fn wake(&self) {
+        let _ = (&*self.tx).write(&[1]);
+    }
+}
+
+impl SlotPark {
+    /// The wake end's fd, for the slot thread's `poll(2)`.
+    pub fn fd(&self) -> i32 {
+        self.rx.as_raw_fd()
+    }
+    /// Drain any queued wake bytes so a burst of kicks cannot fill the
+    /// socketpair buffer.
+    pub fn drain(&self) {
+        let mut b = [0u8; 64];
+        while let Ok(n) = (&self.rx).read(&mut b) {
+            if n == 0 {
+                break;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
+    use super::{map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput};
     use client::graphics::PixMap;
     use client::render::backend::{FrameOutput, TextureHandle};
 
@@ -220,5 +276,38 @@ mod tests {
         inp.drain(&mut shell);
         shell.latch_click();
         assert_eq!((shell.mouse_click_button, shell.mouse_click_x), (1, 10));
+    }
+
+    #[test]
+    fn wake_channel_fires_a_polling_parker_and_drains() {
+        let (wake, park) = wake_channel();
+        let mut fds = [libc::pollfd {
+            fd: park.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+        assert_eq!(rc, 0, "no kick yet: poll must time out");
+        wake.wake();
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 1000) };
+        assert_eq!(rc, 1, "a wake byte must fire the poll");
+        assert_ne!(fds[0].revents & libc::POLLIN, 0);
+        park.drain();
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
+        assert_eq!(rc, 0, "drained: poll goes quiet again");
+    }
+
+    #[test]
+    fn wake_channel_clones_share_one_wake() {
+        let (wake, park) = wake_channel();
+        let wake2 = wake.clone();
+        let mut fds = [libc::pollfd {
+            fd: park.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        wake2.wake();
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 1000) };
+        assert_eq!(rc, 1, "a cloned SlotWake must wake the same park");
     }
 }

@@ -24,7 +24,7 @@ pub use host::set_debug;
 pub use host::Host;
 mod rss;
 mod scatter;
-use host::{should_emit_tick, FrameBuf, Pump, SlotInput};
+use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use nav::grid::StepGrid;
 use nav::router::find;
 use nav::tile::Tile;
@@ -466,6 +466,10 @@ pub struct Play {
     /// [`default_pack_path`]); `None` when no pack loads, and `ctx.walk`
     /// then refuses to arm.
     grid: Option<Arc<StepGrid>>,
+    /// Per-slot control wake ends: [`SlotWake::wake`] kicks a parked slot
+    /// thread (focus/draw/stop/spawn), which re-reads the shared state on
+    /// its next tick. Inserted at spawn, removed after `stop_slot` joins.
+    wakes: HashMap<String, SlotWake>,
 }
 
 impl Play {
@@ -494,6 +498,7 @@ impl Play {
             cheats: Arc::new(Mutex::new(HashMap::new())),
             travellers: Arc::new(Mutex::new(HashMap::new())),
             grid: nav::pack::load_pack(&default_pack_path()).ok().map(Arc::new),
+            wakes: HashMap::new(),
         }
     }
 
@@ -501,14 +506,35 @@ impl Play {
     /// channel head). Focus is pure bookkeeping in the flat model: every
     /// slot is a full `Client` on its own thread, so switching focus never
     /// parks/adopts a socket. Unknown names are allowed (the wall may spawn
-    /// them later).
+    /// them later). The newly focused slot is kicked so a parked thread
+    /// re-reads its draw state (the panel's per-frame hook applies
+    /// `set_draw` on the next tick).
     pub fn focus(&mut self, name: &str) {
         self.focused = Some(name.to_string());
+        self.wake(name);
     }
 
     /// The focused slot's name, `None` when nothing is focused yet.
     pub fn focused(&self) -> Option<String> {
         self.focused.clone()
+    }
+
+    /// Kick one slot's parked thread (a no-op when the name is not a
+    /// running slot or the thread is already awake). The panel/host-play
+    /// call this whenever a shared-state change must take effect within a
+    /// frame instead of at the next game-tick park timeout.
+    pub fn wake(&self, name: &str) {
+        if let Some(w) = self.wakes.get(name) {
+            w.wake();
+        }
+    }
+
+    /// Kick every running slot (wall-policy changes like
+    /// `only_render_selected` affect every member's draw state).
+    pub fn wake_all(&self) {
+        for w in self.wakes.values() {
+            w.wake();
+        }
     }
 
     /// Snapshot of every slot's status.
@@ -580,7 +606,9 @@ impl Play {
             .unwrap()
             .entry(name.to_string())
             .or_default()
-            .start_compiled(make())
+            .start_compiled(make())?;
+        self.wake(name);
+        Ok(())
     }
 
     /// Start a loaded JS bot on `name`'s slot: the isolate is spawned here,
@@ -600,7 +628,9 @@ impl Play {
             .unwrap()
             .entry(name.to_string())
             .or_default()
-            .start_load(source, shape)
+            .start_load(source, shape)?;
+        self.wake(name);
+        Ok(())
     }
 
     /// Pause `name`'s script (operator Pause; survives login until
@@ -609,6 +639,7 @@ impl Play {
         if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
             slot.pause();
         }
+        self.wake(name);
     }
 
     /// Resume `name`'s script; the next `on_is_up` re-gates it.
@@ -616,6 +647,7 @@ impl Play {
         if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
             slot.resume();
         }
+        self.wake(name);
     }
 
     /// Stop `name`'s script: teardown hook, instance dropped, Idle.
@@ -623,6 +655,7 @@ impl Play {
         if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
             slot.stop();
         }
+        self.wake(name);
     }
 
     /// `name`'s script lifecycle state; `Idle` when the slot has none.
@@ -651,6 +684,7 @@ impl Play {
         if let Some(q) = self.cheats.lock().unwrap().get_mut(user) {
             q.push_back(cmd.to_string());
         }
+        self.wake(user);
     }
 
     /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
@@ -676,9 +710,13 @@ impl Play {
         if self.focused.as_deref() == Some(name) {
             self.focused = None;
         }
+        // Wake a parked thread so its next probe sees `stop`; the wake end
+        // stays alive (removed after the join) so the poll cannot miss it.
         if let Some(handle) = self.handles.remove(name) {
+            self.wake(name);
             let _ = handle.join();
         }
+        self.wakes.remove(name);
     }
 
     /// Register a control arm without spawning a slot thread (panel unit
@@ -731,11 +769,16 @@ impl Play {
         // so a caller's own clone cannot keep a stale uid.
         arm.uid.store(profile.uid, Ordering::Relaxed);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
+        // The control wake: `Play::wake` kicks the parked slot thread on
+        // focus/draw/stop/spawn changes; the slot thread polls the park end.
+        let (wake, park) = wake_channel();
+        self.wakes.insert(profile.username.clone(), wake);
         spawn_slot_thread(
             &self.options,
             profile,
             input,
             mailbox,
+            Some(park),
             arm,
             Arc::clone(&self.cache),
             self.ifaces.clone(),
@@ -852,6 +895,7 @@ fn spawn_slot_thread(
     profile: Profile,
     slot_input: Option<Arc<SlotInput>>,
     slot_mailbox: Option<Arc<FrameBuf>>,
+    park: Option<SlotPark>,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
     ifaces_template: Vec<Option<IfType>>,
@@ -897,6 +941,9 @@ fn spawn_slot_thread(
                 .unwrap()
                 .entry(username.clone())
                 .or_default();
+            // The park end survives re-login rounds (run_client is entered
+            // once per ingame stretch), so wrap it once here.
+            let park = park.map(Arc::new);
             let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
             #[cfg(test)]
             {
@@ -965,6 +1012,7 @@ fn spawn_slot_thread(
                     &username,
                     slot_input.clone(),
                     slot_mailbox.clone(),
+                    park.clone(),
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);
@@ -1084,6 +1132,21 @@ fn spawn_slot_thread(
                                     &slot_statuses,
                                 );
                             }
+                            // Busy flag for the idle scheduler: a slot with
+                            // a running script, queued cheats, or an armed
+                            // traveller must keep ticking (never parked), so
+                            // the observe hook reports it every frame.
+                            script_running(&slot_scripts, name)
+                                || slot_cheats
+                                    .lock()
+                                    .unwrap()
+                                    .get(name)
+                                    .is_some_and(|q| !q.is_empty())
+                                || slot_travellers
+                                    .lock()
+                                    .unwrap()
+                                    .get(name)
+                                    .is_some_and(|t| t.queued().is_some())
                         }
                     },
                     {
@@ -1369,6 +1432,59 @@ mod tests {
             "stop_slot drops the status row"
         );
         assert!(play.queue.lock().unwrap().status(7).is_none());
+    }
+
+    #[test]
+    fn stop_slot_wakes_a_parked_thread_before_joining() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        // A fake parked slot: blocks on the control park fd with a long
+        // poll (like the real idle scheduler) and only exits once `stop`
+        // is set *and* the wake fires it out of the poll.
+        let (wake, park) = wake_channel();
+        play.wakes.insert("bob".into(), wake);
+        let arm = SlotArm::new(9, false);
+        play.arms.insert("bob".into(), Arc::clone(&arm));
+        play.spawned.insert("bob".into());
+        let stop = Arc::clone(&arm.stop);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let watchdog = thread::spawn(move || {
+            let mut fds = [libc::pollfd {
+                fd: park.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 5000) };
+            assert!(rc > 0, "stop_slot's wake must fire the parked poll");
+            park.drain();
+            assert!(stop.load(Ordering::Relaxed), "woken because stop was set");
+            done_tx.send(()).unwrap();
+        });
+        play.handles.insert("bob".into(), watchdog);
+
+        thread::sleep(Duration::from_millis(50));
+        let start = Instant::now();
+        play.stop_slot("bob");
+        // Without the wake the join would wait out the 5 s poll; the wake
+        // must return the rail ✕ within a frame.
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "stop_slot must wake a parked thread, not wait for its poll"
+        );
+        done_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("parked thread never acknowledged the wake");
+        assert!(play.wakes.is_empty(), "stop_slot drops the wake end");
     }
 
     #[test]
