@@ -6,7 +6,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -18,8 +17,8 @@ use client::client::LoginError;
 use client::config::if_type::ComponentType;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
+use client::render::Renderer;
 pub use host::debug_enabled;
-use host::lean::{Lean, LeanError};
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
 pub use host::set_debug;
@@ -86,30 +85,13 @@ pub struct SlotStatus {
     /// Payload bytes from `Client.stream` (0 when no stream).
     pub bytes_in: u64,
     pub bytes_out: u64,
-    /// Client draw-entry counters (honest zeros until first paint enter).
-    pub game_draw_enters: u64,
-    pub title_screen_draw_enters: u64,
-    /// Host-stamped frame timings / paint-vs-skip counts from `Client`.
-    pub loop_ns: u64,
-    pub raster_ns: u64,
-    pub paint_n: u64,
-    pub skip_n: u64,
-    /// True for a lean channel row (`host::lean::Lean`, no `Client`, no
-    /// World); false for a full `Client` slot. The live channel ladder
-    /// counts leanes against the one head.
-    pub lean: bool,
 }
 
 impl SlotStatus {
-    /// Wall member is online: a fat Client has built the scene (`scene_state
-    /// == 2`); a lean channel only ever reaches `scene_state` 1 on
-    /// `REBUILD_NORMAL`, so login-granted (`ingame`) is enough.
+    /// Wall member is online: every slot is a full `Client` now (no lean
+    /// special case), so a slot is up when the scene is built.
     pub fn is_up(&self) -> bool {
-        if self.lean {
-            self.ingame
-        } else {
-            self.ingame && self.scene_state == 2
-        }
+        self.ingame && self.scene_state == 2
     }
 }
 
@@ -160,26 +142,20 @@ impl Default for SlotStatus {
             queue_total: -1,
             bytes_in: 0,
             bytes_out: 0,
-            game_draw_enters: 0,
-            title_screen_draw_enters: 0,
-            loop_ns: 0,
-            raster_ns: 0,
-            paint_n: 0,
-            skip_n: 0,
-            lean: false,
         }
     }
 }
 
-/// Copy stream byte counters and draw-entry counts from `Client` onto a
-/// `SlotStatus` row. No stream → bytes stay 0.
-pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
-    s.game_draw_enters = c.game_draw_enters;
-    s.title_screen_draw_enters = c.title_screen_draw_enters;
-    s.loop_ns = c.loop_ns;
-    s.raster_ns = c.raster_ns;
-    s.paint_n = c.paint_n;
-    s.skip_n = c.skip_n;
+/// Copy the stream byte counters from `Client` onto a `SlotStatus` row. No
+/// stream → bytes stay 0.
+///
+/// The old draw-entry counters and frame timings are gone from `Client`
+/// (M2 Task 1): `game_draw_enters`/`title_screen_draw_enters` are
+/// unmaintainable through the opaque `Renderer::mainredraw`, and the
+/// loop/raster/paint/skip timings are slot-local in `host`'s private
+/// `SlotLoop`. The status row keeps only what `Client.stream` still
+/// exposes.
+pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
     let (bi, bo) = c
         .stream
         .as_ref()
@@ -189,21 +165,19 @@ pub fn copy_stream_and_draw(c: &Client, s: &mut SlotStatus) {
     s.bytes_out = bo;
 }
 
-/// One observe of a slot's script wiring (fat and lean share it): gate
-/// [`SlotScript::on_is_up`], dispatch [`SlotScript::on_game_tick`] on the
-/// PLAYER_INFO edge, then run any cheats the panel queued. `driver` is the
-/// slot body's own `Client`/`Lean`; `here` is the local player's world tile
+/// One observe of a slot's script wiring: gate [`SlotScript::on_is_up`],
+/// dispatch [`SlotScript::on_game_tick`] on the PLAYER_INFO edge, then run
+/// any cheats the panel queued. `driver` is the slot body's own `Client`
+/// (the only `Driver`); `here` is the local player's world tile
 /// `(x, z, level)` when the body decoded one, else `None` (then the walk
 /// hook refuses to arm). `travellers`/`grid` back the `ctx.walk` closure:
 /// the closure refuses synchronously only when there is no tile, no grid,
 /// or a route already queued; `find` runs off-pump on a short-lived worker
 /// per request, arming the uid's traveller when a route exists (a Start
 /// that would panic on the first tick must not succeed when no route can
-/// arm). Returns whether the
-/// driver's out buffer was
-/// written (the lean pump flushes; the fat `Client` sends on its next
-/// mainloop pass). A slot whose script is Idle/Paused publishes nothing —
-/// no dispatch, no flush.
+/// arm). Returns whether the driver's out buffer was written (the slot's
+/// own `Client` sends on its next mainloop pass). A slot whose script is
+/// Idle/Paused publishes nothing — no dispatch, no flush.
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
 #[allow(clippy::too_many_arguments)]
@@ -297,7 +271,7 @@ fn script_observe(
     wrote
 }
 
-/// Per-slot nav latch key: the `(player gen / lean tick, here)` pair the
+/// Per-slot nav latch key: the `(player gen, here)` pair the pump last
 /// pump last stepped. The step is skipped until either half changes, so a
 /// hop is sent once per server tick, not every 20 ms frame (panel
 /// `tick_latch`).
@@ -316,11 +290,10 @@ fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str)
 /// One pump step of a uid's traveller: drive the armed route one hop
 /// through `driver`. `here` is the player's absolute tile when the body
 /// decoded one (else the traveller stands still) and `door_open` the
-/// door's live state (the fat observe reads the loc typecode; the lean
-/// pump passes `false` — see gaps.md). Mirrors the traveller's queued
-/// dest into the status row's `walk_*` fields (`-1` when idle). Returns
-/// the traveller's [`NavStatus`] so callers can tell whether the hop
-/// wrote the driver.
+/// door's live state read from the slot's loc typecode. Mirrors the
+/// traveller's queued dest into the status row's `walk_*` fields (`-1`
+/// when idle). Returns the traveller's [`NavStatus`] so callers can tell
+/// whether the hop wrote the driver.
 fn step_traveller<D: Driver>(
     driver: &mut D,
     name: &str,
@@ -392,27 +365,8 @@ pub struct SlotArm {
     /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
-    /// is 16; after a grant, or when parking/tuning, this is true.
+    /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
-    /// Park/tune baton: the slot thread sends its live `Lean` here on stop
-    /// instead of dropping the TCP.
-    pub handoff: Mutex<Option<mpsc::Sender<Lean>>>,
-    /// Reverse baton: spawn_slot starts from this live socket and opcode-18
-    /// reconnects in place.
-    pub adopt: Mutex<Option<Lean>>,
-    /// In-place channel change on the fat TV thread (no second `maininit`).
-    pub swap: Mutex<Option<HeadSwap>>,
-    pub want_swap: Arc<AtomicBool>,
-}
-
-/// Steal the current TV socket as a lean, then opcode-18 the incoming
-/// lean onto the **same** fat `Client` thread.
-pub struct HeadSwap {
-    pub lean: Lean,
-    pub username: String,
-    pub password: String,
-    pub uid: i32,
-    pub park: mpsc::Sender<Lean>,
 }
 
 impl SlotArm {
@@ -425,35 +379,8 @@ impl SlotArm {
             latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
             reconnect: Arc::new(AtomicBool::new(false)),
-            handoff: Mutex::new(None),
-            adopt: Mutex::new(None),
-            swap: Mutex::new(None),
-            want_swap: Arc::new(AtomicBool::new(false)),
         })
     }
-}
-
-fn send_handoff_lean(arm: &SlotArm, lean: Option<Lean>, uid: i32, queue: &Arc<Mutex<LoginQueue>>) {
-    if let Some(tx) = arm.handoff.lock().unwrap().take() {
-        if let Some(lean) = lean {
-            let _ = tx.send(lean);
-        }
-    }
-    queue.lock().unwrap().leave(uid);
-}
-
-fn send_handoff_client(
-    arm: &SlotArm,
-    client: &mut Client,
-    uid: i32,
-    queue: &Arc<Mutex<LoginQueue>>,
-) {
-    if let Some(tx) = arm.handoff.lock().unwrap().take() {
-        if let Some(lean) = Lean::from_client(client) {
-            let _ = tx.send(lean);
-        }
-    }
-    queue.lock().unwrap().leave(uid);
 }
 
 /// Whether the slot may start a login handshake: on the title (not ingame)
@@ -499,10 +426,11 @@ fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> 
 /// [`Play::spawn_slot`] can add a profile after the initial [`run_with_io`]
 /// call; later slots share the same login FIFO, cache, and per-frame hook.
 ///
-/// Channel-head (4.7): `head` is the one fat `Client` (the tuned profile)
-/// and `channels` are the lean sessions for every other profile;
-/// [`Play::tune`] moves the head between profiles. `profiles` keeps the
-/// vault credentials every tune and lean park needs.
+/// Flat slot model (M2): every profile owns **one** full `Client` on its
+/// own slot thread — there is no channel head and no lean baton.
+/// [`Play::focus`] only records which slot the panel samples (the old
+/// head); switching focus never touches a socket. `profiles` keeps the
+/// vault credentials for later spawns and reconnects.
 pub struct Play {
     /// Shared status rows; panel tests push fakes here for `pump_status`.
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
@@ -510,24 +438,19 @@ pub struct Play {
     options: PlayOptions,
     cache: Arc<Cache>,
     /// The shared obj-id → name table every script ctx resolves `has_item`
-    /// against (built once from `cache.objs`; lean channels never load
-    /// their own cache).
+    /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
     ifaces: Vec<Option<IfType>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
-    /// Vault profiles keyed by username (`tune` looks up the incoming
-    /// password/uid; the park needs the outgoing one too).
+    /// Vault profiles keyed by username (a later spawn/reconnect looks up
+    /// the password/uid here).
     profiles: HashMap<String, Profile>,
-    /// The tuned profile's fat `Client`; every other profile is a lean
-    /// channel. `None` until the first [`Play::tune`].
-    head: Option<Head>,
-    /// Lean channels for every profile that is not currently the head.
-    channels: HashMap<String, Lean>,
-    /// In-flight threaded retune (UI must not join slot threads).
-    pending_tune: Option<PendingTune>,
+    /// The slot the panel currently samples (the old channel head). Pure
+    /// bookkeeping: every slot is a full `Client` on its own thread.
+    focused: Option<String>,
     /// Per-slot compiled scripts: the slot threads drive `on_is_up` /
     /// `on_game_tick` on each drain, the panel arms them via the
     /// [`Play::script_start`] family. Keyed by username (the identity the
@@ -546,50 +469,47 @@ pub struct Play {
     grid: Option<Arc<StepGrid>>,
 }
 
-/// Handoffs in flight for [`Play::retune`]: receivers are polled from
-/// [`Play::poll_tune`] so the panel thread never `join`s a login/draw.
-struct PendingTune {
-    name: String,
-    prev: Option<String>,
-    incoming_rx: mpsc::Receiver<Lean>,
-    park_rx: Option<mpsc::Receiver<Lean>>,
-    incoming: Option<Lean>,
-    parked: Option<Lean>,
-    incoming_done: bool,
-    park_done: bool,
-    spawned_head: bool,
-    swap_placed: bool,
-    /// Latest cap-click while this hop is in flight; started when we finish.
-    queued: Option<String>,
-    input: Option<Arc<SlotInput>>,
-    pixels: Option<Arc<PixelBuf>>,
-}
-
-/// The tuned profile's fat `Client`. Exactly one head: `tune` parks the
-/// previous one as a lean channel and reconnects this one (opcode 18).
-struct Head {
-    name: String,
-    client: Client,
-}
-
-/// Errors from [`Play::tune`].
-#[derive(Debug)]
-pub enum TuneError {
-    /// `tune` was asked for a name that is not a known profile.
-    UnknownProfile(String),
-    /// Parking the previous head as a lean channel (opcode 18 reconnect)
-    /// failed.
-    Park(LeanError),
-    /// The incoming channel's reconnect login (wrapper opcode 18) failed.
-    Login(LoginError),
-    /// A previous retune is still handing off sockets.
-    Busy,
-}
-
 impl Play {
-    /// True while [`Play::retune`] is still handing off sockets.
-    pub fn tune_pending(&self) -> bool {
-        self.pending_tune.is_some()
+    /// Shared construction for the public `run*` entry points: one login
+    /// FIFO, one shared cache/iface template, and the per-slot script/cheat
+    /// maps. `per_frame` starts as a no-op — slots stay draw-off (headless)
+    /// until a caller's own per-frame hook turns a slot's renderer on.
+    fn new(options: &PlayOptions) -> Play {
+        let (cache, ifaces) = load_template(&options.cache_dir);
+        let cache = Arc::new(cache);
+        let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
+        Play {
+            statuses: Arc::new(Mutex::new(Vec::new())),
+            handles: HashMap::new(),
+            options: options.clone(),
+            cache,
+            obj_names,
+            ifaces,
+            queue: Arc::new(Mutex::new(LoginQueue::default())),
+            per_frame: Arc::new(|_: &mut Client, _: &str| {}),
+            spawned: HashSet::new(),
+            arms: HashMap::new(),
+            profiles: HashMap::new(),
+            focused: None,
+            scripts: Arc::new(Mutex::new(HashMap::new())),
+            cheats: Arc::new(Mutex::new(HashMap::new())),
+            travellers: Arc::new(Mutex::new(HashMap::new())),
+            grid: nav::pack::load_pack(&default_pack_path()).ok().map(Arc::new),
+        }
+    }
+
+    /// Make `name` the focused slot — the one the panel samples (the old
+    /// channel head). Focus is pure bookkeeping in the flat model: every
+    /// slot is a full `Client` on its own thread, so switching focus never
+    /// parks/adopts a socket. Unknown names are allowed (the wall may spawn
+    /// them later).
+    pub fn focus(&mut self, name: &str) {
+        self.focused = Some(name.to_string());
+    }
+
+    /// The focused slot's name, `None` when nothing is focused yet.
+    pub fn focused(&self) -> Option<String> {
+        self.focused.clone()
     }
 
     /// Snapshot of every slot's status.
@@ -611,13 +531,14 @@ impl Play {
         self.arms.get(name).cloned()
     }
 
-    /// Keep vault credentials for a later [`Play::tune`] / [`Play::retune`].
+    /// Keep vault credentials for a later [`Play::spawn_slot`] /
+    /// reconnect.
     pub fn remember_profile(&mut self, profile: Profile) {
         self.profiles.insert(profile.username.clone(), profile);
     }
 
     /// Move `uid` to the front of the login FIFO so the TV head handshakes
-    /// before lean extras that already queued. Mirrors the place onto the
+    /// before slots that already queued. Mirrors the place onto the
     /// status row so the queue card can show *k of n* during maininit
     /// (the slot has not entered [`wait_for_permit`] yet).
     pub fn prefer_login(&self, uid: i32) {
@@ -638,15 +559,6 @@ impl Play {
     /// Snapshot of the login FIFO (front first). Panel tests pin TV-first.
     pub fn login_queue_uids(&self) -> Vec<i32> {
         self.queue.lock().unwrap().queued_uids()
-    }
-
-    /// The unique fat `Client` on this play (the TV). `None` while every
-    /// row is lean or the wall is empty.
-    pub fn fat_head_name(&self) -> Option<String> {
-        self.statuses()
-            .into_iter()
-            .find(|s| !s.lean)
-            .map(|s| s.username)
     }
 
     /// Whether `name` is a slot this play controls (spawned or armed), so
@@ -762,6 +674,9 @@ impl Play {
         self.arms.remove(name);
         self.scripts.lock().unwrap().remove(name);
         self.cheats.lock().unwrap().remove(name);
+        if self.focused.as_deref() == Some(name) {
+            self.focused = None;
+        }
         if let Some(handle) = self.handles.remove(name) {
             let _ = handle.join();
         }
@@ -804,8 +719,8 @@ impl Play {
         pixels: Option<Arc<PixelBuf>>,
         arm: Option<Arc<SlotArm>>,
     ) {
-        // Keep the vault credentials on the wall: `tune` parks the
-        // outgoing head and reconnects the incoming one from this map.
+        // Keep the vault credentials on the wall for later spawns and
+        // DC-reconnect re-handshakes.
         self.profiles
             .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
@@ -837,409 +752,6 @@ impl Play {
         );
     }
 
-    /// Spawn one lean channel slot on this play's FIFO: `Lean::login` (cold,
-    /// opcode 16, no `Client`), then pump the stream at the host cadence.
-    /// The status row is marked `lean`; no-op if the name is already running.
-    /// `None` arm logs in immediately (CLI/e2e); the panel passes a real
-    /// arm so extras sit on the title until Login all.
-    pub fn spawn_channel(&mut self, profile: Profile) {
-        self.spawn_channel_with(profile, None, false);
-    }
-
-    /// Like [`spawn_channel`], with a panel control arm (auto-login / latch).
-    pub fn spawn_channel_with_arm(&mut self, profile: Profile, arm: Option<Arc<SlotArm>>) {
-        self.spawn_channel_with(profile, arm, false);
-    }
-
-    /// Like [`spawn_channel`], but the handshake is opcode 18 (park after
-    /// the fat head's socket dropped).
-    pub fn spawn_channel_reconnect(&mut self, profile: Profile) {
-        self.spawn_channel_with(profile, None, true);
-    }
-
-    fn spawn_channel_with(&mut self, profile: Profile, arm: Option<Arc<SlotArm>>, reconnect: bool) {
-        self.profiles
-            .insert(profile.username.clone(), profile.clone());
-        if !self.spawned.insert(profile.username.clone()) {
-            return;
-        }
-        let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
-        arm.uid.store(profile.uid, Ordering::Relaxed);
-        arm.reconnect.store(reconnect, Ordering::Relaxed);
-        self.arms.insert(profile.username.clone(), Arc::clone(&arm));
-        spawn_channel_thread(
-            &self.options,
-            profile,
-            arm,
-            Arc::clone(&self.queue),
-            Arc::clone(&self.statuses),
-            Arc::clone(&self.scripts),
-            Arc::clone(&self.cheats),
-            Arc::clone(&self.travellers),
-            self.grid.clone(),
-            Arc::clone(&self.obj_names),
-            self.ifaces.clone(),
-            &mut self.handles,
-        );
-    }
-
-    /// Threaded channel-head tune: signal baton-pass (no UI `join`). The
-    /// panel must call [`Play::poll_tune`] each frame to finish spawn.
-    pub fn retune(
-        &mut self,
-        name: &str,
-        input: Option<Arc<SlotInput>>,
-        pixels: Option<Arc<PixelBuf>>,
-    ) -> Result<(), TuneError> {
-        if self.fat_head_name().as_deref() == Some(name) {
-            return Ok(());
-        }
-        if !self.profiles.contains_key(name) {
-            return Err(TuneError::UnknownProfile(name.to_string()));
-        }
-        if let Some(pending) = self.pending_tune.as_mut() {
-            // Cap-click during a hop: keep the in-flight steal, remember
-            // the latest target. Do not Busy the UI.
-            if pending.name != name {
-                pending.queued = Some(name.to_string());
-            }
-            return Ok(());
-        }
-        let incoming_rx = self.begin_handoff(name);
-        let prev = self.fat_head_name().filter(|p| p != name);
-        // Keep the TV thread: park is an in-place swap, not begin_handoff.
-        self.pending_tune = Some(PendingTune {
-            name: name.to_string(),
-            prev,
-            incoming_rx,
-            park_rx: None,
-            incoming: None,
-            parked: None,
-            incoming_done: false,
-            park_done: false,
-            spawned_head: false,
-            swap_placed: false,
-            queued: None,
-            input,
-            pixels,
-        });
-        self.poll_tune();
-        Ok(())
-    }
-
-    /// Drive in-flight retune: take handed-off sockets and spawn the new
-    /// fat head / parked lean. Never joins a slot thread.
-    pub fn poll_tune(&mut self) {
-        let (
-            spawn_head,
-            place_swap,
-            name,
-            incoming,
-            input,
-            pixels,
-            prev,
-            parked,
-            rekey,
-            done,
-            queued,
-            failed,
-        ) = {
-            let Some(pending) = self.pending_tune.as_mut() else {
-                return;
-            };
-            if !pending.incoming_done {
-                match pending.incoming_rx.try_recv() {
-                    Ok(lean) => {
-                        pending.incoming = Some(lean);
-                        pending.incoming_done = true;
-                    }
-                    Err(mpsc::TryRecvError::Disconnected) => pending.incoming_done = true,
-                    Err(mpsc::TryRecvError::Empty) => {}
-                }
-            }
-            if !pending.park_done {
-                match pending.park_rx.as_ref() {
-                    None if pending.prev.is_none() || pending.swap_placed => {
-                        if pending.prev.is_none() {
-                            pending.park_done = true;
-                        }
-                    }
-                    None => {}
-                    Some(rx) => match rx.try_recv() {
-                        Ok(lean) => {
-                            pending.parked = Some(lean);
-                            pending.park_done = true;
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => pending.park_done = true,
-                        Err(mpsc::TryRecvError::Empty) => {}
-                    },
-                }
-            }
-            let in_place = pending.prev.is_some();
-            let steal_failed = in_place
-                && pending.incoming_done
-                && pending.incoming.is_none()
-                && !pending.swap_placed;
-            let place_swap = in_place
-                && pending.incoming_done
-                && pending.incoming.is_some()
-                && !pending.swap_placed;
-            let spawn_head = !in_place && pending.incoming_done && !pending.spawned_head;
-            if spawn_head {
-                pending.spawned_head = true;
-            }
-            let name = pending.name.clone();
-            let incoming = if place_swap || spawn_head {
-                pending.incoming.take()
-            } else {
-                None
-            };
-            let input = if spawn_head {
-                pending.input.take()
-            } else {
-                None
-            };
-            let pixels = if spawn_head {
-                pending.pixels.take()
-            } else {
-                None
-            };
-            let spawn_park = pending.park_done && pending.parked.is_some();
-            let prev = pending.prev.clone();
-            let parked = if spawn_park {
-                pending.parked.take()
-            } else {
-                None
-            };
-            let rekey = spawn_park;
-            let done = pending.incoming_done
-                && pending.park_done
-                && (pending.spawned_head || pending.swap_placed)
-                && (pending.prev.is_none() || spawn_park);
-            let queued = if done || steal_failed {
-                pending.queued.take()
-            } else {
-                None
-            };
-            let failed = if steal_failed {
-                Some(pending.name.clone())
-            } else {
-                None
-            };
-            (
-                spawn_head, place_swap, name, incoming, input, pixels, prev, parked, rekey, done,
-                queued, failed,
-            )
-        };
-        if place_swap {
-            if let (Some(prev), Some(lean), Some(profile)) =
-                (prev.clone(), incoming, self.profiles.get(&name).cloned())
-            {
-                if let Some(arm) = self.arms.get(&prev).cloned() {
-                    let (park_tx, park_rx) = mpsc::channel();
-                    if let Some(pending) = self.pending_tune.as_mut() {
-                        pending.park_rx = Some(park_rx);
-                    }
-                    *arm.swap.lock().unwrap() = Some(HeadSwap {
-                        lean,
-                        username: profile.username.clone(),
-                        password: profile.password.clone(),
-                        uid: profile.uid,
-                        park: park_tx,
-                    });
-                    arm.want_swap.store(true, Ordering::Relaxed);
-                    if let Some(pending) = self.pending_tune.as_mut() {
-                        pending.swap_placed = true;
-                    }
-                    if debug_enabled() {
-                        eprintln!("[host-play] retune in-place {prev} -> {name}");
-                    }
-                } else {
-                    self.spawn_channel_from_lean(profile, lean);
-                    self.pending_tune = None;
-                }
-            }
-        } else if spawn_head {
-            if let Some(profile) = self.profiles.get(&name).cloned() {
-                let arm = SlotArm::new(profile.uid, true);
-                if incoming.is_some() {
-                    arm.reconnect.store(true, Ordering::Relaxed);
-                }
-                if let Some(lean) = incoming {
-                    *arm.adopt.lock().unwrap() = Some(lean);
-                }
-                self.spawn_slot(profile, input, pixels, Some(arm));
-            }
-        }
-        if rekey {
-            if let Some(prev) = prev.clone() {
-                self.rekey_fat(&prev, &name);
-            }
-        }
-        if let (Some(prev), Some(parked)) = (prev, parked) {
-            if let Some(p) = self.profiles.get(&prev).cloned() {
-                self.spawn_channel_from_lean(p, parked);
-            }
-        }
-        if done || failed.is_some() {
-            self.pending_tune = None;
-        }
-        if let Some(name) = failed {
-            if let Some(p) = self.profiles.get(&name).cloned() {
-                self.spawn_channel_reconnect(p);
-            }
-        }
-        if let Some(next) = queued {
-            if self.fat_head_name().as_deref() != Some(next.as_str()) {
-                let _ = self.retune(&next, None, None);
-            }
-        }
-    }
-
-    fn rekey_fat(&mut self, prev: &str, next: &str) {
-        if prev == next {
-            return;
-        }
-        if let Some(arm) = self.arms.remove(prev) {
-            self.arms.insert(next.to_string(), arm);
-        }
-        if let Some(handle) = self.handles.remove(prev) {
-            self.handles.insert(next.to_string(), handle);
-        }
-        self.spawned.remove(prev);
-        self.spawned.insert(next.to_string());
-        // The renamed thread looks its script/cheat slots up by its new
-        // username; keep the per-uid state with it across the tune.
-        if let Some(slot) = self.scripts.lock().unwrap().remove(prev) {
-            self.scripts.lock().unwrap().insert(next.to_string(), slot);
-        }
-        if let Some(q) = self.cheats.lock().unwrap().remove(prev) {
-            self.cheats.lock().unwrap().insert(next.to_string(), q);
-        }
-        let mut all = self.statuses.lock().unwrap();
-        if let Some(s) = all.iter_mut().find(|s| s.username == prev && !s.lean) {
-            s.username = next.to_string();
-            s.lean = false;
-        }
-    }
-
-    /// Signal a slot to hand off its live socket. Does not join.
-    fn begin_handoff(&mut self, name: &str) -> mpsc::Receiver<Lean> {
-        if let Some(lean) = self.channels.remove(name) {
-            let (tx, rx) = mpsc::channel();
-            let _ = tx.send(lean);
-            return rx;
-        }
-        let (tx, rx) = mpsc::channel();
-        if let Some(arm) = self.arms.get(name).cloned() {
-            *arm.handoff.lock().unwrap() = Some(tx);
-            arm.stop.store(true, Ordering::Relaxed);
-            self.spawned.remove(name);
-            self.statuses.lock().unwrap().retain(|s| s.username != name);
-            self.arms.remove(name);
-            if let Some(handle) = self.handles.remove(name) {
-                thread::spawn(move || {
-                    let _ = handle.join();
-                });
-            }
-        }
-        rx
-    }
-
-    fn spawn_channel_from_lean(&mut self, profile: Profile, lean: Lean) {
-        self.profiles
-            .insert(profile.username.clone(), profile.clone());
-        if !self.spawned.insert(profile.username.clone()) {
-            return;
-        }
-        let arm = SlotArm::new(profile.uid, true);
-        arm.reconnect.store(true, Ordering::Relaxed);
-        *arm.adopt.lock().unwrap() = Some(lean);
-        self.arms.insert(profile.username.clone(), Arc::clone(&arm));
-        spawn_channel_thread(
-            &self.options,
-            profile,
-            arm,
-            Arc::clone(&self.queue),
-            Arc::clone(&self.statuses),
-            Arc::clone(&self.scripts),
-            Arc::clone(&self.cheats),
-            Arc::clone(&self.travellers),
-            self.grid.clone(),
-            Arc::clone(&self.obj_names),
-            self.ifaces.clone(),
-            &mut self.handles,
-        );
-    }
-
-    /// Tune the head to `name` (274bot channel head). Sequence:
-    /// 1. Take `name`'s lean socket if one is up (baton, no DC);
-    /// 2. Park the current head: steal its live socket into a Lean
-    ///    (throw away World/ifaces/pixmaps) — no TCP close;
-    /// 3. Put `name`'s socket on the fat Client and opcode-**18** reconnect
-    ///    **in place** so the server dumps region/player state. No lean
-    ///    socket → fresh TCP 18 as before;
-    /// 4. wipe the previous channel's scene (`scene_state = 0`, fresh
-    ///    `localPlayer`, cleared player/npc tables).
-    ///
-    /// The first tune (no head yet) skips the park. Tuning the current
-    /// head is a no-op.
-    pub fn tune(&mut self, name: &str) -> Result<(), TuneError> {
-        let profile = self
-            .profiles
-            .get(name)
-            .cloned()
-            .ok_or_else(|| TuneError::UnknownProfile(name.to_string()))?;
-        if self.head.as_ref().is_some_and(|h| h.name == name) {
-            return Ok(());
-        }
-
-        // 1. Incoming lean: keep the TCP, hand the socket to the Client.
-        let incoming = self.channels.remove(name);
-
-        // 2. Park the current head: baton-pass the live socket into Lean.
-        let mut client = if let Some(mut head) = self.head.take() {
-            let prev_name = head.name.clone();
-            match Lean::from_client(&mut head.client) {
-                Some(lean) => {
-                    self.channels.insert(prev_name, lean);
-                }
-                None => {
-                    // No stream to steal (never logged in): leave parked
-                    // without a channel rather than a fake DC login.
-                }
-            }
-            head.client
-        } else {
-            prepare_client(
-                bot_client_config(&self.options, &profile),
-                profile.uid,
-                Arc::clone(&self.cache),
-                self.ifaces.clone(),
-            )
-        };
-
-        // 3. Opcode 18 on the adopted socket (or a fresh TCP if `name`
-        //    was not a lean channel). Same RSA block as a lost_con.
-        client.login_uid = profile.uid;
-        if let Some(lean) = incoming {
-            client.stream = Some(lean.into_stream());
-            client.baton = true;
-        }
-        client
-            .login(name, &profile.password, true)
-            .map_err(TuneError::Login)?;
-
-        // 4. Response 15 keeps the previous session's state; a channel
-        //    change is a different account's scene, so wipe it.
-        client.wipe_scene();
-
-        self.head = Some(Head {
-            name: name.to_string(),
-            client,
-        });
-        Ok(())
-    }
 }
 
 /// Spawn one slot thread per profile. Each slot waits for a login-queue
@@ -1265,29 +777,8 @@ where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<PixelBuf>>),
     G: Fn(&mut Client, &str) + Send + Sync + 'static,
 {
-    let (cache, ifaces) = load_template(&options.cache_dir);
-    let cache = Arc::new(cache);
-    let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
-    let mut play = Play {
-        statuses: Arc::new(Mutex::new(Vec::new())),
-        handles: HashMap::new(),
-        options: options.clone(),
-        cache,
-        obj_names,
-        ifaces,
-        queue: Arc::new(Mutex::new(LoginQueue::default())),
-        per_frame: Arc::new(per_frame),
-        spawned: HashSet::new(),
-        arms: HashMap::new(),
-        profiles: HashMap::new(),
-        head: None,
-        channels: HashMap::new(),
-        pending_tune: None,
-        scripts: Arc::new(Mutex::new(HashMap::new())),
-        cheats: Arc::new(Mutex::new(HashMap::new())),
-        travellers: Arc::new(Mutex::new(HashMap::new())),
-        grid: nav::pack::load_pack(&default_pack_path()).ok().map(Arc::new),
-    };
+    let mut play = Play::new(options);
+    play.per_frame = Arc::new(per_frame);
     for profile in profiles {
         let (slot_input, slot_pixels) = per_slot(&profile.username);
         play.spawn_slot(profile, slot_input, slot_pixels, None);
@@ -1295,42 +786,14 @@ where
     play
 }
 
-/// Channel-head wall spawn: the first `heads` profiles (0 or 1) are fat
-/// `Client` slots and every other profile is a lean channel — no World, no
-/// ifaces, no caches (`host::lean::Lean`). The head stays draw-off like a
-/// wall slot; only the live channel ladder uses this today, so the panel
-/// `stress50` full-`Client` path through [`run_with_io`] is untouched.
+/// Wall spawn for the e2e ladder: every profile spawns one full `Client`
+/// slot (the old `1 fat + N lean` split is gone). `heads` only selects
+/// whether the first profile gets the login-FIFO front.
 pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize) -> Play {
-    let (cache, ifaces) = load_template(&options.cache_dir);
-    let cache = Arc::new(cache);
-    let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
-    let mut play = Play {
-        statuses: Arc::new(Mutex::new(Vec::new())),
-        handles: HashMap::new(),
-        options: options.clone(),
-        cache,
-        obj_names,
-        ifaces,
-        queue: Arc::new(Mutex::new(LoginQueue::default())),
-        per_frame: Arc::new(|c: &mut Client, _: &str| c.set_draw(false)),
-        spawned: HashSet::new(),
-        arms: HashMap::new(),
-        profiles: HashMap::new(),
-        head: None,
-        channels: HashMap::new(),
-        pending_tune: None,
-        scripts: Arc::new(Mutex::new(HashMap::new())),
-        cheats: Arc::new(Mutex::new(HashMap::new())),
-        travellers: Arc::new(Mutex::new(HashMap::new())),
-        grid: nav::pack::load_pack(&default_pack_path()).ok().map(Arc::new),
-    };
+    let mut play = Play::new(options);
     let tv_uid = profiles.first().map(|p| p.uid);
-    for (i, profile) in profiles.into_iter().enumerate() {
-        if i < heads {
-            play.spawn_slot(profile, None, None, None);
-        } else {
-            play.spawn_channel(profile);
-        }
+    for profile in profiles {
+        play.spawn_slot(profile, None, None, None);
     }
     if heads >= 1 {
         if let Some(uid) = tv_uid {
@@ -1407,6 +870,7 @@ fn spawn_slot_thread(
     let uid = profile.uid;
     let password = profile.password.clone();
     let config = bot_client_config(options, &profile);
+    let lowmem = config.lowmem;
     let mainland = options.mainland;
 
     handles.insert(
@@ -1416,9 +880,9 @@ fn spawn_slot_thread(
             .stack_size(THREAD_STACK)
             .spawn(move || {
             {
-                // Publish the row before `prepare_client`/`maininit` (highmem
-                // TV can stall for seconds). Login all prefers this uid;
-                // lean extras must not claim the FIFO while the tube loads.
+                // Publish the row before `prepare_client`/`maininit`
+                // (a slow cache fetch can stall for seconds), so the
+                // queue card shows the slot while it loads.
                 let mut all = slot_statuses.lock().unwrap();
                 all.push(SlotStatus {
                     username: username.clone(),
@@ -1449,104 +913,62 @@ fn spawn_slot_thread(
 
             // Jag/anim/model/map prefetch (mirrors client-play; the scene
             // cannot reach scene_state 2 until the loc models are in).
-            client.maininit();
+            // `maininit` draws its progress into a renderer, so a headless
+            // slot builds a transient one and drops it — the frame renderer
+            // stays host-owned (built lazily when the panel turns this
+            // slot's draw on).
+            {
+                let mut renderer = Renderer::new(lowmem);
+                client.maininit(&mut renderer);
+            }
             if client.error_loading && debug_enabled() {
                 eprintln!("[host-play] slot {username}: maininit failed");
             }
 
-            let uname = Arc::new(Mutex::new(username.clone()));
-            let mut password = password;
-            let mut uid = uid;
             let mut backoff = LoginBackoff::new();
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
-                    send_handoff_client(&arm, &mut client, uid, &slot_queue);
+                    slot_queue.lock().unwrap().leave(uid);
                     return;
                 }
-                if let Some(swap) = arm.swap.lock().unwrap().take() {
-                    arm.want_swap.store(false, Ordering::Relaxed);
-                    // Park A (TCP stays up as lean). Drop B's lean so the
-                    // server sees a DC, then opcode-18 on a *new* TCP —
-                    // 18 on the stolen live socket is RSA code 6.
-                    let parked = Lean::from_client(&mut client);
-                    let new_uid = swap.uid;
-                    let new_pass = swap.password.clone();
-                    let new_name = swap.username.clone();
-                    drop(swap.lean);
-                    client.login_uid = new_uid;
-                    eprintln!("[host-play] slot swap -> {new_name}: DC + opcode 18");
-                    match client.login(&new_name, &new_pass, true) {
-                        Ok(()) => {
-                            if let Some(parked) = parked {
-                                let _ = swap.park.send(parked);
-                            }
-                            uid = new_uid;
-                            password = new_pass;
-                            *uname.lock().unwrap() = new_name;
-                            arm.uid.store(uid, Ordering::Relaxed);
-                            client.wipe_scene();
-                            backoff.reset();
-                            on_login_success(&arm);
-                        }
-                        Err(e) => {
-                            if let Some(parked) = parked {
-                                client.stream = Some(parked.into_stream());
-                                client.baton = true;
-                            }
-                            let name = uname.lock().unwrap().clone();
-                            record_login_error(&slot_statuses, &name, &e);
-                            thread::sleep(login_retry_wait(&mut backoff, e.code));
-                            continue;
-                        }
-                    }
-                } else if !client.ingame {
+                if !client.ingame {
                     if !should_handshake(&arm, client.ingame) {
                         thread::sleep(Duration::from_millis(20));
                         continue;
                     }
-                    let name = uname.lock().unwrap().clone();
-                    wait_for_permit(&slot_queue, &slot_statuses, &name, uid, &arm.stop);
+                    wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
                     if arm.stop.load(Ordering::Relaxed) {
-                        send_handoff_client(&arm, &mut client, uid, &slot_queue);
+                        slot_queue.lock().unwrap().leave(uid);
                         return;
                     }
-                    mark_login_started(&slot_statuses, &name);
-                    if let Some(lean) = arm.adopt.lock().unwrap().take() {
-                        client.stream = Some(lean.into_stream());
-                        client.baton = true;
-                        arm.reconnect.store(true, Ordering::Relaxed);
-                    }
+                    mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
                     if debug_enabled() {
                         eprintln!(
-                            "[host-play] slot {name}: handshake begin reconnect={reconnect}"
+                            "[host-play] slot {username}: handshake begin reconnect={reconnect}"
                         );
                     }
-                    match client.login(&name, &password, reconnect) {
+                    match client.login(&username, &password, reconnect) {
                         Ok(()) => {
-                            if arm.reconnect.load(Ordering::Relaxed) {
-                                client.wipe_scene();
-                            }
                             backoff.reset();
                             on_login_success(&arm);
                             if debug_enabled() {
-                                eprintln!("[host-play] slot {name}: handshake ok");
+                                eprintln!("[host-play] slot {username}: handshake ok");
                             }
                         }
                         Err(e) => {
-                            record_login_error(&slot_statuses, &name, &e);
+                            record_login_error(&slot_statuses, &username, &e);
                             thread::sleep(login_retry_wait(&mut backoff, e.code));
                             continue;
                         }
                     }
                 }
                 let mut mainland_sent = false;
-                let uname_obs = Arc::clone(&uname);
                 let arm_obs = Arc::clone(&arm);
-                let run_name = uname.lock().unwrap().clone();
+                let obs_name = username.clone();
                 Host::run_client(
                     &mut client,
-                    &run_name,
+                    &username,
                     slot_input.clone(),
                     slot_pixels.clone(),
                     {
@@ -1564,8 +986,8 @@ fn spawn_slot_thread(
                         // server ticks, not 20 ms frames (panel `tick_latch`).
                         let mut last_nav_step: Option<NavStepKey> = None;
                         move |c, _ignored, run_sends| {
-                            let name = uname_obs.lock().unwrap().clone();
-                            slot_frame(c, &name);
+                            let name = &obs_name;
+                            slot_frame(c, name);
                             if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
@@ -1587,13 +1009,13 @@ fn spawn_slot_thread(
                                 let mut up = false;
                                 let mut here = None;
                                 for s in all.iter_mut() {
-                                    if s.username == name {
+                                    if s.username == *name {
                                         s.ingame = c.ingame;
                                         s.scene_state = c.scene_state;
                                         s.runenergy = c.runenergy;
                                         s.run_sends = run_sends;
                                         s.main_modal_id = c.main_modal_id;
-                                        copy_stream_and_draw(c, s);
+                                        copy_stream_bytes(c, s);
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,
@@ -1604,7 +1026,7 @@ fn spawn_slot_thread(
                                             s.tile_x = tx;
                                             s.tile_z = tz;
                                             // Tile level is not decoded on
-                                            // either body yet (see gaps.md).
+                                            // the body yet (see gaps.md).
                                             here = Some((tx, tz, 0));
                                             s.player = lp.name.clone().unwrap_or_default();
                                         }
@@ -1616,14 +1038,14 @@ fn spawn_slot_thread(
                             // Inventory view: zip the TYPE_INV iface's obj
                             // ids/counts, rebuilt each observe while the
                             // script is Running (the idle-skip gate).
-                            let inv = if script_running(&slot_scripts, &name) {
+                            let inv = if script_running(&slot_scripts, name) {
                                 inventory_from_ifaces(&c.ifaces)
                             } else {
                                 None
                             };
                             script_observe(
                                 c,
-                                &name,
+                                name,
                                 up,
                                 tick_edge,
                                 script_tick,
@@ -1639,13 +1061,13 @@ fn spawn_slot_thread(
                             // player-gen/tile latch like the panel's WalkTo
                             // hook so a hop is sent once per server tick,
                             // not re-sent every 20 ms frame. Door state is
-                            // read live from the fat client's loc typecode.
+                            // read live from the slot client's loc typecode.
                             let nav_key = (c.gens.player, here);
                             if last_nav_step != Some(nav_key) {
                                 last_nav_step = Some(nav_key);
                                 let door_open = {
                                     let all = slot_travellers.lock().unwrap();
-                                    match all.get(&name).and_then(|t| {
+                                    match all.get(name).and_then(|t| {
                                         here.and_then(|(hx, hz, hl)| {
                                             t.current_door(Tile { x: hx, z: hz, level: hl })
                                         })
@@ -1661,7 +1083,7 @@ fn spawn_slot_thread(
                                 };
                                 step_traveller(
                                     c,
-                                    &name,
+                                    name,
                                     here,
                                     door_open,
                                     &slot_travellers,
@@ -1672,371 +1094,21 @@ fn spawn_slot_thread(
                     },
                     {
                         let ifaces_template = ifaces_template.clone();
-                        move |c| {
-                            tick_flags(c, &ifaces_template, &arm_obs)
-                                || arm_obs.want_swap.load(Ordering::Relaxed)
-                                || !c.ingame
-                        }
+                        move |c| tick_flags(c, &ifaces_template, &arm_obs) || !c.ingame
                     },
                 );
                 if arm.stop.load(Ordering::Relaxed) {
-                    send_handoff_client(&arm, &mut client, uid, &slot_queue);
+                    slot_queue.lock().unwrap().leave(uid);
                     return;
                 }
-                let name = uname.lock().unwrap().clone();
                 let mut all = slot_statuses.lock().unwrap();
-                if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
                     s.ingame = client.ingame;
                     s.scene_state = client.scene_state;
                 }
             }
             })
             .expect("failed to spawn slot thread"),
-    );
-}
-
-enum LeanPump {
-    /// Arm `stop` / handoff — the thread should exit.
-    Stopped,
-    /// Socket died; caller may reconnect.
-    Died,
-}
-
-/// Pump a live lean: mark `ingame`, host `NO_TIMEOUT` once a second, update
-/// the snapshot. Adopt (parked TV) uses `seed = false`.
-#[allow(clippy::too_many_arguments)]
-fn run_lean_pump(
-    mut lean: Lean,
-    arm: &SlotArm,
-    username: &str,
-    uid: i32,
-    slot_queue: &Arc<Mutex<LoginQueue>>,
-    slot_statuses: &Arc<Mutex<Vec<SlotStatus>>>,
-    slot_scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
-    slot_cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    slot_travellers: &Arc<Mutex<HashMap<String, Traveller>>>,
-    slot_grid: &Option<Arc<StepGrid>>,
-    slot_obj_names: &Arc<api::obj_names::ObjNames>,
-    ifaces: &[Option<IfType>],
-    seed: bool,
-) -> LeanPump {
-    let mut last_tick: u64;
-    {
-        let snap = lean.snapshot();
-        last_tick = snap.tick;
-        let mut all = slot_statuses.lock().unwrap();
-        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-            s.ingame = true;
-            s.error = None;
-            s.scene_state = snap.scene_state;
-            s.tile_x = snap.tile_x;
-            s.tile_z = snap.tile_z;
-        }
-    }
-    let mut seeded = !seed;
-    let mut last_ka = Instant::now();
-    let mut logging_out = false;
-    // Last `(tick, here)` the traveller stepped: skip until either changes
-    // so the hop budget counts PLAYER_INFOs, not 20 ms frames.
-    let mut last_nav_step: Option<NavStepKey> = None;
-    loop {
-        if arm.stop.load(Ordering::Relaxed) {
-            send_handoff_lean(arm, Some(lean), uid, slot_queue);
-            return LeanPump::Stopped;
-        }
-        if arm.want_logout.load(Ordering::Relaxed) {
-            let _ = api::interact::logout(&mut lean, ifaces);
-            let _ = lean.flush();
-            arm.want_logout.store(false, Ordering::Relaxed);
-            arm.latch.store(true, Ordering::Relaxed);
-            arm.want_login.store(false, Ordering::Relaxed);
-            logging_out = true;
-        }
-        if !logging_out && last_ka.elapsed() >= Duration::from_secs(1) {
-            lean.write_no_timeout();
-            last_ka = Instant::now();
-        }
-        let pump = lean.pump();
-        let mut died = false;
-        let mut up = false;
-        let mut tick_edge = false;
-        let mut tick = 0u64;
-        // The lean snapshot's `here` is the local player tile from the
-        // PLAYER_INFO teleport branch; it only moves on teleport/rebuild
-        // (walk-run tracking is a later gap — see gaps.md).
-        let mut here = None;
-        {
-            let mut all = slot_statuses.lock().unwrap();
-            if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                match pump {
-                    Ok(()) => {
-                        let snap = lean.snapshot();
-                        let scene_state = snap.scene_state;
-                        // The snapshot's PLAYER_INFO count is the lean
-                        // channel's tick edge (mirrors fat `should_emit_tick`).
-                        tick_edge = snap.tick != last_tick;
-                        last_tick = snap.tick;
-                        tick = snap.tick;
-                        here = snap.here;
-                        s.scene_state = scene_state;
-                        s.tile_x = snap.tile_x;
-                        s.tile_z = snap.tile_z;
-                        s.ingame = true;
-                        up = s.is_up();
-                        if !seeded && scene_state != 0 {
-                            let t = scatter_tile_for(uid);
-                            api::interact::seed_at(&mut lean, t.level, t.x, t.z);
-                            if let Err(e) = lean.flush() {
-                                s.error = Some(format!("seed: {e:?}"));
-                                s.ingame = false;
-                                died = true;
-                            } else {
-                                seeded = true;
-                                if debug_enabled() {
-                                    eprintln!(
-                                        "[host-play] channel {username}: seed {} {} {}",
-                                        t.level, t.x, t.z
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        s.error = Some(match &e {
-                            LeanError::Login(le) => format!("code {}: {}", le.code, le.mes2),
-                            LeanError::Io(io) => format!("io: {io}"),
-                            LeanError::FrameTooLarge { ptype, psize } => {
-                                format!("frame too large ptype={ptype} psize={psize}")
-                            }
-                        });
-                        s.ingame = false;
-                        died = true;
-                    }
-                }
-            }
-        }
-        // Script wiring runs every observe, dead or not: a downed channel
-        // re-gates `on_is_up(false)` so the script pauses while it is out.
-        // Inventory view: clone the snapshot's inv slots, only while the
-        // script is Running (same idle-skip gate as the fat path). The
-        // clone is owned so the `&mut lean` driver borrow below is free.
-        let inv: Option<Vec<(i32, i32)>> = if script_running(slot_scripts, username) {
-            Some(lean.snapshot().inv.clone())
-        } else {
-            None
-        };
-        let mut wrote = script_observe(
-            &mut lean,
-            username,
-            up,
-            tick_edge,
-            tick,
-            here,
-            inv.as_deref(),
-            Some(slot_obj_names.as_ref()),
-            slot_scripts,
-            slot_cheats,
-            slot_travellers,
-            slot_grid,
-        );
-        // Per-uid nav step on the pump, gated on the tick/tile latch like
-        // the fat path. Lean has no loc typecode decode, so every door leg
-        // is worked as closed (`door_open = false`; see gaps.md).
-        let nav_key = (tick, here);
-        if last_nav_step != Some(nav_key) {
-            last_nav_step = Some(nav_key);
-            if matches!(
-                step_traveller(&mut lean, username, here, false, slot_travellers, slot_statuses),
-                NavStatus::Walking | NavStatus::Door
-            ) {
-                wrote = true;
-            }
-        }
-        if wrote && !died {
-            if let Err(e) = lean.flush() {
-                let mut all = slot_statuses.lock().unwrap();
-                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                    s.error = Some(format!("script flush: {e:?}"));
-                    s.ingame = false;
-                }
-                died = true;
-            }
-        }
-        if died {
-            return LeanPump::Died;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// Spawn one lean channel thread. The channel waits for a login-queue
-/// permit (shared FIFO with the head), cold-logins with `Lean::login`
-/// (wrapper opcode 16), then pumps inbound frames at the host cadence —
-/// no `maininit`, no `Client`, no pixels. Host writes `NO_TIMEOUT` so
-/// parked extras stay logged in. The row mirrors the thin `LeanSnapshot`.
-#[allow(clippy::too_many_arguments)]
-fn spawn_channel_thread(
-    options: &PlayOptions,
-    profile: Profile,
-    arm: Arc<SlotArm>,
-    slot_queue: Arc<Mutex<LoginQueue>>,
-    slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
-    slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
-    slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    slot_travellers: Arc<Mutex<HashMap<String, Traveller>>>,
-    slot_grid: Option<Arc<StepGrid>>,
-    slot_obj_names: Arc<api::obj_names::ObjNames>,
-    ifaces: Vec<Option<IfType>>,
-    handles: &mut HashMap<String, thread::JoinHandle<()>>,
-) {
-    let username = profile.username.clone();
-    let uid = profile.uid;
-    let password = profile.password.clone();
-    let config = bot_client_config(options, &profile);
-
-    handles.insert(
-        username.clone(),
-        thread::Builder::new()
-            .name(format!("{username}-lean"))
-            .stack_size(THREAD_STACK)
-            .spawn(move || {
-                {
-                    let mut all = slot_statuses.lock().unwrap();
-                    all.push(SlotStatus {
-                        username: username.clone(),
-                        lean: true,
-                        ..SlotStatus::default()
-                    });
-                }
-                slot_scripts
-                    .lock()
-                    .unwrap()
-                    .entry(username.clone())
-                    .or_default();
-                slot_cheats
-                    .lock()
-                    .unwrap()
-                    .entry(username.clone())
-                    .or_default();
-                if let Some(lean) = arm.adopt.lock().unwrap().take() {
-                    match run_lean_pump(
-                        lean,
-                        &arm,
-                        &username,
-                        uid,
-                        &slot_queue,
-                        &slot_statuses,
-                        &slot_scripts,
-                        &slot_cheats,
-                        &slot_travellers,
-                        &slot_grid,
-                        &slot_obj_names,
-                        &ifaces,
-                        false,
-                    ) {
-                        LeanPump::Stopped => return,
-                        LeanPump::Died => {}
-                    }
-                }
-                loop {
-                    if arm.stop.load(Ordering::Relaxed) {
-                        send_handoff_lean(&arm, None, uid, &slot_queue);
-                        return;
-                    }
-                    if !should_handshake(&arm, false) {
-                        // Sit idle until Login all / auto-login arms a handshake.
-                        thread::sleep(Duration::from_millis(20));
-                        continue;
-                    }
-                    wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
-                    if arm.stop.load(Ordering::Relaxed) {
-                        send_handoff_lean(&arm, None, uid, &slot_queue);
-                        return;
-                    }
-                    let login_started = Instant::now();
-                    {
-                        let mut all = slot_statuses.lock().unwrap();
-                        if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                            // First attempt only: retries must not move the
-                            // handshake-start metric the harness polls.
-                            if s.login_started.is_none() {
-                                s.login_started = Some(login_started);
-                            }
-                            s.error = None;
-                        }
-                    }
-                    match Lean::login(
-                        &config,
-                        &username,
-                        &password,
-                        uid,
-                        arm.reconnect.load(Ordering::Relaxed),
-                    ) {
-                        Ok(lean) => {
-                            arm.reconnect.store(true, Ordering::Relaxed);
-                            if debug_enabled() {
-                                eprintln!("[host-play] channel {username}: ingame");
-                            }
-                            match run_lean_pump(
-                                lean,
-                                &arm,
-                                &username,
-                                uid,
-                                &slot_queue,
-                                &slot_statuses,
-                                &slot_scripts,
-                                &slot_cheats,
-                                &slot_travellers,
-                                &slot_grid,
-                                &slot_obj_names,
-                                &ifaces,
-                                true,
-                            ) {
-                                LeanPump::Stopped => return,
-                                LeanPump::Died => {}
-                            }
-                        }
-                        Err(e) => {
-                            let msg = match &e {
-                                LeanError::Login(le) => format!("code {}: {}", le.code, le.mes2),
-                                LeanError::Io(io) => format!("io: {io}"),
-                                LeanError::FrameTooLarge { ptype, psize } => {
-                                    format!("frame too large ptype={ptype} psize={psize}")
-                                }
-                            };
-                            if debug_enabled() {
-                                eprintln!("[host-play] channel {username}: login {msg}");
-                            }
-                            {
-                                let mut all = slot_statuses.lock().unwrap();
-                                if let Some(s) = all.iter_mut().find(|s| s.username == username) {
-                                    s.error = Some(msg);
-                                }
-                            }
-                            // A rejected lean login retries after the same
-                            // codes as the fat slots (world full / login
-                            // limit / wrong credentials).
-                            let wait = match &e {
-                                LeanError::Login(le) => match le.code {
-                                    16 => Duration::from_secs(20),
-                                    5 => Duration::from_secs(60),
-                                    _ => Duration::from_secs(5),
-                                },
-                                _ => Duration::from_secs(5),
-                            };
-                            let deadline = Instant::now() + wait;
-                            while Instant::now() < deadline {
-                                if arm.stop.load(Ordering::Relaxed) {
-                                    slot_queue.lock().unwrap().leave(uid);
-                                    return;
-                                }
-                                thread::sleep(Duration::from_millis(20));
-                            }
-                        }
-                    }
-                }
-            })
-            .expect("failed to spawn channel thread"),
     );
 }
 
@@ -2153,7 +1225,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
-    use client::client::{ClientConfig, ClientNpc, ClientPlayer};
+    use client::client::ClientConfig;
     use client::config::Cache;
     use vault::ProfileSettings;
 
@@ -2173,7 +1245,7 @@ mod tests {
             lowmem: true,
             mainland: false,
         };
-        let lean = Profile {
+        let quiet = Profile {
             username: "a".into(),
             password: "a".into(),
             uid: 1,
@@ -2191,7 +1263,7 @@ mod tests {
                 auto_login: false,
             },
         };
-        assert!(bot_client_config(&opt, &lean).lowmem);
+        assert!(bot_client_config(&opt, &quiet).lowmem);
         assert!(!bot_client_config(&opt, &loud).lowmem);
     }
 
@@ -2246,17 +1318,6 @@ mod tests {
             1,
         );
         assert!(play.statuses().is_empty());
-    }
-
-    #[test]
-    fn channel_rows_default_to_fat_and_channel_rows_mark_lean() {
-        let mut s = SlotStatus {
-            username: "t".into(),
-            ..SlotStatus::default()
-        };
-        assert!(!s.lean, "default row is a full Client slot");
-        s.lean = true;
-        assert!(s.lean, "a lean channel row carries the flag");
     }
 
     #[test]
@@ -2388,36 +1449,27 @@ mod tests {
     }
 
     #[test]
-    fn slot_status_is_up_lean_ingame_without_scene_2() {
-        let mut lean = SlotStatus {
+    fn slot_status_is_up_requires_scene_2() {
+        let loading = SlotStatus {
             username: "s01".into(),
             ingame: true,
             scene_state: 1,
-            lean: true,
             ..SlotStatus::default()
         };
-        assert!(lean.is_up());
-        lean.ingame = false;
-        assert!(!lean.is_up());
-        let fat = SlotStatus {
-            username: "s00".into(),
-            ingame: true,
-            scene_state: 1,
-            lean: false,
-            ..SlotStatus::default()
-        };
-        assert!(!fat.is_up(), "fat Client still loading is not up");
-        let fat_ready = SlotStatus {
-            username: "s00".into(),
+        assert!(!loading.is_up(), "still loading is not up");
+        let mut ready = SlotStatus {
+            username: "s01".into(),
             ingame: true,
             scene_state: 2,
             ..SlotStatus::default()
         };
-        assert!(fat_ready.is_up());
+        assert!(ready.is_up());
+        ready.ingame = false;
+        assert!(!ready.is_up(), "logged out is not up");
     }
 
     #[test]
-    fn copy_stream_and_draw_zeros_without_stream() {
+    fn copy_stream_bytes_zeros_without_stream() {
         let c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -2434,19 +1486,29 @@ mod tests {
             username: "t".into(),
             ..SlotStatus::default()
         };
-        copy_stream_and_draw(&c, &mut s);
+        copy_stream_bytes(&c, &mut s);
         assert_eq!(s.bytes_in, 0);
         assert_eq!(s.bytes_out, 0);
-        assert_eq!(s.game_draw_enters, 0);
-        assert_eq!(s.title_screen_draw_enters, 0);
     }
 
+    /// The flat slot row mirrors `Client.stream`'s payload byte counters;
+    /// a completed handshake proves both directions count.
     #[test]
-    fn copy_stream_and_draw_copies_timing_fields() {
+    fn copy_stream_bytes_mirrors_stream_counters() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let server = thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            grant_login(&mut s, &log, 2);
+            // Keep the socket open briefly so the writer thread flushes the
+            // login block before the client drops it.
+            thread::sleep(Duration::from_millis(50));
+        });
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
-                port: 1,
+                port: addr.port(),
                 cache_dir: String::new(),
                 members: true,
                 lowmem: true,
@@ -2455,19 +1517,15 @@ mod tests {
             Arc::new(Cache::default()),
             vec![],
         );
-        c.loop_ns = 10;
-        c.raster_ns = 3;
-        c.paint_n = 2;
-        c.skip_n = 8;
+        c.login("a", "pw", false).unwrap();
         let mut s = SlotStatus {
-            username: "t".into(),
+            username: "a".into(),
             ..SlotStatus::default()
         };
-        copy_stream_and_draw(&c, &mut s);
-        assert_eq!(s.loop_ns, 10);
-        assert_eq!(s.raster_ns, 3);
-        assert_eq!(s.paint_n, 2);
-        assert_eq!(s.skip_n, 8);
+        copy_stream_bytes(&c, &mut s);
+        assert!(s.bytes_in > 0, "handshake reads count as bytes_in");
+        assert!(s.bytes_out > 0, "handshake writes count as bytes_out");
+        server.join().unwrap();
     }
 
     #[test]
@@ -2644,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn retune_unknown_profile_is_error() {
+    fn focus_selects_the_sampled_slot() {
         let mut play = run_with_io(
             &PlayOptions {
                 host: "127.0.0.1".into(),
@@ -2657,22 +1715,19 @@ mod tests {
             |_| (None, None),
             |_, _| {},
         );
-        assert!(matches!(
-            play.retune("ghost", None, None),
-            Err(TuneError::UnknownProfile(n)) if n == "ghost"
-        ));
-        play.remember_profile(profile("ghost", 1));
-        let t0 = Instant::now();
-        play.retune("ghost", None, None).unwrap();
-        assert!(
-            t0.elapsed() < Duration::from_millis(250),
-            "retune must not join a slot thread"
+        assert_eq!(play.focused(), None, "no slot is focused before focus()");
+        play.focus("b");
+        assert_eq!(play.focused().as_deref(), Some("b"));
+        play.focus("c");
+        assert_eq!(
+            play.focused().as_deref(),
+            Some("c"),
+            "focus only records the sampled slot — no socket is touched"
         );
-        play.stop_slot("ghost");
     }
 
     #[test]
-    fn retune_queues_latest_instead_of_busy() {
+    fn stop_slot_clears_focus_on_the_stopped_name() {
         let mut play = run_with_io(
             &PlayOptions {
                 host: "127.0.0.1".into(),
@@ -2685,23 +1740,29 @@ mod tests {
             |_| (None, None),
             |_, _| {},
         );
-        play.remember_profile(profile("a", 1));
-        play.remember_profile(profile("b", 2));
-        play.remember_profile(profile("c", 3));
-        play.statuses.lock().unwrap().push(SlotStatus {
-            username: "a".into(),
-            ingame: true,
-            scene_state: 2,
-            ..SlotStatus::default()
-        });
-        let arm_b = SlotArm::new(2, false);
-        play.attach_arm("b", Arc::clone(&arm_b));
-        play.retune("b", None, None).unwrap();
-        assert!(play.tune_pending(), "steal of b has no thread yet");
-        play.retune("c", None, None).unwrap();
-        assert!(
-            play.tune_pending(),
-            "a later cap-click must queue, not Busy"
+        // No real client: fake arm + a handle that exits only once
+        // `stop_slot` flags it.
+        let arm = SlotArm::new(7, false);
+        play.arms.insert("alice".into(), Arc::clone(&arm));
+        let watchdog = {
+            let arm = Arc::clone(&arm);
+            thread::spawn(move || {
+                while !arm.stop.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+        play.handles.insert("alice".into(), watchdog);
+        play.spawned.insert("alice".into());
+        play.focus("alice");
+        assert_eq!(play.focused().as_deref(), Some("alice"));
+
+        play.stop_slot("alice");
+
+        assert_eq!(
+            play.focused(),
+            None,
+            "focus must not dangle on a stopped slot"
         );
     }
 
@@ -2761,101 +1822,41 @@ mod tests {
         }
     }
 
-    /// Tune B: park A is a socket baton (no extra login). B is not yet a
-    /// lean channel, so the head's 18 is a fresh TCP. Wrappers: A's 18,
-    /// B's 18 — not a third park-18.
+    /// Flat model: spawning two profiles gives two full `Client` slots —
+    /// one status row and one control arm each, no lean channel bookkeeping.
     #[test]
-    fn tune_b_handshake_is_18_and_parks_a_as_lean() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let wrappers = Arc::new(Mutex::new(Vec::new()));
-        let log = Arc::clone(&wrappers);
-        let server = thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut s, _) = listener.accept().unwrap();
-                let mut hdr = [0u8; 2];
-                s.read_exact(&mut hdr).unwrap();
-                assert_eq!(hdr[0], 14); // login server probe
-                for _ in 0..8 {
-                    s.write_all(&[0]).unwrap();
-                }
-                s.write_all(&[0]).unwrap(); // response 0 → send seed
-                s.write_all(&[0u8; 8]).unwrap(); // g8 seed
-                let mut buf = [0u8; 512];
-                let n = s.read(&mut buf).unwrap();
-                assert!(n > 0);
-                log.lock().unwrap().push(buf[0]);
-                s.write_all(&[15]).unwrap(); // reconnect grant (15, not 2)
-            }
-        });
-
-        let opts = PlayOptions {
-            host: "127.0.0.1".into(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        };
-        let mut play = run_with_io(&opts, vec![], |_| (None, None), |_, _| {});
-        play.profiles.insert("a".into(), profile("a", 1));
-        play.profiles.insert("b".into(), profile("b", 2));
-
-        play.tune("a").unwrap(); // establish the head (still opcode 18)
-        assert_eq!(play.head.as_ref().unwrap().client.login_uid, 1);
-        // A's scene is live; tune("b") must wipe it, not keep it.
-        let head = play.head.as_mut().unwrap();
-        head.client.scene_state = 1;
-        head.client.player_count = 1;
-        head.client.players[123] = Some(ClientPlayer::at(3, 4));
-        head.client.npc_count = 1;
-        head.client.npc[7] = Some(ClientNpc::default());
-        head.client.local_player.as_mut().unwrap().y = 77;
-
-        play.tune("b").unwrap();
-
-        {
-            let w = wrappers.lock().unwrap();
-            assert_eq!(
-                w.as_slice(),
-                &[18, 18],
-                "A tune-in and B tune-in are 18; park is a baton, not a third login"
-            );
-        }
-        let head = play.head.as_ref().unwrap();
-        assert_eq!(head.name, "b");
-        assert_eq!(head.client.login_user, "b");
-        assert_eq!(
-            head.client.login_uid, 2,
-            "the reused head Client must carry B's login uid, not A's"
+    fn two_profiles_spawn_two_client_slots() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
         );
-        assert!(head.client.ingame);
-        assert_eq!(head.client.last_login_reconnect, Some(true));
-        assert_eq!(
-            head.client.scene_state, 0,
-            "tune wipes the previous channel's scene"
-        );
-        assert_eq!(
-            head.client.local_player.as_ref().unwrap().y,
-            0,
-            "tune wipes the previous channel's local player"
-        );
+        // `auto_login = false` arms sit on the title (no TCP), so both
+        // threads idle on a 20 ms sleep until `stop_slot` joins them.
+        play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));
+        play.spawn_slot(profile("b", 2), None, None, Some(SlotArm::new(2, false)));
+
+        assert_eq!(play.arms.len(), 2, "one control arm per profile");
+        // The slot threads publish their status rows asynchronously.
         assert!(
-            head.client.players[123].is_none(),
-            "previous players cleared"
+            wait_until(500, || {
+                let names: Vec<String> = play.statuses().into_iter().map(|s| s.username).collect();
+                names.contains(&"a".into()) && names.contains(&"b".into())
+            }),
+            "each profile's slot thread publishes one status row"
         );
-        assert!(head.client.npc[7].is_none(), "previous npcs cleared");
-        assert_eq!(head.client.player_count, 0);
-        assert_eq!(head.client.npc_count, 0);
-        assert!(
-            play.channels.contains_key("a"),
-            "parked A stays ingame as a lean channel"
-        );
-        assert!(
-            !play.channels.contains_key("b"),
-            "the tuned head is not a lean channel"
-        );
-        play.channels.get_mut("a").unwrap().pump().unwrap();
-        server.join().unwrap();
+        assert_eq!(play.statuses().len(), 2, "one status row per profile");
+
+        play.stop_slot("a");
+        play.stop_slot("b");
+        assert_eq!(play.statuses().len(), 0, "both slots stopped");
     }
 
     fn grant_login(s: &mut std::net::TcpStream, log: &Mutex<Vec<u8>>, code: u8) {
@@ -2875,59 +1876,6 @@ mod tests {
         if code == 2 {
             s.write_all(&[0, 0]).unwrap(); // staff + mouse after grant 2
         }
-    }
-
-    /// Reverse baton: B is already a lean channel. Tune B must opcode-18
-    /// on B's existing TCP (fake reconnect so the server dumps state),
-    /// not open a third socket. A is parked by stealing its socket.
-    #[test]
-    fn tune_reverse_baton_sends_18_on_the_lean_socket() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let wrappers = Arc::new(Mutex::new(Vec::new()));
-        let log = Arc::clone(&wrappers);
-        let server = thread::spawn(move || {
-            let (mut a, _) = listener.accept().unwrap();
-            grant_login(&mut a, &log, 15);
-            let (mut b, _) = listener.accept().unwrap();
-            grant_login(&mut b, &log, 2);
-            grant_login(&mut b, &log, 15);
-            let _ = a;
-        });
-
-        let opts = PlayOptions {
-            host: "127.0.0.1".into(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        };
-        let mut play = run_with_io(&opts, vec![], |_| (None, None), |_, _| {});
-        play.profiles.insert("a".into(), profile("a", 1));
-        play.profiles.insert("b".into(), profile("b", 2));
-        play.tune("a").unwrap();
-
-        let cfg = ClientConfig {
-            host: "127.0.0.1".into(),
-            port: addr.port(),
-            cache_dir: "/tmp".into(),
-            members: true,
-            lowmem: true,
-        };
-        let lean = Lean::login(&cfg, "b", "pw", 2, false).unwrap();
-        play.channels.insert("b".into(), lean);
-        play.tune("b").unwrap();
-
-        assert_eq!(
-            wrappers.lock().unwrap().as_slice(),
-            &[18, 16, 18],
-            "A 18, B cold 16, B reverse-baton 18 on the same socket"
-        );
-        assert_eq!(play.head.as_ref().unwrap().name, "b");
-        assert!(play.channels.contains_key("a"));
-        assert!(!play.channels.contains_key("b"));
-        assert_eq!(play.head.as_ref().unwrap().client.scene_state, 0);
-        server.join().unwrap();
     }
 
     // --- Task 5: per-uid compiled scripts ---
@@ -3075,7 +2023,7 @@ mod tests {
         }
     }
 
-    /// One fat/lean `script_observe` wiring rig: a started slot script for
+    /// One `script_observe` wiring rig: a started slot script for
     /// "alice" plus its (empty) cheat queue.
     struct ScriptWiring {
         scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
@@ -3153,7 +2101,8 @@ mod tests {
         // Up but no edge: nothing.
         script_observe(&mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &travellers, &grid);
         assert_eq!(*count.lock().unwrap(), 1);
-        // A dispatched tick wrote the driver's out buffer (lean flush cue).
+        // A dispatched tick wrote the driver's out buffer (the slot's own
+        // `Client` sends it on the next mainloop pass).
         assert!(script_observe(
             &mut c, "alice", true, true, 3, None, None, None, &scripts, &cheats, &travellers, &grid
         ));
@@ -3163,7 +2112,8 @@ mod tests {
     #[test]
     fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
         // Task 12: an Idle SlotScript must not publish a script snapshot —
-        // no dispatch and no driver write, so the lean pump skips its flush.
+        // no dispatch and no driver write, so the slot has nothing to send
+        // on the next mainloop pass.
         let scripts = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         let count = Arc::new(Mutex::new(0));
