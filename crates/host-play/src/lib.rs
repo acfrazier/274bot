@@ -17,7 +17,6 @@ use client::client::LoginError;
 use client::config::if_type::ComponentType;
 use client::config::{Cache, IfType};
 use client::io::JagFile;
-use client::render::Renderer;
 pub use host::debug_enabled;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
@@ -870,7 +869,6 @@ fn spawn_slot_thread(
     let uid = profile.uid;
     let password = profile.password.clone();
     let config = bot_client_config(options, &profile);
-    let lowmem = config.lowmem;
     let mainland = options.mainland;
 
     handles.insert(
@@ -913,14 +911,10 @@ fn spawn_slot_thread(
 
             // Jag/anim/model/map prefetch (mirrors client-play; the scene
             // cannot reach scene_state 2 until the loc models are in).
-            // `maininit` draws its progress into a renderer, so a headless
-            // slot builds a transient one and drops it — the frame renderer
-            // stays host-owned (built lazily when the panel turns this
-            // slot's draw on).
-            {
-                let mut renderer = Renderer::new(lowmem);
-                client.maininit(&mut renderer);
-            }
+            // `maininit` is renderer-free now: progress recording lives on
+            // the Client, and no `Renderer` is constructed for a headless
+            // slot.
+            client.maininit();
             if client.error_loading && debug_enabled() {
                 eprintln!("[host-play] slot {username}: maininit failed");
             }
