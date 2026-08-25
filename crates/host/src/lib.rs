@@ -8,7 +8,7 @@ mod slot_io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::interact::set_run;
 use api::settle::{modal_delta, Settle};
@@ -50,9 +50,15 @@ const IDLE_PARK_MS: Duration = Duration::from_millis(600);
 
 /// Park bound while the client socket is stalled (a wake consumed no bytes:
 /// EOF, or a packet still mid-flight). Shorter than the tick bound so the
-/// game-loop watchdog still notices a dead server, but long enough that a
-/// permanently-readable socket cannot busy-spin the slot.
+/// wall-clock game-loop watchdog still notices a dead server promptly, but
+/// long enough that a permanently-readable socket cannot busy-spin the slot.
 const STALL_PARK_MS: Duration = Duration::from_millis(200);
+
+/// Park bound for a watch-only 1 fps sidecar: the 1 s wall-clock repaint
+/// cadence. The slot wakes once a second to drain the socket and decide
+/// the paint; a packet arriving mid-park still wakes the poll immediately,
+/// so nothing is ever dropped.
+const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
@@ -115,15 +121,18 @@ impl Host {
     /// sends (from the previous tick); observe's return is whether the slot
     /// has script/cheat/nav work, which keeps a busy slot on the frame loop.
     ///
-    /// The scheduler is event-driven: a slot that draws or captures input
-    /// keeps the fixed 20 ms [`FRAME_MS`] loop — that loop *is* the render
-    /// cadence. Everything else parks on `poll(2)` over the client socket's
-    /// readability, the `ctl` control wake (focus/draw/stop/spawn), and the
-    /// game-tick timeout ([`IDLE_PARK_MS`]), waking once per park to drain
-    /// the socket and re-evaluate. Packets are never dropped: a readable
-    /// socket wakes the park, and `mainloop` is the first thing that drains
-    /// it. A wake that consumed no bytes (EOF, partial packet) skips the
-    /// socket on the next park so it cannot busy-spin.
+    /// The scheduler is event-driven: a slot that captures input, is still
+    /// loading (TV static), or runs full-rate TV keeps the fixed 20 ms
+    /// [`FRAME_MS`] loop — that loop *is* the render cadence. A watch-only
+    /// 1 fps sidecar (draw on, nothing on the 20 ms loop) parks on the 1 s
+    /// wall-clock repaint bound; everything else parks on `poll(2)` over
+    /// the client socket's readability, the `ctl` control wake
+    /// (focus/draw/stop/spawn), and the game-tick timeout ([`IDLE_PARK_MS`]),
+    /// waking once per park to drain the socket and re-evaluate. Packets
+    /// are never dropped: a readable socket wakes the park, and `mainloop`
+    /// is the first thing that drains it. A wake that consumed no bytes
+    /// (EOF, partial packet) skips the socket on the next park so it cannot
+    /// busy-spin.
     pub fn run_client<F, P>(
         client: &mut Client,
         username: &str,
@@ -150,7 +159,7 @@ impl Host {
             if probe(client) {
                 return;
             }
-            if frame_cadence(client, input.as_deref()) || busy {
+            if frame_cadence(client, input.as_deref(), &slot) || busy {
                 socket_stalled = false;
                 let start = std::time::Instant::now();
                 busy = Self::client_tick(
@@ -170,12 +179,15 @@ impl Host {
                 }
                 continue;
             }
-            // Idle: park until a packet, a control kick, or the game-tick
-            // bound, then run one tick (drain the socket / apply the panel's
-            // `set_draw`) and re-evaluate.
+            // Idle: park until a packet, a control kick, or the bound, then
+            // run one tick (drain the socket / apply the panel's
+            // `set_draw`) and re-evaluate. A watch-only sidecar wakes on
+            // the 1 s repaint bound; everything else on the game-tick bound.
             let before = stream_bytes(client);
             let timeout = if socket_stalled {
                 STALL_PARK_MS
+            } else if watch_only(client, input.as_deref(), &slot) {
+                WATCH_PARK_MS
             } else {
                 IDLE_PARK_MS
             };
@@ -259,7 +271,8 @@ impl Host {
         let paint = raster_this_tick(
             client.draw,
             capture || zap || slot.full_rate,
-            &mut slot.raster_n,
+            t_loop,
+            &mut slot.raster_last,
             &mut slot.raster_was_on,
         );
         // A drawing slot lazily builds its `Renderer` on the first paint
@@ -309,12 +322,24 @@ impl Host {
     }
 }
 
-/// Frame-loop cadence: a slot that draws or captures input keeps the fixed
+/// Frame-loop cadence: a slot that captures input, is still loading (TV
+/// static re-rolls every 20 ms), or runs full-rate TV keeps the fixed
 /// 20 ms loop — that loop *is* the render cadence (50 fps) and the input
-/// drain cadence. Everything else (draw off, no capture) may park on
-/// socket-read unless the observe hook reported script/cheat/nav work.
-fn frame_cadence(client: &Client, input: Option<&SlotInput>) -> bool {
-    client.draw || input.map(|i| i.enabled()).unwrap_or(false)
+/// drain cadence. Draw-on but not capture/full-rate is **watch-only 1 fps**:
+/// the picture only refreshes once a second, so the slot parks on the 1 s
+/// wall-clock bound instead of holding the 20 ms sim loop for a 1 fps
+/// sidecar. `busy` (script/cheat/nav work from the observe hook) also
+/// keeps a slot on the frame loop.
+fn frame_cadence(client: &Client, input: Option<&SlotInput>, slot: &SlotLoop) -> bool {
+    input.map(|i| i.enabled()).unwrap_or(false)
+        || (client.draw && (slot.full_rate || (client.ingame && client.scene_state != 2)))
+}
+
+/// A watch-only 1 fps sidecar: the renderer is on but nothing needs the
+/// 20 ms loop (no capture, no full-rate, not still loading) — it parks on
+/// the 1 s wall-clock repaint bound.
+fn watch_only(client: &Client, input: Option<&SlotInput>, slot: &SlotLoop) -> bool {
+    client.draw && !frame_cadence(client, input, slot)
 }
 
 /// Payload bytes the client's stream has consumed; 0 when no stream.
@@ -400,28 +425,42 @@ fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Dur
     ParkWake::Timeout
 }
 
-/// rs2b0t rail: watch-only is **1 fps** (every 50 ticks of 20 ms). The first
-/// tick after draw rises paints immediately so checking the box is not a
-/// cold hitch. Capture paints every tick (minimenu). Draw off never paints.
-const WATCH_RASTER_TICKS: u32 = 50;
+/// Watch-only repaint bound: the rail/sidecar picture refreshes once a
+/// wall-clock second. Elapsed time, not a tick count — the slot is parked
+/// on [`WATCH_PARK_MS`], so ticks (one per wake) are not a clock.
+const WATCH_PAINT_MS: Duration = Duration::from_secs(1);
 
-fn raster_this_tick(draw: bool, capture: bool, n: &mut u32, was_on: &mut bool) -> bool {
+/// rs2b0t rail: watch-only paints on a 1 s **wall-clock** cadence — the
+/// slot is parked, so ticks are not a clock; elapsed time since the last
+/// paint decides, not a tick count. The first tick after draw rises paints
+/// immediately so checking the box is not a cold hitch. Capture (input /
+/// TV static / full-rate) paints every tick. Draw off never paints.
+fn raster_this_tick(
+    draw: bool,
+    capture: bool,
+    now: Instant,
+    last_paint: &mut Option<Instant>,
+    was_on: &mut bool,
+) -> bool {
     if !draw {
         *was_on = false;
         return false;
     }
     if capture {
+        *last_paint = Some(now);
         *was_on = true;
         return true;
     }
     let rising = !*was_on;
     *was_on = true;
-    if rising {
-        *n = 0;
-        return true;
+    let due = match *last_paint {
+        Some(last) => rising || now.duration_since(last) >= WATCH_PAINT_MS,
+        None => true, // first watch paint: nothing painted yet
+    };
+    if due {
+        *last_paint = Some(now);
     }
-    *n = n.wrapping_add(1);
-    (*n).is_multiple_of(WATCH_RASTER_TICKS)
+    due
 }
 
 /// Per-slot post-drain state: snapshot, settle, auto-run, the full-rate
@@ -438,7 +477,9 @@ struct SlotLoop {
     /// TODO(Task 2): wire this from the panel/TV control path.
     full_rate: bool,
     renderer: Option<Renderer>,
-    raster_n: u32,
+    /// `Instant` of the last paint of any kind; the watch-only 1 fps
+    /// decision repaints when this is ≥1 s old.
+    raster_last: Option<Instant>,
     raster_was_on: bool,
     loop_ns: u64,
     raster_ns: u64,
@@ -458,7 +499,7 @@ impl SlotLoop {
             last_modal: None,
             full_rate: false,
             renderer: None,
-            raster_n: 0,
+            raster_last: None,
             raster_was_on: false,
             loop_ns: 0,
             raster_ns: 0,
@@ -810,29 +851,62 @@ mod tests {
     }
 
     #[test]
-    fn raster_this_tick_watch_is_one_fps_capture_is_every_tick() {
-        let mut n = 0;
+    fn raster_this_tick_watch_is_wall_clock_one_fps_capture_is_every_tick() {
+        let t0 = Instant::now();
+        let mut last = None;
         let mut on = false;
-        assert!(!raster_this_tick(false, false, &mut n, &mut on));
+        assert!(!raster_this_tick(false, false, t0, &mut last, &mut on));
         assert!(
-            raster_this_tick(true, false, &mut n, &mut on),
+            raster_this_tick(true, false, t0, &mut last, &mut on),
             "rising edge paints now"
         );
-        for _ in 0..(WATCH_RASTER_TICKS - 1) {
-            assert!(!raster_this_tick(true, false, &mut n, &mut on));
-        }
-        assert!(raster_this_tick(true, false, &mut n, &mut on));
-        assert!(raster_this_tick(true, true, &mut n, &mut on));
-        assert!(raster_this_tick(true, true, &mut n, &mut on));
+        // Sub-second wakes (the parked slot's cadence) stay quiet…
+        assert!(!raster_this_tick(
+            true,
+            false,
+            t0 + Duration::from_millis(500),
+            &mut last,
+            &mut on
+        ));
+        // …and the paint lands once a wall-clock second elapses.
+        assert!(raster_this_tick(
+            true,
+            false,
+            t0 + Duration::from_secs(1),
+            &mut last,
+            &mut on
+        ));
+        assert!(!raster_this_tick(
+            true,
+            false,
+            t0 + Duration::from_secs(1) + Duration::from_millis(100),
+            &mut last,
+            &mut on
+        ));
+        // Capture paints every tick (minimenu / TV static / full-rate).
+        assert!(raster_this_tick(
+            true,
+            true,
+            t0 + Duration::from_secs(1),
+            &mut last,
+            &mut on
+        ));
+        assert!(raster_this_tick(
+            true,
+            true,
+            t0 + Duration::from_secs(1),
+            &mut last,
+            &mut on
+        ));
         on = false;
         assert!(
-            raster_this_tick(true, false, &mut n, &mut on),
+            raster_this_tick(true, false, t0 + Duration::from_secs(1), &mut last, &mut on),
             "draw rising after off paints immediately"
         );
     }
 
     #[test]
-    fn watch_only_draw_copies_first_tick_then_one_fps() {
+    fn watch_only_paints_first_tick_then_once_per_second() {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
@@ -842,12 +916,13 @@ mod tests {
         c.scene_state = 2;
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(buf.generation(), 1);
-        for _ in 0..(WATCH_RASTER_TICKS - 1) {
-            Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
-            assert_eq!(buf.generation(), 1);
-        }
+        // A fast second tick (the parked slot draining a burst) must not
+        // repaint before a wall-clock second elapses.
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
-        assert_eq!(buf.generation(), 2);
+        assert_eq!(buf.generation(), 1);
+        thread::sleep(Duration::from_secs(1) + Duration::from_millis(50));
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert_eq!(buf.generation(), 2, "watch-only repaints after 1 s");
     }
 
     #[test]
@@ -993,13 +1068,15 @@ mod tests {
         let (mirror, seen) = seen();
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
+        let inp = SlotInput::new();
+        inp.set_enabled(true);
         let handle = thread::spawn(move || {
             let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
             c.set_draw(true);
             Host::run_client(
                 &mut c,
                 "focused",
-                None,
+                Some(inp),
                 None,
                 None,
                 |c, _, _| {
@@ -1077,6 +1154,56 @@ mod tests {
     }
 
     #[test]
+    fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
+        let (wake, park) = crate::slot_io::wake_channel();
+        let (mirror, seen) = seen();
+        let buf = FrameBuf::new();
+        let buf2 = Arc::clone(&buf);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+            c.set_draw(true);
+            c.ingame = true;
+            c.scene_state = 2;
+            Host::run_client(
+                &mut c,
+                "sidecar",
+                None,
+                Some(buf2),
+                Some(Arc::new(park)),
+                |c, _, _| {
+                    mirror.lock().unwrap().0 = c.loop_cycle;
+                    false
+                },
+                |_| stop2.load(Ordering::Relaxed),
+            );
+        });
+        // The rising edge paints the first frame, then the slot parks.
+        thread::sleep(Duration::from_millis(100));
+        let t0 = seen.lock().unwrap().0;
+        let g0 = buf.generation();
+        assert!(g0 >= 1, "watch-only rising edge must paint the first frame");
+        // A 20 ms loop would tick ~100× in 2.2 s; the 1 s park stays near
+        // 2–3 wakes while still repainting once per second.
+        thread::sleep(Duration::from_secs(2) + Duration::from_millis(200));
+        let t1 = seen.lock().unwrap().0;
+        let g1 = buf.generation();
+        let ticks = t1 - t0;
+        assert!(
+            (1..=5).contains(&ticks),
+            "watch-only sidecar must wake ~1×/s, not 50×/s: ticks {t0} -> {t1} ({ticks} in 2.2 s)"
+        );
+        assert!(
+            g1 >= g0 + 2,
+            "watch-only sidecar must still paint once/sec: gen {g0} -> {g1} in 2.2 s"
+        );
+        stop.store(true, Ordering::Relaxed);
+        wake.wake();
+        handle.join().unwrap();
+    }
+
+    #[test]
     fn stop_control_wakes_a_parked_slot_and_returns() {
         let (wake, park) = crate::slot_io::wake_channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -1109,8 +1236,13 @@ mod tests {
     fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
         let (wake, park) = crate::slot_io::wake_channel();
         let (mirror, seen) = seen();
-        let want_draw = Arc::new(AtomicBool::new(false));
-        let want_draw2 = Arc::clone(&want_draw);
+        let inp = SlotInput::new();
+        // The panel mirrors focus into the slot thread via the observe
+        // hook (per_frame → `set_draw`, capture → `input.set_enabled`).
+        // The kick flips the slot from draw-off to focused+capture, which
+        // must wake the park into the 20 ms frame loop.
+        let want = Arc::new(AtomicBool::new(false));
+        let want2 = Arc::clone(&want);
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
         let handle = thread::spawn(move || {
@@ -1118,14 +1250,13 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "kicked",
-                None,
+                Some(Arc::clone(&inp)),
                 None,
                 Some(Arc::new(park)),
-                // The panel mirrors focus into the slot thread via the
-                // observe hook (per_frame → set_draw), reading the shared
-                // intent like `run_with_io`'s per_frame reads the Focus.
                 |c, _, _| {
-                    c.set_draw(want_draw2.load(Ordering::Relaxed));
+                    let on = want2.load(Ordering::Relaxed);
+                    c.set_draw(on);
+                    inp.set_enabled(on);
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false
                 },
@@ -1138,7 +1269,7 @@ mod tests {
         let before = seen.lock().unwrap().0;
         assert!(before <= 1, "draw-off slot must park, got {before} ticks");
         // The panel flips its draw intent and kicks the parked thread.
-        want_draw.store(true, Ordering::Relaxed);
+        want.store(true, Ordering::Relaxed);
         wake.wake();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
