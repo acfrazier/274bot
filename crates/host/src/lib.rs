@@ -1228,23 +1228,50 @@ mod tests {
             );
         });
         // The rising edge paints the first frame, then the slot parks.
-        thread::sleep(Duration::from_millis(100));
-        let t0 = seen.lock().unwrap().0;
+        // Poll for the first paint — no fixed sleep, because under parallel
+        // `--workspace` load the slot thread can be delayed arbitrarily.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if buf.generation() >= 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watch-only sidecar never painted its first frame"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
         let g0 = buf.generation();
         assert!(g0 >= 1, "watch-only rising edge must paint the first frame");
-        // A 20 ms loop would tick ~100× in 2.2 s; the 1 s park stays near
-        // 2–3 wakes while still repainting once per second.
-        thread::sleep(Duration::from_secs(2) + Duration::from_millis(200));
+        // The second paint is gated on a wall-clock second since the first
+        // (the elapsed-time paint decision), so it must still arrive on the
+        // 1 s park — poll for it with a generous deadline.
+        let second = Instant::now();
+        let deadline = second + Duration::from_secs(10);
+        loop {
+            if buf.generation() >= g0 + 2 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watch-only sidecar never repainted (gen stuck at {})",
+                buf.generation()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            second.elapsed() >= Duration::from_millis(900),
+            "watch-only repaint must wait a wall-clock second, not every tick"
+        );
+        // Parking proof: a 20 ms loop would tick ~100× in 2.2 s; the 1 s
+        // park stays near 2–3 wakes.
         let t1 = seen.lock().unwrap().0;
-        let g1 = buf.generation();
-        let ticks = t1 - t0;
+        thread::sleep(Duration::from_secs(2) + Duration::from_millis(200));
+        let t2 = seen.lock().unwrap().0;
+        let ticks = t2 - t1;
         assert!(
             (1..=5).contains(&ticks),
-            "watch-only sidecar must wake ~1×/s, not 50×/s: ticks {t0} -> {t1} ({ticks} in 2.2 s)"
-        );
-        assert!(
-            g1 >= g0 + 2,
-            "watch-only sidecar must still paint once/sec: gen {g0} -> {g1} in 2.2 s"
+            "watch-only sidecar must wake ~1×/s, not 50×/s: ticks {t1} -> {t2} ({ticks} in 2.2 s)"
         );
         stop.store(true, Ordering::Relaxed);
         wake.wake();
@@ -1320,18 +1347,31 @@ mod tests {
         // The panel flips its draw intent and kicks the parked thread.
         want.store(true, Ordering::Relaxed);
         wake.wake();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // Gate on the tick count, not a fixed deadline: under parallel load
+        // the kicked slot can take a while to run 8 ticks, so give it a
+        // generous window (a still-parked slot would be far slower).
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let t = seen.lock().unwrap().0;
             if t >= before + 8 {
-                break; // the ~20 ms cadence resumed after the kick
+                break; // the kicked slot is ticking again
             }
             assert!(
                 Instant::now() < deadline,
-                "kicked slot never resumed the frame loop"
+                "kicked slot never resumed ticking, {t} ticks in 10 s"
             );
-            thread::sleep(Duration::from_millis(5));
+            thread::sleep(Duration::from_millis(10));
         }
+        // Then the rate: ≥3 ticks per 300 ms is the ~20 ms cadence (a
+        // parked slot yields ≤1), so the kick really re-entered the frame
+        // loop instead of just ticking slowly.
+        let t1 = seen.lock().unwrap().0;
+        thread::sleep(Duration::from_millis(300));
+        let t2 = seen.lock().unwrap().0;
+        assert!(
+            t2 >= t1 + 3,
+            "kicked slot must tick at ~20 ms, {t1} -> {t2} over 300 ms"
+        );
         stop.store(true, Ordering::Relaxed);
         handle.join().unwrap();
     }
