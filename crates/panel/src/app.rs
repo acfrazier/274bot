@@ -1,4 +1,5 @@
-//! dear-app shell: docking enabled, multi-viewport disabled, amber chrome.
+//! Panel shell: docking enabled, multi-viewport disabled, amber chrome,
+//! running on the panel-owned window loop in `crate::window`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -7,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use dear_app::{AddOns, RedrawMode, Theme};
+use crate::window::{self, Gpu, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
     Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, StyleColor,
@@ -43,11 +44,11 @@ use crate::theme::{
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
 /// `auto_dockspace` is off so we own the split (game left, 330px panel right).
-/// Default dear-app `RedrawMode::Poll` spins the UI thread and starves the
+/// Default `RedrawMode::Poll` spins the UI thread and starves the
 /// 20 ms slot; WaitUntil matches the client tick.
-pub fn runner_config() -> dear_app::RunnerConfig {
-    // Viewports stay off: dear-app renders into the single main viewport only.
-    dear_app::RunnerConfig {
+pub fn runner_config() -> window::PanelConfig {
+    // Viewports stay off: the panel renders into the single main viewport only.
+    window::PanelConfig {
         window_title: "274bot".into(),
         window_size: (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64),
         clear_color: BG,
@@ -55,7 +56,7 @@ pub fn runner_config() -> dear_app::RunnerConfig {
         redraw: RedrawMode::WaitUntil { fps: 50.0 },
         ini_filename: Some(PathBuf::from("274bot-panel.ini")),
         restore_previous_geometry: false,
-        docking: dear_app::DockingConfig {
+        docking: window::DockingConfig {
             enable: true,
             auto_dockspace: false,
             dockspace_flags: DockNodeFlags::AUTO_HIDE_TAB_BAR,
@@ -66,9 +67,10 @@ pub fn runner_config() -> dear_app::RunnerConfig {
     }
 }
 
-/// Scale all ImGui style sizes for a window DPI. Held for Task 7: dear-app runs
-/// under `HiDpiMode::Default`, which already sets `display_framebuffer_scale`,
-/// so applying this on top of that would double every size on Retina.
+/// Scale all ImGui style sizes for a window DPI. Held for Task 7: the loop
+/// runs under `HiDpiMode::Default`, which already sets
+/// `display_framebuffer_scale`, so applying this on top of that would double
+/// every size on Retina.
 pub fn apply_ui_scale(style: &mut dear_imgui_rs::Style, dpi: f32) {
     let s = integer_ui_scale(dpi);
     unsafe {
@@ -523,16 +525,16 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
 
 /// The Game pane: the single focused applet, or — while MultiBox is in
 /// Grid mode — one cell per wall member.
-fn game_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, title: &str) {
+fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     let built = ui
         .window(title)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::HORIZONTAL_SCROLLBAR)
         .build(|| {
             let avail = ui.content_region_avail();
             if state.session.multibox && state.session.wall.grid {
-                grid_pane(ui, addons, state, avail);
+                grid_pane(ui, gpu, state, avail);
             } else {
-                game_pane(ui, addons, state, avail);
+                game_pane(ui, gpu, state, avail);
             }
         });
     state.session.set_game_pane_open(built.is_some());
@@ -540,7 +542,7 @@ fn game_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, title: &str
 
 /// Single-bot Game pane: the focused slot's applet, 765:503 fitted and
 /// centred, with the nav overlay, capture, and queue card.
-fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 2]) {
+fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let size = fit_applet(avail);
     let cursor = ui.cursor_pos();
     ui.set_cursor_pos([
@@ -548,7 +550,7 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         cursor[1] + ((avail[1] - size[1]) * 0.5).max(0.0),
     ]);
     if state.game_view.is_none() {
-        state.game_view = Some(GameView::init(&mut addons.gpu));
+        state.game_view = Some(GameView::init(gpu));
     }
     let (draw, capture) = {
         let focus = state.session.focus.lock().unwrap();
@@ -570,7 +572,7 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
             if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
                 let pixels = frame_pixels(frame);
                 if let Some(view) = state.game_view.as_mut() {
-                    view.upload(&addons.gpu, &pixels);
+                    view.upload(gpu, &pixels);
                 }
             }
             state.last_upload = Some((name, gen));
@@ -612,7 +614,7 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
 /// only the focused cell; the queue card overlays the focused cell. While
 /// `only_render_selected` is on (the safe default) each cell collapses to
 /// a cap row (dot, name + brief, ✗) with no preview body.
-fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 2]) {
+fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let members = state.session.wall.members.clone();
     if members.is_empty() {
         ui.text_disabled("no wall members");
@@ -656,7 +658,7 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
             continue;
         }
         let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
-        let clicked = cell_body(ui, addons, state, name, [cw, ch], draw);
+        let clicked = cell_body(ui, gpu, state, name, [cw, ch], draw);
         // Capture only on the focused cell; a click on another cell is a
         // select, not a click-through.
         if is_focused && capture && ui.is_item_hovered() {
@@ -1356,13 +1358,13 @@ fn input_section(ui: &Ui, session: &mut Session) {
 /// needs the render-all confirm), one tile per wall member (cap only while
 /// only-render-selected, else cap + 1 fps body or renderer-off
 /// placeholder), `+ add bot`, and the 1 Hz resource card.
-fn rail_window(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
+fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.sample_resources();
     ui.window(RAIL_WINDOW)
         .flags(WindowFlags::NO_COLLAPSE)
         .build(|| {
             rail_bulk_row(ui, state);
-            rail_tiles(ui, addons, state);
+            rail_tiles(ui, gpu, state);
             add_bot_button(ui, state);
             resource_card(ui, state);
         });
@@ -1479,7 +1481,7 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
 /// safe default) the strip is collapsed: cap only, no body. Clicking the
 /// name or the body focuses the member; the ✗ (a sibling button, never
 /// part of the name click) removes it.
-fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
+fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
     let statuses = state.session.statuses();
@@ -1511,7 +1513,7 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
             // Collapsed strip: no preview body until "render all" is accepted.
             false
         } else {
-            rail_body(ui, addons, state, name, draw)
+            rail_body(ui, gpu, state, name, draw)
         };
         if cap_remove {
             state.session.rail_remove(name);
@@ -1550,7 +1552,7 @@ fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32
 /// box was clicked (the grid cell / rail tile select path).
 fn cell_body(
     ui: &Ui,
-    addons: &mut AddOns,
+    gpu: &mut Gpu,
     state: &mut PanelState,
     name: &str,
     size: [f32; 2],
@@ -1566,7 +1568,7 @@ fn cell_body(
         .views
         .entry(name.to_string())
         .or_insert_with(|| TileView {
-            view: GameView::init(&mut addons.gpu),
+            view: GameView::init(gpu),
         });
     // One consumer per `FrameBuf`: in rail mode the Game pane draws the
     // focused slot (or the first spawned slot when nothing is focused), so
@@ -1595,7 +1597,7 @@ fn cell_body(
             .and_then(|s| s.pixels.take())
         {
             let pixels = frame_pixels(frame);
-            tv.view.upload(&addons.gpu, &pixels);
+            tv.view.upload(gpu, &pixels);
         }
     }
     ui.image(tv.view.tex_id, size);
@@ -1603,8 +1605,8 @@ fn cell_body(
 }
 
 /// Rail tile body: the fixed `TILE_W`×`TILE_H` case of [`cell_body`].
-fn rail_body(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, name: &str, draw: bool) -> bool {
-    cell_body(ui, addons, state, name, [TILE_W, TILE_H], draw)
+fn rail_body(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, name: &str, draw: bool) -> bool {
+    cell_body(ui, gpu, state, name, [TILE_W, TILE_H], draw)
 }
 
 /// `+ add bot`: opens the chooser modal again (first MultiBox-on opened it
@@ -1734,7 +1736,7 @@ fn chooser_row(ui: &Ui, name: &str, on_wall: bool) -> (bool, bool) {
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `live` is `Some("null_raster")` or `Some("stress50")` (temp vault;
 /// `BOT_VAULT_PASS` is unused on those paths).
-pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
+pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
@@ -1796,56 +1798,62 @@ pub fn run_panel(live: Option<String>) -> Result<(), dear_app::DearAppError> {
     let cfg = runner_config();
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
-    dear_app::AppBuilder::new()
-        .with_config(cfg)
-        .on_style(amber_style)
-        .on_gpu_init(move |window, _, _, _| {
+    window::run(
+        cfg,
+        amber_style,
+        move |window, _, _, _| {
             scale.store(
                 integer_ui_scale(window.scale_factor() as f32).to_bits(),
                 Ordering::Relaxed,
             );
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
-        })
-        .on_frame(move |ui, addons| {
+        },
+        move |ui, gpu| {
             if state.os_window.is_none() {
                 state.os_window = os_window.lock().unwrap().clone();
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
-            state.session.pump_status();
-            let statuses = state.session.statuses();
-            if let Some(live) = state.live.as_mut() {
-                let fail = match live {
-                    LiveHarness::Null(n) => live_null_tick(n, &statuses),
-                    LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
-                    LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session),
-                };
-                if let Some(msg) = fail {
-                    eprintln!("FAIL: {msg}");
-                    std::process::exit(1);
-                }
-            }
-            let title = game_window_title(state.session.focused_name().as_deref());
-            dock_host(ui, &mut state, &title);
-            let class = single_bot_window_class();
-            ui.set_next_window_class(&class);
-            panel_window(ui, &mut state.session);
-            if state.session.walkto_open {
-                picker::picker_window(ui, &mut state.session);
-            }
-            ui.set_next_window_class(&class);
-            game_window(ui, addons, &mut state, &title);
-            if state.session.multibox && !state.session.wall.grid {
-                ui.set_next_window_class(&class);
-                rail_window(ui, addons, &mut state);
-            }
-            // Every frame, not only while open: the prev latches must track
-            // the close so the next open is a fresh rising edge.
-            chooser_window(ui, &mut state.session);
-            browse_window(ui, &mut state.session);
-            load_window(ui, &mut state.session);
-            render_all_warn_window(ui, &mut state.session);
-        })
-        .run()
+            ui_frame(ui, gpu, &mut state);
+        },
+    )
+}
+
+/// The per-frame UI body (the former dear-app `on_frame` closure): session
+/// pump, live harness ticks, dock host, chrome, game pane, rail.
+fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
+    state.session.pump_status();
+    let statuses = state.session.statuses();
+    if let Some(live) = state.live.as_mut() {
+        let fail = match live {
+            LiveHarness::Null(n) => live_null_tick(n, &statuses),
+            LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
+            LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session),
+        };
+        if let Some(msg) = fail {
+            eprintln!("FAIL: {msg}");
+            std::process::exit(1);
+        }
+    }
+    let title = game_window_title(state.session.focused_name().as_deref());
+    dock_host(ui, state, &title);
+    let class = single_bot_window_class();
+    ui.set_next_window_class(&class);
+    panel_window(ui, &mut state.session);
+    if state.session.walkto_open {
+        picker::picker_window(ui, &mut state.session);
+    }
+    ui.set_next_window_class(&class);
+    game_window(ui, gpu, state, &title);
+    if state.session.multibox && !state.session.wall.grid {
+        ui.set_next_window_class(&class);
+        rail_window(ui, gpu, state);
+    }
+    // Every frame, not only while open: the prev latches must track
+    // the close so the next open is a fresh rising edge.
+    chooser_window(ui, &mut state.session);
+    browse_window(ui, &mut state.session);
+    load_window(ui, &mut state.session);
+    render_all_warn_window(ui, &mut state.session);
 }
 
 #[cfg(test)]
@@ -1861,7 +1869,7 @@ mod tests {
         BASE_WINDOW_W, LIVE_USAGE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
-    use dear_app::RedrawMode;
+    use crate::window::RedrawMode;
 
     #[test]
     fn chooser_should_open_popup_table() {

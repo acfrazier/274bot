@@ -1,5 +1,5 @@
 //! Panel session: owns the unlocked vault, the running slot map, the shared
-//! `Focus`, and per-slot frame/input channels. The dear-app frame reads
+//! `Focus`, and per-slot frame/input channels. The panel frame reads
 //! `Session`; slot threads stay in `host_play` (spawned via `run_with_io`
 //! with per-profile `FrameBuf` mailbox/`SlotInput`, keeping the login FIFO
 //! and the mainland hop).

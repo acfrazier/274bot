@@ -4,8 +4,8 @@
 //! The client paints a 765×503 applet (`client::APPLET_W/H`); the panel keeps
 //! the texture at exactly that size and lets the Image widget scale it.
 
+use crate::window::Gpu;
 use client::render::backend::FrameOutput;
-use dear_app::GpuApi;
 use dear_imgui_rs::TextureId;
 
 /// Applet draw size the client always paints (never DPI-scaled).
@@ -23,8 +23,8 @@ pub struct GameView {
 
 impl GameView {
     /// Create the 765×503 RGBA8 texture and register it. Call once from the
-    /// first `on_frame`, when `gpu.device()` is live.
-    pub fn init(gpu: &mut GpuApi) -> Self {
+    /// first frame, when `gpu.device()` is live.
+    pub fn init(gpu: &mut Gpu) -> Self {
         let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("274 game image"),
             size: wgpu::Extent3d {
@@ -50,10 +50,10 @@ impl GameView {
     }
 
     /// Upload packed `0x00RRGGBB` pixels (a `FrameBuf` snapshot) into the
-    /// texture. dear-app's `GpuApi` exposes no per-texture sampler choice, so
+    /// texture. `Gpu` exposes no per-texture sampler choice, so
     /// the Image samples with the renderer's default rather than a pixelated
     /// one. Reuses an RGBA scratch buffer so Poll-rate frames don't allocate.
-    pub fn upload(&mut self, gpu: &GpuApi, pixels: &[u32]) {
+    pub fn upload(&mut self, gpu: &Gpu, pixels: &[u32]) {
         let n = (APPLET_W * APPLET_H) as usize;
         self.rgba.resize(n * 4, 0);
         expand_rgba(&pixels[..n.min(pixels.len())], &mut self.rgba);

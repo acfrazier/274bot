@@ -927,22 +927,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
-name = "dear-app"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "035f5c43f5d21db896ff0f03a82bafcd574546e71d6b0297add9690e7af3e2b7"
-dependencies = [
- "dear-imgui-rs",
- "dear-imgui-wgpu",
- "dear-imgui-winit",
- "pollster",
- "thiserror 2.0.20",
- "tracing",
- "wgpu",
- "winit",
-]
-
-[[package]]
 name = "dear-imgui-build-support"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3149,8 +3133,9 @@ version = "0.1.0"
 dependencies = [
  "api",
  "client",
- "dear-app",
  "dear-imgui-rs",
+ "dear-imgui-wgpu",
+ "dear-imgui-winit",
  "host",
  "host-play",
  "nav",
@@ -3159,6 +3144,7 @@ dependencies = [
  "script",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "vault",
  "wgpu",
  "winit",

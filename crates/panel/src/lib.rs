@@ -12,6 +12,7 @@ pub mod session;
 pub mod theme;
 pub mod ui_state;
 pub mod wall;
+pub mod window;
 
 pub use app::*;
 pub use chrome::*;
