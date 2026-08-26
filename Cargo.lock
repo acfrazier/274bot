@@ -640,6 +640,7 @@ dependencies = [
  "num-bigint",
  "pollster",
  "rustysynth",
+ "sha2",
  "softbuffer",
  "wgpu",
  "winit",
