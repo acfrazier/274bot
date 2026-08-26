@@ -355,6 +355,15 @@ impl AppWindow {
             cb(&mut context);
         }
 
+        // The rail draws U+2059 (⁙) and U+2717 (✗) as text, which the
+        // default Latin-1 font cannot render: merge an embedded DejaVu
+        // Sans so they rasterize. Fail loudly rather than draw '?' again.
+        let (quincunx, ballot_x) = add_glyph_font(&mut context);
+        assert!(
+            quincunx && ballot_x,
+            "merged glyph font must cover U+2059 and U+2717"
+        );
+
         let mut platform = imgui_winit::WinitPlatform::new(&mut context);
         platform.attach_window(&window, imgui_winit::HiDpiMode::Default, &mut context);
 
@@ -715,6 +724,44 @@ fn to_rgba(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
 
 fn align_up(n: u32, align: u32) -> u32 {
     n.div_ceil(align) * align
+}
+
+/// DejaVu Sans 2.37 (SIL OFL), embedded so the rail's non-Latin-1 glyphs
+/// render. The default atlas font (ProggyClean) covers Latin-1 only;
+/// `U+2059` (⁙) and `U+2717` (✗) need a second font source.
+const GLYPH_FONT_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+
+/// The two codepoints the rail draws beyond the default font's Latin-1,
+/// as a Dear ImGui `(start, end)` pair list: `U+2059` (status quincunx)
+/// and `U+2717` (remove), NUL-terminated.
+const GLYPH_FONT_RANGES: [u32; 5] = [0x2059, 0x2059, 0x2717, 0x2717, 0];
+
+/// Merge the embedded DejaVu Sans into the atlas's default font so the
+/// rail's `U+2059` and `U+2717` glyphs rasterize (they render as `?` in
+/// the Latin-1 default font). `merge_mode` keeps Latin-1 on the default
+/// font — only the ranged codepoints fall through to DejaVu, at the
+/// default font's reference size (`size_pixels: 0.0`; an explicit size
+/// would trip imgui's merge/implicit-reference-size assert). Returns the
+/// two codepoints' presence in the merged font; the unit test pins it.
+fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool) {
+    let mut fonts = ctx.fonts();
+    fonts.add_font_default(None);
+    let merged = fonts
+        .add_font_from_memory_ttf(
+            GLYPH_FONT_BYTES,
+            0.0,
+            Some(
+                &imgui::FontConfig::new()
+                    .merge_mode(true)
+                    .name("dejavu-sans (status/remove glyphs)"),
+            ),
+            Some(&GLYPH_FONT_RANGES),
+        )
+        .expect("embedded DejaVu Sans is a valid TTF");
+    (
+        merged.is_glyph_in_font('\u{2059}'),
+        merged.is_glyph_in_font('\u{2717}'),
+    )
 }
 
 /// Lifecycle callbacks: style tweak after the theme, and the GPU-init hook
@@ -1082,5 +1129,17 @@ mod tests {
         assert_eq!(align_up(256, 256), 256);
         assert_eq!(align_up(257, 256), 512);
         assert_eq!(align_up(0, 256), 0);
+    }
+
+    /// The merged glyph font must cover the two non-Latin-1 codepoints
+    /// the rail draws as text: U+2059 (⁙ status dot) and U+2717 (✗
+    /// remove). Without them the panel would render `?` again.
+    #[test]
+    fn glyph_font_merges_status_and_remove_codepoints() {
+        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = imgui::Context::create();
+        let (quincunx, ballot_x) = add_glyph_font(&mut ctx);
+        assert!(quincunx, "U+2059 (status dot) must resolve in the merged font");
+        assert!(ballot_x, "U+2717 (remove) must resolve in the merged font");
     }
 }

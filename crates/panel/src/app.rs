@@ -25,8 +25,8 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{
-    cap_title, os_window_size, status_quincunx, traffic_light, Light, REMOVE_GLYPH, BASE_WINDOW_H,
-    BASE_WINDOW_W, DOT_W, RAIL_W, TILE_H, TILE_W,
+    cap_title, os_window_size, traffic_light, Light, REMOVE_GLYPH, STATUS_GLYPH, BASE_WINDOW_H,
+    BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
 };
 use host::debug_enabled;
 
@@ -621,7 +621,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 /// [`grid_cells`]. Clicking a cell selects the member; capture reaches
 /// only the focused cell; the queue card overlays the focused cell. While
 /// `only_render_selected` is on (the safe default) each cell collapses to
-/// a cap row (dot, name + brief, ×) with no preview body.
+/// a cap row (dot, name + brief, ✗) with no preview body.
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let members = state.session.wall.members.clone();
     if members.is_empty() {
@@ -629,7 +629,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         return;
     }
     let cells = grid_cells(members.len(), avail);
-    // Drop textures for members that left the wall (grid × / wall change).
+    // Drop textures for members that left the wall (grid ✗ / wall change).
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
@@ -1483,17 +1483,17 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
 }
 
 /// One tile per wall member, in wall order: cap (traffic-light dot,
-/// name + brief, ×) then a `TILE_W`×`TILE_H` body. The body blits the
+/// name + brief, ✗) then a `TILE_W`×`TILE_H` body. The body blits the
 /// slot's `FrameBuf` when `draw_for_slot` says this member paints, else
 /// the renderer-off placeholder. While `only_render_selected` is on (the
 /// safe default) the strip is collapsed: cap only, no body. Clicking the
-/// name or the body focuses the member; the × (a sibling button, never
+/// name or the body focuses the member; the ✗ (a sibling button, never
 /// part of the name click) removes it.
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
     let statuses = state.session.statuses();
-    // Drop textures for members that left the rail (rail × or wall change).
+    // Drop textures for members that left the rail (rail ✗ or wall change).
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
@@ -1533,14 +1533,14 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 }
 
 /// Cap row: the traffic-light dot, the member's name plus brief status
-/// (click selects), and a small red × (rail remove: logout arm then
+/// (click selects), and a small red ✗ (rail remove: logout arm then
 /// `stop_slot`, never `vault`). `width` is the strip the row must fit
 /// (rail avail or grid cell width). Returns `(selected, removed)`.
 fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32) -> (bool, bool) {
     const X_W: f32 = 24.0;
-    // The status dot is a draw-list quincunx (the `U+2059` shape): the
-    // default Latin-1 font cannot render `⁙`, so no text is drawn.
-    status_quincunx(ui, light.rgb());
+    const DOT_W: f32 = 16.0;
+    ui.text_colored(light.rgb(), STATUS_GLYPH);
+    ui.same_line();
     let selected = focused == Some(name);
     let clicked = ui
         .selectable_config(cap_title(name, light))
