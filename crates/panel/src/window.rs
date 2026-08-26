@@ -7,8 +7,10 @@
 //! present cycle driven by an `ApplicationHandler` event loop. The
 //! window/GPU stack is rebuilt on render errors exactly like the original.
 
+use std::mem;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dear_imgui_rs as imgui;
@@ -45,6 +47,32 @@ pub enum PanelError {
     Render(#[source] imgui_wgpu::RendererError),
     #[error("WGPU surface validation failed while acquiring the next frame")]
     SurfaceValidation,
+}
+
+/// A completed whole-window capture: RGBA8 pixels plus the scenario's
+/// sidecar JSON, ready for the panel frame to write (`window.rs` never
+/// touches the filesystem — the loop side stays pure).
+#[derive(Debug)]
+pub struct ShotCapture {
+    pub label: String,
+    pub snapshot_json: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Whole-window capture coordination between the scenario sink (slot
+/// thread), the UI body (per-frame drain), the render pass (readback),
+/// and the panel frame (file write).
+#[derive(Default)]
+pub struct ShotState {
+    /// `(label, snapshot_json)` requests pushed by the scenario sink,
+    /// drained by the UI body.
+    pub requests: Vec<(String, String)>,
+    /// The UI body's per-frame drain: what the next render pass captures.
+    pub wanted: Vec<(String, String)>,
+    /// Captures completed by the render pass, consumed by the UI body.
+    pub done: Vec<ShotCapture>,
 }
 
 /// Redraw behavior for the event loop (dear-app `RedrawMode` equivalent).
@@ -203,6 +231,12 @@ struct AppWindow {
     surface: wgpu::Surface<'static>,
     imgui: ImguiState,
     clear_color: wgpu::Color,
+    /// Present for backends whose surface textures cannot be `COPY_SRC`:
+    /// the imgui pass renders into this private offscreen texture (same
+    /// format as the surface, so the present blit is a legal texture
+    /// copy), the shot readback copies it, and it is blitted to the
+    /// surface for present.
+    offscreen: Option<wgpu::Texture>,
 }
 
 impl AppWindow {
@@ -251,7 +285,12 @@ impl AppWindow {
         let (device, queue) =
             block_on(adapter.request_device(&device_desc)).map_err(PanelError::DeviceRequest)?;
 
-        // Surface config
+        // Surface config. Whole-window shots (the 377 harness pattern)
+        // copy the just-rendered frame back before present, so the
+        // surface asks for `COPY_SRC`. Some backends reject that on a
+        // surface texture: then the loop renders into a private offscreen
+        // texture (see `offscreen`) and the surface only needs `COPY_DST`
+        // for the present blit.
         let physical_size = window.inner_size();
         let caps = surface.get_capabilities(&adapter);
         let preferred_srgb = [
@@ -264,8 +303,18 @@ impl AppWindow {
             .find(|f| caps.formats.contains(f))
             .unwrap_or(caps.formats[0]);
 
+        let surface_copyable = adapter
+            .get_texture_format_features(format)
+            .allowed_usages
+            .contains(wgpu::TextureUsages::COPY_SRC);
+        let surface_usage = if surface_copyable {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST
+        };
+
         let surface_desc = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: surface_usage,
             format,
             width: physical_size.width,
             height: physical_size.height,
@@ -276,6 +325,12 @@ impl AppWindow {
         };
 
         surface.configure(&device, &surface_desc);
+
+        let offscreen = if surface_copyable {
+            None
+        } else {
+            Some(make_offscreen(&device, &surface_desc))
+        };
 
         if let Some(cb) = lifecycle.on_gpu_init.as_mut() {
             cb(&window, &device, &queue, &surface_desc);
@@ -343,6 +398,7 @@ impl AppWindow {
                 b: cfg.clear_color[2] as f64,
                 a: cfg.clear_color[3] as f64,
             },
+            offscreen,
         })
     }
 
@@ -351,10 +407,18 @@ impl AppWindow {
             self.surface_desc.width = new_size.width;
             self.surface_desc.height = new_size.height;
             self.surface.configure(&self.device, &self.surface_desc);
+            if self.offscreen.is_some() {
+                self.offscreen = Some(make_offscreen(&self.device, &self.surface_desc));
+            }
         }
     }
 
-    fn render<F>(&mut self, gui: &mut F, docking: &DockingConfig) -> Result<(), PanelError>
+    fn render<F>(
+        &mut self,
+        gui: &mut F,
+        docking: &DockingConfig,
+        shots: &Mutex<ShotState>,
+    ) -> Result<(), PanelError>
     where
         F: FnMut(&imgui::Ui, &mut Gpu),
     {
@@ -414,9 +478,12 @@ impl AppWindow {
             }
         };
 
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = match &self.offscreen {
+            // Fallback render target: the imgui pass draws here, then the
+            // offscreen texture is blitted to the surface for present.
+            Some(offscreen) => offscreen.create_view(&wgpu::TextureViewDescriptor::default()),
+            None => frame.texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        };
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -451,13 +518,203 @@ impl AppWindow {
                 .map_err(PanelError::Render)?;
         }
 
+        // Whole-window shots: drain the UI body's requests, copy the
+        // just-rendered frame into staging buffers (recorded in this
+        // encoder), and map the bytes back after submit. No file I/O —
+        // the loop side stays pure; `done` holds bytes for the panel.
+        let mut readbacks: Vec<ShotReadback> = Vec::new();
+        {
+            let mut guard = shots.lock().unwrap();
+            let wanted = mem::take(&mut guard.wanted);
+            if !wanted.is_empty() {
+                let source = self.offscreen.as_ref().unwrap_or(&frame.texture);
+                readbacks = self.readback(source, &mut encoder, &wanted);
+            }
+        }
+        if let Some(offscreen) = &self.offscreen {
+            // Present blit: same-format texture copy (the offscreen holds
+            // what the render pass wrote).
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: offscreen,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &frame.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.surface_desc.width,
+                    height: self.surface_desc.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
+        if !readbacks.is_empty() {
+            let captures = self.map_readbacks(readbacks);
+            shots.lock().unwrap().done.extend(captures);
+        }
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
         }
         Ok(())
     }
+
+    /// Record a `copy_texture_to_buffer` per requested shot into a
+    /// `MAP_READ | COPY_DST` staging buffer. The copies share this
+    /// encoder's submission; the bytes land in [`Self::map_readbacks`].
+    fn readback(
+        &self,
+        source: &wgpu::Texture,
+        encoder: &mut wgpu::CommandEncoder,
+        jobs: &[(String, String)],
+    ) -> Vec<ShotReadback> {
+        let width = source.width();
+        let height = source.height();
+        let bytes_per_row = 4 * width;
+        let padded = align_up(bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        jobs.iter()
+            .map(|(label, snapshot_json)| {
+                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("274 panel shot staging"),
+                    size: padded as u64 * height as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: source,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(padded),
+                            rows_per_image: Some(height),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                ShotReadback {
+                    label: label.clone(),
+                    snapshot_json: snapshot_json.clone(),
+                    buffer,
+                    width,
+                    height,
+                }
+            })
+            .collect()
+    }
+
+    /// Block on the staging copies (poll) and pack the padded rows into
+    /// RGBA8, normalized from the surface/offscreen format.
+    fn map_readbacks(&self, readbacks: Vec<ShotReadback>) -> Vec<ShotCapture> {
+        readbacks
+            .into_iter()
+            .filter_map(|rb| {
+                let padded = align_up(4 * rb.width, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                let slice = rb.buffer.slice(..);
+                let mapped = Arc::new(AtomicBool::new(false));
+                let flag = Arc::clone(&mapped);
+                let _ = slice.map_async(wgpu::MapMode::Read, move |res| {
+                    if res.is_ok() {
+                        flag.store(true, Ordering::Release);
+                    }
+                });
+                let _ = self
+                    .device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: None,
+                    });
+                // A failed map (device lost) drops the shot instead of
+                // panicking the loop, which recovers GPU state on render
+                // errors — the shot is a smoke artifact, not the run.
+                if !mapped.load(Ordering::Acquire) {
+                    return None;
+                }
+                let data = slice.get_mapped_range();
+                let mut rgba = Vec::with_capacity((4 * rb.width * rb.height) as usize);
+                for row in 0..rb.height as usize {
+                    let start = row * padded as usize;
+                    rgba.extend_from_slice(&data[start..start + (4 * rb.width) as usize]);
+                }
+                drop(data);
+                rb.buffer.unmap();
+                Some(ShotCapture {
+                    label: rb.label,
+                    snapshot_json: rb.snapshot_json,
+                    width: rb.width,
+                    height: rb.height,
+                    rgba: to_rgba(&rgba, self.surface_desc.format),
+                })
+            })
+            .collect()
+    }
+}
+
+/// One pending staging readback; the copy is recorded in the encoder and
+/// the bytes land after submit + poll.
+struct ShotReadback {
+    label: String,
+    snapshot_json: String,
+    buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+}
+
+/// The offscreen capture target for backends whose surface textures
+/// cannot be copied: same format as the surface so the present blit
+/// (`copy_texture_to_texture`) is a legal copy. Captured bytes are
+/// normalized to RGBA in [`to_rgba`].
+fn make_offscreen(device: &wgpu::Device, desc: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("274 panel shot offscreen"),
+        size: wgpu::Extent3d {
+            width: desc.width,
+            height: desc.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: desc.format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// The PNG wants RGBA; `Bgra8*` textures store their R/B bytes swapped.
+fn to_rgba(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
+    if matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        let mut rgba = bytes.to_vec();
+        for px in rgba.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        rgba
+    } else {
+        bytes.to_vec()
+    }
+}
+
+fn align_up(n: u32, align: u32) -> u32 {
+    n.div_ceil(align) * align
 }
 
 /// Lifecycle callbacks: style tweak after the theme, and the GPU-init hook
@@ -479,6 +736,9 @@ where
     window: Option<AppWindow>,
     lifecycle: Lifecycle,
     ui_frame: F,
+    /// Whole-window shot coordination shared with the UI body (the
+    /// scenario sink's requests) and the render readback.
+    shots: Arc<Mutex<ShotState>>,
     last_wake: Instant,
 }
 
@@ -491,6 +751,7 @@ where
         on_style: impl FnMut(&mut imgui::Context) + 'static,
         on_gpu_init: impl FnMut(&Arc<Window>, &wgpu::Device, &wgpu::Queue, &wgpu::SurfaceConfiguration)
             + 'static,
+        shots: Arc<Mutex<ShotState>>,
         ui_frame: F,
     ) -> Self {
         Self {
@@ -501,6 +762,7 @@ where
                 on_gpu_init: Some(Box::new(on_gpu_init)),
             },
             ui_frame,
+            shots,
             last_wake: Instant::now(),
         }
     }
@@ -550,7 +812,7 @@ where
                         &full_event,
                     );
 
-                    if let Err(e) = window.render(&mut self.ui_frame, &self.cfg.docking) {
+                    if let Err(e) = window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref()) {
                         eprintln!(
                             "Render error: {e}; attempting to recover by recreating GPU state"
                         );
@@ -641,12 +903,14 @@ where
 
 /// Run the panel window loop. `ui_frame` is called every frame with the Ui
 /// and the `Gpu` handle; `on_gpu_init` fires once the device/queue/surface
-/// exist (the loop owns the window now).
+/// exist (the loop owns the window now). `shots` coordinates whole-window
+/// captures between the UI body (requests) and the render pass (readback).
 pub fn run<F>(
     cfg: PanelConfig,
     on_style: impl FnMut(&mut imgui::Context) + 'static,
     on_gpu_init: impl FnMut(&Arc<Window>, &wgpu::Device, &wgpu::Queue, &wgpu::SurfaceConfiguration)
         + 'static,
+    shots: Arc<Mutex<ShotState>>,
     ui_frame: F,
 ) -> Result<(), PanelError>
 where
@@ -662,7 +926,7 @@ where
         }
     }
 
-    let mut app = App::new(cfg, on_style, on_gpu_init, ui_frame);
+    let mut app = App::new(cfg, on_style, on_gpu_init, shots, ui_frame);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -790,5 +1054,33 @@ mod tests {
         assert!(d.host_window_flags.contains(WindowFlags::NO_TITLE_BAR));
         assert!(d.host_window_flags.contains(WindowFlags::NO_RESIZE));
         assert_eq!(d.host_window_name, "DockSpaceHost");
+    }
+
+    /// The shot readback normalizes `Bgra8*` captures to RGBA (the PNG
+    /// color order); `Rgba8*` bytes pass through untouched.
+    #[test]
+    fn to_rgba_swaps_bgra_rows_and_leaves_rgba() {
+        let bgra = [0u8, 1, 2, 3, 10, 11, 12, 13];
+        assert_eq!(
+            to_rgba(&bgra, wgpu::TextureFormat::Bgra8Unorm),
+            vec![2, 1, 0, 3, 12, 11, 10, 13]
+        );
+        assert_eq!(
+            to_rgba(&bgra, wgpu::TextureFormat::Bgra8UnormSrgb),
+            vec![2, 1, 0, 3, 12, 11, 10, 13]
+        );
+        assert_eq!(
+            to_rgba(&bgra, wgpu::TextureFormat::Rgba8UnormSrgb),
+            bgra.to_vec()
+        );
+    }
+
+    /// Staging rows must be padded to the wgpu copy alignment.
+    #[test]
+    fn align_up_pads_to_copy_bytes_per_row() {
+        assert_eq!(align_up(4, 256), 256);
+        assert_eq!(align_up(256, 256), 256);
+        assert_eq!(align_up(257, 256), 512);
+        assert_eq!(align_up(0, 256), 0);
     }
 }

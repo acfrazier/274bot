@@ -18,6 +18,7 @@
 
 pub mod evidence;
 pub mod proof;
+pub mod shot;
 mod runner;
 
 use std::path::PathBuf;
@@ -61,6 +62,12 @@ pub enum StepKind {
     /// Nav walk: arm the A* route from the current tile (the pack grid),
     /// hop it one leg per tick, wait for `arrived(dest)`.
     Walk { dest: Tile },
+    /// Whole-window shot at the moment `wait.arm` holds: nothing is sent,
+    /// then the runner fires the shot sink (headed: the panel captures
+    /// the window; headless: a no-op) with the label + the terminal
+    /// snapshot. The shot lands under `~/.274bot/smoke/<runId>/` as
+    /// `<stamp>_<safeLabel>.png` + a `.json` sidecar.
+    Shot { label: &'static str },
 }
 
 /// Evidence wait for a step: a named predicate and a tick budget.

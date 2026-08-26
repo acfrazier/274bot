@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 client = { workspace = true }
+serde = { version = "=1.0.219", features = ["derive"] }

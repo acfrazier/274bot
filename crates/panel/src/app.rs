@@ -127,6 +127,12 @@ struct PanelState {
     os_window: Option<std::sync::Arc<winit::window::Window>>,
     /// Last `request_inner_size` rail-open flag; skip no-op resizes.
     rail_window_applied: Option<bool>,
+    /// Whole-window shot coordination: the scenario sink (slot thread)
+    /// → the render readback (`window::ShotState`) → the shot files.
+    shot_state: Arc<Mutex<crate::window::ShotState>>,
+    /// Per-run shot dir (`~/.274bot/smoke/<runId>`), created when a
+    /// `--live script_*` run starts.
+    shot_dir: Option<PathBuf>,
 }
 
 /// Headed live harness: null_raster (2 slots), stress50 (50 slots), or a
@@ -251,6 +257,8 @@ impl Default for PanelState {
             live: None,
             os_window: None,
             rail_window_applied: None,
+            shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
+            shot_dir: None,
         }
     }
 }
@@ -1774,6 +1782,27 @@ pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
                 eprintln!("FAIL: {e}");
                 std::process::exit(1);
             }
+            // Whole-window shots: one per-run dir (the 377 harness
+            // pattern), created before the first frame. The headed sink
+            // bridges the slot-threaded runner to the window readback:
+            // it enqueues `(label, snapshot JSON)`; `ui_frame` hands the
+            // requests to the render pass, then writes the PNG + sidecar
+            // from the returned bytes.
+            state.shot_dir = scenario::shot::create_run_dir()
+                .map(Some)
+                .unwrap_or_else(|e| {
+                    eprintln!("[panel] shot dir: {e}; shots will be skipped");
+                    None
+                });
+            let shots = Arc::clone(&state.shot_state);
+            if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
+                runner.set_shot_sink(Box::new(
+                    move |label: &str, snap: &api::snapshot::GameSnapshot| {
+                        let json = serde_json::to_string_pretty(snap).unwrap_or_default();
+                        shots.lock().unwrap().requests.push((label.to_string(), json));
+                    },
+                ));
+            }
             state.live = Some(LiveHarness::Script(LiveScript {
                 name: name.to_string(),
                 passed: false,
@@ -1808,6 +1837,7 @@ pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
             );
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
+        Arc::clone(&state.shot_state),
         move |ui, gpu| {
             if state.os_window.is_none() {
                 state.os_window = os_window.lock().unwrap().clone();
@@ -1818,9 +1848,34 @@ pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
     )
 }
 
+/// Whole-window shots (the 377 harness pattern): write completed captures
+/// to the per-run dir, then hand the scenario sink's new requests to the
+/// next render pass's readback.
+fn pump_shots(state: &mut PanelState) {
+    let mut shots = state.shot_state.lock().unwrap();
+    for cap in std::mem::take(&mut shots.done) {
+        if let Some(dir) = state.shot_dir.as_deref() {
+            match scenario::shot::write_shot(
+                dir,
+                &cap.label,
+                &cap.rgba,
+                cap.width,
+                cap.height,
+                &cap.snapshot_json,
+            ) {
+                Ok(path) => println!("[panel] shot {} -> {}", cap.label, path.display()),
+                Err(e) => eprintln!("[panel] shot {}: {e}", cap.label),
+            }
+        }
+    }
+    let requests = std::mem::take(&mut shots.requests);
+    shots.wanted.extend(requests);
+}
+
 /// The per-frame UI body (the former dear-app `on_frame` closure): session
 /// pump, live harness ticks, dock host, chrome, game pane, rail.
 fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
+    pump_shots(state);
     state.session.pump_status();
     let statuses = state.session.statuses();
     if let Some(live) = state.live.as_mut() {

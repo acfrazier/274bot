@@ -4,6 +4,7 @@
 
 use client::client::{Client, ClientGens, ClientNpc};
 use client::config::if_type::ComponentType;
+use serde::Serialize;
 
 /// A family of world state, mirroring the `ClientGens` counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,7 +21,7 @@ pub enum Family {
 /// Owned view of one live NPC slot, keyed by its slot index in
 /// `Client.npc`. The reader's copy is independent of later in-place walk
 /// mutations, so identity (the slot index) is stable across rebuilds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct NpcView {
     pub index: usize,
     pub r#type: Option<usize>,
@@ -52,9 +53,11 @@ impl NpcView {
 
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
-#[derive(Default)]
+/// Serializes to the whole-window shot sidecar JSON (the terminal state).
+#[derive(Default, Serialize)]
 pub struct GameSnapshot {
     /// World generations the snapshot has been rebuilt up to.
+    #[serde(skip)]
     gens: ClientGens,
     npc: Vec<NpcView>,
     runenergy: i32,

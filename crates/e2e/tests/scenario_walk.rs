@@ -27,6 +27,12 @@ fn scenario_walk() {
     let mainland = scenario.seed.mainland;
     let seed_profiles = scenario.seed.profiles.clone();
     let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
+    // The headless twin never writes shots: explicit no-op sink (the same
+    // behavior as the runner's default).
+    runner
+        .lock()
+        .unwrap()
+        .set_shot_sink(Box::new(|_, _| {}));
     let mut opts = options();
     opts.mainland = mainland;
     let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {

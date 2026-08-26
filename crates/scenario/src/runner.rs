@@ -61,6 +61,11 @@ pub struct ScenarioRunner {
     /// fixture grids relax this.
     require_mainland_base: bool,
     evidence: Option<Evidence>,
+    /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
+    /// arm holds, with the label and the terminal snapshot. The headed
+    /// panel fills this with its window capture; the headless twin keeps
+    /// the default no-op.
+    shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
 }
 
 impl ScenarioRunner {
@@ -94,7 +99,15 @@ impl ScenarioRunner {
             deadline: DEFAULT_DEADLINE,
             require_mainland_base: true,
             evidence: None,
+            shot_sink: None,
         }
+    }
+
+    /// Install the whole-window shot sink (headed: the panel's window
+    /// capture bridge; headless: a no-op). Fired when a `Shot` step's
+    /// arm holds.
+    pub fn set_shot_sink(&mut self, sink: Box<dyn FnMut(&str, &GameSnapshot) + Send>) {
+        self.shot_sink = Some(sink);
     }
 
     /// The shared obj-id → name table for `Item` predicates and the
@@ -192,6 +205,15 @@ impl ScenarioRunner {
                 (wait.arm, wait.budget_ticks)
             };
             if arm.check(&self.snapshot, self.obj_names.as_deref()) {
+                let shot_label = match &self.current_step().kind {
+                    StepKind::Shot { label } => Some(*label),
+                    _ => None,
+                };
+                if let Some(label) = shot_label {
+                    if let Some(sink) = self.shot_sink.as_mut() {
+                        sink(label, &self.snapshot);
+                    }
+                }
                 self.advance_step();
             } else if self.ticks_waited >= budget {
                 self.finish_fail(&format!(
@@ -266,7 +288,8 @@ impl ScenarioRunner {
     }
 
     /// Send the current step's action once. `Perform` runs its closure;
-    /// `Walk` arms the A* route from the current tile.
+    /// `Walk` arms the A* route from the current tile; `Shot` sends
+    /// nothing (the step only waits for its arm to capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         let walk_dest = match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
@@ -275,6 +298,7 @@ impl ScenarioRunner {
                 }
                 return Err("driver rejected the send".into());
             }
+            StepKind::Shot { .. } => return Ok(()),
             StepKind::Walk { dest } => *dest,
         };
         self.arm_walk(walk_dest)
@@ -393,6 +417,8 @@ mod tests {
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
     use nav::grid::StepGrid;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
     use std::time::Duration;
 
     use crate::{Scenario, Seed, Step, StepKind};
@@ -720,5 +746,98 @@ mod tests {
             RunnerStatus::Failed(msg) => assert!(msg.contains("deadline"), "msg: {msg}"),
             other => panic!("expected Failed, got {other:?}"),
         }
+    }
+
+    /// A one-step shot scenario: no send, the arm holds on the first
+    /// dirty tick (stat(16) >= 0 with the seeded client), and the proof
+    /// mirrors the arm.
+    fn shot_scenario(label: &'static str) -> Scenario {
+        Scenario {
+            name: "shot",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "shot the courtyard",
+                kind: StepKind::Shot { label },
+                wait: wait(Proof::Stat { id: 16, min: 0 }, 10),
+            }],
+            proof: Proof::Stat { id: 16, min: 0 },
+        }
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn shot_step_fires_the_sink_once_with_label_and_terminal_snapshot() {
+        let mut c = seeded_client();
+        let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
+        let fired: Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&fired);
+        runner.set_shot_sink(Box::new(move |label, snap| {
+            sink.lock().unwrap().push((label.to_string(), snap.tile()));
+        }));
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        let fired = fired.lock().unwrap();
+        assert_eq!(fired.len(), 1, "the sink fires once per shot step");
+        assert_eq!(fired[0].0, "arrive courtyard");
+        assert_eq!(
+            fired[0].1,
+            Some((3220, 3220, 0)),
+            "the sink sees the terminal snapshot's player tile"
+        );
+    }
+
+    #[test]
+    fn shot_step_with_the_default_sink_is_a_noop_and_passes() {
+        // The headless twin leaves the default (no-op) sink: a Shot step
+        // must still run to PASS without a window to capture.
+        let mut c = seeded_client();
+        let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn shot_step_writes_png_and_json_through_a_test_sink() {
+        let dir = temp_dir("shot");
+        let mut c = seeded_client();
+        let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
+        let sink_dir = dir.clone();
+        let now = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_616_000);
+        runner.set_shot_sink(Box::new(move |label, snap| {
+            let json =
+                serde_json::to_string_pretty(snap).expect("terminal snapshot serializes");
+            // A known 4x4 RGBA buffer: no wgpu surface needed here.
+            let rgba: Vec<u8> = (0..64).map(|i| (i * 4) as u8).collect();
+            crate::shot::write_shot_at(&sink_dir, label, &rgba, 4, 4, &json, now)
+                .expect("test sink writes the shot");
+        }));
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        let png = dir.join("2026-08-25T00-00-00_arrive_courtyard.png");
+        let json = dir.join("2026-08-25T00-00-00_arrive_courtyard.json");
+        assert!(png.exists(), "one <label>.png written: {png:?}");
+        assert!(json.exists(), "one <label>.json written: {json:?}");
+        let header = std::fs::read(&png).unwrap();
+        assert_eq!(&header[..8], b"\x89PNG\r\n\x1a\n");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(v["tile"], serde_json::json!([3220, 3220, 0]));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
