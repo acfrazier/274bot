@@ -172,17 +172,20 @@ struct LiveScript {
 }
 
 /// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
-/// the tick the focused slot reaches scene 2; this watch latches `passed`
-/// once `pump_shots` has written the PNG (the caller exits 0), mirrors
-/// the shared runner's failures, and FAILs when scene 2 never arrives
-/// within [`SMOKE_DEADLINE`].
+/// the tick the focused slot reaches scene 2, but the capture is held
+/// [`SMOKE_SETTLE`] so the slot's 1 fps renderer can rasterize the world
+/// first; this watch latches `passed` once `pump_shots` has written the
+/// PNG (the caller exits 0), mirrors the shared runner's failures, and
+/// FAILs when scene 2 never arrives within [`SMOKE_DEADLINE`].
 struct LiveSmoke {
     started: Instant,
     last_step: Option<(usize, usize)>,
     failed: Option<String>,
-    /// The pure trigger has seen the focused slot at scene 2 once; the
-    /// deadline message distinguishes a stuck login from a missing write.
-    saw_scene2: bool,
+    /// The instant the pure trigger first saw the focused slot at scene 2
+    /// (`None` before). The settle gate holds the shot until
+    /// [`SMOKE_SETTLE`] has elapsed; the deadline message distinguishes a
+    /// stuck login from a missing write.
+    saw_scene2_at: Option<Instant>,
     /// The scene2 PNG landed (`pump_shots` wrote it): the caller exits 0.
     passed: bool,
 }
@@ -261,7 +264,7 @@ impl LiveBoot {
                     started: Instant::now(),
                     last_step: None,
                     failed: None,
-                    saw_scene2: false,
+                    saw_scene2_at: None,
                     passed: false,
                 }));
             }
@@ -433,12 +436,31 @@ impl RunMode {
 /// minutes.
 const SMOKE_DEADLINE: Duration = Duration::from_secs(300);
 
+/// `--smoke` render-settle window: after the focused slot reaches scene 2,
+/// the whole-window shot request waits this long before reaching the render
+/// readback — the slot's renderer rasterizes at 1 fps on the CPU backend
+/// (slower in a debug build), so an immediate capture would still show the
+/// title/loading screen.
+const SMOKE_SETTLE: Duration = Duration::from_secs(3);
+
 /// `--smoke` trigger: fire exactly once, on the frame the focused slot
 /// first reaches `ingame && scene_state == 2`. Pure so the trigger path
 /// is a table test; the smoke watch calls it against the focused slot's
 /// status every frame.
 fn smoke_should_fire(smoke_armed: bool, already_fired: bool, ingame: bool, scene_state: i32) -> bool {
     smoke_armed && !already_fired && ingame && scene_state == 2
+}
+
+/// `--smoke` render-settle predicate: the scene2 shot request is released
+/// to the render readback only once the focused slot has held scene 2 for
+/// [`SMOKE_SETTLE`] (wall-clock, so the slot's 1 fps renderer has rasterized
+/// the world) and is still ingame. `saw_scene2_at` is `None` until the
+/// trigger latches scene 2.
+fn smoke_settled(saw_scene2_at: Option<Instant>, now: Instant, ingame: bool) -> bool {
+    match saw_scene2_at {
+        Some(t) => ingame && now.saturating_duration_since(t) >= SMOKE_SETTLE,
+        None => false,
+    }
 }
 
 /// The interactive F12 capture label: `manual-<stamp>` (the 377 stamp so
@@ -627,13 +649,25 @@ fn live_script_tick(live: &mut LiveScript, session: &mut Session) -> Option<Stri
     }
 }
 
+/// The focused slot's status row, `None` when nothing is focused or the
+/// focused username has no row this pump.
+fn focused_slot<'a>(
+    session: &Session,
+    statuses: &'a [host_play::SlotStatus],
+) -> Option<&'a host_play::SlotStatus> {
+    let focused = session.focused_name();
+    statuses
+        .iter()
+        .find(|s| focused.as_deref() == Some(s.username.as_str()))
+}
+
 /// Headed `--smoke` watch. `wrote_shots` is the count `pump_shots` wrote
 /// this frame: the smoke's single scene2 shot landing passes the run (the
 /// caller exits 0). Before that, the pure trigger latches scene 2 on the
-/// focused slot for a precise deadline message, and the shared runner's
-/// failures surface unchanged. The 300 s ceiling is the run's own clock:
-/// it also catches a runner that passed but whose PNG never got written
-/// (e.g. a failed render readback).
+/// focused slot for the render-settle gate and a precise deadline message,
+/// and the shared runner's failures surface unchanged. The 300 s ceiling
+/// is the run's own clock: it also catches a runner that passed but whose
+/// PNG never got written (e.g. a failed render readback).
 fn live_smoke_tick(
     live: &mut LiveSmoke,
     session: &mut Session,
@@ -648,18 +682,15 @@ fn live_smoke_tick(
         live.passed = true;
         return None;
     }
-    let focused = session.focused_name();
-    let slot = statuses
-        .iter()
-        .find(|s| focused.as_deref() == Some(s.username.as_str()));
+    let slot = focused_slot(session, statuses);
     if smoke_should_fire(
         true,
-        live.saw_scene2,
+        live.saw_scene2_at.is_some(),
         slot.map_or(false, |s| s.ingame),
         slot.map_or(0, |s| s.scene_state),
     ) {
-        live.saw_scene2 = true;
-        println!("smoke: focused slot at scene 2; capture requested");
+        live.saw_scene2_at = Some(Instant::now());
+        println!("smoke: focused slot at scene 2; waiting for the render to settle before the capture");
     }
     // Mirror the shared runner so a scenario failure is the failure.
     let status = session
@@ -682,7 +713,7 @@ fn live_smoke_tick(
         _ => {}
     }
     if live.started.elapsed() >= SMOKE_DEADLINE {
-        let msg = if live.saw_scene2 {
+        let msg = if live.saw_scene2_at.is_some() {
             "panel-play --smoke: scene2 shot never written within 300s".to_string()
         } else {
             "panel-play --smoke: focused slot never reached scene 2 within 300s".to_string()
@@ -2127,7 +2158,25 @@ fn pump_shots(state: &mut PanelState) -> usize {
         }
     }
     let requests = std::mem::take(&mut shots.requests);
-    shots.wanted.extend(requests);
+    // `--smoke` render-settle gate: hold the scene2 request until the
+    // focused slot has held scene 2 for [`SMOKE_SETTLE`] and is still
+    // ingame — the slot's 1 fps renderer needs wall-clock time to
+    // rasterize the world, and an early readback captures the title
+    // screen. `script_*` and interactive shots drain as before.
+    let hold = match state.live.as_ref() {
+        Some(LiveHarness::Smoke(s)) => !smoke_settled(
+            s.saw_scene2_at,
+            Instant::now(),
+            focused_slot(&state.session, &state.session.statuses())
+                .map_or(false, |slot| slot.ingame),
+        ),
+        _ => false,
+    };
+    if !hold {
+        shots.wanted.extend(requests);
+    } else {
+        shots.requests = requests;
+    }
     written
 }
 
@@ -2196,8 +2245,8 @@ mod tests {
         apply_only_render_selected, apply_ui_scale, boot_for, chooser_should_open_popup,
         edit_parameters_enabled, live_null_tick, live_script_tick, live_smoke_tick,
         live_stress_tick, manual_shot_label, parse_live_args, runner_config, smoke_should_fire,
-        Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
+        smoke_settled, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode,
+        BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use crate::window::RedrawMode;
@@ -2493,6 +2542,25 @@ mod tests {
     }
 
     #[test]
+    fn smoke_settled_table() {
+        // The scene2 shot request reaches the render readback only once
+        // the focused slot has held scene 2 for the full settle window and
+        // is still ingame (the 1 fps renderer needs wall-clock time to
+        // rasterize the world; an early capture is the title screen).
+        let t0 = Instant::now();
+        let cases: &[(&str, Option<Instant>, Instant, bool, bool)] = &[
+            ("no scene 2 yet", None, t0, true, false),
+            ("before the settle window", Some(t0), t0 + Duration::from_secs(1), true, false),
+            ("at the settle boundary", Some(t0), t0 + SMOKE_SETTLE, true, true),
+            ("after the settle window", Some(t0), t0 + Duration::from_secs(5), true, true),
+            ("settled but logged out", Some(t0), t0 + Duration::from_secs(5), false, false),
+        ];
+        for (name, at, now, ingame, expect) in cases {
+            assert_eq!(smoke_settled(*at, *now, *ingame), *expect, "{name}");
+        }
+    }
+
+    #[test]
     fn manual_shot_label_is_stamped_and_stays_normalized() {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_616_000);
         let label = manual_shot_label(now);
@@ -2627,7 +2695,7 @@ mod tests {
             started,
             last_step: None,
             failed: None,
-            saw_scene2: false,
+            saw_scene2_at: None,
             passed: false,
         }
     }
@@ -2653,12 +2721,12 @@ mod tests {
             live_smoke_tick(&mut live, &mut s, &[st("test", true, 1)], 0),
             None
         );
-        assert!(!live.saw_scene2);
+        assert!(!live.saw_scene2_at.is_some());
         // Scene 2 on the focused slot latches exactly once (the pure
         // trigger), and a late deadline names the missing write.
         let scene2 = [st("test", true, 2)];
         assert_eq!(live_smoke_tick(&mut live, &mut s, &scene2, 0), None);
-        assert!(live.saw_scene2);
+        assert!(live.saw_scene2_at.is_some());
         live.started = Instant::now() - SMOKE_DEADLINE;
         let err = live_smoke_tick(&mut live, &mut s, &scene2, 0).expect("deadline");
         assert!(err.contains("never written within 300s"), "err: {err}");
