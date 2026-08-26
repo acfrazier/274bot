@@ -92,13 +92,41 @@ pub struct Scenario {
 pub fn get(name: &str) -> Option<Scenario> {
     match name {
         "walk" => Some(walk_scenario()),
+        "render_smoke" => Some(render_smoke_scenario()),
         _ => None,
     }
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
-    vec!["walk"]
+    vec!["walk", "render_smoke"]
+}
+
+/// The `render_smoke` scenario: log in `test`/`test`, do nothing, and
+/// fire one whole-window shot the tick the seed gate releases. The panel's
+/// `--smoke` path relaxes the mainland-base seed gate (`no_mainland_gate`)
+/// so the capture lands the tick the focused slot first reaches
+/// `ingame && scene_state == 2`; the `stat(16) >= 0` arm always holds on a
+/// rebuilt snapshot, so the shot fires immediately. The proof mirrors the
+/// arm so the run PASSes once the capture is requested — the panel exits 0
+/// when the PNG is written, not on the runner status.
+fn render_smoke_scenario() -> Scenario {
+    Scenario {
+        name: "render_smoke",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "capture scene 2",
+            kind: StepKind::Shot { label: "scene2" },
+            wait: Wait {
+                arm: Proof::Stat { id: 16, min: 0 },
+                budget_ticks: 1,
+            },
+        }],
+        proof: Proof::Stat { id: 16, min: 0 },
+    }
 }
 
 /// The `walk` scenario: log in `test`/`test`, mainland-hop into the
@@ -175,5 +203,21 @@ pub fn default_pack_path() -> PathBuf {
             Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
             Err(_) => PathBuf::from(".274bot/274bot.navpack"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_smoke_registered_as_a_one_shot_scene2_capture() {
+        let s = get("render_smoke").expect("render_smoke is registered");
+        assert_eq!(s.name, "render_smoke");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(!s.seed.mainland, "no hop needed for a smoke capture");
+        assert_eq!(s.steps.len(), 1, "one capture step");
+        assert!(matches!(s.steps[0].kind, StepKind::Shot { label: "scene2" }));
+        assert_eq!(s.proof.name(), "stat(16)>=0");
     }
 }

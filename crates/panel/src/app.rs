@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::window::{self, Gpu, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
@@ -120,7 +120,8 @@ struct PanelState {
     /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
     /// first 1 Hz pass (first rate needs two samples).
     last_traffic: Option<(Instant, u64, usize)>,
-    /// Headed `--live` watch (`null_raster` or `stress50`); `None` interactive.
+    /// Headed `--live` watch (`null_raster`, `stress50`, `script_<name>`)
+    /// or `--smoke`; `None` interactive.
     live: Option<LiveHarness>,
     /// winit window cloned from `on_gpu_init` so MultiBox can grow/shrink
     /// the OS inner size by [`RAIL_W`] without shrinking the Game pane.
@@ -131,16 +132,19 @@ struct PanelState {
     /// → the render readback (`window::ShotState`) → the shot files.
     shot_state: Arc<Mutex<crate::window::ShotState>>,
     /// Per-run shot dir (`~/.274bot/smoke/<runId>`), created when a
-    /// `--live script_*` run starts.
+    /// `--live script_*` run starts or lazily on the first write (the
+    /// interactive F12 capture has no run start to hook).
     shot_dir: Option<PathBuf>,
 }
 
-/// Headed live harness: null_raster (2 slots), stress50 (50 slots), or a
-/// shared scenario (`script_<name>`).
+/// Headed live harness: null_raster (2 slots), stress50 (50 slots), a
+/// shared scenario (`script_<name>`), or `--smoke` (one whole-window shot
+/// at scene 2, then exit 0).
 enum LiveHarness {
     Null(LiveNull),
     Stress(LiveStress),
     Script(LiveScript),
+    Smoke(LiveSmoke),
 }
 
 /// Headed `null_raster` harness state. `started` is the 120s login clock.
@@ -165,6 +169,22 @@ struct LiveScript {
     passed: bool,
     failed: Option<String>,
     last_step: Option<(usize, usize)>,
+}
+
+/// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
+/// the tick the focused slot reaches scene 2; this watch latches `passed`
+/// once `pump_shots` has written the PNG (the caller exits 0), mirrors
+/// the shared runner's failures, and FAILs when scene 2 never arrives
+/// within [`SMOKE_DEADLINE`].
+struct LiveSmoke {
+    started: Instant,
+    last_step: Option<(usize, usize)>,
+    failed: Option<String>,
+    /// The pure trigger has seen the focused slot at scene 2 once; the
+    /// deadline message distinguishes a stuck login from a missing write.
+    saw_scene2: bool,
+    /// The scene2 PNG landed (`pump_shots` wrote it): the caller exits 0.
+    passed: bool,
 }
 
 /// One rail/grid tile's GPU texture (uploaded when the slot's `FrameBuf`
@@ -263,15 +283,80 @@ impl Default for PanelState {
     }
 }
 
-const LIVE_USAGE: &str = "usage: panel-play [--live null_raster|stress50|script_<name>]";
+const LIVE_USAGE: &str = "usage: panel-play [--smoke] [--live null_raster|stress50|script_<name>]";
 
-/// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored.
-/// Unknown flags/names → `Err((2, msg))`; `--help`/`-h` → `Err((0, usage))`.
+/// What `panel-play` should do this run: the normal interactive panel, a
+/// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
+/// then exit 0).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunMode {
+    Interactive,
+    Live(String),
+    Smoke,
+}
+
+impl RunMode {
+    /// The `--live` harness name, `None` for interactive and `--smoke`.
+    fn live_name(&self) -> Option<&str> {
+        match self {
+            RunMode::Live(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn is_smoke(&self) -> bool {
+        matches!(self, RunMode::Smoke)
+    }
+}
+
+/// `--smoke` login+world deadline: the focused slot must reach scene 2
+/// (and the shot write must land) within this window or the run FAILs
+/// with exit 1. Generous — scene 2 usually lands inside the first two
+/// minutes.
+const SMOKE_DEADLINE: Duration = Duration::from_secs(300);
+
+/// `--smoke` trigger: fire exactly once, on the frame the focused slot
+/// first reaches `ingame && scene_state == 2`. Pure so the trigger path
+/// is a table test; the smoke watch calls it against the focused slot's
+/// status every frame.
+fn smoke_should_fire(smoke_armed: bool, already_fired: bool, ingame: bool, scene_state: i32) -> bool {
+    smoke_armed && !already_fired && ingame && scene_state == 2
+}
+
+/// The interactive F12 capture label: `manual-<stamp>` (the 377 stamp so
+/// shot files sort chronologically). Already in the 377 safe alphabet, so
+/// `safe_label` is a no-op on it.
+fn manual_shot_label(now: SystemTime) -> String {
+    format!("manual-{}", scenario::shot::stamp_utc(now))
+}
+
+/// F12 whole-window shot: enqueue `(manual-<stamp>, default snapshot)` on
+/// the same `shot_state.requests` path the scenario sink uses, so the
+/// render readback and `pump_shots` handle it with no scenario involved.
+/// The per-run shot dir is created lazily by `pump_shots` on the first
+/// write.
+fn enqueue_manual_shot(state: &mut PanelState) {
+    let label = manual_shot_label(SystemTime::now());
+    let json =
+        serde_json::to_string_pretty(&api::snapshot::GameSnapshot::new()).unwrap_or_default();
+    state
+        .shot_state
+        .lock()
+        .unwrap()
+        .requests
+        .push((label.clone(), json));
+    println!("[panel] F12: shot {label} queued");
+}
+
+/// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored. `--smoke`
+/// wins over both. Unknown flags/names → `Err((2, msg))`;
+/// `--help`/`-h` → `Err((0, usage))`.
 pub fn parse_live_args(
     args: impl IntoIterator<Item = impl AsRef<str>>,
     env_live: Option<&str>,
-) -> Result<Option<String>, (i32, String)> {
+) -> Result<RunMode, (i32, String)> {
     let mut live = env_live.filter(|s| !s.is_empty()).map(str::to_string);
+    let mut smoke = false;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_ref() {
@@ -281,9 +366,13 @@ pub fn parse_live_args(
                 };
                 live = Some(name.as_ref().to_string());
             }
+            "--smoke" => smoke = true,
             "--help" | "-h" => return Err((0, LIVE_USAGE.into())),
             other => return Err((2, format!("panel-play: unknown {other}"))),
         }
+    }
+    if smoke {
+        return Ok(RunMode::Smoke);
     }
     if let Some(name) = live.as_deref() {
         let script_ok = name
@@ -293,7 +382,7 @@ pub fn parse_live_args(
             return Err((2, LIVE_USAGE.into()));
         }
     }
-    Ok(live)
+    Ok(live.map(RunMode::Live).unwrap_or(RunMode::Interactive))
 }
 
 /// Headed watch: wait until both slots are scene 2, print RSS/counters, PASS.
@@ -418,6 +507,72 @@ fn live_script_tick(live: &mut LiveScript, session: &mut Session) -> Option<Stri
         }
         None => None,
     }
+}
+
+/// Headed `--smoke` watch. `wrote_shots` is the count `pump_shots` wrote
+/// this frame: the smoke's single scene2 shot landing passes the run (the
+/// caller exits 0). Before that, the pure trigger latches scene 2 on the
+/// focused slot for a precise deadline message, and the shared runner's
+/// failures surface unchanged. The 300 s ceiling is the run's own clock:
+/// it also catches a runner that passed but whose PNG never got written
+/// (e.g. a failed render readback).
+fn live_smoke_tick(
+    live: &mut LiveSmoke,
+    session: &mut Session,
+    statuses: &[host_play::SlotStatus],
+    wrote_shots: usize,
+) -> Option<String> {
+    if live.passed || live.failed.is_some() {
+        return None;
+    }
+    if wrote_shots > 0 {
+        println!("PASS: panel-play --smoke (scene2 whole-window shot written)");
+        live.passed = true;
+        return None;
+    }
+    let focused = session.focused_name();
+    let slot = statuses
+        .iter()
+        .find(|s| focused.as_deref() == Some(s.username.as_str()));
+    if smoke_should_fire(
+        true,
+        live.saw_scene2,
+        slot.map_or(false, |s| s.ingame),
+        slot.map_or(0, |s| s.scene_state),
+    ) {
+        live.saw_scene2 = true;
+        println!("smoke: focused slot at scene 2; capture requested");
+    }
+    // Mirror the shared runner so a scenario failure is the failure.
+    let status = session
+        .scenario
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|r| r.status());
+    match status {
+        Some(scenario::RunnerStatus::Failed(msg)) => {
+            live.failed = Some(msg.clone());
+            return Some(msg);
+        }
+        Some(scenario::RunnerStatus::Running { step, total }) => {
+            if live.last_step != Some((step, total)) {
+                live.last_step = Some((step, total));
+                println!("smoke: running step {step}/{total}");
+            }
+        }
+        _ => {}
+    }
+    if live.started.elapsed() >= SMOKE_DEADLINE {
+        let msg = if live.saw_scene2 {
+            "panel-play --smoke: scene2 shot never written within 300s".to_string()
+        } else {
+            "panel-play --smoke: focused slot never reached scene 2 within 300s".to_string()
+        };
+        live.failed = Some(msg.clone());
+        return Some(msg);
+    }
+    None
 }
 
 /// Leaf dock nodes hide the tab bar while they host a single window.
@@ -1741,15 +1896,40 @@ fn chooser_row(ui: &Ui, name: &str, on_wall: bool) -> (bool, bool) {
     (loaded, removed)
 }
 
+/// Install the whole-window shot plumbing for a headed scenario run: the
+/// per-run shot dir plus the sink bridging the slot-threaded runner to
+/// the window readback — it enqueues `(label, snapshot JSON)`, and
+/// `ui_frame` hands the requests to the render pass, then writes the PNG
+/// + sidecar from the returned bytes. Shared by `--live script_*` and
+/// `--smoke`.
+fn arm_scenario_shots(state: &mut PanelState) {
+    state.shot_dir = scenario::shot::create_run_dir()
+        .map(Some)
+        .unwrap_or_else(|e| {
+            eprintln!("[panel] shot dir: {e}; shots will be skipped");
+            None
+        });
+    let shots = Arc::clone(&state.shot_state);
+    if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
+        runner.set_shot_sink(Box::new(
+            move |label: &str, snap: &api::snapshot::GameSnapshot| {
+                let json = serde_json::to_string_pretty(snap).unwrap_or_default();
+                shots.lock().unwrap().requests.push((label.to_string(), json));
+            },
+        ));
+    }
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
-/// `live` is `Some("null_raster")` or `Some("stress50")` (temp vault;
-/// `BOT_VAULT_PASS` is unused on those paths).
-pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
+/// `mode` selects the normal interactive panel, a `--live NAME` harness,
+/// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
+/// exit 0).
+pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
 
-    match live.as_deref() {
+    match mode.live_name() {
         Some("null_raster") => {
             if let Err(e) = state.session.live_prepare_null_raster() {
                 eprintln!("FAIL: {e}");
@@ -1782,27 +1962,7 @@ pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
                 eprintln!("FAIL: {e}");
                 std::process::exit(1);
             }
-            // Whole-window shots: one per-run dir (the 377 harness
-            // pattern), created before the first frame. The headed sink
-            // bridges the slot-threaded runner to the window readback:
-            // it enqueues `(label, snapshot JSON)`; `ui_frame` hands the
-            // requests to the render pass, then writes the PNG + sidecar
-            // from the returned bytes.
-            state.shot_dir = scenario::shot::create_run_dir()
-                .map(Some)
-                .unwrap_or_else(|e| {
-                    eprintln!("[panel] shot dir: {e}; shots will be skipped");
-                    None
-                });
-            let shots = Arc::clone(&state.shot_state);
-            if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
-                runner.set_shot_sink(Box::new(
-                    move |label: &str, snap: &api::snapshot::GameSnapshot| {
-                        let json = serde_json::to_string_pretty(snap).unwrap_or_default();
-                        shots.lock().unwrap().requests.push((label.to_string(), json));
-                    },
-                ));
-            }
+            arm_scenario_shots(&mut state);
             state.live = Some(LiveHarness::Script(LiveScript {
                 name: name.to_string(),
                 passed: false,
@@ -1811,7 +1971,34 @@ pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
             }));
         }
         _ => {
-            if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
+            if mode.is_smoke() {
+                // The smoke uses the `render_smoke` scenario (temp
+                // `test`/`test` vault) so the sidecar snapshot is built
+                // from the slot's real `Client`, exactly like any
+                // scenario. The seed gate is relaxed to `ingame &&
+                // scene_state == 2` so the shot fires the tick the
+                // focused slot first reaches scene 2.
+                let Some(scenario) = scenario::get("render_smoke") else {
+                    eprintln!("FAIL: unknown scenario render_smoke");
+                    std::process::exit(1);
+                };
+                if let Err(e) = state.session.live_prepare_script(scenario) {
+                    eprintln!("FAIL: {e}");
+                    std::process::exit(1);
+                }
+                if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
+                    runner.no_mainland_gate();
+                    runner.set_deadline(SMOKE_DEADLINE);
+                }
+                arm_scenario_shots(&mut state);
+                state.live = Some(LiveHarness::Smoke(LiveSmoke {
+                    started: Instant::now(),
+                    last_step: None,
+                    failed: None,
+                    saw_scene2: false,
+                    passed: false,
+                }));
+            } else if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
                 // Interactive/headless env flow: unlock before the window so slots
                 // spawn before the first frame. The in-panel prompt covers typing.
                 if !state.session.unlock(&pass) {
@@ -1850,10 +2037,22 @@ pub fn run_panel(live: Option<String>) -> Result<(), window::PanelError> {
 
 /// Whole-window shots (the 377 harness pattern): write completed captures
 /// to the per-run dir, then hand the scenario sink's new requests to the
-/// next render pass's readback.
-fn pump_shots(state: &mut PanelState) {
+/// next render pass's readback. The per-run dir is created lazily on the
+/// first write (the interactive F12 capture has no run start to hook).
+/// Returns how many shots were written this frame — the `--smoke` watch
+/// exits 0 once its single scene2 shot lands.
+fn pump_shots(state: &mut PanelState) -> usize {
     let mut shots = state.shot_state.lock().unwrap();
+    let mut written = 0;
     for cap in std::mem::take(&mut shots.done) {
+        if state.shot_dir.is_none() {
+            state.shot_dir = scenario::shot::create_run_dir()
+                .map(Some)
+                .unwrap_or_else(|e| {
+                    eprintln!("[panel] shot dir: {e}; shots will be skipped");
+                    None
+                });
+        }
         if let Some(dir) = state.shot_dir.as_deref() {
             match scenario::shot::write_shot(
                 dir,
@@ -1863,19 +2062,23 @@ fn pump_shots(state: &mut PanelState) {
                 cap.height,
                 &cap.snapshot_json,
             ) {
-                Ok(path) => println!("[panel] shot {} -> {}", cap.label, path.display()),
+                Ok(path) => {
+                    println!("[panel] shot {} -> {}", cap.label, path.display());
+                    written += 1;
+                }
                 Err(e) => eprintln!("[panel] shot {}: {e}", cap.label),
             }
         }
     }
     let requests = std::mem::take(&mut shots.requests);
     shots.wanted.extend(requests);
+    written
 }
 
 /// The per-frame UI body (the former dear-app `on_frame` closure): session
 /// pump, live harness ticks, dock host, chrome, game pane, rail.
 fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
-    pump_shots(state);
+    let wrote_shots = pump_shots(state);
     state.session.pump_status();
     let statuses = state.session.statuses();
     if let Some(live) = state.live.as_mut() {
@@ -1883,11 +2086,27 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             LiveHarness::Null(n) => live_null_tick(n, &statuses),
             LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
             LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session),
+            LiveHarness::Smoke(s) => live_smoke_tick(s, &mut state.session, &statuses, wrote_shots),
         };
         if let Some(msg) = fail {
             eprintln!("FAIL: {msg}");
             std::process::exit(1);
         }
+        match live {
+            LiveHarness::Smoke(s) if s.passed => {
+                // `pump_shots` wrote the scene2 shot: the render gate is
+                // green, leave with 0.
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+    }
+    // Interactive whole-window capture: F12 enqueues one shot per press
+    // (a rising edge, no repeat) with no scenario involved. Harness runs
+    // keep their own keys — a manual shot during `--smoke` would trip the
+    // "any written shot passes" watch before the scene2 shot lands.
+    if state.live.is_none() && ui.is_key_pressed_with_repeat(Key::F12, false) {
+        enqueue_manual_shot(state);
     }
     let title = game_window_title(state.session.focused_name().as_deref());
     dock_host(ui, state, &title);
@@ -1913,15 +2132,16 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
     use dear_imgui_rs::ConfigFlags;
 
     use super::{
         apply_only_render_selected, apply_ui_scale, chooser_should_open_popup,
-        edit_parameters_enabled, live_null_tick, live_script_tick, live_stress_tick,
-        parse_live_args, runner_config, LiveNull, LiveScript, LiveStress, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE,
+        edit_parameters_enabled, live_null_tick, live_script_tick, live_smoke_tick,
+        live_stress_tick, manual_shot_label, parse_live_args, runner_config, smoke_should_fire,
+        LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W,
+        LIVE_USAGE, SMOKE_DEADLINE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use crate::window::RedrawMode;
@@ -2039,19 +2259,25 @@ mod tests {
 
     #[test]
     fn parse_live_args_none_without_flag_or_env() {
-        assert_eq!(parse_live_args([] as [&str; 0], None), Ok(None));
-        assert_eq!(parse_live_args([] as [&str; 0], Some("")), Ok(None));
+        assert_eq!(
+            parse_live_args([] as [&str; 0], None),
+            Ok(RunMode::Interactive)
+        );
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("")),
+            Ok(RunMode::Interactive)
+        );
     }
 
     #[test]
     fn parse_live_args_env_and_flag_null_raster() {
         assert_eq!(
             parse_live_args([] as [&str; 0], Some("null_raster")),
-            Ok(Some("null_raster".into()))
+            Ok(RunMode::Live("null_raster".into()))
         );
         assert_eq!(
             parse_live_args(["--live", "null_raster"], None),
-            Ok(Some("null_raster".into()))
+            Ok(RunMode::Live("null_raster".into()))
         );
     }
 
@@ -2059,11 +2285,11 @@ mod tests {
     fn parse_live_args_env_and_flag_stress50() {
         assert_eq!(
             parse_live_args([] as [&str; 0], Some("stress50")),
-            Ok(Some("stress50".into()))
+            Ok(RunMode::Live("stress50".into()))
         );
         assert_eq!(
             parse_live_args(["--live", "stress50"], None),
-            Ok(Some("stress50".into()))
+            Ok(RunMode::Live("stress50".into()))
         );
     }
 
@@ -2071,7 +2297,25 @@ mod tests {
     fn parse_live_args_flag_wins_over_env() {
         assert_eq!(
             parse_live_args(["--live", "null_raster"], Some("other")),
-            Ok(Some("null_raster".into()))
+            Ok(RunMode::Live("null_raster".into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_smoke_flag_maps_to_smoke_mode() {
+        assert_eq!(
+            parse_live_args(["--smoke"], None),
+            Ok(RunMode::Smoke)
+        );
+        // A stray BOT_LIVE env does not demote --smoke.
+        assert_eq!(
+            parse_live_args(["--smoke"], Some("stress50")),
+            Ok(RunMode::Smoke)
+        );
+        // --smoke wins over --live when both are passed.
+        assert_eq!(
+            parse_live_args(["--smoke", "--live", "null_raster"], None),
+            Ok(RunMode::Smoke)
         );
     }
 
@@ -2112,11 +2356,17 @@ mod tests {
     fn parse_live_args_script_walk_accepted() {
         assert_eq!(
             parse_live_args(["--live", "script_walk"], None),
-            Ok(Some("script_walk".into()))
+            Ok(RunMode::Live("script_walk".into()))
         );
         assert_eq!(
             parse_live_args([] as [&str; 0], Some("script_walk")),
-            Ok(Some("script_walk".into()))
+            Ok(RunMode::Live("script_walk".into()))
+        );
+        // The smoke scenario is a registered scenario, so the script_
+        // harness can also drive it manually.
+        assert_eq!(
+            parse_live_args(["--live", "script_render_smoke"], None),
+            Ok(RunMode::Live("script_render_smoke".into()))
         );
     }
 
@@ -2130,6 +2380,37 @@ mod tests {
             parse_live_args(["--live", "script_"], None),
             Err((2, LIVE_USAGE.into()))
         );
+    }
+
+    #[test]
+    fn smoke_should_fire_table() {
+        // Fires exactly once, only while armed, only at `ingame && scene 2`.
+        let cases: &[(&str, bool, bool, bool, i32, bool)] = &[
+            ("disarmed never fires", false, false, true, 2, false),
+            ("fires at scene 2", true, false, true, 2, true),
+            ("not before scene 2", true, false, true, 1, false),
+            ("not while logged out", true, false, false, 2, false),
+            ("not after scene 1", true, false, true, 0, false),
+            ("not twice", true, true, true, 2, false),
+            ("not after exit", true, true, true, 1, false),
+        ];
+        for (name, armed, fired, ingame, scene, expect) in cases {
+            assert_eq!(
+                smoke_should_fire(*armed, *fired, *ingame, *scene),
+                *expect,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn manual_shot_label_is_stamped_and_stays_normalized() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_616_000);
+        let label = manual_shot_label(now);
+        assert_eq!(label, "manual-2026-08-25T00-00-00");
+        // The label is already in the 377 safe alphabet: the file name
+        // normalizes to itself (the write path applies `safe_label`).
+        assert_eq!(scenario::shot::safe_label(&label), label);
     }
 
     /// A synthetic client that has already seeded: ingame, scene 2, a
@@ -2250,6 +2531,59 @@ mod tests {
         let msg = live_script_tick(&mut live, &mut s).expect("FAIL returns the message");
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
         assert!(live.failed.is_some());
+    }
+
+    fn smoke_at(started: Instant) -> LiveSmoke {
+        LiveSmoke {
+            started,
+            last_step: None,
+            failed: None,
+            saw_scene2: false,
+            passed: false,
+        }
+    }
+
+    #[test]
+    fn live_smoke_tick_passes_when_the_shot_is_written() {
+        let mut s = crate::session::Session::new();
+        let mut live = smoke_at(Instant::now());
+        let statuses = [st("test", true, 2)];
+        // A written shot (pump_shots drained `done`) exits the smoke: the
+        // tick latches passed and the caller turns it into exit 0.
+        assert_eq!(live_smoke_tick(&mut live, &mut s, &statuses, 1), None);
+        assert!(live.passed, "the written scene2 shot passes the smoke");
+    }
+
+    #[test]
+    fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
+        let mut s = crate::session::Session::new();
+        s.focus.lock().unwrap().focused = Some("test".into());
+        let mut live = smoke_at(Instant::now());
+        // Before scene 2 nothing latches.
+        assert_eq!(
+            live_smoke_tick(&mut live, &mut s, &[st("test", true, 1)], 0),
+            None
+        );
+        assert!(!live.saw_scene2);
+        // Scene 2 on the focused slot latches exactly once (the pure
+        // trigger), and a late deadline names the missing write.
+        let scene2 = [st("test", true, 2)];
+        assert_eq!(live_smoke_tick(&mut live, &mut s, &scene2, 0), None);
+        assert!(live.saw_scene2);
+        live.started = Instant::now() - SMOKE_DEADLINE;
+        let err = live_smoke_tick(&mut live, &mut s, &scene2, 0).expect("deadline");
+        assert!(err.contains("never written within 300s"), "err: {err}");
+    }
+
+    #[test]
+    fn live_smoke_tick_deadline_reports_scene2_never_reached() {
+        let mut s = crate::session::Session::new();
+        s.focus.lock().unwrap().focused = Some("test".into());
+        let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
+        let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0)
+            .expect("deadline");
+        assert!(err.contains("never reached scene 2 within 300s"), "err: {err}");
+        assert!(live.failed.is_some(), "the deadline latches the failure");
     }
 
     fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
