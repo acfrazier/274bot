@@ -545,6 +545,12 @@ impl Session {
                         "audio: speaker closed".into(),
                     );
                 }
+                // Reconcile the client's actual `lowmem` mode to the
+                // Music/SFX gate (toggle on = highmem): a lowmem spawn
+                // skipped the sound load, so flipping the toggle
+                // mid-session must re-run it live, not on the next
+                // respawn. `set_lowmem` is idempotent — per-frame is cheap.
+                c.set_lowmem(!audio.music_on(name));
                 if c.ingame
                     && c.scene_state == 2
                     && seed_on_first_world(c.last_login_reconnect)
