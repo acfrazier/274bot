@@ -19,7 +19,7 @@ use crate::chrome::{
     button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW,
 };
 use crate::focus::{draw_for_slot, should_capture, should_draw};
-use crate::game_view::{frame_pixels, GameView};
+use crate::game_view::GameView;
 use crate::grid::grid_cells;
 use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
@@ -185,6 +185,124 @@ struct LiveSmoke {
     saw_scene2: bool,
     /// The scene2 PNG landed (`pump_shots` wrote it): the caller exits 0.
     passed: bool,
+}
+
+/// Deferred boot work for [`run_panel`]. The unlock / live-harness flows
+/// spawn slot threads, and a slot renderer is built lazily at its first
+/// paint — running these before GPU init would let a slot construct its
+/// own wgpu device ahead of `on_gpu_init`'s `inject_device` (the
+/// shared-device seam's ordering invariant). The first `on_frame` is
+/// guaranteed to run after GPU init, so the boot runs at the top of the
+/// first frame.
+#[derive(Debug)]
+enum Boot {
+    /// `BOT_VAULT_PASS` interactive/headed flow. Failure is non-fatal: the
+    /// in-panel prompt covers typing.
+    Unlock { pass: String },
+    /// Live harness spawns. Failure is fatal (`FAIL:` + exit).
+    Live(LiveBoot),
+}
+
+/// Which live harness the boot starts.
+#[derive(Debug)]
+enum LiveBoot {
+    NullRaster,
+    Stress50,
+    Script { name: String },
+    /// `--smoke`: the `render_smoke` scenario with the relaxed seed gate,
+    /// the smoke deadline, and the shot sink armed.
+    Smoke,
+}
+
+impl LiveBoot {
+    /// Prepare the harness session and install the harness state. `Smoke`
+    /// and `Script` arm the whole-window shot sink too.
+    fn run(self, state: &mut PanelState) -> Result<(), String> {
+        match self {
+            LiveBoot::NullRaster => {
+                state.session.live_prepare_null_raster()?;
+                state.live = Some(LiveHarness::Null(LiveNull {
+                    started: Instant::now(),
+                    saw_scene2: false,
+                    passed: false,
+                }));
+            }
+            LiveBoot::Stress50 => {
+                state.session.live_prepare_stress50()?;
+                state.live = Some(LiveHarness::Stress(LiveStress {
+                    started: Instant::now(),
+                    last_announced: 0,
+                    passed: false,
+                }));
+            }
+            LiveBoot::Script { name } => {
+                let scenario_name = &name["script_".len()..];
+                let scenario = scenario::get(scenario_name)
+                    .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
+                state.session.live_prepare_script(scenario)?;
+                arm_scenario_shots(state);
+                state.live = Some(LiveHarness::Script(LiveScript {
+                    name,
+                    passed: false,
+                    failed: None,
+                    last_step: None,
+                }));
+            }
+            LiveBoot::Smoke => {
+                let scenario = scenario::get("render_smoke")
+                    .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
+                state.session.live_prepare_script(scenario)?;
+                if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
+                    runner.no_mainland_gate();
+                    runner.set_deadline(SMOKE_DEADLINE);
+                }
+                arm_scenario_shots(state);
+                state.live = Some(LiveHarness::Smoke(LiveSmoke {
+                    started: Instant::now(),
+                    last_step: None,
+                    failed: None,
+                    saw_scene2: false,
+                    passed: false,
+                }));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The deferred boot for a [`run_panel`] call, derived from the run mode
+/// and `BOT_VAULT_PASS` — pure, so the mapping is testable (the boot
+/// itself runs after GPU init; nothing here spawns or unlocks).
+fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
+    if mode.is_smoke() {
+        return Some(Boot::Live(LiveBoot::Smoke));
+    }
+    match mode.live_name() {
+        Some("null_raster") => Some(Boot::Live(LiveBoot::NullRaster)),
+        Some("stress50") => Some(Boot::Live(LiveBoot::Stress50)),
+        Some(name) if name.starts_with("script_") => {
+            Some(Boot::Live(LiveBoot::Script { name: name.to_string() }))
+        }
+        _ => vault_pass.map(|pass| Boot::Unlock { pass: pass.to_string() }),
+    }
+}
+
+/// Execute a deferred [`Boot`] (slot spawns) after GPU init. Returns the
+/// fatal `FAIL:` message for live-harness failures; the vault unlock
+/// failure is non-fatal (the in-panel prompt covers typing).
+fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
+    match boot {
+        Boot::Unlock { pass } => {
+            if !state.session.unlock(&pass) {
+                eprintln!(
+                    "panel: vault: {}",
+                    state.session.error.clone().unwrap_or_default()
+                );
+            }
+            Ok(())
+        }
+        Boot::Live(live) => live.run(state),
+    }
 }
 
 /// One rail/grid tile's GPU texture (uploaded when the slot's `FrameBuf`
@@ -723,19 +841,18 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let buf = state.session.focused_pixels();
         // One consumer per `FrameBuf`: `take` moves the stored frame out
         // (a `FrameOutput::Texture` hands its view off once, no Clone),
-        // and `frame_pixels` packs either variant — the `Texture` arm
-        // reads the GPU frame back through the client's device, the
-        // `PixMap` arm packs the CPU pixels. `take` returning `None` is
-        // "no new frame since the last upload", the same skip the old
-        // snapshot path gave.
+        // and `present` routes either variant — the `Texture` arm binds
+        // the client's frame view directly (the shared-device seam, no
+        // read-back), the `PixMap` arm uploads the CPU pixels. `take`
+        // returning `None` is "no new frame since the last upload", the
+        // same skip the old snapshot path gave.
         let name = state.session.focused_name().unwrap_or_default();
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
             if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
-                let pixels = frame_pixels(frame);
                 if let Some(view) = state.game_view.as_mut() {
-                    view.upload(gpu, &pixels);
+                    view.present(gpu, frame);
                 }
             }
             state.last_upload = Some((name, gen));
@@ -1751,16 +1868,16 @@ fn cell_body(
         }
     };
     if !game_pane_owns {
-        // `take` moves the stored frame out; `frame_pixels` packs the
-        // `PixMap` (CPU) or reads the wgpu frame back (`Texture`).
+        // `take` moves the stored frame out; `present` routes it: the
+        // `PixMap` (CPU) arm uploads into the tile's owned texture, the
+        // `Texture` (GPU) arm binds the client's frame view directly.
         if let Some(frame) = state
             .session
             .slots
             .get(name)
             .and_then(|s| s.pixels.take())
         {
-            let pixels = frame_pixels(frame);
-            tv.view.upload(gpu, &pixels);
+            tv.view.present(gpu, frame);
         }
     }
     ui.image(tv.view.tex_id, size);
@@ -1929,87 +2046,13 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
 
-    match mode.live_name() {
-        Some("null_raster") => {
-            if let Err(e) = state.session.live_prepare_null_raster() {
-                eprintln!("FAIL: {e}");
-                std::process::exit(1);
-            }
-            state.live = Some(LiveHarness::Null(LiveNull {
-                started: Instant::now(),
-                saw_scene2: false,
-                passed: false,
-            }));
-        }
-        Some("stress50") => {
-            if let Err(e) = state.session.live_prepare_stress50() {
-                eprintln!("FAIL: {e}");
-                std::process::exit(1);
-            }
-            state.live = Some(LiveHarness::Stress(LiveStress {
-                started: Instant::now(),
-                last_announced: 0,
-                passed: false,
-            }));
-        }
-        Some(name) if name.starts_with("script_") => {
-            let scenario_name = &name["script_".len()..];
-            let Some(scenario) = scenario::get(scenario_name) else {
-                eprintln!("FAIL: unknown scenario {scenario_name}");
-                std::process::exit(1);
-            };
-            if let Err(e) = state.session.live_prepare_script(scenario) {
-                eprintln!("FAIL: {e}");
-                std::process::exit(1);
-            }
-            arm_scenario_shots(&mut state);
-            state.live = Some(LiveHarness::Script(LiveScript {
-                name: name.to_string(),
-                passed: false,
-                failed: None,
-                last_step: None,
-            }));
-        }
-        _ => {
-            if mode.is_smoke() {
-                // The smoke uses the `render_smoke` scenario (temp
-                // `test`/`test` vault) so the sidecar snapshot is built
-                // from the slot's real `Client`, exactly like any
-                // scenario. The seed gate is relaxed to `ingame &&
-                // scene_state == 2` so the shot fires the tick the
-                // focused slot first reaches scene 2.
-                let Some(scenario) = scenario::get("render_smoke") else {
-                    eprintln!("FAIL: unknown scenario render_smoke");
-                    std::process::exit(1);
-                };
-                if let Err(e) = state.session.live_prepare_script(scenario) {
-                    eprintln!("FAIL: {e}");
-                    std::process::exit(1);
-                }
-                if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
-                    runner.no_mainland_gate();
-                    runner.set_deadline(SMOKE_DEADLINE);
-                }
-                arm_scenario_shots(&mut state);
-                state.live = Some(LiveHarness::Smoke(LiveSmoke {
-                    started: Instant::now(),
-                    last_step: None,
-                    failed: None,
-                    saw_scene2: false,
-                    passed: false,
-                }));
-            } else if let Ok(pass) = std::env::var("BOT_VAULT_PASS") {
-                // Interactive/headless env flow: unlock before the window so slots
-                // spawn before the first frame. The in-panel prompt covers typing.
-                if !state.session.unlock(&pass) {
-                    eprintln!(
-                        "panel: vault: {}",
-                        state.session.error.clone().unwrap_or_default()
-                    );
-                }
-            }
-        }
-    }
+    // Deferred boot: the unlock / live-harness flows spawn slot threads,
+    // and a slot renderer is built lazily at its first paint — spawning
+    // before GPU init would let a slot construct its own wgpu device
+    // ahead of `on_gpu_init`'s `inject_device`. The boot runs at the top
+    // of the first `on_frame`, which the loop guarantees runs after GPU
+    // init, so every slot renderer is built on the injected device.
+    let mut boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
 
     let cfg = runner_config();
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
@@ -2017,7 +2060,11 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
     window::run(
         cfg,
         amber_style,
-        move |window, _, _, _| {
+        move |window, device, queue, _| {
+            // The shared-device seam: seed the client's process-wide GPU
+            // context with the panel's device before any slot renderer can
+            // construct (slots spawn on the first frame, after this).
+            client::render::backend::inject_device(device.clone(), queue.clone());
             scale.store(
                 integer_ui_scale(window.scale_factor() as f32).to_bits(),
                 Ordering::Relaxed,
@@ -2026,6 +2073,15 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
         },
         Arc::clone(&state.shot_state),
         move |ui, gpu| {
+            // First frame: run the deferred boot (slot spawns) after GPU
+            // init — a slot renderer can now only ever be built on the
+            // injected device.
+            if let Some(boot) = boot.take() {
+                if let Err(e) = boot_execute(&mut state, boot) {
+                    eprintln!("FAIL: {e}");
+                    std::process::exit(1);
+                }
+            }
             if state.os_window.is_none() {
                 state.os_window = os_window.lock().unwrap().clone();
             }
@@ -2137,14 +2193,47 @@ mod tests {
     use dear_imgui_rs::ConfigFlags;
 
     use super::{
-        apply_only_render_selected, apply_ui_scale, chooser_should_open_popup,
+        apply_only_render_selected, apply_ui_scale, boot_for, chooser_should_open_popup,
         edit_parameters_enabled, live_null_tick, live_script_tick, live_smoke_tick,
         live_stress_tick, manual_shot_label, parse_live_args, runner_config, smoke_should_fire,
-        LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W,
-        LIVE_USAGE, SMOKE_DEADLINE,
+        Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use crate::window::RedrawMode;
+
+    #[test]
+    fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
+        // Every slot-spawning path is deferred (returns a Boot to run on
+        // the first frame after GPU init), never executed eagerly: mapping
+        // a mode to a Boot must not unlock or call live_prepare — those
+        // run only in `boot_execute`, after `on_gpu_init` injected the
+        // panel's device.
+        assert!(matches!(
+            boot_for(&RunMode::Live("null_raster".into()), None),
+            Some(Boot::Live(LiveBoot::NullRaster))
+        ));
+        assert!(matches!(
+            boot_for(&RunMode::Live("stress50".into()), None),
+            Some(Boot::Live(LiveBoot::Stress50))
+        ));
+        match boot_for(&RunMode::Live("script_walk".into()), Some("pass")) {
+            Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_walk"),
+            other => panic!("script_<name> must map to a deferred Script boot, got {other:?}"),
+        }
+        match boot_for(&RunMode::Interactive, Some("hunter2")) {
+            Some(Boot::Unlock { pass }) => assert_eq!(pass, "hunter2"),
+            other => panic!("BOT_VAULT_PASS must map to a deferred Unlock boot, got {other:?}"),
+        }
+        assert!(matches!(
+            boot_for(&RunMode::Smoke, None),
+            Some(Boot::Live(LiveBoot::Smoke))
+        ));
+        assert!(
+            matches!(boot_for(&RunMode::Interactive, None), None),
+            "no boot with no live arg and no pass"
+        );
+    }
 
     #[test]
     fn chooser_should_open_popup_table() {
