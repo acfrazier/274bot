@@ -1,6 +1,8 @@
 //! Sidecar rail chrome: window geometry, the tile size, and the traffic
 //! light that colours each member's cap dot.
 
+use dear_imgui_rs::{DrawSegmentCount, Ui};
+
 /// Width of the MultiBox sidecar rail (rs2b0t's 264px strip).
 pub const RAIL_W: f32 = 264.0;
 /// Cap-body tile draw size inside the rail (rs2b0t ~236×155).
@@ -20,10 +22,50 @@ pub fn os_window_size(rail_open: bool) -> (f32, f32) {
     )
 }
 
-/// Status dot glyph (U+2059), colored by [`Light::rgb`].
-pub const STATUS_GLYPH: &str = "\u{2059}";
-/// Remove glyph (U+2717), drawn in `theme::ERROR` red.
-pub const REMOVE_GLYPH: &str = "\u{2717}";
+/// The status dot's box width (the space the old `U+2059` glyph
+/// occupied); the quincunx is drawn inside it via the draw list.
+pub const DOT_W: f32 = 16.0;
+
+/// Remove glyph (U+00D7, the multiplication sign, in Latin-1), drawn in
+/// `theme::ERROR` red. U+2717 is not in dear-imgui's default Latin-1
+/// font and rendered as `?`.
+pub const REMOVE_GLYPH: &str = "\u{00D7}";
+
+/// The five quincunx centers for a status dot centered at `center` with
+/// `spread`: the center plus four corners. Pure geometry so the draw
+/// path is unit-testable.
+pub fn quincunx_centers(center: [f32; 2], spread: f32) -> [[f32; 2]; 5] {
+    [
+        center,
+        [center[0] - spread, center[1] - spread],
+        [center[0] + spread, center[1] - spread],
+        [center[0] - spread, center[1] + spread],
+        [center[0] + spread, center[1] + spread],
+    ]
+}
+
+/// Draw the five-dot status quincunx at the current cursor in `color`
+/// and reserve the box the text glyph occupied ([`DOT_W`] wide, one text
+/// line tall), then `same_line` back onto it — the exact
+/// `text + same_line` flow the old `U+2059` glyph used. Replaces the
+/// glyph, which dear-imgui's default Latin-1 font cannot render, with
+/// five filled circles in the same box.
+pub fn status_quincunx(ui: &Ui, color: [f32; 4]) {
+    let pos = ui.cursor_pos();
+    let center = [pos[0] + DOT_W * 0.5, pos[1] + ui.text_line_height() * 0.5];
+    const RADIUS: f32 = 2.0;
+    const SPREAD: f32 = 3.0;
+    let draw_list = ui.get_window_draw_list();
+    for c in quincunx_centers(center, SPREAD) {
+        draw_list
+            .add_circle(c, RADIUS, color)
+            .filled(true)
+            .num_segments(DrawSegmentCount::new(8).expect("8 segments in range"))
+            .build();
+    }
+    ui.dummy([DOT_W, ui.text_line_height()]);
+    ui.same_line();
+}
 
 /// Cap dot state: error red wins, then not-ingame grey (logged out),
 /// then running green, else idle yellow. A FIFO-queued login slot is not
@@ -85,8 +127,8 @@ pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_title, os_window_size, traffic_light, Light, REMOVE_GLYPH, STATUS_GLYPH, BASE_WINDOW_H,
-        BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+        cap_title, os_window_size, quincunx_centers, status_quincunx, traffic_light, Light,
+        REMOVE_GLYPH, BASE_WINDOW_H, BASE_WINDOW_W, DOT_W, RAIL_W, TILE_H, TILE_W,
     };
 
     #[test]
@@ -150,8 +192,52 @@ mod tests {
     }
 
     #[test]
-    fn cap_glyphs_are_the_spec_code_points() {
-        assert_eq!(STATUS_GLYPH, "\u{2059}");
-        assert_eq!(REMOVE_GLYPH, "\u{2717}");
+    fn cap_glyphs_render_in_latin1() {
+        // The remove glyph is U+00D7 (multiplication sign), in dear-imgui's
+        // default Latin-1 font; U+2717 and U+2059 are not.
+        assert_eq!(REMOVE_GLYPH, "\u{00D7}");
+    }
+
+    #[test]
+    fn quincunx_centers_are_center_plus_four_corners() {
+        let centers = quincunx_centers([10.0, 20.0], 3.0);
+        assert_eq!(centers.len(), 5);
+        assert_eq!(centers[0], [10.0, 20.0]);
+        assert_eq!(centers[1], [7.0, 17.0]);
+        assert_eq!(centers[2], [13.0, 17.0]);
+        assert_eq!(centers[3], [7.0, 23.0]);
+        assert_eq!(centers[4], [13.0, 23.0]);
+    }
+
+    #[test]
+    fn status_quincunx_draws_and_advances_the_cursor_by_dot_w() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        // A bare context frame needs the font atlas path set up; the
+        // renderer-has-textures flag mirrors what the wgpu renderer sets.
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([200.0, 200.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let mut delta = [0.0f32; 2];
+        ui.window("##274bot-quincunx-test")
+            .size([100.0, 50.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                let before = ui.cursor_pos();
+                status_quincunx(&ui, [1.0, 0.0, 0.0, 1.0]);
+                let after = ui.cursor_pos();
+                delta = [after[0] - before[0], after[1] - before[1]];
+            });
+        // The dummy reserves DOT_W and same_line() brings the cursor back
+        // onto that line plus the default item spacing.
+        assert!(
+            (delta[0] - DOT_W - 8.0).abs() < 0.01,
+            "the quincunx reserves the DOT_W box (moved x by {delta:?})"
+        );
+        assert!(
+            delta[1].abs() < 0.01,
+            "same_line keeps the next item on the dot's row (y delta {delta:?})"
+        );
     }
 }
