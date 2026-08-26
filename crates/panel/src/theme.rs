@@ -24,6 +24,8 @@ pub const BORDER: [f32; 4] = [0.2, 0.2, 0.2, 1.0];
 pub const WARN: [f32; 4] = [224.0 / 255.0, 215.0 / 255.0, 91.0 / 255.0, 1.0];
 /// Error banner text (#ff7b7b).
 pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
+/// Running cap dot (#4cd964), the green cap state.
+pub const GREEN: [f32; 4] = [76.0 / 255.0, 217.0 / 255.0, 100.0 / 255.0, 1.0];
 /// Panel window title.
 pub const TITLE: &str = "274bot";
 /// Dim build line under the title (no fake git hash).

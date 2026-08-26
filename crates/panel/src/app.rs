@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use dear_app::{AddOns, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
-    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, TreeNodeFlags, Ui,
-    WindowClass, WindowFlags,
+    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, StyleColor,
+    TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
 
 use crate::chrome::{
@@ -24,7 +24,8 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{
-    os_window_size, traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+    cap_title, os_window_size, traffic_light, Light, REMOVE_GLYPH, STATUS_GLYPH, BASE_WINDOW_H,
+    BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
 };
 use host::debug_enabled;
 
@@ -610,7 +611,7 @@ fn game_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
 /// [`grid_cells`]. Clicking a cell selects the member; capture reaches
 /// only the focused cell; the queue card overlays the focused cell. While
 /// `only_render_selected` is on (the safe default) each cell collapses to
-/// a cap row (dot, name, ✕) with no preview body.
+/// a cap row (dot, name + brief, ✗) with no preview body.
 fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 2]) {
     let members = state.session.wall.members.clone();
     if members.is_empty() {
@@ -618,7 +619,7 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         return;
     }
     let cells = grid_cells(members.len(), avail);
-    // Drop textures for members that left the wall (grid ✕ / wall change).
+    // Drop textures for members that left the wall (grid ✗ / wall change).
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
@@ -635,10 +636,16 @@ fn grid_pane(ui: &Ui, addons: &mut AddOns, state: &mut PanelState, avail: [f32; 
         if only_selected {
             // Collapsed cell: cap row only, no preview body.
             let status = statuses.iter().find(|s| &s.username == name);
+            let running = status.is_some_and(|s| s.walk_x != -1)
+                || state
+                    .session
+                    .play
+                    .as_ref()
+                    .is_some_and(|p| p.script_state(name) == script::RunState::Running);
             let light = traffic_light(
                 status.is_some_and(|s| s.ingame),
                 status.is_some_and(|s| s.error.is_some()),
-                status.is_some_and(|s| s.queue_position >= 1),
+                running,
             );
             let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref(), cw);
             if cap_remove {
@@ -1465,28 +1472,34 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// One tile per wall member, in wall order: cap (traffic-light dot, name,
-/// ✕) then a `TILE_W`×`TILE_H` body. The body blits the slot's `FrameBuf`
-/// when `draw_for_slot` says this member paints, else the renderer-off
-/// placeholder. While `only_render_selected` is on (the safe default) the
-/// strip is collapsed: cap only, no body. Clicking the name or the body
-/// focuses the member; the ✕ (a sibling button, never part of the name
-/// click) removes it.
+/// One tile per wall member, in wall order: cap (traffic-light dot,
+/// name + brief, ✗) then a `TILE_W`×`TILE_H` body. The body blits the
+/// slot's `FrameBuf` when `draw_for_slot` says this member paints, else
+/// the renderer-off placeholder. While `only_render_selected` is on (the
+/// safe default) the strip is collapsed: cap only, no body. Clicking the
+/// name or the body focuses the member; the ✗ (a sibling button, never
+/// part of the name click) removes it.
 fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
     let statuses = state.session.statuses();
-    // Drop textures for members that left the rail (rail ✕ or wall change).
+    // Drop textures for members that left the rail (rail ✗ or wall change).
     state
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
+        let running = status.is_some_and(|s| s.walk_x != -1)
+            || state
+                .session
+                .play
+                .as_ref()
+                .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
             status.is_some_and(|s| s.ingame),
             status.is_some_and(|s| s.error.is_some()),
-            status.is_some_and(|s| s.queue_position >= 1),
+            running,
         );
         let (focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
@@ -1509,23 +1522,25 @@ fn rail_tiles(ui: &Ui, addons: &mut AddOns, state: &mut PanelState) {
     }
 }
 
-/// Cap row: the traffic-light dot, the member's name (click selects), and
-/// a small ✕ (rail remove: logout arm then `stop_slot`, never `vault`).
-/// `width` is the strip the row must fit (rail avail or grid cell width).
-/// Returns `(selected, removed)`.
+/// Cap row: the traffic-light dot, the member's name plus brief status
+/// (click selects), and a small red ✗ (rail remove: logout arm then
+/// `stop_slot`, never `vault`). `width` is the strip the row must fit
+/// (rail avail or grid cell width). Returns `(selected, removed)`.
 fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32) -> (bool, bool) {
     const X_W: f32 = 24.0;
     const DOT_W: f32 = 16.0;
-    ui.text_colored(light.rgb(), "●");
+    ui.text_colored(light.rgb(), STATUS_GLYPH);
     ui.same_line();
     let selected = focused == Some(name);
     let clicked = ui
-        .selectable_config(name)
+        .selectable_config(cap_title(name, light))
         .selected(selected)
         .size([(width - X_W - DOT_W).max(10.0), 0.0])
         .build();
     ui.same_line();
-    let removed = ui.button_with_size(format!("✕##{name}"), [X_W, 0.0]);
+    let red = ui.push_style_color(StyleColor::Text, ERROR);
+    let removed = ui.button_with_size(format!("{REMOVE_GLYPH}##{name}"), [X_W, 0.0]);
+    red.pop();
     (clicked, removed)
 }
 
