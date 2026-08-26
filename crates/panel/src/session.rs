@@ -1276,7 +1276,6 @@ impl Session {
     /// (`wall_open = false`) without logging anyone out.
     pub fn set_multibox(&mut self, on: bool) {
         self.multibox = on;
-        self.scatter.store(on, Ordering::Relaxed);
         if on {
             let running: Vec<String> = self
                 .play
@@ -1883,6 +1882,18 @@ mod tests {
         let f = s.focus.lock().unwrap();
         assert!(f.renderer, "rail is on; host paints 1 fps until capture");
         assert!(!f.capture);
+    }
+
+    #[test]
+    fn multibox_toggle_does_not_arm_scatter() {
+        let mut s = Session::new();
+        s.set_multibox(true);
+        assert!(
+            !s.scatter.load(Ordering::Relaxed),
+            "MultiBox must not arm the stress50 scatter-seed"
+        );
+        s.set_multibox(false);
+        assert!(!s.scatter.load(Ordering::Relaxed));
     }
 
     #[test]
