@@ -7,6 +7,7 @@ pub mod grid;
 pub mod pack;
 pub mod router;
 pub mod tile;
+pub mod transport;
 pub mod traveller;
 
 #[cfg(test)]
