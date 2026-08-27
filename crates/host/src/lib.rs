@@ -562,7 +562,7 @@ impl SlotLoop {
     }
 }
 
-fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &Client, dirty: DirtyFamilies) {
+fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &mut Client, dirty: DirtyFamilies) {
     if dirty.npc {
         snapshot.rebuild_family(client, Family::Npc);
     }
@@ -583,6 +583,10 @@ fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &Client, dirty: DirtyFamil
     }
     if dirty.scene {
         snapshot.rebuild_family(client, Family::Scene);
+        // Loc and ground-item changes bump the scene gen, so the same
+        // drain flag rebuilds their views.
+        snapshot.rebuild_family(client, Family::Loc);
+        snapshot.rebuild_family(client, Family::GroundItem);
     }
     if dirty.iface {
         snapshot.rebuild_family(client, Family::Iface);

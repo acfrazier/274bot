@@ -149,7 +149,7 @@ mod tests {
         c
     }
 
-    fn snap(c: &Client) -> GameSnapshot {
+    fn snap(c: &mut Client) -> GameSnapshot {
         let mut s = GameSnapshot::new();
         s.rebuild(c);
         s
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn item_resolves_by_name_through_the_obj_table() {
-        let s = snap(&seeded());
+        let s = snap(&mut seeded());
         assert!(Proof::Item {
             name: "Bones",
             count: 1
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn arrived_matches_the_player_world_tile() {
-        let s = snap(&seeded());
+        let s = snap(&mut seeded());
         assert!(Proof::Arrived {
             x: 3220,
             z: 3212,
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn stat_16_is_run_energy_others_never_hold() {
-        let s = snap(&seeded());
+        let s = snap(&mut seeded());
         assert!(Proof::Stat { id: 16, min: 42 }.check(&s, None));
         assert!(!Proof::Stat { id: 16, min: 43 }.check(&s, None));
         // stat(7) is not decoded on the body yet — honest false.
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn chat_matches_the_ring_head_line() {
-        let s = snap(&seeded());
+        let s = snap(&mut seeded());
         assert!(Proof::Chat {
             needle: "Welcome"
         }
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn npc_at_matches_type_and_tile() {
-        let s = snap(&seeded());
+        let s = snap(&mut seeded());
         assert!(Proof::NpcAt {
             r#type: 708,
             x: 100,

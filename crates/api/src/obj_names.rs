@@ -26,7 +26,7 @@ pub struct ItemDefView {
 }
 
 impl ItemDefView {
-    fn from_obj(o: &ObjType) -> Self {
+    pub(crate) fn from_obj(o: &ObjType) -> Self {
         ItemDefView {
             id: o.id,
             name: (!o.name.is_empty()).then(|| o.name.clone()),

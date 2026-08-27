@@ -2,9 +2,10 @@
 //! views rebuilt only when that family's gen moved; reads borrow the last
 //! rebuild instead of deep-copying the world on every read.
 
+use crate::obj_names::ItemDefView;
 use client::client::{Client, ClientGens, ClientNpc, Skill};
 use client::config::if_type::ComponentType;
-use client::config::Cache;
+use client::config::{Cache, ObjType};
 use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
 
@@ -26,6 +27,8 @@ pub struct LocalTile {
 }
 
 /// A family of world state, mirroring the `ClientGens` counters.
+/// `Loc`/`GroundItem` have no counters of their own: loc and ground-item
+/// changes bump `gens.scene`, so both track it with a dedicated slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Npc,
@@ -39,6 +42,8 @@ pub enum Family {
     Camera,
     MapFlag,
     World,
+    Loc,
+    GroundItem,
 }
 
 /// The kind of entity an actor is facing (`ActorTargetView::kind`).
@@ -192,6 +197,101 @@ pub struct StatView {
     pub used: bool,
 }
 
+/// The sim-world layer a placed loc occupies (the m8aq `LocSnapshot.layer`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum LocLayer {
+    Wall,
+    WallDecoration,
+    Ground,
+    GroundDecoration,
+}
+
+/// One placed loc: the packed typecodes plus the decoded shape/angle and
+/// the resolved definition (name/actions/footprint/block flags) from the
+/// loc table.
+#[derive(Debug, Clone, Serialize)]
+pub struct LocView {
+    pub typecode: i32,
+    pub info: i32,
+    pub id: i32,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub actions: Vec<Option<String>>,
+    pub tile: WorldTile,
+    pub distance: i32,
+    pub layer: LocLayer,
+    pub shape: i32,
+    pub angle: i32,
+    pub width: i32,
+    pub length: i32,
+    pub footprint_width: i32,
+    pub footprint_length: i32,
+    pub block_walk: bool,
+    pub block_range: bool,
+    pub active: bool,
+    pub animation: i32,
+    pub map_function: i32,
+    pub map_scene: i32,
+    pub force_approach: i32,
+}
+
+/// One object stack on the ground: the obj definition plus the stack count
+/// and the ground menu ops.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundItemView {
+    pub def: ItemDefView,
+    pub count: i32,
+    pub actions: Vec<Option<String>>,
+    pub tile: WorldTile,
+    pub distance: i32,
+}
+
+/// The built scene: the collision grid the nav/query surface reads, as a
+/// flat row-major `x * width + z` flag list.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct SceneView {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub collision_flags: Vec<i32>,
+}
+
+/// The client's world scalars (the m8aq `WorldStateSnapshot`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub struct WorldStateView {
+    pub map_base_x: i32,
+    pub map_base_z: i32,
+    pub level: i32,
+    pub members: bool,
+    pub multi_combat: bool,
+    pub player_count: i32,
+    pub npc_count: i32,
+    pub cycle: i32,
+}
+
+/// The camera state: the follow-camera eye plus the orbit target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub struct CameraView {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub pitch: i32,
+    pub yaw: i32,
+    pub orbit_pitch: i32,
+    pub orbit_yaw: i32,
+    pub cinematic: bool,
+}
+
+/// The minimap destination flag, in scene-local tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MapFlagView {
+    pub lx: i32,
+    pub lz: i32,
+}
+
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
 /// Serializes to the whole-window shot sidecar JSON (the terminal state).
@@ -221,6 +321,27 @@ pub struct GameSnapshot {
     chat: Option<String>,
     ingame: bool,
     scene_state: i32,
+    /// Placed locs from the last loc rebuild (sweeps the sim world's four
+    /// layers at `minusedlevel`).
+    loc: Vec<LocView>,
+    /// Ground-object stacks from the last ground-item rebuild.
+    ground_item: Vec<GroundItemView>,
+    /// The built scene's collision grid from the last scene rebuild.
+    scene: SceneView,
+    /// The client's world scalars from the last world rebuild.
+    world: WorldStateView,
+    /// The camera state from the last camera rebuild.
+    camera: CameraView,
+    /// The minimap flag from the last map-flag rebuild; `None` while no
+    /// flag is set.
+    map_flag: Option<MapFlagView>,
+    /// Scene gen the loc/ground-item views were rebuilt up to. Loc and
+    /// ground-item changes bump `gens.scene`, so both track it here
+    /// (separately from the scene family's own counter).
+    #[serde(skip)]
+    loc_gen: u64,
+    #[serde(skip)]
+    ground_item_gen: u64,
 }
 
 impl GameSnapshot {
@@ -236,8 +357,10 @@ impl GameSnapshot {
     /// Rebuild `family` from `client` iff its gen moved since the last
     /// rebuild of that family. Returns true iff the gen moved. The npc/
     /// player/stat families rebuild their view caches; the rest track
-    /// their counter so a later view can detect movement.
-    pub fn rebuild_family(&mut self, client: &Client, family: Family) -> bool {
+    /// their counter so a later view can detect movement. `client` is
+    /// mutable because the ground-item lists are iterated in place (the
+    /// client's own `LinkList` cursor pattern).
+    pub fn rebuild_family(&mut self, client: &mut Client, family: Family) -> bool {
         match family {
             Family::Npc => self.rebuild_npcs(client),
             Family::Player => self.rebuild_player(client),
@@ -246,16 +369,18 @@ impl GameSnapshot {
             Family::Stat => self.rebuild_stat(client),
             Family::Chat => self.rebuild_chat(client),
             Family::Scene => self.rebuild_scene(client),
+            Family::Loc => self.rebuild_loc(client),
+            Family::GroundItem => self.rebuild_ground_items(client),
             Family::Iface => track(client.gens.iface, &mut self.gens.iface),
-            Family::Camera => track(client.gens.camera, &mut self.gens.camera),
-            Family::MapFlag => track(client.gens.map_flag, &mut self.gens.map_flag),
-            Family::World => track(client.gens.world, &mut self.gens.world),
+            Family::Camera => self.rebuild_camera(client),
+            Family::MapFlag => self.rebuild_map_flag(client),
+            Family::World => self.rebuild_world(client),
         }
     }
 
     /// Rebuild every family whose gen moved (the harness "one snapshot
     /// per tick" read). Returns true iff any family gen moved.
-    pub fn rebuild(&mut self, client: &Client) -> bool {
+    pub fn rebuild(&mut self, client: &mut Client) -> bool {
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
         dirty |= self.rebuild_family(client, Family::Player);
@@ -264,6 +389,8 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Stat);
         dirty |= self.rebuild_family(client, Family::Chat);
         dirty |= self.rebuild_family(client, Family::Scene);
+        dirty |= self.rebuild_family(client, Family::Loc);
+        dirty |= self.rebuild_family(client, Family::GroundItem);
         dirty |= self.rebuild_family(client, Family::Iface);
         dirty |= self.rebuild_family(client, Family::Camera);
         dirty |= self.rebuild_family(client, Family::MapFlag);
@@ -340,7 +467,40 @@ impl GameSnapshot {
         self.scene_state
     }
 
-    fn rebuild_stat(&mut self, client: &Client) -> bool {
+    /// Placed locs from the last loc rebuild, in scene sweep order (per
+    /// tile: wall, ground, ground decoration, wall decoration).
+    pub fn locs(&self) -> &[LocView] {
+        &self.loc
+    }
+
+    /// Ground-object stacks from the last ground-item rebuild.
+    pub fn ground_items(&self) -> &[GroundItemView] {
+        &self.ground_item
+    }
+
+    /// The built scene (base, level, collision flags) from the last scene
+    /// rebuild; the default is "no scene available".
+    pub fn scene(&self) -> &SceneView {
+        &self.scene
+    }
+
+    /// The client's world scalars from the last world rebuild.
+    pub fn world(&self) -> &WorldStateView {
+        &self.world
+    }
+
+    /// The camera state from the last camera rebuild.
+    pub fn camera(&self) -> &CameraView {
+        &self.camera
+    }
+
+    /// The minimap flag from the last map-flag rebuild; `None` while no
+    /// flag is set.
+    pub fn map_flag(&self) -> Option<&MapFlagView> {
+        self.map_flag.as_ref()
+    }
+
+    fn rebuild_stat(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.stat, &mut self.gens.stat) {
             return false;
         }
@@ -362,7 +522,7 @@ impl GameSnapshot {
     /// tile (base + route head), the `LocalPlayerView`, and the remote
     /// `players` list. `REBUILD_NORMAL` bumps every gen, so a new world
     /// origin re-arms this too.
-    fn rebuild_player(&mut self, client: &Client) -> bool {
+    fn rebuild_player(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.player, &mut self.gens.player) {
             return false;
         }
@@ -423,7 +583,7 @@ impl GameSnapshot {
 
     /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts (the
     /// same view `host-play` hands a running script).
-    fn rebuild_inv(&mut self, client: &Client) -> bool {
+    fn rebuild_inv(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.inv, &mut self.gens.inv) {
             return false;
         }
@@ -443,7 +603,7 @@ impl GameSnapshot {
 
     /// Chat-family rebuild: the ring head (`chat_text[0]`) is the most
     /// recent message.
-    fn rebuild_chat(&mut self, client: &Client) -> bool {
+    fn rebuild_chat(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.chat, &mut self.gens.chat) {
             return false;
         }
@@ -452,19 +612,212 @@ impl GameSnapshot {
         true
     }
 
-    /// Scene-family rebuild: `ingame` + `scene_state`. These flip locally
-    /// (`check_scene` sets `scene_state = 2` on the SIM loop with no gen
-    /// bump), so always copy the cheap fields — a gen-gated copy would
-    /// pin the snapshot in a stale "loading" state. The return value
-    /// still tracks the gen for the harness's dirty/tick semantics.
-    fn rebuild_scene(&mut self, client: &Client) -> bool {
+    /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
+    /// these flip locally (`check_scene` sets `scene_state = 2` on the SIM
+    /// loop with no gen bump), so a gen-gated copy would pin the snapshot
+    /// in a stale "loading" state. The `SceneView` (build base, level and
+    /// the collision grid) only changes on a world build, so it rebuilds
+    /// when the scene gen moves. The return value still tracks the gen for
+    /// the harness's dirty/tick semantics.
+    fn rebuild_scene(&mut self, client: &mut Client) -> bool {
         let moved = track(client.gens.scene, &mut self.gens.scene);
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
+        if moved {
+            let level = client.minusedlevel;
+            match client.collision.get(level as usize) {
+                Some(cmap) => {
+                    self.scene = SceneView {
+                        available: true,
+                        base_x: client.map_build_base_x,
+                        base_z: client.map_build_base_z,
+                        level,
+                        width: cmap.size_x,
+                        height: cmap.size_z,
+                        collision_flags: cmap.flags.iter().flatten().copied().collect(),
+                    };
+                }
+                None => {
+                    self.scene = SceneView {
+                        available: false,
+                        base_x: client.map_build_base_x,
+                        base_z: client.map_build_base_z,
+                        level,
+                        ..SceneView::default()
+                    };
+                }
+            }
+        }
         moved
     }
 
-    fn rebuild_npcs(&mut self, client: &Client) -> bool {
+    /// Loc-family rebuild: sweep the sim world's four layers at
+    /// `minusedlevel` (locs sit on scene tiles, so the world tile is
+    /// `base + scene` with no pixel conversion). Gated on the scene gen —
+    /// loc changes arrive on scene-family packets.
+    fn rebuild_loc(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.scene, &mut self.loc_gen) {
+            return false;
+        }
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        let level = client.minusedlevel;
+        let local_tile = local_world_tile(client);
+        self.loc.clear();
+        for sx in 0..104 {
+            for sz in 0..104 {
+                // Per-tile layer order matches the m8aq sweep: wall,
+                // ground, ground decoration, wall decoration.
+                if let Some(wall) = client.world.get_wall(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        wall.typecode,
+                        wall.typecode2 & 0xff,
+                        LocLayer::Wall,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+                if let Some(sprite) = client.world.get_scene(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        sprite.typecode,
+                        sprite.typecode2 & 0xff,
+                        LocLayer::Ground,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+                if let Some(gd) = client.world.get_gd(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        gd.typecode,
+                        gd.typecode2 & 0xff,
+                        LocLayer::GroundDecoration,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+                if let Some(decor) = client.world.get_decor(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        decor.typecode,
+                        decor.typecode2 & 0xff,
+                        LocLayer::WallDecoration,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+            }
+        }
+        true
+    }
+
+    /// Ground-item rebuild: iterate each `ground_obj` list at
+    /// `minusedlevel` into a `GroundItemView` (obj definition, stack
+    /// count, ground ops). The client's `LinkList` cursor is mutated in
+    /// place (the same `head`/`next` pattern the client's own handlers
+    /// use). Gated on the scene gen — object packets bump it.
+    fn rebuild_ground_items(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.scene, &mut self.ground_item_gen) {
+            return false;
+        }
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        let level = client.minusedlevel;
+        let local_tile = local_world_tile(client);
+        self.ground_item.clear();
+        for x in 0..104 {
+            for z in 0..104 {
+                let cell = &mut client.ground_obj[level as usize][x as usize][z as usize];
+                let Some(list) = cell.as_mut() else {
+                    continue;
+                };
+                let tile = WorldTile {
+                    x: base.0 + x,
+                    z: base.1 + z,
+                    level,
+                };
+                let distance = local_tile
+                    .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
+                    .unwrap_or(0);
+                let mut node = list.head();
+                while let Some(obj) = node {
+                    self.ground_item.push(GroundItemView {
+                        def: item_def_view(&client.cache, obj.id),
+                        count: obj.count,
+                        actions: ground_ops(&client.cache, obj.id),
+                        tile,
+                        distance,
+                    });
+                    node = list.next();
+                }
+            }
+        }
+        true
+    }
+
+    /// World-state rebuild: the client's world scalars. Cheap reads copy
+    /// every rebuild (like the scene status), so counts stay fresh between
+    /// world-gen bumps; the return value tracks the gen for the harness.
+    fn rebuild_world(&mut self, client: &mut Client) -> bool {
+        let moved = track(client.gens.world, &mut self.gens.world);
+        self.world = WorldStateView {
+            map_base_x: client.map_build_base_x,
+            map_base_z: client.map_build_base_z,
+            level: client.minusedlevel,
+            members: client.members_account != 0,
+            multi_combat: client.in_multizone != 0,
+            player_count: client.player_count,
+            npc_count: client.npc_count,
+            cycle: client.loop_cycle,
+        };
+        moved
+    }
+
+    /// Camera rebuild: the follow-camera eye, the orbit target and the
+    /// cinematic flag. The follow camera eases every frame with no packet,
+    /// so the cheap fields copy every rebuild; the return value tracks the
+    /// gen.
+    fn rebuild_camera(&mut self, client: &mut Client) -> bool {
+        let moved = track(client.gens.camera, &mut self.gens.camera);
+        self.camera = CameraView {
+            x: client.cam_x,
+            y: client.cam_y,
+            z: client.cam_z,
+            pitch: client.cam_pitch,
+            yaw: client.cam_yaw,
+            orbit_pitch: client.orbit_camera_pitch,
+            orbit_yaw: client.orbit_camera_yaw,
+            cinematic: client.cinema_cam,
+        };
+        moved
+    }
+
+    /// Map-flag rebuild: the minimap destination flag, `Some` only while
+    /// it is set. The flag flips on minimap clicks with no packet, so the
+    /// view copies every rebuild; the return value tracks the gen.
+    fn rebuild_map_flag(&mut self, client: &mut Client) -> bool {
+        let moved = track(client.gens.map_flag, &mut self.gens.map_flag);
+        self.map_flag = (client.minimap_flag_x != 0)
+            .then_some(MapFlagView {
+                lx: client.minimap_flag_x,
+                lz: client.minimap_flag_z,
+            });
+        moved
+    }
+
+    fn rebuild_npcs(&mut self, client: &mut Client) -> bool {
         if client.gens.npc == self.gens.npc {
             return false;
         }
@@ -560,6 +913,103 @@ fn actor_view(
         running: entity.primary_anim == entity.runanim,
         in_combat: entity.combat_cycle > 0,
     }
+}
+
+/// One `LocView` from a placed layer: decode the loc id and the
+/// shape/angle info byte, then resolve the definition from the loc table.
+/// An unloaded loc id reads the `LocType` defaults (the m8aq `LocType.list`
+/// dummy type).
+#[allow(clippy::too_many_arguments)]
+fn loc_view(
+    typecode: i32,
+    info: i32,
+    layer: LocLayer,
+    base: (i32, i32),
+    level: i32,
+    sx: i32,
+    sz: i32,
+    local_tile: Option<(i32, i32)>,
+    cache: &Cache,
+) -> LocView {
+    let id = (typecode >> 14) & 0x7fff;
+    let shape = info & 0x1f;
+    let angle = (info >> 6) & 0x3;
+    let x = base.0 + sx;
+    let z = base.1 + sz;
+    let (name, description, actions, width, length, block_walk, block_range, active, animation, map_function, map_scene, force_approach) =
+        match cache.locs.get(id as usize) {
+            Some(loc) => (
+                (!loc.name.is_empty()).then(|| loc.name.clone()),
+                (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+                loc.op.clone(),
+                loc.width,
+                loc.length,
+                loc.blockwalk,
+                loc.blockrange,
+                loc.active,
+                loc.anim,
+                loc.mapfunction,
+                loc.mapscene,
+                loc.forceapproach,
+            ),
+            None => (None, None, Vec::new(), 1, 1, true, true, false, -1, -1, -1, 0),
+        };
+    LocView {
+        typecode,
+        info,
+        id,
+        name,
+        description,
+        actions,
+        tile: WorldTile { x, z, level },
+        distance: local_tile
+            .map(|(lx, lz)| chebyshev(x, z, lx, lz))
+            .unwrap_or(0),
+        layer,
+        shape,
+        angle,
+        width,
+        length,
+        // A 90°/270° rotation swaps the footprint axes.
+        footprint_width: if angle == 1 || angle == 3 { length } else { width },
+        footprint_length: if angle == 1 || angle == 3 { width } else { length },
+        block_walk,
+        block_range,
+        active,
+        animation,
+        map_function,
+        map_scene,
+        force_approach,
+    }
+}
+
+/// The obj's definition view via Task 1's mapping. An unloaded obj id
+/// reads the `ObjType` defaults with the requested id (the m8aq
+/// `ObjType.list` dummy type).
+fn item_def_view(cache: &Cache, id: i32) -> ItemDefView {
+    let mut def = match cache.objs.get(id as usize) {
+        Some(o) => ItemDefView::from_obj(o),
+        None => ItemDefView::from_obj(&ObjType::default()),
+    };
+    def.id = id;
+    def
+}
+
+/// The ground menu ops for an obj: the type's `op` table padded to five
+/// slots with a `Take` default filling an empty third (m8aq `groundOps`).
+fn ground_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
+    let mut ops = cache
+        .objs
+        .get(id as usize)
+        .map(|o| o.op.to_vec())
+        .unwrap_or_else(|| vec![None; 5]);
+    if ops.len() < 3 {
+        ops.resize(3, None);
+    }
+    if ops[2].is_none() {
+        ops[2] = Some("Take".into());
+    }
+    ops
 }
 
 fn track(world: u64, tracked: &mut u64) -> bool {

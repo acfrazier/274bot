@@ -153,9 +153,9 @@ mod tests {
 
     #[test]
     fn evidence_json_names_predicate_tile_inv_and_stat() {
-        let c = seeded();
+        let mut c = seeded();
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&c);
+        snap.rebuild(&mut c);
         let started = Instant::now() - Duration::from_millis(12);
         let ev = Evidence::terminal(
             "walk",
@@ -185,9 +185,9 @@ mod tests {
 
     #[test]
     fn fail_evidence_carries_the_message() {
-        let c = seeded();
+        let mut c = seeded();
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&c);
+        snap.rebuild(&mut c);
         let ev = Evidence::terminal(
             "walk",
             "FAIL",
