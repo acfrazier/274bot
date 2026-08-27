@@ -148,7 +148,7 @@ fn plant_npc(c: &mut Client, health: i32) {
 }
 
 /// Evaluate one evidence predicate against `(now, before)` contexts.
-fn evidence_holds(evidence: Evidence, now: &GameSnapshot, before: &GameSnapshot) -> bool {
+fn evidence_holds(evidence: Evidence<'_>, now: &GameSnapshot, before: &GameSnapshot) -> bool {
     evidence(&ReadContext::new(now), &ReadContext::new(before))
 }
 
@@ -162,10 +162,9 @@ fn settle_poll_matches_arrived_then_expires() {
     bump_rebuild(&mut c, &mut now);
     let dest = WorldTile { x: 3220, z: 3212, level: 0 };
 
-    let arms: [(&str, Evidence); 1] = [("arrived", arrived(dest, 0))];
+    let arms: [(&str, Evidence<'_>); 1] = [("arrived", arrived(dest, 0))];
     let options = SettleOptions {
         arms: &arms,
-        since: None,
         budget_ticks: 3,
         budget_ms: None,
     };
@@ -188,10 +187,9 @@ fn settle_poll_matches_arrived_then_expires() {
     }
 
     // The same arm with a lapsed budget expires instead.
-    let arms: [(&str, Evidence); 1] = [("arrived", arrived(dest, 0))];
+    let arms: [(&str, Evidence<'_>); 1] = [("arrived", arrived(dest, 0))];
     let options = SettleOptions {
         arms: &arms,
-        since: None,
         budget_ticks: 0,
         budget_ms: None,
     };
@@ -210,13 +208,12 @@ fn settle_poll_expires_on_disconnect_or_not_ingame() {
     c.stream = None;
     c.ingame = false;
     let now = snap_at(&mut c, 10, 10);
-    let arms: [(&str, Evidence); 1] = [(
+    let arms: [(&str, Evidence<'_>); 1] = [(
         "arrived",
         arrived(WorldTile { x: 3220, z: 3212, level: 0 }, 0),
     )];
     let options = SettleOptions {
         arms: &arms,
-        since: None,
         budget_ticks: 5,
         budget_ms: None,
     };
@@ -233,13 +230,12 @@ fn settle_poll_expires_on_the_ms_budget() {
     let mut c = scene_client();
     let before = snap_at(&mut c, 10, 10);
     let now = snap_at(&mut c, 10, 10);
-    let arms: [(&str, Evidence); 1] = [(
+    let arms: [(&str, Evidence<'_>); 1] = [(
         "arrived",
         arrived(WorldTile { x: 3220, z: 3212, level: 0 }, 0),
     )];
     let options = SettleOptions {
         arms: &arms,
-        since: None,
         budget_ticks: u32::MAX,
         budget_ms: Some(0),
     };
@@ -247,6 +243,49 @@ fn settle_poll_expires_on_the_ms_budget() {
     match settle.poll(ReadContext::new(&now)) {
         Some(Outcome::Expired { .. }) => {}
         _ => panic!("expected Expired on the lapsed ms budget"),
+    }
+}
+
+/// Two `arrived` arms with different destinations in one settle stay
+/// isolated: each matches only its own tile (the closure captures its own
+/// arguments — no shared predicate state).
+#[test]
+fn settle_poll_keeps_two_arrived_arms_isolated() {
+    let mut c = scene_client();
+    let before = snap_at(&mut c, 10, 10);
+    let at_a = snap_at(&mut c, 20, 12);
+    let at_b = snap_at(&mut c, 18, 40);
+    let dest_a = WorldTile { x: 3220, z: 3212, level: 0 };
+    let dest_b = WorldTile { x: 3218, z: 3240, level: 0 };
+
+    let arms: [(&str, Evidence<'_>); 2] = [
+        ("a", arrived(dest_a, 0)),
+        ("b", arrived(dest_b, 0)),
+    ];
+    let options = SettleOptions {
+        arms: &arms,
+        budget_ticks: 5,
+        budget_ms: None,
+    };
+    let mut settle = Settle::new(options, ReadContext::new(&before));
+    match settle.poll(ReadContext::new(&at_a)) {
+        Some(Outcome::Matched { arm, .. }) => assert_eq!(arm, "a", "arm a fires only at dest a"),
+        _ => panic!("expected Matched arm a"),
+    }
+
+    let arms: [(&str, Evidence<'_>); 2] = [
+        ("a", arrived(dest_a, 0)),
+        ("b", arrived(dest_b, 0)),
+    ];
+    let options = SettleOptions {
+        arms: &arms,
+        budget_ticks: 5,
+        budget_ms: None,
+    };
+    let mut settle = Settle::new(options, ReadContext::new(&before));
+    match settle.poll(ReadContext::new(&at_b)) {
+        Some(Outcome::Matched { arm, .. }) => assert_eq!(arm, "b", "arm b fires only at dest b"),
+        _ => panic!("expected Matched arm b"),
     }
 }
 

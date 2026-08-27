@@ -5,23 +5,17 @@
 //! watching. The host drives the polls per tick; nothing here blocks.
 //! `Refused` is produced by `Interactions`, never by `poll`.
 
-use std::cell::{Cell, RefCell};
-
 use crate::interact::SendReason;
 use crate::query::{ChatQueryExt, EntityQueryExt, ItemQueryExt, Query, StatQueryExt};
 use crate::snapshot::{
-    ActorKind, ActorTargetView, ItemContainer, ItemView, LocLayer, LocView, ReadContext,
-    WorldTile,
+    ActorKind, ActorTargetView, ItemContainer, ItemView, LocView, ReadContext, WorldTile,
 };
 
 /// Evidence an arm fired: `(now, before)` snapshot reads, `true` when the
-/// arm's condition holds on the current watch step. The predicates are
-/// plain `fn` pointers (Copy, slice-storable), so each parameterized
-/// predicate's arguments live in the thread-local slot its constructor
-/// registers; a settle's arms are built immediately before `Settle::new`
-/// and one settle is watched at a time per thread, so the slots stay
-/// stable for the whole watch.
-pub type Evidence = fn(&ReadContext<'_>, &ReadContext<'_>) -> bool;
+/// arm's condition holds on the current watch step. Each predicate is a
+/// closure closing over its parameters (the m8aq `Evidence`); the
+/// unparameterized predicates are `'static` closures.
+pub type Evidence<'a> = Box<dyn Fn(&ReadContext<'_>, &ReadContext<'_>) -> bool + 'a>;
 
 /// The outcome of a settle watch. `Refused` is produced by `Interactions`
 /// (a refused send never starts a watch); `poll` reports `Matched` when an
@@ -45,11 +39,10 @@ pub enum Outcome<'a> {
 }
 
 /// One settle watch: the arms to check per step plus the tick/ms budget
-/// (the m8aq `SettleOptions`). `since` is the caller's pre-watch read;
-/// the `before` context passed to [`Settle::new`] is resolved from it.
+/// (the m8aq `SettleOptions`). The `before` context passed to
+/// [`Settle::new`] is the caller's pre-watch read.
 pub struct SettleOptions<'a> {
-    pub arms: &'a [(&'a str, Evidence)],
-    pub since: Option<ReadContext<'a>>,
+    pub arms: &'a [(&'a str, Evidence<'a>)],
     pub budget_ticks: u32,
     pub budget_ms: Option<u64>,
 }
@@ -130,69 +123,34 @@ fn now_ms() -> Option<u64> {
         .map(|d| d.as_millis() as u64)
 }
 
-// --- evidence parameter slots ---------------------------------------------
-//
-// Each parameterized predicate registers its arguments in one thread-local
-// slot and returns a fixed `fn` implementation reading that slot (see the
-// `Evidence` doc note on why the arguments cannot ride inside the fn
-// pointer).
-
-const ORIGIN_TILE: WorldTile = WorldTile {
-    x: 0,
-    z: 0,
-    level: 0,
-};
-
-thread_local! {
-    static ARRIVED: Cell<(WorldTile, i32)> = const { Cell::new((ORIGIN_TILE, 0)) };
-    static ITEM_DELTA: Cell<(i32, i32, ItemContainer)> =
-        const { Cell::new((0, 0, ItemContainer::Inventory)) };
-    static XP_GAINED: Cell<(i32, i32)> = const { Cell::new((0, 1)) };
-    static ENGAGED: Cell<ActorTargetView> =
-        const { Cell::new(ActorTargetView { kind: ActorKind::Npc, index: 0 }) };
-    static MODAL_OPENED: Cell<Option<i32>> = const { Cell::new(None) };
-    static MODAL_CLOSED: Cell<Option<i32>> = const { Cell::new(None) };
-    static OPTION_GONE: RefCell<(i32, LocLayer, WorldTile, String)> =
-        const { RefCell::new((0, LocLayer::Wall, ORIGIN_TILE, String::new())) };
-    static SAID: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
-
 // --- evidence predicates ---------------------------------------------------
 
 /// Arrived: the local player is within `radius` (Chebyshev) of `tile`.
-pub fn arrived(tile: WorldTile, radius: i32) -> Evidence {
-    ARRIVED.with(|slot| slot.set((tile, radius)));
-    arrived_impl
-}
-
-fn arrived_impl(now: &ReadContext<'_>, _before: &ReadContext<'_>) -> bool {
-    let (tile, radius) = ARRIVED.with(|slot| slot.get());
-    let Some(here) = now.local_player() else {
-        return false;
-    };
-    let here = here.player.actor.tile;
-    if here.level != tile.level {
-        return false;
-    }
-    (here.x - tile.x).abs().max((here.z - tile.z).abs()) <= radius
+pub fn arrived(tile: WorldTile, radius: i32) -> Evidence<'static> {
+    Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+        let Some(here) = now.local_player() else {
+            return false;
+        };
+        let here = here.player.actor.tile;
+        if here.level != tile.level {
+            return false;
+        }
+        (here.x - tile.x).abs().max((here.z - tile.z).abs()) <= radius
+    })
 }
 
 /// A container's `item_id` total moved by at least (positive `change`) or
 /// at most (negative `change`) the given amount. The `Widget` container
 /// falls back to inventory, the m8aq `containerQuery` default arm.
-pub fn item_delta(item_id: i32, change: i32, container: ItemContainer) -> Evidence {
-    ITEM_DELTA.with(|slot| slot.set((item_id, change, container)));
-    item_delta_impl
-}
-
-fn item_delta_impl(now: &ReadContext<'_>, before: &ReadContext<'_>) -> bool {
-    let (item_id, change, container) = ITEM_DELTA.with(|slot| slot.get());
-    let moved = item_total(now, container, item_id) - item_total(before, container, item_id);
-    if change >= 0 {
-        moved >= change
-    } else {
-        moved <= change
-    }
+pub fn item_delta(item_id: i32, change: i32, container: ItemContainer) -> Evidence<'static> {
+    Box::new(move |now: &ReadContext<'_>, before: &ReadContext<'_>| {
+        let moved = item_total(now, container, item_id) - item_total(before, container, item_id);
+        if change >= 0 {
+            moved >= change
+        } else {
+            moved <= change
+        }
+    })
 }
 
 fn item_total(ctx: &ReadContext<'_>, container: ItemContainer, item_id: i32) -> i32 {
@@ -213,42 +171,34 @@ fn container_items<'a>(ctx: &'a ReadContext<'a>, container: ItemContainer) -> &'
 }
 
 /// `skill_index` XP gained at least `at_least`.
-pub fn xp_gained(skill_index: i32, at_least: i32) -> Evidence {
-    XP_GAINED.with(|slot| slot.set((skill_index, at_least)));
-    xp_gained_impl
-}
-
-fn xp_gained_impl(now: &ReadContext<'_>, before: &ReadContext<'_>) -> bool {
-    let (skill_index, at_least) = XP_GAINED.with(|slot| slot.get());
-    let xp = |ctx: &ReadContext<'_>| {
-        Query::new(ctx.stats())
-            .with_index(&[skill_index])
-            .first()
-            .map(|s| s.xp)
-            .unwrap_or(0)
-    };
-    xp(now) - xp(before) >= at_least
+pub fn xp_gained(skill_index: i32, at_least: i32) -> Evidence<'static> {
+    Box::new(move |now: &ReadContext<'_>, before: &ReadContext<'_>| {
+        let xp = |ctx: &ReadContext<'_>| {
+            Query::new(ctx.stats())
+                .with_index(&[skill_index])
+                .first()
+                .map(|s| s.xp)
+                .unwrap_or(0)
+        };
+        xp(now) - xp(before) >= at_least
+    })
 }
 
 /// `target` is engaged: the local player faces it, or its health dropped
 /// since `before`.
-pub fn engaged(target: ActorTargetView) -> Evidence {
-    ENGAGED.with(|slot| slot.set(target));
-    engaged_impl
-}
-
-fn engaged_impl(now: &ReadContext<'_>, before: &ReadContext<'_>) -> bool {
-    let target = ENGAGED.with(|slot| slot.get());
-    if let Some(me) = now.local_player() {
-        if let Some(t) = me.player.actor.target {
-            if t.index == target.index && t.kind == target.kind {
-                return true;
+pub fn engaged(target: ActorTargetView) -> Evidence<'static> {
+    Box::new(move |now: &ReadContext<'_>, before: &ReadContext<'_>| {
+        if let Some(me) = now.local_player() {
+            if let Some(t) = me.player.actor.target {
+                if t.index == target.index && t.kind == target.kind {
+                    return true;
+                }
             }
         }
-    }
-    let then = target_health(before, target);
-    let live = target_health(now, target);
-    matches!((then, live), (Some(t), Some(l)) if l < t)
+        let then = target_health(before, target);
+        let live = target_health(now, target);
+        matches!((then, live), (Some(t), Some(l)) if l < t)
+    })
 }
 
 fn target_health(ctx: &ReadContext<'_>, target: ActorTargetView) -> Option<i32> {
@@ -266,138 +216,121 @@ fn target_health(ctx: &ReadContext<'_>, target: ActorTargetView) -> Option<i32> 
 
 /// Any modal root (`None`) or the named root (`Some(id)`) opened among the
 /// four roots.
-pub fn modal_opened(root: Option<i32>) -> Evidence {
-    MODAL_OPENED.with(|slot| slot.set(root));
-    modal_opened_impl
-}
-
-fn modal_opened_impl(now: &ReadContext<'_>, _before: &ReadContext<'_>) -> bool {
-    let root = MODAL_OPENED.with(|slot| slot.get());
-    let modals = now.modals();
-    match root {
-        None => {
-            modals.main != -1 || modals.side != -1 || modals.chat != -1 || modals.tutorial != -1
+pub fn modal_opened(root: Option<i32>) -> Evidence<'static> {
+    Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+        let modals = now.modals();
+        match root {
+            None => {
+                modals.main != -1 || modals.side != -1 || modals.chat != -1 || modals.tutorial != -1
+            }
+            Some(id) => {
+                modals.main == id
+                    || modals.side == id
+                    || modals.chat == id
+                    || modals.tutorial == id
+            }
         }
-        Some(id) => {
-            modals.main == id || modals.side == id || modals.chat == id || modals.tutorial == id
-        }
-    }
+    })
 }
 
 /// No modal root (`None`) or none of the four roots equal `id`.
-pub fn modal_closed(root: Option<i32>) -> Evidence {
-    MODAL_CLOSED.with(|slot| slot.set(root));
-    modal_closed_impl
-}
-
-fn modal_closed_impl(now: &ReadContext<'_>, _before: &ReadContext<'_>) -> bool {
-    let root = MODAL_CLOSED.with(|slot| slot.get());
-    let modals = now.modals();
-    match root {
-        None => {
-            modals.main == -1 && modals.side == -1 && modals.chat == -1 && modals.tutorial == -1
+pub fn modal_closed(root: Option<i32>) -> Evidence<'static> {
+    Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+        let modals = now.modals();
+        match root {
+            None => {
+                modals.main == -1
+                    && modals.side == -1
+                    && modals.chat == -1
+                    && modals.tutorial == -1
+            }
+            Some(id) => {
+                modals.main != id
+                    && modals.side != id
+                    && modals.chat != id
+                    && modals.tutorial != id
+            }
         }
-        Some(id) => {
-            modals.main != id && modals.side != id && modals.chat != id && modals.tutorial != id
-        }
-    }
+    })
 }
 
 /// `target`'s `action` no longer appears on the loc at its tile (or the
 /// loc is gone entirely).
-pub fn option_gone(target: &LocView, action: &str) -> Evidence {
-    OPTION_GONE.with(|slot| {
-        *slot.borrow_mut() = (
-            target.id,
-            target.layer,
-            target.tile,
-            action.trim().to_ascii_lowercase(),
-        );
-    });
-    option_gone_impl
-}
-
-fn option_gone_impl(now: &ReadContext<'_>, _before: &ReadContext<'_>) -> bool {
-    let (id, layer, tile, wanted) = OPTION_GONE.with(|slot| slot.borrow().clone());
-    let live = now.locs().iter().find(|loc| {
-        loc.id == id
-            && loc.layer == layer
-            && loc.tile.x == tile.x
-            && loc.tile.z == tile.z
-            && loc.tile.level == tile.level
-    });
-    match live {
-        None => true,
-        Some(loc) => !loc.actions.iter().any(|candidate| {
-            candidate
-                .as_deref()
-                .is_some_and(|c| c.trim().to_ascii_lowercase() == wanted)
-        }),
-    }
+pub fn option_gone(target: &LocView, action: &str) -> Evidence<'static> {
+    let id = target.id;
+    let layer = target.layer;
+    let tile = target.tile;
+    let wanted = action.trim().to_ascii_lowercase();
+    Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+        let live = now.locs().iter().find(|loc| {
+            loc.id == id
+                && loc.layer == layer
+                && loc.tile.x == tile.x
+                && loc.tile.z == tile.z
+                && loc.tile.level == tile.level
+        });
+        match live {
+            None => true,
+            Some(loc) => !loc.actions.iter().any(|candidate| {
+                candidate
+                    .as_deref()
+                    .is_some_and(|c| c.trim().to_ascii_lowercase() == wanted)
+            }),
+        }
+    })
 }
 
 /// A chat line newer than the `before` read contains one of `phrases`
 /// (trimmed, case-insensitive).
-pub fn said(phrases: &[&str]) -> Evidence {
-    SAID.with(|slot| {
-        *slot.borrow_mut() = phrases.iter().map(|p| (*p).to_string()).collect();
-    });
-    said_impl
-}
-
-fn said_impl(now: &ReadContext<'_>, before: &ReadContext<'_>) -> bool {
-    let phrases: Vec<String> = SAID.with(|slot| slot.borrow().clone());
-    let phrases: Vec<&str> = phrases.iter().map(|s| s.as_str()).collect();
-    let after = Query::new(before.chat()).latest_sequence();
-    Query::new(now.chat())
-        .since(after)
-        .text_contains(&phrases)
-        .exists()
+pub fn said(phrases: &[&str]) -> Evidence<'static> {
+    let phrases: Vec<String> = phrases.iter().map(|p| (*p).to_string()).collect();
+    Box::new(move |now: &ReadContext<'_>, before: &ReadContext<'_>| {
+        let phrases: Vec<&str> = phrases.iter().map(|s| s.as_str()).collect();
+        let after = Query::new(before.chat()).latest_sequence();
+        Query::new(now.chat())
+            .since(after)
+            .text_contains(&phrases)
+            .exists()
+    })
 }
 
 /// A walk was refused: a map flag was set at `before` and dropped at
 /// `now` while the player is not on the flag.
-pub fn server_refused() -> Evidence {
-    server_refused_impl
-}
-
-fn server_refused_impl(now: &ReadContext<'_>, before: &ReadContext<'_>) -> bool {
-    let Some(was) = before.map_flag() else {
-        return false;
-    };
-    if now.map_flag().is_some() {
-        return false;
-    }
-    let Some(here) = now.world_tile() else {
-        return true;
-    };
-    let scene = now.scene();
-    if !scene.available {
-        return true;
-    }
-    here.x - scene.base_x != was.lx || here.z - scene.base_z != was.lz
+pub fn server_refused() -> Evidence<'static> {
+    Box::new(|now: &ReadContext<'_>, before: &ReadContext<'_>| {
+        let Some(was) = before.map_flag() else {
+            return false;
+        };
+        if now.map_flag().is_some() {
+            return false;
+        }
+        let Some(here) = now.world_tile() else {
+            return true;
+        };
+        let scene = now.scene();
+        if !scene.available {
+            return true;
+        }
+        here.x - scene.base_x != was.lx || here.z - scene.base_z != was.lz
+    })
 }
 
 /// The scene is ready: `scene_state == 2` with a nonzero build base.
-pub fn scene_ready() -> Evidence {
-    scene_ready_impl
-}
-
-fn scene_ready_impl(now: &ReadContext<'_>, _before: &ReadContext<'_>) -> bool {
-    now.scene_state() == crate::interact::SCENE_READY && now.scene().base_x != 0
+pub fn scene_ready() -> Evidence<'static> {
+    Box::new(|now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+        now.scene_state() == crate::interact::SCENE_READY && now.scene().base_x != 0
+    })
 }
 
 /// Any inventory slot's id/count changed since `before`.
-pub fn inventory_changed() -> Evidence {
-    inventory_changed_impl
-}
-
-fn inventory_changed_impl(now: &ReadContext<'_>, before: &ReadContext<'_>) -> bool {
-    fn describe(ctx: &ReadContext<'_>) -> Vec<(i32, i32, i32)> {
-        ctx.inventory()
-            .iter()
-            .map(|i| (i.slot, i.def.id, i.count))
-            .collect()
-    }
-    describe(now) != describe(before)
+pub fn inventory_changed() -> Evidence<'static> {
+    Box::new(|now: &ReadContext<'_>, before: &ReadContext<'_>| {
+        fn describe(ctx: &ReadContext<'_>) -> Vec<(i32, i32, i32)> {
+            ctx.inventory()
+                .iter()
+                .map(|i| (i.slot, i.def.id, i.count))
+                .collect()
+        }
+        describe(now) != describe(before)
+    })
 }
