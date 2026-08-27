@@ -90,7 +90,7 @@ pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGr
     let ids = loc_ids_by_name(content_root);
     let positions = loc_positions(content_root);
 
-    door_edges(content_root, &mut graph, &mut skipped);
+    door_edges(content_root, &ids, &mut graph, &mut skipped);
     ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
@@ -359,14 +359,19 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 /// placements, reusing [`parse_door_config`] and [`parse_mapsquare_jm2`]
 /// (the existing jm2 `LOC` → `DoorEdge` bake). Both directions are emitted
 /// (the same `Open` op works either way); `option` 1 is the `Open` op.
+///
+/// Quest-gated doors (`scripts/quests/*/configs/*.loc` and
+/// `scripts/areas/*/configs/*.loc` named blocks) join the door set when
+/// their `[oploc1,<name>]` open script declares a varp gate; the gate is
+/// carried on the edge (`varp_req`), never invented.
 fn door_edges(
     content_root: &Path,
+    ids: &HashMap<String, i32>,
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
     let configs = content_root.join("scripts").join("doors").join("configs");
     let mut door_ids = HashSet::new();
-    let mut configs_read = 0;
     if let Ok(entries) = fs::read_dir(&configs) {
         for ent in entries.flatten() {
             let path = ent.path();
@@ -375,11 +380,18 @@ fn door_edges(
             }
             if let Ok(text) = fs::read_to_string(&path) {
                 door_ids.extend(parse_door_config(&text));
-                configs_read += 1;
             }
         }
     }
-    if configs_read == 0 {
+    let door_reqs = {
+        let constants = script_constants(content_root);
+        let varps = varp_ids_by_name(content_root);
+        let door_names = door_config_names(content_root, ids);
+        quest_door_reqs(content_root, &door_names, ids, &constants, &varps)
+    };
+    door_ids.extend(door_reqs.keys().copied());
+
+    if door_ids.is_empty() {
         bump(skipped, SKIP_NO_DOOR_CONFIGS, 1);
         return;
     }
@@ -409,13 +421,450 @@ fn door_edges(
                         skill_req: vec![],
                         item_req: vec![],
                         quest_req: vec![],
-                        varp_req: vec![],
+                        varp_req: door_reqs.get(&d.loc_id).cloned().unwrap_or_default(),
                     });
                 }
             }
             Err(_) => bump(skipped, SKIP_SQUARE, 1),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Quest-gated doors (requirements read from the door's open script).
+// ---------------------------------------------------------------------------
+
+/// `[<name>]` config block header → the name.
+fn config_header(line: &str) -> Option<&str> {
+    let name = line.strip_prefix('[')?.strip_suffix(']')?;
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return None;
+    }
+    Some(name)
+}
+
+/// Every `^<name> = <int>` constant under `content/scripts` (the value map
+/// the door scripts' `case ^…`/`if (%… >= ^…)` keys resolve through).
+fn script_constants(content_root: &Path) -> HashMap<String, i32> {
+    let mut out = HashMap::new();
+    let mut pending = vec![content_root.join("scripts")];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("constant") {
+                if let Ok(text) = fs::read_to_string(&path) {
+                    for raw in text.lines() {
+                        let line = raw.trim();
+                        let Some(rest) = line.strip_prefix('^') else {
+                            continue;
+                        };
+                        let Some((name, val)) = rest.split_once('=') else {
+                            continue;
+                        };
+                        let name = name.trim();
+                        let Ok(val) = val.trim().parse::<i32>() else {
+                            continue;
+                        };
+                        if !name.is_empty() {
+                            out.entry(name.to_string()).or_insert(val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `pack/varp.pack` `id=name` → name → id (like [`loc_ids_by_name`]).
+fn varp_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
+    let mut out = HashMap::new();
+    let Ok(text) = fs::read_to_string(content_root.join("pack").join("varp.pack")) else {
+        return out;
+    };
+    for line in text.lines() {
+        let Some((id, name)) = line.split_once('=') else {
+            continue;
+        };
+        let Ok(id) = id.trim().parse::<i32>() else {
+            continue;
+        };
+        let name = name.trim();
+        if id >= 0 && !name.is_empty() {
+            out.insert(name.to_string(), id);
+        }
+    }
+    out
+}
+
+/// Every `[<name>]` block in a door config (`scripts/doors/configs/`,
+/// `scripts/quests/`, `scripts/areas/`, `scripts/general_use/configs/`)
+/// that can open (`op1=Open` or `category=door_closed`, the
+/// [`parse_door_config`] rule) and resolves to a numeric loc id.
+fn door_config_names(content_root: &Path, ids: &HashMap<String, i32>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let scripts = content_root.join("scripts");
+    let mut pending = vec![
+        scripts.join("doors").join("configs"),
+        scripts.join("quests"),
+        scripts.join("areas"),
+        scripts.join("general_use").join("configs"),
+    ];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("loc") {
+                if let Ok(text) = fs::read_to_string(&path) {
+                    let mut cur: Option<&str> = None;
+                    let mut openable = false;
+                    for raw in text.lines() {
+                        let line = raw.trim();
+                        if let Some(name) = config_header(line) {
+                            if let Some(prev) = cur {
+                                if openable && ids.contains_key(prev) {
+                                    out.insert(prev.to_string());
+                                }
+                            }
+                            cur = Some(name);
+                            openable = false;
+                        } else if cur.is_some()
+                            && (line == "op1=Open" || line == "category=door_closed")
+                        {
+                            openable = true;
+                        }
+                    }
+                    if let Some(name) = cur {
+                        if openable && ids.contains_key(name) {
+                            out.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Door loc id → its `(varp id, min value)` gate, read from the door's own
+/// `[oploc1,<name>]` open script: a `switch_int(%<varp>)` whose opening
+/// cases carry the open call, or an `if (%<varp> >= ^<const> [| …])` whose
+/// arm opens. The generic `_door_closed` script opens freely and carries
+/// nothing.
+fn quest_door_reqs(
+    content_root: &Path,
+    door_names: &HashSet<String>,
+    ids: &HashMap<String, i32>,
+    constants: &HashMap<String, i32>,
+    varps: &HashMap<String, i32>,
+) -> HashMap<i32, Vec<(i32, i32)>> {
+    let mut out: HashMap<i32, Vec<(i32, i32)>> = HashMap::new();
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        for (op, name, block) in script_blocks(text) {
+            if op != "oploc1" || !door_names.contains(&name) {
+                continue;
+            }
+            let Some(&id) = ids.get(&name) else {
+                continue;
+            };
+            let Some(gates) = script_varp_gate(&block, text, constants) else {
+                continue;
+            };
+            let reqs = out.entry(id).or_default();
+            for (varp, min_value) in gates {
+                if let Some(&varp_id) = varps.get(&varp) {
+                    reqs.push((varp_id, min_value));
+                }
+            }
+        }
+    });
+    out
+}
+
+/// `[<a>,<b>]` blocks in a script text → `(a, b, body)`; the body is the
+/// raw text until the next header. Headers may carry a trailing `//`
+/// comment (the existing parsers' convention).
+fn script_blocks(text: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut cur: Option<(String, String)> = None;
+    let mut body = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        let header_line = match line.find("//") {
+            Some(i) => line[..i].trim(),
+            None => line,
+        };
+        if let Some((a, b)) = script_header(header_line) {
+            if let Some(prev) = cur.take() {
+                out.push((prev.0, prev.1, std::mem::take(&mut body)));
+            }
+            cur = Some((a.to_string(), b.to_string()));
+        } else if cur.is_some() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if let Some((a, b)) = cur.take() {
+        out.push((a, b, body));
+    }
+    out
+}
+
+/// The `(varp name, min value)` gates a door's open script declares: a
+/// `switch_int(%<varp>)` whose opening cases carry the open call, or an
+/// `if (%<varp> (>=|=) ^<const> & …)` whose arm opens (every ANDed varp
+/// condition is carried).
+fn script_varp_gate(
+    block: &str,
+    script_text: &str,
+    constants: &HashMap<String, i32>,
+) -> Option<Vec<(String, i32)>> {
+    if let Some((varp, cases)) = switch_varp_cases(block) {
+        let mut opens = Vec::new();
+        for (keys, body) in cases {
+            if !body_opens(&body, script_text) {
+                continue;
+            }
+            for key in keys {
+                if let Some(v) = case_value(&key, constants) {
+                    opens.push(v);
+                }
+            }
+        }
+        if let Some(min) = opens.into_iter().min() {
+            return Some(vec![(varp, min)]);
+        }
+    }
+    if let Some((gates, arm)) = if_varp_gate(block, constants) {
+        if body_opens(&arm, script_text) {
+            return Some(gates);
+        }
+    }
+    None
+}
+
+/// `^<const>` (resolved through the constants map) or a bare integer.
+fn case_value(key: &str, constants: &HashMap<String, i32>) -> Option<i32> {
+    let key = key.trim();
+    if let Some(name) = key.strip_prefix('^') {
+        constants.get(name).copied()
+    } else {
+        key.parse().ok()
+    }
+}
+
+/// `switch_int (%<varp>) { case … }` from a block: the varp name and every
+/// case's `(keys, body)`. `default` is kept as a key so a gate that only
+/// opens on `default` can never match (it has no numeric keys).
+fn switch_varp_cases(block: &str) -> Option<(String, Vec<(Vec<String>, String)>)> {
+    let lines: Vec<&str> = block.lines().collect();
+    let mut si = None;
+    for (idx, raw) in lines.iter().enumerate() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix("switch_int") else {
+            continue;
+        };
+        let rest = rest.trim_start().strip_prefix('(')?;
+        let name = rest.split(')').next()?.trim();
+        if let Some(name) = name.strip_prefix('%') {
+            si = Some((idx, name.to_string()));
+            break;
+        }
+    }
+    let (start, varp) = si?;
+    let mut cases: Vec<(Vec<String>, String)> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur: Option<Vec<String>> = None;
+    let mut body = String::new();
+    for raw in lines.iter().skip(start + 1) {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // A `case` at the switch's own brace depth starts a new case; the
+        // switch's closing `}` at that depth ends the parse.
+        if depth == 0 {
+            if let Some((keys, rest)) = switch_case(line) {
+                if let Some(prev) = cur.take() {
+                    cases.push((prev, std::mem::take(&mut body)));
+                }
+                cur = Some(keys);
+                if let Some(rest) = rest {
+                    body.push_str(rest);
+                    body.push('\n');
+                }
+                continue;
+            }
+            if line.starts_with('}') {
+                break;
+            }
+        }
+        if cur.is_some() {
+            body.push_str(line);
+            body.push('\n');
+        }
+        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+    }
+    if let Some(keys) = cur.take() {
+        cases.push((keys, body));
+    }
+    Some((varp, cases))
+}
+
+/// `case <key, key, …> : <body>` → (keys, body). `default` is a key.
+fn switch_case(line: &str) -> Option<(Vec<String>, Option<&str>)> {
+    let rest = line.strip_prefix("case")?;
+    let rest = rest.trim_start();
+    let (keys, body) = rest.split_once(':')?;
+    let keys: Vec<String> = keys
+        .split(',')
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .collect();
+    if keys.is_empty() {
+        return None;
+    }
+    let body = body.trim();
+    Some((keys, if body.is_empty() { None } else { Some(body) }))
+}
+
+/// `if (%<varp> (>=|=) ^<const> [& …]) { <arm> }` in a block: every
+/// `(varp, const value)` condition and the arm body. The first matching
+/// guard is read.
+fn if_varp_gate(block: &str, constants: &HashMap<String, i32>) -> Option<(Vec<(String, i32)>, String)> {
+    let bytes = block.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"if") {
+            let tail = &block[i + 2..];
+            let rest = tail.trim_start();
+            let ws = tail.len() - rest.len();
+            if let Some(inner) = rest.strip_prefix('(') {
+                if let Some(close) = inner.find(')') {
+                    let head = inner[..close].trim();
+                    let conds = varp_gate_consts(head);
+                    if !conds.is_empty() {
+                        let mut gates = Vec::new();
+                        for (varp, cname) in conds {
+                            if let Some(&value) = constants.get(&cname) {
+                                gates.push((varp.to_string(), value));
+                            }
+                        }
+                        if !gates.is_empty() {
+                            let arm_from = i + 2 + ws + 1 + close + 1;
+                            if let Some(arm) = balanced_arm(block, arm_from) {
+                                return Some((gates, arm));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `%<varp> (>=|=) ^<const>` conditions in an if-head (ANDed together),
+/// whitespace tolerant; clauses that are not varp-gated (e.g. a `|`
+/// leaving-side term) are skipped.
+fn varp_gate_consts(head: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for clause in head.split('&') {
+        let clause = clause.trim();
+        let (varp, cmp) = if let Some((a, b)) = clause.split_once(">=") {
+            (a, b)
+        } else if let Some((a, b)) = clause.split_once('=') {
+            (a, b)
+        } else {
+            continue;
+        };
+        let varp = varp.trim();
+        let Some(varp) = varp.strip_prefix('%') else {
+            continue;
+        };
+        let cmp = cmp.trim();
+        let Some(cmp) = cmp.strip_prefix('^') else {
+            continue;
+        };
+        let end = cmp
+            .find(|c: char| c.is_whitespace() || c == '|')
+            .unwrap_or(cmp.len());
+        let cname = &cmp[..end];
+        if !cname.is_empty() {
+            out.push((varp.to_string(), cname.to_string()));
+        }
+    }
+    out
+}
+
+/// The balanced `{ … }` starting at or after `from`.
+fn balanced_arm(block: &str, from: usize) -> Option<String> {
+    let rest = &block[from.min(block.len())..];
+    let start = rest.find('{')?;
+    let mut depth = 1i32;
+    for (off, ch) in rest[start + 1..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[start..=start + 1 + off].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// True when a case/if arm opens the door: it calls an `~open*` proc
+/// directly, or calls a `@label` whose own body does.
+fn body_opens(body: &str, script_text: &str) -> bool {
+    if body.contains("open_and_close") || body.contains("~open_") {
+        return true;
+    }
+    for label in body_labels(body) {
+        if let Some(lb) = label_block(script_text, &label) {
+            if body_opens(&lb, script_text) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `@name` tokens in a body.
+fn body_labels(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for part in body.split('@').skip(1) {
+        let end = part
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(part.len());
+        if end > 0 {
+            out.push(part[..end].to_string());
+        }
+    }
+    out
+}
+
+/// The body of `[label,<name>]` in a script text.
+fn label_block(script_text: &str, name: &str) -> Option<String> {
+    for (op, n, body) in script_blocks(script_text) {
+        if op == "label" && n == name {
+            return Some(body);
+        }
+    }
+    None
 }
 
 fn to_world(t: crate::tile::Tile) -> WorldTile {
@@ -1977,5 +2426,104 @@ p_arrivedelay;
             .find(|s| s.to == WorldTile { x: 3047, z: 3235, level: 0 })
             .expect("Shilo → Port Sarim boat");
         assert_eq!(shanks_sarim.ticks, 15);
+    }
+
+    #[test]
+    fn derive_transports_carries_quest_door_varp_req() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "2526=elenagateshut\n4=mcannondoor1\n");
+        fx.write("pack/varp.pack", "165=elenaquest\n0=mcannon\n");
+        fx.write(
+            "scripts/quests/quest_elena/configs/doors.loc",
+            "\
+[elenagateshut]
+name=Door
+model=basic_wall
+active=yes
+op1=Open
+category=door_open_and_close
+param=next_loc_stage,elenagateopen
+",
+        );
+        fx.write(
+            "scripts/quests/quest_elena/configs/quest_elena.constant",
+            "^quest_elena_freed_elena = 28\n^elena_complete = 29\n",
+        );
+        fx.write(
+            "scripts/quests/quest_elena/scripts/plaguehouse.rs2",
+            "\
+[oploc1,elenagateshut] // elena door
+switch_int(%elenaquest) {
+    case ^quest_elena_freed_elena, ^elena_complete : ~open_and_close_door(loc_param(next_loc_stage), ~check_axis(coord, loc_coord, loc_angle), false);
+    case default : mes(\"The door is locked.\");
+}
+",
+        );
+        fx.write(
+            "scripts/quests/quest_mcannon/configs/mcannon_doors.loc",
+            "\
+[mcannondoor1]
+name=Door
+model=basic_wall
+op1=Open
+category=door_closed
+",
+        );
+        fx.write(
+            "scripts/quests/quest_mcannon/configs/quest_mcannon.constant",
+            "^mcannon_tasked_with_fixing_cannon = 6\n",
+        );
+        fx.write(
+            "scripts/quests/quest_mcannon/scripts/mcannon_doors.rs2",
+            "\
+[oploc1,mcannondoor1]
+if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
+    @open_dwarf_cannon_door;
+} else {
+    mes(\"The door is locked.\");
+}
+
+[label,open_dwarf_cannon_door]
+~open_and_close_door(loc_param(next_loc_stage), true, false);
+",
+        );
+        fx.write(
+            "maps/m44_53.jm2",
+            "\
+==== MAP ====
+0 0 0: h1 o6 u50
+0 0 2: h1 o6 u50
+0 1 0: h1 o6 u50
+0 3 0: h1 o6 u50
+==== LOC ====
+0 0 1: 2526 0 2
+0 2 0: 4 0 0
+",
+        );
+        let defs = loc_defs(&[(2526, 1, 1), (4, 1, 1)]);
+        let graph = derive_transports(fx.path(), &defs);
+
+        // The Elena door (Plague City) carries its `%elenaquest >= 28`
+        // gate on both directed edges.
+        let elena: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2526)
+            .collect();
+        assert_eq!(elena.len(), 2);
+        for d in &elena {
+            assert_eq!(d.varp_req, vec![(165, 28)]);
+            assert!(d.quest_req.is_empty());
+        }
+        // The dwarf-cannon door's `if (%mcannon >= ^…) { @label }` gate.
+        let cannon: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 4)
+            .collect();
+        assert_eq!(cannon.len(), 2);
+        for d in &cannon {
+            assert_eq!(d.varp_req, vec![(0, 6)]);
+        }
     }
 }
