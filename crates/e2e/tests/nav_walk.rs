@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use nav::pack::load_pack;
-use nav::router::find;
+use nav::router::find_on_grid;
 use nav::tile::Tile;
 use nav::traveller::{NavStatus, Traveller};
 
@@ -148,7 +148,7 @@ fn nav_walk() {
                     // Mainland hop can land on a loc-blocked tile (a bush
                     // at the tele); A* still starts there and only steps
                     // onto walkable neighbours.
-                    match find(&grid, here, DEST) {
+                    match find_on_grid(&grid, here, DEST) {
                         Ok(route) => {
                             s.traveller.arm(route);
                             armed = true;

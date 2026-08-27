@@ -316,7 +316,7 @@ impl ScenarioRunner {
             z: hz,
             level: hl,
         };
-        match nav::router::find(grid, from, dest) {
+        match nav::router::find_on_grid(grid, from, dest) {
             Ok(route) => {
                 self.traveller.arm(route);
                 Ok(())

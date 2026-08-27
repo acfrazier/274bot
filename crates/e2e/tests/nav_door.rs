@@ -26,7 +26,7 @@ use api::interact::{cheat, op_loc, Driver};
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use nav::pack::load_pack;
-use nav::router::find;
+use nav::router::find_on_grid;
 use nav::tile::{chebyshev, Tile};
 use nav::traveller::{NavStatus, Traveller};
 
@@ -155,7 +155,7 @@ fn nav_door() {
                     } else {
                         OUTSIDE_PACK
                     };
-                    match find(&grid, start, DEST) {
+                    match find_on_grid(&grid, start, DEST) {
                         Ok(route) => {
                             s.traveller.arm(route);
                             s.dest_armed = true;

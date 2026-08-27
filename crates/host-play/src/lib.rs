@@ -28,7 +28,7 @@ mod rss;
 mod scatter;
 use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use nav::grid::StepGrid;
-use nav::router::find;
+use nav::router::find_on_grid;
 use nav::tile::Tile;
 use nav::traveller::{NavStatus, Traveller};
 pub use rss::sample_process;
@@ -237,7 +237,7 @@ fn script_observe(
                         thread::Builder::new()
                             .name(format!("nav-find-{name}"))
                             .spawn(move || {
-                                if let Ok(route) = find(&grid, from, to) {
+                                if let Ok(route) = find_on_grid(&grid, from, to) {
                                     travellers
                                         .lock()
                                         .unwrap()

@@ -7,7 +7,7 @@
 use api::interact::{op_loc, walk, Driver};
 
 use crate::arrival::arrived;
-use crate::router::{Leg, Route};
+use crate::router::{GridLeg, GridRoute};
 use crate::tile::{chebyshev, Tile};
 
 /// The traveller's state, reported by each [`Traveller::tick`].
@@ -31,11 +31,11 @@ pub enum NavStatus {
     Interrupted,
 }
 
-/// Drives a [`Route`] toward its destination one hop per tick. The stub
+/// Drives a [`GridRoute`] toward its destination one hop per tick. The stub
 /// world has no world grid: the caller passes the player's tile each tick,
 /// and the walk target is picked from the armed route's own tiles.
 pub struct Traveller {
-    route: Option<Route>,
+    route: Option<GridRoute>,
     dest: Option<Tile>,
     status: NavStatus,
     hop_ticks: u32,
@@ -68,7 +68,7 @@ impl Traveller {
     }
 
     /// Arm a route, replacing any previous one.
-    pub fn arm(&mut self, route: Route) {
+    pub fn arm(&mut self, route: GridRoute) {
         self.dest = Some(route.dest);
         self.route = Some(route);
         self.hop_ticks = 0;
@@ -122,8 +122,8 @@ impl Traveller {
         if let Some(here) = here {
             while leg < route.legs.len() {
                 let done = match &route.legs[leg] {
-                    Leg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
-                    Leg::Door { to, .. } => *to == here,
+                    GridLeg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
+                    GridLeg::Door { to, .. } => *to == here,
                 };
                 if !done {
                     break;
@@ -134,7 +134,7 @@ impl Traveller {
         let mut out = Vec::new();
         for (i, l) in route.legs.iter().enumerate().skip(leg) {
             match l {
-                Leg::Walk { tiles } => {
+                GridLeg::Walk { tiles } => {
                     if i == leg {
                         if let Some(here) = here {
                             if let Some(pos) = tiles.iter().position(|t| *t == here) {
@@ -145,7 +145,7 @@ impl Traveller {
                     }
                     out.extend(tiles.iter().copied());
                 }
-                Leg::Door { from, to, .. } => {
+                GridLeg::Door { from, to, .. } => {
                     out.push(*from);
                     out.push(*to);
                 }
@@ -165,8 +165,8 @@ impl Traveller {
         let mut leg = self.leg.min(route.legs.len());
         while leg < route.legs.len() {
             let done = match &route.legs[leg] {
-                Leg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
-                Leg::Door { to, .. } => *to == here,
+                GridLeg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
+                GridLeg::Door { to, .. } => *to == here,
             };
             if !done {
                 break;
@@ -174,7 +174,7 @@ impl Traveller {
             leg += 1;
         }
         match route.legs.get(leg) {
-            Some(Leg::Door { loc, loc_id, .. }) => Some((*loc, *loc_id)),
+            Some(GridLeg::Door { loc, loc_id, .. }) => Some((*loc, *loc_id)),
             _ => None,
         }
     }
@@ -220,8 +220,8 @@ impl Traveller {
         // `to` moves on to the next walk leg.
         while self.leg < route.legs.len() {
             let done = match &route.legs[self.leg] {
-                Leg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
-                Leg::Door { to, .. } => *to == here,
+                GridLeg::Walk { tiles } => tiles.last().is_none_or(|last| *last == here),
+                GridLeg::Door { to, .. } => *to == here,
             };
             if !done {
                 break;
@@ -238,7 +238,7 @@ impl Traveller {
         };
 
         match leg {
-            Leg::Walk { tiles } => {
+            GridLeg::Walk { tiles } => {
                 let last = *tiles.last().expect("walk legs are non-empty");
                 // Aim at the leg's far end when it is within 20 tiles;
                 // otherwise hop to a tile ~15 steps ahead of `here` along
@@ -272,7 +272,7 @@ impl Traveller {
                 self.last_walk_ok = Some(accepted);
                 self.status = NavStatus::Walking;
             }
-            Leg::Door {
+            GridLeg::Door {
                 loc, loc_id, to, ..
             } => {
                 if !door_open {
@@ -303,7 +303,7 @@ mod tests {
     use client::client::MiniMenuAction;
 
     use crate::grid::StepGrid;
-    use crate::router::find;
+    use crate::router::find_on_grid;
     use crate::tile::Tile;
     use crate::traveller::{NavStatus, Traveller};
 
@@ -335,7 +335,7 @@ mod tests {
     fn remaining_covers_armed_route_tiles() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -373,7 +373,7 @@ mod tests {
     fn remaining_is_empty_when_standing_on_dest() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -401,7 +401,7 @@ mod tests {
     fn remaining_skips_completed_legs_and_connects_doors() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_door_corridor(),
                 Tile {
                     x: 0,
@@ -448,7 +448,7 @@ mod tests {
     fn remaining_trims_current_leg_to_here() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_1x40(),
                 Tile {
                     x: 0,
@@ -492,7 +492,7 @@ mod tests {
     fn arm_queues_dest_and_clear_drops_it() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -523,7 +523,7 @@ mod tests {
     fn walk_leg_sends_walk_toward_dest() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -561,7 +561,7 @@ mod tests {
     fn long_walk_leg_hop_targets_fifteen_ahead() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_1x40(),
                 Tile {
                     x: 0,
@@ -599,7 +599,7 @@ mod tests {
     fn long_walk_leg_second_hop_stays_ahead() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_1x40(),
                 Tile {
                     x: 0,
@@ -638,7 +638,7 @@ mod tests {
     fn arrived_on_dest_clears_and_reports_arrived() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -673,7 +673,7 @@ mod tests {
     fn door_open_walks_without_requiring_op_loc() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_door_corridor(),
                 Tile {
                     x: 0,
@@ -713,7 +713,7 @@ mod tests {
     fn current_door_is_the_armed_door_leg() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_door_corridor(),
                 Tile {
                     x: 0,
@@ -757,7 +757,7 @@ mod tests {
     fn door_closed_only_op_loc() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_door_corridor(),
                 Tile {
                     x: 0,
@@ -796,7 +796,7 @@ mod tests {
     fn budget_exceeded_reports_budget_and_clears() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -835,7 +835,7 @@ mod tests {
     fn budget_resets_when_here_advances() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,
@@ -885,7 +885,7 @@ mod tests {
     fn walk_leg_falls_back_to_next_tile_when_dest_rejected() {
         let mut t = Traveller::new();
         t.arm(
-            find(
+            find_on_grid(
                 &StepGrid::fixture_open_3x3(),
                 Tile {
                     x: 0,

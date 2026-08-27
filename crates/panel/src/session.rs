@@ -27,7 +27,7 @@ use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::grid::StepGrid;
-use nav::router::{find, NoPath};
+use nav::router::{find_on_grid, NoPath};
 use nav::tile::Tile;
 use nav::traveller::{NavStatus, Traveller};
 use vault::{Profile, Vault};
@@ -1378,7 +1378,7 @@ impl Session {
     pub fn arm_walk_on(&mut self, grid: &StepGrid, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
-        match find(grid, from, dest) {
+        match find_on_grid(grid, from, dest) {
             Ok(route) => {
                 self.error = None;
                 if let Some(name) = self.focused_name() {
