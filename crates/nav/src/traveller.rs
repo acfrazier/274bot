@@ -21,7 +21,7 @@ use api::snapshot::{GameSnapshot, LocView, ReadContext, WorldTile};
 use crate::arrival::arrived as grid_arrived;
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
-use crate::transport::TransportEdge;
+use crate::transport::{TransportEdge, TransportKind};
 
 /// The traveller's state, reported by each [`Traveller::tick`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -391,7 +391,8 @@ impl Traveller {
     /// on every poll. The snapshot is the host's per-tick `GameSnapshot`;
     /// `Interactions` and `Settle` are built fresh from it each call, so
     /// each call performs at most one driver send (walk or transport op)
-    /// plus one settle poll.
+    /// plus one settle poll — except the door-troll fallback, which sends
+    /// `op_loc` and the same-tick walk together on an open door.
     pub fn follow<D: Driver>(
         &mut self,
         d: &mut D,
@@ -476,7 +477,7 @@ impl FollowRun {
                 }
             }
             if self.transport.is_some() {
-                match self.poll_transport(snapshot, options) {
+                match self.poll_transport(d, snapshot, options) {
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::Watching => return None,
                     Poll::LegDone => continue,
@@ -556,6 +557,7 @@ impl FollowRun {
                                         ticks_waited: 0,
                                         sent_tile: Some(here),
                                         tries: 0,
+                                        troll: false,
                                     });
                                     return None;
                                 }
@@ -703,14 +705,22 @@ impl FollowRun {
     /// One transport-hop settle step: match the positional `arrived(edge.to)`
     /// arm (level + proximity, so a level-changing transport completes only
     /// within `close_enough` of `to` on the destination level), or lapse
-    /// the budget.
-    fn poll_transport(
+    /// the budget. A door hop that lapses its cheap budget escalates to
+    /// the automatic troll (see [`FollowRun::troll_door`]); only a troll
+    /// hop (or a non-door transport) lapses to the real `Stalled`.
+    fn poll_transport<D: Driver>(
         &mut self,
+        d: &mut D,
         snapshot: &GameSnapshot,
         options: &mut TravelOptions,
     ) -> Poll {
         let mut hop = self.transport.take().expect("transport hop present");
         let here = here(snapshot);
+        if hop.troll {
+            if let Some(outcome) = self.troll_door(d, snapshot, &mut hop, options) {
+                return Poll::Terminal(outcome);
+            }
+        }
         let arms = [("arrived", arrived(hop.to, self.close_enough))];
         let mut settle = Settle::new(
             SettleOptions {
@@ -744,24 +754,104 @@ impl FollowRun {
             None => {
                 hop.ticks_waited += 1;
                 if hop.ticks_waited > self.budget {
-                    let why = if hop.sent_tile == Some(here) {
-                        HopFailure::Dropped
+                    // The cheap one-interact door hop lapsed: a door the
+                    // closer keeps slamming can never cross that way, so
+                    // escalate this same leg to the automatic troll
+                    // instead of stalling. Re-send every tick (op_loc
+                    // always, plus the same-tick walk when the door reads
+                    // open); only a troll hop that lapses again — or a
+                    // non-door transport — returns the real `Stalled`.
+                    let door_leg = matches!(
+                        &hop.leg,
+                        Leg::Transport { edge } if edge.kind == TransportKind::Door
+                    );
+                    if door_leg && !hop.troll {
+                        hop.troll = true;
+                        hop.ticks_waited = 0;
+                        self.transport = Some(hop);
+                        Poll::Watching
                     } else {
-                        HopFailure::Expired
-                    };
-                    fire_leg(options, &hop.leg, LegPhase::Failed);
-                    Poll::Terminal(TravelOutcome::Stalled {
-                        at: here,
-                        aiming: hop.to,
-                        why,
-                        tries: hop.tries.max(1),
-                    })
+                        let why = if hop.sent_tile == Some(here) {
+                            HopFailure::Dropped
+                        } else {
+                            HopFailure::Expired
+                        };
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        Poll::Terminal(TravelOutcome::Stalled {
+                            at: here,
+                            aiming: hop.to,
+                            why,
+                            tries: hop.tries.max(1),
+                        })
+                    }
                 } else {
                     self.transport = Some(hop);
                     Poll::Watching
                 }
             }
         }
+    }
+
+    /// One door-troll poll: read the door's open/closed state from the
+    /// snapshot's locs and re-send — `op_loc` always, plus the same-tick
+    /// walk when the door reads open — so a tick-perfect closer cannot
+    /// slam the door between the open and the walk. Returns a terminal
+    /// outcome (a refused send, or a missing-loc block after the loc-wait
+    /// budget) or `None` to keep polling.
+    fn troll_door<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<TravelOutcome> {
+        let edge = match &hop.leg {
+            Leg::Transport { edge } => edge.clone(),
+            Leg::Walk { .. } => unreachable!("troll hop holds a transport leg"),
+        };
+        let here = here(snapshot);
+        let tile = door_tile(&edge);
+        let Some(loc) = snapshot.locs().iter().find(|l| l.tile == tile) else {
+            // The door's loc is not in the loaded scene yet (the loc
+            // family is stale, or the door is out of view): keep waiting,
+            // bounded by the hop budget.
+            self.loc_wait += 1;
+            if self.loc_wait > self.budget {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Some(TravelOutcome::Blocked {
+                    at: here,
+                    leg: self.leg_index,
+                    detail: format!(
+                        "troll door loc {} is not at {tile:?} in the loaded scene",
+                        edge.loc_id
+                    ),
+                });
+            }
+            return None;
+        };
+        self.loc_wait = 0;
+        let open = loc.id != edge.loc_id;
+        let mut ix = Interactions::new(snapshot, d);
+        // OP_LOC the door: a closed door opens, an open one re-opens.
+        match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
+            SendResult::Sent { .. } => {}
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Some(TravelOutcome::Refused { at: here, reason });
+            }
+        }
+        if open {
+            // The door reads open this tick: re-open and walk through in
+            // the SAME tick, before a tick-perfect closer can slam it.
+            match ix.walk(hop.to) {
+                SendResult::Sent { .. } => {}
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    return Some(TravelOutcome::Refused { at: here, reason });
+                }
+            }
+        }
+        None
     }
 }
 
@@ -810,13 +900,17 @@ impl WalkHop {
 }
 
 /// One transport-leg hop: the edge (for the phase callback) plus the
-/// arrival target and the stall clock.
+/// arrival target and the stall clock. `troll` marks the automatic
+/// door-troll fallback: the hop re-reads the door's state and re-sends
+/// every poll (op_loc always, plus the same-tick walk when open) after
+/// the cheap one-interact hop lapsed its budget.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
     ticks_waited: u32,
     sent_tile: Option<WorldTile>,
     tries: u32,
+    troll: bool,
 }
 
 /// The player's world tile from the snapshot: the canonical route-based
@@ -871,6 +965,19 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
         .filter(|(_, gap)| *gap <= 3)
         .min_by_key(|(_, gap)| *gap)
         .map(|(loc, _)| loc)
+}
+
+/// The door's own tile: the midpoint between the edge's `from` and `to`
+/// (door configs are authored as walkable tiles on either side of the
+/// loc, so the loc always sits half-way between them). The door-troll
+/// read compares the loc's live id at this tile against the edge's
+/// closed id.
+fn door_tile(edge: &TransportEdge) -> WorldTile {
+    WorldTile {
+        x: (edge.from.x + edge.to.x) / 2,
+        z: (edge.from.z + edge.to.z) / 2,
+        level: edge.from.level,
+    }
 }
 
 /// Fire the `on_leg` callback for a phase transition, using the `options`
@@ -1581,6 +1688,33 @@ mod tests {
         c.world.set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     }
 
+    /// A wall loc at scene (2, 0) — the door tile of [`door_edge`] — as the
+    /// closed door (1530, "Open") or the open state (1531, "Close"),
+    /// mirroring the Catherby range-house door configs.
+    fn plant_door(c: &mut Client, open: bool) {
+        let id = if open { 1531 } else { 1530 };
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.locs.len() <= 1531 {
+                cache.locs.push(LocType::default());
+            }
+            cache.locs[1530] = LocType {
+                id: 1530,
+                name: "Door".into(),
+                op: vec![Some("Open".into()), None, None, None, None],
+                ..Default::default()
+            };
+            cache.locs[1531] = LocType {
+                id: 1531,
+                name: "Door".into(),
+                op: vec![Some("Close".into()), None, None, None, None],
+                ..Default::default()
+            };
+        }
+        let typecode = 0x4000_0000 + (id << 14) + 2;
+        c.world.set_wall(0, 2, 0, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    }
+
     /// A level-0 walk leg over the given (x, z) world tiles.
     fn walk_leg(tiles: &[(i32, i32)]) -> Leg {
         Leg::Walk {
@@ -1592,6 +1726,31 @@ mod tests {
                     level: 0,
                 })
                 .collect(),
+        }
+    }
+
+    /// A Catherby-style door edge on the fixture scene: closed loc 1530 at
+    /// the door tile (3202, 3200), crossing (3201, 3200) → (3203, 3200).
+    fn door_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Door,
+            from: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
         }
     }
 
@@ -1727,6 +1886,85 @@ mod tests {
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
         ));
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
+    }
+
+    #[test]
+    fn follow_auto_trolls_a_door_when_the_cheap_hop_lapses() {
+        // A tick-perfect closer: the mock alternates the door loc's id
+        // (closed 1530 / open 1531) every tick, and the player only
+        // crosses when a walk is actually sent. The cheap one-interact
+        // hop can never cross within its budget, so `follow` must escalate
+        // on its own — no option flag — and troll the door: re-open it
+        // every tick and walk through in the same tick the door reads
+        // open, so the closer cannot slam it shut between the open and the
+        // walk.
+        let mut c = scene_client();
+        plant_door(&mut c, false);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: door_edge(),
+            }],
+            dest: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        // Default options: the fallback must engage automatically.
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 3,
+            close_enough: 1,
+            ..TravelOptions::default()
+        };
+
+        let mut tick = 0u32;
+        let mut crossed = false;
+        loop {
+            match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+                Some(TravelOutcome::Arrived { at }) => {
+                    assert_eq!(
+                        at,
+                        WorldTile {
+                            x: 3203,
+                            z: 3200,
+                            level: 0
+                        }
+                    );
+                    break;
+                }
+                Some(other) => panic!("expected Arrived, got {other:?}"),
+                None => {}
+            }
+            tick += 1;
+            assert!(tick < 200, "the automatic troll fallback never arrived");
+            // The closer slams the door shut each tick: alternate the
+            // door's open/closed state, and only move the player once a
+            // walk was actually sent (the troll's same-tick walk).
+            let open = tick % 2 == 1;
+            plant_door(&mut c, open);
+            if open && !crossed && !rec.walked.is_empty() {
+                crossed = true;
+                plant_player(&mut c, 3, 0);
+            }
+            bump_rebuild(&mut c, &mut snap);
+        }
+        assert!(crossed, "the troll's same-tick walk never crossed the door");
+        assert!(
+            rec.loc_ops >= 2,
+            "the troll must re-open the door after the cheap hop lapses, got {} loc ops",
+            rec.loc_ops
+        );
+        assert!(
+            rec.walked.contains(&(3, 0)),
+            "the troll walks through the open door in the same tick"
+        );
     }
 
     #[test]
@@ -2213,6 +2451,7 @@ mod tests {
         let mut options = TravelOptions::default();
         let mut run = FollowRun::start(route, &options);
         let leg = run.legs.pop_front().expect("the transport leg");
+        let mut rec = FollowRec::default();
         run.transport = Some(TransportHop {
             leg,
             to: WorldTile {
@@ -2227,17 +2466,24 @@ mod tests {
                 level: 0,
             }),
             tries: 0,
+            troll: false,
         });
         // The player is on the destination level (1) but far from `to`:
         // the hop must still be watching.
-        assert!(matches!(run.poll_transport(&snap, &mut options), Poll::Watching));
+        assert!(matches!(
+            run.poll_transport(&mut rec, &snap, &mut options),
+            Poll::Watching
+        ));
         // Within close_enough of `to` on the destination level: the hop
         // completes the leg.
         plant_player(&mut c, 2, 5);
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         let mut snap = GameSnapshot::new();
         snap.rebuild(&mut c);
-        assert!(matches!(run.poll_transport(&snap, &mut options), Poll::LegDone));
+        assert!(matches!(
+            run.poll_transport(&mut rec, &snap, &mut options),
+            Poll::LegDone
+        ));
     }
 
     /// Recording driver: captures the last walk target and counts OP_LOC1
