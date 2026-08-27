@@ -2595,6 +2595,7 @@ mod tests {
                 width: 40,
                 height: 1,
                 flags: vec![0; 40],
+                walkable: vec![0u32; 40],
             },
             graph: nav::transport::TransportGraph::default(),
         }));
