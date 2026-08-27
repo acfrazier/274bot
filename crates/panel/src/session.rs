@@ -19,17 +19,17 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use api::interact::Driver;
+use api::snapshot::{GameSnapshot, WorldTile};
 use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
-use nav::grid::StepGrid;
-use nav::router::{find_on_grid, NoPath};
+use nav::router::{find, Route};
 use nav::tile::Tile;
-use nav::traveller::{NavStatus, Traveller};
+use nav::traveller::{TravelOptions, Traveller};
+use nav::world::NavWorld;
 use vault::{Profile, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
@@ -187,9 +187,10 @@ pub struct Session {
     /// Credentials-section scratch buffers (username/password fields).
     pub cred_user: String,
     pub cred_pass: String,
-    /// Per-username nav travellers; the focused slot's traveller carries
-    /// the armed walk route (ticked from `start_play` `per_frame`).
-    pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<Traveller>>>>>,
+    /// Per-username walk arms; the focused slot's arm carries the armed
+    /// whole-world route (polled from `start_play` `per_frame` via
+    /// [`Traveller::follow`]).
+    pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
     /// The tile the user last picked for WalkTo; `None` until armed. Read
     /// by [`Session::walk_status_text`] so the status row stays honest even
     /// when no route could be found.
@@ -248,6 +249,29 @@ pub struct Session {
 
 /// Keep each per-name panel log bounded.
 const LOG_CAP: usize = 200;
+
+/// Per-username walk arm: the whole-world [`Traveller`] plus the [`Route`]
+/// it is following. [`Session::arm_walk_on`] stores the route (found over
+/// the shared `NavWorld`); the slot hook polls [`Traveller::follow`] with a
+/// clone of it one step per player-info tick. `route` being set is the
+/// "armed" gate the status row and the overlay read; any terminal outcome
+/// clears it (arrival and stall alike).
+#[derive(Default)]
+pub struct WalkArm {
+    pub traveller: Traveller,
+    pub route: Option<Route>,
+}
+
+impl WalkArm {
+    /// The armed route's dest as a panel tile, `None` when idle.
+    fn queued_tile(&self) -> Option<Tile> {
+        self.route.as_ref().map(|r| Tile {
+            x: r.dest.x,
+            z: r.dest.z,
+            level: r.dest.level,
+        })
+    }
+}
 
 /// Log bucket for vault errors and lines with no username.
 pub const PROCESS: &str = "*";
@@ -594,7 +618,7 @@ impl Session {
                     z: c.map_build_base_z + rz,
                     level: 0,
                 };
-                let Some(traveller) = travellers.lock().unwrap().get(name).cloned() else {
+                let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
                     return;
                 };
                 {
@@ -604,18 +628,32 @@ impl Session {
                     }
                     latch.insert(name.to_string(), (c.gens.player, here));
                 }
-                let door = traveller.lock().unwrap().current_door(here);
-                let door_open = match door {
-                    Some((loc, closed_id)) => {
-                        let (bx, bz) = Driver::build_base(c);
-                        Driver::loc_typecode(c, loc.x - bx, loc.z - bz)
-                            .map(|tc| (tc >> 14) & 0x7fff)
-                            != Some(closed_id)
+                let finished = {
+                    let mut arm = arm.lock().unwrap();
+                    let Some(route) = arm.route.clone() else {
+                        return;
+                    };
+                    // The follow surface reads the canonical base + route-head
+                    // tile from a snapshot rebuilt off the same client; the
+                    // run is polled one step per player-info tick.
+                    let mut snapshot = GameSnapshot::new();
+                    snapshot.rebuild(c);
+                    let mut options = TravelOptions {
+                        // Exact arrival: the armed dest must be stood on
+                        // before the route clears (the v1 traveller arrived
+                        // the same way).
+                        close_enough: 0,
+                        ..TravelOptions::default()
+                    };
+                    let outcome = arm.traveller.follow(c, &snapshot, route, &mut options);
+                    if outcome.is_some() {
+                        arm.route = None;
+                        true
+                    } else {
+                        false
                     }
-                    None => false,
                 };
-                let status = traveller.lock().unwrap().tick(c, here, door_open);
-                if matches!(status, NavStatus::Arrived | NavStatus::Budget) {
+                if finished {
                     walk_clear.store(true, Ordering::Relaxed);
                 }
             },
@@ -690,8 +728,8 @@ impl Session {
         self.sync_walk_status();
     }
 
-    /// Copy each slot's traveller `queued()` into `walk_*` (−1 if none) and
-    /// clear [`Session::walk_dest`] after Arrived/Budget.
+    /// Copy each slot's walk-arm dest into `walk_*` (−1 if none) and
+    /// clear [`Session::walk_dest`] after Arrived.
     fn sync_walk_status(&mut self) {
         for s in &mut self.statuses {
             let queued = self
@@ -699,7 +737,7 @@ impl Session {
                 .lock()
                 .unwrap()
                 .get(&s.username)
-                .and_then(|t| t.lock().unwrap().queued());
+                .and_then(|a| a.lock().unwrap().queued_tile());
             apply_queued_walk(s, queued);
         }
         if self.walk_clear.swap(false, Ordering::Relaxed) {
@@ -708,7 +746,7 @@ impl Session {
                     .lock()
                     .unwrap()
                     .get(&n)
-                    .and_then(|t| t.lock().unwrap().queued())
+                    .and_then(|a| a.lock().unwrap().queued_tile())
             });
             if keep.is_none() {
                 self.walk_dest = None;
@@ -1370,42 +1408,57 @@ impl Session {
         self.walk_clear.store(false, Ordering::Relaxed);
     }
 
-    /// Arm a walk to `dest` and route it on `grid` from `from` (the player's
-    /// observed tile). On `Ok(route)` the focused username's traveller is
-    /// armed so the observe tick can step it; on `NoPath` only the dest is
-    /// stored and `error` carries a short message. Callers that do not know
-    /// the player's tile fall back to [`Session::arm_walk`].
-    pub fn arm_walk_on(&mut self, grid: &StepGrid, from: Tile, dest: Tile) {
+    /// Arm a walk to `dest` and route it on `world` from `from` (the
+    /// player's observed tile). On `Ok(route)` the focused username's walk
+    /// arm stores the route so the observe tick can step it via
+    /// [`Traveller::follow`]; on `NoPath` only the dest is stored and
+    /// `error` carries a short message. Callers that do not know the
+    /// player's tile fall back to [`Session::arm_walk`].
+    pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
-        match find_on_grid(grid, from, dest) {
+        let from_w = WorldTile {
+            x: from.x,
+            z: from.z,
+            level: from.level,
+        };
+        let dest_w = WorldTile {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        };
+        match find(&world.collision, &world.graph, from_w, dest_w) {
             Ok(route) => {
                 self.error = None;
                 if let Some(name) = self.focused_name() {
-                    let traveller = self
+                    let arm = self
                         .travellers
                         .lock()
                         .unwrap()
                         .entry(name.clone())
-                        .or_insert_with(|| Arc::new(Mutex::new(Traveller::new())))
+                        .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
                         .clone();
-                    traveller.lock().unwrap().arm(route);
+                    let mut arm = arm.lock().unwrap();
+                    // A fresh arm replaces any in-flight follow run.
+                    arm.traveller.clear();
+                    arm.route = Some(route);
+                    drop(arm);
                     self.tick_latch.lock().unwrap().remove(&name);
                     // Rising edge: the overlay must paint the new route on
                     // this frame, not after the 1 s raster cadence.
                     self.route_gen += 1;
                 }
             }
-            Err(NoPath) => {
+            Err(_) => {
                 self.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
             }
         }
     }
 
-    /// Arm the current [`Session::picker_sel`] on `grid`. Returns false when
-    /// nothing is selected. Clears the selection either way so a second
-    /// confirm does not re-fire.
-    pub fn confirm_picker_walk(&mut self, grid: &StepGrid) -> bool {
+    /// Arm the current [`Session::picker_sel`] on `world`. Returns false
+    /// when nothing is selected. Clears the selection either way so a
+    /// second confirm does not re-fire.
+    pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
         let Some(tile) = self.picker_sel.take() else {
             return false;
         };
@@ -1416,7 +1469,7 @@ impl Session {
                     z: fz,
                     level: tile.level,
                 };
-                self.arm_walk_on(grid, from, tile);
+                self.arm_walk_on(world, from, tile);
             }
             None => self.arm_walk(tile),
         }
@@ -1657,8 +1710,12 @@ mod tests {
     };
     use host::{FrameBuf, InputEv, SlotInput};
     use host_play::{SlotArm, SlotStatus};
-    use nav::grid::StepGrid;
+    use api::snapshot::WorldTile;
+    use client::dash3d::CollisionFlag;
+    use nav::collision::WorldCollision;
     use nav::tile::Tile;
+    use nav::transport::TransportGraph;
+    use nav::world::NavWorld;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use vault::{Profile, ProfileSettings, Vault};
@@ -1684,6 +1741,23 @@ mod tests {
             ingame,
             scene_state: scene,
             ..SlotStatus::default()
+        }
+    }
+
+    /// A `w`×`h` all-walkable level-0 world at (0,0).
+    fn open_world(w: usize, h: usize) -> NavWorld {
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: w,
+                height: h,
+                flags: vec![0u32; w * h],
+            },
+            graph: TransportGraph::default(),
         }
     }
 
@@ -1912,10 +1986,10 @@ mod tests {
         };
         s.picker_sel = Some(dest);
         assert_eq!(s.walk_status_text(), "—");
-        assert!(s.confirm_picker_walk(&StepGrid::fixture_open_3x3()));
+        assert!(s.confirm_picker_walk(&open_world(3, 3)));
         assert!(s.walk_status_text().contains("2"));
         assert!(s.picker_sel.is_none());
-        assert!(!s.confirm_picker_walk(&StepGrid::fixture_open_3x3()));
+        assert!(!s.confirm_picker_walk(&open_world(3, 3)));
     }
 
     #[test]
@@ -1933,14 +2007,14 @@ mod tests {
     fn arm_walk_on_routes_and_arms_focused_traveller() {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
-        let g = StepGrid::fixture_open_3x3();
+        let world = open_world(3, 3);
         let dest = Tile {
             x: 2,
             z: 2,
             level: 0,
         };
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -1955,10 +2029,10 @@ mod tests {
             .lock()
             .unwrap()
             .get("alice")
-            .expect("focused traveller exists")
+            .expect("focused walk arm exists")
             .lock()
             .unwrap()
-            .queued();
+            .queued_tile();
         assert_eq!(queued, Some(dest));
     }
 
@@ -1966,38 +2040,31 @@ mod tests {
     fn arm_walk_on_no_path_stores_dest_and_sets_error() {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
-        let mut g = StepGrid::fixture_open_3x3();
-        g.set_walkable(
-            Tile {
-                x: 1,
-                z: 0,
-                level: 0,
+        // Block the middle column: (1,0), (1,1), (1,2) on the 3x3 world.
+        let mut flags = vec![0u32; 9];
+        for z in 0..3 {
+            flags[z * 3 + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        }
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 3,
+                height: 3,
+                flags,
             },
-            false,
-        );
-        g.set_walkable(
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-            false,
-        );
-        g.set_walkable(
-            Tile {
-                x: 1,
-                z: 2,
-                level: 0,
-            },
-            false,
-        );
+            graph: TransportGraph::default(),
+        };
         let dest = Tile {
             x: 2,
             z: 1,
             level: 0,
         };
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 1,
@@ -2012,10 +2079,10 @@ mod tests {
             "short no-path message, got {err:?}"
         );
         assert!(
-            s.travellers.lock().unwrap().get("alice").is_none_or(|t| t
+            s.travellers.lock().unwrap().get("alice").is_none_or(|a| a
                 .lock()
                 .unwrap()
-                .queued()
+                .route
                 .is_none()),
             "no route must be armed when find fails"
         );
@@ -2024,14 +2091,14 @@ mod tests {
     #[test]
     fn arm_walk_on_without_focus_skips_route_but_stores_dest() {
         let mut s = Session::new();
-        let g = StepGrid::fixture_open_3x3();
+        let world = open_world(3, 3);
         let dest = Tile {
             x: 2,
             z: 2,
             level: 0,
         };
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -2042,7 +2109,7 @@ mod tests {
         assert_eq!(s.walk_dest, Some(dest));
         assert!(
             s.travellers.lock().unwrap().is_empty(),
-            "no focused name to key a traveller"
+            "no focused name to key a walk arm"
         );
     }
 
@@ -2050,10 +2117,10 @@ mod tests {
     fn arm_walk_on_success_bumps_route_gen() {
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
-        let g = StepGrid::fixture_open_3x3();
+        let world = open_world(3, 3);
         assert_eq!(s.route_gen(), 0);
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -2076,14 +2143,14 @@ mod tests {
             username: "alice".into(),
             ..SlotStatus::default()
         });
-        let g = StepGrid::fixture_open_3x3();
+        let world = open_world(3, 3);
         let dest = Tile {
             x: 2,
             z: 2,
             level: 0,
         };
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -2100,6 +2167,7 @@ mod tests {
             ),
             (2, 2, 0)
         );
+        // The slot hook clears the route and flags walk_clear on Arrived.
         s.travellers
             .lock()
             .unwrap()
@@ -2107,7 +2175,7 @@ mod tests {
             .unwrap()
             .lock()
             .unwrap()
-            .clear();
+            .route = None;
         s.walk_clear
             .store(true, std::sync::atomic::Ordering::Relaxed);
         s.sync_walk_status();

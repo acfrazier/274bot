@@ -8,7 +8,9 @@
 
 use std::time::{Duration, Instant};
 
+use api::snapshot::WorldTile;
 use dear_imgui_rs::Ui;
+use nav::router::{Leg, Route};
 use nav::tile::Tile;
 
 use crate::queue_card::{queue_ahead_label, queue_k_of_n, QUEUE_CARD_TITLE};
@@ -51,7 +53,69 @@ fn needs_refresh(cached_gen: u64, gen: u64, since: Duration) -> bool {
     gen != cached_gen || since >= REFRESH
 }
 
-/// Window-space vertices for the focused traveller's remaining route, or
+/// Whether a world tile sits on the same cell as a panel tile.
+fn same_tile(w: WorldTile, t: Tile) -> bool {
+    w.x == t.x && w.z == t.z && w.level == t.level
+}
+
+/// The panel tile of a world tile (structurally identical fields).
+fn tile_from(w: WorldTile) -> Tile {
+    Tile {
+        x: w.x,
+        z: w.z,
+        level: w.level,
+    }
+}
+
+/// The tiles still ahead on a whole-world `Route`, front to back. Walk
+/// legs contribute all their tiles; a transport leg contributes its `from`
+/// and `to` so the polyline stays connected across the crossing. When
+/// `here` is given (the player's observed tile), legs already traversed
+/// are skipped exactly as the follow run skips them, and the current walk
+/// leg is trimmed to the tiles from `here` onward so the line shrinks as
+/// the player walks, not only at leg end. Empty when nothing is armed or
+/// every leg is done.
+fn remaining_route_tiles(route: &Route, here: Option<Tile>) -> Vec<Tile> {
+    let mut leg = 0;
+    if let Some(here) = here {
+        while leg < route.legs.len() {
+            let done = match &route.legs[leg] {
+                Leg::Walk { tiles } => tiles.last().is_some_and(|last| same_tile(*last, here)),
+                Leg::Transport { edge } => same_tile(edge.to, here),
+            };
+            if !done {
+                break;
+            }
+            leg += 1;
+        }
+    }
+    let mut out = Vec::new();
+    for (i, l) in route.legs.iter().enumerate().skip(leg) {
+        match l {
+            Leg::Walk { tiles } => {
+                if i == leg {
+                    if let Some(here) = here {
+                        if let Some(pos) = tiles.iter().position(|t| same_tile(*t, here)) {
+                            out.extend(tiles[pos..].iter().map(|t| tile_from(*t)));
+                            continue;
+                        }
+                    }
+                }
+                out.extend(tiles.iter().map(|t| tile_from(*t)));
+            }
+            Leg::Transport { edge } => {
+                out.push(tile_from(edge.from));
+                out.push(tile_from(edge.to));
+            }
+        }
+    }
+    // A transport's `to` is the next walk leg's first tile: drop the
+    // duplicate crossing tile so the line does not double back.
+    out.dedup();
+    out
+}
+
+/// Window-space vertices for the focused walk arm's remaining route, or
 /// empty when nothing is armed. The schematic grid is anchored on the
 /// focused slot's observed tile; before the first position report the
 /// route's own first tile (the tile it was routed from) anchors instead.
@@ -59,11 +123,15 @@ fn points_for(session: &Session, min: [f32; 2], size: [f32; 2]) -> Vec<[f32; 2]>
     let Some(name) = session.focused_name() else {
         return Vec::new();
     };
-    let Some(traveller) = session.travellers.lock().unwrap().get(&name).cloned() else {
+    let Some(arm) = session.travellers.lock().unwrap().get(&name).cloned() else {
         return Vec::new();
     };
     let here = session.focused_tile().map(|(x, z)| Tile { x, z, level: 0 });
-    let tiles = traveller.lock().unwrap().remaining_walk_tiles(here);
+    let route = arm.lock().unwrap().route.clone();
+    let Some(route) = route else {
+        return Vec::new();
+    };
+    let tiles = remaining_route_tiles(&route, here);
     if tiles.is_empty() {
         return Vec::new();
     }
@@ -207,11 +275,39 @@ impl Default for PathOverlay {
 mod tests {
     use std::time::Duration;
 
-    use nav::grid::StepGrid;
+    use api::snapshot::WorldTile;
+    use client::dash3d::CollisionFlag;
+    use nav::collision::WorldCollision;
+    use nav::router::{find, Leg};
     use nav::tile::Tile;
+    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+    use nav::world::NavWorld;
 
-    use super::{needs_refresh, queue_card_lines, tile_to_local, PathOverlay};
+    use super::{
+        needs_refresh, queue_card_lines, remaining_route_tiles, tile_to_local, PathOverlay,
+    };
     use crate::session::Session;
+
+    /// A `w`×`h` all-walkable level-0 world at (0,0).
+    fn open_world(w: usize, h: usize) -> NavWorld {
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: w,
+                height: h,
+                flags: vec![0u32; w * h],
+            },
+            graph: TransportGraph::default(),
+        }
+    }
+
+    fn tile(x: i32, z: i32, level: i32) -> WorldTile {
+        WorldTile { x, z, level }
+    }
 
     #[test]
     fn overlay_tile_to_image_roundtrip() {
@@ -300,9 +396,9 @@ mod tests {
         let ui = ctx.frame();
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
-        let g = StepGrid::fixture_open_3x3();
+        let world = open_world(3, 3);
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -355,9 +451,9 @@ mod tests {
         );
         let mut s = Session::new();
         s.focus.lock().unwrap().focused = Some("alice".into());
-        let g = StepGrid::fixture_open_3x3();
+        let world = open_world(3, 3);
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -383,7 +479,7 @@ mod tests {
         // routes start on the same tile so the first point is stable, but
         // the line must reach the new dest.
         s.arm_walk_on(
-            &g,
+            &world,
             Tile {
                 x: 0,
                 z: 0,
@@ -408,6 +504,93 @@ mod tests {
         ctx.render();
         assert_eq!(overlay.points()[0], first);
         assert_ne!(overlay.points().last().copied(), Some(last));
+    }
+
+    #[test]
+    fn remaining_route_tiles_maps_walk_legs_front_to_back() {
+        // A walk route (0,0)->(2,2) on an open world maps one point per
+        // route tile, front to back.
+        let world = open_world(3, 3);
+        let route = find(&world.collision, &world.graph, tile(0, 0, 0), tile(2, 2, 0)).unwrap();
+        let tiles = remaining_route_tiles(&route, None);
+        assert_eq!(
+            tiles.first(),
+            Some(&Tile {
+                x: 0,
+                z: 0,
+                level: 0
+            })
+        );
+        assert_eq!(
+            tiles.last(),
+            Some(&Tile {
+                x: 2,
+                z: 2,
+                level: 0
+            })
+        );
+        let Leg::Walk { tiles: leg } = &route.legs[0] else {
+            panic!("walk-only route");
+        };
+        assert_eq!(tiles.len(), leg.len(), "a walk leg maps one point per tile");
+    }
+
+    #[test]
+    fn remaining_route_tiles_connects_transport_legs() {
+        // A walled tile (2,0) with a door edge across it: the route splits
+        // into Walk -> Transport -> Walk and the remaining tiles stay
+        // connected across the crossing (from then to, deduped).
+        let mut flags = vec![0u32; 5];
+        flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        let mut graph = TransportGraph::default();
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            from: tile(1, 0, 0),
+            to: tile(3, 0, 0),
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
+        graph.from.entry(tile(1, 0, 0)).or_default().push(0);
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: tile(0, 0, 0),
+                width: 5,
+                height: 1,
+                flags,
+            },
+            graph,
+        };
+        let route = find(&world.collision, &world.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
+        assert_eq!(
+            remaining_route_tiles(&route, None),
+            vec![
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                },
+                Tile {
+                    x: 1,
+                    z: 0,
+                    level: 0
+                },
+                Tile {
+                    x: 3,
+                    z: 0,
+                    level: 0
+                },
+                Tile {
+                    x: 4,
+                    z: 0,
+                    level: 0
+                },
+            ]
+        );
     }
 
     #[test]
