@@ -1,110 +1,25 @@
-//! Live: two headless slots in one `run_with_io` — `test` walks through the
-//! Catherby range-house door while `test2` is a tick-perfect closer.
-//!
-//! `per_frame` runs *before* host-play `mainland_hop` on the first
-//! `scene_state == 2`, so Catherby `cheat` teles wait until a later tick
-//! when `here` is the Lumbridge courtyard (mainland already applied).
-//! After the mainland hop, both cheat-tele to Catherby. The walker stages
-//! outside at (2813,3436,0) then arms a whole-world `nav::router::find`
-//! route through door 1530 @ (2816,3438,0) to dest (2817,3443,0) on the
-//! baked [`NavWorld`] and drives `Traveller::follow` with default options.
-//! The cheap one-interact door hop is the default; when the closer slams
-//! the door past the hop budget, `follow` escalates on its own to the
-//! door-troll: it polls the door's open/closed state from the snapshot
-//! every tick and re-opens + walks through in the same tick, so the
-//! tick-perfect closer cannot slam it shut. The closer, on every
-//! `player_info`, `op_loc`s the door whenever the loc is not the closed id
-//! 1530 (try 1530 first, then the open id the client currently shows).
-//! PASS when the walker is chebyshev ≤ 1 of dest within 120 s of
-//! dest-arm. FAIL on timeout or on a terminal `follow` outcome other than
-//! `Arrived` (a slammed door must stall out as a clear terminal outcome,
-//! never spin silently).
+//! Live: the shared `nav_door` scenario run headlessly — the twin of
+//! `panel-play --live script_nav_door`. The scenario is a fleet: profile 0
+//! (`test`) is the driven walker (cheat-tele to the Catherby range-house
+//! outside stand, then a whole-world `Follow` through the door), profile 1
+//! (`test2`) is the closer companion that `op_loc`s the door shut on every
+//! open tick. One scenario, two runners: the headed panel and this test
+//! drive the same [`ScenarioRunner`], so both pass/fail identically. The
+//! driven slot ticks the walker; the companion slot ticks its own
+//! per-frame hook — a slammed door surfaces as the follow's terminal
+//! outcome, which is the current diagnostic target.
 //!
 //! Run with the engine up:
 //! `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1 --nocapture`
 
 mod common;
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use api::interact::{cheat, op_loc, Driver};
-use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::Route;
-use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
-use nav::world::NavWorld;
-
-/// Closed Catherby range-house door (loc 1530).
-const DOOR: WorldTile = WorldTile {
-    x: 2816,
-    z: 3438,
-    level: 0,
-};
-const CLOSED_ID: i32 = 1530;
-/// Briefed outside stand (west of pack origin 2816; on-pack fallback is
-/// (2816,3436), the walkable tile south of the door).
-const OUTSIDE: WorldTile = WorldTile {
-    x: 2813,
-    z: 3436,
-    level: 0,
-};
-/// Inside stand, north of the door.
-const DEST: WorldTile = WorldTile {
-    x: 2817,
-    z: 3443,
-    level: 0,
-};
-/// `::tele` to OUTSIDE (level, mx, mz, lx, lz).
-const WALKER_TELE: &str = "tele 0,43,53,61,44";
-/// Inside, diagonal to the door (2817,3439) — off the 2816 corridor.
-const CLOSER_TELE: &str = "tele 0,44,53,1,47";
-
-struct Shared {
-    walker: Slot,
-    closer: Slot,
-    /// The walker's per-tick snapshot; `follow` reads the player tile and
-    /// the door's live loc state from it.
-    snap: api::snapshot::GameSnapshot,
-    traveller: Traveller,
-    route: Option<Route>,
-    loc_id: Option<i32>,
-    dest_armed: bool,
-    arrived: bool,
-    failed: Option<String>,
-}
-
-#[derive(Default)]
-struct Slot {
-    last_gen: u64,
-    here: Option<WorldTile>,
-    scene_state: i32,
-    base: (i32, i32),
-    /// First `scene_state == 2` was observed; that frame host-play still
-    /// queues `mainland_hop` after `per_frame`, so Catherby tele waits.
-    scene2_seen: bool,
-    tele_sent: bool,
-    /// Closer: 1530 was already tried on this open door.
-    tried_1530: bool,
-}
-
-impl Default for Shared {
-    fn default() -> Self {
-        Self {
-            walker: Slot::default(),
-            closer: Slot::default(),
-            snap: api::snapshot::GameSnapshot::new(),
-            traveller: Traveller::new(),
-            route: None,
-            loc_id: None,
-            dest_armed: false,
-            arrived: false,
-            failed: None,
-        }
-    }
-}
+use scenario::{RunnerStatus, ScenarioRunner};
 
 #[test]
 #[ignore = "requires a local 274 engine, nav pack, two accounts, and LIVE=1"]
@@ -113,262 +28,65 @@ fn nav_door() {
         return;
     }
 
-    let world = NavWorld::load_pack(&pack_path())
-        .unwrap_or_else(|e| fail(&format!("no nav pack ({e}) — run nav-pack")));
-
-    let shared = Arc::new(Mutex::new(Shared::default()));
+    let scenario = scenario::get("nav_door").expect("nav_door scenario in registry");
+    let mainland = scenario.seed.mainland;
+    let seed_profiles = scenario.seed.profiles.clone();
+    let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
+    // The headless twin never writes shots: explicit no-op sink (the same
+    // behavior as the runner's default).
+    runner
+        .lock()
+        .unwrap()
+        .set_shot_sink(Box::new(|_, _| {}));
     let mut opts = options();
-    opts.mainland = true;
-
-    let play = run_with_io(
-        &opts,
-        profiles(&[("test", "test"), ("test2", "test2")]),
-        |_| (None, None),
-        {
-            let shared = Arc::clone(&shared);
-            move |c, name| {
-                if name == "test" {
-                    walker_frame(c, &shared);
-                } else if name == "test2" {
-                    closer_frame(c, &shared);
-                }
+    opts.mainland = mainland;
+    let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
+        let runner = Arc::clone(&runner);
+        move |c, name| {
+            let mut r = runner.lock().unwrap();
+            if r.drives(name) {
+                r.tick(c);
+            } else if let Some(index) = r.companion_for(name) {
+                r.companion_tick(index, c);
             }
-        },
-    );
+        }
+    });
+    runner.lock().unwrap().set_obj_names(play.obj_names());
 
+    // The fleet gate: both slots ingame with scene 2 (the walker's own
+    // mainland seed gate still decides when it may tele; the closer needs
+    // its slot up before it can slam).
     wait_ingame(&play, 2, Duration::from_secs(150), "nav_door");
 
-    let arm_deadline = Instant::now() + Duration::from_secs(120);
-    let mut started: Option<Instant> = None;
+    // Poll the shared runner for a terminal status; a FAIL or a timeout
+    // both exit 1 (rs2b0t harness style).
+    let deadline = Instant::now() + Duration::from_secs(180);
     loop {
-        let mut s = shared.lock().unwrap();
-        if let Some(msg) = s.failed.clone() {
-            fail(&msg);
-        }
-        let here = s.walker.here;
-        if s.arrived || here.is_some_and(|h| cheb(h, DEST) <= 1 && at_catherby(h)) {
-            let elapsed = started.map(|st| st.elapsed()).unwrap_or_default();
-            println!("PASS: nav_door walker arrived at {DEST:?} in {elapsed:?} (here={here:?})");
-            return;
-        }
-        if !s.dest_armed && s.walker.scene_state == 2 {
-            if let Some(here) = s.walker.here {
-                if at_catherby(here) && outside_ready(here) {
-                    // The whole-world router starts from the observed tile
-                    // (a loc-blocked tele tile is fine — only tiles stepped
-                    // onto are tested), so the route crosses the door via
-                    // the packed transport edge.
-                    let from = WorldTile {
-                        x: here.x,
-                        z: here.z,
-                        level: 0,
-                    };
-                    let dest = WorldTile {
-                        x: DEST.x,
-                        z: DEST.z,
-                        level: 0,
-                    };
-                    match nav::router::find(&world.collision, &world.graph, from, dest) {
-                        Ok(route) => {
-                            s.route = Some(route);
-                            s.dest_armed = true;
-                            started = Some(Instant::now());
-                            println!("nav_door: armed dest {from:?} -> {dest:?} (here={here:?})");
-                        }
-                        Err(e) => fail(&format!(
-                            "nav_door: no world path from {from:?} to {dest:?} (here={here:?}): {e:?}"
-                        )),
-                    }
+        let (status, evidence) = {
+            let r = runner.lock().unwrap();
+            (r.status(), r.evidence().cloned())
+        };
+        let record = evidence
+            .as_ref()
+            .map(|ev| ev.to_json())
+            .unwrap_or_default();
+        match status {
+            RunnerStatus::Passed => {
+                println!("PASS: nav_door {record}");
+                return;
+            }
+            RunnerStatus::Failed(msg) => {
+                eprintln!("FAIL: nav_door {record}");
+                fail(&format!("nav_door: {msg}"));
+            }
+            other => {
+                if Instant::now() >= deadline {
+                    fail(&format!(
+                        "nav_door: no terminal status within 180s ({other:?})"
+                    ));
                 }
+                std::thread::sleep(Duration::from_millis(250));
             }
         }
-        let now = Instant::now();
-        let walk_timed_out = started
-            .map(|st| now >= st + Duration::from_secs(120))
-            .unwrap_or(false);
-        let arm_timed_out = !s.dest_armed && now >= arm_deadline;
-        let scene = s.walker.scene_state;
-        let loc_id = s.loc_id;
-        drop(s);
-        if walk_timed_out {
-            fail(&format!(
-                "nav_door: not at {DEST:?} within 120 s of dest-arm (here={here:?}, loc_id={loc_id:?})"
-            ));
-        }
-        if arm_timed_out {
-            fail(&format!(
-                "nav_door: never armed dest within 120 s (here={here:?}, scene={scene})"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(250));
     }
-}
-
-fn walker_frame(c: &mut client::client::Client, shared: &Arc<Mutex<Shared>>) {
-    let Some(lp) = &c.local_player else {
-        return;
-    };
-    let here = WorldTile {
-        x: c.map_build_base_x + lp.route_x[0],
-        z: c.map_build_base_z + lp.route_z[0],
-        level: 0,
-    };
-    let loc_id = wall_loc_id(c, DOOR);
-
-    let mut s = shared.lock().unwrap();
-    s.walker.scene_state = c.scene_state;
-    s.walker.base = (c.map_build_base_x, c.map_build_base_z);
-    s.walker.here = Some(here);
-    s.loc_id = loc_id;
-
-    if stage_catherby_tele(c, here, &mut s.walker, WALKER_TELE, "walker") {
-        return;
-    }
-
-    // Poll the follow one step per delivered frame (any family gen moved)
-    // once the route is armed. `follow` reads the player tile and the
-    // door's live loc state from the snapshot itself.
-    if !s.snap.rebuild(c) || !s.dest_armed {
-        return;
-    }
-    let Some(route) = s.route.clone() else {
-        return;
-    };
-    // No special flag: the cheap one-interact door hop is the default,
-    // and the troll escalates automatically when the hop lapses its
-    // budget.
-    let mut options = TravelOptions::default();
-    // Disjoint field borrows: `follow` mutates the traveller while
-    // reading the per-tick snapshot.
-    let outcome = {
-        let Shared { traveller, snap, .. } = &mut *s;
-        traveller.follow(c, snap, route, &mut options)
-    };
-    let Some(outcome) = outcome else {
-        return;
-    };
-    if debug() {
-        let (bx, bz) = s.walker.base;
-        println!(
-            "nav_door walker: here={here:?} outcome={outcome:?} door={loc_id:?} scene=({bx},{bz})"
-        );
-    }
-    match outcome {
-        TravelOutcome::Arrived { .. } => s.arrived = true,
-        // A slammed door must not stall silently: any terminal outcome
-        // other than arrival is a clear FAIL (the troll re-sends every
-        // tick, so a genuine block surfaces here, not as a spin).
-        other => s.failed = Some(format!("nav_door: walker follow {other:?}")),
-    }
-}
-
-fn closer_frame(c: &mut client::client::Client, shared: &Arc<Mutex<Shared>>) {
-    let Some(lp) = &c.local_player else {
-        return;
-    };
-    let here = WorldTile {
-        x: c.map_build_base_x + lp.route_x[0],
-        z: c.map_build_base_z + lp.route_z[0],
-        level: 0,
-    };
-    let mut s = shared.lock().unwrap();
-    s.closer.scene_state = c.scene_state;
-    s.closer.base = (c.map_build_base_x, c.map_build_base_z);
-    s.closer.here = Some(here);
-
-    if stage_catherby_tele(c, here, &mut s.closer, CLOSER_TELE, "closer") {
-        return;
-    }
-
-    if c.gens.player == s.closer.last_gen {
-        return;
-    }
-    s.closer.last_gen = c.gens.player;
-
-    let loc_id = wall_loc_id(c, DOOR);
-    s.loc_id = loc_id;
-    let Some(id) = loc_id else {
-        return;
-    };
-    if id == CLOSED_ID {
-        s.closer.tried_1530 = false;
-        return;
-    }
-    // Brief: try closed id 1530 first on the open door; if it does not
-    // close, use the open id the client currently shows.
-    let op_id = if s.closer.tried_1530 { id } else { CLOSED_ID };
-    s.closer.tried_1530 = true;
-    op_loc(c, DOOR.x, DOOR.z, op_id);
-    if debug() {
-        println!("nav_door closer: here={here:?} loc_id={id} op_loc {op_id}");
-    }
-}
-
-/// Host-play queues `mainland_hop` *after* `per_frame` on the first
-/// `scene_state == 2`. Skip that frame; Catherby-tele only once `here` is
-/// the Lumbridge courtyard (or `x > 3100` and not already at Catherby).
-fn stage_catherby_tele(
-    c: &mut client::client::Client,
-    here: WorldTile,
-    slot: &mut Slot,
-    cmd: &str,
-    who: &str,
-) -> bool {
-    if at_catherby(here) || slot.tele_sent {
-        return false;
-    }
-    if c.scene_state != 2 {
-        return false;
-    }
-    if !slot.scene2_seen {
-        slot.scene2_seen = true;
-        return false;
-    }
-    if !at_lumbridge(here) && here.x <= 3100 {
-        return false;
-    }
-    cheat(c, cmd);
-    slot.tele_sent = true;
-    if debug() {
-        println!("nav_door {who}: {cmd} from {here:?} (after mainland)");
-    }
-    true
-}
-
-fn wall_loc_id(c: &client::client::Client, tile: WorldTile) -> Option<i32> {
-    let (bx, bz) = c.build_base();
-    let sx = tile.x - bx;
-    let sz = tile.z - bz;
-    // Same wall/decor/scene lookup as `Driver::loc_typecode`. An open door
-    // can sit on decor with no wall; returning on wall-None skipped Close.
-    c.loc_typecode(sx, sz).map(|tc| (tc >> 14) & 0x7fff)
-}
-
-fn at_lumbridge(here: WorldTile) -> bool {
-    here.x >= 3200 && here.x < 3264 && here.z >= 3200 && here.z < 3264
-}
-
-fn at_catherby(here: WorldTile) -> bool {
-    here.x >= 2800 && here.x < 2860 && here.z >= 3420 && here.z < 3460
-}
-
-fn outside_ready(here: WorldTile) -> bool {
-    cheb(here, OUTSIDE) <= 1 || (here.z <= 3437 && here.x <= 2818 && here.x >= 2813)
-}
-
-fn cheb(a: WorldTile, b: WorldTile) -> i32 {
-    (a.x - b.x).abs().max((a.z - b.z).abs())
-}
-
-fn debug() -> bool {
-    std::env::var("BOT_DEBUG").as_deref() == Ok("1")
-}
-
-fn pack_path() -> PathBuf {
-    std::env::var("NAV_PACK")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            PathBuf::from(format!("{home}/.274bot/274bot.navpack"))
-        })
 }

@@ -167,6 +167,30 @@ impl ScenarioRunner {
         name == self.profile_name()
     }
 
+    /// The companion slot at `index`'s profile name
+    /// (`seed.profiles[companion.profile].0`).
+    pub fn companion_profile_name(&self, index: usize) -> &'static str {
+        let profile = self.scenario.companions[index].profile;
+        self.scenario.seed.profiles[profile].0
+    }
+
+    /// The companion slot whose profile name is `name`, `None` when no
+    /// companion carries it. The driven slot (profile 0) is never a
+    /// companion, so per-frame hooks dispatch: driven → [`ScenarioRunner::tick`],
+    /// else `companion_for` → [`ScenarioRunner::companion_tick`].
+    pub fn companion_for(&self, name: &str) -> Option<usize> {
+        self.scenario
+            .companions
+            .iter()
+            .position(|c| self.scenario.seed.profiles[c.profile].0 == name)
+    }
+
+    /// Run companion `index`'s per-frame hook once on `client`. No sleeps;
+    /// the caller delivers one frame per call, exactly like [`tick`].
+    pub fn companion_tick(&mut self, index: usize, client: &mut Client) {
+        (self.scenario.companions[index].per_frame)(client);
+    }
+
     /// The terminal evidence record, `None` until PASS/FAIL.
     pub fn evidence(&self) -> Option<&Evidence> {
         self.evidence.as_ref()
@@ -478,7 +502,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use crate::{Scenario, Seed, Step, StepKind};
+    use crate::{Companion, Scenario, Seed, Step, StepKind};
 
     fn cfg() -> ClientConfig {
         ClientConfig {
@@ -528,6 +552,7 @@ mod tests {
                 wait: wait(Proof::Stat { id: 16, min }, budget),
             }],
             proof: Proof::Stat { id: 16, min },
+            companions: vec![],
         }
     }
 
@@ -635,6 +660,7 @@ mod tests {
                 z: dest.z,
                 level: dest.level,
             },
+            companions: vec![],
         }
     }
 
@@ -765,6 +791,7 @@ mod tests {
                 z: dest.z,
                 level: dest.level,
             },
+            companions: vec![],
         }
     }
 
@@ -838,6 +865,66 @@ mod tests {
             }
             other => panic!("expected Failed, got {other:?}"),
         }
+    }
+
+    // --- Companion slots (fleet runs) ---
+
+    /// A 2-profile scenario: profile 0 is the driven slot, profile 1 is a
+    /// companion whose per-frame hook flips a captured flag. Ticking the
+    /// driven slot runs the walker steps; ticking the companion slot runs
+    /// the hook.
+    #[test]
+    fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flipped = Arc::new(AtomicBool::new(false));
+        let hook = Arc::clone(&flipped);
+        let scenario = Scenario {
+            name: "companion",
+            seed: Seed {
+                profiles: vec![("test", "test"), ("test2", "test2")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "set run energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 99;
+                        true
+                    }),
+                },
+                wait: wait(Proof::Stat { id: 16, min: 1 }, 10),
+            }],
+            proof: Proof::Stat { id: 16, min: 1 },
+            companions: vec![Companion {
+                profile: 1,
+                per_frame: Box::new(move |_| {
+                    hook.store(true, Ordering::Relaxed);
+                }),
+            }],
+        };
+        let mut runner = ScenarioRunner::new(scenario);
+        assert_eq!(runner.companion_profile_name(0), "test2");
+        assert_eq!(runner.companion_for("test2"), Some(0));
+        assert_eq!(runner.companion_for("nobody"), None);
+
+        // Driven slot: the walker's steps run to PASS.
+        let mut c = seeded_client();
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 }
+        );
+        c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+
+        // Companion slot: the hook flips the flag on tick.
+        assert!(!flipped.load(Ordering::Relaxed));
+        let index = runner
+            .companion_for("test2")
+            .expect("the companion slot resolves by profile name");
+        runner.companion_tick(index, &mut c);
+        assert!(flipped.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -926,6 +1013,7 @@ mod tests {
                 wait: wait(Proof::Stat { id: 16, min: 0 }, 10),
             }],
             proof: Proof::Stat { id: 16, min: 0 },
+            companions: vec![],
         }
     }
 

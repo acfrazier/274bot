@@ -2698,6 +2698,7 @@ mod tests {
                 },
             }],
             proof: Proof::Stat { id: 16, min: 5 },
+            companions: vec![],
         };
         let mut runner = ScenarioRunner::new(pass);
         {
@@ -2740,6 +2741,7 @@ mod tests {
                 },
             }],
             proof: Proof::Stat { id: 16, min: 999 },
+            companions: vec![],
         };
         let mut runner = ScenarioRunner::new(fail_scenario);
         {
@@ -2785,6 +2787,7 @@ mod tests {
                 },
             }],
             proof: Proof::Stat { id: 16, min: 999 },
+            companions: vec![],
         };
         let mut runner = ScenarioRunner::new(fail_scenario);
         runner.set_terminal_shot("t-fail");

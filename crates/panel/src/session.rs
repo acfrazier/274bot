@@ -598,14 +598,17 @@ impl Session {
                     }
                 }
 
-                // Shared `--live script_*` runner: tick only the
-                // scenario's profile slot, before the local-player gate
-                // (seeding must observe frames with no player decode yet).
-                // The slot thread drives sends through its own `Client`;
-                // the UI frame only reads the runner's status/evidence.
+                // Shared `--live script_*` runner: tick the scenario's
+                // driven slot and its companion slots, before the
+                // local-player gate (seeding must observe frames with no
+                // player decode yet). The slot thread drives sends through
+                // its own `Client`; the UI frame only reads the runner's
+                // status/evidence.
                 if let Some(runner) = scenario.lock().unwrap().as_mut() {
                     if runner.drives(name) {
                         runner.tick(c);
+                    } else if let Some(index) = runner.companion_for(name) {
+                        runner.companion_tick(index, c);
                     }
                 }
 

@@ -24,6 +24,7 @@ mod runner;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use api::interact::{cheat, op_loc, Driver};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 
@@ -96,6 +97,22 @@ pub struct Scenario {
     /// The terminal proof: asserted on the snapshot once the run steps
     /// complete (replaces the "is the script polling Running" stub).
     pub proof: Proof,
+    /// Extra profile slots with their own per-frame hooks: the scenario
+    /// runs as a fleet. Profile 0 is the driven scenario slot; each
+    /// companion names another `seed.profiles` index (so `>= 1`) the
+    /// runner ticks through [`ScenarioRunner::companion_tick`] exactly
+    /// like the driven slot's `tick`. Empty for single-bot scenarios.
+    pub companions: Vec<Companion>,
+}
+
+/// One extra profile slot in a scenario fleet: `profile` is an index into
+/// `seed.profiles` (0 is the driven scenario slot, so companions are
+/// `>= 1`) and `per_frame` is the slot's per-frame hook, run once per
+/// delivered frame by the same per-frame machinery that ticks the driven
+/// slot.
+pub struct Companion {
+    pub profile: usize,
+    pub per_frame: Box<dyn FnMut(&mut Client) + Send>,
 }
 
 /// The registered scenario with this name, `None` when unknown.
@@ -104,13 +121,14 @@ pub fn get(name: &str) -> Option<Scenario> {
         "walk" => Some(walk_scenario()),
         "render_smoke" => Some(render_smoke_scenario()),
         "nav_full" => Some(nav_full_scenario()),
+        "nav_door" => Some(nav_door_scenario()),
         _ => None,
     }
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
-    vec!["walk", "render_smoke", "nav_full"]
+    vec!["walk", "render_smoke", "nav_full", "nav_door"]
 }
 
 /// The `render_smoke` scenario: log in `test`/`test`, do nothing, and
@@ -137,6 +155,7 @@ fn render_smoke_scenario() -> Scenario {
             },
         }],
         proof: Proof::Stat { id: 16, min: 0 },
+        companions: vec![],
     }
 }
 
@@ -193,6 +212,7 @@ fn walk_scenario() -> Scenario {
             z: dest.z,
             level: 0,
         },
+        companions: vec![],
     }
 }
 
@@ -239,7 +259,195 @@ pub fn nav_full_scenario() -> Scenario {
             z: dest.z,
             level: dest.level,
         },
+        companions: vec![],
     }
+}
+
+/// The `nav_door` scenario: the two-bot door slam as a scenario fleet.
+/// Profile 0 (`test`) is the driven walker: after the mainland seed it
+/// cheat-teles to the Catherby range-house `OUTSIDE` stand, then `Follow`s
+/// a whole-world route through the door to `DEST` inside. Profile 1
+/// (`test2`) is the closer companion: it cheat-teles inside, then
+/// `op_loc`s the door shut on every player-info tick the instant the door
+/// reads open, so the walker's follow is stressed against a tick-perfect
+/// closer. The follow's terminal outcome at the door is the diagnostic
+/// target (the closer slams the door shut as the walker approaches, which
+/// surfaces as `Refused Unreachable` in the traveller's settle). The
+/// companion's gating mirrors the old harness: the first `scene_state ==
+/// 2` frame is skipped (host-play queues `mainland_hop` after the hook),
+/// and the Catherby tele waits until `here` is the mainland courtyard.
+fn nav_door_scenario() -> Scenario {
+    let outside = WorldTile {
+        x: OUTSIDE.x,
+        z: OUTSIDE.z,
+        level: 0,
+    };
+    let dest = WorldTile {
+        x: DEST.x,
+        z: DEST.z,
+        level: 0,
+    };
+    Scenario {
+        name: "nav_door",
+        seed: Seed {
+            profiles: vec![("test", "test"), ("test2", "test2")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "tele the walker to the Catherby outside stand",
+                kind: StepKind::Perform {
+                    // Return true on send: the cheat is queued through the
+                    // ISAAC sink, the arm waits for the tele to land.
+                    send: Box::new(|c, _| cheat(c, WALKER_TELE)),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: outside.x,
+                        z: outside.z,
+                        level: 0,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow through the range-house door",
+                kind: StepKind::Follow { dest },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        },
+        companions: vec![Companion {
+            profile: 1,
+            per_frame: {
+                let mut slot = CloserSlot::default();
+                Box::new(move |c| closer_frame(c, &mut slot))
+            },
+        }],
+    }
+}
+
+/// Closed Catherby range-house door (loc 1530) the closer slams.
+const DOOR: WorldTile = WorldTile {
+    x: 2816,
+    z: 3438,
+    level: 0,
+};
+const CLOSED_ID: i32 = 1530;
+/// Briefed outside stand (west of pack origin 2816; on-pack fallback is
+/// (2816,3436), the walkable tile south of the door).
+const OUTSIDE: WorldTile = WorldTile {
+    x: 2813,
+    z: 3436,
+    level: 0,
+};
+/// Inside stand, north of the door.
+const DEST: WorldTile = WorldTile {
+    x: 2817,
+    z: 3443,
+    level: 0,
+};
+/// `::tele` to OUTSIDE (level, mx, mz, lx, lz).
+const WALKER_TELE: &str = "tele 0,43,53,61,44";
+/// Inside, diagonal to the door (2817,3439) — off the 2816 corridor.
+const CLOSER_TELE: &str = "tele 0,44,53,1,47";
+
+/// Per-frame state of the closer companion (profile 1), owned by the
+/// companion's closure. All plain fields, so the closure is `Send`.
+#[derive(Default)]
+struct CloserSlot {
+    /// First `scene_state == 2` was observed; that frame host-play still
+    /// queues `mainland_hop` after `per_frame`, so the Catherby tele
+    /// waits a tick.
+    scene2_seen: bool,
+    tele_sent: bool,
+    last_gen: u64,
+    /// 1530 was already tried on this open door.
+    tried_1530: bool,
+}
+
+/// The closer companion's per-frame hook: gate the Catherby tele behind
+/// the mainland hop, then on every player-info tick `op_loc` the door
+/// whenever the loc is not the closed id 1530 (try 1530 first, then the
+/// open id the client currently shows), so it slams shut tick-perfectly.
+fn closer_frame(c: &mut Client, s: &mut CloserSlot) {
+    let Some(lp) = &c.local_player else {
+        return;
+    };
+    let here = WorldTile {
+        x: c.map_build_base_x + lp.route_x[0],
+        z: c.map_build_base_z + lp.route_z[0],
+        level: 0,
+    };
+    if stage_closer_tele(c, here, s) {
+        return;
+    }
+    if c.gens.player == s.last_gen {
+        return;
+    }
+    s.last_gen = c.gens.player;
+    let Some(loc_id) = wall_loc_id(c, DOOR) else {
+        return;
+    };
+    if loc_id == CLOSED_ID {
+        s.tried_1530 = false;
+        return;
+    }
+    // Try the closed id first; if it does not close, use the open id the
+    // client currently shows.
+    let op_id = if s.tried_1530 { loc_id } else { CLOSED_ID };
+    s.tried_1530 = true;
+    op_loc(c, DOOR.x, DOOR.z, op_id);
+}
+
+/// Host-play queues `mainland_hop` *after* `per_frame` on the first
+/// `scene_state == 2`. Skip that frame; Catherby-tele only once `here` is
+/// the Lumbridge courtyard (or `x > 3100` and not already at Catherby).
+fn stage_closer_tele(c: &mut Client, here: WorldTile, s: &mut CloserSlot) -> bool {
+    if at_catherby(here) || s.tele_sent {
+        return false;
+    }
+    if c.scene_state != 2 {
+        return false;
+    }
+    if !s.scene2_seen {
+        s.scene2_seen = true;
+        return false;
+    }
+    if !at_lumbridge(here) && here.x <= 3100 {
+        return false;
+    }
+    cheat(c, CLOSER_TELE);
+    s.tele_sent = true;
+    true
+}
+
+fn wall_loc_id(c: &Client, tile: WorldTile) -> Option<i32> {
+    let (bx, bz) = c.build_base();
+    let sx = tile.x - bx;
+    let sz = tile.z - bz;
+    // Same wall/decor/scene lookup as `Driver::loc_typecode`. An open door
+    // can sit on decor with no wall; returning on wall-None skipped Close.
+    c.loc_typecode(sx, sz).map(|tc| (tc >> 14) & 0x7fff)
+}
+
+fn at_lumbridge(here: WorldTile) -> bool {
+    here.x >= 3200 && here.x < 3264 && here.z >= 3200 && here.z < 3264
+}
+
+fn at_catherby(here: WorldTile) -> bool {
+    here.x >= 2800 && here.x < 2860 && here.z >= 3420 && here.z < 3460
 }
 
 /// 377 `fail()`: print and exit 1. The headed runner calls this on a
@@ -301,6 +509,35 @@ mod tests {
         assert_eq!(dest, WorldTile { x: 3220, z: 3264, level: 0 });
         assert_eq!(arm, (3220, 3264, 0));
         assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
-        assert_eq!(names(), ["walk", "render_smoke", "nav_full"]);
+        assert_eq!(names(), ["walk", "render_smoke", "nav_full", "nav_door"]);
+    }
+
+    #[test]
+    fn nav_door_is_a_two_profile_fleet_with_a_door_closer_companion() {
+        let s = get("nav_door").expect("nav_door is registered");
+        assert_eq!(s.name, "nav_door");
+        assert_eq!(s.seed.profiles, [("test", "test"), ("test2", "test2")]);
+        assert!(s.seed.mainland, "the hop lands the walker before the Catherby tele");
+        assert_eq!(s.steps.len(), 2, "tele the walker, then follow the route");
+        assert!(
+            matches!(s.steps[0].kind, StepKind::Perform { .. }),
+            "step 1 is the Catherby cheat-tele"
+        );
+        let (dest, arm) = match &s.steps[1].kind {
+            StepKind::Follow { dest } => (
+                *dest,
+                match &s.steps[1].wait.arm {
+                    Proof::Arrived { x, z, level } => (*x, *z, *level),
+                    other => panic!("follow arm must be arrived, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_door step 2 must be Follow"),
+        };
+        assert_eq!(dest, WorldTile { x: 2817, z: 3443, level: 0 });
+        assert_eq!(arm, (2817, 3443, 0));
+        assert_eq!(s.proof.name(), "arrived(2817,3443,0)");
+        assert_eq!(s.companions.len(), 1, "the closer is the one companion");
+        assert_eq!(s.companions[0].profile, 1, "profile 1 (test2) is the closer");
+        assert!(names().contains(&"nav_door"));
     }
 }
