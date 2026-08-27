@@ -12,7 +12,6 @@ use api::interact::{
 };
 use api::obj_names::ItemDefView;
 use api::prot::{LegalSend, LEGAL_SEND};
-use api::settle::{item_delta, modal_delta, xp_gained, Settle};
 use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
 };
@@ -568,65 +567,11 @@ fn legal_row(prot: ClientProt) -> LegalSend {
         .unwrap()
 }
 
-/// Settle: before/after inv counts fold into the `item_delta` evidence.
-#[test]
-fn settle_item_delta_matches_inv_counts() {
-    let before = [1, 0, 5];
-    let after = [1, 3, 5];
-    assert_eq!(item_delta(&before, &after), 3);
-    assert_eq!(item_delta(&after, &before), -3);
-    assert_eq!(item_delta(&before, &before), 0);
-}
-
-/// Settle: xp evidence is the non-negative gain across skills.
-#[test]
-fn settle_xp_gained_is_positive_gain() {
-    let before = [100, 50];
-    let after = [100, 62];
-    assert_eq!(xp_gained(&before, &after), 12);
-    assert_eq!(xp_gained(&after, &before), 0);
-}
-
-/// Settle: modal open/close transitions are detected from before/after ids.
-#[test]
-fn settle_detects_modal_open_and_close() {
-    let (opened, closed) = modal_delta(None, Some(94));
-    assert_eq!(opened, Some(94));
-    assert_eq!(closed, None);
-
-    let (opened, closed) = modal_delta(Some(94), None);
-    assert_eq!(opened, None);
-    assert_eq!(closed, Some(94));
-
-    let (opened, closed) = modal_delta(Some(94), Some(94));
-    assert_eq!((opened, closed), (None, None));
-
-    let (opened, closed) = modal_delta(Some(94), Some(12));
-    assert_eq!(opened, Some(12));
-    assert_eq!(closed, Some(94));
-}
-
-/// Settle: `done` needs armed evidence within the tick/ms budget.
-#[test]
-fn settle_done_requires_evidence_within_budget() {
-    let s = Settle {
-        arrived: true,
-        ticks: 1,
-        ms: 40,
-        ..Settle::default()
-    };
-    assert!(s.done());
-
-    let overdue = Settle {
-        arrived: true,
-        ticks: 11,
-        ..Settle::default()
-    };
-    assert!(!overdue.done(), "past the tick budget");
-
-    let no_evidence = Settle::default();
-    assert!(!no_evidence.done(), "no evidence armed");
-}
+/// Settle moved out of the interact suite with task 10: the v1 evidence
+/// structs (`item_delta`/`xp_gained` array folds, `modal_delta`, the
+/// `done()` budget struct) were replaced by the pollable
+/// `api::settle::Settle`/`Outcome` + the eleven evidence predicates, which
+/// `tests/settle.rs` covers.
 
 #[test]
 fn logout_presses_cc_logout_iface_and_missing_is_false() {

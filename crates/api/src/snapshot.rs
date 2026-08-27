@@ -1824,6 +1824,8 @@ impl GameSnapshot {
 /// `ReadContext`/`ReadApi`): every accessor returns the last rebuild's
 /// view without allocating. The query DSL (`api::query`) builds on these
 /// slices; `component`/`varp`/`world_tile` do a cheap scan/derivation.
+/// Copy so settle outcomes can hand the same context back out of a watch.
+#[derive(Clone, Copy)]
 pub struct ReadContext<'a>(&'a GameSnapshot);
 
 impl<'a> ReadContext<'a> {
@@ -1981,6 +1983,12 @@ impl<'a> ReadContext<'a> {
     /// The camera state.
     pub fn camera(&self) -> &CameraView {
         self.0.camera()
+    }
+
+    /// The minimap flag from the last map-flag rebuild; `None` while no
+    /// flag is set.
+    pub fn map_flag(&self) -> Option<&MapFlagView> {
+        self.0.map_flag()
     }
 
     /// The trade offer screen's own items.
