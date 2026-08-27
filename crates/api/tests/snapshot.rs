@@ -1753,12 +1753,8 @@ fn trade_view_reads_offer_confirm_and_containers() {
 #[test]
 fn chat_lines_read_the_full_ring_in_order() {
     let mut c = client_with_npc();
-    c.chat_text[0] = "second".into();
-    c.chat_type[0] = 0;
-    c.chat_username[0] = String::new();
-    c.chat_text[1] = "first".into();
-    c.chat_type[1] = 4;
-    c.chat_username[1] = "Zezima".into();
+    c.add_chat(4, "first", "Zezima");
+    c.add_chat(0, "second", "");
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::MESSAGE_GAME);
@@ -1778,14 +1774,7 @@ fn chat_lines_read_the_full_ring_in_order() {
     );
 
     let head_seq = lines[0].sequence;
-    c.chat_text[2] = "first".into();
-    c.chat_type[2] = 4;
-    c.chat_username[2] = "Zezima".into();
-    c.chat_text[1] = "second".into();
-    c.chat_type[1] = 0;
-    c.chat_username[1] = String::new();
-    c.chat_text[0] = "third".into();
-    c.chat_type[0] = 0;
+    c.add_chat(0, "third", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
     assert!(snap.rebuild_family(&mut c, Family::Chat));
     let lines = snap.chat_lines();
@@ -1796,6 +1785,60 @@ fn chat_lines_read_the_full_ring_in_order() {
         "a new head bumps the sequence"
     );
     assert_eq!(snap.chat(), Some("third"), "the head accessor stays");
+}
+
+/// Two messages added in a single gen bump get distinct, stable sequences:
+/// the client bumps `chat_seq` once per `add_chat`, so every burst line
+/// reads newer than the previous head's sequence and `since` queries miss
+/// none of them.
+#[test]
+fn chat_burst_in_one_gen_gets_distinct_sequences() {
+    let mut c = client_with_npc();
+    c.add_chat(0, "one", "");
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    let last = snap.chat_lines()[0].sequence;
+
+    // A burst of two messages before the next gen bump.
+    c.add_chat(0, "two", "");
+    c.add_chat(0, "three", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&mut c, Family::Chat));
+
+    let lines = snap.chat_lines();
+    assert_eq!(lines[0].text, "three", "index 0 is the newest line");
+    assert_eq!(lines[1].text, "two");
+    assert!(
+        lines[0].sequence > last && lines[1].sequence > last,
+        "every burst message is new since the previous head"
+    );
+    assert_ne!(
+        lines[0].sequence, lines[1].sequence,
+        "each burst message gets its own per-message sequence"
+    );
+    let (three_seq, two_seq) = (lines[0].sequence, lines[1].sequence);
+
+    // Sequences are stable: a rebuild with no new chat keeps them.
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    let lines = snap.chat_lines();
+    assert_eq!(lines[0].sequence, three_seq);
+    assert_eq!(lines[1].sequence, two_seq);
+}
+
+/// `rebuild`/`rebuild_family` take `&Client`: a shared borrow suffices
+/// now that the ground-item sweep uses the immutable `LinkList` iterator.
+#[test]
+fn rebuild_reads_a_shared_client_borrow() {
+    let mut c = client_with_npc();
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let client = &c;
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(client));
+    assert_eq!(snap.npcs().len(), 1);
+    assert!(!snap.rebuild(client), "unchanged gens are not dirty again");
+    assert!(!snap.rebuild_family(client, Family::Npc));
 }
 
 /// Chat options collect the BUTTON_OK labels of the chat modal; the

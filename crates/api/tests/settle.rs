@@ -507,10 +507,10 @@ fn option_gone_detects_loc_and_action_gone() {
 #[test]
 fn said_matches_new_chat_lines() {
     let mut c = scene_client();
-    c.chat_text[0] = "first".into();
+    c.add_chat(0, "first", "");
     let before = fresh_snap(&mut c);
     let mut now = fresh_snap(&mut c);
-    c.chat_text[0] = "second".into();
+    c.add_chat(0, "second", "");
     bump_rebuild(&mut c, &mut now);
 
     assert!(evidence_holds(said(&["sec"]), &now, &before), "new line");

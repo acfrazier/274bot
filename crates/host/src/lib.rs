@@ -539,7 +539,7 @@ impl SlotLoop {
     }
 }
 
-fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &mut Client, dirty: DirtyFamilies) {
+fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &Client, dirty: DirtyFamilies) {
     if dirty.npc {
         snapshot.rebuild_family(client, Family::Npc);
     }

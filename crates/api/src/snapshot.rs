@@ -348,8 +348,8 @@ pub struct TradeView {
 }
 
 /// One chat history line. The ring's index 0 is the newest line;
-/// `sequence` strictly increases for newer lines (the head bumps on every
-/// chat gen), so `since(last)` queries see only genuinely new lines.
+/// `sequence` is the client's per-message counter (one bump per
+/// `add_chat`), so `since(last)` queries see only genuinely new lines.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChatLineView {
     pub type_: i32,
@@ -619,14 +619,6 @@ pub struct GameSnapshot {
     controls_gate: u64,
     #[serde(skip)]
     menu_gate: u64,
-    /// The chat head's sequence counter: the newest line's `sequence`.
-    /// Bumped when the ring head moves on a chat gen (the client has no
-    /// per-message counter), so sequences stay monotonic per rebuild.
-    #[serde(skip)]
-    chat_seq: i32,
-    /// The ring head from the last chat rebuild, to detect a new message.
-    #[serde(skip)]
-    chat_prev_head: String,
 }
 
 impl Default for GameSnapshot {
@@ -700,8 +692,6 @@ impl Default for GameSnapshot {
             modals_gate: 0,
             controls_gate: 0,
             menu_gate: 0,
-            chat_seq: 0,
-            chat_prev_head: String::new(),
         }
     }
 }
@@ -720,9 +710,9 @@ impl GameSnapshot {
     /// rebuild of that family. Returns true iff the gen moved. The npc/
     /// player/stat families rebuild their view caches; the rest track
     /// their counter so a later view can detect movement. `client` is
-    /// mutable because the ground-item lists are iterated in place (the
-    /// client's own `LinkList` cursor pattern).
-    pub fn rebuild_family(&mut self, client: &mut Client, family: Family) -> bool {
+    /// borrowed immutably (the ground-item lists iterate through the
+    /// `LinkList`'s shared iterator).
+    pub fn rebuild_family(&mut self, client: &Client, family: Family) -> bool {
         match family {
             Family::Npc => self.rebuild_npcs(client),
             Family::Player => self.rebuild_player(client),
@@ -755,7 +745,7 @@ impl GameSnapshot {
 
     /// Rebuild every family whose gen moved (the harness "one snapshot
     /// per tick" read). Returns true iff any family gen moved.
-    pub fn rebuild(&mut self, client: &mut Client) -> bool {
+    pub fn rebuild(&mut self, client: &Client) -> bool {
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
         dirty |= self.rebuild_family(client, Family::Player);
@@ -1036,7 +1026,7 @@ impl GameSnapshot {
         self.active_side_tab
     }
 
-    fn rebuild_stat(&mut self, client: &mut Client) -> bool {
+    fn rebuild_stat(&mut self, client: &Client) -> bool {
         if !track(client.gens.stat, &mut self.gens.stat) {
             return false;
         }
@@ -1056,7 +1046,7 @@ impl GameSnapshot {
 
     /// Varp-family rebuild: the whole `Client.var` table, one view per
     /// definition (unset entries read 0), gated on the varp gen.
-    fn rebuild_varps(&mut self, client: &mut Client) -> bool {
+    fn rebuild_varps(&mut self, client: &Client) -> bool {
         if !track(client.gens.varp, &mut self.gens.varp) {
             return false;
         }
@@ -1073,7 +1063,7 @@ impl GameSnapshot {
     /// tile (base + route head), the `LocalPlayerView`, and the remote
     /// `players` list. `REBUILD_NORMAL` bumps every gen, so a new world
     /// origin re-arms this too.
-    fn rebuild_player(&mut self, client: &mut Client) -> bool {
+    fn rebuild_player(&mut self, client: &Client) -> bool {
         if !track(client.gens.player, &mut self.gens.player) {
             return false;
         }
@@ -1140,7 +1130,7 @@ impl GameSnapshot {
     /// iface stores `obj_id + 1` (0 = empty), so the view carries the
     /// real obj ids — the same convention as `ItemView.def.id`, the
     /// `ObjNames` table and the evidence/`Proof::Item` consumers.
-    fn rebuild_inv(&mut self, client: &mut Client) -> bool {
+    fn rebuild_inv(&mut self, client: &Client) -> bool {
         if !track(client.gens.inv, &mut self.gens.inv) {
             return false;
         }
@@ -1165,18 +1155,17 @@ impl GameSnapshot {
 
     /// Chat-family rebuild: the ring head (`chat_text[0]`) is the most
     /// recent message, and the full ring becomes the `chat_lines` view
-    /// (index 0 = newest). The head's sequence bumps on every chat gen,
-    /// so `sequence` strictly increases for newer lines.
-    fn rebuild_chat(&mut self, client: &mut Client) -> bool {
+    /// (index 0 = newest). Each line's `sequence` is the client's own
+    /// per-message counter (`chat_seq` bumps once per `add_chat`), so a
+    /// burst in one gen bump still gets distinct sequences that only move
+    /// forward.
+    fn rebuild_chat(&mut self, client: &Client) -> bool {
         if !track(client.gens.chat, &mut self.gens.chat) {
             return false;
         }
         let latest = client.chat_text[0].clone();
         self.chat = (!latest.is_empty()).then_some(latest);
-        if client.chat_text[0] != self.chat_prev_head {
-            self.chat_seq += 1;
-            self.chat_prev_head = client.chat_text[0].clone();
-        }
+        let head_seq = client.chat_seq as i32;
         self.chat_lines.clear();
         for i in 0..100 {
             let text = client.chat_text[i].clone();
@@ -1188,7 +1177,7 @@ impl GameSnapshot {
                 username: (!client.chat_username[i].is_empty())
                     .then(|| client.chat_username[i].clone()),
                 text,
-                sequence: self.chat_seq - i as i32,
+                sequence: head_seq - i as i32,
             });
         }
         true
@@ -1196,7 +1185,7 @@ impl GameSnapshot {
 
     /// Inventory rebuild: the inv tab's (side tab 3) TYPE_INV component,
     /// with held ops from the obj defs. Gated on the iface + inv gens.
-    fn rebuild_inventory(&mut self, client: &mut Client) -> bool {
+    fn rebuild_inventory(&mut self, client: &Client) -> bool {
         if !self.inventory_gate.moved(client) {
             return false;
         }
@@ -1243,7 +1232,7 @@ impl GameSnapshot {
 
     /// Equipment rebuild: the worn-items tab's (side tab 4) TYPE_INV
     /// component with its own interface ops.
-    fn rebuild_equipment(&mut self, client: &mut Client) -> bool {
+    fn rebuild_equipment(&mut self, client: &Client) -> bool {
         if !self.equipment_gate.moved(client) {
             return false;
         }
@@ -1255,7 +1244,7 @@ impl GameSnapshot {
 
     /// Bank rebuild: the open main modal's withdraw component (m8aq
     /// `bankItems`).
-    fn rebuild_bank(&mut self, client: &mut Client) -> bool {
+    fn rebuild_bank(&mut self, client: &Client) -> bool {
         if !self.bank_gate.moved(client) {
             return false;
         }
@@ -1280,7 +1269,7 @@ impl GameSnapshot {
 
     /// Bank-side rebuild: the open side modal's deposit component (m8aq
     /// `bankSideItems`).
-    fn rebuild_bank_side(&mut self, client: &mut Client) -> bool {
+    fn rebuild_bank_side(&mut self, client: &Client) -> bool {
         if !self.bank_side_gate.moved(client) {
             return false;
         }
@@ -1303,7 +1292,7 @@ impl GameSnapshot {
     /// component ids are baked by the packed interface table, so the
     /// reads work whether or not a trade is open (m8aq reads the same
     /// hardcoded ids).
-    fn rebuild_trade(&mut self, client: &mut Client) -> bool {
+    fn rebuild_trade(&mut self, client: &Client) -> bool {
         if !self.trade_gate.moved(client) {
             return false;
         }
@@ -1336,7 +1325,7 @@ impl GameSnapshot {
     /// Widgets rebuild: walk every open root's tree into `WidgetView`s.
     /// Gated on the iface gen (tree/component state) and the inv gen
     /// (TYPE_INV slot contents).
-    fn rebuild_widgets(&mut self, client: &mut Client) -> bool {
+    fn rebuild_widgets(&mut self, client: &Client) -> bool {
         if !self.widgets_gate.moved(client) {
             return false;
         }
@@ -1351,7 +1340,7 @@ impl GameSnapshot {
 
     /// Side-tabs rebuild: all 14 slots with the tab state and each
     /// available tab's widget tree.
-    fn rebuild_side_tabs(&mut self, client: &mut Client) -> bool {
+    fn rebuild_side_tabs(&mut self, client: &Client) -> bool {
         if !self.side_tabs_gate.moved(client) {
             return false;
         }
@@ -1385,7 +1374,7 @@ impl GameSnapshot {
 
     /// Chat-options rebuild: the chat modal's BUTTON_OK choices and its
     /// BUTTON_CONTINUE component (the m8aq `chatOptions`/continue).
-    fn rebuild_chat_options(&mut self, client: &mut Client) -> bool {
+    fn rebuild_chat_options(&mut self, client: &Client) -> bool {
         if !track(client.gens.iface, &mut self.chat_options_gate) {
             return false;
         }
@@ -1446,7 +1435,7 @@ impl GameSnapshot {
     /// Make-products rebuild: the chat (or main) modal's obj-model
     /// components as products with their make/smelt buttons grouped four
     /// per product (m8aq `makeProducts`).
-    fn rebuild_make_products(&mut self, client: &mut Client) -> bool {
+    fn rebuild_make_products(&mut self, client: &Client) -> bool {
         if !track(client.gens.iface, &mut self.make_products_gate) {
             return false;
         }
@@ -1502,7 +1491,7 @@ impl GameSnapshot {
 
     /// Quest-statuses rebuild: the quest tab's (side tab 2) TYPE_TEXT
     /// rows with their colours (m8aq `questStatuses`).
-    fn rebuild_quest_statuses(&mut self, client: &mut Client) -> bool {
+    fn rebuild_quest_statuses(&mut self, client: &Client) -> bool {
         if !track(client.gens.iface, &mut self.quest_statuses_gate) {
             return false;
         }
@@ -1536,7 +1525,7 @@ impl GameSnapshot {
     /// Controls rebuild: the run/retaliate toggle pairs from the
     /// player-controls overlay (a table scan — the overlay is a side tab,
     /// so its root is not among the widget roots).
-    fn rebuild_controls(&mut self, client: &mut Client) -> bool {
+    fn rebuild_controls(&mut self, client: &Client) -> bool {
         if !track(client.gens.iface, &mut self.controls_gate) {
             return false;
         }
@@ -1549,7 +1538,7 @@ impl GameSnapshot {
     /// scalar fields copy every rebuild (the count dialog and active tab
     /// flip locally with no packet), while the return value tracks the
     /// iface gen for the harness.
-    fn rebuild_modals(&mut self, client: &mut Client) -> bool {
+    fn rebuild_modals(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.iface, &mut self.modals_gate);
         self.modals = ModalView {
             main: client.main_modal_id,
@@ -1567,7 +1556,7 @@ impl GameSnapshot {
     /// Menu rebuild: the minimenu entries and the login message. The menu
     /// is rebuilt locally every frame with no packet, so the entries copy
     /// every rebuild; the return value tracks the iface gen.
-    fn rebuild_menu(&mut self, client: &mut Client) -> bool {
+    fn rebuild_menu(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.iface, &mut self.menu_gate);
         let n = client.menu_num_entries.max(0) as usize;
         self.menu_entries = client.menu_option.iter().take(n).cloned().collect();
@@ -1592,7 +1581,7 @@ impl GameSnapshot {
     /// the collision grid) only changes on a world build, so it rebuilds
     /// when the scene gen moves. The return value still tracks the gen for
     /// the harness's dirty/tick semantics.
-    fn rebuild_scene(&mut self, client: &mut Client) -> bool {
+    fn rebuild_scene(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.gens.scene);
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
@@ -1629,7 +1618,7 @@ impl GameSnapshot {
     /// `minusedlevel` (locs sit on scene tiles, so the world tile is
     /// `base + scene` with no pixel conversion). Gated on the scene gen —
     /// loc changes arrive on scene-family packets.
-    fn rebuild_loc(&mut self, client: &mut Client) -> bool {
+    fn rebuild_loc(&mut self, client: &Client) -> bool {
         if !track(client.gens.scene, &mut self.loc_gen) {
             return false;
         }
@@ -1700,10 +1689,10 @@ impl GameSnapshot {
 
     /// Ground-item rebuild: iterate each `ground_obj` list at
     /// `minusedlevel` into a `GroundItemView` (obj definition, stack
-    /// count, ground ops). The client's `LinkList` cursor is mutated in
-    /// place (the same `head`/`next` pattern the client's own handlers
-    /// use). Gated on the scene gen — object packets bump it.
-    fn rebuild_ground_items(&mut self, client: &mut Client) -> bool {
+    /// count, ground ops). The `LinkList`'s shared `for_each` iterator
+    /// needs no mutable cursor. Gated on the scene gen — object packets
+    /// bump it.
+    fn rebuild_ground_items(&mut self, client: &Client) -> bool {
         if !track(client.gens.scene, &mut self.ground_item_gen) {
             return false;
         }
@@ -1713,8 +1702,7 @@ impl GameSnapshot {
         self.ground_item.clear();
         for x in 0..104 {
             for z in 0..104 {
-                let cell = &mut client.ground_obj[level as usize][x as usize][z as usize];
-                let Some(list) = cell.as_mut() else {
+                let Some(list) = &client.ground_obj[level as usize][x as usize][z as usize] else {
                     continue;
                 };
                 let tile = WorldTile {
@@ -1725,8 +1713,7 @@ impl GameSnapshot {
                 let distance = local_tile
                     .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
                     .unwrap_or(0);
-                let mut node = list.head();
-                while let Some(obj) = node {
+                list.for_each(|obj| {
                     self.ground_item.push(GroundItemView {
                         def: item_def_view(&client.cache, obj.id),
                         count: obj.count,
@@ -1734,8 +1721,7 @@ impl GameSnapshot {
                         tile,
                         distance,
                     });
-                    node = list.next();
-                }
+                });
             }
         }
         true
@@ -1744,7 +1730,7 @@ impl GameSnapshot {
     /// World-state rebuild: the client's world scalars. Cheap reads copy
     /// every rebuild (like the scene status), so counts stay fresh between
     /// world-gen bumps; the return value tracks the gen for the harness.
-    fn rebuild_world(&mut self, client: &mut Client) -> bool {
+    fn rebuild_world(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.world, &mut self.gens.world);
         self.world = WorldStateView {
             map_base_x: client.map_build_base_x,
@@ -1763,7 +1749,7 @@ impl GameSnapshot {
     /// cinematic flag. The follow camera eases every frame with no packet,
     /// so the cheap fields copy every rebuild; the return value tracks the
     /// gen.
-    fn rebuild_camera(&mut self, client: &mut Client) -> bool {
+    fn rebuild_camera(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.camera, &mut self.gens.camera);
         self.camera = CameraView {
             x: client.cam_x,
@@ -1781,7 +1767,7 @@ impl GameSnapshot {
     /// Map-flag rebuild: the minimap destination flag, `Some` only while
     /// it is set. The flag flips on minimap clicks with no packet, so the
     /// view copies every rebuild; the return value tracks the gen.
-    fn rebuild_map_flag(&mut self, client: &mut Client) -> bool {
+    fn rebuild_map_flag(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.map_flag, &mut self.gens.map_flag);
         self.map_flag = (client.minimap_flag_x != 0).then_some(MapFlagView {
             lx: client.minimap_flag_x,
@@ -1790,7 +1776,7 @@ impl GameSnapshot {
         moved
     }
 
-    fn rebuild_npcs(&mut self, client: &mut Client) -> bool {
+    fn rebuild_npcs(&mut self, client: &Client) -> bool {
         if client.gens.npc == self.gens.npc {
             return false;
         }
