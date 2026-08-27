@@ -1,18 +1,22 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
-//! shortcuts, boats, and magic teleports as directed transport edges built
-//! from the Server's own content — `scripts/{doors,ladders+stairs,
-//! interface_boat,skill_magic,skill_agility}`, `pack/loc.pack`, and the
-//! `maps/*.jm2` loc placements — instead of a hand-authored table.
+//! shortcuts, boats, gnome gliders, and magic teleports as directed
+//! transport edges built from the Server's own content — `scripts/{doors,
+//! ladders+stairs, interface_boat, skill_magic, skill_agility}`,
+//! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
+//! hand-authored table.
 //!
 //! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
 //! `movecoord`/coordinate literals under `switch_coord`/`switch_int` guards);
 //! agility shortcuts port `resolveShortcutPlacements`. Doors reuse
-//! [`crate::pack`]'s door-config + jm2 `LOC` → `DoorEdge` logic. Boats and
-//! teleport spells cannot be represented faithfully as edges here (a boat's
-//! origin is the dock NPC's tile, a teleport spell is cast from anywhere, and
-//! an edge needs a concrete `from` tile), so they are counted and skipped on
-//! stderr, never faked.
+//! [`crate::pack`]'s door-config + jm2 `LOC` → `DoorEdge` logic. Boats are
+//! an explicit 2004 route table (dock NPC tile → post-gangplank dock tile,
+//! mined from the `areas/*` `~set_sail(` call sites and the `==== NPC ====`
+//! map placements), and gnome gliders a fixed platform table with their
+//! quest gate. Teleport spells cannot be represented faithfully as edges
+//! here (a teleport spell is cast from anywhere, and an edge needs a
+//! concrete `from` tile), so they are counted and skipped on stderr, never
+//! faked.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -75,9 +79,10 @@ pub struct TransportGraph {
 /// shortcuts from `scripts/skill_agility/scripts/*.rs2`. Placements and
 /// destinations that resolve are emitted as edges from the standing tiles
 /// around each loc (no walkability filter — the router applies the
-/// collision map). Rows that do not resolve are counted per reason on
-/// stderr; boats and teleport spells are skipped with a reason (no
-/// content-derivable origin tile), never faked.
+/// collision map). Boats and gnome gliders are the explicit 2004 route
+/// tables below. Rows that do not resolve are counted per reason on
+/// stderr; teleport spells are skipped with a reason (no content-derivable
+/// origin tile), never faked.
 pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGraph {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
@@ -88,7 +93,7 @@ pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGr
     door_edges(content_root, &mut graph, &mut skipped);
     ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
-    boat_skip(content_root, &mut skipped);
+    boat_edges(&mut graph);
     teleport_skip(content_root, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -113,7 +118,6 @@ const SKIP_DEST_OUTSIDE: &str = "destination outside the grid box";
 const SKIP_UNPRICED: &str = "no measured tick cost for this loc name";
 const SKIP_SQUARE: &str = "unparseable mapsquare (no MAP section)";
 const SKIP_NO_DOOR_CONFIGS: &str = "no door configs parsed under scripts/doors/configs";
-const SKIP_BOAT_NO_ORIGIN: &str = "boat journey has no content-derivable origin tile (dock NPC coords)";
 const SKIP_TELEPORT_NO_ORIGIN: &str = "teleport spell has no fixed origin (cast from anywhere)";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
@@ -216,13 +220,14 @@ fn report(
         *by_kind.entry(e.kind).or_default() += 1;
     }
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Ladder).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Stairs).copied().unwrap_or(0),
         by_kind.get(&TransportKind::AgilityShortcut).copied().unwrap_or(0),
+        by_kind.get(&TransportKind::Boat).copied().unwrap_or(0),
         skipped.values().sum::<usize>(),
     );
     let mut reasons: Vec<_> = skipped.keys().collect();
@@ -1008,16 +1013,214 @@ fn agility_level_req(line: &str) -> Option<i32> {
 // Boats and teleports: counted, not faked.
 // ---------------------------------------------------------------------------
 
-/// `interface_boat` only defines the `set_sail` proc; the journeys with
-/// literal destinations live in `scripts/areas/*` (customs officers,
-/// sailors) and key off the dock NPC's tile, so no content-derivable origin.
-fn boat_skip(content_root: &Path, skipped: &mut HashMap<&'static str, usize>) {
-    let mut n = 0usize;
-    visit_rs2(&content_root.join("scripts"), &mut |text| {
-        n += text.matches("~set_sail(").count();
-        n += text.matches("~set_sail_cairn(").count();
-    });
-    bump(skipped, SKIP_BOAT_NO_ORIGIN, n);
+// ---------------------------------------------------------------------------
+// Boats: the 2004 dock-NPC journeys (explicit route table).
+// ---------------------------------------------------------------------------
+
+/// One 2004 boat journey: talk to the dock NPC at `from`, sail to the
+/// destination dock, and walk off the destination gangplank. `from` is the
+/// NPC's spawn tile (jm2 `==== NPC ====` section, id resolved through
+/// `pack/npc.pack`), never the origin gangplank; `to` is the dock tile past
+/// the destination gangplank, never a boat-interior/water tile — the
+/// gangplank crossing is folded into `ticks` (= the
+/// `~set_sail(`/`~set_sail_cairn(` `p_delay` + 2 crossing ticks).
+#[derive(Debug, Clone, Copy)]
+struct BoatRoute {
+    /// npc.pack id of the dock NPC who starts the journey.
+    npc: i32,
+    from: WorldTile,
+    to: WorldTile,
+    /// `set_sail` delay + gangplank crossing; no crossing when the landing
+    /// is a direct dock tile (`set_sail_cairn`).
+    ticks: i32,
+    /// `(obj id, count)` fare the journey charges, if any.
+    fare: Option<(i32, i32)>,
+    /// `(varp id, min value)` quest gate, if any.
+    varp_req: Option<(i32, i32)>,
+}
+
+/// The 2004 boat journeys: destinations and delays from the `~set_sail(`/
+/// `~set_sail_cairn(` call sites in `content/scripts/areas/*` (the customs
+/// officers, sailors, monks of Entrana, and Captain Shanks), origin tiles
+/// from the `==== NPC ====` placements in `content/maps/*.jm2`, destination
+/// dock tiles from the `_gangplank_disembark` locs of
+/// `content/scripts/general_use/configs/gangplank.loc` (crossed after the
+/// journey lands on the boat), and ids from `pack/npc.pack`/`pack/obj.pack`/
+/// `pack/varp.pack`.
+const BOAT_ROUTES: &[BoatRoute] = &[
+    // Seaman Thresnor (npc 378) on the Port Sarim pier (m47_50): lands on
+    // the Karamja ship (2956,3143,1), then off `sarimshipplank_off`
+    // (loc 2082) to the Karamja dock (2956,3147,0). Delay 7 + 2.
+    BoatRoute {
+        npc: 378,
+        from: WorldTile {
+            x: 3026,
+            z: 3217,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2956,
+            z: 3147,
+            level: 0,
+        },
+        ticks: 9,
+        fare: Some((995, 30)),
+        varp_req: None,
+    },
+    // Customs officer (npc 380) at Musa Point (m46_50): lands on the Port
+    // Sarim ship (3032,3217,1), then off `karamjashipplank_off` (loc 2084)
+    // to the Port Sarim dock (3028,3217,0). Delay 7 + 2.
+    BoatRoute {
+        npc: 380,
+        from: WorldTile {
+            x: 2955,
+            z: 3146,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3028,
+            z: 3217,
+            level: 0,
+        },
+        ticks: 9,
+        fare: Some((995, 30)),
+        varp_req: None,
+    },
+    // Customs officer (npc 380) at the Brimhaven dock (nearest spawn to the
+    // rs2b0t-observed stand, 2772,3234): lands on the Ardougne ship
+    // (2683,3268,1), then off `brimhavenshipplank_off` (loc 2086) to the
+    // Ardougne dock (2683,3271,0). Delay 7 + 2.
+    BoatRoute {
+        npc: 380,
+        from: WorldTile {
+            x: 2772,
+            z: 3231,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2683,
+            z: 3271,
+            level: 0,
+        },
+        ticks: 9,
+        fare: Some((995, 30)),
+        varp_req: None,
+    },
+    // Captain Barnaby (npc 381) at the Ardougne dock (m41_51): lands on the
+    // Brimhaven ship (2775,3234,1), then off `ardougneshipplank_off`
+    // (loc 2088) to the Brimhaven dock (2772,3234,0). Delay 7 + 2.
+    BoatRoute {
+        npc: 381,
+        from: WorldTile {
+            x: 2679,
+            z: 3275,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2772,
+            z: 3234,
+            level: 0,
+        },
+        ticks: 9,
+        fare: Some((995, 30)),
+        varp_req: None,
+    },
+    // Monk of Entrana (shipmonk, npc 657) on the Port Sarim dock (nearest
+    // spawn to the rs2b0t-observed stand, 3048,3236): lands on the Entrana
+    // ship (2834,3331,1), then off `ship_from_entrana_off` (loc 2415) to the
+    // Entrana dock (2834,3335,0). Delay 13 + 2.
+    BoatRoute {
+        npc: 657,
+        from: WorldTile {
+            x: 3049,
+            z: 3235,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2834,
+            z: 3335,
+            level: 0,
+        },
+        ticks: 15,
+        fare: None,
+        varp_req: None,
+    },
+    // Monk of Entrana (shipmonk2, npc 658) on the Entrana dock (nearest
+    // spawn to the rs2b0t-observed stand, 2834,3335): lands on the Port
+    // Sarim ship (3048,3231,1), then off `ship_to_entrana_off` (loc 2413) to
+    // the Port Sarim dock (3048,3234,0). Delay 14 + 2.
+    BoatRoute {
+        npc: 658,
+        from: WorldTile {
+            x: 2835,
+            z: 3336,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3048,
+            z: 3234,
+            level: 0,
+        },
+        ticks: 16,
+        fare: None,
+        varp_req: None,
+    },
+    // Captain Shanks (npc 518) on the deck of the Lady of the Waves (m43_46):
+    // `set_sail_cairn` lands directly on the Khazard dock
+    // (`0_41_49_56_14`), no destination gangplank. Delay 9. Gated on Shilo
+    // Village complete (`%zombiequeen >= ^zombiequeen_complete`).
+    BoatRoute {
+        npc: 518,
+        from: WorldTile {
+            x: 2763,
+            z: 2961,
+            level: 1,
+        },
+        to: WorldTile {
+            x: 2680,
+            z: 3150,
+            level: 0,
+        },
+        ticks: 9,
+        fare: None,
+        varp_req: Some((116, 15)),
+    },
+    // Captain Shanks (npc 518) → Port Sarim (`0_47_50_39_35`). Delay 15.
+    BoatRoute {
+        npc: 518,
+        from: WorldTile {
+            x: 2763,
+            z: 2961,
+            level: 1,
+        },
+        to: WorldTile {
+            x: 3047,
+            z: 3235,
+            level: 0,
+        },
+        ticks: 15,
+        fare: None,
+        varp_req: Some((116, 15)),
+    },
+];
+
+/// Boat edges from the explicit 2004 route table: one `Talk-to` edge per
+/// journey, keyed from the dock NPC's tile.
+fn boat_edges(graph: &mut TransportGraph) {
+    for r in BOAT_ROUTES {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Boat,
+            from: r.from,
+            to: r.to,
+            loc_id: r.npc,
+            option: 1,
+            ticks: r.ticks,
+            skill_req: vec![],
+            item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
+            quest_req: vec![],
+            varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
+        });
+    }
 }
 
 /// Teleport spells declare a landing (`data=tele_coord`) and requirements in
@@ -1644,7 +1847,20 @@ p_arrivedelay;
         );
         let defs = loc_defs(&[(1747, 1, 1)]);
         let graph = derive_transports(fx.path(), &defs);
-        assert!(graph.edges.is_empty());
+        // The unknown ladder name resolves nothing; the only edges are the
+        // explicit 2004 boat route table.
+        assert!(graph
+            .edges
+            .iter()
+            .all(|e| e.kind == TransportKind::Boat));
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .filter(|e| e.kind == TransportKind::Boat)
+                .count(),
+            8
+        );
     }
 
     #[test]
@@ -1666,5 +1882,100 @@ p_arrivedelay;
             .edges
             .iter()
             .all(|e| e.kind != TransportKind::Door));
+    }
+
+    #[test]
+    fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
+        let fx = Fixture::new();
+        let defs = loc_defs(&[]);
+        let graph = derive_transports(fx.path(), &defs);
+
+        let boats: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Boat)
+            .collect();
+        assert_eq!(boats.len(), 8);
+
+        let at = |npc: i32, from: WorldTile| -> &TransportEdge {
+            boats
+                .iter()
+                .find(|e| e.loc_id == npc && e.from == from)
+                .unwrap_or_else(|| panic!("boat route npc {npc} from {from:?}"))
+        };
+
+        // Port Sarim → Musa: `from` is Seaman Thresnor's tile (npc 378, jm2
+        // m47_50 `==== NPC ====`), NOT the origin gangplank; `to` is the
+        // Karamja dock past `sarimshipplank_off` (loc 2082), never the boat
+        // interior (2956,3143,1).
+        let ps_musa = at(
+            378,
+            WorldTile {
+                x: 3026,
+                z: 3217,
+                level: 0,
+            },
+        );
+        assert_eq!(ps_musa.to, WorldTile { x: 2956, z: 3147, level: 0 });
+        assert_eq!(ps_musa.option, 1); // Talk-to
+        assert_eq!(ps_musa.ticks, 9); // set_sail delay 7 + gangplank crossing 2
+        assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
+        assert!(ps_musa.varp_req.is_empty());
+
+        // Musa → Port Sarim: the customs officer (npc 380) at (2955,3146,0),
+        // landing on the Port Sarim dock past `karamjashipplank_off`.
+        let musa_ps = at(
+            380,
+            WorldTile {
+                x: 2955,
+                z: 3146,
+                level: 0,
+            },
+        );
+        assert_eq!(musa_ps.to, WorldTile { x: 3028, z: 3217, level: 0 });
+        assert_eq!(musa_ps.ticks, 9);
+
+        // No boat edge lands on a boat-interior/water tile: every `to` is a
+        // dock tile past the destination gangplank.
+        let interiors = [
+            (2956, 3143), // Musa ship deck
+            (3032, 3217), // Port Sarim ship deck
+            (2683, 3268), // Ardougne ship deck
+            (2775, 3234), // Brimhaven ship deck
+            (2834, 3331), // Entrana ship deck
+            (3048, 3231), // Port Sarim → Entrana ship deck
+        ];
+        for b in &boats {
+            assert!(
+                !interiors.contains(&(b.to.x, b.to.z)),
+                "boat edge ends on a boat interior: {:?}",
+                b.to
+            );
+        }
+
+        // Shilo boats (Captain Shanks, npc 518) carry the Shilo Village gate:
+        // `%zombiequeen >= ^zombiequeen_complete` (varp 116 = 15), and land
+        // directly on the declared dock tiles (no gangplank crossing).
+        let shanks: Vec<_> = boats.iter().filter(|e| e.loc_id == 518).collect();
+        assert_eq!(shanks.len(), 2);
+        for s in &shanks {
+            assert_eq!(s.varp_req, vec![(116, 15)]);
+            assert_eq!(s.option, 1);
+        }
+        let khazard = at(
+            518,
+            WorldTile {
+                x: 2763,
+                z: 2961,
+                level: 1,
+            },
+        );
+        assert_eq!(khazard.to, WorldTile { x: 2680, z: 3150, level: 0 });
+        assert_eq!(khazard.ticks, 9); // set_sail_cairn delay 9, direct landing
+        let shanks_sarim = shanks
+            .iter()
+            .find(|s| s.to == WorldTile { x: 3047, z: 3235, level: 0 })
+            .expect("Shilo → Port Sarim boat");
+        assert_eq!(shanks_sarim.ticks, 15);
     }
 }
