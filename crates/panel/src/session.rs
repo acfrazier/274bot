@@ -464,8 +464,10 @@ impl Session {
     }
 
     /// Live `script_<name>` setup: temp vault with the scenario's seed
-    /// profiles, mainland hop per the seed, single-client boot, and the
-    /// shared [`scenario::ScenarioRunner`] installed for the slot thread's
+    /// profiles, mainland hop per the seed, single-client boot (the
+    /// MultiBox wall for a fleet — more than one seed profile — so the
+    /// sidecar rail pops out and every bot is visible), and the shared
+    /// [`scenario::ScenarioRunner`] installed for the slot thread's
     /// per-frame hook. The UI frame reads the runner's status/evidence.
     pub fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         let entries: Vec<(&str, &str)> = scenario
@@ -483,6 +485,12 @@ impl Session {
         }
         self.mainland.store(scenario.seed.mainland, Ordering::Relaxed);
         self.scatter.store(false, Ordering::Relaxed);
+        // Fleet scenario (2+ seed profiles): open the MultiBox wall like
+        // `live_prepare_null_raster`/`live_prepare_stress`, so the rail
+        // pops out and every bot is visible.
+        if scenario.seed.profiles.len() > 1 {
+            self.set_multibox(true);
+        }
         self.wall.chooser_open = false;
         let names: Vec<String> = scenario
             .seed
@@ -2529,6 +2537,50 @@ mod tests {
         assert!(
             runner.drives("test") && !runner.drives("test2"),
             "the runner ticks only its seed profile's slot"
+        );
+        // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn live_prepare_script_enables_multibox_for_a_fleet_only() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        let fleet = scenario::get("nav_door").expect("nav_door is registered");
+        assert!(
+            fleet.seed.profiles.len() > 1,
+            "nav_door is a two-profile fleet"
+        );
+        s.live_prepare_script(fleet).expect("prepare");
+        assert!(
+            s.multibox,
+            "a fleet (2+ seed profiles) opens the MultiBox wall"
+        );
+        assert!(
+            s.focus.lock().unwrap().wall_open,
+            "multibox mirrors onto the focus so every bot rasters"
+        );
+        assert!(
+            s.wall.members.iter().any(|m| m == "test2"),
+            "every seed profile is a wall member"
+        );
+        assert!(!s.wall.chooser_open, "live keeps the chooser closed");
+        // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        let solo = scenario::get("walk").expect("walk is registered");
+        assert_eq!(solo.seed.profiles.len(), 1);
+        s.live_prepare_script(solo).expect("prepare");
+        assert!(!s.multibox, "a solo scenario keeps the single-bot boot");
+        assert!(
+            !s.focus.lock().unwrap().wall_open,
+            "no wall members, no extra rasters"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
     }

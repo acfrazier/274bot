@@ -65,6 +65,15 @@ pub struct ScenarioRunner {
     total_ticks: u32,
     started: Instant,
     deadline: Duration,
+    /// Wall-clock settle before a step can start: the scene must have
+    /// held `scene_state == 2` for this long. A cheat tele's rebuild
+    /// drops the scene to 1, and sending the next step before it
+    /// re-settles gets `Refused SceneUnavailable` (the 377 `waitSceneReady`
+    /// + settle idea).
+    scene_settle: Duration,
+    /// The wall-clock instant the scene first read `scene_state == 2`,
+    /// `None` while it is not 2. Any drop below 2 resets it.
+    scene2_since: Option<Instant>,
     /// The seed waits for a mainland build base (>= 3000); tests on
     /// fixture grids relax this.
     require_mainland_base: bool,
@@ -111,6 +120,8 @@ impl ScenarioRunner {
             total_ticks: 0,
             started: Instant::now(),
             deadline: DEFAULT_DEADLINE,
+            scene_settle: Duration::from_secs(2),
+            scene2_since: None,
             require_mainland_base: true,
             evidence: None,
             shot_sink: None,
@@ -147,6 +158,12 @@ impl ScenarioRunner {
     /// Override the whole-run wall-clock deadline (tests use short ones).
     pub fn set_deadline(&mut self, deadline: Duration) {
         self.deadline = deadline;
+    }
+
+    /// Override the scene-settle wall-clock hold. Tests use
+    /// `Duration::ZERO` so the gate reduces to `scene_state == 2`.
+    pub fn set_scene_settle(&mut self, settle: Duration) {
+        self.scene_settle = settle;
     }
 
     /// Relax the mainland build-base seed gate (>= 3000). Tests on
@@ -230,11 +247,35 @@ impl ScenarioRunner {
             return;
         }
         let dirty = self.snapshot.rebuild(client);
+        // Scene-settle tracking: the wall-clock instant the scene first
+        // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
+        // resets it.
+        if self.snapshot.scene_state() == 2 {
+            if self.scene2_since.is_none() {
+                self.scene2_since = Some(Instant::now());
+            }
+        } else {
+            self.scene2_since = None;
+        }
         if matches!(self.phase, Phase::Seeding) && self.seed_done() {
             self.phase = Phase::Running;
             self.begin_step();
         }
         if matches!(self.phase, Phase::Running) {
+            // Scene-settle gate: never start a step until the scene has
+            // held `scene_state == 2` for `scene_settle`. A cheat tele's
+            // rebuild drops the scene to 1 and a send before it re-settles
+            // gets `Refused SceneUnavailable`. The gate applies to every
+            // step, so a tele's `Arrived` arm also waits for the scene to
+            // settle before advancing. No send, no budget counting, no
+            // step advance.
+            let settled = match self.scene2_since {
+                Some(since) => since.elapsed() >= self.scene_settle,
+                None => false,
+            };
+            if !settled {
+                return;
+            }
             if dirty {
                 self.step_route(client);
             }
@@ -560,6 +601,7 @@ mod tests {
     fn perform_send_then_arm_fires_and_proof_passes() {
         let mut c = seeded_client();
         let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
+        runner.set_scene_settle(Duration::ZERO);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
         // Tick 1: seed completes, send runs (runenergy 99 lands on the
         // client), the stale snapshot still shows 0.
@@ -584,6 +626,7 @@ mod tests {
         let mut c = seeded_client();
         // The no-op send leaves runenergy at 0; min 999 never holds.
         let mut runner = ScenarioRunner::new(stat_scenario(999, 3));
+        runner.set_scene_settle(Duration::ZERO);
         for _ in 0..5 {
             c.bump_gens(ServerProt::UPDATE_RUNENERGY);
             runner.tick(&mut c);
@@ -608,6 +651,7 @@ mod tests {
     fn seeding_waits_for_ingame_scene2_and_mainland_base() {
         let mut c = Client::new(cfg());
         let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
+        runner.set_scene_settle(Duration::ZERO);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
 
@@ -686,6 +730,7 @@ mod tests {
         );
         let world = NavWorld::from_grid(&grid);
         let mut runner = ScenarioRunner::with_world(walk_scenario(dest, 120), Some(Arc::new(world)));
+        runner.set_scene_settle(Duration::ZERO);
 
         runner.tick(&mut c);
         assert_eq!(
@@ -725,6 +770,7 @@ mod tests {
         // `with_world(None)` injects no router world: the walk step must
         // fail with a clear pack message.
         let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
         runner.tick(&mut c);
         match runner.status() {
             RunnerStatus::Failed(msg) => {
@@ -818,6 +864,7 @@ mod tests {
         );
         let world = NavWorld::from_grid(&grid);
         let mut runner = ScenarioRunner::with_world(follow_scenario(dest, 120), Some(Arc::new(world)));
+        runner.set_scene_settle(Duration::ZERO);
 
         runner.tick(&mut c);
         assert_eq!(
@@ -855,6 +902,7 @@ mod tests {
         };
         // `with_world(None)` injects no router world.
         let mut runner = ScenarioRunner::with_world(follow_scenario(dest, 120), None);
+        runner.set_scene_settle(Duration::ZERO);
         runner.tick(&mut c);
         match runner.status() {
             RunnerStatus::Failed(msg) => {
@@ -865,6 +913,120 @@ mod tests {
             }
             other => panic!("expected Failed, got {other:?}"),
         }
+    }
+
+    // --- Scene-settle gate (the 377 `waitSceneReady` + settle idea) ---
+
+    /// A perform step whose send lands run energy 99 **and** drops the
+    /// scene to 1 (a cheat tele's rebuild): the arm `stat(16) >= 99`
+    /// holds once the rebuilt snapshot decodes the 99, so any progress
+    /// during the hold must be the gate, not the arm.
+    fn scene_drop_scenario(budget: u32) -> Scenario {
+        Scenario {
+            name: "scene-settle",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "tele and land run energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 99;
+                        c.scene_state = 1; // the tele's scene rebuild
+                        true
+                    }),
+                },
+                wait: wait(Proof::Stat { id: 16, min: 99 }, budget),
+            }],
+            proof: Proof::Stat { id: 16, min: 99 },
+            companions: vec![],
+        }
+    }
+
+    /// With `set_scene_settle(Duration::ZERO)` the hold is only
+    /// `scene_state == 2`: a perform send that drops the scene to 1 must
+    /// not advance while the scene stays 1 (even though the arm holds on
+    /// the rebuilt snapshot), and the arm fires the tick the scene
+    /// returns to 2.
+    #[test]
+    fn scene_settle_zero_holds_while_scene_state_is_not_2() {
+        let mut c = seeded_client();
+        let mut runner = ScenarioRunner::new(scene_drop_scenario(100));
+        runner.set_scene_settle(Duration::ZERO);
+        // Tick 1: seed completes; the send drops the scene to 1.
+        runner.tick(&mut c);
+        assert_eq!(c.scene_state, 1, "the send dropped the scene (tele rebuild)");
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 }
+        );
+        // Scene still 1: the snapshot now decodes run energy 99 (the arm
+        // would hold), but the runner must hold — no step advance.
+        c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "holds while scene_state != 2 even when the arm holds"
+        );
+        // Scene returns to 2: with a zero settle the gate releases and
+        // the arm fires on the same tick.
+        c.scene_state = 2;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        let ev = runner.evidence().expect("evidence at PASS");
+        assert_eq!(ev.outcome, "PASS");
+        assert_eq!(ev.predicate, "stat(16)>=99");
+    }
+
+    /// The wall-clock settle: with a non-zero `scene_settle` the runner
+    /// holds even while the scene is 2, until the scene has held 2 for
+    /// the settle. The first step's send is held too, so a tele's rebuild
+    /// cannot be stepped onto.
+    #[test]
+    fn scene_settle_holds_steps_until_the_scene_has_held_2_for_the_settle() {
+        let mut c = seeded_client();
+        let mut runner = ScenarioRunner::new(scene_drop_scenario(100));
+        runner.set_scene_settle(Duration::from_millis(30));
+        // Tick 1: the scene just became 2 (the seed completed); the
+        // settle has not elapsed, so the step's send is held back.
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 }
+        );
+        assert_eq!(c.runenergy, 0, "the send is held until the settle elapses");
+        // After the settle: the send fires and drops the scene to 1.
+        std::thread::sleep(Duration::from_millis(40));
+        runner.tick(&mut c);
+        assert_eq!(c.runenergy, 99, "the send fired once the settle elapsed");
+        assert_eq!(c.scene_state, 1);
+        // Scene 1: hold, regardless of the elapsed settle.
+        c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "a scene drop below 2 resets the settle clock"
+        );
+        // Scene back to 2: the arm holds on the snapshot, but the settle
+        // has not elapsed again, so the step still does not advance.
+        c.scene_state = 2;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "the step waits out the settle even after the scene returns to 2"
+        );
+        // Once the settle elapses, the arm fires and the run passes.
+        std::thread::sleep(Duration::from_millis(40));
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
     }
 
     // --- Companion slots (fleet runs) ---
@@ -903,6 +1065,7 @@ mod tests {
             }],
         };
         let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
         assert_eq!(runner.companion_profile_name(0), "test2");
         assert_eq!(runner.companion_for("test2"), Some(0));
         assert_eq!(runner.companion_for("nobody"), None);
@@ -933,6 +1096,7 @@ mod tests {
             Arc::new(Mutex::new(Vec::new()));
         let pass_sink = Arc::clone(&sink_events);
         let mut pass = ScenarioRunner::new(stat_scenario(1, 10));
+        pass.set_scene_settle(Duration::ZERO);
         pass.set_terminal_shot("t-pass");
         pass.set_shot_sink(Box::new(move |label, snap| {
             pass_sink
@@ -954,6 +1118,7 @@ mod tests {
         let fail_events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let fail_sink = Arc::clone(&fail_events);
         let mut fail = ScenarioRunner::new(stat_scenario(999, 1));
+        fail.set_scene_settle(Duration::ZERO);
         fail.set_terminal_shot("t-fail");
         fail.set_shot_sink(Box::new(move |label, _| {
             fail_sink.lock().unwrap().push(label.to_string());
@@ -979,6 +1144,7 @@ mod tests {
         c.bump_gens(ServerProt::PLAYER_INFO);
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         let mut runner = ScenarioRunner::new(stat_scenario(999, 999));
+        runner.set_scene_settle(Duration::ZERO);
         runner.set_deadline(Duration::from_millis(1));
         let mut saw_failed = false;
         for _ in 0..20 {
@@ -1034,6 +1200,7 @@ mod tests {
     fn shot_step_fires_the_sink_once_with_label_and_terminal_snapshot() {
         let mut c = seeded_client();
         let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
+        runner.set_scene_settle(Duration::ZERO);
         let fired: Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>> =
             Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&fired);
@@ -1058,6 +1225,7 @@ mod tests {
         // must still run to PASS without a window to capture.
         let mut c = seeded_client();
         let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
+        runner.set_scene_settle(Duration::ZERO);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed);
     }
@@ -1067,6 +1235,7 @@ mod tests {
         let dir = temp_dir("shot");
         let mut c = seeded_client();
         let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
+        runner.set_scene_settle(Duration::ZERO);
         let sink_dir = dir.clone();
         let now = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_616_000);
         runner.set_shot_sink(Box::new(move |label, snap| {

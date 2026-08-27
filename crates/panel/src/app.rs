@@ -2701,6 +2701,7 @@ mod tests {
             companions: vec![],
         };
         let mut runner = ScenarioRunner::new(pass);
+        runner.set_scene_settle(Duration::ZERO);
         {
             let mut c = script_client();
             runner.tick(&mut c);
@@ -2744,6 +2745,7 @@ mod tests {
             companions: vec![],
         };
         let mut runner = ScenarioRunner::new(fail_scenario);
+        runner.set_scene_settle(Duration::ZERO);
         {
             let mut c = script_client();
             runner.tick(&mut c);
@@ -2790,6 +2792,7 @@ mod tests {
             companions: vec![],
         };
         let mut runner = ScenarioRunner::new(fail_scenario);
+        runner.set_scene_settle(Duration::ZERO);
         runner.set_terminal_shot("t-fail");
         {
             let mut c = script_client();
