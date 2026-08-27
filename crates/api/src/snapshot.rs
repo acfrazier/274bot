@@ -213,6 +213,14 @@ pub struct StatView {
     pub used: bool,
 }
 
+/// One varp's value from the client's `var` table (the m8aq
+/// `VarpSnapshot`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct VarpView {
+    pub index: i32,
+    pub value: i32,
+}
+
 /// A contained item: the obj definition plus the container, the slot
 /// position and the interface ops (the m8aq `ItemSnapshot`). `def.id` is
 /// the real obj id — iface `link_obj_type` stores `obj_id + 1` (0 empty),
@@ -494,7 +502,7 @@ pub struct MapFlagView {
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
 /// Serializes to the whole-window shot sidecar JSON (the terminal state).
-#[derive(Default, Serialize)]
+#[derive(Serialize)]
 pub struct GameSnapshot {
     /// World generations the snapshot has been rebuilt up to.
     #[serde(skip)]
@@ -512,6 +520,11 @@ pub struct GameSnapshot {
     /// first `PLAYER_INFO`. Tile level is not decoded on the body yet
     /// (gaps.md), so this is always level 0.
     tile: Option<(i32, i32, i32)>,
+    /// The local player's slot (`Client.self_slot`, -1 before `UPDATE_PID`).
+    self_slot: i32,
+    /// The host game-tick count this snapshot reflects: one bump per
+    /// `PLAYER_INFO` (the same tick edge `should_emit_tick` reads).
+    tick: u32,
     /// Inventory `(obj id, count)` from the TYPE_INV iface, rebuilt when
     /// the inv gen moves (the server's `UPDATE_INV_FULL` fills it each
     /// frame). Empty before the inv iface loads.
@@ -520,6 +533,9 @@ pub struct GameSnapshot {
     chat: Option<String>,
     ingame: bool,
     scene_state: i32,
+    /// Socket state (`Client.stream`): whether the slot is attached to a
+    /// server connection (the m8aq `attached`).
+    attached: bool,
     /// Placed locs from the last loc rebuild (sweeps the sim world's four
     /// layers at `minusedlevel`).
     loc: Vec<LocView>,
@@ -551,6 +567,12 @@ pub struct GameSnapshot {
     equipment: Vec<ItemView>,
     bank: Vec<ItemView>,
     bank_side: Vec<ItemView>,
+    /// The inv tab component's slot count (the m8aq `inventorySize`);
+    /// 0 until the inv tab loads.
+    inventory_size: i32,
+    /// The open main modal's withdraw component (the m8aq
+    /// `bankComponentId`); -1 while no bank is open.
+    bank_component_id: i32,
     trade: TradeView,
     widgets: Vec<WidgetView>,
     side_tabs: Vec<SideTabView>,
@@ -568,6 +590,9 @@ pub struct GameSnapshot {
     login_message: String,
     count_dialog_open: bool,
     active_side_tab: i32,
+    /// The client's varp table (one view per definition, from
+    /// `Client.var`).
+    varps: Vec<VarpView>,
     #[serde(skip)]
     inventory_gate: InvIfaceGate,
     #[serde(skip)]
@@ -604,6 +629,83 @@ pub struct GameSnapshot {
     chat_prev_head: String,
 }
 
+impl Default for GameSnapshot {
+    /// An empty snapshot: no gens moved, no views. The "no such component
+    /// or slot" sentinels default to -1 (never component 0) and the modal
+    /// roots to "none".
+    fn default() -> Self {
+        GameSnapshot {
+            gens: ClientGens::default(),
+            npc: Vec::new(),
+            player: None,
+            players: Vec::new(),
+            stats: Vec::new(),
+            runenergy: 0,
+            base: None,
+            tile: None,
+            self_slot: -1,
+            tick: 0,
+            inv: Vec::new(),
+            chat: None,
+            ingame: false,
+            scene_state: 0,
+            attached: false,
+            loc: Vec::new(),
+            ground_item: Vec::new(),
+            scene: SceneView::default(),
+            world: WorldStateView::default(),
+            camera: CameraView::default(),
+            map_flag: None,
+            loc_gen: 0,
+            ground_item_gen: 0,
+            inventory: Vec::new(),
+            equipment: Vec::new(),
+            bank: Vec::new(),
+            bank_side: Vec::new(),
+            inventory_size: 0,
+            bank_component_id: -1,
+            trade: TradeView::default(),
+            widgets: Vec::new(),
+            side_tabs: Vec::new(),
+            chat_lines: Vec::new(),
+            chat_options: Vec::new(),
+            chat_continue_component_id: -1,
+            make_products: Vec::new(),
+            quest_statuses: Vec::new(),
+            run_controls: None,
+            retaliate_controls: None,
+            modals: ModalView {
+                main: -1,
+                side: -1,
+                chat: -1,
+                tutorial: -1,
+            },
+            menu_entries: Vec::new(),
+            main_modal_texts: Vec::new(),
+            chat_modal_texts: Vec::new(),
+            login_message: String::new(),
+            count_dialog_open: false,
+            active_side_tab: 0,
+            varps: Vec::new(),
+            inventory_gate: InvIfaceGate::default(),
+            equipment_gate: InvIfaceGate::default(),
+            bank_gate: InvIfaceGate::default(),
+            bank_side_gate: InvIfaceGate::default(),
+            trade_gate: InvIfaceGate::default(),
+            widgets_gate: InvIfaceGate::default(),
+            side_tabs_gate: InvIfaceGate::default(),
+            chat_options_gate: 0,
+            make_products_gate: 0,
+            quest_statuses_gate: 0,
+            modals_gate: 0,
+            controls_gate: 0,
+            menu_gate: 0,
+            chat_seq: 0,
+            chat_prev_head: String::new(),
+        }
+    }
+}
+
 impl GameSnapshot {
     pub fn new() -> Self {
         Self::default()
@@ -625,7 +727,7 @@ impl GameSnapshot {
             Family::Npc => self.rebuild_npcs(client),
             Family::Player => self.rebuild_player(client),
             Family::Inv => self.rebuild_inv(client),
-            Family::Varp => track(client.gens.varp, &mut self.gens.varp),
+            Family::Varp => self.rebuild_varps(client),
             Family::Stat => self.rebuild_stat(client),
             Family::Chat => self.rebuild_chat(client),
             Family::Scene => self.rebuild_scene(client),
@@ -707,6 +809,12 @@ impl GameSnapshot {
         &self.stats
     }
 
+    /// The client's varp table from the last varp rebuild, one view per
+    /// definition (unset values read 0).
+    pub fn varps(&self) -> &[VarpView] {
+        &self.varps
+    }
+
     /// Last rebuilt run energy (stat family). `0` until a stat rebuild.
     pub fn runenergy(&self) -> i32 {
         self.runenergy
@@ -722,6 +830,18 @@ impl GameSnapshot {
     /// player-family rebuild.
     pub fn tile(&self) -> Option<(i32, i32, i32)> {
         self.tile
+    }
+
+    /// The local player's slot (`Client.self_slot`) from the last
+    /// player-family rebuild; -1 before the first `PLAYER_INFO`.
+    pub fn self_slot(&self) -> i32 {
+        self.self_slot
+    }
+
+    /// The game-tick count this snapshot reflects: one bump per
+    /// `PLAYER_INFO` (the host's `should_emit_tick` edge).
+    pub fn tick(&self) -> u32 {
+        self.tick
     }
 
     /// The inventory view `(obj id, count)` from the last inv rebuild.
@@ -751,6 +871,12 @@ impl GameSnapshot {
     /// `Client.scene_state` from the last scene rebuild.
     pub fn scene_state(&self) -> i32 {
         self.scene_state
+    }
+
+    /// Socket state from the last scene rebuild: whether the slot is
+    /// attached to a server connection.
+    pub fn attached(&self) -> bool {
+        self.attached
     }
 
     /// Placed locs from the last loc rebuild, in scene sweep order (per
@@ -792,6 +918,12 @@ impl GameSnapshot {
         &self.inventory
     }
 
+    /// The inv tab component's slot count from the last inventory rebuild
+    /// (the m8aq `inventorySize`); 0 until the inv tab loads.
+    pub fn inventory_size(&self) -> i32 {
+        self.inventory_size
+    }
+
     /// Worn-items views from the last equipment rebuild, in slot order.
     pub fn equipment(&self) -> &[ItemView] {
         &self.equipment
@@ -801,6 +933,12 @@ impl GameSnapshot {
     /// withdraw component).
     pub fn bank(&self) -> &[ItemView] {
         &self.bank
+    }
+
+    /// The open main modal's withdraw component from the last bank
+    /// rebuild; -1 while no bank is open.
+    pub fn bank_component_id(&self) -> i32 {
+        self.bank_component_id
     }
 
     /// Bank-side (deposit) item views from the last bank-side rebuild.
@@ -916,6 +1054,21 @@ impl GameSnapshot {
         true
     }
 
+    /// Varp-family rebuild: the whole `Client.var` table, one view per
+    /// definition (unset entries read 0), gated on the varp gen.
+    fn rebuild_varps(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.varp, &mut self.gens.varp) {
+            return false;
+        }
+        self.varps = (0..client.cache.varps.len())
+            .map(|i| VarpView {
+                index: i as i32,
+                value: client.var.get(i).copied().unwrap_or(0),
+            })
+            .collect();
+        true
+    }
+
     /// Player-family rebuild: the scene origin, the local player's world
     /// tile (base + route head), the `LocalPlayerView`, and the remote
     /// `players` list. `REBUILD_NORMAL` bumps every gen, so a new world
@@ -924,6 +1077,9 @@ impl GameSnapshot {
         if !track(client.gens.player, &mut self.gens.player) {
             return false;
         }
+        // One `PLAYER_INFO` per game tick: the snapshot's tick count.
+        self.tick = self.tick.wrapping_add(1);
+        self.self_slot = client.self_slot;
         let base = (client.map_build_base_x, client.map_build_base_z);
         self.base = Some(base);
         self.tile = client.local_player.as_ref().map(|lp| {
@@ -979,8 +1135,10 @@ impl GameSnapshot {
         true
     }
 
-    /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts (the
-    /// same view `host-play` hands a running script).
+    /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The
+    /// iface stores `obj_id + 1` (0 = empty), so the view carries the
+    /// real obj ids — the same convention as `ItemView.def.id`, the
+    /// `ObjNames` table and the evidence/`Proof::Item` consumers.
     fn rebuild_inv(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.inv, &mut self.gens.inv) {
             return false;
@@ -993,7 +1151,12 @@ impl GameSnapshot {
             .find(|f| f.r#type == ComponentType::TYPE_INV)
         {
             if let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) {
-                self.inv = ids.iter().zip(counts).map(|(id, n)| (*id, *n)).collect();
+                self.inv = ids
+                    .iter()
+                    .zip(counts)
+                    .filter(|(id, _)| **id > 0)
+                    .map(|(id, n)| (*id - 1, *n))
+                    .collect();
             }
         }
         true
@@ -1038,11 +1201,18 @@ impl GameSnapshot {
         }
         self.inventory.clear();
         let Some(inv_id) = tab_inv_component(client, 3) else {
+            self.inventory_size = 0;
             return true;
         };
         let Some(inv) = client.ifaces.get(inv_id as usize).and_then(|o| o.as_ref()) else {
+            self.inventory_size = 0;
             return true;
         };
+        self.inventory_size = inv
+            .link_obj_type
+            .as_ref()
+            .map(|ids| ids.len() as i32)
+            .unwrap_or(0);
         let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
             return true;
         };
@@ -1088,8 +1258,8 @@ impl GameSnapshot {
         if !self.bank_gate.moved(client) {
             return false;
         }
-        self.bank = if client.main_modal_id == -1 {
-            Vec::new()
+        self.bank_component_id = if client.main_modal_id == -1 {
+            -1
         } else {
             let root = client.main_modal_id;
             find_inv_component(client, root, |com| {
@@ -1097,8 +1267,12 @@ impl GameSnapshot {
                     .as_deref()
                     .is_some_and(|s| s.to_ascii_lowercase().contains("withdraw"))
             })
-            .and_then(|com_id| inv_items(client, com_id, ItemContainer::Bank))
-            .unwrap_or_default()
+            .unwrap_or(-1)
+        };
+        self.bank = if self.bank_component_id == -1 {
+            Vec::new()
+        } else {
+            inv_items(client, self.bank_component_id, ItemContainer::Bank).unwrap_or_default()
         };
         true
     }
@@ -1421,6 +1595,7 @@ impl GameSnapshot {
         let moved = track(client.gens.scene, &mut self.gens.scene);
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
+        self.attached = client.stream.is_some();
         if moved {
             let level = client.minusedlevel;
             match client.collision.get(level as usize) {
@@ -1642,6 +1817,279 @@ impl GameSnapshot {
             }
         }
         true
+    }
+}
+
+/// The borrowing read surface over one `GameSnapshot` (the m8aq
+/// `ReadContext`/`ReadApi`): every accessor returns the last rebuild's
+/// view without allocating. The query DSL (`api::query`) builds on these
+/// slices; `component`/`varp`/`world_tile` do a cheap scan/derivation.
+pub struct ReadContext<'a>(&'a GameSnapshot);
+
+impl<'a> ReadContext<'a> {
+    pub fn new(snapshot: &'a GameSnapshot) -> Self {
+        ReadContext(snapshot)
+    }
+
+    /// The game-tick count the snapshot reflects.
+    pub fn tick(&self) -> u32 {
+        self.0.tick()
+    }
+
+    /// Whether the slot is attached to a server connection.
+    pub fn attached(&self) -> bool {
+        self.0.attached()
+    }
+
+    /// `Client.ingame`.
+    pub fn ingame(&self) -> bool {
+        self.0.ingame()
+    }
+
+    /// `Client.scene_state`.
+    pub fn scene_state(&self) -> i32 {
+        self.0.scene_state()
+    }
+
+    /// The local player view.
+    pub fn local_player(&self) -> Option<&LocalPlayerView> {
+        self.0.local_player()
+    }
+
+    /// The local player's slot index.
+    pub fn self_slot(&self) -> i32 {
+        self.0.self_slot()
+    }
+
+    /// All 25 skill slots.
+    pub fn stats(&self) -> &[StatView] {
+        self.0.stats()
+    }
+
+    /// Live NPC views (in `npc_ids` order).
+    pub fn npcs(&self) -> &[NpcView] {
+        self.0.npcs()
+    }
+
+    /// Remote player views (the local player lives on `local_player`).
+    pub fn players(&self) -> &[PlayerView] {
+        self.0.players()
+    }
+
+    /// Placed locs from the last loc rebuild.
+    pub fn locs(&self) -> &[LocView] {
+        self.0.locs()
+    }
+
+    /// Ground-item stacks from the last ground-item rebuild.
+    pub fn ground_items(&self) -> &[GroundItemView] {
+        self.0.ground_items()
+    }
+
+    /// Inventory item views.
+    pub fn inventory(&self) -> &[ItemView] {
+        self.0.inventory()
+    }
+
+    /// Worn-items views.
+    pub fn equipment(&self) -> &[ItemView] {
+        self.0.equipment()
+    }
+
+    /// The inv tab's slot count.
+    pub fn inventory_capacity(&self) -> i32 {
+        self.0.inventory_size()
+    }
+
+    /// Bank (withdraw) item views.
+    pub fn bank(&self) -> &[ItemView] {
+        self.0.bank()
+    }
+
+    /// Bank-side (deposit) item views.
+    pub fn bank_side_items(&self) -> &[ItemView] {
+        self.0.bank_side()
+    }
+
+    /// The open main modal's withdraw component, -1 while no bank is open.
+    pub fn bank_component_id(&self) -> i32 {
+        self.0.bank_component_id()
+    }
+
+    /// The full chat ring, newest first (the snapshot's `chat()` head
+    /// accessor stays the single most recent line).
+    pub fn chat(&self) -> &[ChatLineView] {
+        self.0.chat_lines()
+    }
+
+    /// The chat modal's BUTTON_OK choices.
+    pub fn chat_options(&self) -> &[ChatOptionView] {
+        self.0.chat_options()
+    }
+
+    /// The chat modal's BUTTON_CONTINUE component, -1 while latched or
+    /// no chat modal is open.
+    pub fn chat_continue_component_id(&self) -> i32 {
+        self.0.chat_continue_component_id()
+    }
+
+    /// Make/smelt products.
+    pub fn make_products(&self) -> &[MakeProductView] {
+        self.0.make_products()
+    }
+
+    /// Quest-journal entries.
+    pub fn quest_statuses(&self) -> &[QuestStatusView] {
+        self.0.quest_statuses()
+    }
+
+    /// Widgets of the open roots' trees.
+    pub fn widgets(&self) -> &[WidgetView] {
+        self.0.widgets()
+    }
+
+    /// All 14 side-tab slots.
+    pub fn side_tabs(&self) -> &[SideTabView] {
+        self.0.side_tabs()
+    }
+
+    /// The widget with `component_id` among the open roots' trees and the
+    /// side tabs; `None` when it is not part of an open widget.
+    pub fn component(&self, component_id: i32) -> Option<&WidgetView> {
+        self.0
+            .widgets()
+            .iter()
+            .chain(self.0.side_tabs().iter().flat_map(|tab| tab.widgets.iter()))
+            .find(|w| w.component_id == component_id)
+    }
+
+    /// The client's varp table.
+    pub fn varps(&self) -> &[VarpView] {
+        self.0.varps()
+    }
+
+    /// The client's world scalars.
+    pub fn world(&self) -> &WorldStateView {
+        self.0.world()
+    }
+
+    /// The built scene (collision grid).
+    pub fn scene(&self) -> &SceneView {
+        self.0.scene()
+    }
+
+    /// The camera state.
+    pub fn camera(&self) -> &CameraView {
+        self.0.camera()
+    }
+
+    /// The trade offer screen's own items.
+    pub fn trade_my_offer(&self) -> &[ItemView] {
+        &self.0.trade().my_offer
+    }
+
+    /// The trade partner's offered items.
+    pub fn trade_their_offer(&self) -> &[ItemView] {
+        &self.0.trade().their_offer
+    }
+
+    /// The side pack of tradeables.
+    pub fn trade_side_pack(&self) -> &[ItemView] {
+        &self.0.trade().side_pack
+    }
+
+    /// The four open modal roots.
+    pub fn modals(&self) -> &ModalView {
+        self.0.modals()
+    }
+
+    /// Whether the enter-name/amount dialog is up.
+    pub fn count_dialog_open(&self) -> bool {
+        self.0.count_dialog_open()
+    }
+
+    /// The selected side tab.
+    pub fn active_side_tab(&self) -> i32 {
+        self.0.active_side_tab()
+    }
+
+    /// The login screen message.
+    pub fn login_message(&self) -> &str {
+        self.0.login_message()
+    }
+
+    /// The minimenu entries.
+    pub fn menu_entries(&self) -> &[String] {
+        self.0.menu_entries()
+    }
+
+    /// The main modal's TYPE_TEXT lines.
+    pub fn main_modal_texts(&self) -> &[String] {
+        self.0.main_modal_texts()
+    }
+
+    /// The chat modal's TYPE_TEXT lines.
+    pub fn chat_modal_texts(&self) -> &[String] {
+        self.0.chat_modal_texts()
+    }
+
+    /// The run toggle pair.
+    pub fn run_controls(&self) -> Option<&ToggleControlsView> {
+        self.0.run_controls()
+    }
+
+    /// The auto-retaliate toggle pair.
+    pub fn retaliate_controls(&self) -> Option<&ToggleControlsView> {
+        self.0.retaliate_controls()
+    }
+
+    /// The local player's world tile (scene level from the actor view,
+    /// unlike the legacy `tile()` triple's pinned 0); `None` before the
+    /// first `PLAYER_INFO`.
+    pub fn world_tile(&self) -> Option<WorldTile> {
+        self.0.local_player().map(|lp| lp.player.actor.tile)
+    }
+
+    /// The value of varp `index` (0 when unset).
+    pub fn varp(&self, index: i32) -> i32 {
+        self.0
+            .varps()
+            .iter()
+            .find(|v| v.index == index)
+            .map(|v| v.value)
+            .unwrap_or(0)
+    }
+
+    /// The TYPE_INV slot views of `component_id`, empty when the
+    /// component is not an open widget (or holds no items).
+    pub fn component_items(&self, component_id: i32) -> &[ItemView] {
+        self.component(component_id)
+            .map(|w| w.items.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The widget's text, `None` when the component is not an open widget
+    /// or has no text.
+    pub fn component_text(&self, component_id: i32) -> Option<&str> {
+        self.component(component_id).and_then(|w| w.text.as_deref())
+    }
+
+    /// The obj-model id of `component_id` (model type 4), `None`
+    /// otherwise.
+    pub fn component_model_obj_id(&self, component_id: i32) -> Option<i32> {
+        self.component(component_id)
+            .filter(|w| w.model_type == 4)
+            .map(|w| w.model_id)
+    }
+
+    /// The root component drawn on side tab `tab`, -1 when unbound.
+    pub fn side_tab_interface(&self, tab: i32) -> i32 {
+        self.0
+            .side_tabs()
+            .iter()
+            .find(|t| t.index == tab)
+            .map(|t| t.root_component_id)
+            .unwrap_or(-1)
     }
 }
 

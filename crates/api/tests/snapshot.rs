@@ -5,7 +5,7 @@
 use api::query::{npc_by_index, npcs_at};
 use api::snapshot::{
     ActorKind, ActorTargetView, Family, GameSnapshot, ItemActionFamily, ItemContainer, LocLayer,
-    WidgetKind, WidgetRoot, WidgetVarpBindingView, WorldTile,
+    ReadContext, VarpView, WidgetKind, WidgetRoot, WidgetVarpBindingView, WorldTile,
 };
 use client::client::{Client, ClientConfig, ClientNpc};
 use client::config::if_type::{ButtonType, ComponentType, IfType};
@@ -205,7 +205,10 @@ fn player_rebuild_records_base_and_tile() {
     assert!(!snap.rebuild_family(&mut c, Family::Player));
 }
 
-/// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts.
+/// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The iface
+/// stores `obj_id + 1` (0 = empty), so the view carries the **real** obj
+/// ids, matching `ItemView.def.id` and the `ObjNames`-resolved ids the
+/// evidence / `Proof::Item` consumers compare against.
 #[test]
 fn inv_rebuild_reads_the_type_inv_iface() {
     let mut c = client_with_npc();
@@ -216,7 +219,7 @@ fn inv_rebuild_reads_the_type_inv_iface() {
         .find(|f| f.r#type == ComponentType::TYPE_INV)
     {
         Some(inv) => {
-            inv.link_obj_type = Some(vec![526, 995]);
+            inv.link_obj_type = Some(vec![526, 995]); // stored = obj id + 1
             inv.link_obj_number = Some(vec![1, 100]);
         }
         None => c.ifaces.push(Some(IfType {
@@ -229,11 +232,58 @@ fn inv_rebuild_reads_the_type_inv_iface() {
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
     assert!(snap.rebuild_family(&mut c, Family::Inv));
-    assert_eq!(snap.inv(), &[(526, 1), (995, 100)]);
-    assert_eq!(snap.inv_count(526), 1);
-    assert_eq!(snap.inv_count(995), 100);
+    assert_eq!(snap.inv(), &[(525, 1), (994, 100)]);
+    assert_eq!(snap.inv_count(525), 1);
+    assert_eq!(snap.inv_count(994), 100);
+    assert_eq!(snap.inv_count(526), 0, "the stored value is obj id + 1");
     assert_eq!(snap.inv_count(0), 0);
     assert!(!snap.rebuild_family(&mut c, Family::Inv));
+}
+
+/// The legacy `inv()` family and the iface-derived `inventory()` family
+/// agree on obj ids: both decode the stored `obj_id + 1` convention to
+/// real ids.
+#[test]
+fn inv_ids_match_inventory_def_ids() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 3, "Coins");
+    plant_obj(&mut c, 4, "Sword");
+    // `rebuild_inv` reads the first TYPE_INV in the table; point the inv
+    // tab (side tab 3) at the same component so both families agree.
+    let inv_id = c
+        .ifaces
+        .iter()
+        .position(|f| f.as_ref().is_some_and(|f| f.r#type == ComponentType::TYPE_INV))
+        .unwrap_or_else(|| {
+            c.ifaces.push(None);
+            c.ifaces.len() - 1
+        });
+    set_iface(
+        &mut c,
+        inv_id,
+        IfType {
+            id: inv_id as i32,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![4, 5, 0]),
+            link_obj_number: Some(vec![1, 100, 0]),
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = inv_id as i32;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&mut c, Family::Inv));
+    assert!(snap.rebuild_family(&mut c, Family::Inventory));
+
+    assert_eq!(snap.inv(), &[(3, 1), (4, 100)]);
+    let inv_ids: Vec<i32> = snap.inv().iter().map(|(id, _)| *id).collect();
+    let def_ids: Vec<i32> = snap.inventory().iter().map(|v| v.def.id).collect();
+    assert_eq!(
+        inv_ids, def_ids,
+        "inv() ids and inventory() def.id(s) must both be real obj ids"
+    );
 }
 
 /// Chat-family rebuild: the ring head (`chat_text[0]`) is the latest line.
@@ -2221,4 +2271,581 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
             "{family:?} then stays"
         );
     }
+}
+
+// ---- Task 5: full §3.1 assembly (tick/attached/self_slot/inventory_size/
+// bank_component_id/varps) + ReadContext ----
+
+/// The player family reads the local player's slot (`self_slot`, -1 before
+/// any player rebuild) and counts each `PLAYER_INFO` (the game-tick edge,
+/// the host's `should_emit_tick` rule) as one snapshot tick.
+#[test]
+fn player_rebuild_reads_self_slot_and_bumps_tick() {
+    let mut c = client_with_npc();
+    c.self_slot = 7;
+    let mut snap = GameSnapshot::new();
+    assert_eq!(snap.self_slot(), -1, "no player rebuild yet");
+    assert_eq!(snap.tick(), 0);
+
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert_eq!(snap.self_slot(), 7);
+    assert_eq!(snap.tick(), 1);
+
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert_eq!(snap.tick(), 2, "each PLAYER_INFO is one game tick");
+
+    assert!(!snap.rebuild_family(&mut c, Family::Player));
+    assert_eq!(snap.tick(), 2, "no player gen move: no tick");
+}
+
+/// The scene family reads `attached` from the socket (the §3.1 "socket
+/// state" mapping): no stream → not attached; a connected `ClientStream`
+/// → attached. The flag copies every rebuild like `ingame`/`scene_state`.
+#[test]
+fn scene_rebuild_reads_attached_from_the_socket() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let stream =
+        client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
+    let mut c = client_with_npc();
+    let mut snap = GameSnapshot::new();
+
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    assert!(snap.rebuild_family(&mut c, Family::Scene));
+    assert!(!snap.attached(), "no socket yet");
+
+    c.stream = Some(stream);
+    assert!(!snap.rebuild_family(&mut c, Family::Scene));
+    assert!(snap.attached(), "a connected stream marks the slot attached");
+}
+
+/// The varp family rebuilds the whole `client.var` table (one view per
+/// definition; unset entries read 0), gated on the varp gen.
+#[test]
+fn varp_family_rebuild_reads_the_varp_table() {
+    let mut c = client_with_npc();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.varps.clear();
+        cache.varps.push(Default::default());
+        cache.varps.push(Default::default());
+    }
+    c.var = vec![42, 0, 7]; // one beyond the definition count
+    let mut snap = GameSnapshot::new();
+    assert_eq!(snap.varps(), &[]);
+
+    c.bump_gens(ServerProt::VARP_SMALL);
+    assert!(snap.rebuild_family(&mut c, Family::Varp));
+    assert_eq!(
+        snap.varps(),
+        &[
+            VarpView {
+                index: 0,
+                value: 42
+            },
+            VarpView { index: 1, value: 0 }
+        ],
+        "one view per definition, unset values default to 0"
+    );
+    assert!(!snap.rebuild_family(&mut c, Family::Varp));
+}
+
+/// `inventory_size` is the inv tab component's slot count (0 until the
+/// inv tab loads) and `bank_component_id` the open main modal's withdraw
+/// component (-1 when no bank is open — never component 0).
+#[test]
+fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
+    let mut c = client_with_npc();
+    set_iface(
+        &mut c,
+        500,
+        IfType {
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![4, 5, 0, 7]),
+            link_obj_number: Some(vec![1, 100, 0, 2]),
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = 500;
+    set_iface(
+        &mut c,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    c.main_modal_id = 600;
+
+    let mut snap = GameSnapshot::new();
+    assert_eq!(snap.bank_component_id(), -1, "no bank open by default");
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&mut c, Family::Inventory));
+    assert!(snap.rebuild_family(&mut c, Family::Bank));
+    assert_eq!(snap.inventory_size(), 4, "the inv component's slot count");
+    assert_eq!(snap.bank_component_id(), 601);
+
+    c.main_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    assert!(snap.rebuild_family(&mut c, Family::Bank));
+    assert_eq!(snap.bank_component_id(), -1, "no bank: -1, not component 0");
+    assert!(snap.bank().is_empty());
+}
+
+/// `ReadContext` reads every §3.2 accessor from a rebuilt snapshot without
+/// panicking and returns the planted values.
+#[test]
+fn read_context_round_trips_every_family() {
+    let mut c = client_with_npc();
+    // world / camera / scene scalars
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 1;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.self_slot = 7;
+    c.runenergy = 63;
+    c.runweight = 24;
+    c.members_account = 1;
+    c.in_multizone = 1;
+    c.loop_cycle = 412;
+    c.cam_x = 1;
+    c.cam_y = 2;
+    c.cam_z = 3;
+    c.cam_pitch = 4;
+    c.cam_yaw = 5;
+    c.orbit_camera_pitch = 6;
+    c.orbit_camera_yaw = 7;
+    c.cinema_cam = true;
+    c.minimap_flag_x = 14;
+    c.minimap_flag_z = 15;
+    // player family: a local player with a decode-ready body
+    let mut local = ClientPlayer::at(20, 12);
+    local.entity.x = 20 * 128 + 64;
+    local.entity.z = 12 * 128 + 64;
+    local.name = Some("Zezima".into());
+    c.local_player = Some(local);
+    let mut other = ClientPlayer::at(15, 16);
+    other.entity.x = 100;
+    other.entity.z = 150;
+    other.name = Some("Other".into());
+    other.combat_level = 3;
+    other.skill_level = 5;
+    c.players[3] = Some(other);
+    c.player_ids[0] = 3;
+    c.player_count = 1;
+    // varps
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.varps.clear();
+        cache.varps.push(Default::default());
+        cache.varps.push(Default::default());
+    }
+    c.var = vec![42, 0];
+    // a loc (straight wall, angle 1) and a ground-item stack
+    let typecode = 0x4000_0000 + (1 << 14) + 3 + (4 << 7);
+    c.world.set_wall(1, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    plant_obj(&mut c, 3, "Coins");
+    plant_obj(&mut c, 4, "Sword");
+    let bones_id = {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let id = cache.objs.len() as i32;
+        cache.objs.push(ObjType {
+            id,
+            name: "Bones".into(),
+            ..Default::default()
+        });
+        id
+    };
+    let mut list = LinkList::new();
+    list.push(ClientObj::new(bones_id, 2));
+    c.ground_obj[1][10][12] = Some(list);
+    // inventory (side tab 3) + equipment (side tab 4)
+    set_iface(
+        &mut c,
+        500,
+        IfType {
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![4, 5, 0]),
+            link_obj_number: Some(vec![1, 100, 0]),
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = 500;
+    set_iface(
+        &mut c,
+        710,
+        IfType {
+            id: 710,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![711]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        711,
+        IfType {
+            id: 711,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![5, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            iop: [Some("Remove".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    c.side_icon[4] = 710;
+    // bank (main modal) + bank-side (side modal), with a text row
+    set_iface(
+        &mut c,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601, 602]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        602,
+        IfType {
+            id: 602,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Bank line".into(),
+            ..Default::default()
+        },
+    );
+    c.main_modal_id = 600;
+    set_iface(
+        &mut c,
+        700,
+        IfType {
+            id: 700,
+            layer_id: 700,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![701]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        701,
+        IfType {
+            id: 701,
+            layer_id: 700,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![7, 0]),
+            iop: [Some("Deposit All".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    c.side_modal_id = 700;
+    // trade containers (the packed 274 ids)
+    set_iface(
+        &mut c,
+        3415,
+        IfType {
+            id: 3415,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            iop: [Some("Remove 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3416,
+        IfType {
+            id: 3416,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![3, 0]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3417,
+        IfType {
+            id: 3417,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Trading With: Zezima".into(),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3322,
+        IfType {
+            id: 3322,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            iop: [Some("Offer".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    // chat modal: option, continue, a make product and its button
+    set_iface(
+        &mut c,
+        2000,
+        IfType {
+            id: 2000,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2001, 2002, 2003, 2004]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2001,
+        IfType {
+            id: 2001,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_OK,
+            text: "Yes".into(),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2002,
+        IfType {
+            id: 2002,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2003,
+        IfType {
+            id: 2003,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_MODEL,
+            model1_type: 4,
+            model1_id: bones_id,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2004,
+        IfType {
+            id: 2004,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_RECT,
+            button_type: ButtonType::BUTTON_OK,
+            button_text: "Make X".into(),
+            ..Default::default()
+        },
+    );
+    c.chat_modal_id = 2000;
+    // chat ring + quest tab (side tab 2) + controls overlay (root 0)
+    c.chat_text[0] = "hello".into();
+    c.chat_type[0] = 0;
+    set_iface(
+        &mut c,
+        2200,
+        IfType {
+            id: 2200,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2201]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2201,
+        IfType {
+            id: 2201,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Cook's Assistant".into(),
+            colour: 0x00ff00,
+            ..Default::default()
+        },
+    );
+    c.side_icon[2] = 2200;
+    set_iface(
+        &mut c,
+        0,
+        IfType {
+            id: 0,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![1, 2, 3, 4, 5, 6]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        1,
+        IfType {
+            id: 1,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Player controls".into(),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2,
+        IfType {
+            id: 2,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Auto retaliate".into(),
+            ..Default::default()
+        },
+    );
+    // modals / menu scalars
+    c.dialog_input_open = true;
+    c.active_icon = 3;
+    c.login_mes1 = "Welcome".into();
+    c.menu_option = vec!["Walk here".into()];
+    c.menu_num_entries = 1;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    assert!(snap.rebuild(&mut c));
+    let ctx = ReadContext::new(&snap);
+
+    // scalars + player family
+    assert_eq!(ctx.tick(), 1, "one player-info in this run");
+    assert!(!ctx.attached(), "no socket in this fixture");
+    assert!(ctx.ingame());
+    assert_eq!(ctx.scene_state(), 2);
+    assert_eq!(ctx.self_slot(), 7);
+    assert_eq!(ctx.local_player().map(|p| p.player.index), Some(7));
+    assert_eq!(ctx.stats().len(), 25);
+    assert_eq!(ctx.npcs().len(), 1);
+    assert_eq!(ctx.npcs()[0].index, 7);
+    assert_eq!(ctx.players().len(), 1);
+    assert_eq!(ctx.players()[0].index, 3);
+    assert_eq!(ctx.locs().len(), 1);
+    assert_eq!(ctx.locs()[0].tile.x, 3203);
+    assert_eq!(ctx.ground_items().len(), 1);
+    assert_eq!(ctx.ground_items()[0].def.id, bones_id);
+    // item containers
+    assert_eq!(ctx.inventory().len(), 2);
+    assert_eq!(ctx.inventory()[0].def.id, 3);
+    assert_eq!(ctx.equipment().len(), 1);
+    assert_eq!(ctx.equipment()[0].def.id, 4);
+    assert_eq!(ctx.inventory_capacity(), 3);
+    assert_eq!(ctx.bank().len(), 1);
+    assert_eq!(ctx.bank()[0].def.id, 5);
+    assert_eq!(ctx.bank_side_items().len(), 1);
+    assert_eq!(ctx.bank_side_items()[0].def.id, 6);
+    assert_eq!(ctx.bank_component_id(), 601);
+    // chat + make + quests
+    assert_eq!(ctx.chat().len(), 1);
+    assert_eq!(ctx.chat()[0].text, "hello");
+    assert_eq!(ctx.chat_options().len(), 2);
+    assert_eq!(ctx.chat_options()[0].component_id, 2001);
+    assert_eq!(ctx.chat_continue_component_id(), 2002);
+    assert_eq!(ctx.make_products().len(), 1);
+    assert_eq!(ctx.make_products()[0].object_id, bones_id);
+    assert_eq!(ctx.make_products()[0].buttons.len(), 1);
+    assert_eq!(ctx.make_products()[0].buttons[0].quantity, -1);
+    assert_eq!(ctx.quest_statuses().len(), 1);
+    assert_eq!(ctx.quest_statuses()[0].name, "Cook's Assistant");
+    // widgets + side tabs + components
+    assert_eq!(ctx.widgets().len(), 10, "main/side/chat root trees");
+    assert_eq!(ctx.side_tabs().len(), 14);
+    assert_eq!(ctx.component(601).map(|w| w.component_id), Some(601));
+    assert!(ctx.component(999_999).is_none());
+    assert_eq!(ctx.component_items(601).len(), 1);
+    assert_eq!(ctx.component_items(601)[0].def.id, 5);
+    assert_eq!(ctx.component_text(2001), Some("Yes"));
+    assert_eq!(ctx.component_text(601), None);
+    assert_eq!(ctx.component_model_obj_id(2003), Some(bones_id));
+    assert_eq!(ctx.component_model_obj_id(601), None, "model type != 4");
+    assert_eq!(ctx.side_tab_interface(2), 2200);
+    assert_eq!(ctx.side_tab_interface(11), -1, "unbound tab");
+    // varps + world + scene + camera
+    assert_eq!(ctx.varps().len(), 2);
+    assert_eq!(ctx.varps()[0].value, 42);
+    assert_eq!(ctx.varp(1), 0);
+    assert_eq!(ctx.varp(99), 0, "unknown varps read 0");
+    assert_eq!(ctx.world().map_base_x, 3200);
+    assert_eq!(ctx.world().cycle, 412);
+    assert!(ctx.scene().available);
+    assert_eq!(ctx.scene().collision_flags.len(), 104 * 104);
+    assert_eq!(ctx.camera().x, 1);
+    assert!(ctx.camera().cinematic);
+    // trade containers
+    assert_eq!(ctx.trade_my_offer().len(), 1);
+    assert_eq!(ctx.trade_my_offer()[0].def.id, 3);
+    assert_eq!(ctx.trade_their_offer().len(), 1);
+    assert_eq!(ctx.trade_their_offer()[0].def.id, 5);
+    assert_eq!(ctx.trade_side_pack().len(), 1);
+    assert_eq!(ctx.trade_side_pack()[0].def.id, 6);
+    // modals + menu
+    assert_eq!(ctx.modals().main, 600);
+    assert!(ctx.count_dialog_open());
+    assert_eq!(ctx.active_side_tab(), 3);
+    assert_eq!(ctx.login_message(), "Welcome");
+    assert_eq!(ctx.menu_entries(), &["Walk here".to_string()]);
+    assert_eq!(ctx.main_modal_texts(), &["Bank line".to_string()]);
+    assert_eq!(ctx.chat_modal_texts(), &["Yes".to_string()]);
+    // controls
+    let run = ctx.run_controls().expect("run toggle pair");
+    assert_eq!((run.on_component_id, run.off_component_id), (6, 5));
+    let retaliate = ctx.retaliate_controls().expect("retaliate toggle pair");
+    assert_eq!((retaliate.on_component_id, retaliate.off_component_id), (3, 4));
+    // world tile comes from the local player view (real scene level)
+    assert_eq!(
+        ctx.world_tile(),
+        Some(WorldTile {
+            x: 3220,
+            z: 3212,
+            level: 1
+        })
+    );
 }

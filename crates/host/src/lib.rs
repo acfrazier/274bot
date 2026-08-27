@@ -600,6 +600,24 @@ fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &mut Client, dirty: DirtyF
     if dirty.world {
         snapshot.rebuild_family(client, Family::World);
     }
+    // The iface-derived families re-read the materialized `client.ifaces`
+    // (and the inv slot data), so their gens are the iface and inv flags;
+    // each family's own gate no-ops the ones that did not move.
+    if dirty.iface || dirty.inv {
+        snapshot.rebuild_family(client, Family::Inventory);
+        snapshot.rebuild_family(client, Family::Equipment);
+        snapshot.rebuild_family(client, Family::Bank);
+        snapshot.rebuild_family(client, Family::BankSide);
+        snapshot.rebuild_family(client, Family::Trade);
+        snapshot.rebuild_family(client, Family::Widgets);
+        snapshot.rebuild_family(client, Family::SideTabs);
+        snapshot.rebuild_family(client, Family::ChatOptions);
+        snapshot.rebuild_family(client, Family::MakeProducts);
+        snapshot.rebuild_family(client, Family::QuestStatuses);
+        snapshot.rebuild_family(client, Family::Modals);
+        snapshot.rebuild_family(client, Family::Controls);
+        snapshot.rebuild_family(client, Family::Menu);
+    }
 }
 
 /// Run on/off from the orb pair. 152 visible and 153 hidden → running;
@@ -714,6 +732,45 @@ mod tests {
             1,
             "drain must rebuild the world family"
         );
+    }
+
+    /// The drain's iface/inv flags must rebuild the iface-derived v2
+    /// families too, or the host path (as opposed to the scenario
+    /// runner's `GameSnapshot::rebuild`) would keep their views
+    /// permanently empty.
+    #[test]
+    fn drain_rebuilds_the_iface_derived_families() {
+        use client::config::if_type::ComponentType;
+
+        let mut ifaces = vec![None; 1000];
+        ifaces[500] = Some(IfType {
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![4, 5, 0]),
+            link_obj_number: Some(vec![1, 100, 0]),
+            obj_ops: true,
+            ..IfType::default()
+        });
+        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), ifaces);
+        client.side_icon[3] = 500;
+        let mut slot = SlotLoop::new();
+
+        client.gens.iface = 1;
+        client.gens.inv = 1;
+        let result = slot.after_drain(&mut client);
+        assert!(result.dirty.iface);
+        assert!(result.dirty.inv);
+        assert_eq!(
+            slot.snapshot.inventory().len(),
+            2,
+            "an iface/inv drain must rebuild the inventory family"
+        );
+        assert_eq!(slot.snapshot.inventory_size(), 3);
+
+        // A quiet drain leaves the v2 gates alone: unchanged gens do not
+        // re-mark anything dirty.
+        let result = slot.after_drain(&mut client);
+        assert!(!result.dirty.any());
     }
 
     #[test]

@@ -115,15 +115,16 @@ mod tests {
         c.local_player = Some(ClientPlayer::at(20, 12));
         c.runenergy = 42;
         // The client's iface template already has the TYPE_INV widget;
-        // fill it the way the server's `UPDATE_INV_FULL` does.
+        // fill it the way the server's `UPDATE_INV_FULL` does (stored
+        // values are `obj_id + 1`: a real Bones id 526 stores as 527).
         match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
             Some(inv) => {
-                inv.link_obj_type = Some(vec![526, 995]);
+                inv.link_obj_type = Some(vec![527, 996]);
                 inv.link_obj_number = Some(vec![1, 100]);
             }
             None => c.ifaces.push(Some(IfType {
                 r#type: ComponentType::TYPE_INV,
-                link_obj_type: Some(vec![526, 995]),
+                link_obj_type: Some(vec![527, 996]),
                 link_obj_number: Some(vec![1, 100]),
                 ..Default::default()
             })),

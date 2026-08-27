@@ -126,12 +126,13 @@ mod tests {
         c.runenergy = 42;
         match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
             Some(inv) => {
-                inv.link_obj_type = Some(vec![526]);
+                // stored = obj_id + 1: a real Bones id 526 stores as 527.
+                inv.link_obj_type = Some(vec![527]);
                 inv.link_obj_number = Some(vec![1]);
             }
             None => c.ifaces.push(Some(IfType {
                 r#type: ComponentType::TYPE_INV,
-                link_obj_type: Some(vec![526]),
+                link_obj_type: Some(vec![527]),
                 link_obj_number: Some(vec![1]),
                 ..Default::default()
             })),
