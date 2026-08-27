@@ -118,6 +118,31 @@ impl WorldCollision {
         }
         self.flags[lz * self.width + lx] & WALK_BLOCK == 0
     }
+
+    /// The nearest [`Self::walkable`] tile at least one step from `t` along
+    /// `(dx, dz)` — the door-edge snap: a door's blind ±1 `from`/`to` can
+    /// land on a wall loc right outside the door (wall 980 south of the
+    /// Catherby range-house door), and the router can no longer step onto
+    /// that tile. A door at the edge of the bake keeps its blind ±1
+    /// neighbour rather than walking off the grid.
+    pub fn nearest_walkable(&self, t: WorldTile, dx: i32, dz: i32) -> WorldTile {
+        let (mut x, mut z) = (t.x, t.z);
+        loop {
+            x += dx;
+            z += dz;
+            let inside = t.level == self.origin.level
+                && x >= self.origin.x
+                && z >= self.origin.z
+                && (x - self.origin.x) < self.width as i32
+                && (z - self.origin.z) < self.height as i32;
+            if !inside {
+                return WorldTile { x: t.x + dx, z: t.z + dz, level: t.level };
+            }
+            if self.walkable(WorldTile { x, z, level: t.level }) {
+                return WorldTile { x, z, level: t.level };
+            }
+        }
+    }
 }
 
 /// Bake the whole world: every `m<x>_<z>.jm2` under `maps_dir` (other files

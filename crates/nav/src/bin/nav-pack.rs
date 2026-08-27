@@ -96,11 +96,12 @@ fn main() -> ExitCode {
     let walkable = walkable_tiles(&collision);
 
     // The transport graph from the Server content tree (maps/scripts/pack
-    // all live under the maps dir's parent).
+    // all live under the maps dir's parent); door edge from/to snap to the
+    // nearest walkable tile on the collision just baked.
     let content_root = Path::new(&maps_dir)
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    let graph = derive_transports(content_root, &loc_defs);
+    let graph = derive_transports(content_root, &loc_defs, &collision);
 
     // The v2 pack write: collision flags + transport edges.
     let bytes = encode_v2(&collision, &graph);

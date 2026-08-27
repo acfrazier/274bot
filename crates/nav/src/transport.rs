@@ -26,6 +26,7 @@ use std::path::Path;
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 
+use crate::collision::WorldCollision;
 use crate::pack::{parse_door_config, parse_mapsquare_jm2};
 
 /// The kinds of transport edge this graph derives.
@@ -80,7 +81,9 @@ pub struct TransportGraph {
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
-/// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs.
+/// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs,
+/// and the baked whole-world [`WorldCollision`] (the door edges snap their
+/// `from`/`to` to the nearest walkable tile on it).
 ///
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
@@ -91,14 +94,18 @@ pub struct TransportGraph {
 /// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
 /// land in [`TransportGraph::teleports`], never in the `from` index. Rows
 /// that do not resolve are counted per reason on stderr, never faked.
-pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGraph {
+pub fn derive_transports(
+    content_root: &Path,
+    loc_defs: &LocDefs,
+    collision: &WorldCollision,
+) -> TransportGraph {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
 
     let ids = loc_ids_by_name(content_root);
     let positions = loc_positions(content_root);
 
-    door_edges(content_root, &ids, &mut graph, &mut skipped);
+    door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
     ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
@@ -401,7 +408,10 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 
 /// Door edges from `scripts/doors/configs/*.loc` openable ids + the jm2 LOC
 /// placements, reusing [`parse_door_config`] and [`parse_mapsquare_jm2`]
-/// (the existing jm2 `LOC` → `DoorEdge` bake). Both directions are emitted
+/// (the existing jm2 `LOC` → `DoorEdge` bake). Each edge's `from`/`to`
+/// snaps to the nearest walkable tile on the baked `collision`
+/// (perpendicular to the wall), so a wall loc right outside the door never
+/// becomes an unreachable door approach. Both directions are emitted
 /// (the same `Open` op works either way); `option` 1 is the `Open` op.
 ///
 /// Quest-gated doors (`scripts/quests/*/configs/*.loc` and
@@ -413,6 +423,7 @@ fn door_edges(
     ids: &HashMap<String, i32>,
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
+    collision: &WorldCollision,
 ) {
     let configs = content_root.join("scripts").join("doors").join("configs");
     let mut door_ids = HashSet::new();
@@ -452,7 +463,7 @@ fn door_edges(
         let Some((mx, mz)) = mapsquare_coords(name) else {
             continue;
         };
-        match parse_mapsquare_jm2(&path, mx, mz, &door_ids, &passable) {
+        match parse_mapsquare_jm2(&path, mx, mz, &door_ids, &passable, collision) {
             Ok(sq) => {
                 for d in sq.doors {
                     graph.edges.push(TransportEdge {
@@ -2414,6 +2425,7 @@ mod tests {
 
     use super::*;
     use client::config::LocType;
+    use crate::collision::{bake_from_maps, WorldCollision};
 
     /// A throwaway content root written on demand, removed on drop.
     struct Fixture {
@@ -2463,6 +2475,80 @@ mod tests {
         LocDefs::from_locs(&locs)
     }
 
+    /// A collision bake over the fixture's maps, with the given door locs
+    /// stamped blocked-when-closed. Fixtures that write no maps get a
+    /// trivial single-square bake (their assertions never touch the
+    /// collision; `derive_transports` only needs one to snap door edges).
+    fn bake_collision(fx: &Fixture, defs: &LocDefs, door_ids: &HashSet<i32>) -> WorldCollision {
+        if !fx.path().join("maps").is_dir() {
+            fx.write("maps/m44_53.jm2", "==== MAP ====\n0 0 0: h1 u50\n");
+        }
+        bake_from_maps(&fx.path().join("maps"), defs, door_ids).unwrap()
+    }
+
+    #[test]
+    fn derive_transports_snaps_door_edges_to_walkable_tiles() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1530=loc_1530\n");
+        fx.write(
+            "scripts/doors/configs/doors.loc",
+            "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\n",
+        );
+        // m44_53 local (0,46) = absolute (2816,3438). A wall band at local
+        // z=45 (absolute 3437) seals the square; wall 980 sits on the door's
+        // south approach tile (the live-trace layout).
+        let mut text = String::from("==== MAP ====\n");
+        for z in 42..=48 {
+            for x in 0..64 {
+                let flags = if z == 45 { "f1 u50" } else { "h1 u50" };
+                text.push_str(&format!("0 {x} {z}: {flags}\n"));
+            }
+        }
+        text.push_str("==== LOC ====\n0 0 45: 980 0 3\n0 0 46: 1530 0 1\n");
+        fx.write("maps/m44_53.jm2", &text);
+
+        let defs = loc_defs(&[(1530, 1, 1), (980, 1, 1)]);
+        let mut door_ids = HashSet::new();
+        door_ids.insert(1530);
+        let wc = bake_from_maps(&fx.path().join("maps"), &defs, &door_ids).unwrap();
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        let doors: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
+            .collect();
+        assert_eq!(doors.len(), 2);
+        // Neither door side is the wall tile (2816,3437); both are
+        // walkable per the collision bake.
+        for d in &doors {
+            assert_ne!(d.from, WorldTile { x: 2816, z: 3437, level: 0 });
+            assert!(wc.walkable(d.from), "door from not walkable: {:?}", d.from);
+            assert!(wc.walkable(d.to), "door to not walkable: {:?}", d.to);
+        }
+        // The snapped crossing: south approach (2816,3435) <-> north
+        // approach (2816,3440); the wall band and the door's closed stamps
+        // block the four tiles between.
+        let from = WorldTile { x: 2816, z: 3435, level: 0 };
+        let to = WorldTile { x: 2816, z: 3440, level: 0 };
+        let fwd = doors.iter().find(|d| d.from == from).expect("south→north door");
+        assert_eq!(fwd.to, to);
+        let rev = doors.iter().find(|d| d.from == to).expect("north→south door");
+        assert_eq!(rev.to, from);
+
+        // The router reaches the north side only through the door.
+        let r = crate::router::find(
+            &wc,
+            &graph,
+            WorldTile { x: 2816, z: 3430, level: 0 },
+            WorldTile { x: 2816, z: 3445, level: 0 },
+        )
+        .expect("route through the door");
+        assert!(r.legs.iter().any(
+            |l| matches!(l, crate::router::Leg::Transport { edge } if edge.loc_id == 1530)
+        ));
+    }
+
     #[test]
     fn derive_transports_pins_catherby_door_and_a_ladder() {
         let fx = Fixture::new();
@@ -2496,7 +2582,10 @@ switch_coord (loc_coord) {
 ",
         );
         let defs = loc_defs(&[(1530, 1, 1), (1747, 1, 1)]);
-        let graph = derive_transports(fx.path(), &defs);
+        let mut door_ids = HashSet::new();
+        door_ids.insert(1530);
+        let wc = bake_collision(&fx, &defs, &door_ids);
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): one edge per
         // side, both directions, `Open` op 1, one tick.
@@ -2515,9 +2604,11 @@ switch_coord (loc_coord) {
             z: 3437,
             level: 0,
         };
+        // (2816,3439) carries the closed door's own south-face stamp, so
+        // the snapped north side is the next walkable tile.
         let north = WorldTile {
             x: 2816,
-            z: 3439,
+            z: 3440,
             level: 0,
         };
         let fwd = doors
@@ -2611,7 +2702,8 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
 ",
         );
         let defs = loc_defs(&[(2298, 1, 1)]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         let edges: Vec<_> = graph
             .edges
@@ -2790,7 +2882,8 @@ p_arrivedelay;
 ",
         );
         let defs = loc_defs(&[(1747, 1, 1)]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
         // The unknown ladder name resolves nothing; the only edges are the
         // explicit 2004 boat route and gnome-glider tables.
         let explicit = graph
@@ -2831,7 +2924,8 @@ p_arrivedelay;
 ",
         );
         let defs = loc_defs(&[(1530, 1, 1)]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
         assert!(graph
             .edges
             .iter()
@@ -2842,7 +2936,8 @@ p_arrivedelay;
     fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
         let fx = Fixture::new();
         let defs = loc_defs(&[]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         let boats: Vec<_> = graph
             .edges
@@ -3009,7 +3104,10 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
 ",
         );
         let defs = loc_defs(&[(2526, 1, 1), (4, 1, 1)]);
-        let graph = derive_transports(fx.path(), &defs);
+        let mut door_ids = HashSet::new();
+        door_ids.extend([2526, 4]);
+        let wc = bake_collision(&fx, &defs, &door_ids);
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         // The Elena door (Plague City) carries its `%elenaquest >= 28`
         // gate on both directed edges.
@@ -3039,7 +3137,8 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
     fn derive_transports_emits_glider_edges_from_platform_to_platform() {
         let fx = Fixture::new();
         let defs = loc_defs(&[]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         let gliders: Vec<_> = graph
             .edges
@@ -3120,7 +3219,8 @@ data=tele_coord,0_45_57_10_31
 ",
         );
         let defs = loc_defs(&[]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         assert_eq!(graph.teleports.len(), 2);
         // Teleports never join the `from`-indexed edge set.
@@ -3192,7 +3292,8 @@ p_delay(1);
 ",
         );
         let defs = loc_defs(&[]);
-        let graph = derive_transports(fx.path(), &defs);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
 
         // Glory: the charged `_4` stage forwards to the interface label,
         // whose four cases are the four destinations; each carries the

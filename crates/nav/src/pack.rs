@@ -475,7 +475,10 @@ fn loc_header(line: &str) -> Option<i32> {
 /// walkable. A LOC whose loc id is in `door_ids` (openable wall doors from
 /// the Server door configs) with shape 0 becomes a [`DoorEdge`] crossing the
 /// wall: angle 0/2 crosses east-west, angle 1/3 north-south, and the door's
-/// own tile is marked not walkable. Other blocking locs (unknown types
+/// own tile is marked not walkable. The edge's `from`/`to` snap to the
+/// nearest walkable tile on `collision` (see
+/// [`WorldCollision::nearest_walkable`]), not a blind ±1 around the loc.
+/// Other blocking locs (unknown types
 /// default to blockwalk) stamp their footprint unwalkable, except door
 /// from/to tiles. Ground decor, wall decor, and roofs are skipped. Open-door
 /// stages in `passable` are not stamped. Malformed lines are skipped. I/O
@@ -487,19 +490,24 @@ pub fn parse_mapsquare_jm2(
     mapsquare_z: i32,
     door_ids: &HashSet<i32>,
     passable: &HashSet<i32>,
+    collision: &WorldCollision,
 ) -> Result<Mapsquare, PackError> {
     let text = std::fs::read_to_string(path).map_err(PackError::Io)?;
-    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids, passable)
+    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids, passable, collision)
         .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
 }
 
 /// Parse jm2 text into a [`Mapsquare`], or None without a MAP section.
+/// Door edge `from`/`to` snap to the nearest walkable tile on `collision`
+/// (see [`WorldCollision::nearest_walkable`]), not a blind ±1 around the
+/// loc.
 fn parse_mapsquare_text(
     text: &str,
     mapsquare_x: i32,
     mapsquare_z: i32,
     door_ids: &HashSet<i32>,
     passable: &HashSet<i32>,
+    collision: &WorldCollision,
 ) -> Option<Mapsquare> {
     let mut walk = vec![0u8; SQUARE * SQUARE];
     let mut locs = Vec::new();
@@ -534,7 +542,7 @@ fn parse_mapsquare_text(
     let mut doors = Vec::new();
     let mut door_sides = HashSet::new();
     for loc in &locs {
-        if let Some(door) = door_edge(loc, mapsquare_x, mapsquare_z, door_ids) {
+        if let Some(door) = door_edge(loc, mapsquare_x, mapsquare_z, door_ids, collision) {
             walk[loc.z * SQUARE + loc.x] = 0;
             for side in [door.from, door.to] {
                 if let Some((x, z)) = local_in_square(side, mapsquare_x, mapsquare_z) {
@@ -691,12 +699,17 @@ pub(crate) fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
     })
 }
 
-/// Shape-0 openable wall door -> DoorEdge, or None.
+/// Shape-0 openable wall door -> DoorEdge, or None. `from`/`to` snap to
+/// the nearest walkable tile perpendicular to the wall (west/east for an
+/// E-W wall, south/north for a N-S wall) on the baked collision: the blind
+/// ±1 can land on a wall loc right outside the door, which the router can
+/// no longer step onto.
 fn door_edge(
     loc: &LocOnSquare,
     mapsquare_x: i32,
     mapsquare_z: i32,
     door_ids: &HashSet<i32>,
+    collision: &WorldCollision,
 ) -> Option<DoorEdge> {
     if !door_ids.contains(&loc.loc_id) || loc.shape != 0 {
         return None;
@@ -706,31 +719,17 @@ fn door_edge(
         z: mapsquare_z * SQUARE as i32 + loc.z as i32,
         level: 0,
     };
+    let door = WorldTile {
+        x: tile.x,
+        z: tile.z,
+        level: 0,
+    };
+    let snap = |dx: i32, dz: i32| to_tile(collision.nearest_walkable(door, dx, dz));
     let (from, to) = match loc.angle {
-        0 | 2 => (
-            Tile {
-                x: tile.x - 1,
-                z: tile.z,
-                level: 0,
-            },
-            Tile {
-                x: tile.x + 1,
-                z: tile.z,
-                level: 0,
-            },
-        ),
-        1 | 3 => (
-            Tile {
-                x: tile.x,
-                z: tile.z - 1,
-                level: 0,
-            },
-            Tile {
-                x: tile.x,
-                z: tile.z + 1,
-                level: 0,
-            },
-        ),
+        // N-S wall (WEST/EAST facing): cross east-west.
+        0 | 2 => (snap(-1, 0), snap(1, 0)),
+        // E-W wall (NORTH/SOUTH facing): cross south-north.
+        1 | 3 => (snap(0, -1), snap(0, 1)),
         _ => return None,
     };
     Some(DoorEdge {
@@ -739,6 +738,15 @@ fn door_edge(
         from,
         to,
     })
+}
+
+/// `WorldTile` -> the nav [`Tile`] (both are `x/z/level` triples).
+fn to_tile(t: WorldTile) -> Tile {
+    Tile {
+        x: t.x,
+        z: t.z,
+        level: t.level,
+    }
 }
 
 /// Absolute tile -> local mapsquare coords, if it sits in that square.
@@ -776,7 +784,7 @@ mod tests {
 
     use super::{
         decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
-        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare,
+        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE,
     };
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
@@ -784,6 +792,7 @@ mod tests {
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
     use api::snapshot::WorldTile;
+    use client::dash3d::CollisionFlag;
 
     #[test]
     fn pack_roundtrip_fixture_door() {
@@ -1006,6 +1015,29 @@ op1=Open
         assert!(!ids.contains(&1531));
     }
 
+    /// A 64×64 level-0 collision at the given mapsquare with the given
+    /// local `(x, z, flag)` stamps, everything else walkable — the door
+    /// snap's view of the world (mirrors the flags `bake_from_maps` stamps
+    /// for the fixture's MAP/LOC lines; `V_*` range flags are omitted since
+    /// they are not in the walk mask).
+    fn square_collision(mx: i32, mz: i32, extras: &[(usize, usize, u32)]) -> WorldCollision {
+        let mut flags = vec![0u32; SQUARE * SQUARE];
+        for &(x, z, f) in extras {
+            flags[z * SQUARE + x] |= f;
+        }
+        WorldCollision {
+            origin: WorldTile {
+                x: mx * SQUARE as i32,
+                z: mz * SQUARE as i32,
+                level: 0,
+            },
+            width: SQUARE,
+            height: SQUARE,
+            walkable: crate::collision::derive_walkable(&flags),
+            flags,
+        }
+    }
+
     #[test]
     fn parse_jm2_text_pins_catherby_door() {
         let door_ids = parse_door_config(
@@ -1025,7 +1057,22 @@ op1=Open
 ==== NPC ====
 0 0 0: 1234
 ";
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new()).unwrap();
+        // The bake for this text: (0,46) carries MAP f1 (WR_GRND) plus the
+        // door's W_N and wall 980's W_E; (0,47) the door's W_S face stamp.
+        let collision = square_collision(
+            44,
+            53,
+            &[
+                (1, 0, CollisionFlag::WR_GRND as u32),
+                (0, 46, CollisionFlag::WR_GRND as u32
+                    | CollisionFlag::W_N as u32
+                    | CollisionFlag::W_E as u32),
+                (1, 46, CollisionFlag::W_W as u32),
+                (0, 47, CollisionFlag::W_S as u32),
+            ],
+        );
+        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision)
+            .unwrap();
         // (0,0): no f flag -> walkable; (1,0): f1 bit 0 -> blocked;
         // (0,1): f16 bit 0 clear -> walkable; (2,0): no MAP line -> blocked.
         assert_eq!(sq.walk[0], 1);
@@ -1033,7 +1080,9 @@ op1=Open
         assert_eq!(sq.walk[64], 1);
         assert_eq!(sq.walk[2], 0);
         // The Catherby closed door: 1530 @ local (0,46) -> 2816,3438,0,
-        // both from→to and to→from (same loc, loc_id).
+        // both from→to and to→from (same loc, loc_id). The north side
+        // snaps past (0,47) — the door's own blocked south-face stamp — to
+        // the next walkable tile.
         assert_eq!(sq.doors.len(), 2);
         let south = Tile {
             x: 2816,
@@ -1042,7 +1091,7 @@ op1=Open
         };
         let north = Tile {
             x: 2816,
-            z: 3439,
+            z: 3440,
             level: 0,
         };
         let loc = Tile {
@@ -1098,7 +1147,10 @@ blockwalk=yes
 ==== LOC ====
 0 0 45: 980 0 0
 ";
-        let sq = parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new()).unwrap();
+        let collision = square_collision(44, 53, &[]);
+        let sq =
+            parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new(), &collision)
+                .unwrap();
         let grid = merge_squares(&[sq]);
         assert!(!grid.walkable(Tile {
             x: 2816,
@@ -1108,7 +1160,7 @@ blockwalk=yes
     }
 
     #[test]
-    fn parse_jm2_does_not_wipe_door_from_to() {
+    fn parse_jm2_snaps_door_from_to_past_a_wall_loc() {
         let door_ids = parse_door_config("[loc_1530]\nop1=Open\ncategory=door_closed\n");
         let text = "\
 ==== MAP ====
@@ -1119,14 +1171,46 @@ blockwalk=yes
 0 0 46: 1530 0 1
 0 0 45: 980 0 0
 ";
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new()).unwrap();
+        // Wall 980 right outside the door's south side: the door from/to
+        // snap past it to (2816,3436)/(2816,3440) instead of landing on
+        // the wall tile, which stays blocked by the loc.
+        let collision = square_collision(
+            44,
+            53,
+            &[
+                (0, 45, CollisionFlag::W_W as u32),
+                (0, 46, CollisionFlag::W_N as u32),
+                (0, 47, CollisionFlag::W_S as u32),
+            ],
+        );
+        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision)
+            .unwrap();
+        assert_eq!(sq.doors.len(), 2);
+        let south = Tile {
+            x: 2816,
+            z: 3436,
+            level: 0,
+        };
+        let north = Tile {
+            x: 2816,
+            z: 3440,
+            level: 0,
+        };
+        assert!(sq
+            .doors
+            .iter()
+            .any(|d| d.from == south && d.to == north));
+        assert!(sq
+            .doors
+            .iter()
+            .any(|d| d.from == north && d.to == south));
         let grid = merge_squares(&[sq]);
         assert!(!grid.walkable(Tile {
             x: 2816,
             z: 3438,
             level: 0
         }));
-        assert!(grid.walkable(Tile {
+        assert!(!grid.walkable(Tile {
             x: 2816,
             z: 3437,
             level: 0
