@@ -3,13 +3,17 @@
 //! legacy step-grid A* kept under [`find_on_grid`] for the traveller and
 //! live harnesses until the collision+transport router replaces them.
 //!
-//! Walking steps are cost 0 (0-1 BFS via a deque); a transport edge costs
-//! its `ticks` (a min-heap). A step into a neighbour is allowed only when
-//! the neighbour's flags pass the client's directional movement test (the
-//! `PL_WALK_*` masks in `tryMove`), never the blanket `walkable()` check.
+//! One Dijkstra minimizes **total ticks**: a walk step costs the search's
+//! run rate ([`CostModel::running`]: 0.5 ticks/tile, 2 tiles/tick) and a
+//! transport edge costs its `ticks` (OP_BASE + duration). Costs are `f64`
+//! — 0.5 and every reachable sum are exact — ordered with `total_cmp` in
+//! the heap so equal costs tie-break on tile coordinates. A step into a
+//! neighbour is allowed only when the neighbour's flags pass the client's
+//! directional movement test (the `PL_WALK_*` masks in `tryMove`), never
+//! the blanket `walkable()` check.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
@@ -28,13 +32,42 @@ pub enum Leg {
     Transport { edge: TransportEdge },
 }
 
-/// A route from the `find` origin to `dest`. `ticks` is the sum of the
-/// transport legs' tick costs; walking is cost 0.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A route from the `find` origin to `dest`. `ticks` is the total tick
+/// cost of the whole route: walk steps at the search's run rate (0.5 per
+/// tile, exact in f64) plus every transport edge's `ticks`. Half-ticks are
+/// never truncated.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Route {
     pub legs: Vec<Leg>,
     pub dest: WorldTile,
-    pub ticks: i32,
+    pub ticks: f64,
+}
+
+/// Run pace: 2 tiles per tick, 0.5 ticks per tile.
+pub const PER_STEP_RUN: f64 = 0.5;
+/// Walk pace: 1 tile per tick, 1 tick per tile.
+pub const PER_STEP_WALK: f64 = 1.0;
+
+/// The per-search walking rate. This task's searches walk at the fixed
+/// running pace ([`CostModel::running`]); the agility/regen energy-aware
+/// fallback will flip to the walk pace when run energy can't sustain
+/// running.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CostModel {
+    /// Ticks per walked tile at the running pace (0.5).
+    pub run_per_step: f64,
+    /// Ticks per walked tile at the walking pace (1.0).
+    pub walk_per_step: f64,
+}
+
+impl CostModel {
+    /// The fixed running rate this task searches with.
+    pub fn running() -> Self {
+        CostModel {
+            run_per_step: PER_STEP_RUN,
+            walk_per_step: PER_STEP_WALK,
+        }
+    }
 }
 
 /// Why [`find`] failed.
@@ -73,9 +106,10 @@ const MASK_SE: u32 = CollisionFlag::PL_WALK_SE as u32;
 const MASK_NW: u32 = CollisionFlag::PL_WALK_NW as u32;
 const MASK_SW: u32 = CollisionFlag::PL_WALK_SW as u32;
 
-/// Dijkstra over `collision` walk steps (cost 0, deque) and `graph`
-/// transport edges (cost `edge.ticks`, min-heap). Walk steps are
-/// 8-directional and stay on `from`'s level; transports may change level.
+/// Dijkstra over `collision` walk steps (each costing the search's run
+/// rate) and `graph` transport edges (each costing `edge.ticks`), all in
+/// one heap minimizing total ticks. Walk steps are 8-directional and stay
+/// on `from`'s level; transports may change level.
 ///
 /// The origin may sit on a blocked tile (a loc-blocked tele landing); only
 /// the tiles stepped *onto* are tested. Destinations are reached exactly:
@@ -86,50 +120,58 @@ pub fn find(
     from: WorldTile,
     to: WorldTile,
 ) -> Result<Route, RouteError> {
-    find_bounded(collision, graph, from, to, NODE_BUDGET)
+    find_bounded(collision, graph, from, to, CostModel::running(), NODE_BUDGET)
 }
 
-/// [`find`] with an explicit node-expansion budget (the search gives up
-/// with [`RouteError::BudgetExhausted`] once `budget` tiles are settled).
+/// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
+pub fn find_with_model(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    model: CostModel,
+) -> Result<Route, RouteError> {
+    find_bounded(collision, graph, from, to, model, NODE_BUDGET)
+}
+
+/// [`find`] with an explicit cost model and node-expansion budget (the
+/// search gives up with [`RouteError::BudgetExhausted`] once `budget`
+/// tiles are settled).
 fn find_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     to: WorldTile,
+    model: CostModel,
     budget: usize,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
             legs: vec![Leg::Walk { tiles: vec![from] }],
             dest: to,
-            ticks: 0,
+            ticks: 0.0,
         });
     }
 
-    let mut dist: HashMap<WorldTile, i32> = HashMap::new();
+    let mut dist: HashMap<WorldTile, f64> = HashMap::new();
     let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
-    let mut deque: VecDeque<WorldTile> = VecDeque::new();
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
     let mut done: HashSet<WorldTile> = HashSet::new();
 
-    dist.insert(from, 0);
-    deque.push_back(from);
+    dist.insert(from, 0.0);
+    heap.push(HeapNode {
+        cost: 0.0,
+        tile: from,
+    });
 
     let mut expanded = 0usize;
-    while !deque.is_empty() || !heap.is_empty() {
-        // The deque holds the 0-cost states at the current minimum cost
-        // and the heap the positive-cost frontier, so states pop in
-        // non-decreasing cost order and the first pop settles a tile's
-        // distance (stale heap entries are skipped by the cost check).
-        let (cur, cost) = if let Some(t) = deque.pop_front() {
-            (t, dist[&t])
-        } else {
-            let n = heap.pop().expect("heap non-empty when deque is empty");
-            if dist.get(&n.tile) != Some(&n.cost) {
-                continue;
-            }
-            (n.tile, n.cost)
-        };
+    while let Some(n) = heap.pop() {
+        let cur = n.tile;
+        // A stale heap entry (a cheaper path was found after the push) is
+        // skipped; the first pop at the settled distance settles the tile.
+        if dist.get(&cur) != Some(&n.cost) {
+            continue;
+        }
         if !done.insert(cur) {
             continue;
         }
@@ -138,7 +180,7 @@ fn find_bounded(
             return Err(RouteError::BudgetExhausted);
         }
         if cur == to {
-            let (legs, ticks) = reconstruct(to, &came_from, graph);
+            let (legs, ticks) = reconstruct(to, &came_from, graph, model);
             return Ok(Route {
                 legs,
                 dest: to,
@@ -153,21 +195,18 @@ fn find_bounded(
                     z: cur.z + d.1,
                     level: cur.level,
                 };
-                if !done.contains(&nb) && dist.get(&nb).is_none_or(|&g| g > cost) {
-                    dist.insert(nb, cost);
+                let nd = n.cost + model.run_per_step;
+                if !done.contains(&nb) && dist.get(&nb).is_none_or(|&g| g > nd) {
+                    dist.insert(nb, nd);
                     came_from.insert(nb, Back::Walk(cur));
-                    // Back: walks all cost 0, so the deque is a plain BFS
-                    // queue and the first settled path to a tile is a
-                    // shortest (fewest-steps) one. Front-pushing turned it
-                    // into a DFS and produced unwalkably convoluted routes.
-                    deque.push_back(nb);
+                    heap.push(HeapNode { cost: nd, tile: nb });
                 }
             }
         }
         if let Some(idxs) = graph.from.get(&cur) {
             for &ei in idxs {
                 let edge = &graph.edges[ei];
-                let nd = cost + edge.ticks;
+                let nd = n.cost + edge.ticks as f64;
                 if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
                     dist.insert(edge.to, nd);
                     came_from.insert(edge.to, Back::Transport(ei));
@@ -238,8 +277,9 @@ fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
     }
 }
 
-/// How a tile was reached: by a 0-cost walk step from `Walk`'s tile or by
-/// transport edge `Transport` (an index into [`TransportGraph::edges`]).
+/// How a tile was reached: by a walk step (each costing the search's run
+/// rate) from `Walk`'s tile or by transport edge `Transport` (an index
+/// into [`TransportGraph::edges`]).
 #[derive(Clone, Copy)]
 enum Back {
     Walk(WorldTile),
@@ -248,17 +288,20 @@ enum Back {
 
 /// Split the backtrack from `to` back to the entry-less origin into legs:
 /// consecutive walk tiles collapse into one `Walk` leg per run, and each
-/// transport edge is its own `Transport` leg. Returns `(legs, ticks)`.
+/// transport edge is its own `Transport` leg. Returns `(legs, ticks)`
+/// where `ticks` is the total: `(walk tiles − 1) × run rate` per walk leg
+/// plus each transport edge's ticks.
 fn reconstruct(
     to: WorldTile,
     came_from: &HashMap<WorldTile, Back>,
     graph: &TransportGraph,
-) -> (Vec<Leg>, i32) {
+    model: CostModel,
+) -> (Vec<Leg>, f64) {
     // Walk tiles in backtrack order (dest side first).
     let mut walk_rev = vec![to];
     let mut t = to;
     let mut legs_rev: Vec<Leg> = Vec::new();
-    let mut ticks = 0;
+    let mut ticks = 0.0;
     while let Some(prev) = came_from.get(&t) {
         match *prev {
             Back::Walk(pt) => {
@@ -266,27 +309,35 @@ fn reconstruct(
                 t = pt;
             }
             Back::Transport(ei) => {
+                ticks += walk_ticks(&walk_rev, model);
                 walk_rev.reverse();
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
                 let edge = graph.edges[ei].clone();
-                ticks += edge.ticks;
+                ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
                 t = graph.edges[ei].from;
                 walk_rev = vec![t];
             }
         }
     }
+    ticks += walk_ticks(&walk_rev, model);
     walk_rev.reverse();
     legs_rev.push(Leg::Walk { tiles: walk_rev });
     legs_rev.reverse();
     (legs_rev, ticks)
 }
 
-/// Heap entry for transport relaxations; `Ord` is reversed so the smallest
-/// cost pops first, with tile coordinates as tie-breakers to keep the
-/// ordering total.
+/// The tick cost of one collapsed walk leg: `tiles.len() − 1` steps at the
+/// model's run rate (the origin tile is stood on, not walked to).
+fn walk_ticks(tiles: &[WorldTile], model: CostModel) -> f64 {
+    tiles.len().saturating_sub(1) as f64 * model.run_per_step
+}
+
+/// Heap entry for relaxations over total tick cost; `Ord` is reversed so
+/// the smallest cost pops first, with `total_cmp` giving f64 a total order
+/// and tile coordinates as tie-breakers to keep the ordering total.
 struct HeapNode {
-    cost: i32,
+    cost: f64,
     tile: WorldTile,
 }
 
@@ -307,7 +358,7 @@ impl Ord for HeapNode {
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .cost
-            .cmp(&self.cost)
+            .total_cmp(&self.cost)
             .then_with(|| self.tile.x.cmp(&other.tile.x))
             .then_with(|| self.tile.z.cmp(&other.tile.z))
             .then_with(|| self.tile.level.cmp(&other.tile.level))
@@ -518,7 +569,10 @@ mod tests {
 
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
-    use crate::router::{find, find_bounded, find_on_grid, GridLeg, Leg, RouteError};
+    use crate::router::{
+        find, find_bounded, find_on_grid, find_with_model, CostModel, GridLeg, Leg, RouteError,
+        PER_STEP_WALK,
+    };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -738,7 +792,7 @@ mod tests {
         let g = TransportGraph::default();
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 4, 0));
-        assert_eq!(r.ticks, 0);
+        assert_eq!(r.ticks, 2.0); // 4 run steps at 0.5 ticks each
         assert_eq!(r.legs.len(), 1);
         let Leg::Walk { tiles } = &r.legs[0] else {
             panic!("walk-only route");
@@ -752,7 +806,7 @@ mod tests {
         let wc = bake(3, 3, &[]);
         let g = TransportGraph::default();
         let r = find(&wc, &g, tile(1, 1, 0), tile(1, 1, 0)).unwrap();
-        assert_eq!(r.ticks, 0);
+        assert_eq!(r.ticks, 0.0); // no steps walked
         assert_eq!(r.legs, vec![Leg::Walk { tiles: vec![tile(1, 1, 0)] }]);
     }
 
@@ -772,7 +826,9 @@ mod tests {
         let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 4, 0));
-        assert_eq!(r.ticks, 2);
+        // 2 walk steps to the door (1.0) + the 2-tick door + 2 walk steps
+        // from it (1.0).
+        assert_eq!(r.ticks, 4.0);
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { tiles: w0 },
@@ -793,11 +849,12 @@ mod tests {
     }
 
     #[test]
-    fn find_prefers_free_walk_over_a_costly_transport() {
+    fn find_prefers_a_cheap_walk_over_a_costly_transport() {
         let wc = bake(5, 5, &[]);
         let g = door(tile(0, 0, 0), tile(4, 4, 0), 1000);
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
-        assert_eq!(r.ticks, 0);
+        // The 1000-tick door loses to the 2.0-tick walk (4 run steps).
+        assert_eq!(r.ticks, 2.0);
         assert_eq!(r.legs.len(), 1);
         assert!(matches!(&r.legs[0], Leg::Walk { .. }));
     }
@@ -842,7 +899,8 @@ mod tests {
         g.edges.push(ladder.clone());
         let r = find(&wc, &g, tile(0, 0, 0), tile(3, 1, 1)).unwrap();
         assert_eq!(r.dest, tile(3, 1, 1));
-        assert_eq!(r.ticks, 3);
+        // The 3-tick ladder plus 2 run steps on level 1 (1.0).
+        assert_eq!(r.ticks, 4.0);
         let (
             Leg::Walk { tiles: w0 },
             Leg::Transport { edge },
@@ -862,10 +920,89 @@ mod tests {
         let wc = bake(10, 10, &[]);
         let g = TransportGraph::default();
         assert!(matches!(
-            find_bounded(&wc, &g, tile(0, 0, 0), tile(9, 9, 0), 8),
+            find_bounded(
+                &wc,
+                &g,
+                tile(0, 0, 0),
+                tile(9, 9, 0),
+                CostModel::running(),
+                8,
+            ),
             Err(RouteError::BudgetExhausted)
         ));
-        let r = find_bounded(&wc, &g, tile(0, 0, 0), tile(9, 9, 0), 4096).unwrap();
+        let r = find_bounded(
+            &wc,
+            &g,
+            tile(0, 0, 0),
+            tile(9, 9, 0),
+            CostModel::running(),
+            4096,
+        )
+        .unwrap();
         assert_eq!(r.dest, tile(9, 9, 0));
+    }
+
+    #[test]
+    fn find_prefers_a_cheap_door_over_a_long_walk_around() {
+        // A 5×20 bake walled between x=1 and x=2 for z=1..=18: crossing on
+        // foot means walking 20 tiles around a gap (~10 ticks at the run
+        // rate), so the 1-tick door at mid-wall is the cheaper total-tick
+        // route.
+        let mut extras = Vec::new();
+        for z in 1..=18 {
+            extras.push((1, z, CollisionFlag::W_E as u32));
+            extras.push((2, z, CollisionFlag::W_W as u32));
+        }
+        let wc = bake(5, 20, &extras);
+        let g = door(tile(1, 10, 0), tile(2, 10, 0), 1);
+        let r = find(&wc, &g, tile(0, 10, 0), tile(4, 10, 0)).unwrap();
+        assert_eq!(r.dest, tile(4, 10, 0));
+        // 1 walk tile (0.5) + the 1-tick door + 2 walk tiles (1.0).
+        assert_eq!(r.ticks, 2.5);
+        assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
+    }
+
+    #[test]
+    fn find_prefers_walking_around_over_a_cheap_door() {
+        // The wall is one tile tall: crossing it on foot is a 3-step loop
+        // (1.5 ticks), cheaper than the 1-tick door plus its two approach
+        // tiles (2.0), so the router walks around and never uses the door.
+        let wc = bake(5, 5, &[
+            (1, 2, CollisionFlag::W_E as u32),
+            (2, 2, CollisionFlag::W_W as u32),
+        ]);
+        let g = door(tile(1, 2, 0), tile(2, 2, 0), 1);
+        let r = find(&wc, &g, tile(0, 2, 0), tile(3, 2, 0)).unwrap();
+        assert_eq!(r.ticks, 1.5);
+        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
+    }
+
+    #[test]
+    fn walk_only_route_ticks_are_the_walk_tick_cost() {
+        // Walking is no longer free: a walk-only route's `ticks` is the
+        // walk cost (0.5 per tile at the run rate), not 0.
+        let wc = bake(5, 5, &[]);
+        let g = TransportGraph::default();
+        let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
+        assert_eq!(r.ticks, 2.0);
+        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
+    }
+
+    #[test]
+    fn find_cost_model_sets_the_walk_rate_per_search() {
+        // The run-vs-walk rate is a per-search input: the same 4-tile walk
+        // costs 2 ticks at the running pace (0.5/tile) and 4 at the walking
+        // pace (1/tile).
+        let wc = bake(5, 5, &[]);
+        let g = TransportGraph::default();
+        let run = find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), CostModel::running())
+            .unwrap();
+        assert_eq!(run.ticks, 2.0);
+        let walk = CostModel {
+            run_per_step: PER_STEP_WALK,
+            walk_per_step: PER_STEP_WALK,
+        };
+        let r = find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), walk).unwrap();
+        assert_eq!(r.ticks, 4.0);
     }
 }

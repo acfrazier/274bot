@@ -171,7 +171,8 @@ mod tests {
         // The walled tile blocks walking; the door edge crosses it, so the
         // route splits into Walk -> Transport -> Walk legs.
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
-        assert_eq!(r.ticks, 1);
+        // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
+        assert_eq!(r.ticks, 2.0);
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { .. },
@@ -206,7 +207,8 @@ mod tests {
         assert!(!w.collision.walkable(tile(2, 0, 0)));
         // The decoded grid routes exactly like the authored one.
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
-        assert_eq!(r.ticks, 1);
+        // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
+        assert_eq!(r.ticks, 2.0);
         assert_eq!(r.legs.len(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -223,7 +225,7 @@ mod tests {
             64,
         ));
         let r = find(&w.collision, &w.graph, tile(3200, 3200, 0), tile(3263, 3263, 0)).unwrap();
-        assert_eq!(r.ticks, 0);
+        assert_eq!(r.ticks, 31.5); // 63 run steps at 0.5 ticks each
         let Leg::Walk { tiles } = &r.legs[0] else {
             panic!("walk-only route");
         };
@@ -275,7 +277,8 @@ mod tests {
         assert_eq!(w.graph.edges, graph.edges);
         assert_eq!(w.graph.from, graph.from);
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
-        assert_eq!(r.ticks, 1);
+        // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
+        assert_eq!(r.ticks, 2.0);
         assert_eq!(r.legs.len(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1655,7 +1655,7 @@ mod tests {
                 z: 3201,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 0.5, // 1 run step
         };
         let mut options = TravelOptions::default();
         // One tile to the leg end: the run sends one walk and the arrived
@@ -1687,7 +1687,7 @@ mod tests {
                 z: 3200,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 0.0, // no steps
         };
         let mut options = TravelOptions::default();
         // A single-tile leg (the find(from == to) shape) is a no-op: no
@@ -1716,7 +1716,7 @@ mod tests {
                 z: 3205,
                 level: 0,
             },
-            ticks: 2,
+            ticks: 2.0, // the ladder edge's ticks
         };
         let mut options = TravelOptions::default();
         let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
@@ -1751,7 +1751,7 @@ mod tests {
                 z: 3204,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 2.0, // 4 run steps at 0.5 ticks each
         };
         let mut options = TravelOptions {
             budget_ticks_per_hop: 3,
@@ -1792,7 +1792,7 @@ mod tests {
                 z: 3207,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 3.5, // 7 run steps at 0.5 ticks each
         };
         let mut options = TravelOptions {
             budget_ticks_per_hop: 3,
@@ -1835,7 +1835,7 @@ mod tests {
                 z: 3204,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 2.0, // 4 run steps at 0.5 ticks each
         };
         let mut options = TravelOptions::default();
         // The driver rejects the multi-tile hop: `Interactions::walk`
@@ -1864,7 +1864,7 @@ mod tests {
                 z: 3239,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 19.5, // 39 run steps at 0.5 ticks each
         };
         let mut options = TravelOptions {
             close_enough: 200,
@@ -1893,7 +1893,7 @@ mod tests {
                 z: 3202,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 1.0, // 2 run steps at 0.5 ticks each
         };
         let mut phases = Vec::new();
         let mut options = TravelOptions {
@@ -1935,7 +1935,7 @@ mod tests {
                 z: 3205,
                 level: 0,
             },
-            ticks: 2,
+            ticks: 2.0, // the ladder edge's ticks
         };
         let mut options = TravelOptions {
             budget_ticks_per_hop: 3,
@@ -1971,7 +1971,7 @@ mod tests {
                 z: 3205,
                 level: 0,
             },
-            ticks: 2,
+            ticks: 3.0, // 2 run steps (1.0) + the ladder edge's 2 ticks
         };
         let mut phases = Vec::new();
         let mut options = TravelOptions {
@@ -2096,7 +2096,7 @@ mod tests {
                 z: 3205,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 2.5, // 5 run steps at 0.5 ticks each
         };
         let mut options = TravelOptions {
             budget_ticks_per_hop: 10,
@@ -2150,7 +2150,7 @@ mod tests {
                 z: 3239,
                 level: 0,
             },
-            ticks: 0,
+            ticks: 19.5, // 39 run steps at 0.5 ticks each
         };
         let mut options = TravelOptions {
             close_enough: 3,
@@ -2208,7 +2208,7 @@ mod tests {
                 z: 3205,
                 level: 1,
             },
-            ticks: 2,
+            ticks: 2.0, // the ladder edge's ticks
         };
         let mut options = TravelOptions::default();
         let mut run = FollowRun::start(route, &options);
