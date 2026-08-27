@@ -195,16 +195,18 @@ fn walk_scenario() -> Scenario {
 
 /// The `nav_full` scenario: log in `test`/`test`, mainland-hop into the
 /// Lumbridge courtyard, then drive the whole-world nav proof. `find` runs
-/// the Dijkstra router over the collision + transport graph derived from
-/// the baked whole-world pack and `Traveller::follow` drives the route one
-/// step per tick until arrival. The destination is a concrete Lumbridge
-/// tile from the pack — (3220, 3264, 0), 44 chebyshev tiles north of the
-/// tele landing — in mapsquare (50,51), which the pre-bake 2-square pack
-/// (m50_50 + m44_53) never covered, so the walk crosses the z=3264 square
-/// boundary. It is walk-only (no boat/teleport: those have no
-/// content-derivable origin tile); the pack's derived graph is checked at
+/// the Dijkstra router over the **live scene's** collision map (so the
+/// route is one the client can actually walk — the baked pack's boolean
+/// walk grid can diverge from the live collision) plus the transport
+/// graph derived from the baked whole-world pack, and `Traveller::follow`
+/// drives the route one step per tick until arrival. The destination is a
+/// concrete Lumbridge tile from the pack — (3220, 3264, 0), 44 chebyshev
+/// tiles north of the tele landing — in mapsquare (50,51), which the
+/// pre-bake 2-square pack (m50_50 + m44_53) never covered, so the walk
+/// crosses the z=3264 square boundary. It is walk-only (no boat/teleport:
+/// those have no content-derivable origin tile); the route is checked at
 /// arm time, and the run fails with a clear message if no walk path
-/// exists. The step budget is sized for a ~150-tile walk plus re-routing.
+/// exists. The step budget is sized for a ~100-tile walk plus re-routing.
 pub fn nav_full_scenario() -> Scenario {
     let dest = WorldTile {
         x: 3220,

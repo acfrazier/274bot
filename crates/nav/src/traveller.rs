@@ -819,12 +819,15 @@ struct TransportHop {
     tries: u32,
 }
 
-/// The player's world tile from the snapshot; `(0, 0, 0)` before the first
-/// `PLAYER_INFO` (the m8aq `here()` fallback).
+/// The player's world tile from the snapshot: the canonical route-based
+/// tile (`base + route_x[0]`, the server-confirmed position), the same
+/// source the settle `arrived` arm and the runner's `arrived` proof read.
+/// `(0, 0, 0)` before the first `PLAYER_INFO` (the m8aq `here()`
+/// fallback).
 fn here(snapshot: &GameSnapshot) -> WorldTile {
     snapshot
-        .local_player()
-        .map(|lp| lp.player.actor.tile)
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level })
         .unwrap_or(WorldTile {
             x: 0,
             z: 0,

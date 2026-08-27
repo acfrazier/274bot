@@ -2,11 +2,11 @@
 //! `panel-play --live nav_full`. One scenario, two runners: the headed
 //! panel and this test drive the same `ScenarioRunner`, so both
 //! pass/fail identically. The scenario seeds the mainland hop, arms
-//! `find` over the whole-world collision + transport graph derived from
-//! the baked pack, and drives `Traveller::follow` per tick to the
-//! cross-mapsquare destination (3220, 3264, 0). PASS only when the
-//! runner reports `Passed` (the `arrived` proof held); FAIL + exit 1 on
-//! a runner failure or the outer timeout.
+//! `find` over the live scene's collision + the transport graph derived
+//! from the baked whole-world pack, and drives `Traveller::follow` per
+//! tick to the cross-mapsquare destination (3220, 3264, 0). PASS only
+//! when the runner reports `Passed` (the `arrived` proof held); FAIL +
+//! exit 1 on a runner failure or the outer timeout.
 //!
 //! Run with the engine up and the nav pack at the standard path:
 //! `LIVE=1 cargo test -p e2e --test nav_full -- --ignored --test-threads=1 --nocapture`

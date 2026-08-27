@@ -126,12 +126,15 @@ fn now_ms() -> Option<u64> {
 // --- evidence predicates ---------------------------------------------------
 
 /// Arrived: the local player is within `radius` (Chebyshev) of `tile`.
+/// The position is the snapshot's canonical world tile (base + route
+/// head), the same source `Traveller::follow`'s `here()` and the runner's
+/// `arrived` proof read — so a hop and its settle arm can never disagree
+/// about where the player is.
 pub fn arrived(tile: WorldTile, radius: i32) -> Evidence<'static> {
     Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-        let Some(here) = now.local_player() else {
+        let Some(here) = now.world_tile() else {
             return false;
         };
-        let here = here.player.actor.tile;
         if here.level != tile.level {
             return false;
         }

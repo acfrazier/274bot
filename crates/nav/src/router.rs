@@ -156,7 +156,11 @@ fn find_bounded(
                 if !done.contains(&nb) && dist.get(&nb).is_none_or(|&g| g > cost) {
                     dist.insert(nb, cost);
                     came_from.insert(nb, Back::Walk(cur));
-                    deque.push_front(nb);
+                    // Back: walks all cost 0, so the deque is a plain BFS
+                    // queue and the first settled path to a tile is a
+                    // shortest (fewest-steps) one. Front-pushing turned it
+                    // into a DFS and produced unwalkably convoluted routes.
+                    deque.push_back(nb);
                 }
             }
         }

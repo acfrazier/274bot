@@ -733,7 +733,8 @@ fn player_rebuild_reads_local_and_remote_players() {
     );
     assert_eq!(p.combat_level, 3);
     assert_eq!(p.skill_level, 5);
-    assert_eq!(snap.tile(), Some((3220, 3212, 0)));
+    // The canonical tile carries the real scene level (`minusedlevel`).
+    assert_eq!(snap.tile(), Some((3220, 3212, 1)));
 
     assert!(!snap.rebuild_family(&mut c, Family::Player));
 }

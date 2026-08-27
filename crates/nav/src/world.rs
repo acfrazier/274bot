@@ -2,7 +2,10 @@
 //! [`WorldCollision`] walk surface plus the door [`TransportGraph`]. The
 //! pack file stores one walk byte per tile and the door edges; the
 //! Dijkstra router ([`crate::router::find`]) consumes the derived
-//! collision + graph, so live harnesses load one artifact.
+//! collision + graph, so live harnesses load one artifact. Live `Follow`
+//! runs route walks on the client's own collision map (which matches the
+//! live scene exactly) and use this module's `graph` for transport
+//! edges — the pack-derived `collision` is the offline approximation.
 
 use std::path::Path;
 

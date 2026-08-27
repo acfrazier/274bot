@@ -1086,7 +1086,8 @@ impl GameSnapshot {
             (
                 base.0 + lp.route_x[0],
                 base.1 + lp.route_z[0],
-                0, // tile level is not decoded on the body yet (gaps.md)
+                // The scene level (`minusedlevel`), like every actor view.
+                client.minusedlevel,
             )
         });
         let level = client.minusedlevel;
@@ -2051,11 +2052,11 @@ impl<'a> ReadContext<'a> {
         self.0.retaliate_controls()
     }
 
-    /// The local player's world tile (scene level from the actor view,
-    /// unlike the legacy `tile()` triple's pinned 0); `None` before the
+    /// The local player's world tile — the canonical route-based tile
+    /// (`base + route head`) with the scene level; `None` before the
     /// first `PLAYER_INFO`.
     pub fn world_tile(&self) -> Option<WorldTile> {
-        self.0.local_player().map(|lp| lp.player.actor.tile)
+        self.0.tile().map(|(x, z, level)| WorldTile { x, z, level })
     }
 
     /// The value of varp `index` (0 when unset).
