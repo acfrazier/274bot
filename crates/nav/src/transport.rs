@@ -104,15 +104,15 @@ pub struct TransportGraph {
 /// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs,
 /// and the baked whole-world [`WorldCollision`] (the door edges walk their
 /// `to` far side out to a standable tile on it; door edges carry `dir` and
-/// `open_loc_id`, every other kind keeps `dir: None`/`open_loc_id: None`
-/// until steps 3/4 fill them).
+/// `open_loc_id`, every other kind keeps `dir: None`/`open_loc_id: None`).
 ///
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
 /// shortcuts from `scripts/skill_agility/scripts/*.rs2`. Placements and
-/// destinations that resolve are emitted as edges from the standing tiles
-/// around each loc (no walkability filter — the router applies the
-/// collision map). Boats and gnome gliders are the explicit 2004 route
+/// destinations that resolve emit one edge per placement — `at` the loc
+/// tile, `to` the resolved landing (no walkability filter — the router
+/// applies the collision map). Boats and gnome gliders are the explicit
+/// 2004 route
 /// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
 /// land in [`TransportGraph::teleports`], never in the `at` index. Rows
 /// that do not resolve are counted per reason on stderr, never faked.
@@ -1253,8 +1253,8 @@ fn parse_landing(expr: &str) -> Outcome {
     Outcome::Skipped(SKIP_UNPARSED)
 }
 
-/// Ladder/stairs edges (m8aq `resolvePlacements` + the standing-tile fan-out
-/// of `buildTransportTable`, minus the collision-grid filters).
+/// Ladder/stairs edges (m8aq `resolvePlacements` — one edge per placement,
+/// `at` the loc tile, `to` the resolved landing).
 fn ladder_stair_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -1283,7 +1283,7 @@ fn ladder_stair_edges(
         let Some(&id) = ids.get(&loc_name) else {
             continue;
         };
-        let Some(def) = loc_defs.loc(id) else {
+        let Some(_def) = loc_defs.loc(id) else {
             continue;
         };
         let Some(extra) = extra_ticks(&loc_name) else {
@@ -1294,7 +1294,6 @@ fn ladder_stair_edges(
             );
             continue;
         };
-        let (width, length) = (def.width.max(1), def.length.max(1));
         let ticks = 1 + extra;
         let (kind, rule) = &rules[&(loc_name, option)];
         let Some(placements) = positions.get(&id) else {
@@ -1314,69 +1313,38 @@ fn ladder_stair_edges(
             match outcome {
                 Outcome::Skipped(reason) => bump(skipped, reason, 1),
                 Outcome::Landing(landing) => {
-                    for at in standing_tiles(loc, width, length) {
-                        let to = landing_tile(landing, loc, &at);
-                        if !in_world_box(&to) {
-                            bump(skipped, SKIP_DEST_OUTSIDE, 1);
-                            continue;
-                        }
-                        graph.edges.push(TransportEdge {
-                            kind: *kind,
-                            at,
-                            to,
-                            loc_id: id,
-                            option,
-                            ticks,
-                            dir: None,
-                            open_loc_id: None,
-                            skill_req: vec![],
-                            item_req: vec![],
-                            quest_req: vec![],
-                            varp_req: vec![],
-                        });
+                    let at = WorldTile {
+                        x: loc.x,
+                        z: loc.z,
+                        level: loc.level,
+                    };
+                    let to = landing_tile(landing, loc, &at);
+                    if !in_world_box(&to) {
+                        bump(skipped, SKIP_DEST_OUTSIDE, 1);
+                        continue;
                     }
+                    graph.edges.push(TransportEdge {
+                        kind: *kind,
+                        at,
+                        to,
+                        loc_id: id,
+                        option,
+                        ticks,
+                        dir: None,
+                        open_loc_id: None,
+                        skill_req: vec![],
+                        item_req: vec![],
+                        quest_req: vec![],
+                        varp_req: vec![],
+                    });
                 }
             }
         }
     }
 }
 
-/// The walkable-looking tiles around a loc footprint (m8aq
-/// `standingTiles`); the router filters them against the collision map.
-fn standing_tiles(loc: &Placement, width: i32, length: i32) -> Vec<WorldTile> {
-    let turned = loc.angle == 1 || loc.angle == 3;
-    let w = if turned { length } else { width };
-    let l = if turned { width } else { length };
-    let mut out = Vec::new();
-    for dx in 0..w {
-        out.push(WorldTile {
-            level: loc.level,
-            x: loc.x + dx,
-            z: loc.z - 1,
-        });
-        out.push(WorldTile {
-            level: loc.level,
-            x: loc.x + dx,
-            z: loc.z + l,
-        });
-    }
-    for dz in 0..l {
-        out.push(WorldTile {
-            level: loc.level,
-            x: loc.x - 1,
-            z: loc.z + dz,
-        });
-        out.push(WorldTile {
-            level: loc.level,
-            x: loc.x + w,
-            z: loc.z + dz,
-        });
-    }
-    out
-}
-
-/// The `to` tile for a landing, per placement / standing tile (m8aq
-/// `resolvePlacements` dest + `landingOf`).
+/// The `to` tile for a landing, per placement (m8aq `resolvePlacements`
+/// dest + `landingOf`).
 fn landing_tile(landing: &Landing, loc: &Placement, at: &WorldTile) -> WorldTile {
     match *landing {
         Landing::Abs { level, x, z } => WorldTile { level, x, z },
@@ -1423,14 +1391,13 @@ fn shortcut_edges(
         let Some(&id) = ids.get(loc_name) else {
             continue;
         };
-        let Some(def) = loc_defs.loc(id) else {
+        let Some(_def) = loc_defs.loc(id) else {
             continue;
         };
         let Some(extra) = extra_ticks(loc_name) else {
             bump(skipped, SKIP_UNPRICED, positions.get(&id).map_or(0, Vec::len));
             continue;
         };
-        let (width, length) = (def.width.max(1), def.length.max(1));
         let ticks = 1 + extra;
         let skill_req = reqs
             .get(loc_name)
@@ -1440,27 +1407,30 @@ fn shortcut_edges(
             continue;
         };
         for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
             for to in dests(loc) {
                 if !in_world_box(&to) {
                     bump(skipped, SKIP_DEST_OUTSIDE, 1);
                     continue;
                 }
-                for at in standing_tiles(loc, width, length) {
-                    graph.edges.push(TransportEdge {
-                        kind: TransportKind::AgilityShortcut,
-                        at,
-                        to,
-                        loc_id: id,
-                        option: 1,
-                        ticks,
-                        dir: None,
-                        open_loc_id: None,
-                        skill_req: skill_req.clone(),
-                        item_req: vec![],
-                        quest_req: vec![],
-                        varp_req: vec![],
-                    });
-                }
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::AgilityShortcut,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1,
+                    ticks,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: skill_req.clone(),
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                });
             }
         }
     }
@@ -2675,50 +2645,29 @@ switch_coord (loc_coord) {
         assert_eq!(door.ticks, 1);
 
         // One ladder placement (id 1747 @ 2826,3402,0) climbing to
-        // (1,2826,3468): one edge per standing tile.
+        // (1,2826,3468): one edge per placement — `at` the loc tile
+        // (blocked), `to` the same landing.
         let ladders: Vec<_> = graph
             .edges
             .iter()
             .filter(|e| e.kind == TransportKind::Ladder && e.loc_id == 1747)
             .collect();
-        assert_eq!(ladders.len(), 4);
+        assert_eq!(ladders.len(), 1);
         let landing = WorldTile {
             x: 2826,
             z: 3468,
             level: 1,
         };
-        let standing = [
-            WorldTile {
-                x: 2826,
-                z: 3401,
-                level: 0,
-            },
-            WorldTile {
-                x: 2826,
-                z: 3403,
-                level: 0,
-            },
-            WorldTile {
-                x: 2825,
-                z: 3402,
-                level: 0,
-            },
-            WorldTile {
-                x: 2827,
-                z: 3402,
-                level: 0,
-            },
-        ];
-        for l in &ladders {
-            assert_eq!(l.to, landing);
-            assert!(standing.contains(&l.at), "unexpected at {:?}", l.at);
-            assert_eq!(l.option, 1);
-            assert_eq!(l.ticks, 3); // op base 1 + ladder extra 2
-            assert!(l.skill_req.is_empty());
-        }
+        let ladder = &ladders[0];
+        assert_eq!(ladder.at, WorldTile { x: 2826, z: 3402, level: 0 });
+        assert_eq!(ladder.to, landing);
+        assert_eq!(ladder.dir, None);
+        assert_eq!(ladder.open_loc_id, None);
+        assert_eq!(ladder.option, 1);
+        assert_eq!(ladder.ticks, 3); // op base 1 + ladder extra 2
+        assert!(ladder.skill_req.is_empty());
 
-        // The at-index keys the door loc tile and every ladder standing
-        // tile.
+        // The at-index keys the door loc tile and the ladder loc tile.
         let door_at = WorldTile {
             x: 2816,
             z: 3438,
@@ -2733,13 +2682,13 @@ switch_coord (loc_coord) {
                 level: 0
             }
         );
-        let stand = WorldTile {
+        let ladder_at = WorldTile {
             x: 2826,
-            z: 3401,
+            z: 3402,
             level: 0,
         };
-        assert_eq!(graph.at[&stand].len(), 1);
-        assert_eq!(graph.edges[graph.at[&stand][0]].to, landing);
+        assert_eq!(graph.at[&ladder_at].len(), 1);
+        assert_eq!(graph.edges[graph.at[&ladder_at][0]].to, landing);
     }
 
     #[test]
@@ -2775,18 +2724,21 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
             .iter()
             .filter(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == 2298)
             .collect();
-        assert_eq!(edges.len(), 4);
+        assert_eq!(edges.len(), 1);
         let landing = WorldTile {
             x: 2821,
             z: 3400,
             level: 0,
         };
-        for e in &edges {
-            assert_eq!(e.to, landing);
-            assert_eq!(e.option, 1);
-            assert_eq!(e.ticks, 1); // op base 1 + watchshortcut extra 0
-            assert_eq!(e.skill_req, vec![(SKILL_AGILITY, 5)]);
-        }
+        let e = &edges[0];
+        // One edge per placement: `at` the loc tile, `to` the shortcut dest.
+        assert_eq!(e.at, WorldTile { x: 2821, z: 3397, level: 0 });
+        assert_eq!(e.to, landing);
+        assert_eq!(e.dir, None);
+        assert_eq!(e.open_loc_id, None);
+        assert_eq!(e.option, 1);
+        assert_eq!(e.ticks, 1); // op base 1 + watchshortcut extra 0
+        assert_eq!(e.skill_req, vec![(SKILL_AGILITY, 5)]);
     }
 
     #[test]
