@@ -1767,6 +1767,7 @@ mod tests {
                 width: w,
                 height: h,
                 flags: vec![0u32; w * h],
+                walkable: vec![0u32; w * h],
             },
             graph: TransportGraph::default(),
         }
@@ -2065,6 +2066,7 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
+                walkable: nav::collision::derive_walkable(&flags),
                 flags,
             },
             graph: TransportGraph::default(),

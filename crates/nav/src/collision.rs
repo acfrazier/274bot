@@ -287,7 +287,7 @@ pub fn bake_from_maps(
 /// wall flag — like blocked ground or scenery — rejects entry from every
 /// direction). Pure over the raw word, so decoders recompute it from the
 /// packed `flags`.
-pub(crate) fn derive_walkable(flags: &[u32]) -> Vec<u32> {
+pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
     flags
         .iter()
         .map(|&raw| {
