@@ -4,7 +4,7 @@
 
 use crate::obj_names::ItemDefView;
 use client::client::{Client, ClientGens, ClientNpc, Skill};
-use client::config::if_type::ComponentType;
+use client::config::if_type::{ButtonType, ComponentType, IfType};
 use client::config::{Cache, ObjType};
 use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
@@ -44,6 +44,22 @@ pub enum Family {
     World,
     Loc,
     GroundItem,
+    /// Task 4 iface-derived families. They re-read the materialized
+    /// `client.ifaces` (and the inv slot data) instead of deep-copying
+    /// the world; each tracks its own gen gate.
+    Inventory,
+    Equipment,
+    Bank,
+    BankSide,
+    Trade,
+    Widgets,
+    SideTabs,
+    ChatOptions,
+    MakeProducts,
+    QuestStatuses,
+    Modals,
+    Controls,
+    Menu,
 }
 
 /// The kind of entity an actor is facing (`ActorTargetView::kind`).
@@ -197,6 +213,189 @@ pub struct StatView {
     pub used: bool,
 }
 
+/// A contained item: the obj definition plus the container, the slot
+/// position and the interface ops (the m8aq `ItemSnapshot`). `def.id` is
+/// the real obj id — iface `link_obj_type` stores `obj_id + 1` (0 empty),
+/// so the stored value decodes with a `- 1` (the client's own draw
+/// convention; m8aq `readInvComponent`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ItemView {
+    pub def: ItemDefView,
+    pub container: ItemContainer,
+    pub action_family: ItemActionFamily,
+    pub slot: i32,
+    pub count: i32,
+    pub actions: Vec<Option<String>>,
+    pub component_id: i32,
+}
+
+/// Which surface the item sits on (the m8aq `ItemContainer`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ItemContainer {
+    Inventory,
+    Equipment,
+    Bank,
+    BankSide,
+    TradeMyOffer,
+    TradeTheirOffer,
+    TradeSidePack,
+    Widget,
+}
+
+/// Where the item's menu ops come from: held items read the obj def's
+/// `iop`, component items read the TYPE_INV iface's own `iop`, and the
+/// trade partner's offer exposes no ops (the m8aq `ItemActionFamily`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ItemActionFamily {
+    Held,
+    Component,
+    None,
+}
+
+/// One varp-bound component script: an opcode-5 (`IF_VARP`) script with
+/// the varp index as its first operand, decoded like the client's own
+/// toggle/select arms (and m8aq `widgetVarpBindings`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WidgetVarpBindingView {
+    pub script_index: i32,
+    pub varp: i32,
+    pub value: Option<i32>,
+    pub comparator: Option<i32>,
+}
+
+/// The widget tag (which open root's tree the widget lives in).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum WidgetRoot {
+    Main,
+    Side,
+    Chat,
+    Tutorial,
+}
+
+/// The discriminated-union tag of a widget view (only `Widget` today).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum WidgetKind {
+    Widget,
+}
+
+/// One interface component reachable from an open root, with its derived
+/// walk context (accumulated position, parent, root tag).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WidgetView {
+    pub kind: WidgetKind,
+    pub component_id: i32,
+    pub layer_id: i32,
+    pub parent_id: i32,
+    pub root_component_id: i32,
+    pub root: WidgetRoot,
+    pub type_: i32,
+    pub button_type: i32,
+    pub client_code: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub scroll_height: i32,
+    pub scroll_position: i32,
+    pub hidden: bool,
+    pub text: Option<String>,
+    pub alternate_text: Option<String>,
+    pub button_text: Option<String>,
+    pub target_verb: Option<String>,
+    pub target_base: Option<String>,
+    pub target_mask: i32,
+    pub model_type: i32,
+    pub model_id: i32,
+    pub alternate_model_type: i32,
+    pub alternate_model_id: i32,
+    pub scripts: Option<Vec<Option<Vec<i32>>>>,
+    pub script_comparators: Option<Vec<i32>>,
+    pub script_operands: Option<Vec<i32>>,
+    pub varp_bindings: Vec<WidgetVarpBindingView>,
+    pub colour: i32,
+    pub actions: Vec<Option<String>>,
+    pub items: Vec<ItemView>,
+}
+
+/// One side-tab slot: the interface drawn on it and the tab state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SideTabView {
+    pub index: i32,
+    pub root_component_id: i32,
+    pub available: bool,
+    pub active: bool,
+    pub visible: bool,
+    pub widgets: Vec<WidgetView>,
+}
+
+/// The trade ifaces' state and the four trade containers.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct TradeView {
+    pub offer_open: bool,
+    pub confirm_open: bool,
+    pub my_offer: Vec<ItemView>,
+    pub their_offer: Vec<ItemView>,
+    pub side_pack: Vec<ItemView>,
+    pub partner: Option<String>,
+}
+
+/// One chat history line. The ring's index 0 is the newest line;
+/// `sequence` strictly increases for newer lines (the head bumps on every
+/// chat gen), so `since(last)` queries see only genuinely new lines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChatLineView {
+    pub type_: i32,
+    pub username: Option<String>,
+    pub text: String,
+    pub sequence: i32,
+}
+
+/// One BUTTON_OK choice of the chat modal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChatOptionView {
+    pub component_id: i32,
+    pub text: String,
+}
+
+/// One make/smelt button of a make product (`quantity` -1 = "Make X").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MakeButtonView {
+    pub quantity: i32,
+    pub component_id: i32,
+}
+
+/// One make-X product: the obj-model component plus its four buttons.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MakeProductView {
+    pub object_id: i32,
+    pub name: String,
+    pub buttons: Vec<MakeButtonView>,
+}
+
+/// One quest-journal entry (a TYPE_TEXT row of the quest tab).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QuestStatusView {
+    pub component_id: i32,
+    pub name: String,
+    pub colour: i32,
+}
+
+/// The on/off toggle pair of the player-controls overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ToggleControlsView {
+    pub on_component_id: i32,
+    pub off_component_id: i32,
+}
+
+/// The four open modal/overlay roots (-1 = none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub struct ModalView {
+    pub main: i32,
+    pub side: i32,
+    pub chat: i32,
+    pub tutorial: i32,
+}
+
 /// The sim-world layer a placed loc occupies (the m8aq `LocSnapshot.layer`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum LocLayer {
@@ -342,6 +541,67 @@ pub struct GameSnapshot {
     loc_gen: u64,
     #[serde(skip)]
     ground_item_gen: u64,
+
+    /// Task 4 iface-derived views, rebuilt when their gen moved. The
+    /// item-bearing families track the iface and inv gens (component ids
+    /// on the iface gen, slot data on the inv gen); the pure-tree and
+    /// scalar families track the iface gen. Each family keeps its own
+    /// gate so a movement rebuilds only that family.
+    inventory: Vec<ItemView>,
+    equipment: Vec<ItemView>,
+    bank: Vec<ItemView>,
+    bank_side: Vec<ItemView>,
+    trade: TradeView,
+    widgets: Vec<WidgetView>,
+    side_tabs: Vec<SideTabView>,
+    chat_lines: Vec<ChatLineView>,
+    chat_options: Vec<ChatOptionView>,
+    chat_continue_component_id: i32,
+    make_products: Vec<MakeProductView>,
+    quest_statuses: Vec<QuestStatusView>,
+    run_controls: Option<ToggleControlsView>,
+    retaliate_controls: Option<ToggleControlsView>,
+    modals: ModalView,
+    menu_entries: Vec<String>,
+    main_modal_texts: Vec<String>,
+    chat_modal_texts: Vec<String>,
+    login_message: String,
+    count_dialog_open: bool,
+    active_side_tab: i32,
+    #[serde(skip)]
+    inventory_gate: InvIfaceGate,
+    #[serde(skip)]
+    equipment_gate: InvIfaceGate,
+    #[serde(skip)]
+    bank_gate: InvIfaceGate,
+    #[serde(skip)]
+    bank_side_gate: InvIfaceGate,
+    #[serde(skip)]
+    trade_gate: InvIfaceGate,
+    #[serde(skip)]
+    widgets_gate: InvIfaceGate,
+    #[serde(skip)]
+    side_tabs_gate: InvIfaceGate,
+    #[serde(skip)]
+    chat_options_gate: u64,
+    #[serde(skip)]
+    make_products_gate: u64,
+    #[serde(skip)]
+    quest_statuses_gate: u64,
+    #[serde(skip)]
+    modals_gate: u64,
+    #[serde(skip)]
+    controls_gate: u64,
+    #[serde(skip)]
+    menu_gate: u64,
+    /// The chat head's sequence counter: the newest line's `sequence`.
+    /// Bumped when the ring head moves on a chat gen (the client has no
+    /// per-message counter), so sequences stay monotonic per rebuild.
+    #[serde(skip)]
+    chat_seq: i32,
+    /// The ring head from the last chat rebuild, to detect a new message.
+    #[serde(skip)]
+    chat_prev_head: String,
 }
 
 impl GameSnapshot {
@@ -375,6 +635,19 @@ impl GameSnapshot {
             Family::Camera => self.rebuild_camera(client),
             Family::MapFlag => self.rebuild_map_flag(client),
             Family::World => self.rebuild_world(client),
+            Family::Inventory => self.rebuild_inventory(client),
+            Family::Equipment => self.rebuild_equipment(client),
+            Family::Bank => self.rebuild_bank(client),
+            Family::BankSide => self.rebuild_bank_side(client),
+            Family::Trade => self.rebuild_trade(client),
+            Family::Widgets => self.rebuild_widgets(client),
+            Family::SideTabs => self.rebuild_side_tabs(client),
+            Family::ChatOptions => self.rebuild_chat_options(client),
+            Family::MakeProducts => self.rebuild_make_products(client),
+            Family::QuestStatuses => self.rebuild_quest_statuses(client),
+            Family::Modals => self.rebuild_modals(client),
+            Family::Controls => self.rebuild_controls(client),
+            Family::Menu => self.rebuild_menu(client),
         }
     }
 
@@ -395,6 +668,19 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Camera);
         dirty |= self.rebuild_family(client, Family::MapFlag);
         dirty |= self.rebuild_family(client, Family::World);
+        dirty |= self.rebuild_family(client, Family::Inventory);
+        dirty |= self.rebuild_family(client, Family::Equipment);
+        dirty |= self.rebuild_family(client, Family::Bank);
+        dirty |= self.rebuild_family(client, Family::BankSide);
+        dirty |= self.rebuild_family(client, Family::Trade);
+        dirty |= self.rebuild_family(client, Family::Widgets);
+        dirty |= self.rebuild_family(client, Family::SideTabs);
+        dirty |= self.rebuild_family(client, Family::ChatOptions);
+        dirty |= self.rebuild_family(client, Family::MakeProducts);
+        dirty |= self.rebuild_family(client, Family::QuestStatuses);
+        dirty |= self.rebuild_family(client, Family::Modals);
+        dirty |= self.rebuild_family(client, Family::Controls);
+        dirty |= self.rebuild_family(client, Family::Menu);
         dirty
     }
 
@@ -500,6 +786,118 @@ impl GameSnapshot {
         self.map_flag.as_ref()
     }
 
+    /// Inventory item views from the last inventory rebuild, in slot
+    /// order (the inv tab's TYPE_INV component).
+    pub fn inventory(&self) -> &[ItemView] {
+        &self.inventory
+    }
+
+    /// Worn-items views from the last equipment rebuild, in slot order.
+    pub fn equipment(&self) -> &[ItemView] {
+        &self.equipment
+    }
+
+    /// Bank item views from the last bank rebuild (the open main modal's
+    /// withdraw component).
+    pub fn bank(&self) -> &[ItemView] {
+        &self.bank
+    }
+
+    /// Bank-side (deposit) item views from the last bank-side rebuild.
+    pub fn bank_side(&self) -> &[ItemView] {
+        &self.bank_side
+    }
+
+    /// The trade state (offer/confirm open, the four containers, partner).
+    pub fn trade(&self) -> &TradeView {
+        &self.trade
+    }
+
+    /// Widget views from the last widgets rebuild, one per component
+    /// reachable from an open root.
+    pub fn widgets(&self) -> &[WidgetView] {
+        &self.widgets
+    }
+
+    /// Side-tab views (all 14 slots) from the last side-tabs rebuild.
+    pub fn side_tabs(&self) -> &[SideTabView] {
+        &self.side_tabs
+    }
+
+    /// Chat history from the last chat rebuild, newest first (ring order).
+    pub fn chat_lines(&self) -> &[ChatLineView] {
+        &self.chat_lines
+    }
+
+    /// The chat modal's BUTTON_OK choices from the last chat-options
+    /// rebuild, in walk order.
+    pub fn chat_options(&self) -> &[ChatOptionView] {
+        &self.chat_options
+    }
+
+    /// The chat modal's BUTTON_CONTINUE component (-1 while the pause
+    /// button is latched or no chat modal is open).
+    pub fn chat_continue_component_id(&self) -> i32 {
+        self.chat_continue_component_id
+    }
+
+    /// Make-X products from the last make-products rebuild.
+    pub fn make_products(&self) -> &[MakeProductView] {
+        &self.make_products
+    }
+
+    /// Quest-journal entries from the last quest-statuses rebuild.
+    pub fn quest_statuses(&self) -> &[QuestStatusView] {
+        &self.quest_statuses
+    }
+
+    /// The run-toggle pair from the last controls rebuild.
+    pub fn run_controls(&self) -> Option<&ToggleControlsView> {
+        self.run_controls.as_ref()
+    }
+
+    /// The auto-retaliate toggle pair from the last controls rebuild.
+    pub fn retaliate_controls(&self) -> Option<&ToggleControlsView> {
+        self.retaliate_controls.as_ref()
+    }
+
+    /// The four open modal roots from the last modals rebuild.
+    pub fn modals(&self) -> &ModalView {
+        &self.modals
+    }
+
+    /// The minimenu entries from the last menu rebuild.
+    pub fn menu_entries(&self) -> &[String] {
+        &self.menu_entries
+    }
+
+    /// The main modal's TYPE_TEXT lines from the last modals rebuild.
+    pub fn main_modal_texts(&self) -> &[String] {
+        &self.main_modal_texts
+    }
+
+    /// The chat modal's TYPE_TEXT lines from the last modals rebuild.
+    pub fn chat_modal_texts(&self) -> &[String] {
+        &self.chat_modal_texts
+    }
+
+    /// The login screen message (`login_mes1` + `login_mes2`) from the
+    /// last menu rebuild.
+    pub fn login_message(&self) -> &str {
+        &self.login_message
+    }
+
+    /// Whether the enter-name/amount dialog is up from the last modals
+    /// rebuild.
+    pub fn count_dialog_open(&self) -> bool {
+        self.count_dialog_open
+    }
+
+    /// The selected side tab from the last modals rebuild.
+    pub fn active_side_tab(&self) -> i32 {
+        self.active_side_tab
+    }
+
     fn rebuild_stat(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.stat, &mut self.gens.stat) {
             return false;
@@ -602,14 +1000,414 @@ impl GameSnapshot {
     }
 
     /// Chat-family rebuild: the ring head (`chat_text[0]`) is the most
-    /// recent message.
+    /// recent message, and the full ring becomes the `chat_lines` view
+    /// (index 0 = newest). The head's sequence bumps on every chat gen,
+    /// so `sequence` strictly increases for newer lines.
     fn rebuild_chat(&mut self, client: &mut Client) -> bool {
         if !track(client.gens.chat, &mut self.gens.chat) {
             return false;
         }
         let latest = client.chat_text[0].clone();
         self.chat = (!latest.is_empty()).then_some(latest);
+        if client.chat_text[0] != self.chat_prev_head {
+            self.chat_seq += 1;
+            self.chat_prev_head = client.chat_text[0].clone();
+        }
+        self.chat_lines.clear();
+        for i in 0..100 {
+            let text = client.chat_text[i].clone();
+            if text.is_empty() {
+                break; // the ring is dense from the head (m8aq stops at the first hole)
+            }
+            self.chat_lines.push(ChatLineView {
+                type_: client.chat_type[i],
+                username: (!client.chat_username[i].is_empty())
+                    .then(|| client.chat_username[i].clone()),
+                text,
+                sequence: self.chat_seq - i as i32,
+            });
+        }
         true
+    }
+
+    /// Inventory rebuild: the inv tab's (side tab 3) TYPE_INV component,
+    /// with held ops from the obj defs. Gated on the iface + inv gens.
+    fn rebuild_inventory(&mut self, client: &mut Client) -> bool {
+        if !self.inventory_gate.moved(client) {
+            return false;
+        }
+        self.inventory.clear();
+        let Some(inv_id) = tab_inv_component(client, 3) else {
+            return true;
+        };
+        let Some(inv) = client.ifaces.get(inv_id as usize).and_then(|o| o.as_ref()) else {
+            return true;
+        };
+        let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
+            return true;
+        };
+        for (slot, stored) in ids
+            .iter()
+            .copied()
+            .enumerate()
+            .take(ids.len().min(counts.len()))
+        {
+            if stored <= 0 {
+                continue;
+            }
+            let id = stored - 1;
+            if let Some(view) = item_view(
+                &client.cache,
+                inv,
+                slot,
+                ItemContainer::Inventory,
+                ItemActionFamily::Held,
+                cache_held_ops(&client.cache, id),
+            ) {
+                self.inventory.push(view);
+            }
+        }
+        true
+    }
+
+    /// Equipment rebuild: the worn-items tab's (side tab 4) TYPE_INV
+    /// component with its own interface ops.
+    fn rebuild_equipment(&mut self, client: &mut Client) -> bool {
+        if !self.equipment_gate.moved(client) {
+            return false;
+        }
+        self.equipment = tab_inv_component(client, 4)
+            .and_then(|com_id| inv_items(client, com_id, ItemContainer::Equipment))
+            .unwrap_or_default();
+        true
+    }
+
+    /// Bank rebuild: the open main modal's withdraw component (m8aq
+    /// `bankItems`).
+    fn rebuild_bank(&mut self, client: &mut Client) -> bool {
+        if !self.bank_gate.moved(client) {
+            return false;
+        }
+        self.bank = if client.main_modal_id == -1 {
+            Vec::new()
+        } else {
+            let root = client.main_modal_id;
+            find_inv_component(client, root, |com| {
+                com.iop[0]
+                    .as_deref()
+                    .is_some_and(|s| s.to_ascii_lowercase().contains("withdraw"))
+            })
+            .and_then(|com_id| inv_items(client, com_id, ItemContainer::Bank))
+            .unwrap_or_default()
+        };
+        true
+    }
+
+    /// Bank-side rebuild: the open side modal's deposit component (m8aq
+    /// `bankSideItems`).
+    fn rebuild_bank_side(&mut self, client: &mut Client) -> bool {
+        if !self.bank_side_gate.moved(client) {
+            return false;
+        }
+        self.bank_side = if client.side_modal_id == -1 {
+            Vec::new()
+        } else {
+            let root = client.side_modal_id;
+            find_inv_component(client, root, |com| {
+                com.iop[0]
+                    .as_deref()
+                    .is_some_and(|s| s.to_ascii_lowercase().contains("deposit"))
+            })
+            .and_then(|com_id| inv_items(client, com_id, ItemContainer::BankSide))
+            .unwrap_or_default()
+        };
+        true
+    }
+
+    /// Trade rebuild: the 274 trade ifaces' state and containers. The
+    /// component ids are baked by the packed interface table, so the
+    /// reads work whether or not a trade is open (m8aq reads the same
+    /// hardcoded ids).
+    fn rebuild_trade(&mut self, client: &mut Client) -> bool {
+        if !self.trade_gate.moved(client) {
+            return false;
+        }
+        let my_offer =
+            inv_items(client, TRADEMAIN_INV, ItemContainer::TradeMyOffer).unwrap_or_default();
+        let their_offer = inv_items(client, TRADEMAIN_OTHER_INV, ItemContainer::TradeTheirOffer)
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|mut item| {
+                        item.action_family = ItemActionFamily::None;
+                        item
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let side_pack =
+            inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
+        self.trade = TradeView {
+            offer_open: client.main_modal_id == TRADEMAIN,
+            confirm_open: client.main_modal_id == TRADECONFIRM,
+            my_offer,
+            their_offer,
+            side_pack,
+            partner: trade_partner(client),
+        };
+        true
+    }
+
+    /// Widgets rebuild: walk every open root's tree into `WidgetView`s.
+    /// Gated on the iface gen (tree/component state) and the inv gen
+    /// (TYPE_INV slot contents).
+    fn rebuild_widgets(&mut self, client: &mut Client) -> bool {
+        if !self.widgets_gate.moved(client) {
+            return false;
+        }
+        self.widgets.clear();
+        let roots = widget_roots(client);
+        let mut visited = vec![false; client.ifaces.len()];
+        for (root_id, root) in roots {
+            walk_widget_tree(client, root_id, root, &mut visited, &mut self.widgets);
+        }
+        true
+    }
+
+    /// Side-tabs rebuild: all 14 slots with the tab state and each
+    /// available tab's widget tree.
+    fn rebuild_side_tabs(&mut self, client: &mut Client) -> bool {
+        if !self.side_tabs_gate.moved(client) {
+            return false;
+        }
+        self.side_tabs.clear();
+        let mut visited = vec![false; client.ifaces.len()];
+        for index in 0..client.side_icon.len() {
+            let root_component_id = client.side_icon[index];
+            let available = root_component_id != -1;
+            let active = client.active_icon == index as i32;
+            let mut widgets = Vec::new();
+            if available {
+                walk_widget_tree(
+                    client,
+                    root_component_id,
+                    WidgetRoot::Side,
+                    &mut visited,
+                    &mut widgets,
+                );
+            }
+            self.side_tabs.push(SideTabView {
+                index: index as i32,
+                root_component_id,
+                available,
+                active,
+                visible: active && client.side_modal_id == -1 && available,
+                widgets,
+            });
+        }
+        true
+    }
+
+    /// Chat-options rebuild: the chat modal's BUTTON_OK choices and its
+    /// BUTTON_CONTINUE component (the m8aq `chatOptions`/continue).
+    fn rebuild_chat_options(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.iface, &mut self.chat_options_gate) {
+            return false;
+        }
+        self.chat_options.clear();
+        self.chat_continue_component_id = -1;
+        if client.chat_modal_id == -1 {
+            return true;
+        }
+        let root = client.chat_modal_id;
+        // The continue button is a direct child of the chat modal.
+        if let Some(children) = client
+            .ifaces
+            .get(root as usize)
+            .and_then(|o| o.as_ref())
+            .and_then(|m| m.children.as_ref())
+        {
+            for child_id in children {
+                if client
+                    .ifaces
+                    .get(*child_id as usize)
+                    .and_then(|c| c.as_ref())
+                    .is_some_and(|c| c.button_type == ButtonType::BUTTON_CONTINUE)
+                {
+                    self.chat_continue_component_id = *child_id;
+                    break;
+                }
+            }
+        }
+        if client.resumed_pause_button {
+            self.chat_continue_component_id = -1;
+        }
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+                continue;
+            };
+            if com.button_type == ButtonType::BUTTON_OK {
+                let label = if !com.text.is_empty() {
+                    Some(com.text.clone())
+                } else {
+                    non_empty(&com.button_text)
+                };
+                if let Some(text) = label {
+                    self.chat_options.push(ChatOptionView {
+                        component_id: id,
+                        text,
+                    });
+                }
+            }
+            queue.extend(children_of(com));
+        }
+        true
+    }
+
+    /// Make-products rebuild: the chat (or main) modal's obj-model
+    /// components as products with their make/smelt buttons grouped four
+    /// per product (m8aq `makeProducts`).
+    fn rebuild_make_products(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.iface, &mut self.make_products_gate) {
+            return false;
+        }
+        self.make_products.clear();
+        let root = if client.chat_modal_id != -1 {
+            client.chat_modal_id
+        } else {
+            client.main_modal_id
+        };
+        if root == -1 {
+            return true;
+        }
+        let mut objs: Vec<i32> = Vec::new();
+        let mut buttons: Vec<MakeButtonView> = Vec::new();
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+                continue;
+            };
+            if com.model1_type == 4 && com.model1_id > 0 {
+                objs.push(com.model1_id);
+            }
+            if com.button_type == ButtonType::BUTTON_OK {
+                if let Some(quantity) = make_quantity(&com.button_text) {
+                    buttons.push(MakeButtonView {
+                        quantity,
+                        component_id: id,
+                    });
+                }
+            }
+            queue.extend(children_of(com));
+        }
+        for (i, obj) in objs.iter().enumerate() {
+            let name = client
+                .cache
+                .objs
+                .get(*obj as usize)
+                .map(|o| o.name.clone())
+                .unwrap_or_default();
+            let start = i * 4;
+            let end = (start + 4).min(buttons.len());
+            self.make_products.push(MakeProductView {
+                object_id: *obj,
+                name,
+                buttons: buttons[start..end].to_vec(),
+            });
+        }
+        true
+    }
+
+    /// Quest-statuses rebuild: the quest tab's (side tab 2) TYPE_TEXT
+    /// rows with their colours (m8aq `questStatuses`).
+    fn rebuild_quest_statuses(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.iface, &mut self.quest_statuses_gate) {
+            return false;
+        }
+        self.quest_statuses.clear();
+        let Some(root) = client.side_icon.get(2).copied() else {
+            return true;
+        };
+        if root == -1 {
+            return true;
+        }
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+                continue;
+            };
+            if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
+                self.quest_statuses.push(QuestStatusView {
+                    component_id: id,
+                    name: com.text.clone(),
+                    colour: com.colour,
+                });
+            }
+            queue.extend(children_of(com));
+        }
+        true
+    }
+
+    /// Controls rebuild: the run/retaliate toggle pairs from the
+    /// player-controls overlay (a table scan — the overlay is a side tab,
+    /// so its root is not among the widget roots).
+    fn rebuild_controls(&mut self, client: &mut Client) -> bool {
+        if !track(client.gens.iface, &mut self.controls_gate) {
+            return false;
+        }
+        self.run_controls = controls_pair(client, 5, 5, 4);
+        self.retaliate_controls = controls_pair(client, 3, 2, 3);
+        true
+    }
+
+    /// Modals rebuild: the four open roots plus the modal scalars. The
+    /// scalar fields copy every rebuild (the count dialog and active tab
+    /// flip locally with no packet), while the return value tracks the
+    /// iface gen for the harness.
+    fn rebuild_modals(&mut self, client: &mut Client) -> bool {
+        let moved = track(client.gens.iface, &mut self.modals_gate);
+        self.modals = ModalView {
+            main: client.main_modal_id,
+            side: client.side_modal_id,
+            chat: client.chat_modal_id,
+            tutorial: client.tut_com_id,
+        };
+        self.count_dialog_open = client.dialog_input_open;
+        self.active_side_tab = client.active_icon;
+        self.main_modal_texts = modal_texts(client, client.main_modal_id);
+        self.chat_modal_texts = modal_texts(client, client.chat_modal_id);
+        moved
+    }
+
+    /// Menu rebuild: the minimenu entries and the login message. The menu
+    /// is rebuilt locally every frame with no packet, so the entries copy
+    /// every rebuild; the return value tracks the iface gen.
+    fn rebuild_menu(&mut self, client: &mut Client) -> bool {
+        let moved = track(client.gens.iface, &mut self.menu_gate);
+        let n = client.menu_num_entries.max(0) as usize;
+        self.menu_entries = client.menu_option.iter().take(n).cloned().collect();
+        let mut login = String::new();
+        if !client.login_mes1.is_empty() {
+            login.push_str(&client.login_mes1);
+        }
+        if !client.login_mes2.is_empty() {
+            if !login.is_empty() {
+                login.push('\n');
+            }
+            login.push_str(&client.login_mes2);
+        }
+        self.login_message = login;
+        moved
     }
 
     /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
@@ -809,11 +1607,10 @@ impl GameSnapshot {
     /// view copies every rebuild; the return value tracks the gen.
     fn rebuild_map_flag(&mut self, client: &mut Client) -> bool {
         let moved = track(client.gens.map_flag, &mut self.gens.map_flag);
-        self.map_flag = (client.minimap_flag_x != 0)
-            .then_some(MapFlagView {
-                lx: client.minimap_flag_x,
-                lz: client.minimap_flag_z,
-            });
+        self.map_flag = (client.minimap_flag_x != 0).then_some(MapFlagView {
+            lx: client.minimap_flag_x,
+            lz: client.minimap_flag_z,
+        });
         moved
     }
 
@@ -834,8 +1631,14 @@ impl GameSnapshot {
                 let distance = local_tile
                     .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
                     .unwrap_or(0);
-                self.npc
-                    .push(NpcView::from_slot(index, npc, base, level, distance, &client.cache));
+                self.npc.push(NpcView::from_slot(
+                    index,
+                    npc,
+                    base,
+                    level,
+                    distance,
+                    &client.cache,
+                ));
             }
         }
         true
@@ -879,9 +1682,15 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
         return None;
     }
     if face_entity < 32768 {
-        Some(ActorTargetView { kind: ActorKind::Npc, index: face_entity as usize })
+        Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: face_entity as usize,
+        })
     } else {
-        Some(ActorTargetView { kind: ActorKind::Player, index: (face_entity - 32768) as usize })
+        Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: (face_entity - 32768) as usize,
+        })
     }
 }
 
@@ -936,24 +1745,49 @@ fn loc_view(
     let angle = (info >> 6) & 0x3;
     let x = base.0 + sx;
     let z = base.1 + sz;
-    let (name, description, actions, width, length, block_walk, block_range, active, animation, map_function, map_scene, force_approach) =
-        match cache.locs.get(id as usize) {
-            Some(loc) => (
-                (!loc.name.is_empty()).then(|| loc.name.clone()),
-                (!loc.desc.is_empty()).then(|| loc.desc.clone()),
-                loc.op.clone(),
-                loc.width,
-                loc.length,
-                loc.blockwalk,
-                loc.blockrange,
-                loc.active,
-                loc.anim,
-                loc.mapfunction,
-                loc.mapscene,
-                loc.forceapproach,
-            ),
-            None => (None, None, Vec::new(), 1, 1, true, true, false, -1, -1, -1, 0),
-        };
+    let (
+        name,
+        description,
+        actions,
+        width,
+        length,
+        block_walk,
+        block_range,
+        active,
+        animation,
+        map_function,
+        map_scene,
+        force_approach,
+    ) = match cache.locs.get(id as usize) {
+        Some(loc) => (
+            (!loc.name.is_empty()).then(|| loc.name.clone()),
+            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+            loc.op.clone(),
+            loc.width,
+            loc.length,
+            loc.blockwalk,
+            loc.blockrange,
+            loc.active,
+            loc.anim,
+            loc.mapfunction,
+            loc.mapscene,
+            loc.forceapproach,
+        ),
+        None => (
+            None,
+            None,
+            Vec::new(),
+            1,
+            1,
+            true,
+            true,
+            false,
+            -1,
+            -1,
+            -1,
+            0,
+        ),
+    };
     LocView {
         typecode,
         info,
@@ -971,8 +1805,16 @@ fn loc_view(
         width,
         length,
         // A 90°/270° rotation swaps the footprint axes.
-        footprint_width: if angle == 1 || angle == 3 { length } else { width },
-        footprint_length: if angle == 1 || angle == 3 { width } else { length },
+        footprint_width: if angle == 1 || angle == 3 {
+            length
+        } else {
+            width
+        },
+        footprint_length: if angle == 1 || angle == 3 {
+            width
+        } else {
+            length
+        },
         block_walk,
         block_range,
         active,
@@ -1018,4 +1860,426 @@ fn track(world: u64, tracked: &mut u64) -> bool {
     }
     *tracked = world;
     true
+}
+
+/// The two-counter gate of the item-bearing iface families: rebuild when
+/// either the iface or the inv gen moved (component ids on the iface gen,
+/// TYPE_INV slot data on the inv gen).
+#[derive(Default, Clone, Copy)]
+struct InvIfaceGate {
+    iface: u64,
+    inv: u64,
+}
+
+impl InvIfaceGate {
+    fn moved(&mut self, client: &Client) -> bool {
+        let moved = client.gens.iface != self.iface || client.gens.inv != self.inv;
+        self.iface = client.gens.iface;
+        self.inv = client.gens.inv;
+        moved
+    }
+}
+
+/// `Some(s)` for a non-empty string (iface strings are empty when unset).
+fn non_empty(s: &str) -> Option<String> {
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// A component's children list, empty when it has none.
+fn children_of(com: &IfType) -> &[i32] {
+    com.children.as_deref().unwrap_or_default()
+}
+
+/// The open widget roots: the main modal and overlay (both draw above the
+/// game view — the main modal carries the trade/bank/dialog tree), the
+/// side modal (else the active tab's interface), the chat modal and the
+/// tutorial overlay. Roots that are not cleanly resolvable (id not in the
+/// table) are skipped by the walk; every emitted widget keeps the root id
+/// and tag it was walked under.
+fn widget_roots(client: &Client) -> Vec<(i32, WidgetRoot)> {
+    let mut roots = Vec::new();
+    if client.main_modal_id != -1 {
+        roots.push((client.main_modal_id, WidgetRoot::Main));
+    }
+    if client.main_overlay_id != -1 {
+        roots.push((client.main_overlay_id, WidgetRoot::Main));
+    }
+    let side_root = if client.side_modal_id != -1 {
+        client.side_modal_id
+    } else {
+        client
+            .side_icon
+            .get(client.active_icon.max(0) as usize)
+            .copied()
+            .unwrap_or(-1)
+    };
+    if side_root != -1 {
+        roots.push((side_root, WidgetRoot::Side));
+    }
+    if client.chat_modal_id != -1 {
+        roots.push((client.chat_modal_id, WidgetRoot::Chat));
+    }
+    if client.tut_com_id != -1 {
+        roots.push((client.tut_com_id, WidgetRoot::Tutorial));
+    }
+    roots
+}
+
+/// Walk one widget root's tree into `out`, tagging every component with
+/// `root`/`root_component_id`. `visited` is shared across roots so a
+/// component reachable from two open roots belongs to the first that
+/// walks it (its ancestor chain reaches that root first). Positions
+/// accumulate `child_x`/`child_y` from the root (m8aq
+/// `walkPositionedComponents`); the root itself has parent -1.
+fn walk_widget_tree(
+    client: &Client,
+    root_id: i32,
+    root: WidgetRoot,
+    visited: &mut [bool],
+    out: &mut Vec<WidgetView>,
+) {
+    let mut queue: Vec<(i32, i32, i32, i32)> = vec![(root_id, -1, 0, 0)];
+    let mut head = 0;
+    while head < queue.len() {
+        let (id, parent_id, x, y) = queue[head];
+        head += 1;
+        if id < 0 || (id as usize) >= visited.len() || visited[id as usize] {
+            continue;
+        }
+        let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+            continue;
+        };
+        visited[id as usize] = true;
+        out.push(widget_view(client, com, id, parent_id, root_id, root, x, y));
+        if let Some(children) = &com.children {
+            for (i, child) in children.iter().enumerate() {
+                let cx = com
+                    .child_x
+                    .as_ref()
+                    .and_then(|xs| xs.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                let cy = com
+                    .child_y
+                    .as_ref()
+                    .and_then(|ys| ys.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                queue.push((*child, id, x + cx, y + cy));
+            }
+        }
+    }
+}
+
+/// One `WidgetView` from a component plus its walk context. `component_id`
+/// is the table id the walk found the component under (matches `com.id`
+/// for well-formed ifaces).
+#[allow(clippy::too_many_arguments)]
+fn widget_view(
+    client: &Client,
+    com: &IfType,
+    component_id: i32,
+    parent_id: i32,
+    root_component_id: i32,
+    root: WidgetRoot,
+    x: i32,
+    y: i32,
+) -> WidgetView {
+    WidgetView {
+        kind: WidgetKind::Widget,
+        component_id,
+        layer_id: com.layer_id,
+        parent_id,
+        root_component_id,
+        root,
+        type_: com.r#type,
+        button_type: com.button_type,
+        client_code: com.client_code,
+        x,
+        y,
+        width: com.width,
+        height: com.height,
+        scroll_height: com.scroll_height,
+        scroll_position: com.scroll_pos,
+        hidden: com.hide,
+        text: non_empty(&com.text),
+        alternate_text: non_empty(&com.text2),
+        button_text: non_empty(&com.button_text),
+        target_verb: non_empty(&com.target_verb),
+        target_base: non_empty(&com.target_base),
+        target_mask: com.target_mask,
+        model_type: com.model1_type,
+        model_id: com.model1_id,
+        alternate_model_type: com.model2_type,
+        alternate_model_id: com.model2_id,
+        scripts: com
+            .scripts
+            .clone()
+            .map(|scripts| scripts.into_iter().map(Some).collect()),
+        script_comparators: com.script_comparator.clone(),
+        script_operands: com.script_operand.clone(),
+        varp_bindings: varp_bindings(com),
+        colour: com.colour,
+        actions: com.iop.to_vec(),
+        items: if com.r#type == ComponentType::TYPE_INV {
+            read_inv_component(&client.cache, com, ItemContainer::Widget)
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// The varp-bound scripts of a component: opcode-5 (`IF_VARP`) scripts
+/// whose first operand is the varp, with the per-script comparator and
+/// operand (m8aq `widgetVarpBindings`; the client's own toggle/select
+/// arms decode `scripts[0][0] === 5` the same way).
+fn varp_bindings(com: &IfType) -> Vec<WidgetVarpBindingView> {
+    let mut out = Vec::new();
+    let Some(scripts) = &com.scripts else {
+        return out;
+    };
+    for (i, script) in scripts.iter().enumerate() {
+        if script.len() >= 2 && script[0] == 5 {
+            out.push(WidgetVarpBindingView {
+                script_index: i as i32,
+                varp: script[1],
+                value: com.script_operand.as_ref().and_then(|o| o.get(i)).copied(),
+                comparator: com
+                    .script_comparator
+                    .as_ref()
+                    .and_then(|c| c.get(i))
+                    .copied(),
+            });
+        }
+    }
+    out
+}
+
+/// One `ItemView` from a stored slot (`link_obj_type` holds `obj_id + 1`,
+/// 0 = empty), with the given ops.
+fn item_view(
+    cache: &Cache,
+    com: &IfType,
+    slot: usize,
+    container: ItemContainer,
+    action_family: ItemActionFamily,
+    actions: Vec<Option<String>>,
+) -> Option<ItemView> {
+    let stored = com.link_obj_type.as_ref()?.get(slot).copied()?;
+    if stored <= 0 {
+        return None;
+    }
+    let id = stored - 1;
+    Some(ItemView {
+        def: item_def_view(cache, id),
+        container,
+        action_family,
+        slot: slot as i32,
+        count: com
+            .link_obj_number
+            .as_ref()
+            .and_then(|n| n.get(slot))
+            .copied()
+            .unwrap_or(0),
+        actions,
+        component_id: com.id,
+    })
+}
+
+/// The `ItemView`s of a TYPE_INV component's slots (m8aq
+/// `readInvComponent`), with ops from the component's own `iop`.
+fn read_inv_component(cache: &Cache, com: &IfType, container: ItemContainer) -> Vec<ItemView> {
+    let mut out = Vec::new();
+    let Some(ids) = &com.link_obj_type else {
+        return out;
+    };
+    let n = com.link_obj_number.as_ref().map(|n| n.len()).unwrap_or(0);
+    for (slot, stored) in ids.iter().copied().enumerate().take(ids.len().min(n)) {
+        if stored <= 0 {
+            continue;
+        }
+        if let Some(view) = item_view(
+            cache,
+            com,
+            slot,
+            container,
+            ItemActionFamily::Component,
+            com.iop.to_vec(),
+        ) {
+            out.push(view);
+        }
+    }
+    out
+}
+
+/// The items of the iface-table component `com_id` (component ops).
+fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<Vec<ItemView>> {
+    if com_id < 0 {
+        return None;
+    }
+    let com = client
+        .ifaces
+        .get(com_id as usize)
+        .and_then(|o| o.as_ref())?;
+    Some(read_inv_component(&client.cache, com, container))
+}
+
+/// The held-item ops for obj `id`: the type's `iop` padded to five slots
+/// with a `Drop` default in the fifth (m8aq `heldOps`).
+fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
+    let mut ops = cache
+        .objs
+        .get(id as usize)
+        .map(|o| o.iop.to_vec())
+        .unwrap_or_else(|| vec![None; 5]);
+    if ops.len() < 5 {
+        ops.resize(5, None);
+    }
+    if ops[4].is_none() {
+        ops[4] = Some("Drop".into());
+    }
+    ops
+}
+
+/// The TYPE_INV component of side tab `tab` (m8aq `findTabInvComponent`):
+/// tab 4 (worn items) accepts any TYPE_INV, the other tabs need `obj_ops`.
+fn tab_inv_component(client: &Client, tab: usize) -> Option<i32> {
+    let root = client.side_icon.get(tab).copied().unwrap_or(-1);
+    if root == -1 {
+        return None;
+    }
+    find_inv_component(client, root, |com| com.obj_ops || tab == 4)
+}
+
+/// Depth-first search for a TYPE_INV component satisfying `accept` under
+/// `root_id` (m8aq `findInvComponentIn`).
+fn find_inv_component<F>(client: &Client, root_id: i32, accept: F) -> Option<i32>
+where
+    F: Fn(&IfType) -> bool,
+{
+    let mut queue = vec![root_id];
+    while let Some(id) = queue.pop() {
+        let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+            continue;
+        };
+        if com.r#type == ComponentType::TYPE_INV && accept(com) {
+            return Some(id);
+        }
+        queue.extend(children_of(com));
+    }
+    None
+}
+
+/// The 274 trade iface ids (the packed `interface.order` allocation):
+/// trademain 3323 (offer screen), tradeconfirm 3443, trademain:inv 3415,
+/// trademain:otherinv 3416, trademain:otherplayer 3417, tradeside:inv
+/// 3322. The m8aq adapter reads the same hardcoded ids.
+const TRADEMAIN: i32 = 3323;
+const TRADECONFIRM: i32 = 3443;
+const TRADEMAIN_INV: i32 = 3415;
+const TRADEMAIN_OTHER_INV: i32 = 3416;
+const TRADEMAIN_OTHER_PLAYER: i32 = 3417;
+const TRADESIDE_INV: i32 = 3322;
+
+/// The trade partner's name: the `otherplayer` label ("Trading With: X")
+/// with the prefix stripped and whitespace trimmed (m8aq
+/// `normalizeTradePartner`); `None` for an empty label.
+fn trade_partner(client: &Client) -> Option<String> {
+    let text = client
+        .ifaces
+        .get(TRADEMAIN_OTHER_PLAYER as usize)
+        .and_then(|o| o.as_ref())
+        .map(|c| c.text.clone())
+        .unwrap_or_default();
+    let name = match text.find(':') {
+        Some(colon) => text[colon + 1..].trim(),
+        None => text.trim(),
+    };
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// The TYPE_TEXT contents of a modal tree, in walk order (m8aq
+/// `mainModalTexts`/`chatModalTexts`).
+fn modal_texts(client: &Client, root: i32) -> Vec<String> {
+    let mut out = Vec::new();
+    if root == -1 {
+        return out;
+    }
+    let mut queue = vec![root];
+    let mut head = 0;
+    while head < queue.len() {
+        let id = queue[head];
+        head += 1;
+        let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+            continue;
+        };
+        if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
+            out.push(com.text.clone());
+        }
+        queue.extend(children_of(com));
+    }
+    out
+}
+
+/// The toggle pair of the player-controls overlay: the root with an
+/// "Auto retaliate" label among its children, reading `on_index`/
+/// `off_index` from its children list (m8aq `runControls` reads 5/4 for
+/// run, `readRetaliateControls` 2/3 for retaliate — the 274 `controls.if`
+/// com_2/com_3 and com_4/com_5 buttons).
+fn controls_pair(
+    client: &Client,
+    min_children: usize,
+    on_index: usize,
+    off_index: usize,
+) -> Option<ToggleControlsView> {
+    for com in client.ifaces.iter().flatten() {
+        let Some(children) = &com.children else {
+            continue;
+        };
+        let has_retaliate = children.iter().any(|id| {
+            client
+                .ifaces
+                .get(*id as usize)
+                .and_then(|c| c.as_ref())
+                .is_some_and(|c| c.text == "Auto retaliate")
+        });
+        if !has_retaliate || children.len() <= min_children {
+            continue;
+        }
+        let on = children.get(on_index).copied().unwrap_or(-1);
+        let off = children.get(off_index).copied().unwrap_or(-1);
+        if on < 0
+            || off < 0
+            || !client.ifaces.get(on as usize).is_some_and(Option::is_some)
+            || !client.ifaces.get(off as usize).is_some_and(Option::is_some)
+        {
+            return None;
+        }
+        return Some(ToggleControlsView {
+            on_component_id: on,
+            off_component_id: off,
+        });
+    }
+    None
+}
+
+/// The make/smelt button quantity: `"Make X"`/`"Smelt X"` reads -1,
+/// `"Make 10"` reads 10 (m8aq's button regex).
+fn make_quantity(button_text: &str) -> Option<i32> {
+    let lower = button_text.to_ascii_lowercase();
+    let start = lower.find("make ").or_else(|| lower.find("smelt "))?;
+    let rest = lower[start..].trim_start_matches(|c: char| c.is_ascii_alphabetic());
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let token: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if token == "x" {
+        Some(-1)
+    } else {
+        token.parse::<i32>().ok()
+    }
 }

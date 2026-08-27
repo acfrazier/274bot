@@ -1,6 +1,6 @@
 //! Kernel API: snapshot families, queries, interact/settle, ClientProt.
 
-pub use obj_names::{ItemDefView, LocDefs, LocDefView, ObjNames};
+pub use obj_names::{ItemDefView, LocDefView, LocDefs, ObjNames};
 pub use snapshot::{LocalTile, WorldTile};
 
 pub mod interact;
