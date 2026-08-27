@@ -11,6 +11,10 @@
 //! neighbour is allowed only when the neighbour's flags pass the client's
 //! directional movement test (the `PL_WALK_*` masks in `tryMove`), never
 //! the blanket `walkable()` check.
+//!
+//! [`find`] and [`find_with_model`] never see teleports; the any-tile
+//! teleport layer ([`TransportGraph::teleports`]) only joins the search
+//! through [`find_allow_teleports`]/[`find_allow_teleports_with_model`].
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -134,9 +138,35 @@ pub fn find_with_model(
     find_bounded(collision, graph, from, to, model, NODE_BUDGET)
 }
 
+/// [`find`] with the any-tile teleport layer unioned in: every edge in
+/// `graph.teleports` is usable from **any** node at cost `edge.ticks`, so
+/// a teleport can take the route across a wall, a level boundary, or half
+/// the map. Requirements stay on the edges (never gated here, like every
+/// other transport edge); the caller checks them. Default [`find`]/
+/// [`find_with_model`] never see teleports.
+pub fn find_allow_teleports(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+) -> Result<Route, RouteError> {
+    find_bounded_impl(collision, graph, from, to, CostModel::running(), NODE_BUDGET, true)
+}
+
+/// [`find_allow_teleports`] with an explicit per-search cost model.
+pub fn find_allow_teleports_with_model(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    model: CostModel,
+) -> Result<Route, RouteError> {
+    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, true)
+}
+
 /// [`find`] with an explicit cost model and node-expansion budget (the
 /// search gives up with [`RouteError::BudgetExhausted`] once `budget`
-/// tiles are settled).
+/// tiles are settled). Teleports stay off.
 fn find_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -144,6 +174,20 @@ fn find_bounded(
     to: WorldTile,
     model: CostModel,
     budget: usize,
+) -> Result<Route, RouteError> {
+    find_bounded_impl(collision, graph, from, to, model, budget, false)
+}
+
+/// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
+/// into the relaxation from every settled node.
+fn find_bounded_impl(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    model: CostModel,
+    budget: usize,
+    use_teleports: bool,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -217,6 +261,26 @@ fn find_bounded(
                 }
             }
         }
+        // The any-tile teleport layer: every teleport edge leaves from the
+        // current node, wherever it is. The landing is trusted like every
+        // other transport `to` (no walkability filter — the content
+        // declares it).
+        if use_teleports {
+            for (ti, edge) in graph.teleports.iter().enumerate() {
+                let nd = n.cost + edge.ticks as f64;
+                if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
+                    dist.insert(edge.to, nd);
+                    came_from.insert(edge.to, Back::Teleport {
+                        from: cur,
+                        index: ti,
+                    });
+                    heap.push(HeapNode {
+                        cost: nd,
+                        tile: edge.to,
+                    });
+                }
+            }
+        }
     }
     Err(RouteError::NoPath)
 }
@@ -278,12 +342,15 @@ fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
 }
 
 /// How a tile was reached: by a walk step (each costing the search's run
-/// rate) from `Walk`'s tile or by transport edge `Transport` (an index
-/// into [`TransportGraph::edges`]).
+/// rate) from `Walk`'s tile, by transport edge `Transport` (an index
+/// into [`TransportGraph::edges`]), or by any-tile teleport edge
+/// `Teleport` (an index into [`TransportGraph::teleports`], taken from
+/// `from` — the node it was relaxed from).
 #[derive(Clone, Copy)]
 enum Back {
     Walk(WorldTile),
     Transport(usize),
+    Teleport { from: WorldTile, index: usize },
 }
 
 /// Split the backtrack from `to` back to the entry-less origin into legs:
@@ -316,6 +383,18 @@ fn reconstruct(
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
                 t = graph.edges[ei].from;
+                walk_rev = vec![t];
+            }
+            Back::Teleport { from, index } => {
+                ticks += walk_ticks(&walk_rev, model);
+                walk_rev.reverse();
+                legs_rev.push(Leg::Walk { tiles: walk_rev });
+                let edge = graph.teleports[index].clone();
+                ticks += edge.ticks as f64;
+                legs_rev.push(Leg::Transport { edge });
+                // The walk leg before the teleport resumes from the tile the
+                // teleport was actually taken on (a teleport has no `from`).
+                t = from;
                 walk_rev = vec![t];
             }
         }
@@ -570,8 +649,8 @@ mod tests {
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
     use crate::router::{
-        find, find_bounded, find_on_grid, find_with_model, CostModel, GridLeg, Leg, RouteError,
-        PER_STEP_WALK,
+        find, find_allow_teleports, find_bounded, find_on_grid, find_with_model, CostModel,
+        GridLeg, Leg, RouteError, PER_STEP_WALK,
     };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -783,6 +862,29 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.from.entry(from).or_default().push(0);
         graph.edges.push(edge);
+        graph
+    }
+
+    /// One any-tile teleport edge in `graph.teleports` (never in `from`).
+    fn teleport(
+        to: WorldTile,
+        ticks: i32,
+        skill_req: Vec<(i32, i32)>,
+        item_req: Vec<(i32, i32)>,
+    ) -> TransportGraph {
+        let mut graph = TransportGraph::default();
+        graph.teleports.push(TransportEdge {
+            kind: TransportKind::Teleport,
+            from: tile(0, 0, 0),
+            to,
+            loc_id: 0,
+            option: 0,
+            ticks,
+            skill_req,
+            item_req,
+            quest_req: vec![],
+            varp_req: vec![],
+        });
         graph
     }
 
@@ -1004,5 +1106,93 @@ mod tests {
         };
         let r = find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), walk).unwrap();
         assert_eq!(r.ticks, 4.0);
+    }
+
+    // --- allow_teleports: the any-tile teleport layer ---
+
+    #[test]
+    fn find_never_uses_a_spell_teleport_but_find_allow_teleports_does() {
+        // The wall splits the 5×5 bake; only the any-tile spell teleport can
+        // cross it, and only when allow_teleports is on.
+        let wc = walled_5x5();
+        let dest = tile(4, 4, 0);
+        let g = teleport(
+            dest,
+            3, // OP_BASE 1 + the cast p_delay(2)
+            vec![(6, 25)], // Magic level 25 (Varrock)
+            vec![(554, 1), (556, 3), (563, 1)], // fire + air + law runes
+        );
+        assert!(matches!(
+            find(&wc, &g, tile(0, 0, 0), dest),
+            Err(RouteError::NoPath)
+        ));
+        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
+        assert_eq!(r.dest, dest);
+        // Teleported from the origin — no walk, just the cast.
+        assert_eq!(r.ticks, 3.0);
+        let leg = r
+            .legs
+            .iter()
+            .find(|l| matches!(l, Leg::Transport { .. }))
+            .expect("a teleport leg");
+        let Leg::Transport { edge } = leg else {
+            unreachable!()
+        };
+        assert_eq!(edge.kind, TransportKind::Teleport);
+        assert_eq!(edge.skill_req, vec![(6, 25)]);
+        assert_eq!(edge.item_req, vec![(554, 1), (556, 3), (563, 1)]);
+        assert_eq!(edge.to, dest);
+        assert_eq!(edge.ticks, 3);
+    }
+
+    #[test]
+    fn find_never_uses_a_jewellery_teleport_by_default() {
+        let wc = walled_5x5();
+        let dest = tile(4, 4, 0);
+        let g = teleport(dest, 2, vec![], vec![(1712, 1)]); // charged glory
+        assert!(matches!(
+            find(&wc, &g, tile(0, 0, 0), dest),
+            Err(RouteError::NoPath)
+        ));
+        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
+        assert_eq!(r.ticks, 2.0); // OP_BASE 1 + the rub p_delay(1)
+        let Leg::Transport { edge } = r
+            .legs
+            .iter()
+            .find(|l| matches!(l, Leg::Transport { .. }))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(edge.item_req, vec![(1712, 1)]); // the charged item
+        assert!(edge.skill_req.is_empty());
+    }
+
+    #[test]
+    fn find_allow_teleports_is_usable_from_any_tile() {
+        let wc = walled_5x5();
+        let dest = tile(4, 4, 0);
+        let g = teleport(dest, 2, vec![], vec![(1712, 1)]);
+        for origin in [tile(0, 0, 0), tile(1, 3, 0)] {
+            let r = find_allow_teleports(&wc, &g, origin, dest).unwrap();
+            assert_eq!(r.dest, dest);
+            assert_eq!(r.ticks, 2.0, "teleport from {origin:?} costs the rub only");
+            assert!(r
+                .legs
+                .iter()
+                .any(|l| matches!(l, Leg::Transport { .. })));
+        }
+    }
+
+    #[test]
+    fn find_allow_teleports_still_prefers_walking_when_cheaper() {
+        // Total-tick cost still governs: on an open 5×5 the 4 run steps
+        // (2.0) beat the 3-tick teleport, so the route walks.
+        let wc = bake(5, 5, &[]);
+        let dest = tile(4, 4, 0);
+        let g = teleport(dest, 3, vec![(6, 25)], vec![]);
+        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
+        assert_eq!(r.ticks, 2.0);
+        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
     }
 }

@@ -113,7 +113,7 @@ mod tests {
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
     use crate::pack::{encode, encode_v2};
-    use crate::router::{find, Leg};
+    use crate::router::{find, find_allow_teleports, Leg};
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -280,6 +280,59 @@ mod tests {
         // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
         assert_eq!(r.ticks, 2.0);
         assert_eq!(r.legs.len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn v2_world_round_trips_the_teleport_layer_off_the_default_find() {
+        // A 5×5 bake walled down the middle: only the packed any-tile
+        // teleport can cross it, and only under find_allow_teleports.
+        let mut flags = vec![0u32; 25];
+        for z in 0..5 {
+            flags[z * 5 + 1] = BLOCKED;
+            flags[z * 5 + 2] = BLOCKED;
+        }
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 5,
+            height: 5,
+            flags,
+        };
+        let mut graph = TransportGraph::default();
+        graph.teleports.push(TransportEdge {
+            kind: TransportKind::Teleport,
+            from: tile(0, 0, 0),
+            to: tile(4, 4, 0),
+            loc_id: 0,
+            option: 0,
+            ticks: 3,
+            skill_req: vec![(6, 25)],
+            item_req: vec![(554, 1), (556, 3), (563, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
+
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-navworld-teles-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture-teles.navpack");
+        std::fs::write(&path, encode_v2(&collision, &graph)).unwrap();
+        let w = NavWorld::load_pack(&path).expect("v2 pack loads");
+        assert_eq!(w.graph.teleports, graph.teleports);
+        assert!(w.graph.edges.is_empty());
+        assert!(w.graph.from.is_empty());
+        // Default find ignores the teleport layer entirely…
+        assert!(find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 4, 0)).is_err());
+        // …and find_allow_teleports unions it in from anywhere.
+        let r = find_allow_teleports(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
+        assert_eq!(r.ticks, 3.0);
+        assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

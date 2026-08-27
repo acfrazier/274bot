@@ -13,10 +13,11 @@
 //! an explicit 2004 route table (dock NPC tile → post-gangplank dock tile,
 //! mined from the `areas/*` `~set_sail(` call sites and the `==== NPC ====`
 //! map placements), and gnome gliders a fixed platform table with their
-//! quest gate. Teleport spells cannot be represented faithfully as edges
-//! here (a teleport spell is cast from anywhere, and an edge needs a
-//! concrete `from` tile), so they are counted and skipped on stderr, never
-//! faked.
+//! quest gate. Teleports are the one any-tile layer: spell teleports
+//! (`skill_magic/configs/magic_spells.dbrow`) and jewellery rubs
+//! (`general/scripts/enchanted_jewellry/*.rs2`) have no fixed origin, so
+//! they live in [`TransportGraph::teleports`] — usable from any tile, kept
+//! out of the `from`-indexed edge set.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -71,6 +72,11 @@ pub struct TransportEdge {
 pub struct TransportGraph {
     pub edges: Vec<TransportEdge>,
     pub from: HashMap<WorldTile, Vec<usize>>,
+    /// Any-tile teleport edges (spells + jewellery rubs), kept out of
+    /// `edges`/`from` so the default [`crate::router::find`] never sees
+    /// them. [`crate::router::find_allow_teleports`] unions them in from
+    /// any node. `from` is a wire-only placeholder, never indexed.
+    pub teleports: Vec<TransportEdge>,
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
@@ -82,9 +88,9 @@ pub struct TransportGraph {
 /// destinations that resolve are emitted as edges from the standing tiles
 /// around each loc (no walkability filter — the router applies the
 /// collision map). Boats and gnome gliders are the explicit 2004 route
-/// tables below. Rows that do not resolve are counted per reason on
-/// stderr; teleport spells are skipped with a reason (no content-derivable
-/// origin tile), never faked.
+/// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
+/// land in [`TransportGraph::teleports`], never in the `from` index. Rows
+/// that do not resolve are counted per reason on stderr, never faked.
 pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGraph {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
@@ -97,7 +103,7 @@ pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGr
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
     glider_edges(&mut graph);
-    teleport_skip(content_root, &mut skipped);
+    teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
         graph.from.entry(e.from).or_default().push(i);
@@ -121,7 +127,9 @@ const SKIP_DEST_OUTSIDE: &str = "destination outside the grid box";
 const SKIP_UNPRICED: &str = "no measured tick cost for this loc name";
 const SKIP_SQUARE: &str = "unparseable mapsquare (no MAP section)";
 const SKIP_NO_DOOR_CONFIGS: &str = "no door configs parsed under scripts/doors/configs";
-const SKIP_TELEPORT_NO_ORIGIN: &str = "teleport spell has no fixed origin (cast from anywhere)";
+const SKIP_TELEPORT_BAD_DEST: &str = "teleport destination does not parse";
+const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.pack";
+const SKIP_TELEPORT_UNRESOLVED_ITEM: &str = "jewellery item name not in pack/obj.pack";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -134,6 +142,17 @@ const Z1: i32 = 10368;
 const CELLAR_SHIFT: i32 = 6400;
 /// Standard RS2 skill id (Server `PlayerStat`).
 const SKILL_AGILITY: i32 = 16;
+/// Standard RS2 skill id for Magic (Server `PlayerStat`).
+const SKILL_MAGIC: i32 = 6;
+/// Teleport edges have no origin tile (cast/rubbed from anywhere); `from`
+/// is a wire-only placeholder that is never indexed into
+/// [`TransportGraph::from`].
+const TELEPORT_PLACEHOLDER_FROM: WorldTile = WorldTile { x: 0, z: 0, level: 0 };
+/// Spell teleport ticks: OP_BASE 1 + the `player_teleport_normal` cast
+/// `p_delay(2)` (the spell's whole channel).
+const SPELL_TELEPORT_TICKS: i32 = 3;
+/// Jewellery rub teleport ticks: OP_BASE 1 + the rub script's `p_delay(1)`.
+const JEWELLERY_TELEPORT_TICKS: i32 = 2;
 
 fn in_world_box(t: &WorldTile) -> bool {
     (0..LEVELS).contains(&t.level) && (X0..X1).contains(&t.x) && (Z0..Z1).contains(&t.z)
@@ -222,8 +241,15 @@ fn report(
     for e in &graph.edges {
         *by_kind.entry(e.kind).or_default() += 1;
     }
+    // Spells always carry the magic-level skill req; jewellery rubs never do.
+    let spell_teles = graph
+        .teleports
+        .iter()
+        .filter(|e| !e.skill_req.is_empty())
+        .count();
+    let jewel_teles = graph.teleports.len() - spell_teles;
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders); {} teleports ({} spells, {} jewellery); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
@@ -232,6 +258,9 @@ fn report(
         by_kind.get(&TransportKind::AgilityShortcut).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Boat).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Glider).copied().unwrap_or(0),
+        graph.teleports.len(),
+        spell_teles,
+        jewel_teles,
         skipped.values().sum::<usize>(),
     );
     let mut reasons: Vec<_> = skipped.keys().collect();
@@ -256,8 +285,19 @@ struct Placement {
 
 /// `pack/loc.pack` id→name lines → name → id (m8aq `locIdsByName`).
 fn loc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
+    pack_ids_by_name(content_root, "loc.pack")
+}
+
+/// `pack/obj.pack` id→name lines → name → id (the spell-rune and jewellery
+/// item id map).
+fn obj_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
+    pack_ids_by_name(content_root, "obj.pack")
+}
+
+/// `pack/<file>` `id=name` lines → name → id.
+fn pack_ids_by_name(content_root: &Path, file: &str) -> HashMap<String, i32> {
     let mut out = HashMap::new();
-    let Ok(text) = fs::read_to_string(content_root.join("pack").join("loc.pack")) else {
+    let Ok(text) = fs::read_to_string(content_root.join("pack").join(file)) else {
         return out;
     };
     for line in text.lines() {
@@ -487,23 +527,7 @@ fn script_constants(content_root: &Path) -> HashMap<String, i32> {
 
 /// `pack/varp.pack` `id=name` → name → id (like [`loc_ids_by_name`]).
 fn varp_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
-    let mut out = HashMap::new();
-    let Ok(text) = fs::read_to_string(content_root.join("pack").join("varp.pack")) else {
-        return out;
-    };
-    for line in text.lines() {
-        let Some((id, name)) = line.split_once('=') else {
-            continue;
-        };
-        let Ok(id) = id.trim().parse::<i32>() else {
-            continue;
-        };
-        let name = name.trim();
-        if id >= 0 && !name.is_empty() {
-            out.insert(name.to_string(), id);
-        }
-    }
-    out
+    pack_ids_by_name(content_root, "varp.pack")
 }
 
 /// Every `[<name>]` block in a door config (`scripts/doors/configs/`,
@@ -1463,11 +1487,8 @@ fn agility_level_req(line: &str) -> Option<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// Boats and teleports: counted, not faked.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Boats: the 2004 dock-NPC journeys (explicit route table).
+// Boats: the 2004 dock-NPC journeys (explicit route table). Teleports are
+// the any-tile layer (see `teleport_edges` below).
 // ---------------------------------------------------------------------------
 
 /// One 2004 boat journey: talk to the dock NPC at `from`, sail to the
@@ -1769,10 +1790,34 @@ fn glider_edge(from: WorldTile, to: WorldTile) -> TransportEdge {
     }
 }
 
-/// Teleport spells declare a landing (`data=tele_coord`) and requirements in
-/// `skill_magic/configs/magic_spells.dbrow`, but are cast from anywhere, so
-/// they have no single origin tile to key an edge on.
-fn teleport_skip(content_root: &Path, skipped: &mut HashMap<&'static str, usize>) {
+/// Teleport edges (the any-tile layer): the seven spell teleports from
+/// `skill_magic/configs/magic_spells.dbrow` plus the jewellery rub
+/// teleports from `general/scripts/enchanted_jewellry/*.rs2`, all into
+/// [`TransportGraph::teleports`] — never `edges`/`from`, so the default
+/// [`crate::router::find`] never sees them.
+fn teleport_edges(
+    content_root: &Path,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let objs = obj_ids_by_name(content_root);
+    spell_teleports(content_root, &objs, graph, skipped);
+    jewellery_teleports(content_root, &objs, graph, skipped);
+}
+
+/// Spell teleports from `skill_magic/configs/magic_spells.dbrow`: each
+/// `[magic_spell_teleport_*]` block declares `data=levelrequired,N`,
+/// `data=runesrequired,<rune>,<count>[,<rune>,<count>]` (rune names
+/// resolved through `pack/obj.pack`), and `data=tele_coord,<coord>`
+/// (absolute). Requirement = the magic level (`skill_req`) plus the runes
+/// (`item_req`); the members flag declares no gate this model carries.
+/// Ticks = [`SPELL_TELEPORT_TICKS`].
+fn spell_teleports(
+    content_root: &Path,
+    objs: &HashMap<String, i32>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
     let path = content_root
         .join("scripts")
         .join("skill_magic")
@@ -1781,11 +1826,316 @@ fn teleport_skip(content_root: &Path, skipped: &mut HashMap<&'static str, usize>
     let Ok(text) = fs::read_to_string(&path) else {
         return;
     };
-    let n = text
-        .lines()
-        .filter(|l| l.trim().starts_with("data=tele_coord,"))
-        .count();
-    bump(skipped, SKIP_TELEPORT_NO_ORIGIN, n);
+    // (levelrequired, rune pairs, tele_coord) of the current teleport block.
+    let mut cur: Option<(Option<i32>, Vec<(String, i32)>, Option<String>)> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(name) = dbrow_block(line) {
+            if let Some(block) = cur.take() {
+                push_spell_teleport(objs, graph, skipped, block);
+            }
+            cur = name
+                .starts_with("magic_spell_teleport_")
+                .then(|| (None, Vec::new(), None));
+            continue;
+        }
+        let Some((level, runes, coord)) = &mut cur else {
+            continue;
+        };
+        if let Some(rest) = line.strip_prefix("data=levelrequired,") {
+            *level = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("data=runesrequired,") {
+            *runes = rune_pairs(rest);
+        } else if let Some(rest) = line.strip_prefix("data=tele_coord,") {
+            *coord = Some(rest.trim().to_string());
+        }
+    }
+    if let Some(block) = cur.take() {
+        push_spell_teleport(objs, graph, skipped, block);
+    }
+}
+
+/// `[<name>]` dbrow section header → the block name.
+fn dbrow_block(line: &str) -> Option<&str> {
+    let name = line.strip_prefix('[')?.strip_suffix(']')?;
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return None;
+    }
+    Some(name)
+}
+
+/// `firerune,1,airrune,3,lawrune,1[,null,null]` → rune/count pairs; the
+/// trailing `null,null` slot padding is dropped.
+fn rune_pairs(rest: &str) -> Vec<(String, i32)> {
+    let toks: Vec<&str> = rest.split(',').map(|t| t.trim()).collect();
+    let mut out = Vec::new();
+    for pair in toks.chunks(2) {
+        if pair.len() < 2 || pair[0] == "null" {
+            continue;
+        }
+        if let Ok(count) = pair[1].parse::<i32>() {
+            out.push((pair[0].to_string(), count));
+        }
+    }
+    out
+}
+
+fn push_spell_teleport(
+    objs: &HashMap<String, i32>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+    (level, runes, coord): (Option<i32>, Vec<(String, i32)>, Option<String>),
+) {
+    let Some(level) = level else {
+        bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
+        return;
+    };
+    let Some(coord) = coord.and_then(|c| coord_literal(&c)) else {
+        bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
+        return;
+    };
+    let mut item_req = Vec::with_capacity(runes.len());
+    for (rune, count) in &runes {
+        let Some(&id) = objs.get(rune) else {
+            bump(skipped, SKIP_TELEPORT_UNRESOLVED_RUNE, 1);
+            return;
+        };
+        item_req.push((id, *count));
+    }
+    graph.teleports.push(TransportEdge {
+        kind: TransportKind::Teleport,
+        from: TELEPORT_PLACEHOLDER_FROM,
+        to: WorldTile {
+            x: coord.1,
+            z: coord.2,
+            level: coord.0,
+        },
+        loc_id: 0, // a spell button, not a loc/obj use
+        option: 0,
+        ticks: SPELL_TELEPORT_TICKS,
+        skill_req: vec![(SKILL_MAGIC, level)],
+        item_req,
+        quest_req: vec![],
+        varp_req: vec![],
+    });
+}
+
+/// Jewellery rub teleports from `general/scripts/enchanted_jewellry/*.rs2`:
+/// `[opheld4,<name>]` blocks whose body — directly or through a forwarded
+/// `@label` (the glory rubs share `@amulet_of_glory_interface`) — calls
+/// `~player_teleport_normal(<coord>|map_findsquare(<coord>, …))`. The block
+/// name is the charged obj's name, or a `_`-prefixed category the obj
+/// config `skill_magic/configs/enchanted_jewelry.obj` resolves
+/// (`category=…`); obj ids come from `pack/obj.pack`. Requirement = holding
+/// the charged item (`item_req`); `option` 4 is the Rub op (`opheld4`).
+/// Ticks = [`JEWELLERY_TELEPORT_TICKS`].
+fn jewellery_teleports(
+    content_root: &Path,
+    objs: &HashMap<String, i32>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let cats = jewellery_categories(content_root);
+    let dir = content_root
+        .join("scripts")
+        .join("general")
+        .join("scripts")
+        .join("enchanted_jewellry");
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    for ent in entries.flatten() {
+        let path = ent.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("rs2") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for (op, name, body) in jewellery_blocks(&text) {
+            if op != "opheld4" {
+                continue;
+            }
+            let dests = block_teleport_dests(&body, &text);
+            if dests.is_empty() {
+                continue;
+            }
+            let items: Vec<String> = match name.strip_prefix('_') {
+                Some(cat) => cats.get(cat).cloned().unwrap_or_default(),
+                None => vec![name.clone()],
+            };
+            for item in items {
+                let Some(&obj_id) = objs.get(&item) else {
+                    bump(skipped, SKIP_TELEPORT_UNRESOLVED_ITEM, 1);
+                    continue;
+                };
+                for dest in &dests {
+                    graph.teleports.push(TransportEdge {
+                        kind: TransportKind::Teleport,
+                        from: TELEPORT_PLACEHOLDER_FROM,
+                        to: *dest,
+                        loc_id: obj_id,
+                        option: 4, // Rub (opheld4)
+                        ticks: JEWELLERY_TELEPORT_TICKS,
+                        skill_req: vec![],
+                        item_req: vec![(obj_id, 1)],
+                        quest_req: vec![],
+                        varp_req: vec![],
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// `category=<cat>` → obj block names, from `skill_magic/configs/
+/// enchanted_jewelry.obj` (the `_`-prefixed `opheld4` blocks dispatch on
+/// these categories).
+fn jewellery_categories(content_root: &Path) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let path = content_root
+        .join("scripts")
+        .join("skill_magic")
+        .join("configs")
+        .join("enchanted_jewelry.obj");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return out;
+    };
+    let mut cur: Option<&str> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            cur = line.strip_prefix('[').and_then(|s| s.strip_suffix(']'));
+            continue;
+        }
+        if let Some(cat) = line.strip_prefix("category=") {
+            if let Some(name) = cur {
+                out.entry(cat.trim().to_string()).or_default().push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// `(op, name, body)` blocks in an enchanted_jewellry file. Headers here
+/// are `[op,<name>]` possibly with body text on the same line (the glory
+/// `opheld4` one-liners) and/or a `(params)` list
+/// (`[label,<name>](string $m)`); the strict [`script_header`] rejects
+/// both, so these files need their own lenient parse.
+fn jewellery_blocks(text: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut cur: Option<(String, String)> = None;
+    let mut body = String::new();
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => raw[..i].trim(),
+            None => raw.trim(),
+        };
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((header, rest)) = jewellery_header(line) {
+            if let Some(prev) = cur.take() {
+                out.push((prev.0, prev.1, std::mem::take(&mut body)));
+            }
+            cur = Some((header.0.to_string(), header.1.to_string()));
+            if let Some(rest) = rest {
+                body.push_str(rest);
+                body.push('\n');
+            }
+        } else if cur.is_some() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if let Some(prev) = cur.take() {
+        out.push((prev.0, prev.1, body));
+    }
+    out
+}
+
+/// `[op,<name>](params)` block header → `((op, name), same-line body)`.
+/// A header line carries a trailing body only when there is no `(params)`
+/// list after the `]`.
+fn jewellery_header(line: &str) -> Option<((&str, &str), Option<&str>)> {
+    let rest = line.strip_prefix('[')?;
+    let close = rest.find(']')?;
+    let head = &rest[..close];
+    let tail = rest[close + 1..].trim();
+    let (a, b) = head.split_once(',')?;
+    let word = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
+    if !word(a) || !word(b) {
+        return None;
+    }
+    if tail.is_empty() {
+        Some(((a, b), None))
+    } else if tail.starts_with('(') && tail.ends_with(')') {
+        Some(((a, b), None))
+    } else {
+        Some(((a, b), Some(tail)))
+    }
+}
+
+/// The body of `[label,<name>](…)` in the raw script text, from the header
+/// line to the next block header line (params tolerated; the strict
+/// [`script_header`] skips these headers).
+fn label_body_raw(text: &str, name: &str) -> Option<String> {
+    let needle = format!("[label,{name}]");
+    let mut in_label = false;
+    let mut out = String::new();
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => raw[..i].trim(),
+            None => raw.trim(),
+        };
+        if line.is_empty() {
+            continue;
+        }
+        if in_label {
+            if jewellery_header(line).is_some() {
+                break;
+            }
+            out.push_str(line);
+            out.push('\n');
+        } else if line.starts_with(&needle) {
+            in_label = true;
+        }
+    }
+    in_label.then_some(out)
+}
+
+/// The destinations an `opheld4` block can take the player to: direct
+/// `~player_teleport_normal(...)` calls in the block, plus any such calls
+/// in the `@label` bodies the block forwards to.
+fn block_teleport_dests(body: &str, script_text: &str) -> Vec<WorldTile> {
+    let mut out = Vec::new();
+    for args in call_args_all(body, "~player_teleport_normal") {
+        if let Some(dest) = args.first().and_then(|a| teleport_dest(a)) {
+            out.push(dest);
+        }
+    }
+    for label in body_labels(body) {
+        if let Some(lb) = label_body_raw(script_text, &label) {
+            out.extend(block_teleport_dests(&lb, script_text));
+        }
+    }
+    out
+}
+
+/// The landing of one `~player_teleport_normal(...)` arg: a 5-part coord
+/// literal, or `map_findsquare(<coord>, …)` (the search square is the
+/// literal's own tile).
+fn teleport_dest(arg: &str) -> Option<WorldTile> {
+    let arg = arg.trim();
+    let coord = if let Some(inner) = arg.strip_prefix("map_findsquare(") {
+        inner.split(',').next()?.trim()
+    } else {
+        arg
+    };
+    coord_literal(coord).map(|(level, x, z)| WorldTile { x, z, level })
 }
 
 fn visit_rs2(dir: &Path, cb: &mut impl FnMut(&str)) {
@@ -1974,6 +2324,54 @@ fn call_args(text: &str, name: &str) -> Option<Vec<String>> {
         }
     }
     None
+}
+
+/// Every `name(...)` call's args in `text`, in source order (the
+/// first-match [`call_args`] variant; the jewellery rub scripts carry one
+/// teleport per `case`, and each must resolve).
+fn call_args_all(text: &str, name: &str) -> Vec<Vec<String>> {
+    let needle = format!("{name}(");
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(&needle) {
+        let at = from + rel;
+        if at > 0 {
+            let prev = text.as_bytes()[at - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' {
+                from = at + needle.len();
+                continue;
+            }
+        }
+        let after = &text[at + needle.len()..];
+        let mut args = Vec::new();
+        let mut depth = 1i32;
+        let mut start = 0usize;
+        let mut closed = None;
+        for (i, ch) in after.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ',' if depth == 1 => {
+                    args.push(after[start..i].trim().to_string());
+                    start = i + 1;
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        args.push(after[start..i].trim().to_string());
+                        closed = Some(i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(consumed) = closed else {
+            break;
+        };
+        out.push(args);
+        from = at + needle.len() + consumed;
+    }
+    out
 }
 
 /// `L_XHI_ZHI_XLO_ZLO` → `(level, x, z)` with `x = XHI<<6|XLO` (m8aq
@@ -2693,5 +3091,145 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             assert_eq!(g.option, 1); // Talk-to the Gnome pilot
             assert_eq!(g.loc_id, 170);
         }
+    }
+
+    #[test]
+    fn derive_transports_derives_spell_teleports_as_any_tile_edges() {
+        let fx = Fixture::new();
+        fx.write("pack/obj.pack", "554=firerune\n556=airrune\n563=lawrune\n");
+        fx.write(
+            "scripts/skill_magic/configs/magic_spells.dbrow",
+            "\
+[magic_spell_teleport_varrock]
+table=magic_spell_table
+data=spell,^varrock_teleport
+data=members,false
+data=levelrequired,25
+data=runesrequired,firerune,1,airrune,3,lawrune,1
+data=experience,350
+data=tele_coord,0_50_53_13_32
+
+[magic_spell_teleport_trollheim]
+table=magic_spell_table
+data=spell,^trollheim_teleport
+data=members,true
+data=levelrequired,61
+data=runesrequired,firerune,2,lawrune,2,null,null
+data=experience,680
+data=tele_coord,0_45_57_10_31
+",
+        );
+        let defs = loc_defs(&[]);
+        let graph = derive_transports(fx.path(), &defs);
+
+        assert_eq!(graph.teleports.len(), 2);
+        // Teleports never join the `from`-indexed edge set.
+        assert!(graph
+            .edges
+            .iter()
+            .all(|e| e.kind != TransportKind::Teleport));
+        assert!(!graph.from.contains_key(&TELEPORT_PLACEHOLDER_FROM));
+
+        let varrock = graph
+            .teleports
+            .iter()
+            .find(|e| e.to == WorldTile { x: 3213, z: 3424, level: 0 })
+            .expect("Varrock teleport");
+        assert_eq!(varrock.kind, TransportKind::Teleport);
+        assert_eq!(varrock.skill_req, vec![(SKILL_MAGIC, 25)]);
+        assert_eq!(varrock.item_req, vec![(554, 1), (556, 3), (563, 1)]);
+        assert_eq!(varrock.ticks, SPELL_TELEPORT_TICKS);
+
+        let trollheim = graph
+            .teleports
+            .iter()
+            .find(|e| e.to == WorldTile { x: 2890, z: 3679, level: 0 })
+            .expect("Trollheim teleport");
+        // The trailing `null,null` rune-slot padding is dropped.
+        assert_eq!(trollheim.item_req, vec![(554, 2), (563, 2)]);
+        assert_eq!(trollheim.skill_req, vec![(SKILL_MAGIC, 61)]);
+        assert_eq!(trollheim.ticks, SPELL_TELEPORT_TICKS);
+    }
+
+    #[test]
+    fn derive_transports_derives_jewellery_teleports_with_item_reqs() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/obj.pack",
+            "1712=amulet_of_glory_4\n2552=ring_of_dueling_8\n",
+        );
+        fx.write(
+            "scripts/skill_magic/configs/enchanted_jewelry.obj",
+            "\
+[ring_of_dueling_8]
+name=Ring of dueling(8)
+iop4=Rub
+category=category_136
+param=charges,8
+",
+        );
+        fx.write(
+            "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
+            "\
+[opheld4,amulet_of_glory_4] @amulet_of_glory_interface(\"Your amulet has three charges left.\");
+[label,amulet_of_glory_interface](string $message)
+def_obj $item = last_item;
+switch_int($choice) {
+    case 1 : ~player_teleport_normal(0_48_54_15_40);
+    case 2 : ~player_teleport_normal(0_45_49_38_40);
+    case 3 : ~player_teleport_normal(0_48_50_33_51);
+    case 4 : ~player_teleport_normal(0_51_49_29_27);
+}
+",
+        );
+        fx.write(
+            "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
+            "\
+[opheld4,_category_136]
+mes(\"You rub the ring...\");
+p_delay(1);
+~player_teleport_normal(map_findsquare(0_51_50_51_35, 0, 2, ^map_findsquare_lineofwalk));
+",
+        );
+        let defs = loc_defs(&[]);
+        let graph = derive_transports(fx.path(), &defs);
+
+        // Glory: the charged `_4` stage forwards to the interface label,
+        // whose four cases are the four destinations; each carries the
+        // charged item as its requirement.
+        let glory: Vec<_> = graph
+            .teleports
+            .iter()
+            .filter(|e| e.loc_id == 1712)
+            .collect();
+        assert_eq!(glory.len(), 4);
+        let dests: HashSet<WorldTile> = glory.iter().map(|e| e.to).collect();
+        assert_eq!(dests.len(), 4);
+        for e in &glory {
+            assert_eq!(e.item_req, vec![(1712, 1)]);
+            assert_eq!(e.ticks, JEWELLERY_TELEPORT_TICKS);
+            assert_eq!(e.option, 4); // Rub (opheld4)
+            assert!(e.skill_req.is_empty());
+        }
+        assert!(glory
+            .iter()
+            .any(|e| e.to == WorldTile { x: 3087, z: 3496, level: 0 })); // Edgeville
+        assert!(glory
+            .iter()
+            .any(|e| e.to == WorldTile { x: 3293, z: 3163, level: 0 })); // Al Kharid
+
+        // Dueling: the `_category_136` script applies to every
+        // `category=category_136` obj in enchanted_jewelry.obj.
+        let duel = graph
+            .teleports
+            .iter()
+            .find(|e| e.loc_id == 2552)
+            .expect("ring of dueling teleport");
+        assert_eq!(duel.to, WorldTile { x: 3315, z: 3235, level: 0 });
+        assert_eq!(duel.item_req, vec![(2552, 1)]);
+        assert_eq!(duel.ticks, JEWELLERY_TELEPORT_TICKS);
+
+        // The placeholder `from` never enters the `from` index.
+        assert!(!graph.from.contains_key(&TELEPORT_PLACEHOLDER_FROM));
     }
 }

@@ -16,6 +16,9 @@
 //! and per edge `(kind u8, from x/z/level, to x/z/level, loc_id, option,
 //! ticks)` i32le plus the four requirement vectors (count u32le, then
 //! `(id, value)` i32le pairs; quest names as length-prefixed UTF-8). The
+//! any-tile teleport layer (`TransportGraph::teleports`) round-trips inside
+//! the same edges array as kind-4 edges; [`decode_v2`] splits them back out
+//! and never indexes them into `from`. The
 //! v1 decode stays for old `.navpack` files; `nav-pack` now writes v2.
 
 use std::collections::HashSet;
@@ -174,10 +177,13 @@ pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
 
 /// Serialize the whole-world collision + transport graph to the v2 pack
 /// byte format. The graph's `from` index is not stored; [`decode_v2`]
-/// rebuilds it from the edges.
+/// rebuilds it from the edges. Teleports (kind-4 edges) are written after
+/// the ordinary edges in the same array — the wire layout is unchanged, so
+/// old v2 packs decode identically (they just carry no kind-4 edges).
 pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
+    let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
-        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + graph.edges.len() * 88,
+        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + edge_count * 88,
     );
     out.extend_from_slice(MAGIC_V2);
     out.push(VERSION_V2);
@@ -189,8 +195,8 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
     for f in &collision.flags {
         out.extend_from_slice(&f.to_le_bytes());
     }
-    out.extend_from_slice(&(graph.edges.len() as u32).to_le_bytes());
-    for e in &graph.edges {
+    out.extend_from_slice(&(edge_count as u32).to_le_bytes());
+    for e in graph.edges.iter().chain(&graph.teleports) {
         out.push(kind_to_u8(e.kind));
         for v in [
             e.from.x,
@@ -214,7 +220,8 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
 }
 
 /// Deserialize a v2 pack, validating magic, version, and lengths. The
-/// `from` index is rebuilt from the decoded edges.
+/// `from` index is rebuilt from the decoded edges; kind-4 (teleport) edges
+/// split back into [`TransportGraph::teleports`] and are excluded from it.
 pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -251,11 +258,12 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
     // Cap the preallocation at what the remaining bytes can hold; the reads
     // themselves still fail with Truncated past the real end.
     let remaining = bytes.len().saturating_sub(r.position() as usize);
-    let mut edges = Vec::with_capacity(n_edges.min(remaining / 36));
+    let mut graph = TransportGraph::default();
+    graph.edges = Vec::with_capacity(n_edges.min(remaining / 36));
     for _ in 0..n_edges {
         let mut kind = [0u8; 1];
         r.read_exact(&mut kind).map_err(|_| PackError::Truncated)?;
-        edges.push(TransportEdge {
+        let edge = TransportEdge {
             kind: kind_from_u8(kind[0])?,
             from: WorldTile {
                 x: read_i32(&mut r)?,
@@ -274,10 +282,13 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             item_req: read_req_pairs(&mut r)?,
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
-        });
+        };
+        if edge.kind == TransportKind::Teleport {
+            graph.teleports.push(edge);
+        } else {
+            graph.edges.push(edge);
+        }
     }
-    let mut graph = TransportGraph::default();
-    graph.edges = edges;
     for (i, e) in graph.edges.iter().enumerate() {
         graph.from.entry(e.from).or_default().push(i);
     }
@@ -863,6 +874,20 @@ mod tests {
         };
         let gi = graph.edges.len();
         graph.edges.push(glider);
+        // The any-tile teleport layer (Varrock spell): stored as a kind-4
+        // edge in the same array, split back out on decode.
+        graph.teleports.push(TransportEdge {
+            kind: TransportKind::Teleport,
+            from: WorldTile { x: 0, z: 0, level: 0 },
+            to: WorldTile { x: 3213, z: 3424, level: 0 },
+            loc_id: 0,
+            option: 0,
+            ticks: 3,
+            skill_req: vec![(6, 25)],
+            item_req: vec![(554, 1), (556, 3), (563, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
         graph.from.entry(graph.edges[di].from).or_default().push(di);
         graph.from.entry(graph.edges[li].from).or_default().push(li);
         graph.from.entry(graph.edges[gi].from).or_default().push(gi);
@@ -874,8 +899,11 @@ mod tests {
         assert_eq!(c.height, collision.height);
         assert_eq!(c.flags, collision.flags);
         assert_eq!(g.edges, graph.edges);
-        // The from-index is rebuilt from the edges on decode.
+        // Teleports round-trip in their own layer, and the from-index is
+        // rebuilt from the ordinary edges only.
+        assert_eq!(g.teleports, graph.teleports);
         assert_eq!(g.from, graph.from);
+        assert!(!g.from.contains_key(&WorldTile { x: 0, z: 0, level: 0 }));
         // The two formats do not cross-decode: v1 rejects v2 magic and
         // vice versa.
         assert!(matches!(decode(&bytes), Err(PackError::BadMagic)));
