@@ -108,7 +108,8 @@ pub struct NpcView {
     pub level: i32,
     pub size: i32,
     /// Legacy position aliases (the pre-v2 `NpcView` surface; `query::npcs_at`
-    /// and the old tests read them).
+    /// and the old tests read them). These are the raw entity pixel coords,
+    /// not the world `tile` above.
     pub x: i32,
     pub z: i32,
     pub yaw: i32,
@@ -118,6 +119,7 @@ impl NpcView {
     fn from_slot(
         index: usize,
         npc: &ClientNpc,
+        base: (i32, i32),
         level: i32,
         distance: i32,
         cache: &Cache,
@@ -137,7 +139,7 @@ impl NpcView {
             r#type: npc.r#type,
             name,
             actions,
-            tile: WorldTile { x: entity.x, z: entity.z, level },
+            tile: entity_world_tile(entity, base, level),
             distance,
             animation: entity.primary_anim,
             pose_animation: entity.secondary_anim,
@@ -379,6 +381,7 @@ impl GameSnapshot {
                 index: client.self_slot.max(0) as usize,
                 actor: actor_view(
                     &lp.entity,
+                    base,
                     level,
                     0, // the local player's distance to itself
                     lp.name.clone(),
@@ -396,13 +399,15 @@ impl GameSnapshot {
         for i in 0..client.player_count as usize {
             let index = client.player_ids[i] as usize;
             if let Some(player) = client.players.get(index).and_then(|p| p.as_ref()) {
+                let tile = entity_world_tile(&player.entity, base, level);
                 let distance = local_tile
-                    .map(|(lx, lz)| chebyshev(player.x, player.z, lx, lz))
+                    .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
                     .unwrap_or(0);
                 self.players.push(PlayerView {
                     index,
                     actor: actor_view(
                         &player.entity,
+                        base,
                         level,
                         distance,
                         player.name.clone(),
@@ -466,16 +471,18 @@ impl GameSnapshot {
         self.gens.npc = client.gens.npc;
         self.npc.clear();
         self.npc.reserve(client.npc_count as usize);
+        let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
         for i in 0..client.npc_count as usize {
             let index = client.npc_ids[i] as usize;
             if let Some(npc) = client.npc.get(index).and_then(|n| n.as_ref()) {
+                let tile = entity_world_tile(&npc.entity, base, level);
                 let distance = local_tile
-                    .map(|(lx, lz)| chebyshev(npc.x, npc.z, lx, lz))
+                    .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
                     .unwrap_or(0);
                 self.npc
-                    .push(NpcView::from_slot(index, npc, level, distance, &client.cache));
+                    .push(NpcView::from_slot(index, npc, base, level, distance, &client.cache));
             }
         }
         true
@@ -497,6 +504,18 @@ fn chebyshev(ax: i32, az: i32, bx: i32, bz: i32) -> i32 {
     (ax - bx).abs().max((az - bz).abs())
 }
 
+/// The absolute world tile of an entity: its scene-local pixel coords
+/// (`route * 128 + size * 64`) un-scaled by 128 and offset by the build
+/// base, so every actor view is in the same world-tile space as the local
+/// player's tile.
+fn entity_world_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> WorldTile {
+    WorldTile {
+        x: base.0 + (entity.x - entity.size * 64) / 128,
+        z: base.1 + (entity.z - entity.size * 64) / 128,
+        level,
+    }
+}
+
 /// Resolve `face_entity` with the client's own scheme (`entity_face` in
 /// `client.rs`): slots below 32768 are NPC table indexes, at or above are
 /// player slots offset by 32768. The player slot stays the raw server
@@ -516,6 +535,7 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
 /// The shared actor fields from one entity, as the m8aq `ActorSnapshot`.
 fn actor_view(
     entity: &ClientEntity,
+    base: (i32, i32),
     level: i32,
     distance: i32,
     name: Option<String>,
@@ -524,7 +544,7 @@ fn actor_view(
     ActorView {
         name,
         actions,
-        tile: WorldTile { x: entity.x, z: entity.z, level },
+        tile: entity_world_tile(entity, base, level),
         distance,
         animation: entity.primary_anim,
         pose_animation: entity.secondary_anim,

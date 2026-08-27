@@ -465,9 +465,10 @@ fn npc_rebuild_reads_full_actor_view() {
     assert_eq!(v.r#type, planted_type);
     assert_eq!(v.name.as_deref(), Some("Goblin"));
     assert_eq!(v.actions, vec![Some("Attack".into()), None]);
-    assert_eq!(v.tile, WorldTile { x: 100, z: 200, level: 1 });
+    // entity pixel coords (100, 200), size 1 → world tile (3200, 3201)
+    assert_eq!(v.tile, WorldTile { x: 3200, z: 3201, level: 1 });
     // chebyshev from the local player's world tile (3220, 3212)
-    assert_eq!(v.distance, 3120);
+    assert_eq!(v.distance, 20);
     assert_eq!(v.animation, 809);
     assert_eq!(v.pose_animation, 808);
     assert_eq!(v.orientation, 512);
@@ -538,8 +539,10 @@ fn player_rebuild_reads_local_and_remote_players() {
     c.player_op[0] = Some("Attack".into());
     c.player_op[2] = Some("Trade with".into());
     let mut local = ClientPlayer::at(20, 12);
-    local.entity.x = 100;
-    local.entity.z = 200;
+    // rest pose: entity.x = route * 128 + size * 64, so the world-tile
+    // conversion lands back on the route tile (base + route).
+    local.entity.x = 20 * 128 + 64;
+    local.entity.z = 12 * 128 + 64;
     local.name = Some("Zezima".into());
     local.combat_level = 126;
     local.skill_level = 99;
@@ -567,7 +570,12 @@ fn player_rebuild_reads_local_and_remote_players() {
     assert_eq!(local_view.player.actor.distance, 0);
     assert_eq!(
         local_view.player.actor.tile,
-        WorldTile { x: 100, z: 200, level: 1 }
+        WorldTile { x: 3220, z: 3212, level: 1 }
+    );
+    assert_eq!(
+        (local_view.player.actor.tile.x, local_view.player.actor.tile.z),
+        (snap.tile().unwrap().0, snap.tile().unwrap().1),
+        "the local actor tile matches the snapshot's world tile"
     );
     assert_eq!(
         local_view.player.actor.target,
@@ -589,7 +597,9 @@ fn player_rebuild_reads_local_and_remote_players() {
     let p = &players[0];
     assert_eq!(p.index, 3);
     assert_eq!(p.actor.name.as_deref(), Some("Other"));
-    assert_eq!(p.actor.distance, 3120); // chebyshev from (3220, 3212)
+    // entity pixel coords (100, 150), size 1 → world tile (3200, 3200)
+    assert_eq!(p.actor.tile, WorldTile { x: 3200, z: 3200, level: 1 });
+    assert_eq!(p.actor.distance, 20); // chebyshev from (3220, 3212)
     assert_eq!(
         p.actor.target,
         Some(ActorTargetView { kind: ActorKind::Player, index: 7 })
