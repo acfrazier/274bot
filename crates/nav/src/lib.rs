@@ -2,6 +2,7 @@
 //! and arrival detection.
 
 pub mod arrival;
+pub mod collision;
 pub mod grid;
 pub mod pack;
 pub mod router;

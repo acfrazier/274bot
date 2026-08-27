@@ -25,8 +25,9 @@ const MAGIC: &[u8; 4] = b"274N";
 const SQUARE: usize = 64;
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
-/// Largest grid side a pack may decode (4096×4096 tiles).
-const MAX_GRID: usize = 4096;
+/// Largest grid side a pack may decode (16384×16384 tiles ≈ 256 MB of walk
+/// bytes; the whole-world bbox is 1792×9088, comfortably under).
+const MAX_GRID: usize = 16384;
 
 /// Errors loading, writing, or baking a nav pack.
 #[derive(Debug)]
@@ -390,12 +391,12 @@ pub fn merge_squares(squares: &[Mapsquare]) -> StepGrid {
 }
 
 /// Section header `==== NAME ====`, or None for content lines.
-fn section(line: &str) -> Option<&str> {
+pub(crate) fn section(line: &str) -> Option<&str> {
     line.strip_prefix("==== ")?.strip_suffix(" ====")
 }
 
 /// Parse a MAP line into `(x, z, blocked)`, level 0 only.
-fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
+pub(crate) fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
     let (coords, rest) = line.split_once(':')?;
     let mut c = coords.split_whitespace();
     let level: i32 = c.next()?.parse().ok()?;
@@ -420,12 +421,12 @@ fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
 }
 
 /// One level-0 loc placement inside a mapsquare.
-struct LocOnSquare {
-    x: usize,
-    z: usize,
-    loc_id: i32,
-    shape: i32,
-    angle: i32,
+pub(crate) struct LocOnSquare {
+    pub(crate) x: usize,
+    pub(crate) z: usize,
+    pub(crate) loc_id: i32,
+    pub(crate) shape: i32,
+    pub(crate) angle: i32,
 }
 
 /// Walls (0..=3), diagonal wall (9), and centrepiece (10, 11) occupy a walk
@@ -436,7 +437,7 @@ fn loc_blocks_tile(shape: i32) -> bool {
 }
 
 /// Parse a LOC line into a level-0 placement.
-fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
+pub(crate) fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
     let (coords, rest) = line.split_once(':')?;
     let mut c = coords.split_whitespace();
     let level: i32 = c.next()?.parse().ok()?;
