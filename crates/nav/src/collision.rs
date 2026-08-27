@@ -74,7 +74,7 @@ impl WorldCollision {
 /// are metadata, e.g. `ignore.csv`/`free2play.csv`, and are skipped). MAP
 /// flags with bit 0 set stamp `WR_GRND`; LOC placements stamp flags by
 /// shape/angle exactly like the client's `CollisionMap` (`add_wall` for
-/// walls, `add_loc` footprints for scenery, `WR_GROUND_DECOR` for ground
+/// walls, `add_loc` footprints for scenery, `block_ground` for ground
 /// decor). Openable doors (`door_ids`) are stamped blocked-when-closed.
 /// All squares merge into one level-0 bounding grid.
 ///
@@ -260,15 +260,12 @@ fn stamp_square(
                 add_loc(flags, width, height, lx, lz, w, l, loc.angle, blockrange);
             }
         } else if loc.shape == LocShape::GROUND_DECOR {
+            // The client's `block_ground` (WR_GRND) is what blocks walk on
+            // a blockwalk, active ground decor — the brief's original
+            // WR_GROUND_DECOR semantic was wrong vs the client (that flag
+            // is not in the walk mask).
             if blockwalk && def.map_or(false, |d| d.active) {
-                set_at(
-                    flags,
-                    width,
-                    height,
-                    lx,
-                    lz,
-                    CollisionFlag::WR_GROUND_DECOR as u32,
-                );
+                set_at(flags, width, height, lx, lz, CollisionFlag::WR_GRND as u32);
             }
         }
         // Wall decor (4..=8) and unknown shapes carry no collision.
@@ -598,6 +595,7 @@ mod tests {
 ==== LOC ====
 0 0 0: 1013 9 0
 0 0 1: 1248 22 0
+0 0 2: 559 22 0
 ";
         fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
         let locs = defs(&[
@@ -614,19 +612,29 @@ mod tests {
                 active: true,
                 ..LocType::default()
             },
+            LocType {
+                id: 559,
+                blockwalk: true,
+                active: false,
+                ..LocType::default()
+            },
         ]);
         let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
         let t = |x: i32, z: i32| WorldTile { x, z, level: 0 };
         // Shape 9 (wall diagonal) is a scenery-footprint loc like the
         // client: WALK_SCENERY on its tile.
         assert!(!wc.walkable(t(3200, 3200)));
-        // Ground decor stamps WR_GROUND_DECOR but stays walkable (the flag
-        // is not in the walk-block mask, matching the client's mask).
+        // A blockwalk && active ground decor blocks via the client's
+        // `block_ground` (WR_GRND), which is in the walk mask.
         assert_eq!(
-            wc.flag(3200, 3201, 0) & CollisionFlag::WR_GROUND_DECOR as u32,
-            CollisionFlag::WR_GROUND_DECOR as u32
+            wc.flag(3200, 3201, 0) & CollisionFlag::WR_GRND as u32,
+            CollisionFlag::WR_GRND as u32
         );
-        assert!(wc.walkable(t(3200, 3201)));
+        assert!(!wc.walkable(t(3200, 3201)));
+        // The inactive ground decor loc (same shape, `active` gates it) is
+        // not stamped and stays walkable.
+        assert_eq!(wc.flag(3200, 3202, 0), 0);
+        assert!(wc.walkable(t(3200, 3202)));
     }
 
     #[test]
