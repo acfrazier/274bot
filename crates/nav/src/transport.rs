@@ -617,12 +617,15 @@ fn record(
         Some(Guard::Angle(n)) => {
             rule.by_angle.entry(*n).or_insert(outcome);
         }
-        Some(Guard::Default) => {
+        // m8aq `record`: a `default` guard or a null guard (an unguarded
+        // statement) both land in the fallback (`guard?.kind !== 'unknown'`);
+        // only an `unknown` guard drops the outcome.
+        Some(Guard::Default) | None => {
             if rule.fallback.is_none() {
                 rule.fallback = Some(outcome);
             }
         }
-        Some(Guard::Unknown) | None => {}
+        Some(Guard::Unknown) => {}
     }
 }
 
@@ -1577,6 +1580,44 @@ switch_coord (loc_coord) {
         assert!(matches!(
             rule.fallback,
             Some(Outcome::Landing(Landing::FromLevel { d: -1 }))
+        ));
+    }
+
+    #[test]
+    fn parse_script_records_unguarded_statements_as_fallback() {
+        let mut rules = HashMap::new();
+        parse_script(
+            "\
+[oploc1,ship_ladder]
+p_arrivedelay;
+~climb_ladder(movecoord(coord(), 0, 1, 0), true);
+",
+            TransportKind::Ladder,
+            &mut rules,
+        );
+        let (_, rule) = rules.get(&("ship_ladder".to_string(), 1)).unwrap();
+        assert!(matches!(
+            rule.fallback,
+            Some(Outcome::Landing(Landing::FromLevel { d: 1 }))
+        ));
+    }
+
+    #[test]
+    fn parse_script_records_dialog_skip_as_fallback() {
+        let mut rules = HashMap::new();
+        parse_script(
+            "\
+[oploc1,laddermiddle]
+p_arrivedelay;
+@ladder_options(movecoord(coord(), 0, 1, 0), movecoord(coord(), 0, -1, 0));
+",
+            TransportKind::Ladder,
+            &mut rules,
+        );
+        let (_, rule) = rules.get(&("laddermiddle".to_string(), 1)).unwrap();
+        assert!(matches!(
+            rule.fallback,
+            Some(Outcome::Skipped(SKIP_DIALOG))
         ));
     }
 
