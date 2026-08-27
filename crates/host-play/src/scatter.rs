@@ -5,11 +5,10 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::snapshot::WorldTile;
-use nav::tile::Tile;
 use nav::world::NavWorld;
 
 /// Lumbridge courtyard fallback when no nav pack is on disk.
-const LUMBRIDGE: Tile = Tile {
+const LUMBRIDGE: WorldTile = WorldTile {
     x: 3220,
     z: 3218,
     level: 0,
@@ -28,12 +27,12 @@ fn pack_path() -> PathBuf {
 /// The world's level-0 walkable tiles, row-major (z then x): a tile is a
 /// seed candidate when the collision bake's blanket `walkable` check passes
 /// (the standable test, not a directional mask).
-fn walkable_seeds(world: &NavWorld) -> Vec<Tile> {
+fn walkable_seeds(world: &NavWorld) -> Vec<WorldTile> {
     let c = &world.collision;
     let o = c.origin;
     (0..c.height)
         .flat_map(|z| {
-            (0..c.width).map(move |x| Tile {
+            (0..c.width).map(move |x| WorldTile {
                 x: o.x + x as i32,
                 z: o.z + z as i32,
                 level: o.level,
@@ -49,8 +48,8 @@ fn walkable_seeds(world: &NavWorld) -> Vec<Tile> {
         .collect()
 }
 
-fn shuffled_walkable() -> &'static [Tile] {
-    static TILES: OnceLock<Vec<Tile>> = OnceLock::new();
+fn shuffled_walkable() -> &'static [WorldTile] {
+    static TILES: OnceLock<Vec<WorldTile>> = OnceLock::new();
     TILES.get_or_init(|| {
         let mut tiles = NavWorld::load_pack(&pack_path())
             .map(|w| walkable_seeds(&w))
@@ -73,13 +72,13 @@ fn shuffled_walkable() -> &'static [Tile] {
 }
 
 /// A walkable tile for this uid (stable for the process, shuffled pack).
-pub fn scatter_tile_for(uid: i32) -> Tile {
+pub fn scatter_tile_for(uid: i32) -> WorldTile {
     let tiles = shuffled_walkable();
     tiles[(uid.unsigned_abs() as usize) % tiles.len()]
 }
 
 /// `::tele` payload for tests.
-pub fn tele_args(tile: Tile) -> String {
+pub fn tele_args(tile: WorldTile) -> String {
     api::interact::tele_args(tile.level, tile.x, tile.z)
 }
 
@@ -126,12 +125,12 @@ mod tests {
         };
         let seeds = walkable_seeds(&world);
         assert_eq!(seeds.len(), 5);
-        assert!(!seeds.contains(&Tile {
+        assert!(!seeds.contains(&WorldTile {
             x: 3200,
             z: 3201,
             level: 0
         }));
-        assert!(seeds.contains(&Tile {
+        assert!(seeds.contains(&WorldTile {
             x: 3201,
             z: 3200,
             level: 0
