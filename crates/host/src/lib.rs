@@ -584,6 +584,18 @@ fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &Client, dirty: DirtyFamil
     if dirty.scene {
         snapshot.rebuild_family(client, Family::Scene);
     }
+    if dirty.iface {
+        snapshot.rebuild_family(client, Family::Iface);
+    }
+    if dirty.camera {
+        snapshot.rebuild_family(client, Family::Camera);
+    }
+    if dirty.map_flag {
+        snapshot.rebuild_family(client, Family::MapFlag);
+    }
+    if dirty.world {
+        snapshot.rebuild_family(client, Family::World);
+    }
 }
 
 /// Run on/off from the orb pair. 152 visible and 153 hidden → running;
@@ -653,6 +665,51 @@ mod tests {
         assert!(result.dirty.npc);
         assert_eq!(slot.snapshot.gens().npc, 1);
         assert_eq!(slot.pump.dirty(client.gens), DirtyFamilies::default());
+    }
+
+    /// The drain's dirty flags must feed `rebuild_dirty` for the four new
+    /// families too, or `snapshot.gens().{iface,camera,map_flag,world}`
+    /// stay permanently 0 (the API-v2 views will rely on this path).
+    #[test]
+    fn drain_rebuilds_the_four_new_families() {
+        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let mut slot = SlotLoop::new();
+
+        client.gens.iface = 1;
+        let result = slot.after_drain(&mut client);
+        assert!(result.dirty.iface);
+        assert_eq!(
+            slot.snapshot.gens().iface,
+            1,
+            "drain must rebuild the iface family"
+        );
+
+        client.gens.camera = 1;
+        let result = slot.after_drain(&mut client);
+        assert!(result.dirty.camera);
+        assert_eq!(
+            slot.snapshot.gens().camera,
+            1,
+            "drain must rebuild the camera family"
+        );
+
+        client.gens.map_flag = 1;
+        let result = slot.after_drain(&mut client);
+        assert!(result.dirty.map_flag);
+        assert_eq!(
+            slot.snapshot.gens().map_flag,
+            1,
+            "drain must rebuild the map_flag family"
+        );
+
+        client.gens.world = 1;
+        let result = slot.after_drain(&mut client);
+        assert!(result.dirty.world);
+        assert_eq!(
+            slot.snapshot.gens().world,
+            1,
+            "drain must rebuild the world family"
+        );
     }
 
     #[test]
