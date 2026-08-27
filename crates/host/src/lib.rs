@@ -11,7 +11,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use api::interact::set_run;
-use api::settle::{modal_delta, Settle};
 use api::snapshot::{Family, GameSnapshot};
 use auto_run::auto_run_tick;
 use client::client::{Client, ClientConfig};
@@ -115,7 +114,7 @@ impl Host {
     /// runs `mainloop`, and renders (via the slot's optional `Renderer`)
     /// only while `client.draw` is on. Dirty snapshot families
     /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
-    /// drain); settle runs when a family gen moved; think (auto-run) reads
+    /// drain); think (auto-run) reads
     /// energy from the snapshot stat view when it has been rebuilt. The
     /// third observe arg is the count of accepted auto-run `set_run(true)`
     /// sends (from the previous tick); observe's return is whether the slot
@@ -479,15 +478,13 @@ fn raster_this_tick(
     due
 }
 
-/// Per-slot post-drain state: snapshot, settle, auto-run, the full-rate
+/// Per-slot post-drain state: snapshot, auto-run, the full-rate
 /// switch, and the optional `Renderer` a drawing slot owns.
 struct SlotLoop {
     pump: Pump,
     snapshot: GameSnapshot,
-    settle: Settle,
     run_on: bool,
     run_sends: u32,
-    last_modal: Option<i32>,
     renderer: Option<Renderer>,
     /// `Instant` of the last paint of any kind; the watch-only 1 fps
     /// decision repaints when this is ≥1 s old.
@@ -505,10 +502,8 @@ impl SlotLoop {
         Self {
             pump: Pump::new(),
             snapshot: GameSnapshot::new(),
-            settle: Settle::default(),
             run_on: false,
             run_sends: 0,
-            last_modal: None,
             renderer: None,
             raster_last: None,
             raster_was_on: false,
@@ -523,24 +518,6 @@ impl SlotLoop {
     fn after_drain(&mut self, client: &mut Client) -> DrainResult {
         let result = self.pump.drain(client.gens);
         rebuild_dirty(&mut self.snapshot, client, result.dirty);
-        if result.dirty.any() {
-            let after = if client.main_modal_id >= 0 {
-                Some(client.main_modal_id)
-            } else {
-                None
-            };
-            let (opened, closed) = modal_delta(self.last_modal, after);
-            if opened.is_some() {
-                self.settle.modal_opened = opened;
-            }
-            if closed.is_some() {
-                self.settle.modal_closed = closed;
-            }
-            self.last_modal = after;
-            if result.player_info {
-                self.settle.ticks = self.settle.ticks.saturating_add(1);
-            }
-        }
 
         let energy = if self.snapshot.gens().stat > 0 {
             self.snapshot.runenergy()
