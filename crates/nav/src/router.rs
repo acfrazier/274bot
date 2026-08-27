@@ -88,6 +88,11 @@ pub enum RouteError {
 /// under this; it only stops pathological floods.
 const NODE_BUDGET: usize = 4_000_000;
 
+/// The interact radius (chebyshev) a transport edge is usable from: any
+/// standable tile within this distance of the edge's `at` is a valid
+/// take-off. The approach is derived at expansion time, never baked.
+const INTERACT_RADIUS: i32 = 3;
+
 /// The eight step deltas (client coordinates: +x east, +z north).
 const STEPS: [(i32, i32); 8] = [
     (0, 1),
@@ -179,7 +184,10 @@ fn find_bounded(
 }
 
 /// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
-/// into the relaxation from every settled node.
+/// into the relaxation from every settled node. Transport edges are relaxed
+/// from any standable tile within [`INTERACT_RADIUS`] of their `at` (never
+/// from `at` itself when it is blocked); walk steps are the strict
+/// directional [`step_ok`] test throughout.
 fn find_bounded_impl(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -247,17 +255,36 @@ fn find_bounded_impl(
                 }
             }
         }
-        if let Some(idxs) = graph.at.get(&cur) {
-            for &ei in idxs {
-                let edge = &graph.edges[ei];
-                let nd = n.cost + edge.ticks as f64;
-                if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
-                    dist.insert(edge.to, nd);
-                    came_from.insert(edge.to, Back::Transport(ei));
-                    heap.push(HeapNode {
-                        cost: nd,
-                        tile: edge.to,
-                    });
+        // Transport edges are usable from any standable tile within the
+        // interact radius of their `at` — the approach is derived here,
+        // never baked. `at` itself is the interact target and may be
+        // blocked (a wall loc or NPC); only the take-off tile needs to be
+        // standable. Each edge is indexed under its unique `at`, so the
+        // fixed offset sweep finds it exactly once per node (a radius-3
+        // square may cover several `at` tiles — each is a distinct edge).
+        if collision.standable(cur) {
+            for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
+                for dz in -INTERACT_RADIUS..=INTERACT_RADIUS {
+                    let at = WorldTile {
+                        x: cur.x + dx,
+                        z: cur.z + dz,
+                        level: cur.level,
+                    };
+                    let Some(idxs) = graph.at.get(&at) else {
+                        continue;
+                    };
+                    for &ei in idxs {
+                        let edge = &graph.edges[ei];
+                        let nd = n.cost + edge.ticks as f64;
+                        if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
+                            dist.insert(edge.to, nd);
+                            came_from.insert(edge.to, Back::Transport { from: cur, ei });
+                            heap.push(HeapNode {
+                                cost: nd,
+                                tile: edge.to,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -344,13 +371,15 @@ fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
 
 /// How a tile was reached: by a walk step (each costing the search's run
 /// rate) from `Walk`'s tile, by transport edge `Transport` (an index
-/// into [`TransportGraph::edges`]), or by any-tile teleport edge
-/// `Teleport` (an index into [`TransportGraph::teleports`], taken from
-/// `from` — the node it was relaxed from).
+/// into [`TransportGraph::edges`], taken from `from` — the standable tile
+/// within the edge's interact radius that it was relaxed from), or by
+/// any-tile teleport edge `Teleport` (an index into
+/// [`TransportGraph::teleports`], taken from `from` — the node it was
+/// relaxed from).
 #[derive(Clone, Copy)]
 enum Back {
     Walk(WorldTile),
-    Transport(usize),
+    Transport { from: WorldTile, ei: usize },
     Teleport { from: WorldTile, index: usize },
 }
 
@@ -376,14 +405,19 @@ fn reconstruct(
                 walk_rev.push(pt);
                 t = pt;
             }
-            Back::Transport(ei) => {
+            Back::Transport { from, ei } => {
                 ticks += walk_ticks(&walk_rev, model);
                 walk_rev.reverse();
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
                 let edge = graph.edges[ei].clone();
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
-                t = graph.edges[ei].at;
+                // The walk leg before the transport resumes from the tile
+                // the edge was actually taken on — the standable take-off
+                // within the interact radius, never the edge's `at` (which
+                // may be a blocked interact target the player cannot stand
+                // on).
+                t = from;
                 walk_rev = vec![t];
             }
             Back::Teleport { from, index } => {
@@ -892,6 +926,26 @@ mod tests {
         bake(5, 5, &extras)
     }
 
+    /// A 5×6 bake (x=0..4, z=0..5) walled between the west and east sides:
+    /// column 2 carries `W_W` for every row, column 1 carries `W_E` for
+    /// rows 1..=5, and the door's own `at=(2,0)` tile carries
+    /// `W_W | WR_GRND` — blocked, sealing the row-0 gap. The only crossing
+    /// is the door edge, and `at` itself is never standable. Row 4 (`W_N`
+    /// on every column) seals the north strip (z=5) away from the door's
+    /// radius-3 neighborhood.
+    fn blocked_door_fixture() -> WorldCollision {
+        let mut extras = Vec::new();
+        for z in 1..=5 {
+            extras.push((1, z, CollisionFlag::W_E as u32));
+            extras.push((2, z, CollisionFlag::W_W as u32));
+        }
+        for x in 0..5 {
+            extras.push((x, 4, CollisionFlag::W_N as u32));
+        }
+        extras.push((2, 0, (CollisionFlag::W_W | CollisionFlag::WR_GRND) as u32));
+        bake(5, 6, &extras)
+    }
+
     /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
     fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
         let edge = TransportEdge {
@@ -981,10 +1035,10 @@ mod tests {
         let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 4, 0));
-        // 3 walk steps to the door's from tile (1.5, around the wall end)
-        // + the 2-tick door + 3 walk steps from it (1.5, no corner-cutting
-        // past the wall tile).
-        assert_eq!(r.ticks, 5.0);
+        // The origin sits within the door's interact radius of at=(1,2),
+        // so the door is taken straight from it (2.0) plus 3 walk steps
+        // from its far side (1.5, no corner-cutting past the wall tile).
+        assert_eq!(r.ticks, 3.5);
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { tiles: w0 },
@@ -994,8 +1048,7 @@ mod tests {
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
-        assert_eq!(w0.first(), Some(&tile(0, 0, 0)));
-        assert_eq!(w0.last(), Some(&tile(1, 2, 0)));
+        assert_eq!(w0, &vec![tile(0, 0, 0)]);
         assert_eq!(edge.loc_id, 1530);
         assert_eq!(edge.ticks, 2);
         assert_eq!(edge.at, tile(1, 2, 0));
@@ -1013,6 +1066,66 @@ mod tests {
         assert_eq!(r.ticks, 2.0);
         assert_eq!(r.legs.len(), 1);
         assert!(matches!(&r.legs[0], Leg::Walk { .. }));
+    }
+
+    /// The blocked interact target: the door's `at=(2,0)` tile carries a
+    /// footprint/ground block, so it is neither standable nor walkable and
+    /// the old `at`-only expansion could never settle a node on it. The
+    /// neighborhood expansion must take the door from a *neighbouring*
+    /// standable tile instead.
+    #[test]
+    fn router_takes_a_transport_from_a_standable_tile_within_the_interact_radius() {
+        let wc = blocked_door_fixture();
+        let g = door(tile(2, 0, 0), tile(2, 2, 0), 2);
+        let r = find(&wc, &g, tile(1, 0, 0), tile(4, 2, 0)).unwrap();
+        assert_eq!(r.dest, tile(4, 2, 0));
+        // The 2-tick door taken from (1,0) + 2 run steps from (2,2) (1.0).
+        assert_eq!(r.ticks, 3.0);
+        let (
+            Leg::Walk { tiles: w0 },
+            Leg::Transport { edge },
+            Leg::Walk { tiles: w1 },
+        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        else {
+            panic!("expected Walk, Transport, Walk legs");
+        };
+        // The walk leg before the door ends at the take-off tile (1,0) —
+        // a standable tile within the interact radius of `at`, not `at`
+        // itself.
+        assert_eq!(w0, &vec![tile(1, 0, 0)]);
+        assert_eq!(edge.loc_id, 1530);
+        assert_eq!(edge.ticks, 2);
+        assert_eq!(edge.at, tile(2, 0, 0));
+        assert_eq!(edge.to, tile(2, 2, 0));
+        assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
+        assert_eq!(w1.last(), Some(&tile(4, 2, 0)));
+        // Never steps onto the blocked `at` tile.
+        let stepped: Vec<WorldTile> = r
+            .legs
+            .iter()
+            .flat_map(|l| match l {
+                Leg::Walk { tiles } => tiles.clone(),
+                Leg::Transport { .. } => vec![],
+            })
+            .collect();
+        assert!(!stepped.contains(&tile(2, 0, 0)));
+    }
+
+    #[test]
+    fn router_does_not_use_a_transport_from_beyond_the_interact_radius() {
+        let wc = blocked_door_fixture();
+        let g = door(tile(2, 0, 0), tile(2, 2, 0), 2);
+        // (1,5) sits at chebyshev 5 from `at=(2,0)` and is sealed away from
+        // every within-radius tile by the row-4 wall, so the door stays
+        // unusable: no path reaches the east side.
+        assert!(matches!(
+            find(&wc, &g, tile(1, 5, 0), tile(4, 2, 0)),
+            Err(RouteError::NoPath)
+        ));
+        // A same-strip destination routes by walking, never via the door.
+        let r = find(&wc, &g, tile(1, 5, 0), tile(0, 5, 0)).unwrap();
+        assert_eq!(r.ticks, 0.5);
+        assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
     }
 
     /// Any wall flag on a tile now carries the full directional `PL_WALK_*`
@@ -1178,8 +1291,10 @@ mod tests {
         let g = door(tile(1, 10, 0), tile(2, 10, 0), 1);
         let r = find(&wc, &g, tile(0, 10, 0), tile(4, 10, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 10, 0));
-        // 1 walk tile (0.5) + the 1-tick door + 2 walk tiles (1.0).
-        assert_eq!(r.ticks, 2.5);
+        // The origin sits within the door's interact radius of at=(1,10),
+        // so the 1-tick door is taken from it (1.0) plus 2 walk tiles from
+        // its far side (1.0).
+        assert_eq!(r.ticks, 2.0);
         assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
     }
 

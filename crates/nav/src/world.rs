@@ -172,10 +172,12 @@ mod tests {
     fn find_uses_the_derived_world_across_the_corridor() {
         let w = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
         // The walled tile blocks walking; the door edge crosses it, so the
-        // route splits into Walk -> Transport -> Walk legs.
+        // route splits into Walk -> Transport -> Walk legs. The origin is
+        // within the door's interact radius of at=(1,0), so the door is
+        // taken straight from it.
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
-        // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
-        assert_eq!(r.ticks, 2.0);
+        // The 1-tick door taken from the origin + 1 walk tile (0.5).
+        assert_eq!(r.ticks, 1.5);
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { .. },
@@ -210,8 +212,9 @@ mod tests {
         assert!(!w.collision.walkable(tile(2, 0, 0)));
         // The decoded grid routes exactly like the authored one.
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
-        // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
-        assert_eq!(r.ticks, 2.0);
+        // The 1-tick door taken from the origin (within the interact
+        // radius of at=(1,0)) + 1 walk tile (0.5).
+        assert_eq!(r.ticks, 1.5);
         assert_eq!(r.legs.len(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -283,8 +286,9 @@ mod tests {
         assert_eq!(w.graph.edges, graph.edges);
         assert_eq!(w.graph.at, graph.at);
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
-        // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
-        assert_eq!(r.ticks, 2.0);
+        // The 1-tick door taken from the origin (within the interact
+        // radius of at=(1,0)) + 1 walk tile (0.5).
+        assert_eq!(r.ticks, 1.5);
         assert_eq!(r.legs.len(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
