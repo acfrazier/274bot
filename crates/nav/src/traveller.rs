@@ -15,9 +15,10 @@
 use std::collections::VecDeque;
 
 use api::interact::{op_loc, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult};
-use api::query::{ChatQueryExt, Query};
+use api::query::{ChatQueryExt, Query, SceneQuery};
 use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, ReadContext, WorldTile};
+use client::dash3d::CollisionFlag;
 
 use crate::arrival::arrived as grid_arrived;
 use crate::router::{GridLeg, GridRoute, Leg, Route};
@@ -563,6 +564,64 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     chat_seq: chat_seq(snapshot),
+                                    approach: None,
+                                });
+                                return None;
+                            }
+                            SendResult::Refused { reason, .. } => {
+                                fire_leg(options, &leg, LegPhase::Failed);
+                                return Some(TravelOutcome::Refused {
+                                    at: here,
+                                    reason,
+                                });
+                            }
+                        }
+                    }
+                    // The game only accepts an `op_loc` from adjacent: when
+                    // the player is not yet within chebyshev 1 of `at`, walk
+                    // to the nearest standable tile there first and wait to
+                    // arrive (the approach, settled by the transport hop),
+                    // before the loc is found and interacted with.
+                    if cheb(here, edge.at) > 1 {
+                        let Some(approach) = approach_tile(snapshot, edge, here) else {
+                            // No standable tile adjacent to the loc in the
+                            // loaded scene: keep waiting, bounded by the hop
+                            // budget. The leg stays on the front while
+                            // waiting.
+                            self.loc_wait += 1;
+                            if self.loc_wait > self.budget {
+                                fire_leg(options, &leg, LegPhase::Failed);
+                                return Some(TravelOutcome::Blocked {
+                                    at: here,
+                                    leg: self.leg_index,
+                                    detail: format!(
+                                        "no standable tile within 1 of transport loc {} at ({}, {}, {}) in the loaded scene",
+                                        edge.loc_id, edge.at.x, edge.at.z, edge.at.level
+                                    ),
+                                });
+                            }
+                            self.legs.push_front(leg);
+                            return None;
+                        };
+                        let to = edge.to;
+                        let at = edge.at;
+                        let mut ix = Interactions::new(snapshot, d);
+                        match ix.walk(approach) {
+                            SendResult::Sent { .. } => {
+                                self.loc_wait = 0;
+                                self.transport = Some(TransportHop {
+                                    leg,
+                                    to,
+                                    ticks_waited: 0,
+                                    sent_tile: Some(here),
+                                    tries: 0,
+                                    troll: false,
+                                    chat_seq: chat_seq(snapshot),
+                                    approach: Some(ApproachHop {
+                                        tile: approach,
+                                        at,
+                                        ticks_waited: 0,
+                                    }),
                                 });
                                 return None;
                             }
@@ -590,6 +649,7 @@ impl FollowRun {
                                         tries: 0,
                                         troll: false,
                                         chat_seq: chat_seq(snapshot),
+                                        approach: None,
                                     });
                                     return None;
                                 }
@@ -755,6 +815,64 @@ impl FollowRun {
                 return Poll::Terminal(outcome);
             }
         }
+        // The pre-interact approach: the player must stand within chebyshev
+        // 1 of the loc before the game accepts an `op_loc`. While the
+        // approach is armed, watch it instead of the arrive arm; only once
+        // adjacent does the hop find the loc, interact, and settle
+        // `arrived(to)`.
+        if hop.approach.is_some() {
+            match self.poll_approach(snapshot, &mut hop, options) {
+                Poll::Watching => {
+                    self.transport = Some(hop);
+                    return Poll::Watching;
+                }
+                Poll::Terminal(outcome) => return Poll::Terminal(outcome),
+                // The player is adjacent now: fall through, send the loc
+                // interact, then watch `arrived(to)`.
+                Poll::LegDone => {}
+            }
+            let edge = match &hop.leg {
+                Leg::Transport { edge } => edge.clone(),
+                Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
+            };
+            return match find_transport_loc(snapshot, &edge) {
+                Some(loc) => {
+                    let mut ix = Interactions::new(snapshot, d);
+                    match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
+                        SendResult::Sent { .. } => {
+                            self.loc_wait = 0;
+                            hop.ticks_waited = 0;
+                            hop.sent_tile = Some(here);
+                            self.transport = Some(hop);
+                            Poll::Watching
+                        }
+                        SendResult::Refused { reason, .. } => {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+                        }
+                    }
+                }
+                None => {
+                    // The loc has not appeared in the loaded scene yet:
+                    // keep waiting, bounded by the hop budget.
+                    self.loc_wait += 1;
+                    if self.loc_wait > self.budget {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        Poll::Terminal(TravelOutcome::Blocked {
+                            at: here,
+                            leg: self.leg_index,
+                            detail: format!(
+                                "transport loc {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
+                                edge.loc_id, edge.at.x, edge.at.z, edge.at.level
+                            ),
+                        })
+                    } else {
+                        self.transport = Some(hop);
+                        Poll::Watching
+                    }
+                }
+            };
+        }
         // The "I can't reach that!" watch: the client pathfind failed
         // right after the send, so the hop is refused immediately instead
         // of sitting out the settle budget. `chat_seq` is the hop-start
@@ -849,6 +967,91 @@ impl FollowRun {
         }
     }
 
+    /// One approach-hop settle step: match the adjacency arm
+    /// (`arrived(at, 1)` — only once the player stands within chebyshev 1
+    /// of the loc may the hop send the interact), or lapse the budget. A
+    /// door hop whose approach lapses escalates to the automatic troll
+    /// (the cheap hop lapsed before its first interact — the troll walks
+    /// the player to the door too); only a non-door transport lapses to
+    /// the real `Stalled`. The approach walk itself was sent when the hop
+    /// was armed, so this method only settles.
+    fn poll_approach(
+        &mut self,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        options: &mut TravelOptions<'_>,
+    ) -> Poll {
+        let mut approach = hop.approach.take().expect("approach hop present");
+        let here = here(snapshot);
+        let arms = [("arrived", arrived(approach.at, 1))];
+        let mut settle = Settle::new(
+            SettleOptions {
+                arms: &arms,
+                // The run enforces the per-hop budget; the settle only
+                // reports a disconnect (an arm read alone never lapses).
+                budget_ticks: u32::MAX,
+                budget_ms: None,
+            },
+            ReadContext::new(snapshot),
+        );
+        match settle.poll(ReadContext::new(snapshot)) {
+            Some(Outcome::Matched { .. }) => {
+                // The player is adjacent: the caller sends the loc interact.
+                Poll::LegDone
+            }
+            Some(Outcome::Expired { .. }) => {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                Poll::Terminal(TravelOutcome::Stalled {
+                    at: here,
+                    aiming: approach.tile,
+                    why: HopFailure::Dropped,
+                    tries: hop.tries.max(1),
+                })
+            }
+            // `poll` never produces `Refused` (only `Interactions` does);
+            // keep watching defensively.
+            Some(Outcome::Refused { .. }) => {
+                hop.approach = Some(approach);
+                Poll::Watching
+            }
+            None => {
+                approach.ticks_waited += 1;
+                if approach.ticks_waited > self.budget {
+                    // The approach walk never landed: for a door, escalate
+                    // this same leg to the automatic troll instead of
+                    // stalling; only a troll hop that lapses again — or a
+                    // non-door transport — returns the real `Stalled`.
+                    let door_leg = matches!(
+                        &hop.leg,
+                        Leg::Transport { edge } if edge.kind == TransportKind::Door
+                    );
+                    if door_leg && !hop.troll {
+                        hop.troll = true;
+                        hop.approach = None;
+                        hop.ticks_waited = 0;
+                        Poll::Watching
+                    } else {
+                        let why = if hop.sent_tile == Some(here) {
+                            HopFailure::Dropped
+                        } else {
+                            HopFailure::Expired
+                        };
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        Poll::Terminal(TravelOutcome::Stalled {
+                            at: here,
+                            aiming: approach.tile,
+                            why,
+                            tries: hop.tries.max(1),
+                        })
+                    }
+                } else {
+                    hop.approach = Some(approach);
+                    Poll::Watching
+                }
+            }
+        }
+    }
+
     /// One door-troll poll: read the door's open/closed state from the
     /// snapshot's locs and re-send — `op_loc` always, plus the same-tick
     /// walk when the door reads open — so a tick-perfect closer cannot
@@ -868,6 +1071,39 @@ impl FollowRun {
         };
         let here = here(snapshot);
         let tile = door_tile(&edge);
+        // The game only accepts an `op_loc` from adjacent: while the
+        // player is outside chebyshev 1 of the door (the cheap hop may
+        // have lapsed while still approaching), re-send the approach walk
+        // instead of the interact. Only once adjacent does the troll
+        // re-send `op_loc` + the same-tick walk.
+        if cheb(here, edge.at) > 1 {
+            let Some(approach) = approach_tile(snapshot, &edge, here) else {
+                // No standable tile adjacent to the door in the loaded
+                // scene: keep waiting, bounded by the hop budget.
+                self.loc_wait += 1;
+                if self.loc_wait > self.budget {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    return Some(TravelOutcome::Blocked {
+                        at: here,
+                        leg: self.leg_index,
+                        detail: format!(
+                            "troll door loc {} has no standable tile within 1 of {tile:?} in the loaded scene",
+                            edge.loc_id
+                        ),
+                    });
+                }
+                return None;
+            };
+            let mut ix = Interactions::new(snapshot, d);
+            match ix.walk(approach) {
+                SendResult::Sent { .. } => {}
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    return Some(TravelOutcome::Refused { at: here, reason });
+                }
+            }
+            return None;
+        }
         // The live loc's tile can sit a tile or two off the derived `at`
         // (the cheap hop's `find_transport_loc` already tolerates that),
         // so an exact-tile lookup misses it and the troll blocks while
@@ -993,6 +1229,20 @@ struct TransportHop {
     tries: u32,
     troll: bool,
     chat_seq: i32,
+    /// The pre-interact approach walk: the standable take-off tile within
+    /// chebyshev 1 of the edge's `at` the player must reach before the loc
+    /// interact can be sent. `None` once the player stands adjacent (or on
+    /// a hop with no interact, like the open-leaf walk-through).
+    approach: Option<ApproachHop>,
+}
+
+/// The transport approach: the standable take-off tile within chebyshev 1
+/// of the edge's `at` (the walk target), the `at` the adjacency settle is
+/// measured against, and the stall clock.
+struct ApproachHop {
+    tile: WorldTile,
+    at: WorldTile,
+    ticks_waited: u32,
 }
 
 /// The player's world tile from the snapshot: the canonical route-based
@@ -1033,6 +1283,52 @@ fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, 
         let idx = (base + 15).min(tiles.len() - 1).max(base + 1);
         (tiles[idx], idx)
     }
+}
+
+/// The eight tiles within chebyshev 1 of a tile, swept in a fixed order so
+/// the nearest-approach choice is deterministic.
+const APPROACH_RING: [(i32, i32); 8] = [
+    (0, 1),
+    (0, -1),
+    (1, 0),
+    (-1, 0),
+    (-1, -1),
+    (1, -1),
+    (-1, 1),
+    (1, 1),
+];
+
+/// The nearest standable tile within chebyshev 1 of `edge.at` — the
+/// take-off the transport interact must be sent from (the game only
+/// accepts an `op_loc` from adjacent). `at` itself is the interact target
+/// — a blocked loc tile — and is never a candidate.
+/// [`scene_standable`] mirrors `WorldCollision::standable` against the
+/// loaded scene's collision flags. `None` when no adjacent tile is
+/// standable.
+fn approach_tile(snapshot: &GameSnapshot, edge: &TransportEdge, here: WorldTile) -> Option<WorldTile> {
+    APPROACH_RING
+        .iter()
+        .map(|(dx, dz)| WorldTile {
+            x: edge.at.x + dx,
+            z: edge.at.z + dz,
+            level: edge.at.level,
+        })
+        .filter(|t| scene_standable(snapshot, *t))
+        .min_by_key(|t| cheb(*t, here))
+}
+
+/// Whether a tile is standable in the loaded scene: no footprint block —
+/// no `WALK_SCENERY` footprint, no `WR_GRND` ground block, and no
+/// `SQ_BLOCKED` base — the same test as `WorldCollision::standable`
+/// against the client's raw collision flags. Tiles the scene has no flags
+/// for (outside it, or on another level) are not standable.
+fn scene_standable(snapshot: &GameSnapshot, tile: WorldTile) -> bool {
+    SceneQuery::new(snapshot.scene(), None)
+        .collision_at(tile)
+        .is_some_and(|flags| {
+            flags & (CollisionFlag::WALK_SCENERY | CollisionFlag::WR_GRND | CollisionFlag::SQ_BLOCKED)
+                == 0
+        })
 }
 
 /// The snapshot loc for a transport edge: the edge's `loc_id` on the
@@ -2009,6 +2305,56 @@ mod tests {
     }
 
     #[test]
+    fn follow_approaches_a_transport_loc_before_interacting() {
+        // The router may arm a transport leg from a take-off tile up to
+        // `INTERACT_RADIUS` (3) from `at`, but the game only accepts an
+        // `op_loc` from adjacent. The player starts 3 tiles south of the
+        // ladder loc: `follow` must first walk to the nearest standable
+        // tile within chebyshev 1 of `at` (here (3202, 3203)) and only
+        // then send `op_loc`; once adjacent it interacts and settles
+        // `arrived(edge.to)`.
+        let mut c = scene_client();
+        plant_ladder(&mut c, Some("Climb"));
+        let mut snap = snap_at(&mut c, 2, 1); // cheb 3 from the ladder's `at`
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: ladder_edge(),
+            }],
+            dest: WorldTile {
+                x: 3202,
+                z: 3205,
+                level: 0,
+            },
+            ticks: 2.0, // the ladder edge's ticks
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop walks to the adjacent standable tile, never the
+        // interact (the click would be dropped from 3 tiles away).
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert_eq!(rec.walked, vec![(2, 3)], "the approach walk goes out first");
+        assert_eq!(rec.loc_ops, 0, "no OP_LOC1 before the player is adjacent");
+        // The player steps onto the approach tile: the hop sends `op_loc`.
+        plant_player(&mut c, 2, 3);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert_eq!(rec.loc_ops, 1, "one OP_LOC1 once adjacent");
+        // The ladder carries the player to `edge.to`: the run arrives.
+        plant_player(&mut c, 2, 5);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, WorldTile { x: 3202, z: 3205, level: 0 });
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn follow_auto_trolls_a_door_when_the_cheap_hop_lapses() {
         // A tick-perfect closer: the mock alternates the door loc's id
         // (closed 1530 / open 1531) every tick, and the player only
@@ -2251,10 +2597,12 @@ mod tests {
         // The client pathfind failed right after the interact: the game
         // says "I can't reach that!" (a chat line new since the hop
         // started) and the hop must fail fast with the unreachable
-        // signal — never sit out the settle budget.
+        // signal — never sit out the settle budget. The player starts
+        // adjacent to the ladder, so the interact is the hop's first send
+        // (a further start would walk the approach first).
         let mut c = scene_client();
         plant_ladder(&mut c, Some("Climb"));
-        let mut snap = snap_at(&mut c, 0, 0);
+        let mut snap = snap_at(&mut c, 2, 3);
         let mut rec = FollowRec {
             route: Some((0, 0)),
             ..FollowRec::default()
@@ -2271,7 +2619,14 @@ mod tests {
             },
             ticks: 2.0, // the ladder edge's ticks
         };
-        let mut options = TravelOptions::default();
+        // `close_enough: 1` keeps the player outside the arrive arm's
+        // radius of `edge.to` while adjacent to `at` (the far side is
+        // 2 tiles past the ladder), so the can't-reach line is the only
+        // arm that can fire.
+        let mut options = TravelOptions {
+            close_enough: 1,
+            ..TravelOptions::default()
+        };
         // Poll 1: the interact is sent and the hop starts watching.
         assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
@@ -2283,7 +2638,7 @@ mod tests {
                 at,
                 reason: SendReason::Unreachable,
             }) => {
-                assert_eq!(at, WorldTile { x: 3200, z: 3200, level: 0 });
+                assert_eq!(at, WorldTile { x: 3202, z: 3203, level: 0 });
             }
             other => panic!("expected Refused(Unreachable), got {other:?}"),
         }
@@ -2485,8 +2840,11 @@ mod tests {
 
     #[test]
     fn follow_blocks_when_the_transport_loc_is_missing() {
+        // The player starts adjacent to the edge's `at`, so the run reaches
+        // the loc lookup without an approach walk; loc id 99 is never
+        // planted in the scene.
         let mut c = scene_client();
-        let mut snap = snap_at(&mut c, 0, 0);
+        let mut snap = snap_at(&mut c, 2, 3);
         let mut rec = FollowRec {
             route: Some((0, 0)),
             ..FollowRec::default()
@@ -2530,7 +2888,16 @@ mod tests {
         let mut t = Traveller::new();
         let route = Route {
             legs: vec![
-                walk_leg(&[(3200, 3200), (3200, 3201), (3200, 3202)]),
+                // The walk leg ends adjacent to the ladder's `at`, so the
+                // transport leg interacts on its first poll (no approach
+                // walk) and the send counts stay per-leg.
+                walk_leg(&[
+                    (3200, 3200),
+                    (3200, 3201),
+                    (3200, 3202),
+                    (3200, 3203),
+                    (3201, 3203),
+                ]),
                 Leg::Transport {
                     edge: ladder_edge(),
                 },
@@ -2553,7 +2920,7 @@ mod tests {
         let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
             step += 1;
             match step {
-                1 => plant_player(c, 0, 2), // reach the walk leg's end
+                1 => plant_player(c, 1, 3), // reach the walk leg's end (adjacent to the ladder)
                 _ => plant_player(c, 2, 5), // cross the transport to edge.to
             }
         });
@@ -2801,6 +3168,7 @@ mod tests {
             tries: 0,
             troll: false,
             chat_seq: 0,
+            approach: None,
         });
         // The player is on the destination level (1) but far from `to`:
         // the hop must still be watching.
