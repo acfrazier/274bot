@@ -9,11 +9,13 @@ use std::time::{Duration, Instant};
 
 use api::interact::Driver;
 use api::obj_names::ObjNames;
-use api::snapshot::GameSnapshot;
+use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use nav::grid::StepGrid;
+use nav::router::Route;
 use nav::tile::Tile;
-use nav::traveller::{NavStatus, Traveller};
+use nav::traveller::{NavStatus, TravelOptions, TravelOutcome, Traveller};
+use nav::world::NavWorld;
 
 use crate::evidence::Evidence;
 use crate::proof::Proof;
@@ -46,7 +48,16 @@ pub struct ScenarioRunner {
     snapshot: GameSnapshot,
     obj_names: Option<Arc<ObjNames>>,
     grid: Option<Arc<StepGrid>>,
+    /// The whole-world router surface (collision + transport graph),
+    /// derived from the baked pack; `Follow` steps route on it.
+    nav_world: Option<Arc<NavWorld>>,
     traveller: Traveller,
+    /// The armed `Follow` route (re-passed each tick; the traveller
+    /// consumes it when a run starts).
+    follow_route: Option<Route>,
+    /// Whole-window shot label fired at the terminal state (PASS and
+    /// FAIL); `None` for scenarios that only fire `Shot` steps.
+    terminal_shot: Option<&'static str>,
     phase: Phase,
     step: usize,
     step_sent: bool,
@@ -69,27 +80,55 @@ pub struct ScenarioRunner {
 }
 
 impl ScenarioRunner {
-    /// A runner for `scenario`; the nav grid loads from the standard pack
-    /// path (`None` when no pack, so `Walk` steps fail with a clear
-    /// message).
+    /// A runner for `scenario`; the nav grid and the whole-world router
+    /// surface load from the standard pack path (`None` when no pack, so
+    /// `Walk`/`Follow` steps fail with a clear message).
     pub fn new(scenario: Scenario) -> Self {
-        Self::with_grid(scenario, None)
+        let pack = crate::default_pack_path();
+        let grid = nav::pack::load_pack(&pack).ok().map(Arc::new);
+        let nav_world = NavWorld::load_pack(&pack).ok().map(Arc::new);
+        Self::with_data(scenario, grid, nav_world)
     }
 
     /// Runner with an injected nav grid; `None` loads the default pack
-    /// path (tests inject fixture grids).
+    /// path (tests inject fixture grids). No router world is loaded, so
+    /// `Follow` steps fail with a clear message unless [`Self::with_world`]
+    /// supplies one.
     pub fn with_grid(scenario: Scenario, grid: Option<Arc<StepGrid>>) -> Self {
+        Self::with_data(scenario, grid, None)
+    }
+
+    /// Runner with injected nav data: the legacy [`StepGrid`] for `Walk`
+    /// steps and the whole-world [`NavWorld`] (collision + transport
+    /// graph) for `Follow` steps. `None` fields load from the default pack
+    /// path (the live path).
+    pub fn with_world(
+        scenario: Scenario,
+        grid: Option<Arc<StepGrid>>,
+        nav_world: Option<Arc<NavWorld>>,
+    ) -> Self {
         let grid = grid.or_else(|| {
             nav::pack::load_pack(&crate::default_pack_path())
                 .ok()
                 .map(Arc::new)
         });
+        Self::with_data(scenario, grid, nav_world)
+    }
+
+    fn with_data(
+        scenario: Scenario,
+        grid: Option<Arc<StepGrid>>,
+        nav_world: Option<Arc<NavWorld>>,
+    ) -> Self {
         Self {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
             grid,
+            nav_world,
             traveller: Traveller::new(),
+            follow_route: None,
+            terminal_shot: None,
             phase: Phase::Seeding,
             step: 0,
             step_sent: false,
@@ -108,6 +147,20 @@ impl ScenarioRunner {
     /// arm holds.
     pub fn set_shot_sink(&mut self, sink: Box<dyn FnMut(&str, &GameSnapshot) + Send>) {
         self.shot_sink = Some(sink);
+    }
+
+    /// Fire the shot sink at the terminal state (PASS **and** FAIL) with
+    /// `label`, in addition to any `Shot` steps. The headed panel arms
+    /// this for scenarios that need a terminal capture; the headless twin
+    /// keeps the default (no-op) sink.
+    pub fn set_terminal_shot(&mut self, label: &'static str) {
+        self.terminal_shot = Some(label);
+    }
+
+    /// The armed terminal-shot label, `None` when only `Shot` steps fire.
+    /// The panel reads it to hold a FAIL exit until the capture drains.
+    pub fn terminal_shot(&self) -> Option<&'static str> {
+        self.terminal_shot
     }
 
     /// The shared obj-id → name table for `Item` predicates and the
@@ -276,6 +329,7 @@ impl ScenarioRunner {
         self.step_sent = false;
         self.ticks_waited = 0;
         self.traveller.clear();
+        self.follow_route = None;
     }
 
     fn advance_step(&mut self) {
@@ -288,8 +342,10 @@ impl ScenarioRunner {
     }
 
     /// Send the current step's action once. `Perform` runs its closure;
-    /// `Walk` arms the A* route from the current tile; `Shot` sends
-    /// nothing (the step only waits for its arm to capture it).
+    /// `Walk` arms the A* route from the current tile; `Follow` arms the
+    /// whole-world route (`find` over the derived collision + transport
+    /// graph); `Shot` sends nothing (the step only waits for its arm to
+    /// capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         let walk_dest = match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
@@ -300,6 +356,7 @@ impl ScenarioRunner {
             }
             StepKind::Shot { .. } => return Ok(()),
             StepKind::Walk { dest } => *dest,
+            StepKind::Follow { dest } => return self.arm_follow(*dest),
         };
         self.arm_walk(walk_dest)
     }
@@ -325,6 +382,31 @@ impl ScenarioRunner {
         }
     }
 
+    /// Arm a whole-world route (`nav::router::find` over the derived
+    /// collision + transport graph) for a `Follow` step. The origin is the
+    /// observed player tile — a loc-blocked tele landing is fine, the
+    /// router only tests tiles stepped *onto*.
+    fn arm_follow(&mut self, dest: WorldTile) -> Result<(), String> {
+        let Some((hx, hz, hl)) = self.snapshot.tile() else {
+            return Err("no player tile to route from".into());
+        };
+        let Some(world) = self.nav_world.as_ref() else {
+            return Err("no nav world (run nav-pack); cannot route".into());
+        };
+        let from = WorldTile {
+            x: hx,
+            z: hz,
+            level: hl,
+        };
+        match nav::router::find(&world.collision, &world.graph, from, dest) {
+            Ok(route) => {
+                self.follow_route = Some(route);
+                Ok(())
+            }
+            Err(e) => Err(format!("no world path from {from:?} to {dest:?}: {e:?}")),
+        }
+    }
+
     /// Hop an armed route one leg on a delivered server frame (`dirty`
     /// — any family gen moved). The traveller's per-hop budget counts
     /// server ticks, exactly like the host-play pump's player-gen latch,
@@ -332,6 +414,10 @@ impl ScenarioRunner {
     /// is read live from the client's loc typecode.
     fn step_traveller(&mut self, client: &mut Client, dirty: bool) {
         if !dirty {
+            return;
+        }
+        if matches!(self.scenario.steps[self.step].kind, StepKind::Follow { .. }) {
+            self.step_follow(client);
             return;
         }
         let Some((hx, hz, hl)) = self.snapshot.tile() else {
@@ -361,6 +447,38 @@ impl ScenarioRunner {
         }
     }
 
+    /// Poll the armed `Follow` route one step per delivered frame. `find`
+    /// already proved the route at arm time; a terminal outcome other than
+    /// `Arrived` is a stall/refusal/block and fails the step with the
+    /// traveller's own message. `Arrived` leaves the arm predicate
+    /// (`Proof::Arrived`) to fire on the same tick's snapshot read.
+    ///
+    /// The poll options are a fresh default each call — this runner never
+    /// sets an `on_leg` callback, so nothing needs to survive across ticks
+    /// (and a stored `TravelOptions<'static>` would make the runner
+    /// non-`Send`, which the panel's shared runner slot requires).
+    fn step_follow(&mut self, client: &mut Client) {
+        let Some(route) = self.follow_route.clone() else {
+            return;
+        };
+        let mut options = TravelOptions::default();
+        let outcome = self
+            .traveller
+            .follow(client, &self.snapshot, route, &mut options);
+        let Some(outcome) = outcome else {
+            return;
+        };
+        if let TravelOutcome::Arrived { .. } = outcome {
+            // The arm predicate fires on this tick's snapshot read.
+            return;
+        }
+        self.finish_fail(&format!(
+            "step {} ({}): follow {outcome:?}",
+            self.step + 1,
+            self.current_step().name
+        ));
+    }
+
     /// The predicate the terminal evidence names: the failing step's arm,
     /// else the proof.
     fn current_predicate_name(&self) -> String {
@@ -371,8 +489,21 @@ impl ScenarioRunner {
         }
     }
 
+    /// Fire the armed terminal shot at the terminal state (PASS and FAIL).
+    /// The headed panel's sink bridges this to the whole-window readback;
+    /// the headless twin's default sink is a no-op.
+    fn fire_terminal_shot(&mut self) {
+        let Some(label) = self.terminal_shot else {
+            return;
+        };
+        if let Some(sink) = self.shot_sink.as_mut() {
+            sink(label, &self.snapshot);
+        }
+    }
+
     fn finish_pass(&mut self) {
         self.phase = Phase::Done;
+        self.fire_terminal_shot();
         self.evidence = Some(Evidence::terminal(
             self.scenario.name,
             "PASS",
@@ -387,6 +518,7 @@ impl ScenarioRunner {
 
     fn finish_fail(&mut self, msg: &str) {
         self.phase = Phase::Done;
+        self.fire_terminal_shot();
         self.evidence = Some(Evidence::terminal(
             self.scenario.name,
             "FAIL",
@@ -717,6 +849,190 @@ mod tests {
             }
             other => panic!("expected Failed, got {other:?}"),
         }
+    }
+
+    // --- Whole-world `Follow` steps (find + Traveller::follow) ---
+
+    /// A synthetic client with a connected stream (so the snapshot is
+    /// `attached` and `Interactions::walk` passes its preconditions),
+    /// seeded on a mainland base, standing at world (3205, 3200) — scene
+    /// (5, 0), off the fresh client's `_BOUNDS` border columns.
+    fn follow_client() -> Client {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port())
+            .expect("connect");
+        // Keep the listener alive so the connect stays established.
+        std::mem::forget(listener);
+        let mut c = Client::new(cfg());
+        c.stream = Some(stream);
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(ClientPlayer::at(5, 0));
+        for prot in [
+            ServerProt::PLAYER_INFO,
+            ServerProt::REBUILD_NORMAL,
+            ServerProt::UPDATE_STAT,
+        ] {
+            c.bump_gens(prot);
+        }
+        c
+    }
+
+    fn follow_scenario(dest: WorldTile, budget: u32) -> Scenario {
+        Scenario {
+            name: "follow",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "follow the corridor",
+                kind: StepKind::Follow { dest },
+                wait: wait(
+                    Proof::Arrived {
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
+                    },
+                    budget,
+                ),
+            }],
+            proof: Proof::Arrived {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+            },
+        }
+    }
+
+    /// A 1×40 corridor along z at x=3205 (scene x=5, off the fresh
+    /// client's `_BOUNDS` border columns): the route is forced, so the
+    /// follow's hops cannot wander like a 0-cost Dijkstra does on an open
+    /// plane. The `find`-then-`follow` mechanics are what is under test.
+    #[test]
+    fn follow_step_arms_find_and_proofs_arrival() {
+        let mut c = follow_client();
+        let dest = WorldTile {
+            x: 3205,
+            z: 3230,
+            level: 0,
+        };
+        let grid = StepGrid::fixture_rect_at(
+            Tile {
+                x: 3205,
+                z: 3200,
+                level: 0,
+            },
+            1,
+            40,
+        );
+        let world = NavWorld::from_grid(&grid);
+        let mut runner = ScenarioRunner::with_world(
+            follow_scenario(dest, 120),
+            Some(Arc::new(grid)),
+            Some(Arc::new(world)),
+        );
+
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "send armed the whole-world route"
+        );
+
+        // Advance the player north one tile per tick; the follow polls its
+        // settle on every delivered frame and the arm fires on the exact
+        // destination tile.
+        let mut steps = 0;
+        while runner.status() != RunnerStatus::Passed {
+            if steps > 80 {
+                panic!("follow never arrived; status={:?}", runner.status());
+            }
+            steps += 1;
+            c.local_player = Some(ClientPlayer::at(5, steps as i32));
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut c);
+        }
+        let ev = runner.evidence().expect("evidence at PASS");
+        assert_eq!(ev.tile, Some([3205, 3230]));
+        assert_eq!(ev.predicate, "arrived(3205,3230,0)");
+        assert!(ev.ticks > 0, "the walk counted delivered frames");
+    }
+
+    #[test]
+    fn follow_step_fails_without_a_nav_world() {
+        let mut c = follow_client();
+        let dest = WorldTile {
+            x: 3205,
+            z: 3230,
+            level: 0,
+        };
+        let grid = StepGrid::fixture_rect_at(
+            Tile {
+                x: 3205,
+                z: 3200,
+                level: 0,
+            },
+            1,
+            40,
+        );
+        // `with_grid` injects the walk grid but no router world.
+        let mut runner =
+            ScenarioRunner::with_grid(follow_scenario(dest, 120), Some(Arc::new(grid)));
+        runner.tick(&mut c);
+        match runner.status() {
+            RunnerStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("no nav world"),
+                    "clear world error names the pack: {msg}"
+                )
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_shot_fires_the_sink_on_pass_and_fail() {
+        let sink_events: Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let pass_sink = Arc::clone(&sink_events);
+        let mut pass = ScenarioRunner::new(stat_scenario(1, 10));
+        pass.set_terminal_shot("t-pass");
+        pass.set_shot_sink(Box::new(move |label, snap| {
+            pass_sink
+                .lock()
+                .unwrap()
+                .push((label.to_string(), snap.tile()));
+        }));
+        let mut c = seeded_client();
+        pass.tick(&mut c);
+        c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+        pass.tick(&mut c);
+        assert_eq!(pass.status(), RunnerStatus::Passed);
+        assert_eq!(
+            sink_events.lock().unwrap().as_slice(),
+            &[("t-pass".to_string(), Some((3220, 3220, 0)))],
+            "the terminal shot fires once on PASS"
+        );
+
+        let fail_events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let fail_sink = Arc::clone(&fail_events);
+        let mut fail = ScenarioRunner::new(stat_scenario(999, 1));
+        fail.set_terminal_shot("t-fail");
+        fail.set_shot_sink(Box::new(move |label, _| {
+            fail_sink.lock().unwrap().push(label.to_string());
+        }));
+        let mut c = seeded_client();
+        fail.tick(&mut c);
+        assert!(matches!(fail.status(), RunnerStatus::Failed(_)));
+        assert_eq!(
+            fail_events.lock().unwrap().as_slice(),
+            &["t-fail".to_string()],
+            "the terminal shot fires once on FAIL"
+        );
     }
 
     #[test]

@@ -169,6 +169,11 @@ struct LiveScript {
     passed: bool,
     failed: Option<String>,
     last_step: Option<(usize, usize)>,
+    /// FAIL terminal-shot drain: the instant the runner first reported
+    /// `Failed` while a terminal shot was armed. The watch keeps pumping
+    /// (returning `None`) until the shot writes or [`NAV_FULL_SHOT_DRAIN`]
+    /// lapses, so a FAIL screenshot lands before exit 1.
+    drain_started: Option<Instant>,
 }
 
 /// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
@@ -239,16 +244,26 @@ impl LiveBoot {
                 }));
             }
             LiveBoot::Script { name } => {
-                let scenario_name = &name["script_".len()..];
+                let scenario_name = name.strip_prefix("script_").unwrap_or(&name);
                 let scenario = scenario::get(scenario_name)
                     .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
                 state.session.live_prepare_script(scenario)?;
                 arm_scenario_shots(state);
+                // `nav_full` runs longer than the default scenario deadline
+                // (mainland seed + a ~150-tile walk) and needs a terminal
+                // whole-window shot on PASS and on FAIL.
+                if scenario_name == "nav_full" {
+                    if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
+                        runner.set_deadline(NAV_FULL_DEADLINE);
+                        runner.set_terminal_shot("nav_full terminal");
+                    }
+                }
                 state.live = Some(LiveHarness::Script(LiveScript {
                     name,
                     passed: false,
                     failed: None,
                     last_step: None,
+                    drain_started: None,
                 }));
             }
             LiveBoot::Smoke => {
@@ -283,6 +298,9 @@ fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
     match mode.live_name() {
         Some("null_raster") => Some(Boot::Live(LiveBoot::NullRaster)),
         Some("stress50") => Some(Boot::Live(LiveBoot::Stress50)),
+        Some("nav_full") => Some(Boot::Live(LiveBoot::Script {
+            name: "nav_full".to_string(),
+        })),
         Some(name) if name.starts_with("script_") => {
             Some(Boot::Live(LiveBoot::Script { name: name.to_string() }))
         }
@@ -404,7 +422,8 @@ impl Default for PanelState {
     }
 }
 
-const LIVE_USAGE: &str = "usage: panel-play [--smoke] [--live null_raster|stress50|script_<name>]";
+const LIVE_USAGE: &str =
+    "usage: panel-play [--smoke] [--live null_raster|stress50|nav_full|script_<name>]";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -435,6 +454,17 @@ impl RunMode {
 /// with exit 1. Generous — scene 2 usually lands inside the first two
 /// minutes.
 const SMOKE_DEADLINE: Duration = Duration::from_secs(300);
+
+/// `nav_full` whole-run deadline: the mainland seed can take ~90s and the
+/// ~150-tile walk another ~2 minutes, so the default 180s scenario
+/// deadline would fail a healthy run. 360s still bounds a stuck one.
+const NAV_FULL_DEADLINE: Duration = Duration::from_secs(360);
+
+/// `nav_full` FAIL shot drain: after a `Failed` status the panel holds
+/// the exit up to this long so the terminal whole-window capture — asked
+/// for by the slot thread, written by the render readback — lands before
+/// exit 1.
+const NAV_FULL_SHOT_DRAIN: Duration = Duration::from_secs(10);
 
 /// `--smoke` render-settle window: after the focused slot reaches scene 2,
 /// the whole-window shot request waits this long before reaching the render
@@ -518,7 +548,7 @@ pub fn parse_live_args(
         let script_ok = name
             .strip_prefix("script_")
             .is_some_and(|n| scenario::get(n).is_some());
-        if name != "null_raster" && name != "stress50" && !script_ok {
+        if name != "null_raster" && name != "stress50" && name != "nav_full" && !script_ok {
             return Err((2, LIVE_USAGE.into()));
         }
     }
@@ -599,16 +629,23 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
 /// Headed script watch: mirror the shared `ScenarioRunner` each frame.
 /// PASS prints the JSON evidence record and keeps the window open (visual
 /// debug); FAIL prints the record and returns the message (the caller
-/// exits 1, the existing live FAIL contract).
-fn live_script_tick(live: &mut LiveScript, session: &mut Session) -> Option<String> {
+/// exits 1, the existing live FAIL contract). When the runner armed a
+/// terminal shot, a FAIL holds the exit until the capture writes (or
+/// [`NAV_FULL_SHOT_DRAIN`] lapses), so the FAIL screenshot lands too.
+fn live_script_tick(
+    live: &mut LiveScript,
+    session: &mut Session,
+    wrote_shots: usize,
+) -> Option<String> {
     if live.passed || live.failed.is_some() {
         return None;
     }
-    let (status, evidence) = {
+    let (status, evidence, wants_terminal_shot) = {
         let guard = session.scenario.lock().unwrap();
         (
             guard.as_ref().map(|r| r.status()),
             guard.as_ref().and_then(|r| r.evidence().cloned()),
+            guard.as_ref().is_some_and(|r| r.terminal_shot().is_some()),
         )
     };
     let record = |evidence: &Option<scenario::Evidence>| {
@@ -624,6 +661,21 @@ fn live_script_tick(live: &mut LiveScript, session: &mut Session) -> Option<Stri
             None
         }
         Some(scenario::RunnerStatus::Failed(msg)) => {
+            if wants_terminal_shot {
+                let held = match live.drain_started {
+                    Some(t0) => t0.elapsed() >= NAV_FULL_SHOT_DRAIN,
+                    // The frame the failure is first seen: the request is
+                    // already in `shot_state`, but `pump_shots` ran before
+                    // this tick, so the write needs at least one more frame.
+                    None => false,
+                };
+                if !held && wrote_shots == 0 {
+                    if live.drain_started.is_none() {
+                        live.drain_started = Some(Instant::now());
+                    }
+                    return None;
+                }
+            }
             eprintln!("FAIL: live {} {}", live.name, record(&evidence));
             live.failed = Some(msg.clone());
             Some(msg)
@@ -2190,7 +2242,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         let fail = match live {
             LiveHarness::Null(n) => live_null_tick(n, &statuses),
             LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
-            LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session),
+            LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session, wrote_shots),
             LiveHarness::Smoke(s) => live_smoke_tick(s, &mut state.session, &statuses, wrote_shots),
         };
         if let Some(msg) = fail {
@@ -2269,6 +2321,10 @@ mod tests {
         match boot_for(&RunMode::Live("script_walk".into()), Some("pass")) {
             Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_walk"),
             other => panic!("script_<name> must map to a deferred Script boot, got {other:?}"),
+        }
+        match boot_for(&RunMode::Live("nav_full".into()), None) {
+            Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "nav_full"),
+            other => panic!("nav_full must map to a deferred Script boot, got {other:?}"),
         }
         match boot_for(&RunMode::Interactive, Some("hunter2")) {
             Some(Boot::Unlock { pass }) => assert_eq!(pass, "hunter2"),
@@ -2428,6 +2484,18 @@ mod tests {
         assert_eq!(
             parse_live_args(["--live", "stress50"], None),
             Ok(RunMode::Live("stress50".into()))
+        );
+    }
+
+    #[test]
+    fn parse_live_args_accepts_nav_full() {
+        assert_eq!(
+            parse_live_args(["--live", "nav_full"], None),
+            Ok(RunMode::Live("nav_full".into()))
+        );
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("nav_full")),
+            Ok(RunMode::Live("nav_full".into()))
         );
     }
 
@@ -2645,9 +2713,10 @@ mod tests {
             passed: false,
             failed: None,
             last_step: None,
+            drain_started: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s),
+            live_script_tick(&mut live, &mut s, 0),
             None,
             "PASS keeps the window open"
         );
@@ -2684,10 +2753,64 @@ mod tests {
             passed: false,
             failed: None,
             last_step: None,
+            drain_started: None,
         };
-        let msg = live_script_tick(&mut live, &mut s).expect("FAIL returns the message");
+        // No terminal shot armed: the FAIL returns immediately.
+        let msg = live_script_tick(&mut live, &mut s, 0).expect("FAIL returns the message");
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
         assert!(live.failed.is_some());
+    }
+
+    /// A terminal-shot FAIL holds the exit until the shot writes (or the
+    /// drain lapses): the first frame returns `None` (the request landed
+    /// after `pump_shots` ran), the write frame returns the message.
+    #[test]
+    fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
+        use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Seed, Step, StepKind, Wait};
+        let mut s = crate::session::Session::new();
+        let fail_scenario = Scenario {
+            name: "f",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "never",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 999 },
+                    budget_ticks: 1,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 999 },
+        };
+        let mut runner = ScenarioRunner::new(fail_scenario);
+        runner.set_terminal_shot("t-fail");
+        {
+            let mut c = script_client();
+            runner.tick(&mut c);
+        }
+        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+        *s.scenario.lock().unwrap() = Some(runner);
+        let mut live = LiveScript {
+            name: "nav_full".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, 0),
+            None,
+            "the first FAIL frame holds so the shot can land"
+        );
+        assert!(live.drain_started.is_some());
+        // The shot writes on a later frame: the FAIL is returned.
+        let msg = live_script_tick(&mut live, &mut s, 1).expect("FAIL after the shot writes");
+        assert!(live.failed.is_some());
+        assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
     }
 
     fn smoke_at(started: Instant) -> LiveSmoke {

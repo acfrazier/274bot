@@ -9,6 +9,7 @@ pub mod router;
 pub mod tile;
 pub mod transport;
 pub mod traveller;
+pub mod world;
 
 #[cfg(test)]
 mod tests {

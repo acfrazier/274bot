@@ -24,7 +24,7 @@ mod runner;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::snapshot::GameSnapshot;
+use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use nav::tile::Tile;
 
@@ -62,6 +62,13 @@ pub enum StepKind {
     /// Nav walk: arm the A* route from the current tile (the pack grid),
     /// hop it one leg per tick, wait for `arrived(dest)`.
     Walk { dest: Tile },
+    /// Whole-world nav: arm `nav::router::find` over the collision +
+    /// transport graph derived from the baked pack and drive
+    /// `Traveller::follow` one step per tick until the route terminates.
+    /// The wait arm is `arrived(dest)`; the proof mirrors it, so a follow
+    /// that ends anywhere but the destination fails the step with the
+    /// terminal outcome's message.
+    Follow { dest: WorldTile },
     /// Whole-window shot at the moment `wait.arm` holds: nothing is sent,
     /// then the runner fires the shot sink (headed: the panel captures
     /// the window; headless: a no-op) with the label + the terminal
@@ -93,13 +100,14 @@ pub fn get(name: &str) -> Option<Scenario> {
     match name {
         "walk" => Some(walk_scenario()),
         "render_smoke" => Some(render_smoke_scenario()),
+        "nav_full" => Some(nav_full_scenario()),
         _ => None,
     }
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
-    vec!["walk", "render_smoke"]
+    vec!["walk", "render_smoke", "nav_full"]
 }
 
 /// The `render_smoke` scenario: log in `test`/`test`, do nothing, and
@@ -185,6 +193,50 @@ fn walk_scenario() -> Scenario {
     }
 }
 
+/// The `nav_full` scenario: log in `test`/`test`, mainland-hop into the
+/// Lumbridge courtyard, then drive the whole-world nav proof. `find` runs
+/// the Dijkstra router over the collision + transport graph derived from
+/// the baked whole-world pack and `Traveller::follow` drives the route one
+/// step per tick until arrival. The destination is a concrete Lumbridge
+/// tile from the pack — (3220, 3264, 0), 44 chebyshev tiles north of the
+/// tele landing — in mapsquare (50,51), which the pre-bake 2-square pack
+/// (m50_50 + m44_53) never covered, so the walk crosses the z=3264 square
+/// boundary. It is walk-only (no boat/teleport: those have no
+/// content-derivable origin tile); the pack's derived graph is checked at
+/// arm time, and the run fails with a clear message if no walk path
+/// exists. The step budget is sized for a ~150-tile walk plus re-routing.
+pub fn nav_full_scenario() -> Scenario {
+    let dest = WorldTile {
+        x: 3220,
+        z: 3264,
+        level: 0,
+    };
+    Scenario {
+        name: "nav_full",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![Step {
+            name: "follow the whole-world route",
+            kind: StepKind::Follow { dest },
+            wait: Wait {
+                arm: Proof::Arrived {
+                    x: dest.x,
+                    z: dest.z,
+                    level: dest.level,
+                },
+                budget_ticks: 600,
+            },
+        }],
+        proof: Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        },
+    }
+}
+
 /// 377 `fail()`: print and exit 1. The headed runner calls this on a
 /// `Failed` status; the headless twin maps the same status through its own
 /// `common::fail` (same exit-1 contract).
@@ -219,5 +271,31 @@ mod tests {
         assert_eq!(s.steps.len(), 1, "one capture step");
         assert!(matches!(s.steps[0].kind, StepKind::Shot { label: "scene2" }));
         assert_eq!(s.proof.name(), "stat(16)>=0");
+    }
+
+    #[test]
+    fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
+        let s = get("nav_full").expect("nav_full is registered");
+        assert_eq!(s.name, "nav_full");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(s.seed.mainland, "the mainland hop lands the Lumbridge tele");
+        assert_eq!(s.steps.len(), 1, "one follow step");
+        let (dest, arm) = match &s.steps[0].kind {
+            StepKind::Follow { dest } => (
+                *dest,
+                match &s.steps[0].wait.arm {
+                    Proof::Arrived { x, z, level } => (*x, *z, *level),
+                    other => panic!("follow arm must be arrived, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_full step must be Follow"),
+        };
+        // The destination is a concrete pack tile ~44 tiles north of the
+        // mainland landing, crossing the z=3264 mapsquare boundary into
+        // (50,51) — a square the old 2-square pack never baked.
+        assert_eq!(dest, WorldTile { x: 3220, z: 3264, level: 0 });
+        assert_eq!(arm, (3220, 3264, 0));
+        assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
+        assert_eq!(names(), ["walk", "render_smoke", "nav_full"]);
     }
 }
