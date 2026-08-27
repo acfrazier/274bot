@@ -3,11 +3,13 @@
 // and never touches the network (same trick as `client/tests/gens.rs`).
 
 use api::query::{npc_by_index, npcs_at};
-use api::snapshot::{Family, GameSnapshot};
+use api::snapshot::{ActorKind, ActorTargetView, Family, GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig, ClientNpc};
 use client::config::if_type::{ComponentType, IfType};
+use client::config::NpcType;
 use client::dash3d::ClientPlayer;
 use client::io::ServerProt;
+use std::sync::Arc;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -376,4 +378,225 @@ fn tile_types_are_plain_copy_data() {
     let mut locs = std::collections::HashSet::new();
     locs.insert(l);
     assert!(locs.contains(&l2));
+}
+
+/// Stat rebuild reads the full skill table into `StatView`s (all 25
+/// skills) and keeps `runenergy()` as a derived convenience.
+#[test]
+fn stat_view_rebuild_reads_full_skills() {
+    let mut c = client_with_npc();
+    c.stat_effective_level[0] = 12;
+    c.stat_base_level[0] = 12;
+    c.stat_xp[0] = 1300;
+    c.stat_effective_level[2] = 30;
+    c.stat_base_level[2] = 30;
+    c.stat_xp[2] = 13150;
+    c.runenergy = 20;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    assert!(snap.rebuild_family(&c, Family::Stat));
+
+    let stats = snap.stats();
+    assert_eq!(stats.len(), 25);
+    assert_eq!(stats[0].index, 0);
+    assert_eq!(stats[0].name, "attack");
+    assert_eq!(stats[0].effective, 12);
+    assert_eq!(stats[0].base, 12);
+    assert_eq!(stats[0].xp, 1300);
+    assert!(stats[0].used);
+    assert_eq!(stats[2].name, "strength");
+    assert_eq!(stats[2].effective, 30);
+    assert_eq!(stats[2].xp, 13150);
+    assert_eq!(stats[18].name, "slayer");
+    assert!(!stats[18].used, "the client table marks slayer unused");
+    assert_eq!(stats[19].name, "-unused-");
+    assert!(!stats[19].used, "the -unused- slot is not a skill");
+    assert_eq!(stats[20].name, "runecraft");
+    assert!(stats[20].used);
+    assert_eq!(snap.runenergy(), 20);
+    assert!(!snap.rebuild_family(&c, Family::Stat));
+}
+
+/// An npc rebuild copies the full actor view: tile, distance, anims,
+/// health, face target, and the npc-type name/actions/level.
+#[test]
+fn npc_rebuild_reads_full_actor_view() {
+    let mut c = client_with_npc();
+    // Plant the npc type at the index `r#type` points at, so the fixture
+    // works with or without a real /tmp cache.
+    let mut planted_type = None;
+    let npc = c.npc[7].as_mut().unwrap();
+    if let Some(cache) = Arc::get_mut(&mut c.cache) {
+        planted_type = Some(cache.npcs.len());
+        npc.r#type = planted_type;
+        cache.npcs.push(NpcType {
+            id: 9,
+            name: "Goblin".into(),
+            op: vec![Some("Attack".into()), None],
+            vislevel: 2,
+            ..Default::default()
+        });
+    }
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 1;
+    c.local_player = Some(ClientPlayer::at(20, 12));
+    {
+        let e = &mut c.npc[7].as_mut().unwrap().entity;
+        e.primary_anim = 809;
+        e.secondary_anim = 808;
+        e.yaw = 512;
+        e.dst_yaw = 768;
+        e.chat_message = Some("hi".into());
+        e.spotanim_id = 99;
+        e.health = 4;
+        e.total_health = 8;
+        e.face_entity = 3;
+        e.route_length = 1;
+        e.combat_cycle = 50;
+        e.runanim = 810;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+
+    let v = &snap.npcs()[0];
+    assert_eq!(v.index, 7);
+    assert_eq!(v.r#type, planted_type);
+    assert_eq!(v.name.as_deref(), Some("Goblin"));
+    assert_eq!(v.actions, vec![Some("Attack".into()), None]);
+    assert_eq!(v.tile, WorldTile { x: 100, z: 200, level: 1 });
+    // chebyshev from the local player's world tile (3220, 3212)
+    assert_eq!(v.distance, 3120);
+    assert_eq!(v.animation, 809);
+    assert_eq!(v.pose_animation, 808);
+    assert_eq!(v.orientation, 512);
+    assert_eq!(v.target_orientation, 768);
+    assert_eq!(v.overhead_text.as_deref(), Some("hi"));
+    assert_eq!(v.spot_animation, 99);
+    assert_eq!(v.health, 4);
+    assert_eq!(v.total_health, 8);
+    assert_eq!(v.face_entity, 3);
+    assert_eq!(
+        v.target,
+        Some(ActorTargetView { kind: ActorKind::Npc, index: 3 })
+    );
+    assert!(v.moving);
+    assert!(v.in_combat);
+    assert!(!v.running, "primary_anim 809 != runanim 810");
+    assert_eq!(v.level, 2);
+    assert_eq!(v.size, 1);
+    // legacy position fields keep the existing consumers working
+    assert_eq!(v.x, 100);
+    assert_eq!(v.z, 200);
+    assert_eq!(v.yaw, 512);
+}
+
+/// `face_entity` is decoded with the client's own scheme: NPC slots below
+/// 32768, player slots above (offset by 32768).
+#[test]
+fn npc_face_target_encodes_npc_and_player_kinds() {
+    let mut c = client_with_npc();
+    c.npc[7].as_mut().unwrap().entity.face_entity = 3;
+    let mut other = ClientNpc::default();
+    other.entity.x = 300;
+    other.entity.z = 100;
+    other.r#type = Some(9);
+    other.entity.face_entity = 7 + 32768;
+    c.npc[3] = Some(other);
+    c.npc_ids[1] = 3;
+    c.npc_count = 2;
+    c.local_player = Some(ClientPlayer::at(20, 12));
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    snap.rebuild_family(&c, Family::Npc);
+
+    assert_eq!(
+        npc_by_index(snap.npcs(), 7).unwrap().target,
+        Some(ActorTargetView { kind: ActorKind::Npc, index: 3 })
+    );
+    assert_eq!(
+        npc_by_index(snap.npcs(), 3).unwrap().target,
+        Some(ActorTargetView { kind: ActorKind::Player, index: 7 })
+    );
+}
+
+/// Player rebuild reads the local player (`LocalPlayerView` with energy,
+/// weight, distance 0) and the full remote `players` list.
+#[test]
+fn player_rebuild_reads_local_and_remote_players() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 1;
+    c.self_slot = 7;
+    c.runenergy = 63;
+    c.runweight = 24;
+    c.player_op[0] = Some("Attack".into());
+    c.player_op[2] = Some("Trade with".into());
+    let mut local = ClientPlayer::at(20, 12);
+    local.entity.x = 100;
+    local.entity.z = 200;
+    local.name = Some("Zezima".into());
+    local.combat_level = 126;
+    local.skill_level = 99;
+    local.entity.primary_anim = 808;
+    local.entity.face_entity = 3; // facing an npc
+    c.local_player = Some(local);
+    let mut other = ClientPlayer::at(15, 16);
+    other.entity.x = 100;
+    other.entity.z = 150;
+    other.name = Some("Other".into());
+    other.combat_level = 3;
+    other.skill_level = 5;
+    other.entity.face_entity = 7 + 32768; // facing the local player
+    c.players[3] = Some(other);
+    c.player_ids[0] = 3;
+    c.player_count = 1;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&c, Family::Player));
+
+    let local_view = snap.local_player().expect("local player view");
+    assert_eq!(local_view.player.index, 7);
+    assert_eq!(local_view.player.actor.name.as_deref(), Some("Zezima"));
+    assert_eq!(local_view.player.actor.distance, 0);
+    assert_eq!(
+        local_view.player.actor.tile,
+        WorldTile { x: 100, z: 200, level: 1 }
+    );
+    assert_eq!(
+        local_view.player.actor.target,
+        Some(ActorTargetView { kind: ActorKind::Npc, index: 3 })
+    );
+    assert_eq!(local_view.player.actor.animation, 808);
+    assert_eq!(local_view.player.combat_level, 126);
+    assert_eq!(local_view.player.skill_level, 99);
+    assert_eq!(local_view.energy, 63);
+    assert_eq!(local_view.weight, 24);
+    // actions come from the client's shared player menu ops table
+    assert_eq!(
+        local_view.player.actor.actions,
+        vec![Some("Attack".into()), None, Some("Trade with".into()), None, None]
+    );
+
+    let players = snap.players();
+    assert_eq!(players.len(), 1);
+    let p = &players[0];
+    assert_eq!(p.index, 3);
+    assert_eq!(p.actor.name.as_deref(), Some("Other"));
+    assert_eq!(p.actor.distance, 3120); // chebyshev from (3220, 3212)
+    assert_eq!(
+        p.actor.target,
+        Some(ActorTargetView { kind: ActorKind::Player, index: 7 })
+    );
+    assert_eq!(p.combat_level, 3);
+    assert_eq!(p.skill_level, 5);
+    assert_eq!(snap.tile(), Some((3220, 3212, 0)));
+
+    assert!(!snap.rebuild_family(&c, Family::Player));
 }
