@@ -8,6 +8,7 @@ use api::interact::{
     answer_count, cheat, close_modal, interact, login, mainland_hop, op_loc, press, seed_at,
     set_run, tele_args, walk, Driver, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
 };
+use api::obj_names::ItemDefView;
 use api::prot::{LegalSend, LEGAL_SEND};
 use api::settle::{item_delta, modal_delta, xp_gained, Settle};
 use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
@@ -593,4 +594,236 @@ fn logout_presses_cc_logout_iface_and_missing_is_false() {
     assert!(logout(&mut rec, &ifaces));
     assert_eq!(rec.actions, vec![0]);
     assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 7)]);
+}
+
+/// Wire types: every `OpTarget` and `WireCommand` variant constructs with a
+/// distinct discriminant, `SendResult` carries either a sent command or a
+/// refusal reason, and every `SendReason` variant gets a match arm (the
+/// exhaustive `match` is the compile-time count check).
+#[test]
+fn wire_command_kinds_and_reasons_compile_and_match() {
+    use api::interact::{OpTarget, SendReason, SendResult, WireCommand};
+    use api::snapshot::{
+        ActorView, GroundItemView, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
+        NpcView, PlayerView, WorldTile,
+    };
+    use std::collections::HashSet;
+    use std::mem::discriminant;
+
+    let tile = WorldTile { x: 1, z: 2, level: 0 };
+    let npc = NpcView {
+        index: 0,
+        r#type: None,
+        name: None,
+        actions: Vec::new(),
+        tile,
+        distance: 0,
+        animation: 0,
+        pose_animation: 0,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: 0,
+        health: 0,
+        total_health: 0,
+        face_entity: 0,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 0,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    };
+    let player = PlayerView {
+        index: 0,
+        actor: ActorView {
+            name: None,
+            actions: Vec::new(),
+            tile,
+            distance: 0,
+            animation: 0,
+            pose_animation: 0,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: 0,
+            health: 0,
+            total_health: 0,
+            face_entity: 0,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+        },
+        combat_level: 0,
+        skill_level: 0,
+    };
+    let loc = LocView {
+        typecode: 0,
+        info: 0,
+        id: 0,
+        name: None,
+        description: None,
+        actions: Vec::new(),
+        tile,
+        distance: 0,
+        layer: LocLayer::Ground,
+        shape: 0,
+        angle: 0,
+        width: 0,
+        length: 0,
+        footprint_width: 0,
+        footprint_length: 0,
+        block_walk: false,
+        block_range: false,
+        active: false,
+        animation: 0,
+        map_function: 0,
+        map_scene: 0,
+        force_approach: 0,
+    };
+    let gi = GroundItemView {
+        def: item_def(),
+        count: 0,
+        actions: Vec::new(),
+        tile,
+        distance: 0,
+    };
+    let item = ItemView {
+        def: item_def(),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 1,
+        actions: Vec::new(),
+        component_id: 0,
+    };
+
+    let targets = [
+        OpTarget::Npc(&npc),
+        OpTarget::Player(&player),
+        OpTarget::Loc(&loc),
+        OpTarget::GroundItem(&gi),
+        OpTarget::Item(&item),
+    ];
+    let distinct = targets.iter().map(|t| discriminant(t)).collect::<HashSet<_>>();
+    assert_eq!(distinct.len(), targets.len(), "OpTarget discriminants collide");
+
+    let commands = [
+        WireCommand::Op {
+            target: OpTarget::Npc(&npc),
+            operation: 1,
+        },
+        WireCommand::UseItem {
+            select: &item,
+            target: OpTarget::Loc(&loc),
+        },
+        WireCommand::UseWidget {
+            component_id: 12,
+            target: OpTarget::Item(&item),
+        },
+        WireCommand::Button {
+            component_id: 13,
+            button_type: 14,
+        },
+        WireCommand::Continue { component_id: 15 },
+        WireCommand::Close,
+        WireCommand::Count { value: 16 },
+        WireCommand::Walk { tile },
+        WireCommand::SideTab { tab: 17 },
+        WireCommand::Login {
+            username: "u".into(),
+            password: "p".into(),
+        },
+        WireCommand::ClearLocalModal { component_id: 18 },
+    ];
+    let distinct = commands.iter().map(|c| discriminant(c)).collect::<HashSet<_>>();
+    assert_eq!(distinct.len(), commands.len(), "WireCommand discriminants collide");
+
+    let reasons = [
+        SendReason::NotAttached,
+        SendReason::NotIngame,
+        SendReason::SceneUnavailable,
+        SendReason::OffScene,
+        SendReason::LevelMismatch,
+        SendReason::StaleTarget,
+        SendReason::InvalidAction,
+        SendReason::UnsupportedTarget,
+        SendReason::ComponentNotVisible,
+        SendReason::ClientSideOnly,
+        SendReason::TargetMaskMismatch,
+        SendReason::CountDialogOpen,
+        SendReason::NoCountDialog,
+        SendReason::InvalidCount,
+        SendReason::NoModalOpen,
+        SendReason::NoContinue,
+        SendReason::Unreachable,
+        SendReason::InvalidTab,
+        SendReason::AlreadyIngame,
+        SendReason::DriverRejected,
+    ];
+    for r in reasons {
+        let label = match r {
+            SendReason::NotAttached => "NotAttached",
+            SendReason::NotIngame => "NotIngame",
+            SendReason::SceneUnavailable => "SceneUnavailable",
+            SendReason::OffScene => "OffScene",
+            SendReason::LevelMismatch => "LevelMismatch",
+            SendReason::StaleTarget => "StaleTarget",
+            SendReason::InvalidAction => "InvalidAction",
+            SendReason::UnsupportedTarget => "UnsupportedTarget",
+            SendReason::ComponentNotVisible => "ComponentNotVisible",
+            SendReason::ClientSideOnly => "ClientSideOnly",
+            SendReason::TargetMaskMismatch => "TargetMaskMismatch",
+            SendReason::CountDialogOpen => "CountDialogOpen",
+            SendReason::NoCountDialog => "NoCountDialog",
+            SendReason::InvalidCount => "InvalidCount",
+            SendReason::NoModalOpen => "NoModalOpen",
+            SendReason::NoContinue => "NoContinue",
+            SendReason::Unreachable => "Unreachable",
+            SendReason::InvalidTab => "InvalidTab",
+            SendReason::AlreadyIngame => "AlreadyIngame",
+            SendReason::DriverRejected => "DriverRejected",
+        };
+        assert!(!label.is_empty());
+    }
+    let distinct = reasons.iter().map(|r| discriminant(r)).collect::<HashSet<_>>();
+    assert_eq!(distinct.len(), reasons.len(), "SendReason discriminants collide");
+
+    match (SendResult::Sent {
+        tick: 7,
+        command: WireCommand::Close,
+    }) {
+        SendResult::Sent { tick, command } => {
+            assert_eq!(tick, 7);
+            assert!(matches!(command, WireCommand::Close));
+        }
+        SendResult::Refused { .. } => panic!("Sent refused"),
+    }
+    match (SendResult::Refused {
+        tick: 8,
+        reason: SendReason::Unreachable,
+    }) {
+        SendResult::Refused { tick, reason } => {
+            assert_eq!(tick, 8);
+            assert_eq!(reason, SendReason::Unreachable);
+        }
+        SendResult::Sent { .. } => panic!("Refused sent"),
+    }
+}
+
+fn item_def() -> ItemDefView {
+    ItemDefView {
+        id: 0,
+        name: None,
+        stackable: false,
+        members: false,
+        base_value: 0,
+        noted: false,
+        certificate_link: -1,
+        certificate_template: -1,
+    }
 }

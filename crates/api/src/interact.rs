@@ -8,6 +8,7 @@ use client::client::{Client, MiniMenuAction};
 use client::io::ClientProt;
 
 use crate::prot::{Out, Send};
+use crate::snapshot::{GroundItemView, ItemView, LocView, NpcView, PlayerView, WorldTile};
 
 /// The run-on orb; `set_run(true)` presses it through `doAction` IF_BUTTON.
 /// 274 draws it on controls overlay 147 (`controls:com_5`).
@@ -268,4 +269,106 @@ pub fn logout<D: Driver + ?Sized>(
         return false;
     };
     press(driver, id)
+}
+
+// ---------------------------------------------------------------------------
+// Wire types (api-v2). `Interactions` (task 9) resolves a `WireCommand` from
+// a target/action pair, gates it, and returns a `SendResult`; these enums
+// only carry the command + refusal shape — the `Driver` calls stay here.
+// ---------------------------------------------------------------------------
+
+/// Which snapshot view an interaction targets. Carries a borrow of the
+/// view so identity (`index`/`tile`/`component_id`) survives until send.
+#[derive(Debug, Clone)]
+pub enum OpTarget<'a> {
+    Npc(&'a NpcView),
+    Player(&'a PlayerView),
+    Loc(&'a LocView),
+    GroundItem(&'a GroundItemView),
+    Item(&'a ItemView),
+}
+
+/// One resolved wire interaction, ready to dispatch through [`Driver`].
+/// `Walk` tiles are absolute world tiles (the `tryMove` path translates
+/// through [`Driver::build_base`]); `Login` carries the full credential
+/// pair so the command is self-contained.
+#[derive(Debug, Clone)]
+pub enum WireCommand<'a> {
+    Op {
+        target: OpTarget<'a>,
+        operation: i32,
+    },
+    UseItem {
+        select: &'a ItemView,
+        target: OpTarget<'a>,
+    },
+    UseWidget {
+        component_id: i32,
+        target: OpTarget<'a>,
+    },
+    Button {
+        component_id: i32,
+        button_type: i32,
+    },
+    Continue {
+        component_id: i32,
+    },
+    Close,
+    Count {
+        value: i32,
+    },
+    Walk {
+        tile: WorldTile,
+    },
+    SideTab {
+        tab: i32,
+    },
+    Login {
+        username: String,
+        password: String,
+    },
+    ClearLocalModal {
+        component_id: i32,
+    },
+}
+
+/// Why a wire interaction was refused before dispatch. Every variant is one
+/// precondition or legality check the task-9 gate runs; the host surfaces
+/// these verbatim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendReason {
+    NotAttached,
+    NotIngame,
+    SceneUnavailable,
+    OffScene,
+    LevelMismatch,
+    StaleTarget,
+    InvalidAction,
+    UnsupportedTarget,
+    ComponentNotVisible,
+    ClientSideOnly,
+    TargetMaskMismatch,
+    CountDialogOpen,
+    NoCountDialog,
+    InvalidCount,
+    NoModalOpen,
+    NoContinue,
+    Unreachable,
+    InvalidTab,
+    AlreadyIngame,
+    DriverRejected,
+}
+
+/// The outcome of a wire interaction: the command was accepted and sent at
+/// `tick`, or refused at `tick` with a [`SendReason`].
+#[derive(Debug, Clone)]
+pub enum SendResult<'a> {
+    Sent {
+        tick: u64,
+        command: WireCommand<'a>,
+    },
+    Refused {
+        tick: u64,
+        reason: SendReason,
+    },
 }
