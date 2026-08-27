@@ -1,26 +1,43 @@
-//! Nav pack: encode/decode of [`StepGrid`] to the `.navpack` binary format,
-//! plus the jm2 mapsquare bake used by the `nav-pack` binary.
+//! Nav pack: encode/decode of [`StepGrid`] (v1) and of the whole-world
+//! [`WorldCollision`] + [`TransportGraph`] (v2) to the `.navpack` binary
+//! format, plus the jm2 mapsquare bake used by the `nav-pack` binary.
 //!
-//! Format: magic `b"274N"`, version `u8` 1, origin `(x, z, level)` i32le,
+//! V1 format: magic `b"274N"`, version `u8` 1, origin `(x, z, level)` i32le,
 //! width/height u32le, one walk byte per tile (row-major z then x, 1 =
 //! walkable, same indexing as [`StepGrid`]), door count u32le, then per door
 //! `(loc_x, loc_z, loc_level, loc_id, from_x, from_z, from_level, to_x, to_z,
 //! to_level)` all i32le. Door loc ids come from the Server
 //! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
 //! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
+//!
+//! V2 format: magic `b"274V"`, version `u8` 2, collision origin
+//! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`] `flags`
+//! u32le per tile (row-major z then x), then the transport edge count u32le
+//! and per edge `(kind u8, from x/z/level, to x/z/level, loc_id, option,
+//! ticks)` i32le plus the four requirement vectors (count u32le, then
+//! `(id, value)` i32le pairs; quest names as length-prefixed UTF-8). The
+//! v1 decode stays for old `.navpack` files; `nav-pack` now writes v2.
 
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
 
+use api::snapshot::WorldTile;
+
+use crate::collision::WorldCollision;
 use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::Tile;
+use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
-/// Current pack format version.
+/// Current pack format version (v1: boolean walk bytes + doors).
 const VERSION: u8 = 1;
 /// File magic.
 const MAGIC: &[u8; 4] = b"274N";
+/// V2 pack format version (collision flags + transport graph).
+const VERSION_V2: u8 = 2;
+/// V2 file magic.
+const MAGIC_V2: &[u8; 4] = b"274V";
 /// Mapsquare edge length in tiles.
 const SQUARE: usize = 64;
 /// Bytes per door entry.
@@ -36,7 +53,7 @@ pub enum PackError {
     Io(io::Error),
     /// File does not start with the `b"274N"` magic.
     BadMagic,
-    /// Pack version is not [`VERSION`].
+    /// Pack version is not the expected one for its magic.
     BadVersion(u8),
     /// File ended before the declared contents.
     Truncated,
@@ -48,7 +65,7 @@ impl fmt::Display for PackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PackError::Io(e) => write!(f, "io error: {e}"),
-            PackError::BadMagic => write!(f, "bad pack magic (expected b\"274N\")"),
+            PackError::BadMagic => write!(f, "bad pack magic (expected b\"274N\" or b\"274V\")"),
             PackError::BadVersion(v) => write!(f, "unsupported pack version {v}"),
             PackError::Truncated => write!(f, "pack file truncated"),
             PackError::BadLength(m) => write!(f, "inconsistent pack: {m}"),
@@ -153,6 +170,198 @@ pub fn decode(bytes: &[u8]) -> Result<StepGrid, PackError> {
 pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
     let bytes = std::fs::read(path).map_err(PackError::Io)?;
     decode(&bytes)
+}
+
+/// Serialize the whole-world collision + transport graph to the v2 pack
+/// byte format. The graph's `from` index is not stored; [`decode_v2`]
+/// rebuilds it from the edges.
+pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + graph.edges.len() * 88,
+    );
+    out.extend_from_slice(MAGIC_V2);
+    out.push(VERSION_V2);
+    for v in [collision.origin.x, collision.origin.z, collision.origin.level] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&(collision.width as u32).to_le_bytes());
+    out.extend_from_slice(&(collision.height as u32).to_le_bytes());
+    for f in &collision.flags {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out.extend_from_slice(&(graph.edges.len() as u32).to_le_bytes());
+    for e in &graph.edges {
+        out.push(kind_to_u8(e.kind));
+        for v in [
+            e.from.x,
+            e.from.z,
+            e.from.level,
+            e.to.x,
+            e.to.z,
+            e.to.level,
+            e.loc_id,
+            e.option,
+            e.ticks,
+        ] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        write_req_pairs(&mut out, &e.skill_req);
+        write_req_pairs(&mut out, &e.item_req);
+        write_req_strings(&mut out, &e.quest_req);
+        write_req_pairs(&mut out, &e.varp_req);
+    }
+    out
+}
+
+/// Deserialize a v2 pack, validating magic, version, and lengths. The
+/// `from` index is rebuilt from the decoded edges.
+pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
+    let mut r = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
+    if &magic != MAGIC_V2 {
+        return Err(PackError::BadMagic);
+    }
+    let mut version = [0u8; 1];
+    r.read_exact(&mut version)
+        .map_err(|_| PackError::Truncated)?;
+    if version[0] != VERSION_V2 {
+        return Err(PackError::BadVersion(version[0]));
+    }
+    let origin = WorldTile {
+        x: read_i32(&mut r)?,
+        z: read_i32(&mut r)?,
+        level: read_i32(&mut r)?,
+    };
+    let width = read_u32(&mut r)? as usize;
+    let height = read_u32(&mut r)? as usize;
+    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
+        return Err(PackError::BadLength(format!(
+            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
+        )));
+    }
+    let cells = width
+        .checked_mul(height)
+        .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
+    let mut flags = vec![0u32; cells];
+    for f in &mut flags {
+        *f = read_u32(&mut r)?;
+    }
+    let n_edges = read_u32(&mut r)? as usize;
+    // Cap the preallocation at what the remaining bytes can hold; the reads
+    // themselves still fail with Truncated past the real end.
+    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    let mut edges = Vec::with_capacity(n_edges.min(remaining / 36));
+    for _ in 0..n_edges {
+        let mut kind = [0u8; 1];
+        r.read_exact(&mut kind).map_err(|_| PackError::Truncated)?;
+        edges.push(TransportEdge {
+            kind: kind_from_u8(kind[0])?,
+            from: WorldTile {
+                x: read_i32(&mut r)?,
+                z: read_i32(&mut r)?,
+                level: read_i32(&mut r)?,
+            },
+            to: WorldTile {
+                x: read_i32(&mut r)?,
+                z: read_i32(&mut r)?,
+                level: read_i32(&mut r)?,
+            },
+            loc_id: read_i32(&mut r)?,
+            option: read_i32(&mut r)?,
+            ticks: read_i32(&mut r)?,
+            skill_req: read_req_pairs(&mut r)?,
+            item_req: read_req_pairs(&mut r)?,
+            quest_req: read_req_strings(&mut r)?,
+            varp_req: read_req_pairs(&mut r)?,
+        });
+    }
+    let mut graph = TransportGraph::default();
+    graph.edges = edges;
+    for (i, e) in graph.edges.iter().enumerate() {
+        graph.from.entry(e.from).or_default().push(i);
+    }
+    Ok((
+        WorldCollision {
+            origin,
+            width,
+            height,
+            flags,
+        },
+        graph,
+    ))
+}
+
+/// `TransportKind` as a wire byte.
+fn kind_to_u8(k: TransportKind) -> u8 {
+    match k {
+        TransportKind::Door => 0,
+        TransportKind::Ladder => 1,
+        TransportKind::Stairs => 2,
+        TransportKind::Boat => 3,
+        TransportKind::Teleport => 4,
+        TransportKind::AgilityShortcut => 5,
+    }
+}
+
+/// Wire byte → [`TransportKind`], rejecting unknown values.
+fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
+    match b {
+        0 => Ok(TransportKind::Door),
+        1 => Ok(TransportKind::Ladder),
+        2 => Ok(TransportKind::Stairs),
+        3 => Ok(TransportKind::Boat),
+        4 => Ok(TransportKind::Teleport),
+        5 => Ok(TransportKind::AgilityShortcut),
+        _ => Err(PackError::BadLength(format!(
+            "unknown transport kind {b}"
+        ))),
+    }
+}
+
+/// A requirement vector as `(id, value)` i32le pairs, count-prefixed.
+fn write_req_pairs(out: &mut Vec<u8>, reqs: &[(i32, i32)]) {
+    out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
+    for (a, b) in reqs {
+        out.extend_from_slice(&a.to_le_bytes());
+        out.extend_from_slice(&b.to_le_bytes());
+    }
+}
+
+/// A quest-name vector as length-prefixed UTF-8 strings, count-prefixed.
+fn write_req_strings(out: &mut Vec<u8>, reqs: &[String]) {
+    out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
+    for s in reqs {
+        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+}
+
+/// Read a count-prefixed `(id, value)` pair vector.
+fn read_req_pairs(r: &mut Cursor<&[u8]>) -> Result<Vec<(i32, i32)>, PackError> {
+    let n = read_u32(r)? as usize;
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let mut out = Vec::with_capacity(n.min(remaining / 8));
+    for _ in 0..n {
+        out.push((read_i32(r)?, read_i32(r)?));
+    }
+    Ok(out)
+}
+
+/// Read a count-prefixed length-prefixed UTF-8 string vector.
+fn read_req_strings(r: &mut Cursor<&[u8]>) -> Result<Vec<String>, PackError> {
+    let n = read_u32(r)? as usize;
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let mut out = Vec::with_capacity(n.min(remaining / 4));
+    for _ in 0..n {
+        let len = read_u32(r)? as usize;
+        let mut buf = vec![0u8; len];
+        r.read_exact(&mut buf).map_err(|_| PackError::Truncated)?;
+        let s = String::from_utf8(buf)
+            .map_err(|_| PackError::BadLength("quest req is not UTF-8".into()))?;
+        out.push(s);
+    }
+    Ok(out)
 }
 
 /// All walkable tiles of `grid` on `level`, in row-major (z then x) order.
@@ -550,12 +759,15 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        decode, encode, merge_squares, parse_door_config, parse_mapsquare_text,
-        parse_passable_locs, walkable_dots, Mapsquare,
+        decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
+        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare,
     };
+    use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
     use crate::pack::PackError;
     use crate::tile::Tile;
+    use crate::transport::{TransportEdge, TransportGraph, TransportKind};
+    use api::snapshot::WorldTile;
 
     #[test]
     fn pack_roundtrip_fixture_door() {
@@ -568,6 +780,81 @@ mod tests {
             level: 0
         }));
         assert_eq!(h.doors.len(), g.doors.len());
+    }
+
+    #[test]
+    fn v2_roundtrip_collision_and_transport_graph() {
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 3,
+            height: 2,
+            flags: vec![0, 0, 1, 0, 0, 0],
+        };
+        let mut graph = TransportGraph::default();
+        let door = TransportEdge {
+            kind: TransportKind::Door,
+            from: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        };
+        let ladder = TransportEdge {
+            kind: TransportKind::Ladder,
+            from: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 1,
+            },
+            loc_id: 1747,
+            option: 1,
+            ticks: 3,
+            skill_req: vec![(16, 5)],
+            item_req: vec![(995, 10)],
+            quest_req: vec!["Restless Ghost".into()],
+            varp_req: vec![(4, 1)],
+        };
+        let di = graph.edges.len();
+        graph.edges.push(door);
+        let li = graph.edges.len();
+        graph.edges.push(ladder);
+        graph.from.entry(graph.edges[di].from).or_default().push(di);
+        graph.from.entry(graph.edges[li].from).or_default().push(li);
+
+        let bytes = encode_v2(&collision, &graph);
+        let (c, g) = decode_v2(&bytes).unwrap();
+        assert_eq!(c.origin, collision.origin);
+        assert_eq!(c.width, collision.width);
+        assert_eq!(c.height, collision.height);
+        assert_eq!(c.flags, collision.flags);
+        assert_eq!(g.edges, graph.edges);
+        // The from-index is rebuilt from the edges on decode.
+        assert_eq!(g.from, graph.from);
+        // The two formats do not cross-decode: v1 rejects v2 magic and
+        // vice versa.
+        assert!(matches!(decode(&bytes), Err(PackError::BadMagic)));
+        assert!(matches!(decode_v2(&encode(&StepGrid::fixture_open_3x3())), Err(PackError::BadMagic)));
     }
 
     #[test]

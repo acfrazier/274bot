@@ -1,11 +1,10 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
-//! [`WorldCollision`] walk surface plus the door [`TransportGraph`]. The
-//! pack file stores one walk byte per tile and the door edges; the
-//! Dijkstra router ([`crate::router::find`]) consumes the derived
-//! collision + graph, so live harnesses load one artifact. Live `Follow`
-//! runs route walks on the client's own collision map (which matches the
-//! live scene exactly) and use this module's `graph` for transport
-//! edges — the pack-derived `collision` is the offline approximation.
+//! [`WorldCollision`] walk surface plus the transport [`TransportGraph`].
+//! The v2 pack file stores the collision flags and the transport edges, so
+//! the Dijkstra router ([`crate::router::find`]) consumes one artifact —
+//! live harnesses load this and route on the packed collision. The legacy
+//! v1 pack (boolean walk bytes + doors) still loads through
+//! [`NavWorld::from_grid`] as a fallback for old `.navpack` files.
 
 use std::path::Path;
 
@@ -14,12 +13,12 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{load_pack, PackError};
+use crate::pack::{decode_v2, load_pack, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
 /// router's directional step test rejects the tile from any direction
-/// (a pack walk byte is boolean; there are no half-open faces to keep).
+/// (a v1 pack walk byte is boolean; there are no half-open faces to keep).
 const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
 
 /// The whole-world collision + transport graph the router consumes.
@@ -30,13 +29,21 @@ pub struct NavWorld {
 
 impl NavWorld {
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
-    /// router's world.
+    /// router's world. V2 packs (collision + transport graph) load
+    /// directly; legacy v1 packs fall back to [`Self::from_grid`].
     pub fn load_pack(path: &Path) -> Result<Self, PackError> {
-        Ok(Self::from_grid(&load_pack(path)?))
+        let bytes = std::fs::read(path).map_err(PackError::Io)?;
+        match decode_v2(&bytes) {
+            Ok((collision, graph)) => Ok(NavWorld { collision, graph }),
+            Err(PackError::BadMagic) | Err(PackError::BadVersion(_)) => {
+                Ok(Self::from_grid(&load_pack(path)?))
+            }
+            Err(e) => Err(e),
+        }
     }
 
-    /// Derive the router's world from a pack grid. Walkable tiles carry
-    /// no flags; every blocked tile carries [`BLOCKED`] (the pack has no
+    /// Derive the router's world from a v1 pack grid. Walkable tiles carry
+    /// no flags; every blocked tile carries [`BLOCKED`] (the v1 pack has no
     /// per-direction data, so a blocked tile is a wall on all faces). Each
     /// pack door edge becomes a 1-tick `Door` transport edge; the pack
     /// stores both directions, so the graph indexes `from` exactly as the
@@ -103,11 +110,12 @@ mod tests {
     use client::dash3d::CollisionFlag;
 
     use super::{NavWorld, BLOCKED};
+    use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
-    use crate::pack::encode;
+    use crate::pack::{encode, encode_v2};
     use crate::router::{find, Leg};
     use crate::tile::Tile;
-    use crate::transport::TransportKind;
+    use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
     fn tile(x: i32, z: i32, level: i32) -> WorldTile {
         WorldTile { x, z, level }
@@ -221,5 +229,54 @@ mod tests {
         };
         assert_eq!(tiles.first(), Some(&tile(3200, 3200, 0)));
         assert_eq!(tiles.last(), Some(&tile(3263, 3263, 0)));
+    }
+
+    #[test]
+    fn load_pack_path_round_trips_a_v2_world() {
+        // A 5-tile corridor split by a door: the packed collision and
+        // transport graph route exactly like the authored world.
+        let mut flags = vec![0u32; 5];
+        flags[2] = BLOCKED;
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 5,
+            height: 1,
+            flags,
+        };
+        let mut graph = TransportGraph::default();
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            from: tile(1, 0, 0),
+            to: tile(3, 0, 0),
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
+        graph.from.entry(tile(1, 0, 0)).or_default().push(0);
+
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-navworld-v2-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture-v2.navpack");
+        std::fs::write(&path, encode_v2(&collision, &graph)).unwrap();
+        let w = NavWorld::load_pack(&path).expect("v2 pack loads");
+        assert_eq!(w.collision.origin, tile(0, 0, 0));
+        assert_eq!(w.collision.flags, collision.flags);
+        assert_eq!(w.graph.edges, graph.edges);
+        assert_eq!(w.graph.from, graph.from);
+        let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
+        assert_eq!(r.ticks, 1);
+        assert_eq!(r.legs.len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

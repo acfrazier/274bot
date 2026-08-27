@@ -11,7 +11,6 @@ use api::interact::Driver;
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::collision::WorldCollision;
 use nav::grid::StepGrid;
 use nav::router::Route;
 use nav::tile::Tile;
@@ -357,7 +356,7 @@ impl ScenarioRunner {
             }
             StepKind::Shot { .. } => return Ok(()),
             StepKind::Walk { dest } => *dest,
-            StepKind::Follow { dest } => return self.arm_follow(client, *dest),
+            StepKind::Follow { dest } => return self.arm_follow(*dest),
         };
         self.arm_walk(walk_dest)
     }
@@ -384,28 +383,24 @@ impl ScenarioRunner {
     }
 
     /// Arm a whole-world route for a `Follow` step: `nav::router::find`
-    /// over the live scene's own collision map (so the route is walkable
-    /// in the client — the baked pack's boolean walk grid can diverge from
-    /// the live collision, e.g. on map-object flags) plus the baked pack's
-    /// transport graph. The origin is the observed player tile — a
-    /// loc-blocked tele landing is fine, the router only tests tiles
-    /// stepped *onto*.
-    fn arm_follow(&mut self, client: &Client, dest: WorldTile) -> Result<(), String> {
+    /// over the packed v2 collision + transport graph loaded into
+    /// [`NavWorld`] (the same surface the route is then walked on — the
+    /// pack is baked from the maps, so it matches the live world). The
+    /// origin is the observed player tile — a loc-blocked tele landing is
+    /// fine, the router only tests tiles stepped *onto*.
+    fn arm_follow(&mut self, dest: WorldTile) -> Result<(), String> {
         let Some((hx, hz, hl)) = self.snapshot.tile() else {
             return Err("no player tile to route from".into());
         };
         let Some(world) = self.nav_world.as_ref() else {
             return Err("no nav world (run nav-pack); cannot route".into());
         };
-        let Some(collision) = client_collision_world(client) else {
-            return Err("no live scene collision to route on".into());
-        };
         let from = WorldTile {
             x: hx,
             z: hz,
             level: hl,
         };
-        match nav::router::find(&collision, &world.graph, from, dest) {
+        match nav::router::find(&world.collision, &world.graph, from, dest) {
             Ok(route) => {
                 self.follow_route = Some(route);
                 Ok(())
@@ -547,33 +542,6 @@ fn wait(arm: Proof, budget_ticks: u32) -> Wait {
         arm,
         budget_ticks,
     }
-}
-
-/// The live scene's collision map as a [`WorldCollision`]: the client's
-/// own flags (indexed scene-local, `[x][z]`) transposed into the router's
-/// row-major `[z][x]` grid at the current build base. The router's
-/// directional `step_ok` test reads the same `PL_WALK_*` masks the client
-/// paths on, so a route found here is one the client can actually walk.
-fn client_collision_world(client: &Client) -> Option<WorldCollision> {
-    let level = client.minusedlevel.max(0) as usize;
-    let cmap = client.collision.get(level)?;
-    let (width, height) = (cmap.size_x.max(0) as usize, cmap.size_z.max(0) as usize);
-    let mut flags = vec![0u32; width * height];
-    for z in 0..height {
-        for x in 0..width {
-            flags[z * width + x] = cmap.flags[x][z] as u32;
-        }
-    }
-    Some(WorldCollision {
-        origin: WorldTile {
-            x: client.map_build_base_x,
-            z: client.map_build_base_z,
-            level: client.minusedlevel,
-        },
-        width,
-        height,
-        flags,
-    })
 }
 
 #[cfg(test)]

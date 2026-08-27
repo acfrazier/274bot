@@ -1,19 +1,21 @@
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
-//! into a level-0 [`WorldCollision`] and write the nav pack to `$NAV_PACK`
-//! or `~/.274bot/274bot.navpack` (default). Usage:
+//! into a level-0 [`WorldCollision`], derive the [`TransportGraph`] from
+//! the Server content, and write the v2 nav pack to `$NAV_PACK` or
+//! `~/.274bot/274bot.navpack` (default). Usage:
 //! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where the defaults
 //! are `/Users/acfrazier/experiments/Server/content/maps`,
 //! `/Users/acfrazier/experiments/Server/content/scripts/doors/configs`, and
 //! the compiled client cache `/Users/acfrazier/experiments/Server/engine/data/pack/config`.
-//! Door loc ids come from the `*.loc` door configs; loc `blockwalk=no` /
-//! open-door stages come from `content/scripts/**/*.loc`; the loc definitions
+//! Door loc ids come from the `*.loc` door configs; the loc definitions
 //! (blockwalk, width/length, active) come from the client cache's `config`
 //! jag. Every `.jm2` under the maps dir bakes or the run fails; non-`.jm2`
-//! files (`ignore.csv`/`free2play.csv`) are metadata and skipped.
+//! files (`ignore.csv`/`free2play.csv`) are metadata and skipped. The
+//! transport graph derives from the Server content tree (the maps dir's
+//! parent): door/ladder/stairs/agility edges, with boats and teleport
+//! spells counted and skipped on stderr.
 
 use std::collections::HashSet;
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -22,13 +24,11 @@ use api::snapshot::WorldTile;
 use client::config::Cache;
 use client::io::JagFile;
 use nav::collision::{bake_from_maps, WorldCollision};
-use nav::pack::{
-    encode, merge_squares, parse_door_config, parse_mapsquare_jm2, parse_passable_locs, Mapsquare,
-};
+use nav::pack::encode_v2;
+use nav::transport::derive_transports;
 
 const MAPS_DIR: &str = "/Users/acfrazier/experiments/Server/content/maps";
 const DOORS_DIR: &str = "/Users/acfrazier/experiments/Server/content/scripts/doors/configs";
-const SCRIPTS_DIR: &str = "/Users/acfrazier/experiments/Server/content/scripts";
 const CONFIG_JAG: &str = "/Users/acfrazier/experiments/Server/engine/data/pack/config";
 const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
 
@@ -54,7 +54,7 @@ fn main() -> ExitCode {
     for name in DOOR_CONFIGS {
         let path = Path::new(&doors_dir).join(name);
         match std::fs::read_to_string(&path) {
-            Ok(text) => door_ids.extend(parse_door_config(&text)),
+            Ok(text) => door_ids.extend(nav::pack::parse_door_config(&text)),
             Err(e) => {
                 eprintln!("nav-pack: skipping {name}: {e}");
                 config_failed += 1;
@@ -68,11 +68,6 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-
-    let mut passable = HashSet::new();
-    visit_loc_files(Path::new(SCRIPTS_DIR), &mut |text| {
-        passable.extend(parse_passable_locs(text));
-    });
 
     // Loc definitions (blockwalk, width/length, active) from the client
     // cache: the same table the game client builds its collision from.
@@ -100,56 +95,42 @@ fn main() -> ExitCode {
     };
     let walkable = walkable_tiles(&collision);
 
-    // The nav pack write: one bbox StepGrid on level 0 over every mapsquare.
-    let entries = match fs::read_dir(&maps_dir) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("nav-pack: read {maps_dir}: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let mut squares: Vec<Mapsquare> = Vec::new();
-    for ent in entries.flatten() {
-        let path = ent.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("jm2") {
-            continue;
-        }
-        let Some((mx, mz)) = mapsquare_coords(&path) else {
-            eprintln!(
-                "nav-pack: bailing on {}: not an m<x>_<z> mapsquare",
-                path.display()
-            );
-            return ExitCode::FAILURE;
-        };
-        match parse_mapsquare_jm2(&path, mx, mz, &door_ids, &passable) {
-            Ok(sq) => squares.push(sq),
-            Err(e) => {
-                eprintln!("nav-pack: bailing on {}: {e}", path.display());
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-    if squares.is_empty() {
-        eprintln!("nav-pack: no mapsquares baked");
-        return ExitCode::FAILURE;
-    }
-    let grid = merge_squares(&squares);
-    let bytes = encode(&grid);
+    // The transport graph from the Server content tree (maps/scripts/pack
+    // all live under the maps dir's parent).
+    let content_root = Path::new(&maps_dir)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let graph = derive_transports(content_root, &loc_defs);
+
+    // The v2 pack write: collision flags + transport edges.
+    let bytes = encode_v2(&collision, &graph);
     if let Err(e) = std::fs::write(&out, &bytes) {
         eprintln!("nav-pack: write {}: {e}", out.display());
         return ExitCode::FAILURE;
     }
     eprintln!(
-        "nav-pack: baked {} mapsquares (0 skipped) into a {}x{} collision grid, {} walkable tiles -> {} bytes ({} doors) -> {}",
-        squares.len(),
+        "nav-pack: baked {} mapsquares into a {}x{} collision grid, {} walkable tiles, {} transport edges -> {} bytes -> {}",
+        squares_baked(&maps_dir),
         collision.width,
         collision.height,
         walkable,
+        graph.edges.len(),
         bytes.len(),
-        grid.doors.len(),
         out.display()
     );
     ExitCode::SUCCESS
+}
+
+/// Count `.jm2` files under `maps_dir` (for the summary line).
+fn squares_baked(maps_dir: &str) -> usize {
+    std::fs::read_dir(maps_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("jm2"))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 /// Count tiles with no walk-blocking flag on the bake's level-0 plane.
@@ -160,30 +141,4 @@ fn walkable_tiles(c: &WorldCollision) -> usize {
         })
         .filter(|(x, z)| c.walkable(WorldTile { x: *x, z: *z, level: 0 }))
         .count()
-}
-
-/// `m<x>_<z>.jm2` -> `(x, z)`.
-fn mapsquare_coords(path: &Path) -> Option<(i32, i32)> {
-    let name = path.file_stem()?.to_str()?;
-    let rest = name.strip_prefix('m')?;
-    let (x, z) = rest.split_once('_')?;
-    Some((x.parse().ok()?, z.parse().ok()?))
-}
-
-/// Recursively read every `*.loc` under `dir` and hand the text to `cb`.
-fn visit_loc_files(dir: &Path, cb: &mut impl FnMut(&str)) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for ent in entries.flatten() {
-        let path = ent.path();
-        if path.is_dir() {
-            visit_loc_files(&path, cb);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("loc") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                cb(&text);
-            }
-        }
-    }
 }
