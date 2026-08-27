@@ -7,14 +7,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use api::interact::Driver;
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::grid::StepGrid;
 use nav::router::Route;
-use nav::tile::Tile;
-use nav::traveller::{NavStatus, TravelOptions, TravelOutcome, Traveller};
+use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 
 use crate::evidence::Evidence;
@@ -47,14 +44,14 @@ pub struct ScenarioRunner {
     scenario: Scenario,
     snapshot: GameSnapshot,
     obj_names: Option<Arc<ObjNames>>,
-    grid: Option<Arc<StepGrid>>,
     /// The whole-world router surface (collision + transport graph),
-    /// derived from the baked pack; `Follow` steps route on it.
+    /// loaded from the baked v2 pack; both `Walk` and `Follow` steps
+    /// route on it.
     nav_world: Option<Arc<NavWorld>>,
     traveller: Traveller,
-    /// The armed `Follow` route (re-passed each tick; the traveller
-    /// consumes it when a run starts).
-    follow_route: Option<Route>,
+    /// The armed nav route (re-passed each tick; the traveller consumes
+    /// it when a run starts).
+    route: Option<Route>,
     /// Whole-window shot label fired at the terminal state (PASS and
     /// FAIL); `None` for scenarios that only fire `Shot` steps.
     terminal_shot: Option<&'static str>,
@@ -80,54 +77,32 @@ pub struct ScenarioRunner {
 }
 
 impl ScenarioRunner {
-    /// A runner for `scenario`; the nav grid and the whole-world router
-    /// surface load from the standard pack path (`None` when no pack, so
-    /// `Walk`/`Follow` steps fail with a clear message).
+    /// A runner for `scenario`; the whole-world router surface (collision
+    /// + transport graph) loads from the standard pack path (`None` when
+    /// no pack, so `Walk`/`Follow` steps fail with a clear message).
     pub fn new(scenario: Scenario) -> Self {
         let pack = crate::default_pack_path();
-        let grid = nav::pack::load_pack(&pack).ok().map(Arc::new);
         let nav_world = NavWorld::load_pack(&pack).ok().map(Arc::new);
-        Self::with_data(scenario, grid, nav_world)
+        Self::with_data(scenario, nav_world)
     }
 
-    /// Runner with an injected nav grid; `None` loads the default pack
-    /// path (tests inject fixture grids). No router world is loaded, so
-    /// `Follow` steps fail with a clear message unless [`Self::with_world`]
-    /// supplies one.
-    pub fn with_grid(scenario: Scenario, grid: Option<Arc<StepGrid>>) -> Self {
-        Self::with_data(scenario, grid, None)
+    /// Runner with injected nav data: the whole-world [`NavWorld`]
+    /// (collision + transport graph) both `Walk` and `Follow` steps route
+    /// on. `None` keeps no world loaded, so a nav step fails with a clear
+    /// "no nav world" message (the live [`ScenarioRunner::new`] loads the
+    /// default pack path).
+    pub fn with_world(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
+        Self::with_data(scenario, nav_world)
     }
 
-    /// Runner with injected nav data: the legacy [`StepGrid`] for `Walk`
-    /// steps and the whole-world [`NavWorld`] (collision + transport
-    /// graph) for `Follow` steps. `None` fields load from the default pack
-    /// path (the live path).
-    pub fn with_world(
-        scenario: Scenario,
-        grid: Option<Arc<StepGrid>>,
-        nav_world: Option<Arc<NavWorld>>,
-    ) -> Self {
-        let grid = grid.or_else(|| {
-            nav::pack::load_pack(&crate::default_pack_path())
-                .ok()
-                .map(Arc::new)
-        });
-        Self::with_data(scenario, grid, nav_world)
-    }
-
-    fn with_data(
-        scenario: Scenario,
-        grid: Option<Arc<StepGrid>>,
-        nav_world: Option<Arc<NavWorld>>,
-    ) -> Self {
+    fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         Self {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
-            grid,
             nav_world,
             traveller: Traveller::new(),
-            follow_route: None,
+            route: None,
             terminal_shot: None,
             phase: Phase::Seeding,
             step: 0,
@@ -236,7 +211,9 @@ impl ScenarioRunner {
             self.begin_step();
         }
         if matches!(self.phase, Phase::Running) {
-            self.step_traveller(client, dirty);
+            if dirty {
+                self.step_route(client);
+            }
             if !self.step_sent {
                 if let Err(msg) = self.send_current(client) {
                     self.finish_fail(&format!(
@@ -295,11 +272,12 @@ impl ScenarioRunner {
     }
 
     /// Seed complete: ingame, scene 2, a mainland build base, and — when a
-    /// nav grid is loaded — the player standing on a tile inside the
-    /// grid's bounds. The base heuristic alone is not enough: the tutorial
-    /// island's build base is also `>= 3000`, so the mainland hop must
-    /// have actually landed (the pack covers Lumbridge only). A loc-blocked
-    /// tele landing is still inside the bounds, so it releases the gate.
+    /// nav world is loaded — the player standing on a tile inside the
+    /// packed collision's bounds. The base heuristic alone is not enough:
+    /// the tutorial island's build base is also `>= 3000`, so the mainland
+    /// hop must have actually landed (the pack covers Lumbridge only). A
+    /// loc-blocked tele landing is still inside the bounds, so it releases
+    /// the gate.
     fn seed_done(&self) -> bool {
         if !self.snapshot.ingame() || self.snapshot.scene_state() != 2 {
             return false;
@@ -311,10 +289,17 @@ impl ScenarioRunner {
             .snapshot
             .base()
             .is_some_and(|(bx, bz)| bx >= 3000 && bz >= 3000);
-        let on_grid = match (self.grid.as_ref(), self.snapshot.tile()) {
-            (Some(g), Some((x, z, l))) => g.contains(Tile { x, z, level: l }),
-            // No grid loaded: fall back to the base heuristic; a `Walk`
-            // step fails with a clear "no nav pack" message later.
+        let on_grid = match (self.nav_world.as_ref(), self.snapshot.tile()) {
+            (Some(w), Some((x, z, l))) => {
+                let o = w.collision.origin;
+                l == o.level
+                    && x >= o.x
+                    && z >= o.z
+                    && x < o.x + w.collision.width as i32
+                    && z < o.z + w.collision.height as i32
+            }
+            // No world loaded: fall back to the base heuristic; a `Walk`
+            // step fails with a clear "no nav world" message later.
             (None, _) => true,
             (Some(_), None) => false,
         };
@@ -329,7 +314,7 @@ impl ScenarioRunner {
         self.step_sent = false;
         self.ticks_waited = 0;
         self.traveller.clear();
-        self.follow_route = None;
+        self.route = None;
     }
 
     fn advance_step(&mut self) {
@@ -342,12 +327,11 @@ impl ScenarioRunner {
     }
 
     /// Send the current step's action once. `Perform` runs its closure;
-    /// `Walk` arms the A* route from the current tile; `Follow` arms the
-    /// whole-world route (`find` over the derived collision + transport
-    /// graph); `Shot` sends nothing (the step only waits for its arm to
-    /// capture it).
+    /// `Walk` and `Follow` both arm the whole-world route (`find` over the
+    /// collision + transport graph) and drive `Traveller::follow`; `Shot`
+    /// sends nothing (the step only waits for its arm to capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
-        let walk_dest = match &self.scenario.steps[self.step].kind {
+        match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
                 if send(client, &self.snapshot) {
                     return Ok(());
@@ -355,40 +339,17 @@ impl ScenarioRunner {
                 return Err("driver rejected the send".into());
             }
             StepKind::Shot { .. } => return Ok(()),
-            StepKind::Walk { dest } => *dest,
-            StepKind::Follow { dest } => return self.arm_follow(*dest),
-        };
-        self.arm_walk(walk_dest)
-    }
-
-    fn arm_walk(&mut self, dest: Tile) -> Result<(), String> {
-        let Some((hx, hz, hl)) = self.snapshot.tile() else {
-            return Err("no player tile to walk from".into());
-        };
-        let Some(grid) = self.grid.as_ref() else {
-            return Err("no nav pack (run nav-pack); cannot route".into());
-        };
-        let from = Tile {
-            x: hx,
-            z: hz,
-            level: hl,
-        };
-        match nav::router::find_on_grid(grid, from, dest) {
-            Ok(route) => {
-                self.traveller.arm(route);
-                Ok(())
-            }
-            Err(_) => Err(format!("no pack path from {from:?} to {dest:?}")),
+            StepKind::Walk { dest } | StepKind::Follow { dest } => self.arm_route(*dest),
         }
     }
 
-    /// Arm a whole-world route for a `Follow` step: `nav::router::find`
-    /// over the packed v2 collision + transport graph loaded into
-    /// [`NavWorld`] (the same surface the route is then walked on — the
-    /// pack is baked from the maps, so it matches the live world). The
-    /// origin is the observed player tile — a loc-blocked tele landing is
-    /// fine, the router only tests tiles stepped *onto*.
-    fn arm_follow(&mut self, dest: WorldTile) -> Result<(), String> {
+    /// Arm a whole-world route: `nav::router::find` over the packed v2
+    /// collision + transport graph loaded into [`NavWorld`] (the same
+    /// surface the route is then walked on — the pack is baked from the
+    /// maps, so it matches the live world). The origin is the observed
+    /// player tile — a loc-blocked tele landing is fine, the router only
+    /// tests tiles stepped *onto*.
+    fn arm_route(&mut self, dest: WorldTile) -> Result<(), String> {
         let Some((hx, hz, hl)) = self.snapshot.tile() else {
             return Err("no player tile to route from".into());
         };
@@ -402,65 +363,26 @@ impl ScenarioRunner {
         };
         match nav::router::find(&world.collision, &world.graph, from, dest) {
             Ok(route) => {
-                self.follow_route = Some(route);
+                self.route = Some(route);
                 Ok(())
             }
             Err(e) => Err(format!("no world path from {from:?} to {dest:?}: {e:?}")),
         }
     }
 
-    /// Hop an armed route one leg on a delivered server frame (`dirty`
-    /// — any family gen moved). The traveller's per-hop budget counts
-    /// server ticks, exactly like the host-play pump's player-gen latch,
-    /// so a parked frame (no packet) must not burn the budget. Door state
-    /// is read live from the client's loc typecode.
-    fn step_traveller(&mut self, client: &mut Client, dirty: bool) {
-        if !dirty {
-            return;
-        }
-        if matches!(self.scenario.steps[self.step].kind, StepKind::Follow { .. }) {
-            self.step_follow(client);
-            return;
-        }
-        let Some((hx, hz, hl)) = self.snapshot.tile() else {
-            return;
-        };
-        let here = Tile {
-            x: hx,
-            z: hz,
-            level: hl,
-        };
-        let door_open = match self.traveller.current_door(here) {
-            Some((loc, closed_id)) => {
-                let (bx, bz) = self.snapshot.base().unwrap_or((0, 0));
-                client
-                    .loc_typecode(loc.x - bx, loc.z - bz)
-                    .map(|tc| (tc >> 14) & 0x7fff)
-                    != Some(closed_id)
-            }
-            None => false,
-        };
-        if matches!(self.traveller.tick(client, here, door_open), NavStatus::Budget) {
-            self.finish_fail(&format!(
-                "step {} ({}): walk per-hop budget exceeded",
-                self.step + 1,
-                self.current_step().name
-            ));
-        }
-    }
-
-    /// Poll the armed `Follow` route one step per delivered frame. `find`
-    /// already proved the route at arm time; a terminal outcome other than
-    /// `Arrived` is a stall/refusal/block and fails the step with the
-    /// traveller's own message. `Arrived` leaves the arm predicate
-    /// (`Proof::Arrived`) to fire on the same tick's snapshot read.
+    /// Poll the armed nav route one leg per delivered frame (`dirty` —
+    /// any family gen moved). `find` already proved the route at arm
+    /// time; a terminal outcome other than `Arrived` is a
+    /// stall/refusal/block and fails the step with the traveller's own
+    /// message. `Arrived` leaves the arm predicate (`Proof::Arrived`) to
+    /// fire on the same tick's snapshot read.
     ///
     /// The poll options are a fresh default each call — this runner never
     /// sets an `on_leg` callback, so nothing needs to survive across ticks
     /// (and a stored `TravelOptions<'static>` would make the runner
     /// non-`Send`, which the panel's shared runner slot requires).
-    fn step_follow(&mut self, client: &mut Client) {
-        let Some(route) = self.follow_route.clone() else {
+    fn step_route(&mut self, client: &mut Client) {
+        let Some(route) = self.route.clone() else {
             return;
         };
         let mut options = TravelOptions::default();
@@ -551,6 +473,7 @@ mod tests {
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
     use nav::grid::StepGrid;
+    use nav::tile::Tile;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -659,19 +582,7 @@ mod tests {
     #[test]
     fn seeding_waits_for_ingame_scene2_and_mainland_base() {
         let mut c = Client::new(cfg());
-        // A mainland-sized nav grid covering (3220, 3220): the seed gate
-        // also checks the player's tile is inside the grid's bounds, so
-        // the mainland hop must have actually landed.
-        let grid = StepGrid::fixture_rect_at(
-            Tile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            32,
-            32,
-        );
-        let mut runner = ScenarioRunner::with_grid(stat_scenario(1, 10), Some(Arc::new(grid)));
+        let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
 
@@ -698,156 +609,103 @@ mod tests {
         );
     }
 
-    #[test]
-    fn seeding_holds_on_a_tile_outside_the_nav_grid() {
-        let mut c = Client::new(cfg());
-        c.ingame = true;
-        c.scene_state = 2;
-        // A mainland build base at the tutorial island's scale and a
-        // player tile the pack does not cover: the base heuristic alone
-        // would release the seed, but the grid-bounds check must hold.
-        c.map_build_base_x = 3088;
-        c.map_build_base_z = 3104;
-        c.local_player = Some(ClientPlayer::at(6, 2));
-        c.bump_gens(ServerProt::PLAYER_INFO);
-        c.bump_gens(ServerProt::REBUILD_NORMAL);
-        let grid = StepGrid::fixture_rect_at(
-            Tile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            32,
-            32,
-        );
-        let mut runner = ScenarioRunner::with_grid(stat_scenario(1, 10), Some(Arc::new(grid)));
-        runner.tick(&mut c);
-        assert_eq!(
-            runner.status(),
-            RunnerStatus::Seeding,
-            "tutorial-island tile (3094,3106) is outside the Lumbridge grid"
-        );
-    }
+    // --- Whole-world `Walk` steps (find + Traveller::follow) ---
 
-    #[test]
-    fn walk_step_arms_the_route_and_proofs_arrival() {
-        let mut c = Client::new(cfg());
-        c.ingame = true;
-        c.scene_state = 2;
-        c.local_player = Some(ClientPlayer::at(0, 0));
-        c.bump_gens(ServerProt::PLAYER_INFO);
-        c.bump_gens(ServerProt::REBUILD_NORMAL);
-
-        let dest = Tile {
-            x: 2,
-            z: 2,
-            level: 0,
-        };
-        let scenario = Scenario {
-            name: "fixture-walk",
+    fn walk_scenario(dest: WorldTile, budget: u32) -> Scenario {
+        Scenario {
+            name: "walk",
             seed: Seed {
                 profiles: vec![("test", "test")],
                 mainland: false,
             },
             steps: vec![Step {
-                name: "walk the 3x3",
+                name: "walk the corridor",
                 kind: StepKind::Walk { dest },
                 wait: wait(
                     Proof::Arrived {
-                        x: 2,
-                        z: 2,
-                        level: 0,
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
                     },
-                    20,
+                    budget,
                 ),
             }],
             proof: Proof::Arrived {
-                x: 2,
-                z: 2,
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+            },
+        }
+    }
+
+    /// A `Walk` step routes exactly like `Follow`: `nav::router::find`
+    /// over the whole-world `NavWorld` (collision + transport graph),
+    /// driven by `Traveller::follow` one leg per delivered frame.
+    #[test]
+    fn walk_step_arms_find_and_proofs_arrival() {
+        let mut c = follow_client();
+        let dest = WorldTile {
+            x: 3205,
+            z: 3230,
+            level: 0,
+        };
+        let grid = StepGrid::fixture_rect_at(
+            Tile {
+                x: 3205,
+                z: 3200,
                 level: 0,
             },
-        };
-        let mut runner =
-            ScenarioRunner::with_grid(scenario, Some(Arc::new(StepGrid::fixture_open_3x3())));
-        runner.no_mainland_gate();
+            1,
+            40,
+        );
+        let world = NavWorld::from_grid(&grid);
+        let mut runner = ScenarioRunner::with_world(walk_scenario(dest, 120), Some(Arc::new(world)));
 
         runner.tick(&mut c);
         assert_eq!(
             runner.status(),
             RunnerStatus::Running { step: 0, total: 1 },
-            "send armed the route"
+            "send armed the whole-world route"
         );
 
-        // Advance the player along the route one tile per tick; the
-        // traveller hops (client walk) and the arm fires on arrival.
+        // Advance the player north one tile per tick; the follow polls its
+        // settle on every delivered frame and the arm fires on the exact
+        // destination tile.
         let mut steps = 0;
         while runner.status() != RunnerStatus::Passed {
-            if steps > 12 {
+            if steps > 80 {
                 panic!("walk never arrived; status={:?}", runner.status());
             }
             steps += 1;
-            let (x, z) = route_progress(steps);
-            c.local_player = Some(ClientPlayer::at(x, z));
+            c.local_player = Some(ClientPlayer::at(5, steps as i32));
             c.bump_gens(ServerProt::PLAYER_INFO);
             runner.tick(&mut c);
         }
         let ev = runner.evidence().expect("evidence at PASS");
-        assert_eq!(ev.tile, Some([2, 2]));
-        assert_eq!(ev.predicate, "arrived(2,2,0)");
-    }
-
-    /// A monotone path across the 3×3 fixture: the traveller's route may
-    /// step either axis first, but every walkable tile in 0..3 reaches
-    /// (2,2), so stepping z then x lands there.
-    fn route_progress(step: u32) -> (i32, i32) {
-        match step {
-            1 => (0, 1),
-            2 => (0, 2),
-            3 => (1, 2),
-            _ => (2, 2),
-        }
+        assert_eq!(ev.tile, Some([3205, 3230]));
+        assert_eq!(ev.predicate, "arrived(3205,3230,0)");
+        assert!(ev.ticks > 0, "the walk counted delivered frames");
     }
 
     #[test]
-    fn walk_step_fails_without_a_nav_pack() {
-        let mut c = seeded_client();
-        let dest = Tile {
-            x: 2,
-            z: 2,
+    fn walk_step_fails_without_a_nav_world() {
+        let mut c = follow_client();
+        let dest = WorldTile {
+            x: 3205,
+            z: 3230,
             level: 0,
         };
-        let scenario = Scenario {
-            name: "no-pack",
-            seed: Seed {
-                profiles: vec![("test", "test")],
-                mainland: false,
-            },
-            steps: vec![Step {
-                name: "walk nowhere",
-                kind: StepKind::Walk { dest },
-                wait: wait(
-                    Proof::Arrived {
-                        x: 2,
-                        z: 2,
-                        level: 0,
-                    },
-                    20,
-                ),
-            }],
-            proof: Proof::Arrived {
-                x: 2,
-                z: 2,
-                level: 0,
-            },
-        };
-        // `with_grid(None)` loads the default pack path; force no grid by
-        // pointing at a missing file.
-        let mut runner = ScenarioRunner::new(scenario);
-        runner.grid = None;
+        let scenario = walk_scenario(dest, 120);
+        // `with_world(None)` injects no router world: the walk step must
+        // fail with a clear pack message.
+        let mut runner = ScenarioRunner::with_world(scenario, None);
         runner.tick(&mut c);
         match runner.status() {
             RunnerStatus::Failed(msg) => {
-                assert!(msg.contains("no nav pack"), "clear pack error: {msg}")
+                assert!(
+                    msg.contains("no nav world"),
+                    "clear world error names the pack: {msg}"
+                )
             }
             other => panic!("expected Failed, got {other:?}"),
         }
@@ -932,11 +790,7 @@ mod tests {
             40,
         );
         let world = NavWorld::from_grid(&grid);
-        let mut runner = ScenarioRunner::with_world(
-            follow_scenario(dest, 120),
-            Some(Arc::new(grid)),
-            Some(Arc::new(world)),
-        );
+        let mut runner = ScenarioRunner::with_world(follow_scenario(dest, 120), Some(Arc::new(world)));
 
         runner.tick(&mut c);
         assert_eq!(
@@ -972,18 +826,8 @@ mod tests {
             z: 3230,
             level: 0,
         };
-        let grid = StepGrid::fixture_rect_at(
-            Tile {
-                x: 3205,
-                z: 3200,
-                level: 0,
-            },
-            1,
-            40,
-        );
-        // `with_grid` injects the walk grid but no router world.
-        let mut runner =
-            ScenarioRunner::with_grid(follow_scenario(dest, 120), Some(Arc::new(grid)));
+        // `with_world(None)` injects no router world.
+        let mut runner = ScenarioRunner::with_world(follow_scenario(dest, 120), None);
         runner.tick(&mut c);
         match runner.status() {
             RunnerStatus::Failed(msg) => {

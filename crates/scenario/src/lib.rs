@@ -26,7 +26,6 @@ use std::time::Duration;
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::tile::Tile;
 
 pub use evidence::{Evidence, InvRow, StatRow};
 pub use proof::Proof;
@@ -59,9 +58,13 @@ pub enum StepKind {
     Perform {
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
-    /// Nav walk: arm the A* route from the current tile (the pack grid),
-    /// hop it one leg per tick, wait for `arrived(dest)`.
-    Walk { dest: Tile },
+    /// Nav walk: arm `nav::router::find` over the collision + transport
+    /// graph derived from the baked pack and drive `Traveller::follow`
+    /// one step per tick until arrival. Identical to `Follow`; the wait
+    /// arm is `arrived(dest)`, the proof mirrors it, so a walk that ends
+    /// anywhere but the destination fails the step with the terminal
+    /// outcome's message.
+    Walk { dest: WorldTile },
     /// Whole-world nav: arm `nav::router::find` over the collision +
     /// transport graph derived from the baked pack and drive
     /// `Traveller::follow` one step per tick until the route terminates.
@@ -141,14 +144,14 @@ fn render_smoke_scenario() -> Scenario {
 /// Lumbridge courtyard, walk south across the open courtyard in two steps,
 /// and prove the player is standing at (3220, 3212, 0). The landing tile
 /// after the mainland tele is (3220, 3220) or (3220, 3222); both steps
-/// walk through open, walkable tiles.
+/// route through open, walkable tiles on the whole-world `NavWorld`.
 fn walk_scenario() -> Scenario {
-    let mid = Tile {
+    let mid = WorldTile {
         x: 3220,
         z: 3216,
         level: 0,
     };
-    let dest = Tile {
+    let dest = WorldTile {
         x: 3220,
         z: 3212,
         level: 0,
