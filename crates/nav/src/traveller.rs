@@ -7,15 +7,15 @@
 //! The high-level [`Traveller::follow`] is a new pollable layer: it drives
 //! a [`crate::router::Route`] leg-by-leg through `api::interact::Interactions`
 //! + `api::settle::Settle` (walk legs via `walk` + an `arrived` arm,
-//! transport legs via `interact` on the transport loc + `arrived`/level
-//! arms), advancing one step per call. The host calls it every tick and
-//! gets `None` while the route is still being followed and `Some(outcome)`
-//! when it terminates.
+//! transport legs via `interact` on the transport loc + a positional
+//! `arrived(edge.to)` arm), advancing one step per call. The host calls it
+//! every tick and gets `None` while the route is still being followed and
+//! `Some(outcome)` when it terminates.
 
 use std::collections::VecDeque;
 
 use api::interact::{op_loc, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult};
-use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
+use api::settle::{arrived, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, ReadContext, WorldTile};
 
 use crate::arrival::arrived as grid_arrived;
@@ -458,7 +458,9 @@ impl FollowRun {
     }
 
     /// One poll step: settle an active hop, or start the next leg (sending
-    /// its first hop). At most one driver send per call.
+    /// its first hop). At most one driver send per call. A settle poll that
+    /// is still watching ends the call (`None`); only a matched settle may
+    /// advance the run — to the next leg or to a terminal outcome.
     fn step<D: Driver>(
         &mut self,
         d: &mut D,
@@ -467,16 +469,18 @@ impl FollowRun {
     ) -> Option<TravelOutcome> {
         loop {
             if self.walk.is_some() {
-                if let Some(outcome) = self.poll_walk(d, snapshot, options) {
-                    return Some(outcome);
+                match self.poll_walk(d, snapshot, options) {
+                    Poll::Terminal(outcome) => return Some(outcome),
+                    Poll::Watching => return None,
+                    Poll::LegDone => continue,
                 }
-                continue;
             }
             if self.transport.is_some() {
-                if let Some(outcome) = self.poll_transport(snapshot, options) {
-                    return Some(outcome);
+                match self.poll_transport(snapshot, options) {
+                    Poll::Terminal(outcome) => return Some(outcome),
+                    Poll::Watching => return None,
+                    Poll::LegDone => continue,
                 }
-                continue;
             }
             // No active hop: work the next leg (or finish).
             let Some(leg) = self.legs.pop_front() else {
@@ -516,6 +520,7 @@ impl FollowRun {
                                 cursor: 0,
                                 aim,
                                 aim_index,
+                                sent: true,
                                 ticks_waited: 0,
                                 sent_tile: Some(here),
                                 tries: 0,
@@ -541,8 +546,6 @@ impl FollowRun {
                     match find_transport_loc(snapshot, edge) {
                         Some(loc) => {
                             let to = edge.to;
-                            let to_level = edge.to.level;
-                            let level_changing = edge.from.level != edge.to.level;
                             let mut ix = Interactions::new(snapshot, d);
                             match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
                                 SendResult::Sent { .. } => {
@@ -550,8 +553,6 @@ impl FollowRun {
                                     self.transport = Some(TransportHop {
                                         leg,
                                         to,
-                                        to_level,
-                                        level_changing,
                                         ticks_waited: 0,
                                         sent_tile: Some(here),
                                         tries: 0,
@@ -592,17 +593,47 @@ impl FollowRun {
         }
     }
 
-    /// One walk-hop settle step: match the `arrived` arm, or lapse the
-    /// hop budget. On arrival the next hop starts in the same call (still
-    /// only one walk send).
+    /// One walk-hop step: send an armed (unsent) hop, or settle the sent
+    /// one against the `arrived` arm and the hop budget. A still-watching
+    /// settle ends the call; a matched hop arms the next hop (sent on the
+    /// next call) or completes the leg.
     fn poll_walk<D: Driver>(
         &mut self,
         d: &mut D,
         snapshot: &GameSnapshot,
         options: &mut TravelOptions,
-    ) -> Option<TravelOutcome> {
+    ) -> Poll {
         let mut hop = self.walk.take().expect("walk hop present");
         let here = here(snapshot);
+        if !hop.sent {
+            // The previous poll matched mid-leg and armed this hop: send
+            // it now (one walk per call).
+            if self.hops >= self.max_hops {
+                fire_leg(options, &hop.leg(), LegPhase::Failed);
+                return Poll::Terminal(TravelOutcome::GaveUp {
+                    at: here,
+                    hops: self.hops,
+                });
+            }
+            self.hops += 1;
+            let (aim, aim_index) = pick_aim(hop.tiles(), here, hop.cursor);
+            let mut ix = Interactions::new(snapshot, d);
+            return match ix.walk(aim) {
+                SendResult::Sent { .. } => {
+                    hop.aim = aim;
+                    hop.aim_index = aim_index;
+                    hop.sent = true;
+                    hop.ticks_waited = 0;
+                    hop.sent_tile = Some(here);
+                    self.walk = Some(hop);
+                    Poll::Watching
+                }
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg(), LegPhase::Failed);
+                    Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+                }
+            };
+        }
         let arms = [("arrived", arrived(hop.aim, self.close_enough))];
         let mut settle = Settle::new(
             SettleOptions {
@@ -622,38 +653,18 @@ impl FollowRun {
                 if hop.aim_index + 1 >= hop.tiles().len() {
                     fire_leg(options, &hop.leg(), LegPhase::Done);
                     self.leg_index += 1;
-                    return None;
+                    return Poll::LegDone;
                 }
-                if self.hops >= self.max_hops {
-                    fire_leg(options, &hop.leg(), LegPhase::Failed);
-                    return Some(TravelOutcome::GaveUp {
-                        at: here,
-                        hops: self.hops,
-                    });
-                }
-                self.hops += 1;
+                // Mid-leg: arm the next hop; the next call sends it.
                 hop.cursor = hop.aim_index + 1;
-                let (aim, aim_index) = pick_aim(hop.tiles(), here, hop.cursor);
-                let mut ix = Interactions::new(snapshot, d);
-                match ix.walk(aim) {
-                    SendResult::Sent { .. } => {
-                        hop.aim = aim;
-                        hop.aim_index = aim_index;
-                        hop.ticks_waited = 0;
-                        hop.sent_tile = Some(here);
-                        self.walk = Some(hop);
-                        None
-                    }
-                    SendResult::Refused { reason, .. } => {
-                        fire_leg(options, &hop.leg(), LegPhase::Failed);
-                        Some(TravelOutcome::Refused { at: here, reason })
-                    }
-                }
+                hop.sent = false;
+                self.walk = Some(hop);
+                Poll::Watching
             }
             // A disconnect ends the watch; the hop was effectively dropped.
             Some(Outcome::Expired { .. }) => {
                 fire_leg(options, &hop.leg(), LegPhase::Failed);
-                Some(TravelOutcome::Stalled {
+                Poll::Terminal(TravelOutcome::Stalled {
                     at: here,
                     aiming: hop.aim,
                     why: HopFailure::Dropped,
@@ -664,7 +675,7 @@ impl FollowRun {
             // keep watching defensively.
             Some(Outcome::Refused { .. }) => {
                 self.walk = Some(hop);
-                None
+                Poll::Watching
             }
             None => {
                 hop.ticks_waited += 1;
@@ -675,7 +686,7 @@ impl FollowRun {
                         HopFailure::Expired
                     };
                     fire_leg(options, &hop.leg(), LegPhase::Failed);
-                    Some(TravelOutcome::Stalled {
+                    Poll::Terminal(TravelOutcome::Stalled {
                         at: here,
                         aiming: hop.aim,
                         why,
@@ -683,25 +694,24 @@ impl FollowRun {
                     })
                 } else {
                     self.walk = Some(hop);
-                    None
+                    Poll::Watching
                 }
             }
         }
     }
 
-    /// One transport-hop settle step: match `arrived(edge.to)` (plus the
-    /// level-change arm for a level-changing edge), or lapse the budget.
+    /// One transport-hop settle step: match the positional `arrived(edge.to)`
+    /// arm (level + proximity, so a level-changing transport completes only
+    /// within `close_enough` of `to` on the destination level), or lapse
+    /// the budget.
     fn poll_transport(
         &mut self,
         snapshot: &GameSnapshot,
         options: &mut TravelOptions,
-    ) -> Option<TravelOutcome> {
+    ) -> Poll {
         let mut hop = self.transport.take().expect("transport hop present");
         let here = here(snapshot);
-        let arms = [
-            ("arrived", arrived(hop.to, self.close_enough)),
-            ("level", crossed_to(hop.to_level, hop.level_changing)),
-        ];
+        let arms = [("arrived", arrived(hop.to, self.close_enough))];
         let mut settle = Settle::new(
             SettleOptions {
                 arms: &arms,
@@ -714,11 +724,11 @@ impl FollowRun {
             Some(Outcome::Matched { .. }) => {
                 fire_leg(options, &hop.leg, LegPhase::Done);
                 self.leg_index += 1;
-                None
+                Poll::LegDone
             }
             Some(Outcome::Expired { .. }) => {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
-                Some(TravelOutcome::Stalled {
+                Poll::Terminal(TravelOutcome::Stalled {
                     at: here,
                     aiming: hop.to,
                     why: HopFailure::Dropped,
@@ -729,7 +739,7 @@ impl FollowRun {
             // keep watching defensively.
             Some(Outcome::Refused { .. }) => {
                 self.transport = Some(hop);
-                None
+                Poll::Watching
             }
             None => {
                 hop.ticks_waited += 1;
@@ -740,7 +750,7 @@ impl FollowRun {
                         HopFailure::Expired
                     };
                     fire_leg(options, &hop.leg, LegPhase::Failed);
-                    Some(TravelOutcome::Stalled {
+                    Poll::Terminal(TravelOutcome::Stalled {
                         at: here,
                         aiming: hop.to,
                         why,
@@ -748,11 +758,22 @@ impl FollowRun {
                     })
                 } else {
                     self.transport = Some(hop);
-                    None
+                    Poll::Watching
                 }
             }
         }
     }
+}
+
+/// The outcome of one settle poll inside a follow step.
+enum Poll {
+    /// The hop is still being watched: the call ends (`None` to the host).
+    Watching,
+    /// The hop's leg completed: the run may start the next leg (or finish)
+    /// in the same call.
+    LegDone,
+    /// The run terminated on this poll.
+    Terminal(TravelOutcome),
 }
 
 /// One walk-leg hop: the leg's tiles, the aim tile, and the stall clock.
@@ -762,6 +783,9 @@ struct WalkHop {
     cursor: usize,
     aim: WorldTile,
     aim_index: usize,
+    /// Whether the walk for `aim` has been sent; a matched mid-leg hop is
+    /// re-armed with `sent: false` and sent on the next call.
+    sent: bool,
     ticks_waited: u32,
     /// The player's tile when the hop's walk was sent (stall detection).
     sent_tile: Option<WorldTile>,
@@ -785,14 +809,11 @@ impl WalkHop {
     }
 }
 
-/// One transport-leg hop: the edge (for the phase callback and the arrival
-/// arms) plus the stall clock.
+/// One transport-leg hop: the edge (for the phase callback) plus the
+/// arrival target and the stall clock.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
-    to_level: i32,
-    /// The edge changes level: the `level` arm is live.
-    level_changing: bool,
     ticks_waited: u32,
     sent_tile: Option<WorldTile>,
     tries: u32,
@@ -849,19 +870,6 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
         .map(|(loc, _)| loc)
 }
 
-/// The level-change settle arm: fires once the local player stands on
-/// `level` — only meaningful for a level-changing edge (a same-level
-/// transport relies on the `arrived` arm alone).
-fn crossed_to(level: i32, changing: bool) -> Evidence<'static> {
-    Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-        if !changing {
-            return false;
-        }
-        now.local_player()
-            .is_some_and(|lp| lp.player.actor.tile.level == level)
-    })
-}
-
 /// Fire the `on_leg` callback for a phase transition, using the `options`
 /// of the poll in which the transition happened.
 fn fire_leg(options: &mut TravelOptions<'_>, leg: &Leg, phase: LegPhase) {
@@ -874,7 +882,7 @@ fn fire_leg(options: &mut TravelOptions<'_>, leg: &Leg, phase: LegPhase) {
 mod tests {
     use api::interact::{Driver, SendReason};
     use api::prot::Out;
-    use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
+    use api::snapshot::{GameSnapshot, WorldTile};
     use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
     use client::config::LocType;
     use client::io::{ClientStream, ServerProt};
@@ -885,7 +893,8 @@ mod tests {
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportKind};
     use crate::traveller::{
-        crossed_to, HopFailure, LegPhase, NavStatus, TravelOptions, TravelOutcome, Traveller,
+        FollowRun, HopFailure, LegPhase, NavStatus, Poll, TransportHop, TravelOptions,
+        TravelOutcome, Traveller,
     };
 
     #[test]
@@ -1992,18 +2001,6 @@ mod tests {
         assert!(matches!(&phases[3], (Leg::Transport { .. }, LegPhase::Done)));
     }
 
-    #[test]
-    fn level_change_arm_only_fires_for_a_changing_edge() {
-        let mut c = scene_client();
-        let snap = snap_at(&mut c, 0, 0);
-        let ctx = ReadContext::new(&snap);
-        // The fixture player is on level 0: the arm fires only when the
-        // edge actually changes level and the target level matches.
-        assert!(crossed_to(0, true)(&ctx, &ctx));
-        assert!(!crossed_to(1, true)(&ctx, &ctx));
-        assert!(!crossed_to(0, false)(&ctx, &ctx));
-    }
-
     /// Recording driver for the follow tests: the build base matches the
     /// fixture scene (3200, 3200), so loc scene coords translate like the
     /// live client and `Interactions`' in-scene check passes. Walks are
@@ -2068,6 +2065,176 @@ mod tests {
         fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
             true
         }
+    }
+
+    #[test]
+    fn follow_waits_across_polls_for_the_hop_to_arrive() {
+        // Regression: a hop spanning several ticks must return `None` from
+        // each still-waiting poll (the host re-polls next tick), never a
+        // stall caused by re-polling the same snapshot within one call.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            },
+            ticks: 0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 10,
+            ..TravelOptions::default()
+        };
+        // Poll 1: the run sends the hop's walk.
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        // Poll 2: the player is mid-leg — the settle must still be watching
+        // (the call returns `None`), never a stall from an intra-call spin.
+        plant_player(&mut c, 0, 2);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options).is_none(),
+            "a mid-walk poll must not stall"
+        );
+        // Poll 3: the player reaches the leg end — the run arrives.
+        plant_player(&mut c, 0, 5);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3200,
+                        z: 3205,
+                        level: 0
+                    }
+                )
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn follow_steps_a_long_walk_leg_hop_by_hop() {
+        // A leg longer than close_enough needs several hops: the player
+        // advances toward the end between polls and each matched hop arms
+        // the next one until the last tile is reached.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let tiles: Vec<(i32, i32)> = (0..40).map(|z| (3200, 3200 + z)).collect();
+        let route = Route {
+            legs: vec![walk_leg(&tiles)],
+            dest: WorldTile {
+                x: 3200,
+                z: 3239,
+                level: 0,
+            },
+            ticks: 0,
+        };
+        let mut options = TravelOptions {
+            close_enough: 3,
+            ..TravelOptions::default()
+        };
+        let mut z = 0;
+        loop {
+            if let Some(outcome) = t.follow(&mut rec, &snap, route.clone(), &mut options) {
+                assert!(matches!(outcome, TravelOutcome::Arrived { .. }));
+                break;
+            }
+            z = (z + 15).min(39);
+            plant_player(&mut c, 0, z);
+            bump_rebuild(&mut c, &mut snap);
+        }
+        assert!(
+            rec.walked.len() >= 2,
+            "a long leg needs several hops, got {}",
+            rec.walked.len()
+        );
+    }
+
+    #[test]
+    fn level_change_transport_requires_proximity_to_to() {
+        // Regression: a level-changing transport completes only when the
+        // player is within `close_enough` of `to` on the destination level
+        // — never merely for standing anywhere on that level.
+        let mut c = scene_client();
+        c.minusedlevel = 1;
+        let snap = snap_at(&mut c, 100, 100);
+        let edge = TransportEdge {
+            kind: TransportKind::Ladder,
+            from: WorldTile {
+                x: 3202,
+                z: 3204,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3202,
+                z: 3205,
+                level: 1,
+            },
+            loc_id: 1,
+            option: 1,
+            ticks: 2,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 3202,
+                z: 3205,
+                level: 1,
+            },
+            ticks: 2,
+        };
+        let mut options = TravelOptions::default();
+        let mut run = FollowRun::start(route, &options);
+        let leg = run.legs.pop_front().expect("the transport leg");
+        run.transport = Some(TransportHop {
+            leg,
+            to: WorldTile {
+                x: 3202,
+                z: 3205,
+                level: 1,
+            },
+            ticks_waited: 0,
+            sent_tile: Some(WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            }),
+            tries: 0,
+        });
+        // The player is on the destination level (1) but far from `to`:
+        // the hop must still be watching.
+        assert!(matches!(run.poll_transport(&snap, &mut options), Poll::Watching));
+        // Within close_enough of `to` on the destination level: the hop
+        // completes the leg.
+        plant_player(&mut c, 2, 5);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&mut c);
+        assert!(matches!(run.poll_transport(&snap, &mut options), Poll::LegDone));
     }
 
     /// Recording driver: captures the last walk target and counts OP_LOC1
