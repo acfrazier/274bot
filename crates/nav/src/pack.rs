@@ -301,6 +301,7 @@ fn kind_to_u8(k: TransportKind) -> u8 {
         TransportKind::Boat => 3,
         TransportKind::Teleport => 4,
         TransportKind::AgilityShortcut => 5,
+        TransportKind::Glider => 6,
     }
 }
 
@@ -313,6 +314,7 @@ fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
         3 => Ok(TransportKind::Boat),
         4 => Ok(TransportKind::Teleport),
         5 => Ok(TransportKind::AgilityShortcut),
+        6 => Ok(TransportKind::Glider),
         _ => Err(PackError::BadLength(format!(
             "unknown transport kind {b}"
         ))),

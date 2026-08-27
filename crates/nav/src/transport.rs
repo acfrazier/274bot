@@ -36,12 +36,14 @@ pub enum TransportKind {
     Ladder,
     /// A staircase placement.
     Stairs,
-    /// A ship/boat journey (origin is the dock).
+    /// A ship/boat journey (origin is the dock NPC's tile).
     Boat,
     /// A magic teleport spell (destination is the spell's landing).
     Teleport,
     /// An agility shortcut (stile, wall climb, …).
     AgilityShortcut,
+    /// A gnome-glider flight between two fixed platforms.
+    Glider,
 }
 
 /// One directed transport hop: stand on `from`, use `option` on the loc
@@ -94,6 +96,7 @@ pub fn derive_transports(content_root: &Path, loc_defs: &LocDefs) -> TransportGr
     ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
+    glider_edges(&mut graph);
     teleport_skip(content_root, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -220,7 +223,7 @@ fn report(
         *by_kind.entry(e.kind).or_default() += 1;
     }
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
@@ -228,6 +231,7 @@ fn report(
         by_kind.get(&TransportKind::Stairs).copied().unwrap_or(0),
         by_kind.get(&TransportKind::AgilityShortcut).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Boat).copied().unwrap_or(0),
+        by_kind.get(&TransportKind::Glider).copied().unwrap_or(0),
         skipped.values().sum::<usize>(),
     );
     let mut reasons: Vec<_> = skipped.keys().collect();
@@ -1672,6 +1676,79 @@ fn boat_edges(graph: &mut TransportGraph) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Gnome gliders: the 2004 Gnome Air network (fixed platform table).
+// ---------------------------------------------------------------------------
+
+/// The Grand Tree glider hub (Ta Quir Priw): `^ta_quir_priw =
+/// 3_38_54_33_45` in `scripts/areas/area_gnome/configs/glider.constant`
+/// (the Gnome pilot spawns one tile west).
+const GLIDER_HUB: WorldTile = WorldTile {
+    x: 2465,
+    z: 3501,
+    level: 3,
+};
+
+/// The four glider pads and their platforms, from the same `glider.constant`
+/// (`^gandius = 0_46_46_27_25`, `^sindarpos = 0_44_54_34_41`,
+/// `^lemanto_andra = 0_51_53_56_38`, `^kar_hewo = 0_51_50_20_11`), except
+/// Gandius, where the constant tile (2963,2969) is not walkable and the
+/// rs2b0t-observed stand tile is used instead.
+const GLIDER_PADS: &[WorldTile] = &[
+    WorldTile {
+        x: 2971,
+        z: 2969,
+        level: 0,
+    }, // Gandius (Gnome Stronghold)
+    WorldTile {
+        x: 2850,
+        z: 3497,
+        level: 0,
+    }, // Sindarpos (Al Kharid)
+    WorldTile {
+        x: 3320,
+        z: 3430,
+        level: 0,
+    }, // Lemanto Andra (Varrock)
+    WorldTile {
+        x: 3284,
+        z: 3211,
+        level: 0,
+    }, // Kar-Hewo (Karamja)
+];
+
+/// Gnome pilot (npc.pack 170): the `Talk-to` target at every platform.
+const GNOME_PILOT: i32 = 170;
+
+/// The glider quest gate: the pilot offers Gnome Air only once the Grand
+/// Tree quest is complete (`%grandtree >= ^grandtree_complete`, varp 150
+/// = 160 in `scripts/quests/quest_grandtree/scripts/gnome_glider.rs2`'s
+/// `[opnpc1,gnomepilot]` block).
+const GLIDER_QUEST_REQ: (i32, i32) = (150, 160);
+
+/// Glider edges from the fixed platform table: the hub ↔ each pad, both
+/// directions. `calc_glidervar` in `gnome_glider.rs2` allows only hub↔pad
+/// flights (pad↔pad shows "You can't go there at the moment."); the flight
+/// is a `p_delay(3)` + teleport on top of the `Talk-to` op.
+fn glider_edges(graph: &mut TransportGraph) {
+    for pad in GLIDER_PADS {
+        for (from, to) in [(GLIDER_HUB, *pad), (*pad, GLIDER_HUB)] {
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Glider,
+                from,
+                to,
+                loc_id: GNOME_PILOT,
+                option: 1,
+                ticks: 4,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![GLIDER_QUEST_REQ],
+            });
+        }
+    }
+}
+
 /// Teleport spells declare a landing (`data=tele_coord`) and requirements in
 /// `skill_magic/configs/magic_spells.dbrow`, but are cast from anywhere, so
 /// they have no single origin tile to key an edge on.
@@ -2297,16 +2374,26 @@ p_arrivedelay;
         let defs = loc_defs(&[(1747, 1, 1)]);
         let graph = derive_transports(fx.path(), &defs);
         // The unknown ladder name resolves nothing; the only edges are the
-        // explicit 2004 boat route table.
-        assert!(graph
+        // explicit 2004 boat route and gnome-glider tables.
+        let explicit = graph
             .edges
             .iter()
-            .all(|e| e.kind == TransportKind::Boat));
+            .filter(|e| e.kind == TransportKind::Boat || e.kind == TransportKind::Glider)
+            .count();
+        assert_eq!(explicit, graph.edges.len());
         assert_eq!(
             graph
                 .edges
                 .iter()
                 .filter(|e| e.kind == TransportKind::Boat)
+                .count(),
+            8
+        );
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .filter(|e| e.kind == TransportKind::Glider)
                 .count(),
             8
         );
@@ -2524,6 +2611,55 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         assert_eq!(cannon.len(), 2);
         for d in &cannon {
             assert_eq!(d.varp_req, vec![(0, 6)]);
+        }
+    }
+
+    #[test]
+    fn derive_transports_emits_glider_edges_from_platform_to_platform() {
+        let fx = Fixture::new();
+        let defs = loc_defs(&[]);
+        let graph = derive_transports(fx.path(), &defs);
+
+        let gliders: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Glider)
+            .collect();
+        // The Grand Tree hub ↔ each of the four pads, both directions
+        // (`calc_glidervar` allows only hub↔pad flights).
+        assert_eq!(gliders.len(), 8);
+        let hub = WorldTile {
+            x: 2465,
+            z: 3501,
+            level: 3,
+        };
+        let sindarpos = WorldTile {
+            x: 2850,
+            z: 3497,
+            level: 0,
+        };
+        let gandius = WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        };
+        let hub_edges: Vec<_> = gliders
+            .iter()
+            .filter(|e| e.from == hub)
+            .collect();
+        assert_eq!(hub_edges.len(), 4);
+        assert!(hub_edges.iter().any(|e| e.to == sindarpos));
+        assert!(hub_edges.iter().any(|e| e.to == gandius));
+        let sindarpos_edges: Vec<_> = gliders
+            .iter()
+            .filter(|e| e.from == sindarpos)
+            .collect();
+        assert_eq!(sindarpos_edges.len(), 1);
+        assert_eq!(sindarpos_edges[0].to, hub);
+        for g in &gliders {
+            assert_eq!(g.varp_req, vec![(150, 160)]); // Grand Tree complete
+            assert_eq!(g.option, 1); // Talk-to the Gnome pilot
+            assert_eq!(g.loc_id, 170);
         }
     }
 }
