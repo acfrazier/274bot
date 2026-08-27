@@ -1,6 +1,8 @@
 //! Whole-world level-0 collision bake: every mapsquare's MAP f-flags and
 //! LOC placements → one [`WorldCollision`] of `client::dash3d::CollisionFlag`
-//! bitmasks, mirroring the client's `CollisionMap` stamping.
+//! bitmasks, mirroring the client's `CollisionMap` stamping, plus the
+//! derived per-tile walkable word ([`derive_walkable`]) the router's
+//! directional step test reads.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -20,6 +22,25 @@ const WALK_BLOCK: u32 = CollisionFlag::WALK_BLOCK_FLAGS as u32
     | CollisionFlag::WALK_SCENERY as u32
     | CollisionFlag::WR_GRND as u32;
 
+/// The client's `SQ_BLOCKED` base shared by every `PL_WALK_*` movement mask
+/// (`WALK_SCENERY | BLOCK_NPCS_AND_PLAYERS | WR_GRND` = `0x280100`): any of
+/// these on a tile makes the derived walkable word reject every direction.
+const SQ_BLOCKED: u32 = CollisionFlag::WALK_SCENERY as u32
+    | CollisionFlag::BLOCK_NPCS_AND_PLAYERS as u32
+    | CollisionFlag::WR_GRND as u32;
+
+/// Raw walk wall bit → the client's directional `PL_WALK_*` movement mask.
+const WALK_BITS: [(u32, u32); 8] = [
+    (CollisionFlag::W_N as u32, CollisionFlag::PL_WALK_N as u32),
+    (CollisionFlag::W_E as u32, CollisionFlag::PL_WALK_E as u32),
+    (CollisionFlag::W_S as u32, CollisionFlag::PL_WALK_S as u32),
+    (CollisionFlag::W_W as u32, CollisionFlag::PL_WALK_W as u32),
+    (CollisionFlag::W_NE as u32, CollisionFlag::PL_WALK_NE as u32),
+    (CollisionFlag::W_SE as u32, CollisionFlag::PL_WALK_SE as u32),
+    (CollisionFlag::W_NW as u32, CollisionFlag::PL_WALK_NW as u32),
+    (CollisionFlag::W_SW as u32, CollisionFlag::PL_WALK_SW as u32),
+];
+
 /// Whole-world level-0 collision: one `CollisionFlag` bitmask per tile,
 /// row-major `z` then `x`, mirroring the client's `CollisionMap` build.
 pub struct WorldCollision {
@@ -28,7 +49,17 @@ pub struct WorldCollision {
     pub origin: WorldTile,
     pub width: usize,
     pub height: usize,
+    /// The raw baked word per tile: the client's `W_*`/`V_*` wall bits,
+    /// `WALK_SCENERY` footprints, and `WR_GRND` ground blocks, exactly as
+    /// `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp them.
     pub flags: Vec<u32>,
+    /// The derived walkable word per tile, mirroring the client's movement
+    /// masks: a raw wall bit `W_D` sets the full `PL_WALK_D` mask (which
+    /// carries the shared `SQ_BLOCKED` base), so any wall flag — like
+    /// blocked ground or scenery — makes the tile reject entry from every
+    /// direction. The router's `step_ok` reads this word, never the raw
+    /// `flags`.
+    pub walkable: Vec<u32>,
 }
 
 impl WorldCollision {
@@ -48,6 +79,25 @@ impl WorldCollision {
             return 0;
         }
         self.flags[lz * self.width + lx]
+    }
+
+    /// The derived directional walkable word at `(x, z, level)`, `0` for
+    /// tiles outside the grid or on another level (same indexing and
+    /// out-of-grid shape as [`Self::flag`]).
+    pub fn walkable_word(&self, x: i32, z: i32, level: i32) -> u32 {
+        if level != self.origin.level {
+            return 0;
+        }
+        let lx = x - self.origin.x;
+        let lz = z - self.origin.z;
+        if lx < 0 || lz < 0 {
+            return 0;
+        }
+        let (lx, lz) = (lx as usize, lz as usize);
+        if lx >= self.width || lz >= self.height {
+            return 0;
+        }
+        self.walkable[lz * self.width + lx]
     }
 
     /// True when `t` sits on this bake's level-0 plane, inside its bounds,
@@ -174,8 +224,30 @@ pub fn bake_from_maps(
         },
         width,
         height,
+        walkable: derive_walkable(&flags),
         flags,
     })
+}
+
+/// Derive the directional walkable word from the raw collision flags: a raw
+/// wall bit `W_D` on a tile sets the client's full `PL_WALK_D` mask there
+/// (mirroring `tryMove`'s masks, whose shared `SQ_BLOCKED` base means any
+/// wall flag — like blocked ground or scenery — rejects entry from every
+/// direction). Pure over the raw word, so decoders recompute it from the
+/// packed `flags`.
+pub(crate) fn derive_walkable(flags: &[u32]) -> Vec<u32> {
+    flags
+        .iter()
+        .map(|&raw| {
+            let mut w = raw & SQ_BLOCKED;
+            for &(bit, mask) in &WALK_BITS {
+                if raw & bit != 0 {
+                    w |= mask;
+                }
+            }
+            w
+        })
+        .collect()
 }
 
 /// Stamp one mapsquare's MAP flags and LOC placements into the bbox grid.

@@ -8,9 +8,9 @@
 //! transport edge costs its `ticks` (OP_BASE + duration). Costs are `f64`
 //! — 0.5 and every reachable sum are exact — ordered with `total_cmp` in
 //! the heap so equal costs tie-break on tile coordinates. A step into a
-//! neighbour is allowed only when the neighbour's flags pass the client's
-//! directional movement test (the `PL_WALK_*` masks in `tryMove`), never
-//! the blanket `walkable()` check.
+//! neighbour is allowed only when the neighbour's derived walkable word
+//! passes the client's directional movement test (the `PL_WALK_*` masks in
+//! `tryMove`), never the blanket `walkable()` check.
 //!
 //! [`find`] and [`find_with_model`] never see teleports; the any-tile
 //! teleport layer ([`TransportGraph::teleports`]) only joins the search
@@ -286,15 +286,16 @@ fn find_bounded_impl(
 }
 
 /// Whether a one-tile step from `cur` by `d` is allowed — the client's
-/// `tryMove` movement test, not the blanket `walkable()` (which is stricter
-/// than the client: a tile with only, say, a `W_S` face flag is still
-/// standable). A step into a neighbour clears that neighbour's `PL_WALK_*`
-/// mask for the face/corner the step enters through; a diagonal step
-/// additionally clears both orthogonal neighbours' cardinal masks, exactly
-/// like `tryMove`'s BFS. Every step stays inside the bake's x/z grid (the
-/// whole-world mapsquare bbox); on other levels the bake carries no flags
-/// yet — transports may land there — so steps are unrestricted within that
-/// plane.
+/// `tryMove` movement test against the collision bake's derived walkable
+/// word, not the blanket `walkable()`. A step into a neighbour clears that
+/// neighbour's `PL_WALK_*` mask for the face/corner the step enters
+/// through; a diagonal step additionally clears both orthogonal neighbours'
+/// cardinal masks, exactly like `tryMove`'s BFS. The derived word carries
+/// the `SQ_BLOCKED` base on any wall/scenery/ground tile, so those tiles
+/// reject entry from every direction. Every step stays inside the bake's
+/// x/z grid (the whole-world mapsquare bbox); on other levels the bake
+/// carries no flags yet — transports may land there — so steps are
+/// unrestricted within that plane.
 fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
     let nb = WorldTile {
         x: cur.x + d.0,
@@ -309,7 +310,7 @@ fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
     if lx as usize >= collision.width || lz as usize >= collision.height {
         return false;
     }
-    let f = |x: i32, z: i32| collision.flag(x, z, nb.level);
+    let f = |x: i32, z: i32| collision.walkable_word(x, z, nb.level);
     match (d.0, d.1) {
         // Cardinal: the destination's face toward `cur`.
         (0, 1) => f(nb.x, nb.z) & MASK_S == 0,
@@ -643,14 +644,19 @@ impl Ord for GridNode {
 
 #[cfg(test)]
 mod tests {
+    use api::obj_names::LocDefs;
     use api::snapshot::WorldTile;
+    use client::config::LocType;
     use client::dash3d::CollisionFlag;
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::PathBuf;
 
-    use crate::collision::WorldCollision;
+    use crate::collision::{bake_from_maps, WorldCollision};
     use crate::grid::StepGrid;
     use crate::router::{
-        find, find_allow_teleports, find_bounded, find_on_grid, find_with_model, CostModel,
-        GridLeg, Leg, RouteError, PER_STEP_WALK,
+        find, find_allow_teleports, find_bounded, find_on_grid, find_with_model, step_ok,
+        CostModel, GridLeg, Leg, RouteError, PER_STEP_WALK,
     };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -830,8 +836,35 @@ mod tests {
             origin: tile(0, 0, 0),
             width,
             height,
-            flags,
+            flags: flags.clone(),
+            walkable: crate::collision::derive_walkable(&flags),
         }
+    }
+
+    /// A scratch mapsquare directory for one fixture, removed on drop.
+    struct FixDir(PathBuf);
+
+    impl FixDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "274bot-nav-router-{name}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            FixDir(dir)
+        }
+    }
+
+    impl Drop for FixDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A one-loc `LocDefs` table.
+    fn defs(locs: &[LocType]) -> LocDefs {
+        LocDefs::from_locs(locs)
     }
 
     /// A 5×5 grid split by a wall between x=1 and x=2: the client's `W_E` on
@@ -840,6 +873,20 @@ mod tests {
         let mut extras = Vec::new();
         for z in 0..5 {
             extras.push((1, z, CollisionFlag::W_E as u32));
+            extras.push((2, z, CollisionFlag::W_W as u32));
+        }
+        bake(5, 5, &extras)
+    }
+
+    /// The same wall with a door gap at `gap_z`: column 1 carries no `W_E`
+    /// there, so the door's `from` tile stays open while column 2's `W_W`
+    /// still seals the crossing.
+    fn walled_5x5_gap(gap_z: i32) -> WorldCollision {
+        let mut extras = Vec::new();
+        for z in 0..5 {
+            if z != gap_z {
+                extras.push((1, z, CollisionFlag::W_E as u32));
+            }
             extras.push((2, z, CollisionFlag::W_W as u32));
         }
         bake(5, 5, &extras)
@@ -924,13 +971,16 @@ mod tests {
 
     #[test]
     fn router_uses_transport_across_a_wall() {
-        let wc = walled_5x5();
+        // The wall has a door gap at z=2: the door's from tile stays open,
+        // but the wall's own stamps otherwise seal the crossing.
+        let wc = walled_5x5_gap(2);
         let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 4, 0));
-        // 2 walk steps to the door (1.0) + the 2-tick door + 2 walk steps
-        // from it (1.0).
-        assert_eq!(r.ticks, 4.0);
+        // 3 walk steps to the door's from tile (1.5, around the wall end)
+        // + the 2-tick door + 3 walk steps from it (1.5, no corner-cutting
+        // past the wall tile).
+        assert_eq!(r.ticks, 5.0);
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { tiles: w0 },
@@ -961,24 +1011,85 @@ mod tests {
         assert!(matches!(&r.legs[0], Leg::Walk { .. }));
     }
 
-    /// A tile with only a `W_S` face flag is still standable: the client's
-    /// movement test checks only the face the step enters through, so a
-    /// route may pass through it from the north, but the reverse direction
-    /// steps into the blocked face and cannot.
+    /// Any wall flag on a tile now carries the full directional `PL_WALK_*`
+    /// word (the masks share the `SQ_BLOCKED` base), so the tile rejects
+    /// entry from every direction — a 1-wide walled corridor is no path
+    /// either way, not just one way.
     #[test]
-    fn find_steps_respect_directional_face_flags() {
-        // A 1-tile-wide column: the only route through (0,1) is vertical.
+    fn find_wall_flags_block_the_tile_every_direction() {
         let wc = bake(1, 3, &[(0, 1, CollisionFlag::W_S as u32)]);
         let g = TransportGraph::default();
-        let r = find(&wc, &g, tile(0, 2, 0), tile(0, 0, 0)).unwrap();
-        let Leg::Walk { tiles } = &r.legs[0] else {
-            panic!("walk-only route");
-        };
-        assert_eq!(tiles, &vec![tile(0, 2, 0), tile(0, 1, 0), tile(0, 0, 0)]);
+        assert!(matches!(
+            find(&wc, &g, tile(0, 2, 0), tile(0, 0, 0)),
+            Err(RouteError::NoPath)
+        ));
         assert!(matches!(
             find(&wc, &g, tile(0, 0, 0), tile(0, 2, 0)),
             Err(RouteError::NoPath)
         ));
+    }
+
+    /// The wall-tile fixture from the live `nav_door` trace: wall 980
+    /// (WALL_STRAIGHT, south) at (2816,3437) and door 1530 (WALL_STRAIGHT,
+    /// north) at (2816,3438) — m44_53 `0 0 45: 980 0 3` and
+    /// `0 0 46: 1530 0 1`. `step_ok` must reject every step into the wall
+    /// tile (the east step the live walker took) and the closed door, while
+    /// genuinely open neighbours still pass, and the router never routes
+    /// onto the wall tile.
+    #[test]
+    fn wall_tile_blocks_through_wall_steps_and_the_router_avoids_it() {
+        let fix = FixDir::new("wall-980-door-1530");
+        fs::write(
+            fix.0.join("m43_53.jm2"),
+            "==== MAP ====\n0 63 44: h1 u50\n0 63 45: h1 u50\n0 63 46: h1 u50\n==== LOC ====\n",
+        )
+        .unwrap();
+        fs::write(
+            fix.0.join("m44_53.jm2"),
+            "==== MAP ====\n0 0 43: h1 u50\n0 0 44: h10 u50\n0 0 45: h19 o10 u48\n0 0 46: h30 o10 u48\n0 0 47: h30 o5 f4 u50\n==== LOC ====\n0 0 45: 980 0 3\n0 0 46: 1530 0 1\n",
+        )
+        .unwrap();
+        let locs = defs(&[
+            LocType {
+                id: 980,
+                blockwalk: true,
+                ..LocType::default()
+            },
+            LocType {
+                id: 1530,
+                blockwalk: true,
+                ..LocType::default()
+            },
+        ]);
+        let mut door_ids = HashSet::new();
+        door_ids.insert(1530);
+        let wc = bake_from_maps(&fix.0, &locs, &door_ids).unwrap();
+        let g = TransportGraph::default();
+
+        // The live walker's step: (2815,3437) east into the wall tile
+        // (2816,3437) is rejected.
+        assert!(!step_ok(&wc, tile(2815, 3437, 0), (1, 0)));
+        // Other through-wall steps: north into the wall tile (its south
+        // face), the diagonal into it, and the closed door crossing.
+        assert!(!step_ok(&wc, tile(2816, 3436, 0), (0, 1)));
+        assert!(!step_ok(&wc, tile(2815, 3438, 0), (1, -1)));
+        assert!(!step_ok(&wc, tile(2816, 3438, 0), (0, 1)));
+        // A genuinely open neighbour still passes.
+        assert!(step_ok(&wc, tile(2815, 3437, 0), (0, 1)));
+        assert!(step_ok(&wc, tile(2815, 3437, 0), (-1, 0)));
+
+        // The router never routes onto the wall tile: the wall seals the
+        // door's approach (no path onto it), and a route on the open side
+        // of the wall never contains it.
+        assert!(matches!(
+            find(&wc, &g, tile(2813, 3436, 0), tile(2816, 3438, 0)),
+            Err(RouteError::NoPath)
+        ));
+        let r = find(&wc, &g, tile(2813, 3436, 0), tile(2815, 3438, 0)).unwrap();
+        let Leg::Walk { tiles } = &r.legs[0] else {
+            panic!("walk-only route");
+        };
+        assert!(!tiles.contains(&tile(2816, 3437, 0)));
     }
 
     #[test]
@@ -1046,13 +1157,15 @@ mod tests {
 
     #[test]
     fn find_prefers_a_cheap_door_over_a_long_walk_around() {
-        // A 5×20 bake walled between x=1 and x=2 for z=1..=18: crossing on
-        // foot means walking 20 tiles around a gap (~10 ticks at the run
-        // rate), so the 1-tick door at mid-wall is the cheaper total-tick
-        // route.
+        // A 5×20 bake walled between x=1 and x=2 for z=1..=18 with a door
+        // gap at z=10: crossing on foot means walking 20 tiles around the
+        // wall ends (~10 ticks at the run rate), so the 1-tick door at
+        // mid-wall is the cheaper total-tick route.
         let mut extras = Vec::new();
         for z in 1..=18 {
-            extras.push((1, z, CollisionFlag::W_E as u32));
+            if z != 10 {
+                extras.push((1, z, CollisionFlag::W_E as u32));
+            }
             extras.push((2, z, CollisionFlag::W_W as u32));
         }
         let wc = bake(5, 20, &extras);
@@ -1066,16 +1179,13 @@ mod tests {
 
     #[test]
     fn find_prefers_walking_around_over_a_cheap_door() {
-        // The wall is one tile tall: crossing it on foot is a 3-step loop
-        // (1.5 ticks), cheaper than the 1-tick door plus its two approach
-        // tiles (2.0), so the router walks around and never uses the door.
-        let wc = bake(5, 5, &[
-            (1, 2, CollisionFlag::W_E as u32),
-            (2, 2, CollisionFlag::W_W as u32),
-        ]);
-        let g = door(tile(1, 2, 0), tile(2, 2, 0), 1);
+        // A single wall tile (2,2): crossing it on foot is a 4-step loop
+        // (2.0 ticks), cheaper than the 2-tick door plus its two approach
+        // tiles (3.0), so the router walks around and never uses the door.
+        let wc = bake(5, 5, &[(2, 2, CollisionFlag::W_W as u32)]);
+        let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
         let r = find(&wc, &g, tile(0, 2, 0), tile(3, 2, 0)).unwrap();
-        assert_eq!(r.ticks, 1.5);
+        assert_eq!(r.ticks, 2.0);
         assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
     }
 

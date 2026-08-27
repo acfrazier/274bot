@@ -297,6 +297,9 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             origin,
             width,
             height,
+            // The derived walkable word is a pure function of the raw
+            // flags, so it is recomputed rather than stored on the wire.
+            walkable: crate::collision::derive_walkable(&flags),
             flags,
         },
         graph,
@@ -797,6 +800,7 @@ mod tests {
 
     #[test]
     fn v2_roundtrip_collision_and_transport_graph() {
+        let flags = vec![0, 0, 1, 0, 0, 0];
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -805,7 +809,8 @@ mod tests {
             },
             width: 3,
             height: 2,
-            flags: vec![0, 0, 1, 0, 0, 0],
+            flags: flags.clone(),
+            walkable: crate::collision::derive_walkable(&flags),
         };
         let mut graph = TransportGraph::default();
         let door = TransportEdge {

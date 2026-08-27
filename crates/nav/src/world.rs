@@ -64,7 +64,7 @@ impl NavWorld {
                     }
                 })
             })
-            .collect();
+            .collect::<Vec<u32>>();
         let collision = WorldCollision {
             origin: WorldTile {
                 x: grid.origin.x,
@@ -73,6 +73,7 @@ impl NavWorld {
             },
             width: grid.width,
             height: grid.height,
+            walkable: crate::collision::derive_walkable(&flags),
             flags,
         };
         let mut graph = TransportGraph::default();
@@ -243,6 +244,7 @@ mod tests {
             origin: tile(0, 0, 0),
             width: 5,
             height: 1,
+            walkable: crate::collision::derive_walkable(&flags),
             flags,
         };
         let mut graph = TransportGraph::default();
@@ -296,6 +298,7 @@ mod tests {
             origin: tile(0, 0, 0),
             width: 5,
             height: 5,
+            walkable: crate::collision::derive_walkable(&flags),
             flags,
         };
         let mut graph = TransportGraph::default();
