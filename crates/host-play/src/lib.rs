@@ -364,8 +364,11 @@ fn step_nav_bot<D: Driver>(
 
 /// The fat Client's inventory `(obj_id, count)` slots, zipped from the
 /// TYPE_INV iface's linked obj ids/numbers (the server's `UPDATE_INV_FULL`
-/// fills them each frame). Short-lived: rebuilt per observe while the slot
-/// script is Running; `None` when no TYPE_INV iface is loaded yet.
+/// fills them each frame). The iface stores `obj_id + 1` (0 = empty), so
+/// the view carries the real 0-based ids scripts resolve `has_item`
+/// against — the same convention as `api::snapshot`'s inv view.
+/// Short-lived: rebuilt per observe while the slot script is Running;
+/// `None` when no TYPE_INV iface is loaded yet.
 fn inventory_from_ifaces(ifaces: &[Option<IfType>]) -> Option<Vec<(i32, i32)>> {
     let inv = ifaces
         .iter()
@@ -374,7 +377,13 @@ fn inventory_from_ifaces(ifaces: &[Option<IfType>]) -> Option<Vec<(i32, i32)>> {
     let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
         return None;
     };
-    Some(ids.iter().zip(counts).map(|(id, n)| (*id, *n)).collect())
+    Some(
+        ids.iter()
+            .zip(counts)
+            .filter(|(id, _)| **id > 0)
+            .map(|(id, n)| (*id - 1, *n))
+            .collect(),
+    )
 }
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
@@ -2439,6 +2448,46 @@ mod tests {
             Some((true, true, true)),
             "a Running script sees the inventory view and resolves names"
         );
+    }
+
+    #[test]
+    fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
+        // The TYPE_INV iface stores `obj_id + 1` (0 = empty slot); scripts
+        // resolve `has_item` against the 0-based ObjNames table, so the
+        // view must carry `id - 1` and drop the empties.
+        let mut ifaces = vec![None; 3];
+        ifaces[1] = Some(IfType {
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![2, 0, 1]),
+            link_obj_number: Some(vec![3, 0, 1]),
+            ..Default::default()
+        });
+        let inv = inventory_from_ifaces(&ifaces).expect("TYPE_INV iface present");
+        assert_eq!(
+            inv,
+            vec![(1, 3), (0, 1)],
+            "1-based ids map down by one and empty slots drop"
+        );
+
+        // End-to-end: the mapped id-0 slot must resolve via has_item.
+        let mut objs = vec![client::config::ObjType::default(); 1];
+        objs[0].id = 0;
+        objs[0].name = "Bones".into();
+        let names = api::obj_names::ObjNames::from_objs(&objs);
+        let mut rec = NavRec {
+            walked: None,
+            sink: Sink,
+        };
+        let ctx = ScriptCtx {
+            driver: &mut rec,
+            tick: 0,
+            here: None,
+            walk: None,
+            inv: Some(&inv),
+            obj_names: Some(&names),
+        };
+        assert!(ctx.has_item("Bones"));
+        assert!(!ctx.has_item("Vial"));
     }
 
     /// Test script that queues one walk to a (mutable) target each tick and
