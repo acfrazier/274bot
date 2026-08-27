@@ -8,10 +8,11 @@
 //! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
 //! `movecoord`/coordinate literals under `switch_coord`/`switch_int` guards);
-//! agility shortcuts port `resolveShortcutPlacements`. Doors derive one
-//! edge per jm2 placement from the door configs + the baked collision
-//! (`at` = the loc tile, `dir` from the angle, `to` the far-side walk-out,
-//! `open_loc_id` from the config's `next_loc_stage`). Boats are
+//! agility shortcuts port `resolveShortcutPlacements`. Doors derive two
+//! edges per jm2 placement — `dir` and its opposite — from the door
+//! configs + the baked collision (`at` = the loc tile, `to` each
+//! direction's far-side walk-out, `open_loc_id` from the config's
+//! `next_loc_stage`). Boats are
 //! an explicit 2004 route table (dock NPC tile → post-gangplank dock tile,
 //! mined from the `areas/*` `~set_sail(` call sites and the `==== NPC ====`
 //! map placements), and gnome gliders a fixed platform table with their
@@ -109,8 +110,9 @@ pub struct TransportGraph {
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
 /// shortcuts from `scripts/skill_agility/scripts/*.rs2`. Placements and
-/// destinations that resolve emit one edge per placement — `at` the loc
-/// tile, `to` the resolved landing (no walkability filter — the router
+/// destinations that resolve emit an edge — doors emit two per placement
+/// (`dir` and its opposite, each with its own far-side walk-out); `at` the
+/// loc tile, `to` the resolved landing (no walkability filter — the router
 /// applies the collision map). Boats and gnome gliders are the explicit
 /// 2004 route
 /// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
@@ -430,17 +432,17 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 // ---------------------------------------------------------------------------
 
 /// Door edges from `scripts/doors/configs/*.loc` openable ids + the jm2 LOC
-/// placements, one edge per placement: `at` = the door loc tile, `dir` =
-/// the placement angle's wall orientation, `to` = the far-side tile
-/// (walking outward from `at` in the wall's far direction until
+/// placements, two edges per placement: `at` = the door loc tile, `dir` =
+/// the placement angle's wall orientation and its opposite (a door is
+/// bidirectional), `to` = each direction's far-side tile (walking outward
+/// from `at` in the wall's far direction until
 /// [`WorldCollision::standable`] accepts one), `open_loc_id` = the
 /// config's `param=next_loc_stage` open leaf. `option` 1 is the `Open` op;
-/// `to` is the crossing's arrival side, so a placement emits exactly one
-/// edge (the far side of a door is one side, never a snap). Quest-gated
+/// each `to` is that crossing's arrival side, never a snap. Quest-gated
 /// doors (`scripts/quests/*/configs/*.loc` and
 /// `scripts/areas/*/configs/*.loc` named blocks) join the door set when
 /// their `[oploc1,<name>]` open script declares a varp gate; the gate is
-/// carried on the edge (`varp_req`), never invented.
+/// carried on every edge of the door (`varp_req`), never invented.
 fn door_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -493,23 +495,28 @@ fn door_edges(
                 z: p.z,
                 level: p.level,
             };
-            let Some(to) = door_far_side(at, dir, collision) else {
-                continue;
-            };
-            graph.edges.push(TransportEdge {
-                kind: TransportKind::Door,
-                at,
-                to,
-                loc_id: *id,
-                option: 1,
-                ticks: 1,
-                dir: Some(dir),
-                open_loc_id: open_ids.get(id).copied(),
-                skill_req: vec![],
-                item_req: vec![],
-                quest_req: vec![],
-                varp_req: door_reqs.get(id).cloned().unwrap_or_default(),
-            });
+            // A door is bidirectional: an edge in `dir` and one in its
+            // opposite, each with its own far-side walk-out (a direction
+            // whose far side never resolves yields no edge).
+            for dir in [dir, opposite(dir)] {
+                let Some(to) = door_far_side(at, dir, collision) else {
+                    continue;
+                };
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: *id,
+                    option: 1,
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: open_ids.get(id).copied(),
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: door_reqs.get(id).cloned().unwrap_or_default(),
+                });
+            }
         }
     }
 }
@@ -523,6 +530,16 @@ fn door_dir(angle: i32) -> Option<DoorDir> {
         2 => Some(DoorDir::E),
         3 => Some(DoorDir::S),
         _ => None,
+    }
+}
+
+/// The opposite crossing direction of a door edge's `dir`.
+fn opposite(dir: DoorDir) -> DoorDir {
+    match dir {
+        DoorDir::N => DoorDir::S,
+        DoorDir::E => DoorDir::W,
+        DoorDir::S => DoorDir::N,
+        DoorDir::W => DoorDir::E,
     }
 }
 
@@ -2544,9 +2561,11 @@ mod tests {
             "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\nparam=next_loc_stage,loc_1531\n",
         );
         // m44_53 local (0,46) = absolute (2816,3438). Wall 980 (angle
-        // SOUTH) sits on the door's south approach tile (2816,3437); the
-        // closed door's own angle-NORTH stamp puts W_S on (2816,3439),
-        // which stands (face flags never disqualify).
+        // SOUTH) sits on the door's south approach tile (2816,3437), so
+        // the south-bound far-side walk-out stops on that tile — its W_S
+        // face flag stands (face flags never disqualify). The closed
+        // door's own angle-NORTH stamp puts W_S on (2816,3439), which also
+        // stands.
         fx.write(
             "maps/m44_53.jm2",
             "\
@@ -2570,22 +2589,31 @@ mod tests {
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
             .collect();
-        // One edge per placement: `at` is the door loc tile, `dir` the wall
-        // orientation, `to` the far side walked out to standability.
-        assert_eq!(doors.len(), 1);
-        let d = &doors[0];
-        assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
-        assert_eq!(d.dir, Some(DoorDir::N));
-        assert_eq!(d.to, WorldTile { x: 2816, z: 3439, level: 0 });
-        assert_eq!(d.open_loc_id, Some(1531));
-        assert_eq!(d.option, 1);
-        assert_eq!(d.ticks, 1);
-        assert!(d.varp_req.is_empty());
-        // Neither the target nor the arrival lands on wall 980's tile.
-        let wall = WorldTile { x: 2816, z: 3437, level: 0 };
-        assert!(doors.iter().all(|e| e.at != wall && e.to != wall));
-        // The at-index keys the door loc tile.
-        assert_eq!(graph.at[&d.at], vec![0]);
+        // Two edges per placement: `dir` and its opposite, each with its
+        // own far side. `at` is the door loc tile, `to` the far side
+        // walked out to standability.
+        assert_eq!(doors.len(), 2);
+        let n = doors
+            .iter()
+            .find(|e| e.dir == Some(DoorDir::N))
+            .expect("north-bound door edge");
+        let s = doors
+            .iter()
+            .find(|e| e.dir == Some(DoorDir::S))
+            .expect("south-bound door edge");
+        for d in [n, s] {
+            assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+            assert_eq!(d.open_loc_id, Some(1531));
+            assert_eq!(d.option, 1);
+            assert_eq!(d.ticks, 1);
+            assert!(d.varp_req.is_empty());
+        }
+        assert_eq!(n.to, WorldTile { x: 2816, z: 3439, level: 0 });
+        // The south-bound walk-out stops on wall 980's own tile: its W_S
+        // face flag stands (the wall's face flag never disqualifies).
+        assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
+        // The at-index keys the door loc tile with both directed edges.
+        assert_eq!(graph.at[&n.at].len(), 2);
     }
 
     #[test]
@@ -2626,23 +2654,33 @@ switch_coord (loc_coord) {
         let wc = bake_collision(&fx, &defs, &door_ids);
         let graph = derive_transports(fx.path(), &defs, &wc);
 
-        // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): one edge per
-        // placement — `at` the loc tile, `dir` N, `to` the north side
-        // walked out to standability, `Open` op 1, one tick.
+        // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): two edges
+        // per placement — `at` the loc tile, `dir` N and S, each `to` the
+        // far side walked out to standability, `Open` op 1, one tick.
         let doors: Vec<_> = graph
             .edges
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
             .collect();
-        assert_eq!(doors.len(), 1);
-        let door = &doors[0];
-        assert_eq!(door.at, WorldTile { x: 2816, z: 3438, level: 0 });
-        assert_eq!(door.dir, Some(DoorDir::N));
+        assert_eq!(doors.len(), 2);
+        let n = doors
+            .iter()
+            .find(|e| e.dir == Some(DoorDir::N))
+            .expect("north-bound door edge");
+        let s = doors
+            .iter()
+            .find(|e| e.dir == Some(DoorDir::S))
+            .expect("south-bound door edge");
+        for d in [n, s] {
+            assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+            assert_eq!(d.option, 1);
+            assert_eq!(d.ticks, 1);
+        }
         // (2816,3439) carries the closed door's own south-face stamp, which
-        // stands (face flags never disqualify).
-        assert_eq!(door.to, WorldTile { x: 2816, z: 3439, level: 0 });
-        assert_eq!(door.option, 1);
-        assert_eq!(door.ticks, 1);
+        // stands (face flags never disqualify); the south far side is the
+        // open tile straight below the door.
+        assert_eq!(n.to, WorldTile { x: 2816, z: 3439, level: 0 });
+        assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
 
         // One ladder placement (id 1747 @ 2826,3402,0) climbing to
         // (1,2826,3468): one edge per placement — `at` the loc tile
@@ -2667,21 +2705,28 @@ switch_coord (loc_coord) {
         assert_eq!(ladder.ticks, 3); // op base 1 + ladder extra 2
         assert!(ladder.skill_req.is_empty());
 
-        // The at-index keys the door loc tile and the ladder loc tile.
+        // The at-index keys the door loc tile (both directed edges) and the
+        // ladder loc tile.
         let door_at = WorldTile {
             x: 2816,
             z: 3438,
             level: 0,
         };
-        assert_eq!(graph.at[&door_at].len(), 1);
-        assert_eq!(
-            graph.edges[graph.at[&door_at][0]].to,
-            WorldTile {
-                x: 2816,
-                z: 3439,
-                level: 0
-            }
-        );
+        assert_eq!(graph.at[&door_at].len(), 2);
+        let door_tos: Vec<_> = graph.at[&door_at]
+            .iter()
+            .map(|&i| graph.edges[i].to)
+            .collect();
+        assert!(door_tos.contains(&WorldTile {
+            x: 2816,
+            z: 3439,
+            level: 0
+        }));
+        assert!(door_tos.contains(&WorldTile {
+            x: 2816,
+            z: 3437,
+            level: 0
+        }));
         let ladder_at = WorldTile {
             x: 2826,
             z: 3402,
@@ -3127,13 +3172,15 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         let graph = derive_transports(fx.path(), &defs, &wc);
 
         // The Elena door (Plague City) carries its `%elenaquest >= 28`
-        // gate on both directed edges.
+        // gate on its east-bound edge (the west-bound far side is off the
+        // bake's grid, so no west-bound edge resolves).
         let elena: Vec<_> = graph
             .edges
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2526)
             .collect();
-        // One edge per placement (a single loc placement each).
+        // One edge per placement (a single loc placement each); the west
+        // far side never becomes standable inside the bake.
         assert_eq!(elena.len(), 1);
         for d in &elena {
             assert_eq!(d.varp_req, vec![(165, 28)]);
@@ -3145,7 +3192,7 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 4)
             .collect();
-        assert_eq!(cannon.len(), 1);
+        assert_eq!(cannon.len(), 2);
         for d in &cannon {
             assert_eq!(d.varp_req, vec![(0, 6)]);
         }
