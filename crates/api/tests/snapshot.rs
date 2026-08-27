@@ -354,3 +354,26 @@ fn scene_status_is_always_fresh_without_a_gen_bump() {
     assert_eq!(snap.scene_state(), 2, "scene status is always fresh");
     assert!(snap.ingame());
 }
+
+/// The tile key types are plain data: Copy, Eq and Hash so later
+/// families can key per-tile caches (locs, ground items) on them.
+#[test]
+fn tile_types_are_plain_copy_data() {
+    let t = api::snapshot::WorldTile {
+        x: 3220,
+        z: 3212,
+        level: 1,
+    };
+    let t2 = t; // Copy
+    assert_eq!(t, t2);
+    let mut tiles = std::collections::HashSet::new();
+    tiles.insert(t);
+    assert!(tiles.contains(&t2));
+
+    let l = api::snapshot::LocalTile { lx: 20, lz: 12 };
+    let l2 = l;
+    assert_eq!(l, l2);
+    let mut locs = std::collections::HashSet::new();
+    locs.insert(l);
+    assert!(locs.contains(&l2));
+}

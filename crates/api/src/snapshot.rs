@@ -6,6 +6,23 @@ use client::client::{Client, ClientGens, ClientNpc};
 use client::config::if_type::ComponentType;
 use serde::Serialize;
 
+/// A world tile: absolute `x`/`z` plus the plane (`level`). The key type
+/// loc/ground-item/player families are positioned by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorldTile {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+}
+
+/// A tile relative to the scene origin (`level` is implicit in the world
+/// build). The loc/ground-item families' scene coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalTile {
+    pub lx: i32,
+    pub lz: i32,
+}
+
 /// A family of world state, mirroring the `ClientGens` counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
