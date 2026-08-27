@@ -21,7 +21,7 @@
 //! and never indexes them into `at`. The
 //! v1 decode stays for old `.navpack` files; `nav-pack` now writes v2.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
@@ -436,6 +436,52 @@ pub fn parse_door_config(text: &str) -> HashSet<i32> {
     ids
 }
 
+/// Closed door loc id → its open leaf id: every `[loc_N]` block's
+/// `param=next_loc_stage,loc_M` (the id the door changes into when opened).
+/// Name-valued params (`param=next_loc_stage,<name>`) resolve through the
+/// loc id map; unparseable values carry nothing.
+pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
+    let mut out = HashMap::new();
+    let mut cur: Option<(i32, Option<i32>)> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(n) = loc_header(line) {
+            if let Some((id, open)) = cur {
+                if let Some(open) = open {
+                    out.insert(id, open);
+                }
+            }
+            cur = Some((n, None));
+        } else if let Some((_, open)) = cur.as_mut() {
+            if let Some(param) = line.strip_prefix("param=") {
+                if let Some((key, value)) = param.split_once(',') {
+                    if key.trim() == "next_loc_stage" {
+                        *open = door_open_value(value.trim(), ids);
+                    }
+                }
+            }
+        }
+    }
+    if let Some((id, open)) = cur {
+        if let Some(open) = open {
+            out.insert(id, open);
+        }
+    }
+    out
+}
+
+/// A `param=next_loc_stage` value → the open leaf id: `loc_N` parses
+/// numerically; a bare name resolves through the loc id map.
+fn door_open_value(value: &str, ids: &HashMap<String, i32>) -> Option<i32> {
+    if let Some(n) = value.strip_prefix("loc_") {
+        n.parse().ok()
+    } else if let Some(&id) = ids.get(value) {
+        Some(id)
+    } else {
+        None
+    }
+}
+
 /// Loc ids that do **not** block walk: `[loc_N]` blocks with `blockwalk=no`,
 /// `category=door_opened`, or `op1=Close`. Absent `blockwalk` is the 274
 /// default (block). Unknown loc ids are treated as blocking by the bake.
@@ -786,7 +832,8 @@ mod tests {
 
     use super::{
         decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
-        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE,
+        parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare,
+        SQUARE,
     };
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
@@ -1023,6 +1070,42 @@ op1=Open
         assert!(ids.contains(&1530));
         assert!(!ids.contains(&1514));
         assert!(!ids.contains(&1531));
+    }
+
+    #[test]
+    fn parse_door_open_ids_reads_next_loc_stage() {
+        let text = "\
+[loc_1530]
+name=Door
+op1=Open
+category=door_closed
+param=next_loc_stage,loc_1531
+
+[loc_1512]
+op1=Open
+param=next_loc_stage,loc_1513
+
+[loc_1514]
+op1=Open
+param=next_loc_stage,elenagateopen
+
+[membergatel]
+name=Gate
+op1=Open
+";
+        // Numeric `loc_N` values parse directly; the name-valued one
+        // resolves through the loc id map.
+        let ids = {
+            let mut m = std::collections::HashMap::new();
+            m.insert("elenagateopen".to_string(), 1535);
+            m
+        };
+        let open = parse_door_open_ids(text, &ids);
+        assert_eq!(open.get(&1530), Some(&1531));
+        assert_eq!(open.get(&1512), Some(&1513));
+        assert_eq!(open.get(&1514), Some(&1535));
+        // Non-numeric headers and unknown names carry nothing.
+        assert_eq!(open.get(&1534), None);
     }
 
     /// A 64×64 level-0 collision at the given mapsquare with the given

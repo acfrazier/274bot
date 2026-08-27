@@ -8,8 +8,10 @@
 //! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
 //! `movecoord`/coordinate literals under `switch_coord`/`switch_int` guards);
-//! agility shortcuts port `resolveShortcutPlacements`. Doors reuse
-//! [`crate::pack`]'s door-config + jm2 `LOC` → `DoorEdge` logic. Boats are
+//! agility shortcuts port `resolveShortcutPlacements`. Doors derive one
+//! edge per jm2 placement from the door configs + the baked collision
+//! (`at` = the loc tile, `dir` from the angle, `to` the far-side walk-out,
+//! `open_loc_id` from the config's `next_loc_stage`). Boats are
 //! an explicit 2004 route table (dock NPC tile → post-gangplank dock tile,
 //! mined from the `areas/*` `~set_sail(` call sites and the `==== NPC ====`
 //! map placements), and gnome gliders a fixed platform table with their
@@ -27,7 +29,7 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
-use crate::pack::{parse_door_config, parse_mapsquare_jm2};
+use crate::pack::{parse_door_config, parse_door_open_ids};
 
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,9 +64,10 @@ pub enum DoorDir {
 /// loc `loc_id`, arrive at `to` after `ticks`. `at` is the interact
 /// target — the loc tile (door/ladder/stairs/agility/glider) or the
 /// origin-leg NPC tile (boat); `to` is the arrival tile. `dir` is the
-/// crossing direction for doors only (`None` for every other kind, until
-/// step 2 fills it); `open_loc_id` the open leaf id for state-changing
-/// locs (`None` for now). Requirement vectors are `(skill id, level)` /
+/// crossing direction for doors only (`None` for every other kind until
+/// steps 3/4 fill them); `open_loc_id` the open leaf id a door config's
+/// `next_loc_stage` declares (`None` when the config carries none).
+/// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare (empty when the source
 /// declares nothing).
@@ -99,9 +102,10 @@ pub struct TransportGraph {
 
 /// Derive the transport graph from `content_root` (the Server content tree:
 /// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs,
-/// and the baked whole-world [`WorldCollision`] (the door edges snap their
-/// `at`/`to` to the nearest walkable tile on it; every edge is emitted
-/// with `dir: None`, `open_loc_id: None` for now).
+/// and the baked whole-world [`WorldCollision`] (the door edges walk their
+/// `to` far side out to a standable tile on it; door edges carry `dir` and
+/// `open_loc_id`, every other kind keeps `dir: None`/`open_loc_id: None`
+/// until steps 3/4 fill them).
 ///
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
@@ -150,7 +154,6 @@ const SKIP_RANDOM: &str = "destination is randomised";
 const SKIP_UNPARSED: &str = "destination expression not understood";
 const SKIP_DEST_OUTSIDE: &str = "destination outside the grid box";
 const SKIP_UNPRICED: &str = "no measured tick cost for this loc name";
-const SKIP_SQUARE: &str = "unparseable mapsquare (no MAP section)";
 const SKIP_NO_DOOR_CONFIGS: &str = "no door configs parsed under scripts/doors/configs";
 const SKIP_TELEPORT_BAD_DEST: &str = "teleport destination does not parse";
 const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.pack";
@@ -302,6 +305,7 @@ fn report(
 /// One loc placement read from a jm2 file (all levels).
 struct Placement {
     id: i32,
+    shape: i32,
     angle: i32,
     level: i32,
     x: i32,
@@ -406,11 +410,12 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
             continue;
         };
         // Same token layout and defaults as m8aq `readMapsquare`: the second
-        // token is the shape (unused for edges), the third the angle.
-        d.next();
+        // token is the shape, the third the angle.
+        let shape: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
         let angle: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
         out.push(Placement {
             id,
+            shape,
             angle,
             level,
             x: mx * 64 + x,
@@ -425,14 +430,14 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 // ---------------------------------------------------------------------------
 
 /// Door edges from `scripts/doors/configs/*.loc` openable ids + the jm2 LOC
-/// placements, reusing [`parse_door_config`] and [`parse_mapsquare_jm2`]
-/// (the existing jm2 `LOC` → `DoorEdge` bake). Each edge's `at`/`to`
-/// snaps to the nearest walkable tile on the baked `collision`
-/// (perpendicular to the wall), so a wall loc right outside the door never
-/// becomes an unreachable door approach. Both directions are emitted
-/// (the same `Open` op works either way); `option` 1 is the `Open` op.
-///
-/// Quest-gated doors (`scripts/quests/*/configs/*.loc` and
+/// placements, one edge per placement: `at` = the door loc tile, `dir` =
+/// the placement angle's wall orientation, `to` = the far-side tile
+/// (walking outward from `at` in the wall's far direction until
+/// [`WorldCollision::standable`] accepts one), `open_loc_id` = the
+/// config's `param=next_loc_stage` open leaf. `option` 1 is the `Open` op;
+/// `to` is the crossing's arrival side, so a placement emits exactly one
+/// edge (the far side of a door is one side, never a snap). Quest-gated
+/// doors (`scripts/quests/*/configs/*.loc` and
 /// `scripts/areas/*/configs/*.loc` named blocks) join the door set when
 /// their `[oploc1,<name>]` open script declares a varp gate; the gate is
 /// carried on the edge (`varp_req`), never invented.
@@ -445,6 +450,7 @@ fn door_edges(
 ) {
     let configs = content_root.join("scripts").join("doors").join("configs");
     let mut door_ids = HashSet::new();
+    let mut open_ids: HashMap<i32, i32> = HashMap::new();
     if let Ok(entries) = fs::read_dir(&configs) {
         for ent in entries.flatten() {
             let path = ent.path();
@@ -453,6 +459,7 @@ fn door_edges(
             }
             if let Ok(text) = fs::read_to_string(&path) {
                 door_ids.extend(parse_door_config(&text));
+                open_ids.extend(parse_door_open_ids(&text, ids));
             }
         }
     }
@@ -468,40 +475,87 @@ fn door_edges(
         bump(skipped, SKIP_NO_DOOR_CONFIGS, 1);
         return;
     }
-    // Passable locs only affect walk stamping, never the door list.
-    let passable = HashSet::new();
-    let Ok(entries) = fs::read_dir(content_root.join("maps")) else {
-        return;
-    };
-    for ent in entries.flatten() {
-        let path = ent.path();
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+    let positions = loc_positions(content_root);
+    for id in &door_ids {
+        let Some(placements) = positions.get(id) else {
             continue;
         };
-        let Some((mx, mz)) = mapsquare_coords(name) else {
-            continue;
-        };
-        match parse_mapsquare_jm2(&path, mx, mz, &door_ids, &passable, collision) {
-            Ok(sq) => {
-                for d in sq.doors {
-                    graph.edges.push(TransportEdge {
-                        kind: TransportKind::Door,
-                        at: to_world(d.from),
-                        to: to_world(d.to),
-                        loc_id: d.loc_id,
-                        option: 1,
-                        ticks: 1,
-                        dir: None,
-                        open_loc_id: None,
-                        skill_req: vec![],
-                        item_req: vec![],
-                        quest_req: vec![],
-                        varp_req: door_reqs.get(&d.loc_id).cloned().unwrap_or_default(),
-                    });
-                }
+        for p in placements {
+            // The collision bake (and its `standable`) is level 0 only.
+            if p.level != 0 || p.shape != 0 {
+                continue;
             }
-            Err(_) => bump(skipped, SKIP_SQUARE, 1),
+            let Some(dir) = door_dir(p.angle) else {
+                continue;
+            };
+            let at = WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            };
+            let Some(to) = door_far_side(at, dir, collision) else {
+                continue;
+            };
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Door,
+                at,
+                to,
+                loc_id: *id,
+                option: 1,
+                ticks: 1,
+                dir: Some(dir),
+                open_loc_id: open_ids.get(id).copied(),
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: door_reqs.get(id).cloned().unwrap_or_default(),
+            });
         }
+    }
+}
+
+/// `DoorDir` for a placement angle (0=west, 1=north, 2=east, 3=south —
+/// the [`client::dash3d::LocAngle`] order), `None` for any other angle.
+fn door_dir(angle: i32) -> Option<DoorDir> {
+    match angle {
+        0 => Some(DoorDir::W),
+        1 => Some(DoorDir::N),
+        2 => Some(DoorDir::E),
+        3 => Some(DoorDir::S),
+        _ => None,
+    }
+}
+
+/// The far-side tile of a door at `at`: walk outward in the wall's far
+/// direction (`dir`: N→+z, S→-z, E→+x, W→-x) one tile at a time until
+/// `collision.standable` accepts one. A door whose far side never becomes
+/// standable inside the bake yields no edge.
+fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
+    let (dx, dz) = match dir {
+        DoorDir::N => (0, 1),
+        DoorDir::S => (0, -1),
+        DoorDir::E => (1, 0),
+        DoorDir::W => (-1, 0),
+    };
+    let (mut x, mut z) = (at.x + dx, at.z + dz);
+    loop {
+        let t = WorldTile {
+            x,
+            z,
+            level: at.level,
+        };
+        if collision.standable(t) {
+            return Some(t);
+        }
+        if x < collision.origin.x
+            || z < collision.origin.z
+            || (x - collision.origin.x) >= collision.width as i32
+            || (z - collision.origin.z) >= collision.height as i32
+        {
+            return None;
+        }
+        x += dx;
+        z += dz;
     }
 }
 
@@ -924,14 +978,6 @@ fn label_block(script_text: &str, name: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn to_world(t: crate::tile::Tile) -> WorldTile {
-    WorldTile {
-        x: t.x,
-        z: t.z,
-        level: t.level,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2510,7 +2556,8 @@ mod tests {
     /// A collision bake over the fixture's maps, with the given door locs
     /// stamped blocked-when-closed. Fixtures that write no maps get a
     /// trivial single-square bake (their assertions never touch the
-    /// collision; `derive_transports` only needs one to snap door edges).
+    /// collision; `derive_transports` only needs one to walk door far
+    /// sides out on).
     fn bake_collision(fx: &Fixture, defs: &LocDefs, door_ids: &HashSet<i32>) -> WorldCollision {
         if !fx.path().join("maps").is_dir() {
             fx.write("maps/m44_53.jm2", "==== MAP ====\n0 0 0: h1 u50\n");
@@ -2519,26 +2566,29 @@ mod tests {
     }
 
     #[test]
-    fn derive_transports_snaps_door_edges_to_walkable_tiles() {
+    fn derive_transports_door_edge_at_dir_to_open_loc_id() {
         let fx = Fixture::new();
-        fx.write("pack/loc.pack", "1530=loc_1530\n");
+        fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
         fx.write(
             "scripts/doors/configs/doors.loc",
-            "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\n",
+            "[loc_1530]\nname=Door\nop1=Open\ncategory=door_closed\nparam=next_loc_stage,loc_1531\n",
         );
-        // m44_53 local (0,46) = absolute (2816,3438). A wall band at local
-        // z=45 (absolute 3437) seals the square; wall 980 sits on the door's
-        // south approach tile (the live-trace layout).
-        let mut text = String::from("==== MAP ====\n");
-        for z in 42..=48 {
-            for x in 0..64 {
-                let flags = if z == 45 { "f1 u50" } else { "h1 u50" };
-                text.push_str(&format!("0 {x} {z}: {flags}\n"));
-            }
-        }
-        text.push_str("==== LOC ====\n0 0 45: 980 0 3\n0 0 46: 1530 0 1\n");
-        fx.write("maps/m44_53.jm2", &text);
-
+        // m44_53 local (0,46) = absolute (2816,3438). Wall 980 (angle
+        // SOUTH) sits on the door's south approach tile (2816,3437); the
+        // closed door's own angle-NORTH stamp puts W_S on (2816,3439),
+        // which stands (face flags never disqualify).
+        fx.write(
+            "maps/m44_53.jm2",
+            "\
+==== MAP ====
+0 0 45: h1 o6 u50
+0 0 46: h1 o6 u50
+0 0 47: h1 o6 u50
+==== LOC ====
+0 0 46: 1530 0 1
+0 0 45: 980 0 3
+",
+        );
         let defs = loc_defs(&[(1530, 1, 1), (980, 1, 1)]);
         let mut door_ids = HashSet::new();
         door_ids.insert(1530);
@@ -2550,35 +2600,22 @@ mod tests {
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
             .collect();
-        assert_eq!(doors.len(), 2);
-        // Neither door side is the wall tile (2816,3437); both are
-        // walkable per the collision bake.
-        for d in &doors {
-            assert_ne!(d.at, WorldTile { x: 2816, z: 3437, level: 0 });
-            assert!(wc.walkable(d.at), "door at not walkable: {:?}", d.at);
-            assert!(wc.walkable(d.to), "door to not walkable: {:?}", d.to);
-        }
-        // The snapped crossing: south approach (2816,3435) <-> north
-        // approach (2816,3440); the wall band and the door's closed stamps
-        // block the four tiles between.
-        let at = WorldTile { x: 2816, z: 3435, level: 0 };
-        let to = WorldTile { x: 2816, z: 3440, level: 0 };
-        let fwd = doors.iter().find(|d| d.at == at).expect("south→north door");
-        assert_eq!(fwd.to, to);
-        let rev = doors.iter().find(|d| d.at == to).expect("north→south door");
-        assert_eq!(rev.to, at);
-
-        // The router reaches the north side only through the door.
-        let r = crate::router::find(
-            &wc,
-            &graph,
-            WorldTile { x: 2816, z: 3430, level: 0 },
-            WorldTile { x: 2816, z: 3445, level: 0 },
-        )
-        .expect("route through the door");
-        assert!(r.legs.iter().any(
-            |l| matches!(l, crate::router::Leg::Transport { edge } if edge.loc_id == 1530)
-        ));
+        // One edge per placement: `at` is the door loc tile, `dir` the wall
+        // orientation, `to` the far side walked out to standability.
+        assert_eq!(doors.len(), 1);
+        let d = &doors[0];
+        assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+        assert_eq!(d.dir, Some(DoorDir::N));
+        assert_eq!(d.to, WorldTile { x: 2816, z: 3439, level: 0 });
+        assert_eq!(d.open_loc_id, Some(1531));
+        assert_eq!(d.option, 1);
+        assert_eq!(d.ticks, 1);
+        assert!(d.varp_req.is_empty());
+        // Neither the target nor the arrival lands on wall 980's tile.
+        let wall = WorldTile { x: 2816, z: 3437, level: 0 };
+        assert!(doors.iter().all(|e| e.at != wall && e.to != wall));
+        // The at-index keys the door loc tile.
+        assert_eq!(graph.at[&d.at], vec![0]);
     }
 
     #[test]
@@ -2620,39 +2657,22 @@ switch_coord (loc_coord) {
         let graph = derive_transports(fx.path(), &defs, &wc);
 
         // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): one edge per
-        // side, both directions, `Open` op 1, one tick.
+        // placement — `at` the loc tile, `dir` N, `to` the north side
+        // walked out to standability, `Open` op 1, one tick.
         let doors: Vec<_> = graph
             .edges
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
             .collect();
-        assert_eq!(doors.len(), 2);
-        for d in &doors {
-            assert_eq!(d.option, 1);
-            assert_eq!(d.ticks, 1);
-        }
-        let south = WorldTile {
-            x: 2816,
-            z: 3437,
-            level: 0,
-        };
-        // (2816,3439) carries the closed door's own south-face stamp, so
-        // the snapped north side is the next walkable tile.
-        let north = WorldTile {
-            x: 2816,
-            z: 3440,
-            level: 0,
-        };
-        let fwd = doors
-            .iter()
-            .find(|d| d.at == south)
-            .expect("Catherby south→north door");
-        assert_eq!(fwd.to, north);
-        let rev = doors
-            .iter()
-            .find(|d| d.at == north)
-            .expect("Catherby reverse neighbour");
-        assert_eq!(rev.to, south);
+        assert_eq!(doors.len(), 1);
+        let door = &doors[0];
+        assert_eq!(door.at, WorldTile { x: 2816, z: 3438, level: 0 });
+        assert_eq!(door.dir, Some(DoorDir::N));
+        // (2816,3439) carries the closed door's own south-face stamp, which
+        // stands (face flags never disqualify).
+        assert_eq!(door.to, WorldTile { x: 2816, z: 3439, level: 0 });
+        assert_eq!(door.option, 1);
+        assert_eq!(door.ticks, 1);
 
         // One ladder placement (id 1747 @ 2826,3402,0) climbing to
         // (1,2826,3468): one edge per standing tile.
@@ -2697,9 +2717,22 @@ switch_coord (loc_coord) {
             assert!(l.skill_req.is_empty());
         }
 
-        // The at-index keys both edges' targets.
-        assert_eq!(graph.at[&south].len(), 1);
-        assert_eq!(graph.edges[graph.at[&south][0]].to, north);
+        // The at-index keys the door loc tile and every ladder standing
+        // tile.
+        let door_at = WorldTile {
+            x: 2816,
+            z: 3438,
+            level: 0,
+        };
+        assert_eq!(graph.at[&door_at].len(), 1);
+        assert_eq!(
+            graph.edges[graph.at[&door_at][0]].to,
+            WorldTile {
+                x: 2816,
+                z: 3439,
+                level: 0
+            }
+        );
         let stand = WorldTile {
             x: 2826,
             z: 3401,
@@ -3148,7 +3181,8 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2526)
             .collect();
-        assert_eq!(elena.len(), 2);
+        // One edge per placement (a single loc placement each).
+        assert_eq!(elena.len(), 1);
         for d in &elena {
             assert_eq!(d.varp_req, vec![(165, 28)]);
             assert!(d.quest_req.is_empty());
@@ -3159,7 +3193,7 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             .iter()
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 4)
             .collect();
-        assert_eq!(cannon.len(), 2);
+        assert_eq!(cannon.len(), 1);
         for d in &cannon {
             assert_eq!(d.varp_req, vec![(0, 6)]);
         }
