@@ -10,13 +10,15 @@
 //! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
 //! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
 //!
-//! V2 format: magic `b"274V"`, version `u8` 2, collision origin
+//! V2 format: magic `b"274V"`, version `u8` 3, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`] `flags`
 //! u32le per tile (row-major z then x), then the transport edge count u32le
 //! and per edge `(kind u8, at x/z/level, to x/z/level, loc_id, option,
-//! ticks)` i32le plus the four requirement vectors (count u32le, then
-//! `(id, value)` i32le pairs; quest names as length-prefixed UTF-8). The
-//! any-tile teleport layer (`TransportGraph::teleports`) round-trips inside
+//! ticks, dir u8, open_loc_id)` i32le plus the four requirement vectors
+//! (count u32le, then `(id, value)` i32le pairs; quest names as
+//! length-prefixed UTF-8). `dir` encodes [`DoorDir`] as `0=None,
+//! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
+//! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode_v2`] splits them back out
 //! and never indexes them into `at`. The
 //! v1 decode stays for old `.navpack` files; `nav-pack` now writes v2.
@@ -31,14 +33,15 @@ use api::snapshot::WorldTile;
 use crate::collision::WorldCollision;
 use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::Tile;
-use crate::transport::{TransportEdge, TransportGraph, TransportKind};
+use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
 /// Current pack format version (v1: boolean walk bytes + doors).
 const VERSION: u8 = 1;
 /// File magic.
 const MAGIC: &[u8; 4] = b"274N";
-/// V2 pack format version (collision flags + transport graph).
-const VERSION_V2: u8 = 2;
+/// V2 pack format version (collision flags + transport graph; v3 adds the
+/// per-edge `dir`/`open_loc_id` fields).
+const VERSION_V2: u8 = 3;
 /// V2 file magic.
 const MAGIC_V2: &[u8; 4] = b"274V";
 /// Mapsquare edge length in tiles.
@@ -178,12 +181,13 @@ pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
 /// Serialize the whole-world collision + transport graph to the v2 pack
 /// byte format. The graph's `at` index is not stored; [`decode_v2`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array — the wire layout is unchanged, so
-/// old v2 packs decode identically (they just carry no kind-4 edges).
+/// the ordinary edges in the same array. The v3 wire (version byte 3)
+/// carries `dir`/`open_loc_id` per edge; v2 streams are rejected by
+/// [`decode_v2`]'s version check rather than mis-read.
 pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
-        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + edge_count * 88,
+        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + edge_count * 96,
     );
     out.extend_from_slice(MAGIC_V2);
     out.push(VERSION_V2);
@@ -211,6 +215,8 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
         ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
+        out.push(dir_to_u8(e.dir));
+        out.extend_from_slice(&e.open_loc_id.unwrap_or(-1).to_le_bytes());
         write_req_pairs(&mut out, &e.skill_req);
         write_req_pairs(&mut out, &e.item_req);
         write_req_strings(&mut out, &e.quest_req);
@@ -259,7 +265,7 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
     // themselves still fail with Truncated past the real end.
     let remaining = bytes.len().saturating_sub(r.position() as usize);
     let mut graph = TransportGraph::default();
-    graph.edges = Vec::with_capacity(n_edges.min(remaining / 36));
+    graph.edges = Vec::with_capacity(n_edges.min(remaining / 41));
     for _ in 0..n_edges {
         let mut kind = [0u8; 1];
         r.read_exact(&mut kind).map_err(|_| PackError::Truncated)?;
@@ -278,8 +284,15 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             loc_id: read_i32(&mut r)?,
             option: read_i32(&mut r)?,
             ticks: read_i32(&mut r)?,
-            dir: None,
-            open_loc_id: None,
+            dir: dir_from_u8(read_u8(&mut r)?)?,
+            open_loc_id: {
+                let id = read_i32(&mut r)?;
+                if id == -1 {
+                    None
+                } else {
+                    Some(id)
+                }
+            },
             skill_req: read_req_pairs(&mut r)?,
             item_req: read_req_pairs(&mut r)?,
             quest_req: read_req_strings(&mut r)?,
@@ -334,6 +347,29 @@ fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
         _ => Err(PackError::BadLength(format!(
             "unknown transport kind {b}"
         ))),
+    }
+}
+
+/// `Option<DoorDir>` as a wire byte: `0=None, 1=N, 2=E, 3=S, 4=W`.
+fn dir_to_u8(d: Option<DoorDir>) -> u8 {
+    match d {
+        None => 0,
+        Some(DoorDir::N) => 1,
+        Some(DoorDir::E) => 2,
+        Some(DoorDir::S) => 3,
+        Some(DoorDir::W) => 4,
+    }
+}
+
+/// Wire byte → `Option<DoorDir>` (`0` = None), rejecting unknown values.
+fn dir_from_u8(b: u8) -> Result<Option<DoorDir>, PackError> {
+    match b {
+        0 => Ok(None),
+        1 => Ok(Some(DoorDir::N)),
+        2 => Ok(Some(DoorDir::E)),
+        3 => Ok(Some(DoorDir::S)),
+        4 => Ok(Some(DoorDir::W)),
+        _ => Err(PackError::BadLength(format!("unknown door dir {b}"))),
     }
 }
 
@@ -820,6 +856,12 @@ fn read_i32(r: &mut Cursor<&[u8]>) -> Result<i32, PackError> {
     Ok(i32::from_le_bytes(b))
 }
 
+fn read_u8(r: &mut Cursor<&[u8]>) -> Result<u8, PackError> {
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    Ok(b[0])
+}
+
 fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
     let mut b = [0u8; 4];
     r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
@@ -839,7 +881,7 @@ mod tests {
     use crate::grid::StepGrid;
     use crate::pack::PackError;
     use crate::tile::Tile;
-    use crate::transport::{TransportEdge, TransportGraph, TransportKind};
+    use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
 
@@ -886,8 +928,8 @@ mod tests {
             loc_id: 1530,
             option: 1,
             ticks: 1,
-            dir: None,
-            open_loc_id: None,
+            dir: Some(DoorDir::N),
+            open_loc_id: Some(1531),
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
@@ -970,6 +1012,9 @@ mod tests {
         assert_eq!(c.height, collision.height);
         assert_eq!(c.flags, collision.flags);
         assert_eq!(g.edges, graph.edges);
+        // The door edge's new fields round-trip on the wire.
+        assert_eq!(g.edges[di].dir, Some(DoorDir::N));
+        assert_eq!(g.edges[di].open_loc_id, Some(1531));
         // Teleports round-trip in their own layer, and the at-index is
         // rebuilt from the ordinary edges only.
         assert_eq!(g.teleports, graph.teleports);
@@ -979,6 +1024,32 @@ mod tests {
         // vice versa.
         assert!(matches!(decode(&bytes), Err(PackError::BadMagic)));
         assert!(matches!(decode_v2(&encode(&StepGrid::fixture_open_3x3())), Err(PackError::BadMagic)));
+    }
+
+    #[test]
+    fn v2_decode_rejects_old_version_streams() {
+        // A version-2 stream (pre-`dir`/`open_loc_id` wire) is rejected,
+        // not mis-read: the re-bake immediately rewrites it at v3.
+        let flags = vec![0, 0, 1, 0, 0, 0];
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 3,
+            height: 2,
+            flags: flags.clone(),
+            walkable: crate::collision::derive_walkable(&flags),
+        };
+        let graph = TransportGraph::default();
+        let mut bytes = encode_v2(&collision, &graph);
+        // The version byte sits right after the 4-byte magic.
+        bytes[4] = 2;
+        assert!(matches!(
+            decode_v2(&bytes),
+            Err(PackError::BadVersion(2))
+        ));
     }
 
     #[test]
