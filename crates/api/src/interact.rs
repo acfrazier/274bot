@@ -61,6 +61,13 @@ pub trait Driver {
     fn out(&mut self) -> &mut dyn Out;
     /// Queue a login handshake. Returns true iff the driver accepted it.
     fn login(&mut self, username: &str, password: &str, reconnect: bool) -> bool;
+    /// Switch the active side tab locally, the client's
+    /// `handle_tab_clicks` behavior (flip `active_icon` + redraw flags).
+    /// Returns false when `tab` is not a bound side icon. Defaults to
+    /// false for stubs that do not model the side icons.
+    fn click_side_tab(&mut self, tab: i32) -> bool {
+        false
+    }
 }
 
 impl Driver for Client {
@@ -139,6 +146,22 @@ impl Driver for Client {
 
     fn login(&mut self, username: &str, password: &str, reconnect: bool) -> bool {
         Client::login(self, username, password, reconnect).is_ok()
+    }
+
+    fn click_side_tab(&mut self, tab: i32) -> bool {
+        // `iconLoop`/`handle_tab_clicks` (client-ts 2787): a tab is only
+        // clickable when it has a bound interface; the click selects it
+        // and redraws the side panel and icon strips.
+        let Some(&bound) = self.side_icon.get(tab as usize) else {
+            return false;
+        };
+        if bound == -1 {
+            return false;
+        }
+        self.active_icon = tab;
+        self.redraw_side = true;
+        self.redraw_icons = true;
+        true
     }
 }
 
@@ -982,8 +1005,9 @@ impl<'a> Interactions<'a> {
 
     /// Translate one `WireCommand` into `Driver` calls (the m8aq
     /// `LiveInteractionDriver.dispatch`): op/use/button arms through
-    /// `set_menu`/`do_action`, walk through `try_move`, close/count/
-    /// side-tab/login through the `Send`/`Driver` primitives.
+    /// `set_menu`/`do_action`, walk through `try_move`, close/side-tab
+    /// through the client-local `doAction`/`click_side_tab` arms, count/
+    /// login through the `Send`/`Driver` primitives.
     fn send_command(&mut self, command: &WireCommand<'_>) -> bool {
         match command {
             WireCommand::Op { target, operation } => {
@@ -1032,14 +1056,18 @@ impl<'a> Interactions<'a> {
             WireCommand::Continue { component_id } => {
                 self.menu_action(MiniMenuAction::PAUSE_BUTTON, 0, 0, *component_id)
             }
-            WireCommand::Close => close_modal(&mut *self.driver),
+            // The m8aq `close`/`clear-local-modal` arms dispatch
+            // CLOSE_BUTTON, so `Client::close_modal()` runs — it clears
+            // the client's local modal ids AND writes CLOSE_MODAL.
+            WireCommand::Close | WireCommand::ClearLocalModal { .. } => {
+                self.menu_action(MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)
+            }
             WireCommand::Count { value } => answer_count(&mut *self.driver, *value),
             WireCommand::Walk { tile } => walk(&mut *self.driver, tile.x, tile.z),
-            WireCommand::SideTab { tab } => click_side_tab(&mut *self.driver, *tab),
+            WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)
             }
-            WireCommand::ClearLocalModal { .. } => close_modal(&mut *self.driver),
         }
     }
 
@@ -1093,16 +1121,6 @@ impl<'a> Interactions<'a> {
         }
         lx >= 0 && lz >= 0 && lx < scene.width && lz < scene.height
     }
-}
-
-/// Report a side-tab click through the TUT_CLICKSIDE wire path (the
-/// client's own flashing-tab click write; the m8aq adapter flipped the
-/// local `activeIcon`, which the kernel cannot reach through `Driver`).
-pub fn click_side_tab<D: Driver + ?Sized>(driver: &mut D, tab: i32) -> bool {
-    let out = driver.out();
-    out.p1_enc(ClientProt::TUT_CLICKSIDE.id);
-    out.p1(tab);
-    true
 }
 
 /// Wire `Interactions` over the same snapshot + driver pair (the m8aq

@@ -165,6 +165,8 @@ struct Recorder {
     base: (i32, i32),
     /// Packed scene typecode at the loc tile; `None` falls back to loc id.
     scene_typecode: Option<i32>,
+    /// Tabs handed to `click_side_tab`.
+    side_tabs: Vec<i32>,
 }
 
 /// One `try_move` call: `(src_x, src_z, dx, dz, forceapproach, ...)`.
@@ -227,6 +229,11 @@ impl Driver for Recorder {
     }
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         self.logins += 1;
+        true
+    }
+
+    fn click_side_tab(&mut self, tab: i32) -> bool {
+        self.side_tabs.push(tab);
         true
     }
 }
@@ -480,6 +487,43 @@ fn client_driver_walk_writes_move_gameclick() {
     // (207 + -621246914) & 0xff = 13, then size + ctrl + absolute tile.
     assert_eq!(&c.out.data()[..7], &[13, 5, 0, 0, 10, 0, 10]);
     assert_eq!(c.out.pos, 7);
+}
+
+/// The real `Client` driver: the close dispatch runs `Client::close_modal`
+/// (the doAction CLOSE_BUTTON arm), which clears the local modal ids and
+/// writes CLOSE_MODAL through `out`.
+#[test]
+fn client_driver_close_button_clears_local_modal_state() {
+    let mut c = Client::new(cfg());
+    c.ingame = true;
+    c.main_modal_id = 100;
+    c.side_modal_id = 200;
+    c.chat_modal_id = 300;
+    c.set_menu(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0);
+    assert!(c.do_action(0));
+    assert_eq!(c.main_modal_id, -1, "local main modal cleared");
+    assert_eq!(c.side_modal_id, -1, "local side modal cleared");
+    assert_eq!(c.chat_modal_id, -1, "local chat modal cleared");
+    assert_eq!(c.out.data()[0] as i32, ClientProt::CLOSE_MODAL.id & 0xff);
+    assert_eq!(c.out.pos, 1);
+}
+
+/// The real `Client` driver: `click_side_tab` flips `active_icon` and the
+/// redraw flags for a bound tab and refuses an unbound one (the client's
+/// `handle_tab_clicks` behavior, no packet).
+#[test]
+fn client_driver_click_side_tab_flips_active_icon() {
+    let mut c = Client::new(cfg());
+    c.side_icon[5] = 700;
+    assert!(c.click_side_tab(5));
+    assert_eq!(c.active_icon, 5);
+    assert!(c.redraw_side);
+    assert!(c.redraw_icons);
+    assert_eq!(c.out.pos, 0, "a local flip sends nothing");
+
+    assert!(!c.click_side_tab(9), "unbound tab is refused");
+    assert_eq!(c.active_icon, 5, "the failed click does not flip");
+    assert!(!c.click_side_tab(14), "out-of-range tab is refused");
 }
 
 /// Every `ClientProt` constant has a `LEGAL_SEND` row (same count), every
@@ -1482,10 +1526,12 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
     assert!(rec.actions.is_empty());
 }
 
-/// `close_modal` writes CLOSE_MODAL when any root is open and refuses
-/// with `NoModalOpen` when all four roots are closed.
+/// `close_modal` dispatches CLOSE_BUTTON through the driver (so the real
+/// client's `close_modal` clears the local modal ids and writes
+/// CLOSE_MODAL) and refuses with `NoModalOpen` when all four roots are
+/// closed.
 #[test]
-fn close_modal_writes_close_modal_and_refuses_with_none_open() {
+fn close_modal_dispatches_close_button_and_refuses_with_none_open() {
     let mut s = scene();
     plant_modal(&mut s.client);
     let snap = rebuild(&mut s.client);
@@ -1497,7 +1543,9 @@ fn close_modal_writes_close_modal_and_refuses_with_none_open() {
             SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
         }
     }
-    assert_eq!(rec.out.0, vec![OutByte::Enc(ClientProt::CLOSE_MODAL.id)]);
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)]);
+    assert!(rec.out.0.is_empty(), "the client-local close clears state");
 
     let mut s = scene();
     let snap = rebuild(&mut s.client);
@@ -1512,6 +1560,7 @@ fn close_modal_writes_close_modal_and_refuses_with_none_open() {
             }
         ));
     }
+    assert!(rec.actions.is_empty());
     assert!(rec.out.0.is_empty());
 }
 
@@ -1565,10 +1614,11 @@ fn answer_count_writes_resume_p_countdialog_and_refuses_bad_states() {
     assert!(rec.out.0.is_empty());
 }
 
-/// `click_side_tab` reports the tab through TUT_CLICKSIDE and refuses an
-/// unavailable tab before the wire.
+/// `click_side_tab` routes the tab through `Driver::click_side_tab` (the
+/// client-local side-icon flip) and refuses an unavailable tab before the
+/// driver sees it.
 #[test]
-fn click_side_tab_sends_tut_clickside_and_refuses_unavailable_tab() {
+fn click_side_tab_dispatches_driver_hook_and_refuses_unavailable_tab() {
     let mut s = scene();
     plant_inventory(&mut s.client);
     let snap = rebuild(&mut s.client);
@@ -1590,10 +1640,8 @@ fn click_side_tab_sends_tut_clickside_and_refuses_unavailable_tab() {
             }
         ));
     }
-    assert_eq!(
-        rec.out.0,
-        vec![OutByte::Enc(ClientProt::TUT_CLICKSIDE.id), OutByte::P1(3)]
-    );
+    assert_eq!(rec.side_tabs, vec![3]);
+    assert!(rec.out.0.is_empty(), "no wire send for a local flip");
 }
 
 /// `login` refuses while ingame and routes the handshake through
@@ -1636,7 +1684,7 @@ fn login_refuses_when_ingame_and_sends_when_logged_out() {
 }
 
 /// `clear_local_modal` refuses when the named component is not an open
-/// root and sends CLOSE_MODAL when it is.
+/// root and dispatches CLOSE_BUTTON (the client-local close) when it is.
 #[test]
 fn clear_local_modal_refuses_when_modal_not_open_and_closes_when_open() {
     let mut s = scene();
@@ -1662,7 +1710,9 @@ fn clear_local_modal_refuses_when_modal_not_open_and_closes_when_open() {
             SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
         }
     }
-    assert_eq!(rec.out.0, vec![OutByte::Enc(ClientProt::CLOSE_MODAL.id)]);
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)]);
+    assert!(rec.out.0.is_empty(), "the client-local close clears state");
 }
 
 /// `set_run`/`set_retaliate` press the on/off toggle components of the
