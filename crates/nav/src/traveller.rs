@@ -868,7 +868,28 @@ impl FollowRun {
         };
         let here = here(snapshot);
         let tile = door_tile(&edge);
-        let Some(loc) = snapshot.locs().iter().find(|l| l.tile == tile) else {
+        // The live loc's tile can sit a tile or two off the derived `at`
+        // (the cheap hop's `find_transport_loc` already tolerates that),
+        // so an exact-tile lookup misses it and the troll blocks while
+        // the walker stands still. Search by id within chebyshev 3 of
+        // `at` instead — the edge's closed `loc_id`, or the open leaf's
+        // `open_loc_id` when the door reads open — nearest first, same
+        // shape as `find_transport_loc`.
+        let Some(loc) = snapshot
+            .locs()
+            .iter()
+            .filter(|loc| {
+                loc.tile.level == tile.level
+                    && (loc.id == edge.loc_id
+                        || edge
+                            .open_loc_id
+                            .is_some_and(|open_id| loc.id == open_id))
+            })
+            .map(|loc| (loc, cheb(loc.tile, tile)))
+            .filter(|(_, gap)| *gap <= 3)
+            .min_by_key(|(_, gap)| *gap)
+            .map(|(loc, _)| loc)
+        else {
             // The door's loc is not in the loaded scene yet (the loc
             // family is stale, or the door is out of view): keep waiting,
             // bounded by the hop budget.
@@ -1779,10 +1800,11 @@ mod tests {
         c.world.set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     }
 
-    /// A wall loc at scene (1, 0) — the `at` tile of [`door_edge`] — as
-    /// the closed door (1530, "Open") or the open state (1531, "Close"),
-    /// mirroring the Catherby range-house door configs.
-    fn plant_door(c: &mut Client, open: bool) {
+    /// A wall loc at scene (`scene_x`, 0) — the `at` tile of [`door_edge`]
+    /// or an offset of it — as the closed door (1530, "Open") or the open
+    /// state (1531, "Close"), mirroring the Catherby range-house door
+    /// configs.
+    fn plant_door(c: &mut Client, open: bool, scene_x: i32) {
         let id = if open { 1531 } else { 1530 };
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -1803,7 +1825,8 @@ mod tests {
             };
         }
         let typecode = 0x4000_0000 + (id << 14) + 1;
-        c.world.set_wall(0, 1, 0, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+        c.world
+            .set_wall(0, scene_x, 0, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     }
 
     /// A level-0 walk leg over the given (x, z) world tiles.
@@ -1994,9 +2017,10 @@ mod tests {
         // on its own — no option flag — and troll the door: re-open it
         // every tick and walk through in the same tick the door reads
         // open, so the closer cannot slam it shut between the open and the
-        // walk.
+        // walk. The edge carries the open leaf's id (`open_loc_id`), the
+        // id the troll's radius lookup matches when the door reads open.
         let mut c = scene_client();
-        plant_door(&mut c, false);
+        plant_door(&mut c, false, 1);
         let mut snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
             route: Some((0, 0)),
@@ -2005,7 +2029,10 @@ mod tests {
         let mut t = Traveller::new();
         let route = Route {
             legs: vec![Leg::Transport {
-                edge: door_edge(),
+                edge: TransportEdge {
+                    open_loc_id: Some(1531),
+                    ..door_edge()
+                },
             }],
             dest: WorldTile {
                 x: 3203,
@@ -2045,7 +2072,7 @@ mod tests {
             // door's open/closed state, and only move the player once a
             // walk was actually sent (the troll's same-tick walk).
             let open = tick % 2 == 1;
-            plant_door(&mut c, open);
+            plant_door(&mut c, open, 1);
             if open && !crossed && !rec.walked.is_empty() {
                 crossed = true;
                 plant_player(&mut c, 3, 0);
@@ -2065,13 +2092,92 @@ mod tests {
     }
 
     #[test]
+    fn follow_troll_finds_an_offset_door_loc_within_radius() {
+        // The door loc's live tile is offset from the edge's derived `at`
+        // by +1 in x, so the exact-tile lookup (`l.tile == at`) never
+        // finds it and the troll blocks while the walker stands still.
+        // The troll must search by id within radius 3 of `at` — the same
+        // shape as `find_transport_loc` — to find the offset loc, re-open
+        // it, and walk through on the open tick instead of `Blocked`.
+        let mut c = scene_client();
+        plant_door(&mut c, false, 2); // offset from door_edge()'s at (3201, 3200)
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: TransportEdge {
+                    open_loc_id: Some(1531),
+                    ..door_edge()
+                },
+            }],
+            dest: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 3,
+            close_enough: 1,
+            ..TravelOptions::default()
+        };
+
+        let mut tick = 0u32;
+        let mut crossed = false;
+        loop {
+            match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+                Some(TravelOutcome::Arrived { at }) => {
+                    assert_eq!(
+                        at,
+                        WorldTile {
+                            x: 3203,
+                            z: 3200,
+                            level: 0
+                        }
+                    );
+                    break;
+                }
+                Some(other) => panic!("expected Arrived, got {other:?}"),
+                None => {}
+            }
+            tick += 1;
+            assert!(tick < 200, "the troll never crossed the offset door");
+            // A tick-perfect closer slams the door each tick; the player
+            // only crosses once a walk was actually sent (the troll's
+            // same-tick walk), exactly like the on-at troll test.
+            let open = tick % 2 == 1;
+            plant_door(&mut c, open, 2);
+            if open && !crossed && !rec.walked.is_empty() {
+                crossed = true;
+                plant_player(&mut c, 3, 0);
+            }
+            bump_rebuild(&mut c, &mut snap);
+        }
+        assert!(crossed, "the troll's same-tick walk never crossed the door");
+        assert!(
+            rec.loc_ops >= 2,
+            "the troll must re-open the offset door after the cheap hop lapses, got {} loc ops",
+            rec.loc_ops
+        );
+        assert!(
+            rec.walked.contains(&(3, 0)),
+            "the troll walks through the open door in the same tick"
+        );
+    }
+
+    #[test]
     fn follow_walks_through_an_open_leaf_without_op_loc() {
         // The open leaf (1531) is planted at `edge.at` and the edge
         // carries its id: `follow` must not interact (OP_LOC1 on an open
         // leaf Closes it) — it walks straight through and arrives on
         // `edge.to` with no op_loc at all.
         let mut c = scene_client();
-        plant_door(&mut c, true);
+        plant_door(&mut c, true, 1);
         let mut snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
             route: Some((0, 0)),
@@ -2110,7 +2216,7 @@ mod tests {
         // still recognized by the closed id being absent from `edge.at`
         // while a same-tile loc offers the "Close" op.
         let mut c = scene_client();
-        plant_door(&mut c, true);
+        plant_door(&mut c, true, 1);
         let mut snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
             route: Some((0, 0)),
