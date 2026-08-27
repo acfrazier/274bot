@@ -254,6 +254,67 @@ fn scene_rebuild_records_ingame_and_scene_state() {
     assert!(!snap.rebuild_family(&c, Family::Scene));
 }
 
+/// The position of each `Family` variant in the enum. An exhaustive
+/// match keeps this compile-checked against `ClientGens`' counters.
+fn family_index(f: Family) -> usize {
+    match f {
+        Family::Npc => 1,
+        Family::Player => 2,
+        Family::Inv => 3,
+        Family::Varp => 4,
+        Family::Stat => 5,
+        Family::Chat => 6,
+        Family::Scene => 7,
+        Family::Iface => 8,
+        Family::Camera => 9,
+        Family::MapFlag => 10,
+        Family::World => 11,
+    }
+}
+
+/// `Family` covers all 11 `ClientGens` counters, and the four new
+/// families track their gen (no view yet) so a later view can detect
+/// movement.
+#[test]
+fn family_enum_covers_all_client_gens() {
+    assert_eq!(
+        family_index(Family::World),
+        11,
+        "Family must mirror ClientGens' 11 counters"
+    );
+
+    let mut c = client_with_npc();
+    let mut snap = GameSnapshot::new();
+
+    assert!(!snap.rebuild_family(&c, Family::Iface));
+    assert!(!snap.rebuild_family(&c, Family::Camera));
+    assert!(!snap.rebuild_family(&c, Family::MapFlag));
+    assert!(!snap.rebuild_family(&c, Family::World));
+    assert_eq!(snap.gens().iface, 0);
+    assert_eq!(snap.gens().camera, 0);
+    assert_eq!(snap.gens().map_flag, 0);
+    assert_eq!(snap.gens().world, 0);
+
+    c.bump_gens(ServerProt::IF_SETPOSITION);
+    c.bump_gens(ServerProt::CAM_LOOKAT);
+    c.bump_gens(ServerProt::UNSET_MAP_FLAG);
+    c.bump_gens(ServerProt::SET_MULTIWAY);
+
+    assert!(snap.rebuild_family(&c, Family::Iface));
+    assert!(snap.rebuild_family(&c, Family::Camera));
+    assert!(snap.rebuild_family(&c, Family::MapFlag));
+    assert!(snap.rebuild_family(&c, Family::World));
+    assert_eq!(snap.gens().iface, 1);
+    assert_eq!(snap.gens().camera, 1);
+    assert_eq!(snap.gens().map_flag, 1);
+    assert_eq!(snap.gens().world, 1);
+
+    assert!(!snap.rebuild_family(&c, Family::Iface));
+    assert!(!snap.rebuild_family(&c, Family::Camera));
+    assert!(!snap.rebuild_family(&c, Family::MapFlag));
+    assert!(!snap.rebuild_family(&c, Family::World));
+}
+
 /// `GameSnapshot::rebuild` (the harness read) rebuilds every family and
 /// reports whether any gen moved.
 #[test]

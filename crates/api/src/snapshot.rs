@@ -16,6 +16,10 @@ pub enum Family {
     Stat,
     Chat,
     Scene,
+    Iface,
+    Camera,
+    MapFlag,
+    World,
 }
 
 /// Owned view of one live NPC slot, keyed by its slot index in
@@ -102,6 +106,10 @@ impl GameSnapshot {
             Family::Stat => self.rebuild_stat(client),
             Family::Chat => self.rebuild_chat(client),
             Family::Scene => self.rebuild_scene(client),
+            Family::Iface => track(client.gens.iface, &mut self.gens.iface),
+            Family::Camera => track(client.gens.camera, &mut self.gens.camera),
+            Family::MapFlag => track(client.gens.map_flag, &mut self.gens.map_flag),
+            Family::World => track(client.gens.world, &mut self.gens.world),
         }
     }
 
@@ -116,6 +124,10 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Stat);
         dirty |= self.rebuild_family(client, Family::Chat);
         dirty |= self.rebuild_family(client, Family::Scene);
+        dirty |= self.rebuild_family(client, Family::Iface);
+        dirty |= self.rebuild_family(client, Family::Camera);
+        dirty |= self.rebuild_family(client, Family::MapFlag);
+        dirty |= self.rebuild_family(client, Family::World);
         dirty
     }
 

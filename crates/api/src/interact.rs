@@ -228,8 +228,8 @@ pub fn tele_args(level: i32, x: i32, z: i32) -> String {
     )
 }
 
-/// Skip tutorial and `::tele` to an absolute tile. Lean and Client both
-/// send this through [`cheat`]; the host flushes after.
+/// Skip tutorial and `::tele` to an absolute tile, sent through [`cheat`];
+/// the host flushes after.
 pub fn seed_at<D: Driver + ?Sized>(driver: &mut D, level: i32, x: i32, z: i32) {
     cheat(driver, "setvar tutorial 1000");
     cheat(driver, &tele_args(level, x, z));

@@ -34,12 +34,26 @@ pub struct DirtyFamilies {
     pub stat: bool,
     pub chat: bool,
     pub scene: bool,
+    pub iface: bool,
+    pub camera: bool,
+    pub map_flag: bool,
+    pub world: bool,
 }
 
 impl DirtyFamilies {
     /// True if any family gen moved.
     pub fn any(self) -> bool {
-        self.npc || self.player || self.inv || self.varp || self.stat || self.chat || self.scene
+        self.npc
+            || self.player
+            || self.inv
+            || self.varp
+            || self.stat
+            || self.chat
+            || self.scene
+            || self.iface
+            || self.camera
+            || self.map_flag
+            || self.world
     }
 }
 
@@ -53,6 +67,10 @@ pub fn dirty_families(last: ClientGens, current: ClientGens) -> DirtyFamilies {
         stat: last.stat != current.stat,
         chat: last.chat != current.chat,
         scene: last.scene != current.scene,
+        iface: last.iface != current.iface,
+        camera: last.camera != current.camera,
+        map_flag: last.map_flag != current.map_flag,
+        world: last.world != current.world,
     }
 }
 
@@ -137,6 +155,10 @@ mod tests {
         assert!(!dirty.stat);
         assert!(!dirty.chat);
         assert!(!dirty.scene);
+        assert!(!dirty.iface);
+        assert!(!dirty.camera);
+        assert!(!dirty.map_flag);
+        assert!(!dirty.world);
 
         let mut pump = Pump::new();
         let result = pump.drain(after);
@@ -151,6 +173,36 @@ mod tests {
             DirtyFamilies::default(),
             "Pump::dirty() after drain is the empty-trap; use DrainResult.dirty"
         );
+    }
+
+    #[test]
+    fn new_family_gens_mark_their_families_dirty() {
+        let before = gens();
+        let mut after = before;
+        after.iface = 1;
+        after.camera = 1;
+        after.map_flag = 1;
+        after.world = 1;
+
+        let dirty = dirty_families(before, after);
+        assert!(dirty.iface, "iface gen moved: iface family must be dirty");
+        assert!(
+            dirty.camera,
+            "camera gen moved: camera family must be dirty"
+        );
+        assert!(
+            dirty.map_flag,
+            "map_flag gen moved: map_flag family must be dirty"
+        );
+        assert!(dirty.world, "world gen moved: world family must be dirty");
+        assert!(dirty.any(), "any() must cover the four new families");
+        assert!(!dirty.npc);
+        assert!(!dirty.player);
+        assert!(!dirty.inv);
+        assert!(!dirty.varp);
+        assert!(!dirty.stat);
+        assert!(!dirty.chat);
+        assert!(!dirty.scene);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Thin obj-id → name table for compiled scripts. The full `ObjType`
 //! decode carries model/sprite/op data a script never reads; this keeps
 //! only `id` + `name`, indexed by id, built once per `Play` and shared by
-//! every slot (lean channels never load their own cache).
+//! every slot.
 
 use client::config::ObjType;
 
