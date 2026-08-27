@@ -5,14 +5,24 @@
 // `client/tests/gens.rs` — no network).
 
 use api::interact::{
-    answer_count, cheat, close_modal, interact, login, mainland_hop, op_loc, press, seed_at,
-    set_run, tele_args, walk, Driver, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
+    answer_count, cheat, close_modal, create_interactions, interact, login, mainland_hop,
+    offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present, tele_args,
+    walk, ActionSpec, Driver, Interactions, MAX_OPERATIONS, OpTarget, SCENE_READY, SendReason,
+    SendResult, WireCommand, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
 };
 use api::obj_names::ItemDefView;
 use api::prot::{LegalSend, LEGAL_SEND};
 use api::settle::{item_delta, modal_delta, xp_gained, Settle};
-use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
-use client::io::{ClientProt, Isaac};
+use api::snapshot::{
+    GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
+};
+use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::{LocType, NpcType, ObjType};
+use client::dash3d::ClientObj;
+use client::datastruct::LinkList;
+use client::io::{ClientProt, Isaac, ServerProt};
+use std::sync::Arc;
 
 fn cfg() -> ClientConfig {
     ClientConfig {
@@ -826,4 +836,1132 @@ fn item_def() -> ItemDefView {
         certificate_link: -1,
         certificate_template: -1,
     }
+}
+
+// ---- Task 9: Interactions orchestration (ActionResolution/TargetIdentity) ----
+
+/// A planted client attached to a local socket pair (the snapshot.rs
+/// pattern): the bound listener plus connected `ClientStream` mark the
+/// slot attached, with the scene ready (`ingame && scene_state == 2`).
+struct Scene {
+    _listener: std::net::TcpListener,
+    client: Client,
+}
+
+fn configured_client() -> Client {
+    let mut c = Client::new(cfg());
+    c.ingame = true;
+    c.scene_state = SCENE_READY;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c
+}
+
+fn scene() -> Scene {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let stream =
+        client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
+    let mut c = configured_client();
+    c.stream = Some(stream);
+    Scene {
+        _listener: listener,
+        client: c,
+    }
+}
+
+/// Bump every gen and rebuild every family into a fresh snapshot.
+fn rebuild(c: &mut Client) -> GameSnapshot {
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(c);
+    snap
+}
+
+fn set_iface(c: &mut Client, id: usize, com: IfType) {
+    if c.ifaces.len() <= id {
+        c.ifaces.resize(id + 1, None);
+    }
+    c.ifaces[id] = Some(com);
+}
+
+/// Plant an npc type whose menu ops the snapshot's npc view carries.
+fn plant_npc_type(c: &mut Client, id: i32, name: &str, ops: &[&str]) {
+    let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+    while cache.npcs.len() <= id as usize {
+        cache.npcs.push(NpcType::default());
+    }
+    cache.npcs[id as usize] = NpcType {
+        id,
+        name: name.into(),
+        op: ops.iter().map(|s| Some((*s).to_string())).collect(),
+        ..Default::default()
+    };
+}
+
+/// Plant one live npc at `slot` (pixel (50, 50) * 128 → world tile
+/// (3250, 3250)).
+fn plant_npc(c: &mut Client, slot: usize, id: i32) {
+    let mut npc = ClientNpc::default();
+    npc.entity.x = 50 * 128;
+    npc.entity.z = 50 * 128;
+    npc.r#type = Some(id as usize);
+    c.npc[slot] = Some(npc);
+    c.npc_ids = vec![slot as i32];
+    c.npc_count = 1;
+}
+
+/// The inventory tab (side tab 3) holding one item (stored id 4 → obj 3).
+fn plant_inventory(c: &mut Client) {
+    set_iface(
+        c,
+        500,
+        IfType {
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = 500;
+}
+
+/// A main modal (root 100) with a BUTTON_TARGET widget (101, npc mask),
+/// a plain BUTTON_OK (102), a client-code BUTTON_OK (103) and a
+/// player-only-mask target widget (104).
+fn plant_modal(c: &mut Client) {
+    set_iface(
+        c,
+        100,
+        IfType {
+            id: 100,
+            layer_id: 100,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![101, 102, 103, 104]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        101,
+        IfType {
+            id: 101,
+            layer_id: 100,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_TARGET,
+            target_mask: 0x2,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        102,
+        IfType {
+            id: 102,
+            layer_id: 100,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        103,
+        IfType {
+            id: 103,
+            layer_id: 100,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_OK,
+            client_code: 205,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        104,
+        IfType {
+            id: 104,
+            layer_id: 100,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_TARGET,
+            target_mask: 0x8,
+            ..Default::default()
+        },
+    );
+    c.main_modal_id = 100;
+}
+
+/// The player-controls overlay (root 0): children 3/4 = retaliate
+/// on/off, 5/6 = run off/on (the `controls_pair` indices).
+fn plant_controls(c: &mut Client) {
+    set_iface(
+        c,
+        0,
+        IfType {
+            id: 0,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![1, 2, 3, 4, 5, 6]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        1,
+        IfType {
+            id: 1,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Player controls".into(),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        2,
+        IfType {
+            id: 2,
+            r#type: ComponentType::TYPE_TEXT,
+            text: "Auto retaliate".into(),
+            ..Default::default()
+        },
+    );
+    for id in 3..=6 {
+        set_iface(
+            c,
+            id,
+            IfType {
+                id: id as i32,
+                r#type: ComponentType::TYPE_TEXT,
+                button_type: ButtonType::BUTTON_TOGGLE,
+                ..Default::default()
+            },
+        );
+    }
+    c.side_icon[0] = 0;
+}
+
+fn fixture_npc(actions: &[&str]) -> NpcView {
+    NpcView {
+        index: 7,
+        r#type: Some(9),
+        name: Some("Goblin".into()),
+        actions: actions.iter().map(|s| Some((*s).to_string())).collect(),
+        tile: WorldTile {
+            x: 3250,
+            z: 3250,
+            level: 0,
+        },
+        distance: 5,
+        animation: 0,
+        pose_animation: 0,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        health: 7,
+        total_health: 7,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 2,
+        size: 1,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+/// `operation_of` scans the target's labels in menu order (trimmed,
+/// case-insensitive), skipping empty and "hidden" slots, capped at
+/// `MAX_OPERATIONS`.
+#[test]
+fn operation_of_matches_label_case_insensitively_skipping_hidden() {
+    let npc = fixture_npc(&["Attack", "  Hidden ", "", "Pickpocket", "Examine", "Sixth"]);
+    let target = OpTarget::Npc(&npc);
+
+    assert_eq!(operation_of(&target, "Attack"), Some(1));
+    assert_eq!(
+        operation_of(&target, "  attack  "),
+        Some(1),
+        "trimmed case-insensitive"
+    );
+    assert_eq!(
+        operation_of(&target, "Pickpocket"),
+        Some(4),
+        "hidden/empty slots are skipped"
+    );
+    assert_eq!(operation_of(&target, "Examine"), Some(5));
+    assert_eq!(operation_of(&target, "Sixth"), None, "beyond MAX_OPERATIONS");
+    assert_eq!(operation_of(&target, "Nope"), None);
+    assert_eq!(MAX_OPERATIONS, 5);
+}
+
+/// `offers_operation` accepts only the 1..=MAX_OPERATIONS range with a
+/// usable action in that slot.
+#[test]
+fn offers_operation_guards_range_and_usable_slots() {
+    let npc = fixture_npc(&["Attack", "hidden", "Examine"]);
+    let target = OpTarget::Npc(&npc);
+    assert!(offers_operation(&target, 1));
+    assert!(!offers_operation(&target, 2), "hidden slot");
+    assert!(offers_operation(&target, 3));
+    assert!(!offers_operation(&target, 4), "no fourth action");
+    assert!(!offers_operation(&target, 0), "operations are 1-based");
+    assert!(!offers_operation(&target, 6), "past MAX_OPERATIONS");
+}
+
+/// Recording driver + planted snapshot: walk to a same-level in-scene
+/// tile sends a `Walk` through `try_move`; an off-scene tile is refused
+/// with `OffScene` before the driver sees it.
+#[test]
+fn interactions_walk_refuses_off_scene_and_sends_when_ok() {
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder {
+        route: Some((50, 50)),
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.walk(WorldTile {
+            x: 3210,
+            z: 3212,
+            level: 0,
+        }) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Walk { tile } if tile == WorldTile { x: 3210, z: 3212, level: 0 }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("in-scene walk refused: {reason:?}"),
+        }
+        match ix.walk(WorldTile {
+            x: 3500,
+            z: 3212,
+            level: 0,
+        }) {
+            SendResult::Refused { tick, reason } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert_eq!(reason, SendReason::OffScene);
+            }
+            SendResult::Sent { .. } => panic!("off-scene walk sent"),
+        }
+    }
+    assert_eq!(rec.moves, vec![(50, 50, 10, 12, false, 0, 0, 0, 0, 0, 0)]);
+}
+
+/// `interact` resolves a label (and a raw operation) to an op number,
+/// then dispatches the matching `MiniMenuAction` opcode through
+/// `set_menu`/`do_action` with the npc slot as menu param `a`.
+#[test]
+fn interact_dispatches_npc_op_through_menu() {
+    let mut s = scene();
+    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack", "Pickpocket", "Examine"]);
+    plant_npc(&mut s.client, 7, 9);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.interact(
+            OpTarget::Npc(&snap.npcs()[0]),
+            ActionSpec::Label("Pickpocket".into()),
+        ) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::Op { operation: 2, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        match ix.interact(OpTarget::Npc(&snap.npcs()[0]), ActionSpec::Operation(1)) {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(command, WireCommand::Op { operation: 1, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.actions, vec![0, 0]);
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::OP_NPC2, 7, 0, 0),
+            (0, MiniMenuAction::OP_NPC1, 7, 0, 0),
+        ]
+    );
+}
+
+/// A loc target dispatches through the scene coords with the packed
+/// typecode as menu param `a` (the `interact_with_loc` contract).
+#[test]
+fn interact_dispatches_loc_op_through_scene_coords() {
+    let mut s = scene();
+    let typecode = 0x4000_0000 + (1 << 14) + 3 + (4 << 7);
+    s.client
+        .world
+        .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    let loc_id = (typecode >> 14) & 0x7fff;
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        while cache.locs.len() <= loc_id as usize {
+            cache.locs.push(LocType::default());
+        }
+        cache.locs[loc_id as usize] = LocType {
+            id: loc_id,
+            name: "Door".into(),
+            op: vec![Some("Open".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    let loc = &snap.locs()[0];
+    assert_eq!(loc.tile, WorldTile { x: 3203, z: 3204, level: 0 });
+    let mut rec = Recorder {
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.interact(OpTarget::Loc(loc), ActionSpec::Label("Open".into())) {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(command, WireCommand::Op { operation: 1, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::OP_LOC1, typecode, 3, 4)]);
+}
+
+/// A ground-item target dispatches through the scene coords with the obj
+/// id as menu param `a`.
+#[test]
+fn interact_dispatches_ground_item_op_through_scene_coords() {
+    let mut s = scene();
+    let bones_id = {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        let id = cache.objs.len() as i32;
+        cache.objs.push(ObjType {
+            id,
+            name: "Bones".into(),
+            op: [Some("Take".into()), None, None, None, None],
+            ..Default::default()
+        });
+        id
+    };
+    let mut list = LinkList::new();
+    list.push(ClientObj::new(bones_id, 2));
+    s.client.ground_obj[0][10][12] = Some(list);
+    let snap = rebuild(&mut s.client);
+    let gi = &snap.ground_items()[0];
+    assert_eq!(gi.tile, WorldTile { x: 3210, z: 3212, level: 0 });
+    let mut rec = Recorder {
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.interact(OpTarget::GroundItem(gi), ActionSpec::Label("Take".into())) {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(command, WireCommand::Op { operation: 1, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::OP_OBJ1, bones_id, 10, 12)]
+    );
+}
+
+/// `use_item_on` first arms the held item (`USEHELD_START`) then aims the
+/// target kind (`USEHELD_ONNPC`), both through `set_menu`/`do_action`.
+#[test]
+fn use_item_on_selects_held_item_then_aims_target() {
+    let mut s = scene();
+    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack"]);
+    plant_npc(&mut s.client, 7, 9);
+    plant_inventory(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.inventory()[0].def.id, 3);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.use_item_on(&snap.inventory()[0], OpTarget::Npc(&snap.npcs()[0])) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::UseItem { .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.actions, vec![0, 0]);
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::USEHELD_START, 3, 0, 500),
+            (0, MiniMenuAction::USEHELD_ONNPC, 7, 0, 0),
+        ]
+    );
+}
+
+/// `press` dispatches a BUTTON_OK through IF_BUTTON and refuses the
+/// target-verb and client-code arms before the driver sees them.
+#[test]
+fn press_dispatches_button_and_refuses_target_client_side_only() {
+    let mut s = scene();
+    plant_modal(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        let widget_ok = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 102)
+            .unwrap();
+        match ix.press(widget_ok) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Button {
+                        component_id: 102,
+                        button_type: 1
+                    }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        let widget_target = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 101)
+            .unwrap();
+        assert!(matches!(
+            ix.press(widget_target),
+            SendResult::Refused {
+                reason: SendReason::InvalidAction,
+                ..
+            }
+        ));
+        let widget_code = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 103)
+            .unwrap();
+        assert!(matches!(
+            ix.press(widget_code),
+            SendResult::Refused {
+                reason: SendReason::ClientSideOnly,
+                ..
+            }
+        ));
+    }
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 102)]);
+}
+
+/// `use_widget_on` opens the target-button arm (`TGT_BUTTON`) then aims
+/// the target kind (`TGT_NPC`), and refuses on a target-mask mismatch.
+#[test]
+fn use_widget_on_aims_target_after_target_button() {
+    let mut s = scene();
+    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack"]);
+    plant_npc(&mut s.client, 7, 9);
+    plant_modal(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        let widget = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 101)
+            .unwrap();
+        match ix.use_widget_on(widget, OpTarget::Npc(&snap.npcs()[0])) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::UseWidget {
+                        component_id: 101,
+                        ..
+                    }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        let wrong_mask = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == 104)
+            .unwrap();
+        assert!(matches!(
+            ix.use_widget_on(wrong_mask, OpTarget::Npc(&snap.npcs()[0])),
+            SendResult::Refused {
+                reason: SendReason::TargetMaskMismatch,
+                ..
+            }
+        ));
+    }
+    assert_eq!(rec.actions, vec![0, 0]);
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::TGT_BUTTON, 0, 0, 101),
+            (0, MiniMenuAction::TGT_NPC, 7, 0, 0),
+        ]
+    );
+}
+
+/// `continue_dialog` sends the chat modal's PAUSE_BUTTON and refuses with
+/// `NoContinue` when no continue component is open.
+#[test]
+fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
+    let mut s = scene();
+    set_iface(
+        &mut s.client,
+        200,
+        IfType {
+            id: 200,
+            layer_id: 200,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![201]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut s.client,
+        201,
+        IfType {
+            id: 201,
+            layer_id: 200,
+            r#type: ComponentType::TYPE_TEXT,
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
+        },
+    );
+    s.client.chat_modal_id = 200;
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.chat_continue_component_id(), 201);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.continue_dialog() {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Continue { component_id: 201 }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 201)]);
+
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.continue_dialog(),
+            SendResult::Refused {
+                reason: SendReason::NoContinue,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty());
+}
+
+/// `close_modal` writes CLOSE_MODAL when any root is open and refuses
+/// with `NoModalOpen` when all four roots are closed.
+#[test]
+fn close_modal_writes_close_modal_and_refuses_with_none_open() {
+    let mut s = scene();
+    plant_modal(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.close_modal() {
+            SendResult::Sent { command, .. } => assert!(matches!(command, WireCommand::Close)),
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.out.0, vec![OutByte::Enc(ClientProt::CLOSE_MODAL.id)]);
+
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.close_modal(),
+            SendResult::Refused {
+                reason: SendReason::NoModalOpen,
+                ..
+            }
+        ));
+    }
+    assert!(rec.out.0.is_empty());
+}
+
+/// `answer_count` writes RESUME_P_COUNTDIALOG for a valid count and
+/// refuses when no count dialog is open or the count is negative.
+#[test]
+fn answer_count_writes_resume_p_countdialog_and_refuses_bad_states() {
+    let mut s = scene();
+    s.client.dialog_input_open = true;
+    let snap = rebuild(&mut s.client);
+    assert!(snap.count_dialog_open());
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.answer_count(1500) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::Count { value: 1500 }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        assert!(matches!(
+            ix.answer_count(-1),
+            SendResult::Refused {
+                reason: SendReason::InvalidCount,
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        rec.out.0,
+        vec![
+            OutByte::Enc(ClientProt::RESUME_P_COUNTDIALOG.id),
+            OutByte::P4(1500),
+        ]
+    );
+
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.answer_count(5),
+            SendResult::Refused {
+                reason: SendReason::NoCountDialog,
+                ..
+            }
+        ));
+    }
+    assert!(rec.out.0.is_empty());
+}
+
+/// `click_side_tab` reports the tab through TUT_CLICKSIDE and refuses an
+/// unavailable tab before the wire.
+#[test]
+fn click_side_tab_sends_tut_clickside_and_refuses_unavailable_tab() {
+    let mut s = scene();
+    plant_inventory(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.click_side_tab(3) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::SideTab { tab: 3 }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        assert!(matches!(
+            ix.click_side_tab(99),
+            SendResult::Refused {
+                reason: SendReason::InvalidTab,
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        rec.out.0,
+        vec![OutByte::Enc(ClientProt::TUT_CLICKSIDE.id), OutByte::P1(3)]
+    );
+}
+
+/// `login` refuses while ingame and routes the handshake through
+/// `Driver::login` once logged out.
+#[test]
+fn login_refuses_when_ingame_and_sends_when_logged_out() {
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.login("bot", "hunter2"),
+            SendResult::Refused {
+                reason: SendReason::AlreadyIngame,
+                ..
+            }
+        ));
+    }
+    assert_eq!(rec.logins, 0);
+
+    let mut s = scene();
+    s.client.ingame = false;
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.login("bot", "hunter2") {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Login { ref username, .. } if username == "bot"
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.logins, 1);
+}
+
+/// `clear_local_modal` refuses when the named component is not an open
+/// root and sends CLOSE_MODAL when it is.
+#[test]
+fn clear_local_modal_refuses_when_modal_not_open_and_closes_when_open() {
+    let mut s = scene();
+    plant_modal(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.clear_local_modal(999),
+            SendResult::Refused {
+                reason: SendReason::NoModalOpen,
+                ..
+            }
+        ));
+        match ix.clear_local_modal(100) {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(
+                    command,
+                    WireCommand::ClearLocalModal { component_id: 100 }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.out.0, vec![OutByte::Enc(ClientProt::CLOSE_MODAL.id)]);
+}
+
+/// `set_run`/`set_retaliate` press the on/off toggle components of the
+/// controls overlay with the live button type.
+#[test]
+fn set_run_and_retaliate_press_the_toggle_components() {
+    let mut s = scene();
+    plant_controls(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let run = snap.run_controls().expect("run toggle pair");
+    assert_eq!((run.on_component_id, run.off_component_id), (6, 5));
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.set_run(true) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Button {
+                        component_id: 6,
+                        button_type: 4
+                    }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        assert!(matches!(ix.set_run(false), SendResult::Sent { .. }));
+        assert!(matches!(ix.set_retaliate(true), SendResult::Sent { .. }));
+        assert!(matches!(ix.set_retaliate(false), SendResult::Sent { .. }));
+    }
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::TOGGLE_BUTTON, 0, 0, 6),
+            (0, MiniMenuAction::TOGGLE_BUTTON, 0, 0, 5),
+            (0, MiniMenuAction::TOGGLE_BUTTON, 0, 0, 3),
+            (0, MiniMenuAction::TOGGLE_BUTTON, 0, 0, 4),
+        ]
+    );
+}
+
+/// The m8aq precondition order: not attached, not ingame, count dialog
+/// open (unless answering the count), scene not ready.
+#[test]
+fn interact_refuses_when_not_attached_not_ingame_or_count_dialog_open() {
+    let npc = fixture_npc(&["Attack"]);
+    let attack = ActionSpec::Label("Attack".into());
+
+    let mut c = configured_client();
+    let snap = rebuild(&mut c);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(&npc), attack.clone()),
+            SendResult::Refused {
+                reason: SendReason::NotAttached,
+                ..
+            }
+        ));
+    }
+
+    let mut s = scene();
+    s.client.ingame = false;
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(&npc), attack.clone()),
+            SendResult::Refused {
+                reason: SendReason::NotIngame,
+                ..
+            }
+        ));
+    }
+
+    let mut s = scene();
+    s.client.dialog_input_open = true;
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(&npc), attack.clone()),
+            SendResult::Refused {
+                reason: SendReason::CountDialogOpen,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.walk(WorldTile {
+                x: 3210,
+                z: 3212,
+                level: 0
+            }),
+            SendResult::Refused {
+                reason: SendReason::CountDialogOpen,
+                ..
+            }
+        ));
+    }
+
+    let mut s = scene();
+    s.client.scene_state = 1;
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(&npc), attack),
+            SendResult::Refused {
+                reason: SendReason::SceneUnavailable,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty());
+}
+
+/// `interact` refuses an unresolvable action, a stale target and an item
+/// target with no action family; tile-addressed targets also get the
+/// level/off-scene checks before identity.
+#[test]
+fn interact_refuses_invalid_action_stale_target_and_unsupported() {
+    let mut s = scene();
+    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack"]);
+    plant_npc(&mut s.client, 7, 9);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        let npc = &snap.npcs()[0];
+
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Bark".into())),
+            SendResult::Refused {
+                reason: SendReason::InvalidAction,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(9)),
+            SendResult::Refused {
+                reason: SendReason::InvalidAction,
+                ..
+            }
+        ));
+
+        let mut gone = npc.clone();
+        gone.index = 99;
+        assert!(matches!(
+            ix.interact(OpTarget::Npc(&gone), ActionSpec::Label("Attack".into())),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+
+        let item = ItemView {
+            def: item_def(),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::None,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        };
+        assert!(matches!(
+            ix.interact(OpTarget::Item(&item), ActionSpec::Label("Wield".into())),
+            SendResult::Refused {
+                reason: SendReason::UnsupportedTarget,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty());
+    assert!(rec.menus.is_empty());
+}
+
+/// `still_present` re-checks the target's identity against the snapshot
+/// per kind: npc slot+id, remote player slot+name (never the self slot),
+/// loc typecode/layer/tile, ground-item id/tile, item id/slot/component.
+#[test]
+fn still_present_matches_identity_per_kind() {
+    let mut s = scene();
+    // npc
+    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack"]);
+    plant_npc(&mut s.client, 7, 9);
+    // remote player
+    let mut other = ClientPlayer::at(15, 16);
+    other.entity.x = 100;
+    other.entity.z = 150;
+    other.name = Some("Other".into());
+    other.combat_level = 3;
+    other.skill_level = 5;
+    s.client.players[3] = Some(other);
+    s.client.player_ids = vec![3];
+    s.client.player_count = 1;
+    // a loc (wall) and a ground-item stack
+    let typecode = 0x4000_0000 + (1 << 14) + 3 + (4 << 7);
+    s.client
+        .world
+        .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    let bones_id = {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        let id = cache.objs.len() as i32;
+        cache.objs.push(ObjType {
+            id,
+            name: "Bones".into(),
+            ..Default::default()
+        });
+        id
+    };
+    let mut list = LinkList::new();
+    list.push(ClientObj::new(bones_id, 2));
+    s.client.ground_obj[0][10][12] = Some(list);
+    plant_inventory(&mut s.client);
+    let snap = rebuild(&mut s.client);
+
+    let npc = &snap.npcs()[0];
+    assert!(still_present(&OpTarget::Npc(npc), &snap));
+    let mut slot_moved = npc.clone();
+    slot_moved.index = 99;
+    assert!(!still_present(&OpTarget::Npc(&slot_moved), &snap));
+    let mut id_changed = npc.clone();
+    id_changed.r#type = Some(999);
+    assert!(!still_present(&OpTarget::Npc(&id_changed), &snap));
+
+    let player = &snap.players()[0];
+    assert!(still_present(&OpTarget::Player(player), &snap));
+    let mut renamed = player.clone();
+    renamed.actor.name = Some("Renamed".into());
+    assert!(
+        !still_present(&OpTarget::Player(&renamed), &snap),
+        "player name mismatch"
+    );
+
+    let loc = &snap.locs()[0];
+    assert!(still_present(&OpTarget::Loc(loc), &snap));
+    let mut loc_moved = loc.clone();
+    loc_moved.tile.x += 1;
+    assert!(
+        !still_present(&OpTarget::Loc(&loc_moved), &snap),
+        "loc tile moved"
+    );
+    let mut loc_layer = loc.clone();
+    loc_layer.layer = LocLayer::Ground;
+    assert!(
+        !still_present(&OpTarget::Loc(&loc_layer), &snap),
+        "loc layer changed"
+    );
+
+    let gi = &snap.ground_items()[0];
+    assert!(still_present(&OpTarget::GroundItem(gi), &snap));
+    let mut gi_moved = gi.clone();
+    gi_moved.tile.z += 1;
+    assert!(
+        !still_present(&OpTarget::GroundItem(&gi_moved), &snap),
+        "ground-item tile moved"
+    );
+
+    let item = &snap.inventory()[0];
+    assert!(still_present(&OpTarget::Item(item), &snap));
+    let mut item_slot = item.clone();
+    item_slot.slot = 5;
+    assert!(
+        !still_present(&OpTarget::Item(&item_slot), &snap),
+        "item slot moved"
+    );
+
+    // the self slot is never a present player target
+    let mut s2 = scene();
+    s2.client.self_slot = 3;
+    let mut other = ClientPlayer::at(15, 16);
+    other.name = Some("Other".into());
+    s2.client.players[3] = Some(other);
+    s2.client.player_ids = vec![3];
+    s2.client.player_count = 1;
+    let snap2 = rebuild(&mut s2.client);
+    assert!(
+        !still_present(&OpTarget::Player(&snap2.players()[0]), &snap2),
+        "the self slot is never a target"
+    );
+}
+
+/// `create_interactions` wires the same snapshot + driver pair.
+#[test]
+fn create_interactions_wires_snapshot_and_driver() {
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    let mut ix = create_interactions(&snap, &mut rec);
+    assert!(matches!(
+        ix.close_modal(),
+        SendResult::Refused {
+            reason: SendReason::NoModalOpen,
+            ..
+        }
+    ));
 }
