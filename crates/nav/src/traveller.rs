@@ -582,7 +582,7 @@ impl FollowRun {
                                     leg: self.leg_index,
                                     detail: format!(
                                         "transport loc {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
-                                        edge.loc_id, edge.from.x, edge.from.z, edge.from.level
+                                        edge.loc_id, edge.at.x, edge.at.z, edge.at.level
                                     ),
                                 });
                             }
@@ -954,29 +954,29 @@ fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, 
 }
 
 /// The snapshot loc for a transport edge: the edge's `loc_id` on the
-/// edge's level within 3 tiles of `edge.from` (the m8aq `gap <= 3`),
+/// edge's level within 3 tiles of `edge.at` (the m8aq `gap <= 3`),
 /// nearest first.
 fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
     snapshot
         .locs()
         .iter()
-        .filter(|loc| loc.id == edge.loc_id && loc.tile.level == edge.from.level)
-        .map(|loc| (loc, cheb(loc.tile, edge.from)))
+        .filter(|loc| loc.id == edge.loc_id && loc.tile.level == edge.at.level)
+        .map(|loc| (loc, cheb(loc.tile, edge.at)))
         .filter(|(_, gap)| *gap <= 3)
         .min_by_key(|(_, gap)| *gap)
         .map(|(loc, _)| loc)
 }
 
-/// The door's own tile: the midpoint between the edge's `from` and `to`
+/// The door's own tile: the midpoint between the edge's `at` and `to`
 /// (door configs are authored as walkable tiles on either side of the
 /// loc, so the loc always sits half-way between them). The door-troll
 /// read compares the loc's live id at this tile against the edge's
 /// closed id.
 fn door_tile(edge: &TransportEdge) -> WorldTile {
     WorldTile {
-        x: (edge.from.x + edge.to.x) / 2,
-        z: (edge.from.z + edge.to.z) / 2,
-        level: edge.from.level,
+        x: (edge.at.x + edge.to.x) / 2,
+        z: (edge.at.z + edge.to.z) / 2,
+        level: edge.at.level,
     }
 }
 
@@ -1734,7 +1734,7 @@ mod tests {
     fn door_edge() -> TransportEdge {
         TransportEdge {
             kind: TransportKind::Door,
-            from: WorldTile {
+            at: WorldTile {
                 x: 3201,
                 z: 3200,
                 level: 0,
@@ -1747,6 +1747,8 @@ mod tests {
             loc_id: 1530,
             option: 1,
             ticks: 1,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
@@ -1758,7 +1760,7 @@ mod tests {
     fn ladder_edge() -> TransportEdge {
         TransportEdge {
             kind: TransportKind::Ladder,
-            from: WorldTile {
+            at: WorldTile {
                 x: 3202,
                 z: 3204,
                 level: 0,
@@ -1771,6 +1773,8 @@ mod tests {
             loc_id: 1,
             option: 1,
             ticks: 2,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
@@ -2421,7 +2425,7 @@ mod tests {
         let snap = snap_at(&mut c, 100, 100);
         let edge = TransportEdge {
             kind: TransportKind::Ladder,
-            from: WorldTile {
+            at: WorldTile {
                 x: 3202,
                 z: 3204,
                 level: 0,
@@ -2434,6 +2438,8 @@ mod tests {
             loc_id: 1,
             option: 1,
             ticks: 2,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],

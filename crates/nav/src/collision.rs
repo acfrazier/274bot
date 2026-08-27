@@ -119,6 +119,33 @@ impl WorldCollision {
         self.flags[lz * self.width + lx] & WALK_BLOCK == 0
     }
 
+    /// True when `t` sits on this bake's level-0 plane, inside its bounds,
+    /// and has no footprint block: no `WALK_SCENERY` footprint, no `WR_GRND`
+    /// ground block, and no `SQ_BLOCKED` base. Directional face flags
+    /// (`W_N`/`W_S`/`V_*`/…) do NOT disqualify standing — a wall's
+    /// face-flagged floor tile can be stood on even though the router can
+    /// never walk onto it. The transport interact-target neighbourhood is
+    /// tested against this, never the stricter [`Self::walkable`].
+    pub fn standable(&self, t: WorldTile) -> bool {
+        if t.level != self.origin.level {
+            return false;
+        }
+        let lx = t.x - self.origin.x;
+        let lz = t.z - self.origin.z;
+        if lx < 0 || lz < 0 {
+            return false;
+        }
+        let (lx, lz) = (lx as usize, lz as usize);
+        if lx >= self.width || lz >= self.height {
+            return false;
+        }
+        self.flags[lz * self.width + lx]
+            & (CollisionFlag::WALK_SCENERY as u32
+                | CollisionFlag::WR_GRND as u32
+                | CollisionFlag::SQ_BLOCKED as u32)
+            == 0
+    }
+
     /// The nearest [`Self::walkable`] tile at least one step from `t` along
     /// `(dx, dz)` — the door-edge snap: a door's blind ±1 `from`/`to` can
     /// land on a wall loc right outside the door (wall 980 south of the
@@ -755,5 +782,86 @@ mod tests {
             bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()),
             Err(PackError::BadLength(_))
         ));
+    }
+
+    /// A level-0 world at (3200,3200) with one flag word per tile.
+    fn flag_world(flags: Vec<u32>) -> WorldCollision {
+        let wc = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: flags.len(),
+            height: 1,
+            walkable: derive_walkable(&flags),
+            flags,
+        };
+        wc
+    }
+
+    #[test]
+    fn face_flag_tile_is_standable_but_not_walkable() {
+        let wc = flag_world(vec![CollisionFlag::W_N as u32]);
+        let t = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        // A directional face flag (the closed door's W_N) does not block
+        // standing, but the blanket walkable() still rejects the tile.
+        assert!(wc.standable(t));
+        assert!(!wc.walkable(t));
+    }
+
+    #[test]
+    fn footprint_and_ground_blocks_are_not_standable() {
+        let wc = flag_world(vec![
+            CollisionFlag::WR_GRND as u32,
+            CollisionFlag::WALK_SCENERY as u32,
+            0,
+        ]);
+        let t = |x: i32| WorldTile {
+            x: 3200 + x,
+            z: 3200,
+            level: 0,
+        };
+        // A ground block and a scenery footprint disqualify standing just
+        // like walking.
+        assert!(!wc.standable(t(0)));
+        assert!(!wc.walkable(t(0)));
+        assert!(!wc.standable(t(1)));
+        assert!(!wc.walkable(t(1)));
+        // A clear tile stays both standable and walkable.
+        assert!(wc.standable(t(2)));
+        assert!(wc.walkable(t(2)));
+    }
+
+    #[test]
+    fn range_face_flags_do_not_disqualify_standing() {
+        // V_N (a blockrange wall's range stamp) is a face flag like W_N:
+        // standable, never a footprint block.
+        let wc = flag_world(vec![CollisionFlag::V_N as u32]);
+        let t = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        assert!(wc.standable(t));
+    }
+
+    #[test]
+    fn standable_rejects_out_of_grid_and_other_levels() {
+        let wc = flag_world(vec![0u32]);
+        assert!(!wc.standable(WorldTile {
+            x: 3199,
+            z: 3200,
+            level: 0
+        }));
+        assert!(!wc.standable(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 1
+        }));
     }
 }

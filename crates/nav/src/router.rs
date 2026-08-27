@@ -247,7 +247,7 @@ fn find_bounded_impl(
                 }
             }
         }
-        if let Some(idxs) = graph.from.get(&cur) {
+        if let Some(idxs) = graph.at.get(&cur) {
             for &ei in idxs {
                 let edge = &graph.edges[ei];
                 let nd = n.cost + edge.ticks as f64;
@@ -383,7 +383,7 @@ fn reconstruct(
                 let edge = graph.edges[ei].clone();
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
-                t = graph.edges[ei].from;
+                t = graph.edges[ei].at;
                 walk_rev = vec![t];
             }
             Back::Teleport { from, index } => {
@@ -394,7 +394,7 @@ fn reconstruct(
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
                 // The walk leg before the teleport resumes from the tile the
-                // teleport was actually taken on (a teleport has no `from`).
+                // teleport was actually taken on (a teleport has no `at`).
                 t = from;
                 walk_rev = vec![t];
             }
@@ -892,27 +892,29 @@ mod tests {
         bake(5, 5, &extras)
     }
 
-    /// One directed door edge `from -> to` (loc 1530, `Open` op 1).
-    fn door(from: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
+    /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
+    fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
         let edge = TransportEdge {
             kind: TransportKind::Door,
-            from,
+            at,
             to,
             loc_id: 1530,
             option: 1,
             ticks,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
         };
         let mut graph = TransportGraph::default();
-        graph.from.entry(from).or_default().push(0);
+        graph.at.entry(at).or_default().push(0);
         graph.edges.push(edge);
         graph
     }
 
-    /// One any-tile teleport edge in `graph.teleports` (never in `from`).
+    /// One any-tile teleport edge in `graph.teleports` (never in `at`).
     fn teleport(
         to: WorldTile,
         ticks: i32,
@@ -922,11 +924,13 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.teleports.push(TransportEdge {
             kind: TransportKind::Teleport,
-            from: tile(0, 0, 0),
+            at: tile(0, 0, 0),
             to,
             loc_id: 0,
             option: 0,
             ticks,
+            dir: None,
+            open_loc_id: None,
             skill_req,
             item_req,
             quest_req: vec![],
@@ -994,7 +998,7 @@ mod tests {
         assert_eq!(w0.last(), Some(&tile(1, 2, 0)));
         assert_eq!(edge.loc_id, 1530);
         assert_eq!(edge.ticks, 2);
-        assert_eq!(edge.from, tile(1, 2, 0));
+        assert_eq!(edge.at, tile(1, 2, 0));
         assert_eq!(edge.to, tile(2, 2, 0));
         assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
         assert_eq!(w1.last(), Some(&tile(4, 4, 0)));
@@ -1097,18 +1101,20 @@ mod tests {
         let wc = bake(4, 4, &[]);
         let ladder = TransportEdge {
             kind: TransportKind::Ladder,
-            from: tile(0, 0, 0),
+            at: tile(0, 0, 0),
             to: tile(1, 1, 1),
             loc_id: 1747,
             option: 1,
             ticks: 3,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
         };
         let mut g = TransportGraph::default();
-        g.from.entry(ladder.from).or_default().push(0);
+        g.at.entry(ladder.at).or_default().push(0);
         g.edges.push(ladder.clone());
         let r = find(&wc, &g, tile(0, 0, 0), tile(3, 1, 1)).unwrap();
         assert_eq!(r.dest, tile(3, 1, 1));

@@ -46,7 +46,7 @@ impl NavWorld {
     /// no flags; every blocked tile carries [`BLOCKED`] (the v1 pack has no
     /// per-direction data, so a blocked tile is a wall on all faces). Each
     /// pack door edge becomes a 1-tick `Door` transport edge; the pack
-    /// stores both directions, so the graph indexes `from` exactly as the
+    /// stores both directions, so the graph indexes `at` exactly as the
     /// grid authored them.
     pub fn from_grid(grid: &StepGrid) -> Self {
         let flags = (0..grid.height)
@@ -81,7 +81,7 @@ impl NavWorld {
             let i = graph.edges.len();
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Door,
-                from: WorldTile {
+                at: WorldTile {
                     x: d.from.x,
                     z: d.from.z,
                     level: d.from.level,
@@ -94,12 +94,14 @@ impl NavWorld {
                 loc_id: d.loc_id,
                 option: 1,
                 ticks: 1,
+                dir: None,
+                open_loc_id: None,
                 skill_req: vec![],
                 item_req: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
             });
-            graph.from.entry(graph.edges[i].from).or_default().push(i);
+            graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
         NavWorld { collision, graph }
     }
@@ -156,14 +158,14 @@ mod tests {
             .graph
             .edges
             .iter()
-            .find(|e| e.kind == TransportKind::Door && e.from == tile(1, 0, 0))
+            .find(|e| e.kind == TransportKind::Door && e.at == tile(1, 0, 0))
             .expect("door edge from the corridor's west side");
         assert_eq!(fwd.to, tile(3, 0, 0));
         assert_eq!(fwd.loc_id, 1530);
         assert_eq!(fwd.ticks, 1);
-        assert_eq!(w.graph.from.get(&tile(1, 0, 0)).map(Vec::len), Some(1));
+        assert_eq!(w.graph.at.get(&tile(1, 0, 0)).map(Vec::len), Some(1));
         // The fixture corridor is a single directed edge.
-        assert_eq!(w.graph.from.get(&tile(3, 0, 0)), None);
+        assert_eq!(w.graph.at.get(&tile(3, 0, 0)), None);
     }
 
     #[test]
@@ -183,7 +185,7 @@ mod tests {
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
-        assert_eq!(edge.from, tile(1, 0, 0));
+        assert_eq!(edge.at, tile(1, 0, 0));
         assert_eq!(edge.to, tile(3, 0, 0));
         assert_eq!(edge.loc_id, 1530);
     }
@@ -250,17 +252,19 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
-            from: tile(1, 0, 0),
+            at: tile(1, 0, 0),
             to: tile(3, 0, 0),
             loc_id: 1530,
             option: 1,
             ticks: 1,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
         });
-        graph.from.entry(tile(1, 0, 0)).or_default().push(0);
+        graph.at.entry(tile(1, 0, 0)).or_default().push(0);
 
         let dir = std::env::temp_dir().join(format!(
             "274bot-navworld-v2-{}-{}",
@@ -277,7 +281,7 @@ mod tests {
         assert_eq!(w.collision.origin, tile(0, 0, 0));
         assert_eq!(w.collision.flags, collision.flags);
         assert_eq!(w.graph.edges, graph.edges);
-        assert_eq!(w.graph.from, graph.from);
+        assert_eq!(w.graph.at, graph.at);
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
         // 1 walk tile (0.5) + the 1-tick door + 1 walk tile (0.5).
         assert_eq!(r.ticks, 2.0);
@@ -304,11 +308,13 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.teleports.push(TransportEdge {
             kind: TransportKind::Teleport,
-            from: tile(0, 0, 0),
+            at: tile(0, 0, 0),
             to: tile(4, 4, 0),
             loc_id: 0,
             option: 0,
             ticks: 3,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![(6, 25)],
             item_req: vec![(554, 1), (556, 3), (563, 1)],
             quest_req: vec![],
@@ -329,7 +335,7 @@ mod tests {
         let w = NavWorld::load_pack(&path).expect("v2 pack loads");
         assert_eq!(w.graph.teleports, graph.teleports);
         assert!(w.graph.edges.is_empty());
-        assert!(w.graph.from.is_empty());
+        assert!(w.graph.at.is_empty());
         // Default find ignores the teleport layer entirely…
         assert!(find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 4, 0)).is_err());
         // …and find_allow_teleports unions it in from anywhere.

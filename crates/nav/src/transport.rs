@@ -17,7 +17,7 @@
 //! (`skill_magic/configs/magic_spells.dbrow`) and jewellery rubs
 //! (`general/scripts/enchanted_jewellry/*.rs2`) have no fixed origin, so
 //! they live in [`TransportGraph::teleports`] — usable from any tile, kept
-//! out of the `from`-indexed edge set.
+//! out of the `at`-indexed edge set.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -48,42 +48,60 @@ pub enum TransportKind {
     Glider,
 }
 
-/// One directed transport hop: stand on `from`, use `option` on the loc
-/// `loc_id`, arrive at `to` after `ticks`. Requirement vectors are `(skill
-/// id, level)` / `(item id, count)` pairs, spell/quest names, and `(varp,
-/// value)` pairs, filled from what the source scripts/defs declare (empty
-/// when the source declares nothing).
+/// The crossing direction of a door edge (step 2 derives it from the door
+/// angle); `None` for every other edge kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DoorDir {
+    N,
+    E,
+    S,
+    W,
+}
+
+/// One directed transport hop: stand on or near `at`, use `option` on the
+/// loc `loc_id`, arrive at `to` after `ticks`. `at` is the interact
+/// target — the loc tile (door/ladder/stairs/agility/glider) or the
+/// origin-leg NPC tile (boat); `to` is the arrival tile. `dir` is the
+/// crossing direction for doors only (`None` for every other kind, until
+/// step 2 fills it); `open_loc_id` the open leaf id for state-changing
+/// locs (`None` for now). Requirement vectors are `(skill id, level)` /
+/// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
+/// filled from what the source scripts/defs declare (empty when the source
+/// declares nothing).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
-    pub from: WorldTile,
+    pub at: WorldTile,
     pub to: WorldTile,
     pub loc_id: i32,
     pub option: i32,
     pub ticks: i32,
+    pub dir: Option<DoorDir>,
+    pub open_loc_id: Option<i32>,
     pub skill_req: Vec<(i32, i32)>,
     pub item_req: Vec<(i32, i32)>,
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
 }
 
-/// All transport edges, indexed by origin tile (`graph.from[tile]` lists
+/// All transport edges, indexed by interact target (`graph.at[tile]` lists
 /// indexes into [`TransportGraph::edges`]).
 #[derive(Debug, Default)]
 pub struct TransportGraph {
     pub edges: Vec<TransportEdge>,
-    pub from: HashMap<WorldTile, Vec<usize>>,
+    pub at: HashMap<WorldTile, Vec<usize>>,
     /// Any-tile teleport edges (spells + jewellery rubs), kept out of
-    /// `edges`/`from` so the default [`crate::router::find`] never sees
+    /// `edges`/`at` so the default [`crate::router::find`] never sees
     /// them. [`crate::router::find_allow_teleports`] unions them in from
-    /// any node. `from` is a wire-only placeholder, never indexed.
+    /// any node. `at` is a wire-only placeholder, never indexed.
     pub teleports: Vec<TransportEdge>,
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
 /// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs,
 /// and the baked whole-world [`WorldCollision`] (the door edges snap their
-/// `from`/`to` to the nearest walkable tile on it).
+/// `at`/`to` to the nearest walkable tile on it; every edge is emitted
+/// with `dir: None`, `open_loc_id: None` for now).
 ///
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
@@ -92,7 +110,7 @@ pub struct TransportGraph {
 /// around each loc (no walkability filter — the router applies the
 /// collision map). Boats and gnome gliders are the explicit 2004 route
 /// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
-/// land in [`TransportGraph::teleports`], never in the `from` index. Rows
+/// land in [`TransportGraph::teleports`], never in the `at` index. Rows
 /// that do not resolve are counted per reason on stderr, never faked.
 pub fn derive_transports(
     content_root: &Path,
@@ -113,7 +131,7 @@ pub fn derive_transports(
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
-        graph.from.entry(e.from).or_default().push(i);
+        graph.at.entry(e.at).or_default().push(i);
     }
 
     report(content_root, &graph, &skipped);
@@ -151,10 +169,10 @@ const CELLAR_SHIFT: i32 = 6400;
 const SKILL_AGILITY: i32 = 16;
 /// Standard RS2 skill id for Magic (Server `PlayerStat`).
 const SKILL_MAGIC: i32 = 6;
-/// Teleport edges have no origin tile (cast/rubbed from anywhere); `from`
-/// is a wire-only placeholder that is never indexed into
-/// [`TransportGraph::from`].
-const TELEPORT_PLACEHOLDER_FROM: WorldTile = WorldTile { x: 0, z: 0, level: 0 };
+/// Teleport edges have no origin tile (cast/rubbed from anywhere); `at` is
+/// a wire-only placeholder that is never indexed into
+/// [`TransportGraph::at`].
+const TELEPORT_PLACEHOLDER_AT: WorldTile = WorldTile { x: 0, z: 0, level: 0 };
 /// Spell teleport ticks: OP_BASE 1 + the `player_teleport_normal` cast
 /// `p_delay(2)` (the spell's whole channel).
 const SPELL_TELEPORT_TICKS: i32 = 3;
@@ -408,7 +426,7 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 
 /// Door edges from `scripts/doors/configs/*.loc` openable ids + the jm2 LOC
 /// placements, reusing [`parse_door_config`] and [`parse_mapsquare_jm2`]
-/// (the existing jm2 `LOC` → `DoorEdge` bake). Each edge's `from`/`to`
+/// (the existing jm2 `LOC` → `DoorEdge` bake). Each edge's `at`/`to`
 /// snaps to the nearest walkable tile on the baked `collision`
 /// (perpendicular to the wall), so a wall loc right outside the door never
 /// becomes an unreachable door approach. Both directions are emitted
@@ -468,11 +486,13 @@ fn door_edges(
                 for d in sq.doors {
                     graph.edges.push(TransportEdge {
                         kind: TransportKind::Door,
-                        from: to_world(d.from),
+                        at: to_world(d.from),
                         to: to_world(d.to),
                         loc_id: d.loc_id,
                         option: 1,
                         ticks: 1,
+                        dir: None,
+                        open_loc_id: None,
                         skill_req: vec![],
                         item_req: vec![],
                         quest_req: vec![],
@@ -1248,19 +1268,21 @@ fn ladder_stair_edges(
             match outcome {
                 Outcome::Skipped(reason) => bump(skipped, reason, 1),
                 Outcome::Landing(landing) => {
-                    for from in standing_tiles(loc, width, length) {
-                        let to = landing_tile(landing, loc, &from);
+                    for at in standing_tiles(loc, width, length) {
+                        let to = landing_tile(landing, loc, &at);
                         if !in_world_box(&to) {
                             bump(skipped, SKIP_DEST_OUTSIDE, 1);
                             continue;
                         }
                         graph.edges.push(TransportEdge {
                             kind: *kind,
-                            from,
+                            at,
                             to,
                             loc_id: id,
                             option,
                             ticks,
+                            dir: None,
+                            open_loc_id: None,
                             skill_req: vec![],
                             item_req: vec![],
                             quest_req: vec![],
@@ -1309,7 +1331,7 @@ fn standing_tiles(loc: &Placement, width: i32, length: i32) -> Vec<WorldTile> {
 
 /// The `to` tile for a landing, per placement / standing tile (m8aq
 /// `resolvePlacements` dest + `landingOf`).
-fn landing_tile(landing: &Landing, loc: &Placement, from: &WorldTile) -> WorldTile {
+fn landing_tile(landing: &Landing, loc: &Placement, at: &WorldTile) -> WorldTile {
     match *landing {
         Landing::Abs { level, x, z } => WorldTile { level, x, z },
         Landing::LocDelta { dx, d_level, dz } => WorldTile {
@@ -1318,14 +1340,14 @@ fn landing_tile(landing: &Landing, loc: &Placement, from: &WorldTile) -> WorldTi
             z: loc.z + dz,
         },
         Landing::FromLevel { d } => WorldTile {
-            level: from.level + d,
-            x: from.x,
-            z: from.z,
+            level: at.level + d,
+            x: at.x,
+            z: at.z,
         },
         Landing::FromZ { d } => WorldTile {
-            level: from.level,
-            x: from.x,
-            z: from.z + d,
+            level: at.level,
+            x: at.x,
+            z: at.z + d,
         },
     }
 }
@@ -1377,14 +1399,16 @@ fn shortcut_edges(
                     bump(skipped, SKIP_DEST_OUTSIDE, 1);
                     continue;
                 }
-                for from in standing_tiles(loc, width, length) {
+                for at in standing_tiles(loc, width, length) {
                     graph.edges.push(TransportEdge {
                         kind: TransportKind::AgilityShortcut,
-                        from,
+                        at,
                         to,
                         loc_id: id,
                         option: 1,
                         ticks,
+                        dir: None,
+                        open_loc_id: None,
                         skill_req: skill_req.clone(),
                         item_req: vec![],
                         quest_req: vec![],
@@ -1502,8 +1526,8 @@ fn agility_level_req(line: &str) -> Option<i32> {
 // the any-tile layer (see `teleport_edges` below).
 // ---------------------------------------------------------------------------
 
-/// One 2004 boat journey: talk to the dock NPC at `from`, sail to the
-/// destination dock, and walk off the destination gangplank. `from` is the
+/// One 2004 boat journey: talk to the dock NPC at `at`, sail to the
+/// destination dock, and walk off the destination gangplank. `at` is the
 /// NPC's spawn tile (jm2 `==== NPC ====` section, id resolved through
 /// `pack/npc.pack`), never the origin gangplank; `to` is the dock tile past
 /// the destination gangplank, never a boat-interior/water tile — the
@@ -1513,7 +1537,7 @@ fn agility_level_req(line: &str) -> Option<i32> {
 struct BoatRoute {
     /// npc.pack id of the dock NPC who starts the journey.
     npc: i32,
-    from: WorldTile,
+    at: WorldTile,
     to: WorldTile,
     /// `set_sail` delay + gangplank crossing; no crossing when the landing
     /// is a direct dock tile (`set_sail_cairn`).
@@ -1539,7 +1563,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // (2956,3146,0). Delay 7 + 2.
     BoatRoute {
         npc: 378,
-        from: WorldTile {
+        at: WorldTile {
             x: 3026,
             z: 3217,
             level: 0,
@@ -1559,7 +1583,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // Delay 7 + 2.
     BoatRoute {
         npc: 380,
-        from: WorldTile {
+        at: WorldTile {
             x: 2955,
             z: 3146,
             level: 0,
@@ -1579,7 +1603,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // Ardougne dock (2683,3271,0). Delay 7 + 2.
     BoatRoute {
         npc: 380,
-        from: WorldTile {
+        at: WorldTile {
             x: 2772,
             z: 3231,
             level: 0,
@@ -1598,7 +1622,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // (loc 2088) to the Brimhaven dock (2772,3234,0). Delay 7 + 2.
     BoatRoute {
         npc: 381,
-        from: WorldTile {
+        at: WorldTile {
             x: 2679,
             z: 3275,
             level: 0,
@@ -1618,7 +1642,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // Entrana dock (2834,3335,0). Delay 13 + 2.
     BoatRoute {
         npc: 657,
-        from: WorldTile {
+        at: WorldTile {
             x: 3049,
             z: 3235,
             level: 0,
@@ -1638,7 +1662,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // the Port Sarim dock (3048,3234,0). Delay 14 + 2.
     BoatRoute {
         npc: 658,
-        from: WorldTile {
+        at: WorldTile {
             x: 2835,
             z: 3336,
             level: 0,
@@ -1658,7 +1682,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // Village complete (`%zombiequeen >= ^zombiequeen_complete`).
     BoatRoute {
         npc: 518,
-        from: WorldTile {
+        at: WorldTile {
             x: 2763,
             z: 2961,
             level: 1,
@@ -1675,7 +1699,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
     // Captain Shanks (npc 518) → Port Sarim (`0_47_50_39_35`). Delay 15.
     BoatRoute {
         npc: 518,
-        from: WorldTile {
+        at: WorldTile {
             x: 2763,
             z: 2961,
             level: 1,
@@ -1697,11 +1721,13 @@ fn boat_edges(graph: &mut TransportGraph) {
     for r in BOAT_ROUTES {
         graph.edges.push(TransportEdge {
             kind: TransportKind::Boat,
-            from: r.from,
+            at: r.at,
             to: r.to,
             loc_id: r.npc,
             option: 1,
             ticks: r.ticks,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
             quest_req: vec![],
@@ -1786,14 +1812,16 @@ fn glider_edges(graph: &mut TransportGraph) {
     }
 }
 
-fn glider_edge(from: WorldTile, to: WorldTile) -> TransportEdge {
+fn glider_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Glider,
-        from,
+        at,
         to,
         loc_id: GNOME_PILOT,
         option: 1,
         ticks: 4,
+        dir: None,
+        open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
         quest_req: vec![],
@@ -1804,7 +1832,7 @@ fn glider_edge(from: WorldTile, to: WorldTile) -> TransportEdge {
 /// Teleport edges (the any-tile layer): the seven spell teleports from
 /// `skill_magic/configs/magic_spells.dbrow` plus the jewellery rub
 /// teleports from `general/scripts/enchanted_jewellry/*.rs2`, all into
-/// [`TransportGraph::teleports`] — never `edges`/`from`, so the default
+/// [`TransportGraph::teleports`] — never `edges`/`at`, so the default
 /// [`crate::router::find`] never sees them.
 fn teleport_edges(
     content_root: &Path,
@@ -1915,7 +1943,7 @@ fn push_spell_teleport(
     }
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
-        from: TELEPORT_PLACEHOLDER_FROM,
+        at: TELEPORT_PLACEHOLDER_AT,
         to: WorldTile {
             x: coord.1,
             z: coord.2,
@@ -1924,6 +1952,8 @@ fn push_spell_teleport(
         loc_id: 0, // a spell button, not a loc/obj use
         option: 0,
         ticks: SPELL_TELEPORT_TICKS,
+        dir: None,
+        open_loc_id: None,
         skill_req: vec![(SKILL_MAGIC, level)],
         item_req,
         quest_req: vec![],
@@ -1983,11 +2013,13 @@ fn jewellery_teleports(
                 for dest in &dests {
                     graph.teleports.push(TransportEdge {
                         kind: TransportKind::Teleport,
-                        from: TELEPORT_PLACEHOLDER_FROM,
+                        at: TELEPORT_PLACEHOLDER_AT,
                         to: *dest,
                         loc_id: obj_id,
                         option: 4, // Rub (opheld4)
                         ticks: JEWELLERY_TELEPORT_TICKS,
+                        dir: None,
+                        open_loc_id: None,
                         skill_req: vec![],
                         item_req: vec![(obj_id, 1)],
                         quest_req: vec![],
@@ -2522,19 +2554,19 @@ mod tests {
         // Neither door side is the wall tile (2816,3437); both are
         // walkable per the collision bake.
         for d in &doors {
-            assert_ne!(d.from, WorldTile { x: 2816, z: 3437, level: 0 });
-            assert!(wc.walkable(d.from), "door from not walkable: {:?}", d.from);
+            assert_ne!(d.at, WorldTile { x: 2816, z: 3437, level: 0 });
+            assert!(wc.walkable(d.at), "door at not walkable: {:?}", d.at);
             assert!(wc.walkable(d.to), "door to not walkable: {:?}", d.to);
         }
         // The snapped crossing: south approach (2816,3435) <-> north
         // approach (2816,3440); the wall band and the door's closed stamps
         // block the four tiles between.
-        let from = WorldTile { x: 2816, z: 3435, level: 0 };
+        let at = WorldTile { x: 2816, z: 3435, level: 0 };
         let to = WorldTile { x: 2816, z: 3440, level: 0 };
-        let fwd = doors.iter().find(|d| d.from == from).expect("south→north door");
+        let fwd = doors.iter().find(|d| d.at == at).expect("south→north door");
         assert_eq!(fwd.to, to);
-        let rev = doors.iter().find(|d| d.from == to).expect("north→south door");
-        assert_eq!(rev.to, from);
+        let rev = doors.iter().find(|d| d.at == to).expect("north→south door");
+        assert_eq!(rev.to, at);
 
         // The router reaches the north side only through the door.
         let r = crate::router::find(
@@ -2613,12 +2645,12 @@ switch_coord (loc_coord) {
         };
         let fwd = doors
             .iter()
-            .find(|d| d.from == south)
+            .find(|d| d.at == south)
             .expect("Catherby south→north door");
         assert_eq!(fwd.to, north);
         let rev = doors
             .iter()
-            .find(|d| d.from == north)
+            .find(|d| d.at == north)
             .expect("Catherby reverse neighbour");
         assert_eq!(rev.to, south);
 
@@ -2659,22 +2691,22 @@ switch_coord (loc_coord) {
         ];
         for l in &ladders {
             assert_eq!(l.to, landing);
-            assert!(standing.contains(&l.from), "unexpected from {:?}", l.from);
+            assert!(standing.contains(&l.at), "unexpected at {:?}", l.at);
             assert_eq!(l.option, 1);
             assert_eq!(l.ticks, 3); // op base 1 + ladder extra 2
             assert!(l.skill_req.is_empty());
         }
 
-        // The from-index keys both edges' origins.
-        assert_eq!(graph.from[&south].len(), 1);
-        assert_eq!(graph.edges[graph.from[&south][0]].to, north);
+        // The at-index keys both edges' targets.
+        assert_eq!(graph.at[&south].len(), 1);
+        assert_eq!(graph.edges[graph.at[&south][0]].to, north);
         let stand = WorldTile {
             x: 2826,
             z: 3401,
             level: 0,
         };
-        assert_eq!(graph.from[&stand].len(), 1);
-        assert_eq!(graph.edges[graph.from[&stand][0]].to, landing);
+        assert_eq!(graph.at[&stand].len(), 1);
+        assert_eq!(graph.edges[graph.at[&stand][0]].to, landing);
     }
 
     #[test]
@@ -2946,19 +2978,19 @@ p_arrivedelay;
             .collect();
         assert_eq!(boats.len(), 8);
 
-        let at = |npc: i32, from: WorldTile| -> &TransportEdge {
+        let boat = |npc: i32, at: WorldTile| -> &TransportEdge {
             boats
                 .iter()
-                .find(|e| e.loc_id == npc && e.from == from)
-                .unwrap_or_else(|| panic!("boat route npc {npc} from {from:?}"))
+                .find(|e| e.loc_id == npc && e.at == at)
+                .unwrap_or_else(|| panic!("boat route npc {npc} at {at:?}"))
         };
 
-        // Port Sarim → Musa: `from` is Seaman Thresnor's tile (npc 378, jm2
+        // Port Sarim → Musa: `at` is Seaman Thresnor's tile (npc 378, jm2
         // m47_50 `==== NPC ====`), NOT the origin gangplank; `to` is the
         // Karamja dock past `sarimshipplank_off` (loc 2082, north-facing,
         // disembark lands loc + (0,-1,+2) = (2956,3146,0)), never the boat
         // interior (2956,3143,1).
-        let ps_musa = at(
+        let ps_musa = boat(
             378,
             WorldTile {
                 x: 3026,
@@ -2976,7 +3008,7 @@ p_arrivedelay;
         // landing on the Port Sarim dock past `karamjashipplank_off`
         // (loc 2084, west-facing, disembark lands loc + (-2,-1,0) =
         // (3029,3217,0)).
-        let musa_ps = at(
+        let musa_ps = boat(
             380,
             WorldTile {
                 x: 2955,
@@ -3014,7 +3046,7 @@ p_arrivedelay;
             assert_eq!(s.varp_req, vec![(116, 15)]);
             assert_eq!(s.option, 1);
         }
-        let khazard = at(
+        let khazard = boat(
             518,
             WorldTile {
                 x: 2763,
@@ -3170,7 +3202,7 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         };
         let hub_edges: Vec<_> = gliders
             .iter()
-            .filter(|e| e.from == hub)
+            .filter(|e| e.at == hub)
             .collect();
         assert_eq!(hub_edges.len(), 4);
         assert!(hub_edges.iter().any(|e| e.to == sindarpos));
@@ -3178,13 +3210,13 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         assert!(hub_edges.iter().any(|e| e.to == lemanto_andra));
         let sindarpos_edges: Vec<_> = gliders
             .iter()
-            .filter(|e| e.from == sindarpos)
+            .filter(|e| e.at == sindarpos)
             .collect();
         assert_eq!(sindarpos_edges.len(), 1);
         assert_eq!(sindarpos_edges[0].to, hub);
         // Lemanto Andra is one-way: no pad → hub flight exists in
         // gnome_glider.rs2.
-        assert!(gliders.iter().all(|e| e.from != lemanto_andra));
+        assert!(gliders.iter().all(|e| e.at != lemanto_andra));
         for g in &gliders {
             assert_eq!(g.varp_req, vec![(150, 160)]); // Grand Tree complete
             assert_eq!(g.option, 1); // Talk-to the Gnome pilot
@@ -3223,12 +3255,12 @@ data=tele_coord,0_45_57_10_31
         let graph = derive_transports(fx.path(), &defs, &wc);
 
         assert_eq!(graph.teleports.len(), 2);
-        // Teleports never join the `from`-indexed edge set.
+        // Teleports never join the `at`-indexed edge set.
         assert!(graph
             .edges
             .iter()
             .all(|e| e.kind != TransportKind::Teleport));
-        assert!(!graph.from.contains_key(&TELEPORT_PLACEHOLDER_FROM));
+        assert!(!graph.at.contains_key(&TELEPORT_PLACEHOLDER_AT));
 
         let varrock = graph
             .teleports
@@ -3330,7 +3362,7 @@ p_delay(1);
         assert_eq!(duel.item_req, vec![(2552, 1)]);
         assert_eq!(duel.ticks, JEWELLERY_TELEPORT_TICKS);
 
-        // The placeholder `from` never enters the `from` index.
-        assert!(!graph.from.contains_key(&TELEPORT_PLACEHOLDER_FROM));
+        // The placeholder `at` never enters the `at` index.
+        assert!(!graph.at.contains_key(&TELEPORT_PLACEHOLDER_AT));
     }
 }

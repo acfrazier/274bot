@@ -68,7 +68,7 @@ fn tile_from(w: WorldTile) -> Tile {
 }
 
 /// The tiles still ahead on a whole-world `Route`, front to back. Walk
-/// legs contribute all their tiles; a transport leg contributes its `from`
+/// legs contribute all their tiles; a transport leg contributes its `at`
 /// and `to` so the polyline stays connected across the crossing. When
 /// `here` is given (the player's observed tile), legs already traversed
 /// are skipped exactly as the follow run skips them, and the current walk
@@ -104,7 +104,7 @@ fn remaining_route_tiles(route: &Route, here: Option<Tile>) -> Vec<Tile> {
                 out.extend(tiles.iter().map(|t| tile_from(*t)));
             }
             Leg::Transport { edge } => {
-                out.push(tile_from(edge.from));
+                out.push(tile_from(edge.at));
                 out.push(tile_from(edge.to));
             }
         }
@@ -539,23 +539,25 @@ mod tests {
     fn remaining_route_tiles_connects_transport_legs() {
         // A walled tile (2,0) with a door edge across it: the route splits
         // into Walk -> Transport -> Walk and the remaining tiles stay
-        // connected across the crossing (from then to, deduped).
+        // connected across the crossing (at then to, deduped).
         let mut flags = vec![0u32; 5];
         flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         let mut graph = TransportGraph::default();
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
-            from: tile(1, 0, 0),
+            at: tile(1, 0, 0),
             to: tile(3, 0, 0),
             loc_id: 1530,
             option: 1,
             ticks: 1,
+            dir: None,
+            open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
         });
-        graph.from.entry(tile(1, 0, 0)).or_default().push(0);
+        graph.at.entry(tile(1, 0, 0)).or_default().push(0);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: tile(0, 0, 0),
