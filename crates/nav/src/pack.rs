@@ -841,8 +841,31 @@ mod tests {
         graph.edges.push(door);
         let li = graph.edges.len();
         graph.edges.push(ladder);
+        let glider = TransportEdge {
+            kind: TransportKind::Glider,
+            from: WorldTile {
+                x: 2465,
+                z: 3501,
+                level: 3,
+            },
+            to: WorldTile {
+                x: 2850,
+                z: 3497,
+                level: 0,
+            },
+            loc_id: 170,
+            option: 1,
+            ticks: 4,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![(150, 160)],
+        };
+        let gi = graph.edges.len();
+        graph.edges.push(glider);
         graph.from.entry(graph.edges[di].from).or_default().push(di);
         graph.from.entry(graph.edges[li].from).or_default().push(li);
+        graph.from.entry(graph.edges[gi].from).or_default().push(gi);
 
         let bytes = encode_v2(&collision, &graph);
         let (c, g) = decode_v2(&bytes).unwrap();

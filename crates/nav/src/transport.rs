@@ -1503,7 +1503,8 @@ struct BoatRoute {
 const BOAT_ROUTES: &[BoatRoute] = &[
     // Seaman Thresnor (npc 378) on the Port Sarim pier (m47_50): lands on
     // the Karamja ship (2956,3143,1), then off `sarimshipplank_off`
-    // (loc 2082) to the Karamja dock (2956,3147,0). Delay 7 + 2.
+    // (loc 2082, north-facing at 2956,3144,1) to the Karamja dock
+    // (2956,3146,0). Delay 7 + 2.
     BoatRoute {
         npc: 378,
         from: WorldTile {
@@ -1513,16 +1514,17 @@ const BOAT_ROUTES: &[BoatRoute] = &[
         },
         to: WorldTile {
             x: 2956,
-            z: 3147,
+            z: 3146,
             level: 0,
         },
         ticks: 9,
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Customs officer (npc 380) at Musa Point (m46_50): lands on the Port
-    // Sarim ship (3032,3217,1), then off `karamjashipplank_off` (loc 2084)
-    // to the Port Sarim dock (3028,3217,0). Delay 7 + 2.
+    // Customs officer (npc 380) at Musa Point (m46_49): lands on the Port
+    // Sarim ship (3032,3217,1), then off `karamjashipplank_off` (loc 2084,
+    // west-facing at 3031,3217,1) to the Port Sarim dock (3029,3217,0).
+    // Delay 7 + 2.
     BoatRoute {
         npc: 380,
         from: WorldTile {
@@ -1531,7 +1533,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
             level: 0,
         },
         to: WorldTile {
-            x: 3028,
+            x: 3029,
             z: 3217,
             level: 0,
         },
@@ -1689,32 +1691,43 @@ const GLIDER_HUB: WorldTile = WorldTile {
     level: 3,
 };
 
-/// The four glider pads and their platforms, from the same `glider.constant`
-/// (`^gandius = 0_46_46_27_25`, `^sindarpos = 0_44_54_34_41`,
-/// `^lemanto_andra = 0_51_53_56_38`, `^kar_hewo = 0_51_50_20_11`), except
-/// Gandius, where the constant tile (2963,2969) is not walkable and the
-/// rs2b0t-observed stand tile is used instead.
-const GLIDER_PADS: &[WorldTile] = &[
-    WorldTile {
-        x: 2971,
-        z: 2969,
-        level: 0,
-    }, // Gandius (Gnome Stronghold)
-    WorldTile {
-        x: 2850,
-        z: 3497,
-        level: 0,
-    }, // Sindarpos (Al Kharid)
-    WorldTile {
-        x: 3320,
-        z: 3430,
-        level: 0,
-    }, // Lemanto Andra (Varrock)
-    WorldTile {
-        x: 3284,
-        z: 3211,
-        level: 0,
-    }, // Kar-Hewo (Karamja)
+/// The four glider pads and their platforms, decoded from `glider.constant`
+/// (`^gandius = 0_46_46_27_25` → (2971,2969), `^sindarpos = 0_44_54_34_41`,
+/// `^lemanto_andra = 0_51_53_56_38`, `^kar_hewo = 0_51_50_20_11`). The
+/// second field is whether the pad has a return flight to the hub.
+const GLIDER_PADS: &[(WorldTile, bool)] = &[
+    (
+        WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        },
+        true,
+    ), // Gandius (Gnome Stronghold)
+    (
+        WorldTile {
+            x: 2850,
+            z: 3497,
+            level: 0,
+        },
+        true,
+    ), // Sindarpos (Al Kharid)
+    (
+        WorldTile {
+            x: 3320,
+            z: 3430,
+            level: 0,
+        },
+        false,
+    ), // Lemanto Andra (Varrock): one-way
+    (
+        WorldTile {
+            x: 3284,
+            z: 3211,
+            level: 0,
+        },
+        true,
+    ), // Kar-Hewo (Karamja)
 ];
 
 /// Gnome pilot (npc.pack 170): the `Talk-to` target at every platform.
@@ -1722,30 +1735,37 @@ const GNOME_PILOT: i32 = 170;
 
 /// The glider quest gate: the pilot offers Gnome Air only once the Grand
 /// Tree quest is complete (`%grandtree >= ^grandtree_complete`, varp 150
-/// = 160 in `scripts/quests/quest_grandtree/scripts/gnome_glider.rs2`'s
+/// = 160 in `scripts/areas/area_gnome/scripts/gnome_glider.rs2`'s
 /// `[opnpc1,gnomepilot]` block).
 const GLIDER_QUEST_REQ: (i32, i32) = (150, 160);
 
-/// Glider edges from the fixed platform table: the hub ↔ each pad, both
-/// directions. `calc_glidervar` in `gnome_glider.rs2` allows only hub↔pad
-/// flights (pad↔pad shows "You can't go there at the moment."); the flight
-/// is a `p_delay(3)` + teleport on top of the `Talk-to` op.
+/// Glider edges from the fixed platform table: the hub to every pad, and
+/// back from the round-trip pads. `calc_glidervar` in `gnome_glider.rs2`
+/// allows only hub↔pad flights (pad↔pad shows "You can't go there at the
+/// moment."), and has no lemanto_andra → hub pair, so Lemanto Andra is
+/// one-way. The flight is a `p_delay(3)` + teleport on top of the
+/// `Talk-to` op.
 fn glider_edges(graph: &mut TransportGraph) {
-    for pad in GLIDER_PADS {
-        for (from, to) in [(GLIDER_HUB, *pad), (*pad, GLIDER_HUB)] {
-            graph.edges.push(TransportEdge {
-                kind: TransportKind::Glider,
-                from,
-                to,
-                loc_id: GNOME_PILOT,
-                option: 1,
-                ticks: 4,
-                skill_req: vec![],
-                item_req: vec![],
-                quest_req: vec![],
-                varp_req: vec![GLIDER_QUEST_REQ],
-            });
+    for (pad, round_trip) in GLIDER_PADS {
+        graph.edges.push(glider_edge(GLIDER_HUB, *pad));
+        if *round_trip {
+            graph.edges.push(glider_edge(*pad, GLIDER_HUB));
         }
+    }
+}
+
+fn glider_edge(from: WorldTile, to: WorldTile) -> TransportEdge {
+    TransportEdge {
+        kind: TransportKind::Glider,
+        from,
+        to,
+        loc_id: GNOME_PILOT,
+        option: 1,
+        ticks: 4,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![GLIDER_QUEST_REQ],
     }
 }
 
@@ -2395,7 +2415,7 @@ p_arrivedelay;
                 .iter()
                 .filter(|e| e.kind == TransportKind::Glider)
                 .count(),
-            8
+            7
         );
     }
 
@@ -2442,7 +2462,8 @@ p_arrivedelay;
 
         // Port Sarim → Musa: `from` is Seaman Thresnor's tile (npc 378, jm2
         // m47_50 `==== NPC ====`), NOT the origin gangplank; `to` is the
-        // Karamja dock past `sarimshipplank_off` (loc 2082), never the boat
+        // Karamja dock past `sarimshipplank_off` (loc 2082, north-facing,
+        // disembark lands loc + (0,-1,+2) = (2956,3146,0)), never the boat
         // interior (2956,3143,1).
         let ps_musa = at(
             378,
@@ -2452,14 +2473,16 @@ p_arrivedelay;
                 level: 0,
             },
         );
-        assert_eq!(ps_musa.to, WorldTile { x: 2956, z: 3147, level: 0 });
+        assert_eq!(ps_musa.to, WorldTile { x: 2956, z: 3146, level: 0 });
         assert_eq!(ps_musa.option, 1); // Talk-to
         assert_eq!(ps_musa.ticks, 9); // set_sail delay 7 + gangplank crossing 2
         assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
         assert!(ps_musa.varp_req.is_empty());
 
         // Musa → Port Sarim: the customs officer (npc 380) at (2955,3146,0),
-        // landing on the Port Sarim dock past `karamjashipplank_off`.
+        // landing on the Port Sarim dock past `karamjashipplank_off`
+        // (loc 2084, west-facing, disembark lands loc + (-2,-1,0) =
+        // (3029,3217,0)).
         let musa_ps = at(
             380,
             WorldTile {
@@ -2468,7 +2491,7 @@ p_arrivedelay;
                 level: 0,
             },
         );
-        assert_eq!(musa_ps.to, WorldTile { x: 3028, z: 3217, level: 0 });
+        assert_eq!(musa_ps.to, WorldTile { x: 3029, z: 3217, level: 0 });
         assert_eq!(musa_ps.ticks, 9);
 
         // No boat edge lands on a boat-interior/water tile: every `to` is a
@@ -2625,9 +2648,9 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             .iter()
             .filter(|e| e.kind == TransportKind::Glider)
             .collect();
-        // The Grand Tree hub ↔ each of the four pads, both directions
-        // (`calc_glidervar` allows only hub↔pad flights).
-        assert_eq!(gliders.len(), 8);
+        // The Grand Tree hub flies to all four pads and back from three of
+        // them (`calc_glidervar` has no lemanto_andra → hub pair): 7 edges.
+        assert_eq!(gliders.len(), 7);
         let hub = WorldTile {
             x: 2465,
             z: 3501,
@@ -2643,6 +2666,11 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             z: 2969,
             level: 0,
         };
+        let lemanto_andra = WorldTile {
+            x: 3320,
+            z: 3430,
+            level: 0,
+        };
         let hub_edges: Vec<_> = gliders
             .iter()
             .filter(|e| e.from == hub)
@@ -2650,12 +2678,16 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         assert_eq!(hub_edges.len(), 4);
         assert!(hub_edges.iter().any(|e| e.to == sindarpos));
         assert!(hub_edges.iter().any(|e| e.to == gandius));
+        assert!(hub_edges.iter().any(|e| e.to == lemanto_andra));
         let sindarpos_edges: Vec<_> = gliders
             .iter()
             .filter(|e| e.from == sindarpos)
             .collect();
         assert_eq!(sindarpos_edges.len(), 1);
         assert_eq!(sindarpos_edges[0].to, hub);
+        // Lemanto Andra is one-way: no pad → hub flight exists in
+        // gnome_glider.rs2.
+        assert!(gliders.iter().all(|e| e.from != lemanto_andra));
         for g in &gliders {
             assert_eq!(g.varp_req, vec![(150, 160)]); // Grand Tree complete
             assert_eq!(g.option, 1); // Talk-to the Gnome pilot
