@@ -23,7 +23,7 @@ use client::dash3d::CollisionFlag;
 use crate::arrival::arrived as grid_arrived;
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
-use crate::transport::{TransportEdge, TransportKind};
+use crate::transport::{DoorDir, TransportEdge, TransportKind};
 
 /// The traveller's state, reported by each [`Traveller::tick`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -409,6 +409,18 @@ impl Traveller {
             .follow
             .as_mut()
             .and_then(|run| run.step(d, snapshot, options));
+        if crate::debug_enabled() {
+            let run = self.follow.as_ref();
+            eprintln!(
+                "[nav-follow] here={:?} walk={} transport={} leg={} hops={} outcome={:?}",
+                here(snapshot),
+                run.is_some_and(|r| r.walk.is_some()),
+                run.is_some_and(|r| r.transport.is_some()),
+                run.map(|r| r.leg_index).unwrap_or(0),
+                run.map(|r| r.hops).unwrap_or(0),
+                outcome,
+            );
+        }
         if outcome.is_some() {
             self.follow = None;
         }
@@ -728,7 +740,21 @@ impl FollowRun {
                 }
             };
         }
-        let arms = [("arrived", arrived(hop.aim, self.close_enough))];
+        // Last tile of the walk is the dest: exact stand. A loose
+        // close_enough reports Arrived short; the runner then re-arms the
+        // original route and the walker yo-yos back through the door.
+        let radius = if hop.aim_index + 1 >= hop.tiles().len() {
+            0
+        } else {
+            self.close_enough
+        };
+        let arms = [("arrived", arrived(hop.aim, radius))];
+        if crate::debug_enabled() {
+            eprintln!(
+                "[nav-walk] here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?}",
+                hop.aim, hop.ticks_waited, hop.sent_tile
+            );
+        }
         let mut settle = Settle::new(
             SettleOptions {
                 arms: &arms,
@@ -814,6 +840,31 @@ impl FollowRun {
             if let Some(outcome) = self.troll_door(d, snapshot, &mut hop, options) {
                 return Poll::Terminal(outcome);
             }
+        } else if hop.approach.is_none() {
+            if let Leg::Transport { edge } = &hop.leg {
+            // Cheap hop: Open was sent; the live open leaf can sit a tile
+            // off `at`. Walk through as soon as it reads open — do not sit
+            // until the troll budget while the door is already open.
+            if edge.kind == TransportKind::Door
+                && edge_loc_open(snapshot, edge)
+                && !door_crossed(edge, here)
+            {
+                let mut ix = Interactions::new(snapshot, d);
+                match ix.walk(hop.to) {
+                    SendResult::Sent { .. } => {
+                        if crate::debug_enabled() {
+                            eprintln!("[nav-transport] cheap hop walk-through to {:?}", hop.to);
+                        }
+                    }
+                    SendResult::Refused { reason, .. } => {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
+                    }
+                }
+                self.transport = Some(hop);
+                return Poll::Watching;
+            }
+            }
         }
         // The pre-interact approach: the player must stand within chebyshev
         // 1 of the loc before the game accepts an `op_loc`. While the
@@ -878,8 +929,38 @@ impl FollowRun {
         // of sitting out the settle budget. `chat_seq` is the hop-start
         // watermark, so only genuinely new lines count.
         let hop_seq = hop.chat_seq;
+        let edge = match &hop.leg {
+            Leg::Transport { edge } => edge.clone(),
+            Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
+        };
+        if crate::debug_enabled() {
+            eprintln!(
+                "[nav-transport] here={here:?} to={:?} troll={} ticks_waited={} loc_id={} open={}",
+                hop.to,
+                hop.troll,
+                hop.ticks_waited,
+                edge.loc_id,
+                edge_loc_open(snapshot, &edge),
+            );
+        }
+        let close_enough = self.close_enough;
+        let arrived_arm: Evidence<'static> = if edge.kind == TransportKind::Door && edge.dir.is_some()
+        {
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                let Some(here) = now.world_tile() else {
+                    return false;
+                };
+                if here.level != edge.to.level {
+                    return false;
+                }
+                door_crossed(&edge, here)
+                    && (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs()) <= close_enough
+            })
+        } else {
+            arrived(edge.to, close_enough)
+        };
         let arms: [(&str, Evidence<'static>); 2] = [
-            ("arrived", arrived(hop.to, self.close_enough)),
+            ("arrived", arrived_arm),
             (
                 "unreachable",
                 Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
@@ -1071,6 +1152,14 @@ impl FollowRun {
         };
         let here = here(snapshot);
         let tile = door_tile(&edge);
+        if crate::debug_enabled() {
+            eprintln!(
+                "[nav-troll] here={here:?} at={tile:?} cheb={} ticks_waited={} loc_wait={}",
+                cheb(here, edge.at),
+                hop.ticks_waited,
+                self.loc_wait
+            );
+        }
         // The game only accepts an `op_loc` from adjacent: while the
         // player is outside chebyshev 1 of the door (the cheap hop may
         // have lapsed while still approaching), re-send the approach walk
@@ -1146,23 +1235,38 @@ impl FollowRun {
         self.loc_wait = 0;
         let open = loc.id != edge.loc_id;
         let mut ix = Interactions::new(snapshot, d);
-        // OP_LOC the door: a closed door opens, an open one re-opens.
-        match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
-            SendResult::Sent { .. } => {}
-            SendResult::Refused { reason, .. } => {
-                fire_leg(options, &hop.leg, LegPhase::Failed);
-                return Some(TravelOutcome::Refused { at: here, reason });
-            }
+        if crate::debug_enabled() {
+            eprintln!(
+                "[nav-troll] door loc={} at={:?} open={} closed_id={}",
+                loc.id, loc.tile, open, edge.loc_id
+            );
         }
-        if open {
-            // The door reads open this tick: re-open and walk through in
-            // the SAME tick, before a tick-perfect closer can slam it.
-            match ix.walk(hop.to) {
-                SendResult::Sent { .. } => {}
+        // OP_LOC1 on an open door is Close. Closed: Open. Open: walk
+        // through this tick (do not click — that slams it in the walker's
+        // face and they turn back to the door).
+        if !open {
+            match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
+                SendResult::Sent { .. } => {
+                    if crate::debug_enabled() {
+                        eprintln!("[nav-troll] Open SENT");
+                    }
+                }
                 SendResult::Refused { reason, .. } => {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
                     return Some(TravelOutcome::Refused { at: here, reason });
                 }
+            }
+            return None;
+        }
+        match ix.walk(hop.to) {
+            SendResult::Sent { .. } => {
+                if crate::debug_enabled() {
+                    eprintln!("[nav-troll] walk-through SENT to {:?}", hop.to);
+                }
+            }
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Some(TravelOutcome::Refused { at: here, reason });
             }
         }
         None
@@ -1345,32 +1449,38 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
         .map(|(loc, _)| loc)
 }
 
-/// Whether the live loc family at `edge.at` already reads **open**: a
-/// same-tile loc carries the edge's `open_loc_id`, or (`open_loc_id` is
-/// `None`) the closed `loc_id` is absent while a same-tile loc offers the
-/// "Close" op. Interacting with an open leaf would Close it, so the
-/// traveller skips the interact and walks straight through instead.
-fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bool {
-    let same_tile = |loc: &LocView| loc.tile == edge.at;
-    let closed_present = snapshot
+/// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
+/// open 1531 sits a tile off the derived `at`).
+fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
+    snapshot
         .locs()
         .iter()
-        .any(|loc| same_tile(loc) && loc.id == edge.loc_id);
-    if let Some(open_id) = edge.open_loc_id {
-        return snapshot
-            .locs()
-            .iter()
-            .any(|loc| same_tile(loc) && loc.id == open_id);
-    }
-    !closed_present
-        && snapshot.locs().iter().any(|loc| {
-            same_tile(loc)
-                && loc
-                    .actions
-                    .iter()
-                    .flatten()
-                    .any(|action| action.trim().eq_ignore_ascii_case("close"))
+        .filter(|loc| {
+            loc.tile.level == edge.at.level
+                && (loc.id == edge.loc_id || edge.open_loc_id == Some(loc.id))
         })
+        .map(|loc| (loc, cheb(loc.tile, edge.at)))
+        .filter(|(_, gap)| *gap <= 3)
+        .min_by_key(|(_, gap)| *gap)
+        .map(|(loc, _)| loc)
+}
+
+/// Whether the live loc family already reads **open**. Searches closed
+/// and open ids within 3 of `at` — an exact-tile check misses the
+/// Catherby open leaf at (2816,3439) while `at` is (2816,3438).
+fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bool {
+    if let Some(loc) = find_door_loc(snapshot, edge) {
+        return loc.id != edge.loc_id;
+    }
+    snapshot.locs().iter().any(|loc| {
+        cheb(loc.tile, edge.at) <= 3
+            && loc.tile.level == edge.at.level
+            && loc
+                .actions
+                .iter()
+                .flatten()
+                .any(|action| action.trim().eq_ignore_ascii_case("close"))
+    })
 }
 
 /// The chat ring's latest sequence — the hop-start watermark for the
@@ -1386,6 +1496,19 @@ fn chat_seq(snapshot: &GameSnapshot) -> i32 {
 /// edge's closed id.
 fn door_tile(edge: &TransportEdge) -> WorldTile {
     edge.at
+}
+
+/// Whether `here` has crossed a door edge to its far side. `dir` is the
+/// wall's crossing direction; proximity alone can match a near-side
+/// approach tile to `to` when `close_enough` is 2.
+fn door_crossed(edge: &TransportEdge, here: WorldTile) -> bool {
+    match edge.dir {
+        Some(DoorDir::N) => here.z > edge.at.z,
+        Some(DoorDir::S) => here.z < edge.at.z,
+        Some(DoorDir::E) => here.x > edge.at.x,
+        Some(DoorDir::W) => here.x < edge.at.x,
+        None => true,
+    }
 }
 
 /// Fire the `on_leg` callback for a phase transition, using the `options`
@@ -1409,7 +1532,7 @@ mod tests {
     use crate::grid::StepGrid;
     use crate::router::{find_on_grid, Leg, Route};
     use crate::tile::Tile;
-    use crate::transport::{TransportEdge, TransportKind};
+    use crate::transport::{DoorDir, TransportEdge, TransportKind};
     use crate::traveller::{
         door_tile, FollowRun, HopFailure, LegPhase, NavStatus, Poll, TransportHop, TravelOptions,
         TravelOutcome, Traveller,
@@ -2101,6 +2224,10 @@ mod tests {
     /// state (1531, "Close"), mirroring the Catherby range-house door
     /// configs.
     fn plant_door(c: &mut Client, open: bool, scene_x: i32) {
+        plant_door_at(c, open, scene_x, 0);
+    }
+
+    fn plant_door_at(c: &mut Client, open: bool, scene_x: i32, scene_z: i32) {
         let id = if open { 1531 } else { 1530 };
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -2120,9 +2247,9 @@ mod tests {
                 ..Default::default()
             };
         }
-        let typecode = 0x4000_0000 + (id << 14) + 1;
+        let typecode = 0x4000_0000 + (id << 14) + scene_x + (scene_z << 7);
         c.world
-            .set_wall(0, scene_x, 0, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+            .set_wall(0, scene_x, scene_z, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     }
 
     /// A level-0 walk leg over the given (x, z) world tiles.
@@ -2244,6 +2371,50 @@ mod tests {
         ));
         assert_eq!(rec.walked.len(), 1, "one walk send");
         assert_eq!(rec.walked, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn follow_does_not_arrive_short_of_the_last_walk_tile() {
+        // The leg's last tile is the destination: the settle must require
+        // the player to stand on it exactly. A loose `close_enough` would
+        // report Arrived one tile short, and the scenario runner would
+        // re-arm the original route (through a door, that walks back).
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[(3200, 3200), (3200, 3201), (3200, 3202)])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3202,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default(); // close_enough = 2
+
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert_eq!(rec.walked, vec![(0, 2)], "walk aims at the last tile");
+
+        plant_player(&mut c, 0, 1);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options).is_none(),
+            "a walk leg must not finish one tile short of its last tile"
+        );
+
+        plant_player(&mut c, 0, 2);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, WorldTile { x: 3200, z: 3202, level: 0 });
+            }
+            other => panic!("expected Arrived on the last tile, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2438,6 +2609,61 @@ mod tests {
     }
 
     #[test]
+    fn follow_troll_walks_an_open_door_without_closing_it() {
+        // OP_LOC1 on an open door is Close. After the cheap hop lapses the
+        // troll must walk through an already-open door and not click it.
+        let mut c = scene_client();
+        plant_door(&mut c, false, 1);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: TransportEdge {
+                    open_loc_id: Some(1531),
+                    ..door_edge()
+                },
+            }],
+            dest: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 2,
+            close_enough: 1,
+            ..TravelOptions::default()
+        };
+
+        // Cheap hop: interact, then sit the budget out.
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        let ops_after_cheap = rec.loc_ops;
+        assert!(ops_after_cheap >= 1, "cheap hop sent OP_LOC1");
+        for _ in 0..3 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        }
+
+        plant_door(&mut c, true, 1);
+        bump_rebuild(&mut c, &mut snap);
+        let ops_before_open = rec.loc_ops;
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert_eq!(
+            rec.loc_ops, ops_before_open,
+            "troll must not OP_LOC1 an open door (that Closes it)"
+        );
+        assert!(
+            rec.walked.contains(&(3, 0)),
+            "troll walks through the open door"
+        );
+    }
+
+    #[test]
     fn follow_troll_finds_an_offset_door_loc_within_radius() {
         // The door loc's live tile is offset from the edge's derived `at`
         // by +1 in x, so the exact-tile lookup (`l.tile == at`) never
@@ -2590,6 +2816,50 @@ mod tests {
         ));
         assert_eq!(rec.loc_ops, 0, "no OP_LOC1 through a close leaf");
         assert!(rec.walked.contains(&(3, 0)), "walk straight through the open door");
+    }
+
+    #[test]
+    fn follow_cheap_hop_walks_when_the_open_leaf_is_offset() {
+        // Live Catherby: closed 1530 is derived at (2816,3438) but the
+        // open 1531 sits a tile north. `edge_loc_open` used exact `at`, so
+        // after Open the hop kept waiting (open=false) until the troll
+        // budget. Cheap hop must see the offset open leaf and walk.
+        let mut c = scene_client();
+        plant_door_at(&mut c, false, 1, 0);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = TransportEdge {
+            open_loc_id: Some(1531),
+            dir: Some(DoorDir::E),
+            ..door_edge()
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert_eq!(rec.loc_ops, 1, "cheap hop Opens the closed door");
+
+        c.world.del_wall(0, 1, 0);
+        plant_door_at(&mut c, true, 1, 1); // open leaf at (3201, 3201)
+        bump_rebuild(&mut c, &mut snap);
+        let walks = rec.walked.len();
+        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(
+            rec.walked.len() > walks,
+            "cheap hop must walk through once the offset open leaf appears"
+        );
     }
 
     #[test]

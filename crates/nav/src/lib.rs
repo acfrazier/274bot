@@ -11,6 +11,13 @@ pub mod transport;
 pub mod traveller;
 pub mod world;
 
+/// Verbose nav/traveller dumps (`BOT_DEBUG=1`). Cached once per process.
+pub fn debug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BOT_DEBUG").is_ok_and(|v| v == "1"))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::grid::StepGrid;
