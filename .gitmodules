@@ -1,4 +1,4 @@
 [submodule "vendor/fr-client-rust"]
 	path = vendor/fr-client-rust
 	url = https://github.com/acfrazier/FR-client-bothost.git
-	branch = r274-bothost
+	branch = r274-bh-modular

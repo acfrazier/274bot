@@ -2,18 +2,19 @@
 
 Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
-**What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bothost`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` **in this checkout** (not Fairy-Ring, not GitHub).
+**What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bh-modular`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` **in this checkout** (not Fairy-Ring, not GitHub).
 
-**Client fork:** Patch `FR-client-bothost` `r274-bothost` (instrumentation, skip-paint). **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
+**Client fork:** Patch `FR-client-bothost` `r274-bh-modular` (instrumentation, skip-paint, wgpu). `r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork — do not push there. **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 
 **Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,e2e}` (`panel` is this campaign's native UI).
 
 **Scope:** the **wall** is **in-scope** this campaign — MultiBox sidecar
 rail, grid mode, profile chooser (rail/grid/chooser). **Nav** remains
 in-scope (pack bake, router/traveller, WalkTo picker, live door harness).
-Still no dummy tick-end opcode, no scripts, no GPU 3D in this repo
-(CpuPix3D holds for the wall; wgpu if ever is last on bothost — 50
-full-rate GPU clients as a tech demo — not Fairy-Ring).
+Still no dummy tick-end opcode. GPU 3D (wgpu) lives in the client
+submodule (headed default; `BOT_CPU=1` is CpuPix3D). Compiled scripts
+and WalkTo are in-tree; do not invent a tick-end opcode or put 274bot
+crates in the client repo.
 
 **SDD models (operator):** task implementer `deepseek-v4-flash`, per-task reviewer `deepseek-v4-pro` (or flash if it behaves), **whole-branch review: grok**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 

@@ -95,3 +95,23 @@ pub fn wait_ingame(play: &Play, want: usize, timeout: Duration, case: &str) {
         thread::sleep(Duration::from_millis(250));
     }
 }
+
+/// Poll until `want` slots show `!ingame` (clean IF logout) or `fail`.
+pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let statuses = play.statuses();
+        let out = statuses.iter().filter(|s| !s.ingame).count();
+        if out >= want {
+            println!("PASS: {case}: {out} slot(s) on the title after logout");
+            return;
+        }
+        if Instant::now() >= deadline {
+            fail(&format!(
+                "{case}: {out}/{want} slot(s) left the game after {timeout:?}; \
+                 statuses: {statuses:?}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+}
