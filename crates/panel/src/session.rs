@@ -303,6 +303,7 @@ impl Session {
                 capture: false,
                 only_render_selected: true,
                 sidecar_50: false,
+                live_full_rate: false,
                 wall_open: false,
                 wall: Vec::new(),
                 renderer_by: HashMap::new(),

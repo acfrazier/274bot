@@ -15,6 +15,9 @@ pub struct Focus {
     /// Sidecar-50 pref: wall/grid members render at 50 fps instead of the
     /// 1 fps watch cadence.
     pub sidecar_50: bool,
+    /// Ephemeral live overlay: every drawing slot at 50 fps, focused
+    /// included. Not sidecar-50. Not persisted.
+    pub live_full_rate: bool,
     /// Whether the wall draw policy is active.
     pub wall_open: bool,
     /// Wall members eligible to draw when `only_render_selected` is off.
@@ -53,10 +56,14 @@ pub fn draw_for_slot(f: &Focus, name: &str) -> bool {
 
 /// Whether this slot runs at the 50 fps frame cadence instead of the
 /// 1 fps watch cadence: the sidecar-50 pref is on and the slot is a
-/// drawing wall/grid member. The focused slot's own 50 fps is the capture
-/// path (capture raises it), not this pref.
+/// drawing wall/grid member, or the ephemeral live overlay is up (every
+/// drawing slot, focused included). The focused slot's own 50 fps is the
+/// capture path (capture raises it), not either of these.
 pub fn full_rate_for(f: &Focus, name: &str) -> bool {
-    f.sidecar_50 && f.focused.as_deref() != Some(name) && draw_for_slot(f, name)
+    if !draw_for_slot(f, name) {
+        return false;
+    }
+    f.live_full_rate || (f.sidecar_50 && f.focused.as_deref() != Some(name))
 }
 
 /// Capture (the focused bot's capture checkbox) additionally requires draw.
@@ -79,6 +86,7 @@ mod tests {
             capture: false,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -101,6 +109,7 @@ mod tests {
             capture: true,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -113,6 +122,7 @@ mod tests {
             capture: true,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -129,6 +139,7 @@ mod tests {
             capture: false,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -144,6 +155,7 @@ mod tests {
             capture: false,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -157,6 +169,7 @@ mod tests {
             capture: false,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -173,6 +186,7 @@ mod tests {
             capture: false,
             only_render_selected: true,
             sidecar_50: false,
+            live_full_rate: false,
             wall_open: true,
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
@@ -197,6 +211,7 @@ mod tests {
             capture: false,
             only_render_selected: false,
             sidecar_50: true,
+            live_full_rate: false,
             wall_open: true,
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
@@ -220,5 +235,29 @@ mod tests {
         f.wall_open = true;
         f.renderer_by.insert("b".into(), false);
         assert!(!full_rate_for(&f, "b"));
+    }
+
+    #[test]
+    fn live_full_rate_raises_every_drawing_slot_including_focused() {
+        let mut f = Focus {
+            focused: Some("a".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: false,
+            sidecar_50: false,
+            live_full_rate: true,
+            wall_open: true,
+            wall: vec!["a".into(), "b".into()],
+            renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
+        };
+        assert!(full_rate_for(&f, "a"), "focused slot is 50 fps without capture");
+        assert!(full_rate_for(&f, "b"), "drawing member is 50 fps without sidecar_50");
+        f.live_full_rate = false;
+        assert!(!full_rate_for(&f, "a"));
+        assert!(!full_rate_for(&f, "b"));
+        f.sidecar_50 = true;
+        assert!(!full_rate_for(&f, "a"), "sidecar still does not raise focused");
+        assert!(full_rate_for(&f, "b"));
     }
 }
