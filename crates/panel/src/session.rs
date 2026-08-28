@@ -780,15 +780,6 @@ impl Session {
                             z: c.map_build_base_z + lp.route_z[0],
                             level: 0,
                         });
-                        // Interpolated scene tile (entity pixels), not the
-                        // walk-queue dest at route_x[0]. The trail trims
-                        // from this so dest does not stick under the
-                        // player after arrival.
-                        let trail_here = c.local_player.as_ref().map(|lp| WorldTile {
-                            x: c.map_build_base_x + (lp.x - lp.size * 64) / 128,
-                            z: c.map_build_base_z + (lp.z - lp.size * 64) / 128,
-                            level: 0,
-                        });
                         // Run orb (varp 173 / 274 overlay), not the run
                         // animation — the anim is only true while a run
                         // cycle plays.
@@ -807,7 +798,7 @@ impl Session {
                                 level: 0,
                             })
                             .collect();
-                        let trail_world = remaining_trail(&trail_all, trail_here);
+                        let trail_world = remaining_trail(&trail_all, here);
                         publish_nav_debug(
                             c,
                             world,
