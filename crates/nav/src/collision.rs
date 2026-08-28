@@ -51,7 +51,8 @@ pub struct WorldCollision {
     pub height: usize,
     /// The raw baked word per tile: the client's `W_*`/`V_*` wall bits,
     /// `WALK_SCENERY` footprints, and `WR_GRND` ground blocks, exactly as
-    /// `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp them.
+    /// `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp them. Face
+    /// flags alone do not reject every direction — see [`derive_walkable`].
     pub flags: Vec<u32>,
     /// The derived walkable word per tile, mirroring the client's movement
     /// masks: a raw wall bit `W_D` sets the full `PL_WALK_D` mask (which
@@ -64,11 +65,12 @@ pub struct WorldCollision {
 
 impl WorldCollision {
     /// The collision bitmask at `(x, z, level)`, `0` for tiles outside the
-    /// grid or on another level.
+    /// grid. The bake is one level-0 plane; other levels reuse that x,z cell.
     pub fn flag(&self, x: i32, z: i32, level: i32) -> u32 {
-        if level != self.origin.level {
-            return 0;
-        }
+        // The bake is a single level-0 plane. Other levels reuse the same
+        // x,z cell — returning 0 for off-level looked like "no flags", so
+        // the router treated upstairs as an empty world and flooded it.
+        let _ = level;
         let lx = x - self.origin.x;
         let lz = z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -82,12 +84,10 @@ impl WorldCollision {
     }
 
     /// The derived directional walkable word at `(x, z, level)`, `0` for
-    /// tiles outside the grid or on another level (same indexing and
-    /// out-of-grid shape as [`Self::flag`]).
+    /// tiles outside the grid (same indexing as [`Self::flag`]; off-level
+    /// reuses the level-0 cell).
     pub fn walkable_word(&self, x: i32, z: i32, level: i32) -> u32 {
-        if level != self.origin.level {
-            return 0;
-        }
+        let _ = level;
         let lx = x - self.origin.x;
         let lz = z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -104,9 +104,6 @@ impl WorldCollision {
     /// and has no walk-blocking flag. Tiles outside the grid are not
     /// walkable (the grid covers the whole world; beyond it is not a map).
     pub fn walkable(&self, t: WorldTile) -> bool {
-        if t.level != self.origin.level {
-            return false;
-        }
         let lx = t.x - self.origin.x;
         let lz = t.z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -127,9 +124,6 @@ impl WorldCollision {
     /// never walk onto it. The transport interact-target neighbourhood is
     /// tested against this, never the stricter [`Self::walkable`].
     pub fn standable(&self, t: WorldTile) -> bool {
-        if t.level != self.origin.level {
-            return false;
-        }
         let lx = t.x - self.origin.x;
         let lz = t.z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -281,20 +275,20 @@ pub fn bake_from_maps(
     })
 }
 
-/// Derive the directional walkable word from the raw collision flags: a raw
-/// wall bit `W_D` on a tile sets the client's full `PL_WALK_D` mask there
-/// (mirroring `tryMove`'s masks, whose shared `SQ_BLOCKED` base means any
-/// wall flag — like blocked ground or scenery — rejects entry from every
-/// direction). Pure over the raw word, so decoders recompute it from the
-/// packed `flags`.
+/// Derive the walkable word from the raw collision flags. Footprint and
+/// ground (`SQ_BLOCKED`) reject every `tryMove` direction because those
+/// masks share that base. Face flags (`W_N`/`W_S`/…) only reject the
+/// matching face — they must not OR the full `PL_WALK_*` word, which
+/// re-injects `SQ_BLOCKED` and seals open doorways (a Seers-bank stand
+/// became a 31-tile pocket).
 pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
     flags
         .iter()
         .map(|&raw| {
             let mut w = raw & SQ_BLOCKED;
-            for &(bit, mask) in &WALK_BITS {
+            for &(bit, _mask) in &WALK_BITS {
                 if raw & bit != 0 {
-                    w |= mask;
+                    w |= bit;
                 }
             }
             w
@@ -614,9 +608,10 @@ mod tests {
             wc.flag(door.x, door.z, door.level) & CollisionFlag::W_N as u32,
             CollisionFlag::W_N as u32
         );
-        // Outside the grid or on another level: no flags, not walkable.
+        // Outside the grid: no flags, not walkable. Other levels reuse the
+        // level-0 cell (empty off-level used to flood upstairs).
         assert_eq!(wc.flag(3199, 3200, 0), 0);
-        assert!(!wc.walkable(WorldTile {
+        assert!(wc.walkable(WorldTile {
             x: 3200,
             z: 3200,
             level: 1
@@ -851,17 +846,58 @@ mod tests {
     }
 
     #[test]
-    fn standable_rejects_out_of_grid_and_other_levels() {
+    fn standable_rejects_out_of_grid() {
         let wc = flag_world(vec![0u32]);
         assert!(!wc.standable(WorldTile {
             x: 3199,
             z: 3200,
             level: 0
         }));
-        assert!(!wc.standable(WorldTile {
+        // The bake is one level-0 plane; other levels reuse that x,z cell
+        // (empty off-level used to look like "no flags" and flood upstairs).
+        assert!(wc.standable(WorldTile {
             x: 3200,
             z: 3200,
             level: 1
         }));
+    }
+
+    #[test]
+    fn off_level_reuses_the_level0_cell_instead_of_an_empty_plane() {
+        let wc = flag_world(vec![CollisionFlag::WALK_SCENERY as u32]);
+        let l0 = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let l1 = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 1,
+        };
+        assert_eq!(wc.flag(l1.x, l1.z, l1.level), wc.flag(l0.x, l0.z, l0.level));
+        assert_eq!(
+            wc.walkable_word(l1.x, l1.z, l1.level),
+            wc.walkable_word(l0.x, l0.z, l0.level)
+        );
+        assert!(!wc.walkable(l1));
+        assert!(!wc.standable(l1));
+    }
+
+    #[test]
+    fn derive_walkable_does_not_seal_a_face_flag_from_every_side() {
+        let wc = flag_world(vec![CollisionFlag::W_W as u32]);
+        let t = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let word = wc.walkable_word(t.x, t.z, t.level);
+        assert_eq!(word & CollisionFlag::W_W as u32, CollisionFlag::W_W as u32);
+        assert_eq!(
+            word & SQ_BLOCKED,
+            0,
+            "a west wall must not inject SQ_BLOCKED"
+        );
     }
 }
