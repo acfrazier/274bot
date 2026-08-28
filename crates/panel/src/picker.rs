@@ -6,15 +6,19 @@
 //! loaded once per process from `$NAV_PACK` or `~/.274bot/274bot.navpack`.
 
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, MouseButton, Ui, WindowFlags};
+use nav::paint::{collision_at, flood_components, flood_sizes, remaining_path_tiles};
+use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
 use nav::world::NavWorld;
 
+use crate::nav_settings::{effective, parse_html_color, NavSettings};
 use crate::session::Session;
 use crate::theme::{ACCENT, TEXT};
 
@@ -126,6 +130,185 @@ pub fn click_to_tile(
     let tx = centre.0 as f32 + (click[0] - size[0] / 2.0) / scale;
     let tz = centre.1 as f32 + (click[1] - size[1] / 2.0) / scale;
     snap(world, tx, tz, level)
+}
+
+/// The pack-map paints of one visible tile. Only layers that are on mark
+/// tiles: `blocked` fills under `collision_fill`, `path`/`transport` draw
+/// the remaining route under `show_nav_path`, and `flood` (0 = player
+/// seed, 1 = dest seed) colours the component under `component_flood`.
+pub(crate) struct PackMapTile {
+    pub tile: Tile,
+    pub blocked: bool,
+    pub path: bool,
+    pub transport: bool,
+    pub flood: Option<u32>,
+}
+
+/// The visible canvas as a tile rectangle on the bake's level-0 plane:
+/// `width`×`height` tiles starting at `(x0, z0)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PackView {
+    pub x0: i32,
+    pub z0: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Flood component A (the player seed): `#0000FF`.
+const FLOOD_A: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+/// Flood component B (the dest seed): `#C828F0`.
+const FLOOD_B: [f32; 4] = [200.0 / 255.0, 40.0 / 255.0, 240.0 / 255.0, 1.0];
+
+/// The panel tile of a world tile (structurally identical fields).
+fn tile_from(w: WorldTile) -> Tile {
+    Tile {
+        x: w.x,
+        z: w.z,
+        level: w.level,
+    }
+}
+
+/// Cached flood components for a seed pair. The whole-world BFS spans
+/// hundreds of thousands of tiles on the real pack (~20 ms per component),
+/// so a picker frame must never re-flood; only a changed seed pair
+/// recomputes.
+struct FloodCache {
+    /// The collision grid the sets were computed from (origin + dims).
+    key: (i32, i32, usize, usize),
+    seeds: Vec<WorldTile>,
+    components: Vec<Arc<HashSet<WorldTile>>>,
+}
+
+static FLOOD_CACHE: Mutex<Option<FloodCache>> = Mutex::new(None);
+
+/// The step-ok reachable sets for `seeds`, computed once per seed pair and
+/// cached; a cache hit only bumps `Arc` refcounts.
+fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+    let c = &world.collision;
+    let key = (c.origin.x, c.origin.z, c.width, c.height);
+    let mut cache = FLOOD_CACHE.lock().unwrap();
+    let fresh = cache
+        .as_ref()
+        .is_some_and(|f| f.key == key && f.seeds.as_slice() == seeds);
+    if !fresh {
+        let components: Vec<Arc<HashSet<WorldTile>>> = flood_components(c, seeds)
+            .into_iter()
+            .map(Arc::new)
+            .collect();
+        *cache = Some(FloodCache {
+            key,
+            seeds: seeds.to_vec(),
+            components: components.clone(),
+        });
+        components
+    } else {
+        cache.as_ref().unwrap().components.clone()
+    }
+}
+
+/// Last `nav-flood` line reported on stderr. The bake is static, so the
+/// component sizes change only when the player/dest seed pair changes (a
+/// new arm, or the player stepping into the dest's component).
+static FLOOD_REPORT: Mutex<Option<(WorldTile, WorldTile, usize, usize)>> = Mutex::new(None);
+
+/// `nav-flood: player {n} dest {m}` on stderr, once per arm or when the
+/// component sizes change. Connected seeds report the shared size for both.
+fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile) {
+    let mut last = FLOOD_REPORT.lock().unwrap();
+    if last.as_ref().is_some_and(|(p, d, _, _)| *p == player && *d == dest) {
+        return;
+    }
+    let (n, m) = match flood_sizes(&world.collision, player, Some(dest)) {
+        (n, Some(m)) => (n, m),
+        (n, None) => (n, n),
+    };
+    eprintln!("nav-flood: player {n} dest {m}");
+    *last = Some((player, dest, n, m));
+}
+
+/// The pack-map paints for the visible canvas: every viewport tile a layer
+/// draws (blocked collision fill, remaining path / transport hop, flood
+/// component), and nothing outside the view. `route`/`here`/`dest` are the
+/// focused walk arm's inputs; `layers` are the effective nav settings.
+pub(crate) fn pack_map_tiles(
+    world: &NavWorld,
+    view: PackView,
+    route: Option<&Route>,
+    here: Option<WorldTile>,
+    dest: Option<WorldTile>,
+    layers: &NavSettings,
+) -> Vec<PackMapTile> {
+    let level = world.collision.origin.level;
+    let path: HashMap<Tile, bool> = if layers.show_nav_path {
+        route
+            .map(|r| remaining_path_tiles(r, here))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (tile_from(p.tile), p.transport))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    let seeds: Vec<WorldTile> = if layers.component_flood {
+        [here, dest].into_iter().flatten().collect()
+    } else {
+        Vec::new()
+    };
+    let floods = if seeds.is_empty() {
+        Vec::new()
+    } else {
+        flood_sets_for(world, &seeds)
+    };
+    let mut out = Vec::new();
+    for z in view.z0..view.z0 + view.height {
+        for x in view.x0..view.x0 + view.width {
+            let t = Tile { x, z, level };
+            let wt = WorldTile { x, z, level };
+            let blocked = layers.collision_fill && collision_at(&world.collision, wt).blocked;
+            let (is_path, transport) = path
+                .get(&t)
+                .map(|&tr| (true, tr))
+                .unwrap_or((false, false));
+            let flood = if floods.is_empty() {
+                None
+            } else {
+                floods
+                    .iter()
+                    .position(|f| f.contains(&wt))
+                    .map(|i| i as u32)
+            };
+            if blocked || is_path || flood.is_some() {
+                out.push(PackMapTile {
+                    tile: t,
+                    blocked,
+                    path: is_path,
+                    transport,
+                    flood,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The focused walk arm's route clone, `None` when nothing is armed.
+fn focused_route(session: &Session) -> Option<Route> {
+    let name = session.focused_name()?;
+    session
+        .travellers
+        .lock()
+        .unwrap()
+        .get(&name)
+        .cloned()?
+        .lock()
+        .unwrap()
+        .route
+        .clone()
+}
+
+/// `[u8; 3]` to an opaque RGBA float colour for the draw list.
+fn color_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
+    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
 }
 
 /// The "WalkTo" picker window. Draws the collision-dot map when the world
@@ -240,23 +423,98 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld) {
             let oz = min[1] + size[1] / 2.0 - cz * scale;
             let dot = (scale * 0.72).clamp(1.5, 5.0);
             let sel = session.picker_sel;
-            for t in world_dots(world) {
-                let (tx, tz) = (t.x as f32, t.z as f32);
-                if tx < wx0 || tx > wx1 || tz < wz0 || tz > wz1 {
-                    continue;
+            // The visible tile rectangle and the pack-map paints inside it.
+            // Layers paint only these tiles; the bake outside the view is
+            // never iterated.
+            let layers = effective(&session.ui.nav, session.nav_live_force_layers);
+            let any_layer = layers.collision_fill || layers.show_nav_path || layers.component_flood;
+            let level = world.collision.origin.level;
+            let here = session.focused_tile().map(|(x, z)| WorldTile { x, z, level });
+            let dest = session.walk_dest.map(|t| WorldTile { x: t.x, z: t.z, level });
+            let view = PackView {
+                x0: wx0.ceil() as i32,
+                z0: wz0.ceil() as i32,
+                width: (wx1.floor() as i32 - wx0.ceil() as i32 + 1).max(0),
+                height: (wz1.floor() as i32 - wz0.ceil() as i32 + 1).max(0),
+            };
+            let paints = if any_layer {
+                pack_map_tiles(world, view, focused_route(session).as_ref(), here, dest, &layers)
+            } else {
+                Vec::new()
+            };
+            let painted: HashSet<Tile> = paints.iter().map(|p| p.tile).collect();
+            if layers.component_flood {
+                if let (Some(h), Some(d)) = (here, dest) {
+                    report_flood_sizes(world, h, d);
                 }
-                let selected = sel.is_some_and(|s| s == t);
-                let (color, d) = if selected {
-                    (TEXT, (dot + 2.0).min(scale.max(3.0)))
+            }
+            let path_col = color_rgb(parse_html_color(&layers.color_path, [255, 0, 0]));
+            let transport_col = color_rgb(parse_html_color(&layers.color_transport, [0, 255, 0]));
+            let collision_col = color_rgb(parse_html_color(&layers.color_collision, [0, 128, 255]));
+            // Layer fills: the route wins over the flood region, the flood
+            // over the blocked ground (a blocked tile is never on a route
+            // or in a flood).
+            for pt in &paints {
+                let t = pt.tile;
+                let (tx, tz) = (t.x as f32, t.z as f32);
+                let color = if pt.path {
+                    if pt.transport {
+                        transport_col
+                    } else {
+                        path_col
+                    }
+                } else if let Some(id) = pt.flood {
+                    if id == 0 {
+                        FLOOD_A
+                    } else {
+                        FLOOD_B
+                    }
                 } else {
-                    (ACCENT, dot)
+                    debug_assert!(pt.blocked, "pack_map_tiles returns only painted tiles");
+                    collision_col
                 };
-                let h = d / 2.0;
-                let x0 = ox + tx * scale - h;
-                let y0 = oz + tz * scale - h;
-                draw.add_rect([x0, y0], [x0 + d, y0 + d], color)
-                    .filled(true)
-                    .build();
+                draw.add_rect(
+                    [ox + tx * scale, oz + tz * scale],
+                    [ox + tx * scale + scale, oz + tz * scale + scale],
+                    color,
+                )
+                .filled(true)
+                .build();
+                if sel.is_some_and(|s| s == t) {
+                    let d = (dot + 2.0).min(scale.max(3.0));
+                    let h = d / 2.0;
+                    let x0 = ox + tx * scale - h;
+                    let y0 = oz + tz * scale - h;
+                    draw.add_rect([x0, y0], [x0 + d, y0 + d], TEXT)
+                        .filled(true)
+                        .build();
+                }
+            }
+            // Amber dots: walkable view tiles no layer coloured.
+            for z in view.z0..view.z0 + view.height {
+                for x in view.x0..view.x0 + view.width {
+                    let t = Tile { x, z, level };
+                    if !world
+                        .collision
+                        .walkable(WorldTile { x, z, level })
+                        || (any_layer && painted.contains(&t))
+                    {
+                        continue;
+                    }
+                    let (tx, tz) = (t.x as f32, t.z as f32);
+                    let selected = sel.is_some_and(|s| s == t);
+                    let (color, d) = if selected {
+                        (TEXT, (dot + 2.0).min(scale.max(3.0)))
+                    } else {
+                        (ACCENT, dot)
+                    };
+                    let h = d / 2.0;
+                    let x0 = ox + tx * scale - h;
+                    let y0 = oz + tz * scale - h;
+                    draw.add_rect([x0, y0], [x0 + d, y0 + d], color)
+                        .filled(true)
+                        .build();
+                }
             }
         });
     let Some((min, max)) = rect else {
@@ -310,8 +568,13 @@ mod tests {
     use nav::transport::TransportGraph;
     use nav::world::NavWorld;
 
-    use super::{available_levels, click_to_tile, default_pack_path, picker_map_window, snap};
+    use super::{
+        available_levels, click_to_tile, default_pack_path, pack_map_tiles, picker_map_window,
+        snap, PackView,
+    };
+    use crate::nav_settings::NavSettings;
     use crate::session::Session;
+    use nav::router::{Leg, Route};
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
@@ -437,5 +700,126 @@ mod tests {
         picker_map_window(ui, &mut s, &open_world(3, 3), &mut open);
         ctx.render();
         assert!(open, "the window must stay open until Walk is confirmed");
+    }
+
+    /// A `w`×`h` level-0 bake at (0,0) with the given per-tile flags OR'd in.
+    fn bake_world(w: usize, h: usize, extras: &[(i32, i32, u32)]) -> NavWorld {
+        let mut flags = vec![0u32; w * h];
+        for &(x, z, f) in extras {
+            flags[z as usize * w + x as usize] |= f;
+        }
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: w,
+                height: h,
+                flags: flags.clone(),
+                walkable: nav::collision::derive_walkable(&flags),
+            },
+            graph: TransportGraph::default(),
+        }
+    }
+
+    /// A 7×7 bake: a 3×3 open corner plus an isolated open tile moated by
+    /// WR_GRND; everything else blocked ground.
+    fn disconnected_world() -> NavWorld {
+        let mut extras = Vec::new();
+        for z in 0..7 {
+            for x in 0..7 {
+                let open = (x < 3 && z < 3) || (x == 5 && z == 5);
+                if !open {
+                    extras.push((x, z, CollisionFlag::WR_GRND as u32));
+                }
+            }
+        }
+        bake_world(7, 7, &extras)
+    }
+
+    #[test]
+    fn pack_map_collision_only_in_viewport() {
+        // A 5-wide bake with a WR_GRND wall at x=2; the small view covers
+        // the wall and its open neighbour.
+        let world = bake_world(5, 1, &[(2, 0, CollisionFlag::WR_GRND as u32)]);
+        let view = PackView {
+            x0: 1,
+            z0: 0,
+            width: 2,
+            height: 1,
+        };
+        let layers = NavSettings {
+            collision_fill: true,
+            ..Default::default()
+        };
+        let tiles = pack_map_tiles(&world, view, None, None, None, &layers);
+        let in_view = |t: super::Tile| {
+            t.x >= view.x0
+                && t.x < view.x0 + view.width
+                && t.z >= view.z0
+                && t.z < view.z0 + view.height
+        };
+        assert!(tiles.iter().all(|t| in_view(t.tile)));
+        assert!(tiles.iter().any(|t| t.blocked));
+    }
+
+    #[test]
+    fn pack_map_flood_marks_two_components() {
+        let layers = NavSettings {
+            component_flood: true,
+            ..Default::default()
+        };
+        let tiles = pack_map_tiles(
+            &disconnected_world(),
+            PackView {
+                x0: 0,
+                z0: 0,
+                width: 7,
+                height: 7,
+            },
+            None,
+            Some(WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }),
+            Some(WorldTile {
+                x: 5,
+                z: 5,
+                level: 0,
+            }),
+            &layers,
+        );
+        let ids: std::collections::HashSet<_> = tiles.iter().filter_map(|t| t.flood).collect();
+        assert_eq!(ids.len(), 2, "the player and dest components both flood");
+    }
+
+    #[test]
+    fn pack_map_marks_remaining_path_in_view() {
+        let world = bake_world(5, 1, &[]);
+        let tiles: Vec<WorldTile> = (0..5)
+            .map(|x| WorldTile { x, z: 0, level: 0 })
+            .collect();
+        let route = Route {
+            dest: tiles[4],
+            legs: vec![Leg::Walk { tiles: tiles.clone() }],
+            ticks: 0.0,
+        };
+        let layers = NavSettings {
+            show_nav_path: true,
+            ..Default::default()
+        };
+        let view = PackView {
+            x0: 0,
+            z0: 0,
+            width: 5,
+            height: 1,
+        };
+        let marks = pack_map_tiles(&world, view, Some(&route), None, None, &layers);
+        let path: Vec<i32> = marks.iter().filter(|t| t.path).map(|t| t.tile.x).collect();
+        assert_eq!(path, vec![0, 1, 2, 3, 4]);
+        assert!(marks.iter().all(|t| !t.transport), "a walk-only route has no hops");
     }
 }

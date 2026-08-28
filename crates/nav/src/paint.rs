@@ -315,6 +315,14 @@ pub fn flood_component_id(c: &WorldCollision, seeds: &[WorldTile], t: WorldTile)
     None
 }
 
+/// The step-ok reachable set for every seed, in seed order — one BFS per
+/// seed, computed once. A consumer that marks many tiles (a viewport
+/// flood) computes the sets once and probes them instead of re-flooding
+/// per tile through [`flood_component_id`].
+pub fn flood_components(c: &WorldCollision, seeds: &[WorldTile]) -> Vec<HashSet<WorldTile>> {
+    seeds.iter().map(|&s| flood_component(c, s)).collect()
+}
+
 /// The flood size from `a`. When `b` is given and reachable from `a` the
 /// pair reports one component (`None` for the second); when the two seeds
 /// are disconnected both sizes are reported.
@@ -685,6 +693,21 @@ mod tests {
         assert_eq!(flood_component_id(&c, &seeds, tile(5, 5, 0)), Some(1));
         // A moat tile belongs to no flood.
         assert_eq!(flood_component_id(&c, &seeds, tile(3, 3, 0)), None);
+    }
+
+    #[test]
+    fn flood_components_sets_match_component_ids() {
+        let c = disconnected_world();
+        let seeds = [tile(0, 0, 0), tile(5, 5, 0)];
+        let comps = flood_components(&c, &seeds);
+        assert_eq!(comps.len(), 2);
+        assert!(comps[0].contains(&tile(1, 1, 0)));
+        assert!(comps[1].contains(&tile(5, 5, 0)));
+        assert!(
+            !comps[0].contains(&tile(5, 5, 0)),
+            "the moat keeps the disconnected seed out"
+        );
+        assert_eq!(flood_component_id(&c, &seeds, tile(1, 1, 0)), Some(0));
     }
 
     #[test]
