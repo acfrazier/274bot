@@ -26,7 +26,7 @@ use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
-use nav::router::{find, Route};
+use nav::router::{find, find_allow_teleports, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
@@ -1465,8 +1465,9 @@ impl Session {
     /// player's observed tile). On `Ok(route)` the focused username's walk
     /// arm stores the route so the observe tick can step it via
     /// [`Traveller::follow`]; on `NoPath` only the dest is stored and
-    /// `error` carries a short message. Callers that do not know the
-    /// player's tile fall back to [`Session::arm_walk`].
+    /// `error` carries a short message. When `ui.nav.allow_teleports` is
+    /// set, the search also considers the any-tile teleport layer. Callers
+    /// that do not know the player's tile fall back to [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
@@ -1480,7 +1481,12 @@ impl Session {
             z: dest.z,
             level: dest.level,
         };
-        match find(&world.collision, &world.graph, from_w, dest_w) {
+        let routed = if self.ui.nav.allow_teleports {
+            find_allow_teleports(&world.collision, &world.graph, from_w, dest_w)
+        } else {
+            find(&world.collision, &world.graph, from_w, dest_w)
+        };
+        match routed {
             Ok(route) => {
                 self.error = None;
                 if let Some(name) = self.focused_name() {
@@ -1770,8 +1776,9 @@ mod tests {
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
     use nav::collision::WorldCollision;
+    use nav::router::Leg;
     use nav::tile::Tile;
-    use nav::transport::TransportGraph;
+    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use nav::world::NavWorld;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -2146,6 +2153,89 @@ mod tests {
                 .is_none()),
             "no route must be armed when find fails"
         );
+    }
+
+    #[test]
+    fn arm_walk_on_ignores_teles_until_allow_teleports() {
+        // world: origin cannot walk to dest; a teleport edge can.
+        let mut session = Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        // Wall splits the 5x5 between x=1 and x=2 (nav fixture shape), so
+        // no walk crosses; only the any-tile teleport edge reaches (4,4).
+        let mut flags = vec![0u32; 25];
+        for z in 0..5 {
+            flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
+        }
+        let dest_tile = Tile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let dest = WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let mut graph = TransportGraph::default();
+        graph.teleports.push(TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: dest,
+            loc_id: 0,
+            option: 0,
+            ticks: 3,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 5,
+                height: 5,
+                walkable: nav::collision::derive_walkable(&flags),
+                flags,
+            },
+            graph,
+        };
+        let origin = Tile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        session.ui.nav.allow_teleports = false;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.as_ref().unwrap().contains("no path"),
+            "walk-only find must not use the teleport edge"
+        );
+        session.ui.nav.allow_teleports = true;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(session.error.is_none(), "allow_teleports routes the teleport");
+        let arm = session.travellers.lock().unwrap();
+        let route = arm
+            .get(&session.focused_name().unwrap())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .route
+            .clone();
+        assert!(route.unwrap().legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if edge.kind == TransportKind::Teleport
+        )));
     }
 
     #[test]
