@@ -307,18 +307,19 @@ impl Host {
             slot.skip_n = slot.skip_n.wrapping_add(1);
         }
         slot.log_n = slot.log_n.wrapping_add(1);
+        let result = slot.after_drain(client);
+        if should_emit_tick(result.player_info) {
+            slot.tick_n = slot.tick_n.wrapping_add(1);
+        }
         if debug_enabled() && slot.log_n.is_multiple_of(50) {
             eprintln!(
-                "[host] slot {username}: loop_us={} raster_us={} paints={} skips={}",
+                "[host] slot {username}: loop_us={} raster_us={} paints={} skips={} ticks={}",
                 slot.loop_ns / 1000,
                 slot.raster_ns / 1000,
                 slot.paint_n,
-                slot.skip_n
+                slot.skip_n,
+                slot.tick_n
             );
-        }
-        let result = slot.after_drain(client);
-        if should_emit_tick(result.player_info) && debug_enabled() {
-            eprintln!("[host] slot {username}: tick");
         }
         // The whole `FrameOutput` lands in the mailbox, not just the
         // packed pixels: the panel takes the `FrameOutput::Texture` (GPU
@@ -494,6 +495,9 @@ struct SlotLoop {
     raster_ns: u64,
     paint_n: u64,
     skip_n: u64,
+    /// Game-tick edges (`PLAYER_INFO` this drain). Counted internally;
+    /// printed in the 50-frame summary, not per tick.
+    tick_n: u64,
     log_n: u32,
 }
 
@@ -511,6 +515,7 @@ impl SlotLoop {
             raster_ns: 0,
             paint_n: 0,
             skip_n: 0,
+            tick_n: 0,
             log_n: 0,
         }
     }
