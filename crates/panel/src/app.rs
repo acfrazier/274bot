@@ -2673,7 +2673,10 @@ mod tests {
     /// FAIL returns the message the caller turns into exit 1.
     #[test]
     fn live_script_tick_keeps_window_open_on_pass_and_reports_fail() {
-        use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Seed, Step, StepKind, Wait};
+        use scenario::{
+            Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
+            Wait,
+        };
 
         let mut s = crate::session::Session::new();
         // A runnable micro-scenario: the send sets run energy, the arm
@@ -2699,6 +2702,7 @@ mod tests {
             }],
             proof: Proof::Stat { id: 16, min: 5 },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         };
         let mut runner = ScenarioRunner::new(pass);
         runner.set_scene_settle(Duration::ZERO);
@@ -2743,6 +2747,7 @@ mod tests {
             }],
             proof: Proof::Stat { id: 16, min: 999 },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         };
         let mut runner = ScenarioRunner::new(fail_scenario);
         runner.set_scene_settle(Duration::ZERO);
@@ -2770,7 +2775,10 @@ mod tests {
     /// after `pump_shots` ran), the write frame returns the message.
     #[test]
     fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
-        use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Seed, Step, StepKind, Wait};
+        use scenario::{
+            Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
+            Wait,
+        };
         let mut s = crate::session::Session::new();
         let fail_scenario = Scenario {
             name: "f",
@@ -2790,6 +2798,7 @@ mod tests {
             }],
             proof: Proof::Stat { id: 16, min: 999 },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         };
         let mut runner = ScenarioRunner::new(fail_scenario);
         runner.set_scene_settle(Duration::ZERO);

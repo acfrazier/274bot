@@ -565,7 +565,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use crate::{Companion, Scenario, Seed, Step, StepKind};
+    use crate::{Companion, Scenario, ScenarioSettings, Seed, Step, StepKind};
 
     fn cfg() -> ClientConfig {
         ClientConfig {
@@ -616,6 +616,7 @@ mod tests {
             }],
             proof: Proof::Stat { id: 16, min },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         }
     }
 
@@ -727,6 +728,7 @@ mod tests {
                 level: dest.level,
             },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         }
     }
 
@@ -860,6 +862,7 @@ mod tests {
                 level: dest.level,
             },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         }
     }
 
@@ -963,6 +966,7 @@ mod tests {
             }],
             proof: Proof::Stat { id: 16, min: 99 },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         }
     }
 
@@ -1085,6 +1089,7 @@ mod tests {
                     hook.store(true, Ordering::Relaxed);
                 }),
             }],
+            settings: ScenarioSettings::default(),
         };
         let mut runner = ScenarioRunner::new(scenario);
         runner.set_scene_settle(Duration::ZERO);
@@ -1202,6 +1207,7 @@ mod tests {
             }],
             proof: Proof::Stat { id: 16, min: 0 },
             companions: vec![],
+            settings: ScenarioSettings::default(),
         }
     }
 

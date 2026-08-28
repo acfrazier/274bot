@@ -43,6 +43,33 @@ pub fn debug_enabled() -> bool {
 /// + proof). The headless twin uses its own outer timeout.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(180);
 
+/// Boot defaults for a scenario. View knobs are headed-only; deadline /
+/// terminal shot / mainland-base gate are consumed by `ScenarioRunner`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioSettings {
+    pub renderer: bool,
+    pub only_render_selected: bool,
+    pub capture: bool,
+    pub full_rate: bool,
+    pub deadline: Duration,
+    pub terminal_shot: Option<&'static str>,
+    pub require_mainland_base: bool,
+}
+
+impl Default for ScenarioSettings {
+    fn default() -> Self {
+        Self {
+            renderer: true,
+            only_render_selected: true,
+            capture: false,
+            full_rate: false,
+            deadline: DEFAULT_DEADLINE,
+            terminal_shot: None,
+            require_mainland_base: false,
+        }
+    }
+}
+
 /// Runner-independent seed: login credentials and whether the mainland hop
 /// is queued after `scene_state == 2`.
 pub struct Seed {
@@ -110,6 +137,9 @@ pub struct Scenario {
     /// runner ticks through [`ScenarioRunner::companion_tick`] exactly
     /// like the driven slot's `tick`. Empty for single-bot scenarios.
     pub companions: Vec<Companion>,
+    /// Boot settings for the scenario: view knobs for the headed panel and
+    /// runner-consumed deadline / terminal shot / mainland-base gate.
+    pub settings: ScenarioSettings,
 }
 
 /// One extra profile slot in a scenario fleet: `profile` is an index into
@@ -163,6 +193,10 @@ fn render_smoke_scenario() -> Scenario {
         }],
         proof: Proof::Stat { id: 16, min: 0 },
         companions: vec![],
+        settings: ScenarioSettings {
+            deadline: Duration::from_secs(300),
+            ..Default::default()
+        },
     }
 }
 
@@ -220,6 +254,7 @@ fn walk_scenario() -> Scenario {
             level: 0,
         },
         companions: vec![],
+        settings: ScenarioSettings::default(),
     }
 }
 
@@ -267,6 +302,11 @@ pub fn nav_full_scenario() -> Scenario {
             level: dest.level,
         },
         companions: vec![],
+        settings: ScenarioSettings {
+            deadline: Duration::from_secs(360),
+            terminal_shot: Some("nav_full terminal"),
+            ..Default::default()
+        },
     }
 }
 
@@ -342,6 +382,11 @@ fn nav_door_scenario() -> Scenario {
                 Box::new(move |c| closer_frame(c, &mut slot))
             },
         }],
+        settings: ScenarioSettings {
+            full_rate: true,
+            only_render_selected: false,
+            ..Default::default()
+        },
     }
 }
 
@@ -640,5 +685,52 @@ mod tests {
         assert_eq!(s.companions.len(), 1, "the closer is the one companion");
         assert_eq!(s.companions[0].profile, 1, "profile 1 (test2) is the closer");
         assert!(names().contains(&"nav_door"));
+    }
+
+    #[test]
+    fn scenario_settings_default_matches_the_bag() {
+        let d = ScenarioSettings::default();
+        assert!(d.renderer);
+        assert!(d.only_render_selected);
+        assert!(!d.capture);
+        assert!(!d.full_rate);
+        assert_eq!(d.deadline, DEFAULT_DEADLINE);
+        assert_eq!(d.terminal_shot, None);
+        assert!(
+            !d.require_mainland_base,
+            "gate is opt-in for brand-new tutorial accounts"
+        );
+    }
+
+    #[test]
+    fn nav_door_settings_are_full_rate_without_capture_or_sidecar() {
+        let s = get("nav_door").expect("nav_door");
+        assert!(s.settings.full_rate);
+        assert!(!s.settings.only_render_selected);
+        assert!(!s.settings.capture);
+        assert!(s.settings.renderer);
+        assert_eq!(s.settings.deadline, DEFAULT_DEADLINE);
+        assert!(!s.settings.require_mainland_base);
+    }
+
+    #[test]
+    fn nav_full_settings_carry_deadline_and_terminal_shot() {
+        let s = get("nav_full").expect("nav_full");
+        assert_eq!(s.settings.deadline, Duration::from_secs(360));
+        assert_eq!(s.settings.terminal_shot, Some("nav_full terminal"));
+        assert!(!s.settings.full_rate);
+    }
+
+    #[test]
+    fn render_smoke_settings_are_300s_and_gate_off() {
+        let s = get("render_smoke").expect("render_smoke");
+        assert_eq!(s.settings.deadline, Duration::from_secs(300));
+        assert!(!s.settings.require_mainland_base);
+    }
+
+    #[test]
+    fn walk_settings_are_defaults() {
+        let s = get("walk").expect("walk");
+        assert_eq!(s.settings, ScenarioSettings::default());
     }
 }
