@@ -32,6 +32,13 @@ pub use evidence::{Evidence, InvRow, StatRow};
 pub use proof::Proof;
 pub use runner::{RunnerStatus, ScenarioRunner};
 
+/// Verbose scenario/closer dumps (`BOT_DEBUG=1`). Cached once per process.
+pub fn debug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BOT_DEBUG").is_ok_and(|v| v == "1"))
+}
+
 /// The default wall-clock deadline for a whole scenario run (seed + steps
 /// + proof). The headless twin uses its own outer timeout.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(180);
@@ -345,6 +352,7 @@ const DOOR: WorldTile = WorldTile {
     level: 0,
 };
 const CLOSED_ID: i32 = 1530;
+const OPEN_ID: i32 = 1531;
 /// Briefed outside stand (west of pack origin 2816; on-pack fallback is
 /// (2816,3436), the walkable tile south of the door).
 const OUTSIDE: WorldTile = WorldTile {
@@ -373,16 +381,16 @@ struct CloserSlot {
     scene2_seen: bool,
     tele_sent: bool,
     last_gen: u64,
-    /// 1530 was already tried on this open door.
-    tried_1530: bool,
 }
 
 /// The closer companion's per-frame hook: gate the Catherby tele behind
-/// the mainland hop, then on every player-info tick `op_loc` the door
-/// whenever the loc is not the closed id 1530 (try 1530 first, then the
-/// open id the client currently shows), so it slams shut tick-perfectly.
+/// the mainland hop, then on every player-info tick `op_loc` the live
+/// open leaf (id 1531, often a tile off packed `at`) so it slams shut.
 fn closer_frame(c: &mut Client, s: &mut CloserSlot) {
     let Some(lp) = &c.local_player else {
+        if debug_enabled() {
+            eprintln!("[nav-closer] no local_player scene={}", c.scene_state);
+        }
         return;
     };
     let here = WorldTile {
@@ -397,18 +405,28 @@ fn closer_frame(c: &mut Client, s: &mut CloserSlot) {
         return;
     }
     s.last_gen = c.gens.player;
-    let Some(loc_id) = wall_loc_id(c, DOOR) else {
+    let loc = wall_loc(c, DOOR);
+    if debug_enabled() {
+        eprintln!(
+            "[nav-closer] here={here:?} loc={loc:?} tele_sent={} scene={}",
+            s.tele_sent, c.scene_state
+        );
+    }
+    let Some((loc_tile, loc_id)) = loc else {
         return;
     };
     if loc_id == CLOSED_ID {
-        s.tried_1530 = false;
         return;
     }
-    // Try the closed id first; if it does not close, use the open id the
-    // client currently shows.
-    let op_id = if s.tried_1530 { loc_id } else { CLOSED_ID };
-    s.tried_1530 = true;
-    op_loc(c, DOOR.x, DOOR.z, op_id);
+    // OP_LOC1 on the live open leaf is Close. The leaf often sits a tile
+    // off packed `at`; slamming packed `at` looks up an empty typecode.
+    if debug_enabled() {
+        eprintln!(
+            "[nav-closer] SLAM op_loc id={loc_id} at ({},{}) packed=({},{})",
+            loc_tile.x, loc_tile.z, DOOR.x, DOOR.z
+        );
+    }
+    op_loc(c, loc_tile.x, loc_tile.z, loc_id);
 }
 
 /// Host-play queues `mainland_hop` *after* `per_frame` on the first
@@ -426,20 +444,62 @@ fn stage_closer_tele(c: &mut Client, here: WorldTile, s: &mut CloserSlot) -> boo
         return false;
     }
     if !at_lumbridge(here) && here.x <= 3100 {
+        if debug_enabled() {
+            eprintln!("[nav-closer] waiting mainland, here={here:?} scene={}", c.scene_state);
+        }
         return false;
+    }
+    if debug_enabled() {
+        eprintln!("[nav-closer] tele {CLOSER_TELE} from {here:?}");
     }
     cheat(c, CLOSER_TELE);
     s.tele_sent = true;
     true
 }
 
-fn wall_loc_id(c: &Client, tile: WorldTile) -> Option<i32> {
+fn wall_loc(c: &Client, tile: WorldTile) -> Option<(WorldTile, i32)> {
     let (bx, bz) = c.build_base();
-    let sx = tile.x - bx;
-    let sz = tile.z - bz;
-    // Same wall/decor/scene lookup as `Driver::loc_typecode`. An open door
-    // can sit on decor with no wall; returning on wall-None skipped Close.
-    c.loc_typecode(sx, sz).map(|tc| (tc >> 14) & 0x7fff)
+    nearest_door_loc(tile, |x, z| {
+        c.loc_typecode(x - bx, z - bz).map(|tc| (tc >> 14) & 0x7fff)
+    })
+}
+
+/// Nearest 1530/1531 within chebyshev 3 of packed `at`. Returns the live
+/// tile — the Catherby open leaf sits a tile off that origin, and
+/// `op_loc` must click the leaf, not packed `at`.
+fn nearest_door_loc(
+    packed: WorldTile,
+    lookup: impl Fn(i32, i32) -> Option<i32>,
+) -> Option<(WorldTile, i32)> {
+    let mut best: Option<(i32, WorldTile, i32)> = None;
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
+            let gap = dx.abs().max(dz.abs());
+            if gap > 3 {
+                continue;
+            }
+            let x = packed.x + dx;
+            let z = packed.z + dz;
+            let Some(id) = lookup(x, z) else {
+                continue;
+            };
+            if id != CLOSED_ID && id != OPEN_ID {
+                continue;
+            }
+            if best.map(|(g, _, _)| gap < g).unwrap_or(true) {
+                best = Some((
+                    gap,
+                    WorldTile {
+                        x,
+                        z,
+                        level: packed.level,
+                    },
+                    id,
+                ));
+            }
+        }
+    }
+    best.map(|(_, tile, id)| (tile, id))
 }
 
 fn at_lumbridge(here: WorldTile) -> bool {
@@ -510,6 +570,47 @@ mod tests {
         assert_eq!(arm, (3220, 3264, 0));
         assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
         assert_eq!(names(), ["walk", "render_smoke", "nav_full", "nav_door"]);
+    }
+
+    #[test]
+    fn nearest_door_loc_returns_the_offset_open_leaf_not_the_packed_at() {
+        // Live Catherby: packed closed 1530 is (2816,3438); the open leaf
+        // 1531 sits a tile off that `at`. The closer used to find the id
+        // in radius 3 then still slam packed `at`, so interact_with_loc
+        // looked up a typecode on an empty tile.
+        let packed = WorldTile {
+            x: 2816,
+            z: 3438,
+            level: 0,
+        };
+        let found = nearest_door_loc(packed, |x, z| {
+            (x == 2816 && z == 3439).then_some(OPEN_ID)
+        });
+        assert_eq!(
+            found,
+            Some((
+                WorldTile {
+                    x: 2816,
+                    z: 3439,
+                    level: 0
+                },
+                OPEN_ID
+            )),
+            "slam target is the live leaf tile, not packed at"
+        );
+    }
+
+    #[test]
+    fn nearest_door_loc_keeps_the_packed_closed_leaf() {
+        let packed = WorldTile {
+            x: 2816,
+            z: 3438,
+            level: 0,
+        };
+        let found = nearest_door_loc(packed, |x, z| {
+            (x == packed.x && z == packed.z).then_some(CLOSED_ID)
+        });
+        assert_eq!(found, Some((packed, CLOSED_ID)));
     }
 
     #[test]

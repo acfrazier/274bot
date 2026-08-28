@@ -450,15 +450,37 @@ impl ScenarioRunner {
         let Some(route) = self.route.clone() else {
             return;
         };
-        let mut options = TravelOptions::default();
+        if crate::debug_enabled() {
+            let lp = client.local_player.as_ref();
+            let phys = lp.map(|p| ((p.x - 64) / 128, (p.z - 64) / 128));
+            eprintln!(
+                "[nav-runner] tick={} snap={:?} phys={:?} dest={:?} legs={}",
+                self.total_ticks,
+                self.snapshot.tile(),
+                phys,
+                route.dest,
+                route.legs.len(),
+            );
+        }
+        // Exact dest: default close_enough=2 reports Arrived a tile or two
+        // short, the proof (exact tile) fails, and the next poll re-starts
+        // the original route — walker yo-yos back to the door.
+        let mut options = TravelOptions {
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
         let outcome = self
             .traveller
             .follow(client, &self.snapshot, route, &mut options);
         let Some(outcome) = outcome else {
             return;
         };
+        if crate::debug_enabled() {
+            eprintln!("[nav-runner] follow outcome={outcome:?}");
+        }
         if let TravelOutcome::Arrived { .. } = outcome {
-            // The arm predicate fires on this tick's snapshot read.
+            // Don't re-arm the original outside→door→dest legs next tick.
+            self.route = None;
             return;
         }
         self.finish_fail(&format!(
