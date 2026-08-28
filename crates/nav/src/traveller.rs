@@ -200,6 +200,23 @@ impl Traveller {
         self.last_op_ok
     }
 
+    /// The tile the traveller is currently walking toward: the active walk
+    /// hop's aim, the transport hop's approach tile, or the transport
+    /// arrival tile. `None` when no follow run is active (idle). The
+    /// nav-debug paint strokes this as the click target.
+    pub fn current_aim(&self) -> Option<WorldTile> {
+        let run = self.follow.as_ref()?;
+        if let Some(walk) = &run.walk {
+            return Some(walk.aim);
+        }
+        let transport = run.transport.as_ref()?;
+        transport
+            .approach
+            .as_ref()
+            .map(|a| a.tile)
+            .or(Some(transport.to))
+    }
+
     /// The tiles still ahead on the armed route, front to back. Walk legs
     /// contribute all their tiles; a door leg contributes its `from` and
     /// `to` so the polyline stays connected across the crossing. When
@@ -2415,6 +2432,43 @@ mod tests {
             }
             other => panic!("expected Arrived on the last tile, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn current_aim_is_none_idle_and_the_walk_hop_aim_in_follow() {
+        let mut t = Traveller::new();
+        assert_eq!(t.current_aim(), None, "idle traveller has no aim");
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let route = Route {
+            legs: vec![walk_leg(&[(3200, 3200), (3200, 3201), (3200, 3202)])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3202,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options).is_none(),
+            "the run must be active after the first poll"
+        );
+        // A short leg aims at its last tile (the same `pick_aim` the walk
+        // send used).
+        assert_eq!(
+            t.current_aim(),
+            Some(WorldTile {
+                x: 3200,
+                z: 3202,
+                level: 0
+            }),
+            "the walk hop's aim is the leg's last tile"
+        );
     }
 
     #[test]

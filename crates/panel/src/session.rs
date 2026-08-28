@@ -191,8 +191,9 @@ struct NavPublishCfg {
 /// on publishes; unfocused / skip-paint / renderer-off slots store `None`
 /// so a stale paint never lingers. `world` is the baked pack, `route` the
 /// armed walk route, `here` the player's observed world tile, `trail_world`
-/// the client trail tiles (the fork tracks no `tryMove` trail yet — pass
-/// `&[]`), `run_on` the local player's run state (two-tone trail).
+/// the local player's last `tryMove` route buffer (world tiles), `run_on`
+/// the local player's run state (two-tone trail), and `click` the
+/// traveller's current walk aim.
 ///
 /// World → scene: `x - map_build_base_x`, `z - map_build_base_z`.
 /// Collision covers every tile of the loaded [`SCENE_TILES`]² region the
@@ -208,6 +209,7 @@ fn publish_nav_debug(
     here: Option<WorldTile>,
     trail_world: &[WorldTile],
     run_on: bool,
+    click: Option<WorldTile>,
     settings: &NavSettings,
     drawing: bool,
 ) {
@@ -307,10 +309,9 @@ fn publish_nav_debug(
             .map(|(t, tone)| (t.x - base_x, t.z - base_z, tone == TrailTone::RunAlt))
             .collect();
     }
-    // Click: the client's current walk-aim tile (the server hint the
-    // traveller's last walk send set), scene coords.
-    if client.hint_type == 2 {
-        paint.click = Some((client.hint_tile_x - base_x, client.hint_tile_z - base_z));
+    // Click: the traveller's current walk aim, scene coords.
+    if let Some(aim) = click {
+        paint.click = Some((aim.x - base_x, aim.z - base_z));
     }
     client.set_nav_debug_paint(Some(paint));
 }
@@ -738,12 +739,13 @@ impl Session {
                 };
                 let layers = effective(&nav_settings, live_force);
                 let drawing = focused.as_deref() == Some(name) && draw;
-                let route = travellers
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .cloned()
-                    .and_then(|arm| arm.lock().unwrap().route.clone());
+                let (route, click) = match travellers.lock().unwrap().get(name).cloned() {
+                    Some(arm) => {
+                        let arm = arm.lock().unwrap();
+                        (arm.route.clone(), arm.traveller.current_aim())
+                    }
+                    None => (None, None),
+                };
                 match crate::picker::pack() {
                     Some(world) => {
                         let here = c.local_player.as_ref().map(|lp| WorldTile {
@@ -756,14 +758,34 @@ impl Session {
                         let run_on = c.local_player.as_ref().is_some_and(|lp| {
                             lp.entity.primary_anim == lp.entity.runanim
                         });
+                        // The trail is the local player's last `tryMove`
+                        // route buffer (`route_x/z[0..route_length]`), in
+                        // world tiles — not just the route head.
+                        let trail_world: Vec<WorldTile> = c
+                            .local_player
+                            .as_ref()
+                            .map(|lp| {
+                                let len =
+                                    lp.route_length.clamp(0, lp.route_x.len() as i32) as usize;
+                                let base_x = c.map_build_base_x;
+                                let base_z = c.map_build_base_z;
+                                (0..len)
+                                    .map(|i| WorldTile {
+                                        x: base_x + lp.route_x[i],
+                                        z: base_z + lp.route_z[i],
+                                        level: 0,
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         publish_nav_debug(
                             c,
                             world,
                             route.as_ref(),
                             here,
-                            // No client `tryMove` trail is tracked yet.
-                            &[],
+                            &trail_world,
                             run_on,
+                            click,
                             &layers,
                             drawing,
                         );
@@ -2125,11 +2147,13 @@ mod tests {
             z: 3200,
             level: 0,
         });
-        // The server hint: the traveller's current walk-aim tile.
-        c.hint_type = 2;
-        c.hint_tile_x = 3200 + 52;
-        c.hint_tile_z = 3200 + 52;
-        publish_nav_debug(&mut c, &world, Some(&route), here, &[], false, &layers, true);
+        // The traveller's current walk aim, world tile → scene (52, 52).
+        let click = Some(WorldTile {
+            x: 3252,
+            z: 3252,
+            level: 0,
+        });
+        publish_nav_debug(&mut c, &world, Some(&route), here, &[], false, click, &layers, true);
         let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
         assert!(
             !paint.collision.is_empty(),
@@ -2170,7 +2194,7 @@ mod tests {
             vec![(0, 0, false), (1, 0, false), (2, 0, false)],
             "remaining path tiles convert to scene lx,lz"
         );
-        // Click: the client's walk-aim tile converts to scene coords.
+        // Click: the traveller's walk aim converts to scene coords.
         assert_eq!(paint.click, Some((52, 52)));
         assert!(paint.show_collision && paint.show_nsew && paint.show_path);
     }
@@ -2180,15 +2204,62 @@ mod tests {
         let mut c = paint_client();
         let world = walled_world();
         let layers = effective(&NavSettings::default(), true);
-        publish_nav_debug(&mut c, &world, None, None, &[], false, &layers, true);
+        publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
         assert!(c.nav_debug_paint().is_some());
         // Unfocused / skip-paint / renderer-off slots must not linger on a
         // stale paint.
-        publish_nav_debug(&mut c, &world, None, None, &[], false, &layers, false);
+        publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, false);
         assert!(
             c.nav_debug_paint().is_none(),
             "a non-drawing slot stores None"
         );
+    }
+
+    #[test]
+    fn focused_slot_publishes_client_trail_tones() {
+        let mut c = paint_client();
+        let world = walled_world();
+        let layers = NavSettings {
+            client_trail: true,
+            ..NavSettings::default()
+        };
+        // The local player's last tryMove path, world tiles (the route
+        // buffer minus the base), run on.
+        let trail_world = vec![
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            WorldTile {
+                x: 3202,
+                z: 3200,
+                level: 0,
+            },
+        ];
+        publish_nav_debug(
+            &mut c,
+            &world,
+            None,
+            None,
+            &trail_world,
+            true,
+            None,
+            &layers,
+            true,
+        );
+        let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
+        assert_eq!(
+            paint.trail,
+            vec![(0, 0, false), (1, 0, true), (2, 0, false)],
+            "run-on trail alternates Primary / RunAlt in scene coords"
+        );
+        assert!(paint.show_trail);
     }
 
     #[test]
