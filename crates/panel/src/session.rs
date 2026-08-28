@@ -1768,6 +1768,7 @@ mod tests {
     use nav::world::NavWorld;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::time::Duration;
     use vault::{Profile, ProfileSettings, Vault};
 
     fn empty_play() -> host_play::Play {
@@ -2657,6 +2658,35 @@ mod tests {
         assert!(!f.capture);
         assert!(f.renderer);
         assert!(!f.sidecar_50, "sidecar stays the operator knob");
+    }
+
+    #[test]
+    fn live_prepare_nav_full_runner_already_has_deadline_and_shot() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_script(scenario::get("nav_full").unwrap())
+            .expect("prepare");
+        let runner = s.scenario.lock().unwrap();
+        let runner = runner.as_ref().expect("runner");
+        assert_eq!(runner.deadline(), Duration::from_secs(360));
+        assert_eq!(runner.terminal_shot(), Some("nav_full terminal"));
+    }
+
+    #[test]
+    fn live_prepare_smoke_runner_already_has_the_300s_deadline() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_script(scenario::get("render_smoke").unwrap())
+            .expect("prepare");
+        let runner = s.scenario.lock().unwrap();
+        let runner = runner.as_ref().expect("runner");
+        assert_eq!(runner.deadline(), Duration::from_secs(300));
     }
 
     #[test]

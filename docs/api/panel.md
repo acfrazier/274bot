@@ -73,12 +73,18 @@ checkboxes on a focused profile:
 
 - **game renderer** — default **on**, **1 fps rail** (rs2b0t). Checking
   it after off paints **this tick** (no cold wait). Capture raises the
-  focused slot to 50 fps. Unfocused slots do not raster. The Game Image is
-  an RGBA8 texture that is **never below 765×503** (`fit_applet` scale
-  floor 1.0). Grid tiles may still downscale. Rendering never pauses the
-  bot. Renderer-off / `set_draw(false)` still runs `mainloop` and
-  collision, but does not decode loc meshes; flipping the renderer on
-  rebuilds 3D from the same map bytes.
+  focused slot to 50 fps; sidecar 50 fps raises unfocused wall members;
+  full rate (this run) raises every drawing slot (below). Unfocused slots
+  do not raster. The Game Image is an RGBA8 texture that is **never below
+  765×503** (`fit_applet` scale floor 1.0). Grid tiles may still
+  downscale. Rendering never pauses the bot. Renderer-off /
+  `set_draw(false)` still runs `mainloop` and collision, but does not
+  decode loc meshes; flipping the renderer on rebuilds 3D from the same
+  map bytes.
+- **sidecar 50 fps** — unfocused wall members at 50 fps. Interactive /
+  non-test. Scenarios never flip it.
+- **full rate (this run)** — `--live script_*` / smoke only. Every
+  drawing slot at 50 fps, focused included. Ephemeral.
 - **Music / SFX** — unchecked by default (lowmem). Checking it sets
   `Profile.settings.lowmem = false` for that username, opting that one
   profile into **highmem**; it applies the next time the profile starts.
@@ -89,6 +95,8 @@ checkboxes on a focused profile:
   no `try_recv`).
 
 Capture follows focus (never two keyboards) and implies renderer.
+Capture still keeps the focused slot on the 20 ms loop for click-through;
+it is not how tests get fps.
 
 ## MultiBox wall (campaign 4)
 

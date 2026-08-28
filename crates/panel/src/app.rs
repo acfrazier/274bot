@@ -217,8 +217,9 @@ enum LiveBoot {
     NullRaster,
     Stress50,
     Script { name: String },
-    /// `--smoke`: the `render_smoke` scenario with the relaxed seed gate,
-    /// the smoke deadline, and the shot sink armed.
+    /// `--smoke`: the `render_smoke` scenario with the shot sink armed.
+    /// The scenario's own settings carry the 300 s deadline and the off
+    /// mainland-base gate; `live_smoke_tick` keeps its outer ceiling.
     Smoke,
 }
 
@@ -249,15 +250,6 @@ impl LiveBoot {
                     .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
                 state.session.live_prepare_script(scenario)?;
                 arm_scenario_shots(state);
-                // `nav_full` runs longer than the default scenario deadline
-                // (mainland seed + a ~150-tile walk) and needs a terminal
-                // whole-window shot on PASS and on FAIL.
-                if scenario_name == "nav_full" {
-                    if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
-                        runner.set_deadline(NAV_FULL_DEADLINE);
-                        runner.set_terminal_shot("nav_full terminal");
-                    }
-                }
                 state.live = Some(LiveHarness::Script(LiveScript {
                     name,
                     passed: false,
@@ -270,10 +262,6 @@ impl LiveBoot {
                 let scenario = scenario::get("render_smoke")
                     .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
                 state.session.live_prepare_script(scenario)?;
-                if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
-                    runner.no_mainland_gate();
-                    runner.set_deadline(SMOKE_DEADLINE);
-                }
                 arm_scenario_shots(state);
                 state.live = Some(LiveHarness::Smoke(LiveSmoke {
                     started: Instant::now(),
@@ -454,11 +442,6 @@ impl RunMode {
 /// with exit 1. Generous — scene 2 usually lands inside the first two
 /// minutes.
 const SMOKE_DEADLINE: Duration = Duration::from_secs(300);
-
-/// `nav_full` whole-run deadline: the mainland seed can take ~90s and the
-/// ~150-tile walk another ~2 minutes, so the default 180s scenario
-/// deadline would fail a healthy run. 360s still bounds a stuck one.
-const NAV_FULL_DEADLINE: Duration = Duration::from_secs(360);
 
 /// `nav_full` FAIL shot drain: after a `Failed` status the panel holds
 /// the exit up to this long so the terminal whole-window capture — asked
@@ -1679,7 +1662,7 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
         session.set_renderer(cur);
     }
     ui.text_wrapped(if on {
-        "1 fps watch; capture raises the focused slot to 50 fps. Never pauses the bot."
+        "1 fps watch; capture (focused), sidecar (members), and the live overlay all raise to 50 fps. Never pauses the bot."
     } else {
         "renderer off — bot still runs."
     });
@@ -1690,6 +1673,17 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
         session.set_sidecar_50(sidecar);
     }
     ui.text_wrapped("wall/grid members repaint every 20 ms, not 1 s");
+    // Live-only "full rate (this run)": the ephemeral live overlay, shown
+    // only while a `--live script_*` / smoke runner is up (scenarios never
+    // flip the sidecar knob, and the checkbox cannot outlive the run).
+    let live = session.scenario.lock().unwrap().is_some();
+    if live {
+        let mut full = session.focus.lock().unwrap().live_full_rate;
+        if ui.checkbox("full rate (this run)", &mut full) {
+            session.set_live_full_rate(full);
+        }
+        ui.text_wrapped("every drawing slot at 50 fps; not sidecar, not capture, not saved");
+    }
     // Music / SFX: the focused profile's vault lowmem. The toggle
     // retargets the focused slot's cpal speaker live.
     let mut music = !session.focused_lowmem();
