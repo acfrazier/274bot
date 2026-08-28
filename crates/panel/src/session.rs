@@ -30,7 +30,9 @@ use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
-use nav::paint::{collision_at, hull_targets, remaining_path_tiles, trail_tones, TrailTone};
+use nav::paint::{
+    collision_at, hull_targets, remaining_path_tiles, select_draw_indices, trail_tones, TrailTone,
+};
 use nav::router::{find, find_allow_teleports, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
@@ -197,8 +199,9 @@ struct NavPublishCfg {
 ///
 /// World → scene: `x - map_build_base_x`, `z - map_build_base_z`.
 /// Collision covers every tile of the loaded [`SCENE_TILES`]² region the
-/// `collision_fill` / `nsew_labels` toggles warrant; the path is the full
-/// remaining route (the client clips to what its scene can project).
+/// `collision_fill` / `nsew_labels` toggles warrant; the path is the
+/// remaining route subsampled to the 3D draw budget (the pack map keeps
+/// the full path).
 // The brief fixes this signature; a param struct would only shuffle names
 // across the one call site.
 #[allow(clippy::too_many_arguments)]
@@ -233,10 +236,10 @@ fn publish_nav_debug(
         show_collision: settings.collision_fill,
         show_nsew: settings.nsew_labels,
         show_path: settings.show_nav_path,
-        show_trail: settings.client_trail,
-        // The hop-labels toggle also strokes the transport loc hulls (the
-        // client's transport colour family covers both).
-        show_hulls: settings.hop_labels,
+        // `show_nav_path` is the master for the path / hull / trail paints
+        // (spec Display row); the layer toggles opt each one in.
+        show_trail: settings.show_nav_path && settings.client_trail,
+        show_hulls: settings.show_nav_path && settings.hop_labels,
         ..NavDebugPaint::default()
     };
     // Collision: every tile of the loaded scene region whose
@@ -277,21 +280,42 @@ fn publish_nav_debug(
                     bits |= FACE_W;
                 }
                 if (settings.collision_fill && fb.blocked) || (settings.nsew_labels && bits != 0) {
-                    paint.collision.push(NavDebugCell { lx, lz, bits });
+                    paint.collision.push(NavDebugCell {
+                        lx,
+                        lz,
+                        bits,
+                        // The client fills only blocked ground; a face-only
+                        // cell keeps its NSEW letters without a fill quad.
+                        blocked: fb.blocked,
+                    });
                 }
             }
         }
     }
     if let Some(route) = route {
-        // Path: the full remaining route; the client clips the draw.
+        // Path: the remaining route subsampled to the 3D draw budget.
+        // Full density near, stride after, always keeping the transport
+        // hops and the terminal (the pack map keeps the full path).
         if settings.show_nav_path {
-            paint.path = remaining_path_tiles(route, here)
+            let tiles = remaining_path_tiles(route, here);
+            let force: Vec<usize> = tiles
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.transport.then_some(i))
+                .collect();
+            paint.path = select_draw_indices(0, tiles.len(), &force)
                 .into_iter()
-                .map(|p| (p.tile.x - base_x, p.tile.z - base_z, p.transport))
+                .map(|i| {
+                    let p = tiles[i];
+                    (p.tile.x - base_x, p.tile.z - base_z, p.transport)
+                })
                 .collect();
         }
         // Hulls: the loc-backed transport hops ahead, scene coords.
-        if settings.hop_labels {
+        // `show_nav_path` masters them; the hop-labels toggle also
+        // strokes the transport loc hulls (the client's transport colour
+        // family covers both).
+        if settings.show_nav_path && settings.hop_labels {
             paint.hulls = hull_targets(route, here, HULL_WINDOW)
                 .into_iter()
                 .map(|h| NavDebugHull {
@@ -302,16 +326,20 @@ fn publish_nav_debug(
                 .collect();
         }
     }
-    // Trail: client trail tones (two-tone while running).
-    if settings.client_trail {
+    // Trail: client trail tones (two-tone while running). `show_nav_path`
+    // is the master (spec Display row); `client_trail` opts the layer in.
+    if settings.show_nav_path && settings.client_trail {
         paint.trail = trail_tones(trail_world, run_on)
             .into_iter()
             .map(|(t, tone)| (t.x - base_x, t.z - base_z, tone == TrailTone::RunAlt))
             .collect();
     }
-    // Click: the traveller's current walk aim, scene coords.
-    if let Some(aim) = click {
-        paint.click = Some((aim.x - base_x, aim.z - base_z));
+    // Click: the traveller's current walk aim, scene coords. `show_nav_path`
+    // masters it like the hulls (no nav path, no walk-target paint).
+    if settings.show_nav_path {
+        if let Some(aim) = click {
+            paint.click = Some((aim.x - base_x, aim.z - base_z));
+        }
     }
     client.set_nav_debug_paint(Some(paint));
 }
@@ -2016,6 +2044,7 @@ mod tests {
     use client::dash3d::CollisionFlag;
     use client::render::nav_debug::{FACE_N, FACE_S};
     use nav::collision::{derive_walkable, WorldCollision};
+    use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
     use nav::tile::Tile;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -2224,6 +2253,7 @@ mod tests {
         let mut c = paint_client();
         let world = walled_world();
         let layers = NavSettings {
+            show_nav_path: true,
             client_trail: true,
             ..NavSettings::default()
         };
@@ -2264,6 +2294,287 @@ mod tests {
             "run-on trail alternates Primary / RunAlt in scene coords"
         );
         assert!(paint.show_trail);
+    }
+
+    /// A walk leg then a Door transport (loc-backed), the shape the hull
+    /// and draw-budget tests need.
+    fn door_route() -> Route {
+        Route {
+            legs: vec![
+                Leg::Walk {
+                    tiles: vec![
+                        WorldTile {
+                            x: 3200,
+                            z: 3200,
+                            level: 0,
+                        },
+                        WorldTile {
+                            x: 3201,
+                            z: 3200,
+                            level: 0,
+                        },
+                    ],
+                },
+                Leg::Transport {
+                    edge: TransportEdge {
+                        kind: TransportKind::Door,
+                        at: WorldTile {
+                            x: 3202,
+                            z: 3200,
+                            level: 0,
+                        },
+                        to: WorldTile {
+                            x: 3203,
+                            z: 3200,
+                            level: 0,
+                        },
+                        loc_id: 1530,
+                        option: 1,
+                        ticks: 1,
+                        dir: None,
+                        open_loc_id: None,
+                        skill_req: vec![],
+                        item_req: vec![],
+                        quest_req: vec![],
+                        varp_req: vec![],
+                    },
+                },
+            ],
+            dest: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 0.0,
+        }
+    }
+
+    #[test]
+    fn face_only_cell_stays_in_nsew_set_without_collision_block() {
+        // A W_S-only tile: standable ground, one face flag. With both
+        // layers on the cell must stay in the NSEW set (letters) yet
+        // report `blocked` false so the client never collision-fills it.
+        let width = 64;
+        let height = 64;
+        let mut flags = vec![0u32; width * height];
+        flags[1 * width + 1] = CollisionFlag::W_S as u32;
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                width,
+                height,
+                flags: flags.clone(),
+                walkable: derive_walkable(&flags),
+            },
+            graph: TransportGraph::default(),
+        };
+        let mut c = paint_client();
+        let layers = effective(&NavSettings::default(), true);
+        publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
+        let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
+        let face_only = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 1 && cell.lz == 1)
+            .expect("the W_S tile must be in the NSEW set");
+        assert!(
+            face_only.bits & FACE_S != 0 && !face_only.blocked,
+            "face-only cell keeps its letter but is never collision-blocked"
+        );
+    }
+
+    #[test]
+    fn show_nav_path_masters_hulls_click_and_trail() {
+        let mut c = paint_client();
+        let world = walled_world();
+        let route = door_route();
+        let click = Some(WorldTile {
+            x: 3252,
+            z: 3252,
+            level: 0,
+        });
+        let trail_world = [WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        }];
+
+        // Master off: hulls/click/trail stay off even with their own
+        // toggles on.
+        let layers = NavSettings {
+            hop_labels: true,
+            client_trail: true,
+            ..NavSettings::default()
+        };
+        publish_nav_debug(
+            &mut c,
+            &world,
+            Some(&route),
+            None,
+            &trail_world,
+            false,
+            click,
+            &layers,
+            true,
+        );
+        let paint = c.nav_debug_paint().unwrap();
+        assert!(
+            !paint.show_hulls && paint.hulls.is_empty(),
+            "show_nav_path masters the hulls"
+        );
+        assert!(
+            paint.click.is_none(),
+            "no nav path, no walk-target paint"
+        );
+        assert!(
+            !paint.show_trail && paint.trail.is_empty(),
+            "show_nav_path masters the trail"
+        );
+
+        // Master on, layer toggles off: hulls and trail still stay off;
+        // the click (which has no extra toggle) comes on.
+        let layers = NavSettings {
+            show_nav_path: true,
+            hop_labels: false,
+            client_trail: false,
+            ..NavSettings::default()
+        };
+        publish_nav_debug(
+            &mut c,
+            &world,
+            Some(&route),
+            None,
+            &trail_world,
+            false,
+            click,
+            &layers,
+            true,
+        );
+        let paint = c.nav_debug_paint().unwrap();
+        assert!(
+            !paint.show_hulls && paint.hulls.is_empty(),
+            "hop_labels is the hulls' second gate"
+        );
+        assert!(
+            !paint.show_trail && paint.trail.is_empty(),
+            "client_trail is the trail's second gate"
+        );
+        assert_eq!(
+            paint.click,
+            Some((52, 52)),
+            "show_nav_path masters the click paint"
+        );
+
+        // Master + toggles on: the door hop hull and the trail publish.
+        let layers = NavSettings {
+            show_nav_path: true,
+            hop_labels: true,
+            client_trail: true,
+            ..NavSettings::default()
+        };
+        publish_nav_debug(
+            &mut c,
+            &world,
+            Some(&route),
+            None,
+            &trail_world,
+            true,
+            click,
+            &layers,
+            true,
+        );
+        let paint = c.nav_debug_paint().unwrap();
+        assert!(
+            paint.show_hulls && paint.hulls.iter().any(|h| h.loc_id == 1530),
+            "the door hop hull publishes with master + hop_labels"
+        );
+        assert!(
+            paint.show_trail && paint.trail.iter().any(|&(lx, lz, _)| lx == 0 && lz == 0),
+            "the trail publishes with master + client_trail"
+        );
+    }
+
+    #[test]
+    fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
+        // 300 walk tiles + a door hop: the 3D path must stay under the
+        // draw budget, full density near, keeping the transport hop and
+        // the terminal.
+        let mut c = paint_client();
+        let world = walled_world();
+        let mut tiles: Vec<WorldTile> = (0..300)
+            .map(|x| WorldTile {
+                x: 3200 + x,
+                z: 3200,
+                level: 0,
+            })
+            .collect();
+        tiles.push(WorldTile {
+            x: 3500,
+            z: 3200,
+            level: 0,
+        });
+        tiles.push(WorldTile {
+            x: 3501,
+            z: 3200,
+            level: 0,
+        });
+        let route = Route {
+            legs: vec![
+                Leg::Walk {
+                    tiles: tiles[..300].to_vec(),
+                },
+                Leg::Transport {
+                    edge: TransportEdge {
+                        kind: TransportKind::Door,
+                        at: tiles[300],
+                        to: tiles[301],
+                        loc_id: 1530,
+                        option: 1,
+                        ticks: 1,
+                        dir: None,
+                        open_loc_id: None,
+                        skill_req: vec![],
+                        item_req: vec![],
+                        quest_req: vec![],
+                        varp_req: vec![],
+                    },
+                },
+            ],
+            dest: tiles[301],
+            ticks: 0.0,
+        };
+        let layers = NavSettings {
+            show_nav_path: true,
+            ..NavSettings::default()
+        };
+        publish_nav_debug(&mut c, &world, Some(&route), None, &[], false, None, &layers, true);
+        let paint = c.nav_debug_paint().unwrap();
+        assert!(
+            paint.path.len() <= MAX_DRAW_TILES,
+            "the 3D path respects the draw budget ({} tiles)",
+            paint.path.len()
+        );
+        assert!(
+            paint.path.iter().any(|&p| p == (300, 0, true)),
+            "the transport hop is never subsampled away"
+        );
+        assert_eq!(
+            paint.path.last(),
+            Some(&(301, 0, true)),
+            "the terminal hop tile always survives"
+        );
+        assert!(
+            paint.path.iter().any(|&p| p == (0, 0, false))
+                && paint
+                    .path
+                    .iter()
+                    .any(|&p| p == (NEAR_FULL_DENSITY as i32 - 1, 0, false)),
+            "the near path stays at full density"
+        );
     }
 
     #[test]
