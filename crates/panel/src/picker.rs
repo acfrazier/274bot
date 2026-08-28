@@ -53,7 +53,10 @@ pub fn default_pack_path() -> PathBuf {
     }
 }
 
-fn pack() -> Option<&'static NavWorld> {
+/// The baked world, loaded once per process; `None` when the pack is
+/// missing or corrupt. The session's scene-paint publish reads the same
+/// world the picker maps.
+pub(crate) fn pack() -> Option<&'static NavWorld> {
     PACK.get_or_init(|| NavWorld::load_pack(&default_pack_path()).ok())
         .as_ref()
 }

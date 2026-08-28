@@ -20,12 +20,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use api::snapshot::{GameSnapshot, WorldTile};
+use client::client::Client;
+use client::render::nav_debug::{
+    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaint, FACE_E, FACE_N, FACE_S, FACE_W,
+};
 use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
+use nav::paint::{collision_at, hull_targets, remaining_path_tiles, trail_tones, TrailTone};
 use nav::router::{find, find_allow_teleports, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
@@ -33,6 +38,7 @@ use nav::world::NavWorld;
 use vault::{Profile, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
+use crate::nav_settings::{effective, parse_html_color, NavSettings};
 use crate::wall::Wall;
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -160,6 +166,155 @@ pub fn script_status_text(state: script::RunState) -> &'static str {
     }
 }
 
+/// The loaded scene's tile count per side (the client's `BUILD_AREA_SIZE`):
+/// the collision paint only covers the region the client has built,
+/// `[base_x, base_x+104) × [base_z, base_z+104)` in world tiles.
+const SCENE_TILES: i32 = 104;
+
+/// Transport hops up to this many remaining tiles ahead get hull strokes;
+/// the client only projects the locs inside its loaded scene anyway.
+const HULL_WINDOW: usize = 48;
+
+/// Per-frame nav-paint mirror: the slot threads read it each observe to
+/// publish the focused drawing slot's scene paint.
+/// [`Session::pump_status`] re-copies it from `Session::ui.nav` +
+/// `nav_live_force_layers` every UI frame, so modal edits and live-overlay
+/// flips land within a frame.
+#[derive(Clone, Default)]
+struct NavPublishCfg {
+    settings: NavSettings,
+    live_force_layers: bool,
+}
+
+/// Publish the nav-debug scene paint for the focused drawing slot each
+/// observe. `drawing` is the gate: only the focused slot with its renderer
+/// on publishes; unfocused / skip-paint / renderer-off slots store `None`
+/// so a stale paint never lingers. `world` is the baked pack, `route` the
+/// armed walk route, `here` the player's observed world tile, `trail_world`
+/// the client trail tiles (the fork tracks no `tryMove` trail yet — pass
+/// `&[]`), `run_on` the local player's run state (two-tone trail).
+///
+/// World → scene: `x - map_build_base_x`, `z - map_build_base_z`.
+/// Collision covers every tile of the loaded [`SCENE_TILES`]² region the
+/// `collision_fill` / `nsew_labels` toggles warrant; the path is the full
+/// remaining route (the client clips to what its scene can project).
+// The brief fixes this signature; a param struct would only shuffle names
+// across the one call site.
+#[allow(clippy::too_many_arguments)]
+fn publish_nav_debug(
+    client: &mut Client,
+    world: &NavWorld,
+    route: Option<&Route>,
+    here: Option<WorldTile>,
+    trail_world: &[WorldTile],
+    run_on: bool,
+    settings: &NavSettings,
+    drawing: bool,
+) {
+    if !drawing {
+        client.set_nav_debug_paint(None);
+        return;
+    }
+    let base_x = client.map_build_base_x;
+    let base_z = client.map_build_base_z;
+    let mut colors = NavDebugColors::default();
+    colors.collision = parse_html_color(&settings.color_collision, colors.collision);
+    colors.nsew = parse_html_color(&settings.color_text, colors.nsew);
+    colors.path = parse_html_color(&settings.color_path, colors.path);
+    colors.path_hop = parse_html_color(&settings.color_transport, colors.path_hop);
+    colors.trail = parse_html_color(&settings.color_client, colors.trail);
+    colors.trail_run = parse_html_color(&settings.color_client_run_alt, colors.trail_run);
+    colors.hull = parse_html_color(&settings.color_transport, colors.hull);
+    colors.click = parse_html_color(&settings.color_click, colors.click);
+    let mut paint = NavDebugPaint {
+        colors,
+        show_collision: settings.collision_fill,
+        show_nsew: settings.nsew_labels,
+        show_path: settings.show_nav_path,
+        show_trail: settings.client_trail,
+        // The hop-labels toggle also strokes the transport loc hulls (the
+        // client's transport colour family covers both).
+        show_hulls: settings.hop_labels,
+        ..NavDebugPaint::default()
+    };
+    // Collision: every tile of the loaded scene region whose
+    // `collision_fill` (blocked ground) or `nsew_labels` (face letters)
+    // toggle paints it, in scene coords. Tiles outside the pack grid read
+    // as open — no phantom wall at the bake's edge.
+    if settings.collision_fill || settings.nsew_labels {
+        let level = world.collision.origin.level;
+        let ox = world.collision.origin.x;
+        let oz = world.collision.origin.z;
+        let (ow, oh) = (world.collision.width as i32, world.collision.height as i32);
+        for lz in 0..SCENE_TILES {
+            for lx in 0..SCENE_TILES {
+                let x = base_x + lx;
+                let z = base_z + lz;
+                if x < ox || z < oz || x - ox >= ow || z - oz >= oh {
+                    continue;
+                }
+                let fb = collision_at(
+                    &world.collision,
+                    WorldTile {
+                        x,
+                        z,
+                        level,
+                    },
+                );
+                let mut bits = 0u8;
+                if fb.n {
+                    bits |= FACE_N;
+                }
+                if fb.s {
+                    bits |= FACE_S;
+                }
+                if fb.e {
+                    bits |= FACE_E;
+                }
+                if fb.w {
+                    bits |= FACE_W;
+                }
+                if (settings.collision_fill && fb.blocked) || (settings.nsew_labels && bits != 0) {
+                    paint.collision.push(NavDebugCell { lx, lz, bits });
+                }
+            }
+        }
+    }
+    if let Some(route) = route {
+        // Path: the full remaining route; the client clips the draw.
+        if settings.show_nav_path {
+            paint.path = remaining_path_tiles(route, here)
+                .into_iter()
+                .map(|p| (p.tile.x - base_x, p.tile.z - base_z, p.transport))
+                .collect();
+        }
+        // Hulls: the loc-backed transport hops ahead, scene coords.
+        if settings.hop_labels {
+            paint.hulls = hull_targets(route, here, HULL_WINDOW)
+                .into_iter()
+                .map(|h| NavDebugHull {
+                    loc_id: h.loc_id,
+                    scene_x: h.at.x - base_x,
+                    scene_z: h.at.z - base_z,
+                })
+                .collect();
+        }
+    }
+    // Trail: client trail tones (two-tone while running).
+    if settings.client_trail {
+        paint.trail = trail_tones(trail_world, run_on)
+            .into_iter()
+            .map(|(t, tone)| (t.x - base_x, t.z - base_z, tone == TrailTone::RunAlt))
+            .collect();
+    }
+    // Click: the client's current walk-aim tile (the server hint the
+    // traveller's last walk send set), scene coords.
+    if client.hint_type == 2 {
+        paint.click = Some((client.hint_tile_x - base_x, client.hint_tile_z - base_z));
+    }
+    client.set_nav_debug_paint(Some(paint));
+}
+
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
@@ -210,6 +365,10 @@ pub struct Session {
     /// Live-harness overlay: force the paint-layer toggles on for this
     /// session without writing prefs (`NavSettings::effective`).
     pub nav_live_force_layers: bool,
+    /// Per-frame nav-paint mirror the slot threads publish from each
+    /// observe (see [`publish_nav_debug`]); `pump_status` re-copies it
+    /// from `ui.nav` + `nav_live_force_layers` every UI frame.
+    nav_publish: Arc<Mutex<NavPublishCfg>>,
     /// Overlay generation: bumped whenever the focused traveller's route
     /// can change (a new arm, or the focused profile switching). The path
     /// overlay rebuilds immediately on a bump instead of waiting for its
@@ -338,6 +497,7 @@ impl Session {
             picker_sel: None,
             nav_settings_open: false,
             nav_live_force_layers: false,
+            nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             scatter: Arc::new(AtomicBool::new(false)),
@@ -551,6 +711,7 @@ impl Session {
         let walk_clear = Arc::clone(&self.walk_clear);
         let scenario = Arc::clone(&self.scenario);
         let audio = Arc::clone(&self.audio);
+        let nav_publish = Arc::clone(&self.nav_publish);
         // Last failed device-open `(slot, when)`; a machine without an
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
@@ -568,6 +729,47 @@ impl Session {
                     (f.focused.clone(), draw_for_slot(&f, name))
                 };
                 c.set_draw(draw);
+                // Nav-debug scene paint: only the focused drawing slot
+                // publishes; a slot that stops drawing stores None so a
+                // stale paint cannot linger.
+                let (nav_settings, live_force) = {
+                    let cfg = nav_publish.lock().unwrap();
+                    (cfg.settings.clone(), cfg.live_force_layers)
+                };
+                let layers = effective(&nav_settings, live_force);
+                let drawing = focused.as_deref() == Some(name) && draw;
+                let route = travellers
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .cloned()
+                    .and_then(|arm| arm.lock().unwrap().route.clone());
+                match crate::picker::pack() {
+                    Some(world) => {
+                        let here = c.local_player.as_ref().map(|lp| WorldTile {
+                            x: c.map_build_base_x + lp.route_x[0],
+                            z: c.map_build_base_z + lp.route_z[0],
+                            level: 0,
+                        });
+                        // The snapshot's player-run bit reads the same
+                        // animation state; default off with no player.
+                        let run_on = c.local_player.as_ref().is_some_and(|lp| {
+                            lp.entity.primary_anim == lp.entity.runanim
+                        });
+                        publish_nav_debug(
+                            c,
+                            world,
+                            route.as_ref(),
+                            here,
+                            // No client `tryMove` trail is tracked yet.
+                            &[],
+                            run_on,
+                            &layers,
+                            drawing,
+                        );
+                    }
+                    None => c.set_nav_debug_paint(None),
+                }
                 // Focused-slot speaker: at most one cpal speaker, fed by
                 // this slot's Client audio state (midi/waves/fade), gated
                 // on focus + the Music/SFX toggle — `lowmem` (toggle off)
@@ -719,6 +921,7 @@ impl Session {
         // the sidecar-50 cadence latch, and the speaker teardown when the
         // owning slot is no longer running.
         self.sync_sidecar_cadence();
+        self.sync_nav_publish();
         if let Some(owner) = self.audio.owner() {
             if !self.slots.contains_key(&owner) {
                 self.audio.release(&owner);
@@ -953,6 +1156,16 @@ impl Session {
         for (name, slot) in &self.slots {
             slot.input.set_full_rate(full_rate_for(&focus, name));
         }
+    }
+
+    /// Mirror the effective nav-paint config onto the slot threads (they
+    /// publish the focused drawing slot's paint every observe). Runs every
+    /// UI frame so a modal edit or live-overlay flip lands within a frame.
+    fn sync_nav_publish(&self) {
+        *self.nav_publish.lock().unwrap() = NavPublishCfg {
+            settings: self.ui.nav.clone(),
+            live_force_layers: self.nav_live_force_layers,
+        };
     }
 
     /// Game window `.build()` Some/None. Closing the pane turns capture off
@@ -1767,16 +1980,17 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        arm_login_all, combo_index, maybe_send_click, script_active, script_pause_enabled,
-        script_status_text, script_stop_enabled, seed_on_first_world, stream_capture, Session,
-        SlotIo,
+        arm_login_all, combo_index, maybe_send_click, publish_nav_debug, script_active,
+        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
+        stream_capture, Session, SlotIo,
     };
     use host::{FrameBuf, InputEv, SlotInput};
     use host_play::{SlotArm, SlotStatus};
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
-    use nav::collision::WorldCollision;
-    use nav::router::Leg;
+    use client::render::nav_debug::{FACE_N, FACE_S};
+    use nav::collision::{derive_walkable, WorldCollision};
+    use nav::router::{Leg, Route};
     use nav::tile::Tile;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use nav::world::NavWorld;
@@ -1784,6 +1998,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use vault::{Profile, ProfileSettings, Vault};
+
+    use crate::nav_settings::{effective, NavSettings};
 
     fn empty_play() -> host_play::Play {
         host_play::run_with_io(
@@ -1825,6 +2041,154 @@ mod tests {
             },
             graph: TransportGraph::default(),
         }
+    }
+
+    /// A synthetic offline client with a fake mainland scene base (same
+    /// trick as the app tests — no live server, no network).
+    fn paint_client() -> client::client::Client {
+        let mut c = host::prepare_client(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(client::config::Cache::default()),
+            vec![],
+        );
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c
+    }
+
+    /// A 64×64 level-0 world at (3200, 3200) with a face wall and a
+    /// WR_GRND ground block inside the scene region.
+    fn walled_world() -> NavWorld {
+        let width = 64;
+        let height = 64;
+        let mut flags = vec![0u32; width * height];
+        flags[1 * width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
+        flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                width,
+                height,
+                flags: flags.clone(),
+                walkable: derive_walkable(&flags),
+            },
+            graph: TransportGraph::default(),
+        }
+    }
+
+    #[test]
+    fn focused_slot_publishes_scene_collision_for_loaded_map() {
+        let mut c = paint_client();
+        let world = walled_world();
+        // Live-harness layers force collision_fill + nsew_labels on.
+        let layers = effective(&NavSettings::default(), true);
+        let route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![
+                    WorldTile {
+                        x: 3200,
+                        z: 3200,
+                        level: 0,
+                    },
+                    WorldTile {
+                        x: 3201,
+                        z: 3200,
+                        level: 0,
+                    },
+                    WorldTile {
+                        x: 3202,
+                        z: 3200,
+                        level: 0,
+                    },
+                ],
+            }],
+            dest: WorldTile {
+                x: 3202,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let here = Some(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        });
+        // The server hint: the traveller's current walk-aim tile.
+        c.hint_type = 2;
+        c.hint_tile_x = 3200 + 52;
+        c.hint_tile_z = 3200 + 52;
+        publish_nav_debug(&mut c, &world, Some(&route), here, &[], false, &layers, true);
+        let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
+        assert!(
+            !paint.collision.is_empty(),
+            "the loaded scene must include the walled tiles"
+        );
+        assert!(
+            paint
+                .collision
+                .iter()
+                .all(|cell| (0..104).contains(&cell.lx) && (0..104).contains(&cell.lz)),
+            "collision cells are scene tiles inside the loaded 104×104 map"
+        );
+        assert!(
+            paint
+                .collision
+                .iter()
+                .all(|cell| cell.lx < 64 && cell.lz < 64),
+            "tiles outside the pack bake must not paint a phantom wall"
+        );
+        let nsew = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 1 && cell.lz == 1);
+        assert!(
+            nsew.is_some_and(|cell| cell.bits & FACE_N != 0 && cell.bits & FACE_S != 0),
+            "the W_N/W_S tile must pack the N and S face bits"
+        );
+        assert!(
+            paint
+                .collision
+                .iter()
+                .any(|cell| cell.lx == 2 && cell.lz == 2 && cell.bits == 0),
+            "the WR_GRND tile blocks ground with no face bits"
+        );
+        // Path: world tiles convert to scene tiles (client clips).
+        assert_eq!(
+            paint.path,
+            vec![(0, 0, false), (1, 0, false), (2, 0, false)],
+            "remaining path tiles convert to scene lx,lz"
+        );
+        // Click: the client's walk-aim tile converts to scene coords.
+        assert_eq!(paint.click, Some((52, 52)));
+        assert!(paint.show_collision && paint.show_nsew && paint.show_path);
+    }
+
+    #[test]
+    fn unfocused_slot_clears_nav_debug_paint() {
+        let mut c = paint_client();
+        let world = walled_world();
+        let layers = effective(&NavSettings::default(), true);
+        publish_nav_debug(&mut c, &world, None, None, &[], false, &layers, true);
+        assert!(c.nav_debug_paint().is_some());
+        // Unfocused / skip-paint / renderer-off slots must not linger on a
+        // stale paint.
+        publish_nav_debug(&mut c, &world, None, None, &[], false, &layers, false);
+        assert!(
+            c.nav_debug_paint().is_none(),
+            "a non-drawing slot stores None"
+        );
     }
 
     #[test]
