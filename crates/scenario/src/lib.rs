@@ -45,12 +45,15 @@ pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(180);
 
 /// Boot defaults for a scenario. View knobs are headed-only; deadline /
 /// terminal shot / mainland-base gate are consumed by `ScenarioRunner`.
+/// `nav_debug` arms the panel's live overlay: the paint-layer toggles are
+/// forced on for the run without writing the persisted panel prefs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioSettings {
     pub renderer: bool,
     pub only_render_selected: bool,
     pub capture: bool,
     pub full_rate: bool,
+    pub nav_debug: bool,
     pub deadline: Duration,
     pub terminal_shot: Option<&'static str>,
     pub require_mainland_base: bool,
@@ -63,6 +66,7 @@ impl Default for ScenarioSettings {
             only_render_selected: true,
             capture: false,
             full_rate: false,
+            nav_debug: false,
             deadline: DEFAULT_DEADLINE,
             terminal_shot: None,
             require_mainland_base: false,
@@ -160,13 +164,21 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_full" => Some(nav_full_scenario()),
         "nav_door" => Some(nav_door_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
+        "nav_paint_path" => Some(nav_paint_path_scenario()),
         _ => None,
     }
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
-    vec!["walk", "render_smoke", "nav_full", "nav_door", "nav_routes"]
+    vec![
+        "walk",
+        "render_smoke",
+        "nav_full",
+        "nav_door",
+        "nav_routes",
+        "nav_paint_path",
+    ]
 }
 
 /// The `render_smoke` scenario: log in `test`/`test`, do nothing, and
@@ -387,6 +399,7 @@ fn nav_door_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             only_render_selected: false,
+            nav_debug: true,
             ..Default::default()
         },
     }
@@ -730,7 +743,52 @@ fn nav_routes_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
+            nav_debug: true,
             deadline: Duration::from_secs(3600),
+            ..Default::default()
+        },
+    }
+}
+
+/// The `nav_paint_path` scenario: log in `test`/`test`, mainland-hop into
+/// the Lumbridge courtyard, and walk ~8 tiles south in one `Walk` step.
+/// `nav_debug` arms the panel's live overlay, so the headed runner shows
+/// the red baked path clipped to the viewport, the cyan client trail, and
+/// (with run on) the two-tone run-alt trail. No closer, no transport — the
+/// whole point is a plain courtyard path the camera can hold.
+fn nav_paint_path_scenario() -> Scenario {
+    let dest = WorldTile {
+        x: 3220,
+        z: 3212,
+        level: 0,
+    };
+    Scenario {
+        name: "nav_paint_path",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![Step {
+            name: "walk to courtyard south",
+            kind: StepKind::Walk { dest },
+            wait: Wait {
+                arm: Proof::Arrived {
+                    x: dest.x,
+                    z: dest.z,
+                    level: 0,
+                },
+                budget_ticks: 90,
+            },
+        }],
+        proof: Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: 0,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav_debug: true,
             ..Default::default()
         },
     }
@@ -859,7 +917,14 @@ mod tests {
         assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
         assert_eq!(
             names(),
-            ["walk", "render_smoke", "nav_full", "nav_door", "nav_routes"]
+            [
+                "walk",
+                "render_smoke",
+                "nav_full",
+                "nav_door",
+                "nav_routes",
+                "nav_paint_path"
+            ]
         );
     }
 
@@ -951,6 +1016,7 @@ mod tests {
         assert!(d.only_render_selected);
         assert!(!d.capture);
         assert!(!d.full_rate);
+        assert!(!d.nav_debug, "paint layers are opt-in per scenario");
         assert_eq!(d.deadline, DEFAULT_DEADLINE);
         assert_eq!(d.terminal_shot, None);
         assert!(
@@ -968,6 +1034,51 @@ mod tests {
         assert!(s.settings.renderer);
         assert_eq!(s.settings.deadline, DEFAULT_DEADLINE);
         assert!(!s.settings.require_mainland_base);
+    }
+
+    #[test]
+    fn nav_door_settings_force_nav_debug() {
+        let s = nav_door_scenario();
+        assert!(s.settings.nav_debug);
+        assert!(s.settings.full_rate);
+    }
+
+    #[test]
+    fn nav_paint_path_is_a_short_courtyard_walk_with_live_paint_layers() {
+        let s = get("nav_paint_path").expect("nav_paint_path is registered");
+        assert_eq!(s.name, "nav_paint_path");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(s.seed.mainland, "the hop lands the courtyard walk");
+        assert_eq!(s.steps.len(), 1, "one short WalkTo step");
+        let (dest, arm) = match &s.steps[0].kind {
+            StepKind::Walk { dest } => (
+                *dest,
+                match &s.steps[0].wait.arm {
+                    Proof::Arrived { x, z, level } => (*x, *z, *level),
+                    other => panic!("walk arm must be arrived, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_paint_path step must be Walk"),
+        };
+        // The courtyard walk spans ~8 tiles from the mainland landing
+        // (3220,3220) or (3220,3222) down to (3220,3212).
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 3220,
+                z: 3212,
+                level: 0
+            }
+        );
+        assert_eq!(arm, (3220, 3212, 0));
+        assert_eq!(s.proof.name(), "arrived(3220,3212,0)");
+        assert!(s.companions.is_empty(), "no closer for the paint path");
+        assert!(s.settings.full_rate);
+        assert!(s.settings.nav_debug);
+        assert!(
+            names().contains(&"nav_paint_path"),
+            "registered for --live script_nav_paint_path"
+        );
     }
 
     #[test]
@@ -1012,6 +1123,7 @@ mod tests {
         assert_eq!(dest, last);
         assert_eq!(s.proof.name(), "arrived(2817,3443,0)");
         assert!(s.settings.full_rate);
+        assert!(s.settings.nav_debug, "seam run forces the paint layers");
         assert_eq!(s.settings.deadline, Duration::from_secs(3600));
         assert!(names().contains(&"nav_routes"));
     }

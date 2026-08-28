@@ -688,6 +688,10 @@ impl Session {
         self.focus.lock().unwrap().only_render_selected = view.only_render_selected;
         self.set_capture(view.capture);
         self.set_live_full_rate(view.full_rate);
+        // A nav_debug scenario forces the paint-layer toggles on for the
+        // run. The force lives on the session only — never ui_state::save'd
+        // — so a live boot cannot clobber the operator's nav prefs.
+        self.nav_live_force_layers = view.nav_debug;
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
         let mut runner = scenario::ScenarioRunner::new(scenario);
@@ -3219,6 +3223,41 @@ mod tests {
         let runner = s.scenario.lock().unwrap();
         let runner = runner.as_ref().expect("runner");
         assert_eq!(runner.deadline(), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn live_force_layers_does_not_write_panel_ui() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.nav_live_force_layers = true;
+        assert!(
+            crate::nav_settings::effective(&s.ui.nav, s.nav_live_force_layers).show_nav_path,
+            "the live force drives the effective paint layers at runtime"
+        );
+        // A save/load roundtrip of the panel prefs must not persist the
+        // forced layer bools: `nav_live_force_layers` is session-only.
+        let ui = crate::ui_state::load();
+        assert!(
+            !ui.nav.show_nav_path,
+            "forced layers must never reach panel-ui.json"
+        );
+        // And a live boot of a nav_debug scenario arms the force without
+        // writing the prefs.
+        let mut s = Session::new();
+        s.live_prepare_script(scenario::get("nav_door").unwrap())
+            .expect("prepare");
+        assert!(
+            s.nav_live_force_layers,
+            "nav_debug scenario arms the live overlay"
+        );
+        let ui = crate::ui_state::load();
+        assert!(
+            !ui.nav.show_nav_path,
+            "live boot of a nav_debug scenario never writes the prefs"
+        );
     }
 
     #[test]

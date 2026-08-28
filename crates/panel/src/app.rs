@@ -2687,6 +2687,12 @@ mod tests {
             parse_live_args(["--live", "script_nav_routes"], None),
             Ok(RunMode::Live("script_nav_routes".into()))
         );
+        // The courtyard paint-path scenario is a registered scenario, so
+        // the script_ harness drives it like script_nav_routes.
+        assert_eq!(
+            parse_live_args(["--live", "script_nav_paint_path"], None),
+            Ok(RunMode::Live("script_nav_paint_path".into()))
+        );
     }
 
     #[test]
