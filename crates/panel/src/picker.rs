@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, MouseButton, Ui, WindowFlags};
-use nav::paint::{collision_at, flood_components, flood_sizes, remaining_path_tiles};
+use nav::paint::{collision_at, flood_components, remaining_path_tiles};
 use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
 use nav::world::NavWorld;
@@ -206,24 +206,53 @@ fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<Worl
     }
 }
 
-/// Last `nav-flood` line reported on stderr. The bake is static, so the
-/// component sizes change only when the player/dest seed pair changes (a
-/// new arm, or the player stepping into the dest's component).
-static FLOOD_REPORT: Mutex<Option<(WorldTile, WorldTile, usize, usize)>> = Mutex::new(None);
+/// Last `nav-flood` line reported on stderr, keyed by the arm generation
+/// (each new arm re-reports even for the same tiles), the seed pair, and
+/// the component sizes (which change when the player steps into the
+/// dest's component).
+static FLOOD_REPORT: Mutex<Option<(u64, WorldTile, WorldTile, usize, usize)>> = Mutex::new(None);
+
+/// The `nav-flood` line to print this frame, `None` when nothing changed
+/// since the last report. The arm generation is part of the key, so a
+/// second arm with the same tiles still reports.
+fn flood_report_line(
+    last: Option<(u64, WorldTile, WorldTile, usize, usize)>,
+    arm_gen: u64,
+    player: WorldTile,
+    dest: WorldTile,
+    n: usize,
+    m: usize,
+) -> Option<String> {
+    if last == Some((arm_gen, player, dest, n, m)) {
+        return None;
+    }
+    Some(format!("nav-flood: player {n} dest {m}"))
+}
+
+/// The `(n, m)` report sizes from the cached component sets: the player
+/// component size and the dest component size. Connected seeds (the dest
+/// inside the player's flood) share one size.
+fn flood_report_sizes(comps: &[Arc<HashSet<WorldTile>>], dest: WorldTile) -> (usize, usize) {
+    let n = comps[0].len();
+    let m = if comps.len() > 1 && !comps[0].contains(&dest) {
+        comps[1].len()
+    } else {
+        n
+    };
+    (n, m)
+}
 
 /// `nav-flood: player {n} dest {m}` on stderr, once per arm or when the
-/// component sizes change. Connected seeds report the shared size for both.
-fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile) {
+/// component sizes change. The sizes come from the cached flood sets, so
+/// an arm never runs a second world BFS.
+fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile, arm_gen: u64) {
+    let comps = flood_sets_for(world, &[player, dest]);
+    let (n, m) = flood_report_sizes(&comps, dest);
     let mut last = FLOOD_REPORT.lock().unwrap();
-    if last.as_ref().is_some_and(|(p, d, _, _)| *p == player && *d == dest) {
-        return;
+    if let Some(line) = flood_report_line(*last, arm_gen, player, dest, n, m) {
+        eprintln!("{line}");
+        *last = Some((arm_gen, player, dest, n, m));
     }
-    let (n, m) = match flood_sizes(&world.collision, player, Some(dest)) {
-        (n, Some(m)) => (n, m),
-        (n, None) => (n, n),
-    };
-    eprintln!("nav-flood: player {n} dest {m}");
-    *last = Some((player, dest, n, m));
 }
 
 /// The pack-map paints for the visible canvas: every viewport tile a layer
@@ -445,7 +474,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld) {
             let painted: HashSet<Tile> = paints.iter().map(|p| p.tile).collect();
             if layers.component_flood {
                 if let (Some(h), Some(d)) = (here, dest) {
-                    report_flood_sizes(world, h, d);
+                    report_flood_sizes(world, h, d, session.route_gen());
                 }
             }
             let path_col = color_rgb(parse_html_color(&layers.color_path, [255, 0, 0]));
@@ -821,5 +850,42 @@ mod tests {
         let path: Vec<i32> = marks.iter().filter(|t| t.path).map(|t| t.tile.x).collect();
         assert_eq!(path, vec![0, 1, 2, 3, 4]);
         assert!(marks.iter().all(|t| !t.transport), "a walk-only route has no hops");
+    }
+
+    #[test]
+    fn pack_map_flood_report_line_reports_each_arm() {
+        let player = WorldTile { x: 0, z: 0, level: 0 };
+        let dest = WorldTile { x: 5, z: 5, level: 0 };
+        let first = super::flood_report_line(None, 1, player, dest, 9, 1).unwrap();
+        assert_eq!(first, "nav-flood: player 9 dest 1");
+        // A second arm with the same tiles still reports: the arm
+        // generation is part of the report key.
+        let second = super::flood_report_line(Some((1, player, dest, 9, 1)), 2, player, dest, 9, 1)
+            .unwrap();
+        assert_eq!(second, first);
+        // The same arm and sizes do not re-report; a size change does.
+        assert!(
+            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 1).is_none()
+        );
+        assert!(
+            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 9).is_some()
+        );
+    }
+
+    #[test]
+    fn pack_map_flood_report_sizes_from_cached_sets() {
+        let world = disconnected_world();
+        let player = WorldTile { x: 0, z: 0, level: 0 };
+        let dest = WorldTile { x: 5, z: 5, level: 0 };
+        let comps = super::flood_sets_for(&world, &[player, dest]);
+        assert_eq!(
+            super::flood_report_sizes(&comps, dest),
+            (9, 1),
+            "the 3x3 corner and the isolated dest tile"
+        );
+        // Connected seeds (the dest inside the player's flood) share one size.
+        let inside = WorldTile { x: 1, z: 1, level: 0 };
+        let comps = super::flood_sets_for(&world, &[player, inside]);
+        assert_eq!(super::flood_report_sizes(&comps, inside), (9, 9));
     }
 }
