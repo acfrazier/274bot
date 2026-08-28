@@ -1,108 +1,110 @@
-# Nav: routing, walking, and the WalkTo picker
+# Nav: whole-world routing, transports, and WalkTo
 
-`crates/nav` is the campaign nav stack: a baked walkability grid, A*
-routing, a per-tick traveller, and (via the panel) a click-to-walk tile
-picker. It acts only through the kernel API — `api::interact` (`walk`,
-`op_loc`) — and never deep-copies the world.
+`crates/nav` is the single nav stack: a whole-world collision bake, a
+content-derived transport graph, a Dijkstra router, and a pollable route
+follower. It acts only through the kernel API (`api::interact`,
+`api::settle`) and never deep-copies the world.
 
 ## Pack bake
 
-`nav-pack` reads Server mapsquare jm2 text plus the door/loc scripts and
-writes a nav pack:
+`nav-pack` reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
+and writes a **v2** nav pack:
 
 ```bash
-cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR]
+cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_DIR] [CONFIG_DIR]
 ```
 
 Defaults: `MAPS_DIR=/Users/acfrazier/experiments/Server/content/maps`,
-`DOORS_CONFIG_DIR=/Users/acfrazier/experiments/Server/content/scripts/doors/configs`.
-Two mapsquares are baked: Lumbridge `m50_50.jm2` and Catherby
-`m44_53.jm2`. Output goes to `$NAV_PACK` or, by default,
-`~/.274bot/274bot.navpack`. Missing mapsquares are skipped with a stderr
-count; the remaining squares still produce a pack. The bake exits non-zero
-when no door configs parse, no mapsquare bakes, or the pack file cannot be
-written.
+`DOORS_DIR=/Users/acfrazier/experiments/Server/content/scripts/doors/configs`,
+`CONFIG_DIR=/Users/acfrazier/experiments/Server/engine/data/pack/config`.
+Output goes to `$NAV_PACK` or `~/.274bot/274bot.navpack`.
 
-Collision comes from the Server jm2 text (MAP `fN` flags, LOC blockwalk
-footprints, door configs), **not** from the client's `.lcnav.gz` webwalk
-files. Openable wall doors (loc `op1=Open` / `category=door_closed`, shape
-0) become directed `DoorEdge`s; their own tile stays unwalkable. Pack
-format: magic `b"274N"`, version 1, origin/width/height, one walk byte per
-tile (row-major z then x), then door entries (see
-`crates/nav/src/pack.rs`).
+The pack serializes the whole-world `WorldCollision` (one `CollisionFlag`
+bitmask per tile, row-major z-then-x, u32 each) plus the derived
+`TransportGraph` (doors, ladders, stairs, agility shortcuts, with their
+requirements and tick costs). Magic `b"274V"`, version 2 — see
+`crates/nav/src/pack.rs` `encode_v2`/`decode_v2`.
 
-## Scope (host vs bot)
+## Collision (`nav::collision`)
 
-- **Router / pack:** one `StepGrid` per process (host scope). `find` is
-  A*; a long route should not run on the 20 ms slot pump — spawn a worker
-  for `find`, join, then arm the traveller. One shared pack, not one copy
-  per bot.
-- **Traveller:** one per uid, lives on the **slot pump** next to `Driver`
-  (same thread as script `tick`). When Arrived/Idle it holds no extra
-  thread. Do not spawn an OS thread per hop.
+`WorldCollision { origin, width, height, flags: Vec<u32> }` bakes every
+mapsquare's `MAP fN` land flags and `LOC` placements into the client's
+`CollisionFlag` bitmasks, mirroring the client's `CollisionMap`
+`add_wall`/`add_loc` stamping (walls → per-direction `W_*` faces,
+centrepiece footprints → `WALK_SCENERY`, active blockwalk ground decor →
+`WR_GRND`, doors blocked-when-closed). `walkable(t)` is the blanket
+standable check (`WALK_BLOCK_FLAGS | WALK_SCENERY | WR_GRND == 0`); the
+**router does not use it** — it uses directional `PL_WALK_*` edge tests
+(see below).
 
-## Router
+## Transports (`nav::transport`)
 
-`nav::router::find(grid, from, to)` is A* over the 4-neighbour grid
-(N/E/S/W, cost 1, chebyshev heuristic) extended by door edges (cost 2).
-Same level only. Returns `Route { legs, dest }` or `NoPath`; legs split
-around doors: `Walk` … `Door { loc, loc_id, from, to }` … `Walk`.
+`TransportGraph { edges: Vec<TransportEdge>, from: HashMap<WorldTile, Vec<usize>> }`.
+`derive_transports(content_root)` parses the 2004 content: `doors/*.loc`
+(openable doors), `ladders+stairs/` and `areas/` rs2 scripts
+(`p_telejump`/`p_teleport`/`~climb_ladder`, `movecoord` landings),
+`skill_magic/` teleports, and `skill_agility/` shortcuts. A
+`TransportEdge` carries `kind` (Door/Ladder/Stairs/Boat/Teleport/
+AgilityShortcut), `from`/`to`, `loc_id`, the 1-based menu `option`,
+`ticks`, and `skill_req`/`item_req`/`quest_req`/`varp_req`. Boats and
+teleport spells have no content-derivable fixed origin, so they are
+skipped with a stderr count, never faked.
 
-## Traveller
+## Router (`nav::router`)
 
-`nav::traveller::Traveller::tick(driver, here, door_open)` drives a route
-one hop per tick through the `Driver`; the caller supplies the player's
-tile and the door's live open state each tick. Walk legs aim at the leg far
-end when ≤ 20 tiles away, else a tile ~15 steps ahead so the client
-re-routes a short fresh path; a rejected `tryMove` falls back to the next
-leg tile. A door leg sends `op_loc` — the packed wall typecode via
-`Driver::loc_typecode`, falling back to the loc id — and, when the caller
-reports the door open, re-opens and walks through on the **same tick** so a
-closing door cannot slam. Statuses emitted today: `Idle`, `Walking`,
-`Door`, `Arrived`, `Budget` (60 ticks per hop, reset on any advance); the
-enum also declares `Closest`, `Blocked`, and `Interrupted` for later.
-Arrival is `nav::arrival::arrived`: standing on the dest, or adjacent to it
-when the dest is solid — Traveller currently calls it with
-`dest_walkable = true`, so solid-adjacent arrival is in place but not yet
-active (every armed dest is walkable today).
+`find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra:
+0-cost 8-directional tile steps through a deque, transport edges through a
+min-heap at `edge.ticks` cost. Tile steps use the client's directional
+`PL_WALK_*` masks (face + corner + scenery + ground), **not** the blanket
+`walkable()`. `Route { legs, dest, ticks }`; `Leg::Walk { tiles }` runs
+collapse, `Leg::Transport { edge }` is one per transport. `RouteError` is
+`NoPath` or `BudgetExhausted` (a node-expansion cap). `find` is CPU-heavy;
+run it off-pump (a short-lived worker) and arm the result.
 
-## Catherby fixture
+## Traveller (`nav::traveller`)
 
-The closed range-house door: loc **1530** at tile **2816,3438,0**
-(mapsquare 44,53, local 0,46), crossing (2816,3437) → (2816,3439). The
-pack bake tests and the live `nav_door` harness both pin this door.
+`Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:
+call it once per delivered server tick; it returns `None` while in
+progress and `Some(TravelOutcome)` at a terminal state
+(`Arrived`/`Stalled`/`Refused`/`Blocked`/`GaveUp`). One driver send per
+call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
+on_leg, troll_doors }`.
+
+- **Default door leg:** interact the door transport's menu option, then
+  settle `arrived(to, close_enough)` — cheap, no per-tick door polling.
+- **`troll_doors = true` (non-default, expensive):** per tick, read the
+  door's open/closed state from the snapshot's `locs()`; when the door
+  reads open, `op_loc` (re-open) and `walk` through in the **same tick**
+  so a tick-perfect closer cannot slam it (the `2026-08-22-bot-nav.md`
+  same-tick rule). Use only for the live door-troll fixture; ordinary
+  routes pay the cheap default.
 
 ## WalkTo picker
 
 The panel's main-chrome **WalkTo** button opens a collision-dot map
-(`crates/panel/src/picker.rs`): walkable tiles from the loaded pack as
-amber dots, drag to pan, click highlights the nearest walkable tile,
-**Walk** arms the focused slot's traveller (`Session::arm_walk_on`) and
-closes. The pack loads once per process from `$NAV_PACK` or the
-`nav-pack` default; without it the window shows a "run nav-pack" hint.
-
-The amber polyline on the Game Image is a **schematic** overlay: remaining
-A* walk tiles drawn as a flat 52×34 grid centred on the player, not a
-projection through the 274 camera. It will not sit on the 3D path you see.
+(`crates/panel/src/picker.rs`): walkable level-0 tiles from
+`NavWorld.collision` as amber dots, drag to pan, click highlights the
+nearest walkable tile, **Walk** arms `find` and the panel drives `follow`
+on the focused slot's pump. `walk_status_text` mirrors the armed dest and
+clears on any terminal outcome.
 
 ## Live tests
 
 ```bash
+LIVE=1 cargo test -p e2e --test nav_full -- --ignored --test-threads=1
 LIVE=1 cargo test -p e2e --test nav_walk -- --ignored --test-threads=1
 LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
-`nav_walk`: one slot, Lumbridge courtyard walk to (3220,3212,0);
-`arrived` within 90 s of arm. `nav_door`: two slots in one process — the
-walker stages outside the Catherby range house and walks through door 1530
-to (2817,3443,0) while a tick-perfect closer keeps the door **closed**
-(`op_loc` whenever the loc is not the closed id 1530); `chebyshev ≤ 1` of
-dest within 120 s.
+`nav_full`/`nav_walk`: a `find` + `follow` route across formerly-missing
+squares (Lumbridge courtyard → (3220,3264,0) for `nav_full`).
+`nav_door`: two slots — the walker crosses Catherby door 1530 to
+(2817,3443,0) with `troll_doors: true` while a tick-perfect closer keeps
+the door closed; PASS on `Arrived`, FAIL on any other terminal outcome.
 
 ## Credit
 
-Router/Traveller **shape** is a borrowed idea from
-[m8aq](https://github.com/) apiv2 nav/travel — the Rust here is our own,
-and m8aq's wasm is not vendored. The picker's **collision dots** visual
-comes from rs2b0t's WorldMapPicker idea; it is not a port of
-`src/bot/event/webwalk`. Collision bake is the Server jm2, not `.lcnav.gz`.
+Router/Traveller shape borrows from m8aq's apiv2 nav/travel and the
+RuneLite `shortest-path` plugin (collision + transport graph + Dijkstra).
+The Rust is our own; no rsmod wasm is vendored. Collision/transport truth
+is the Server content, scoped to the 2004 surface.

@@ -1,28 +1,32 @@
 # Agent API
 
 The kernel surface a bot agent codes against: reading world state, acting,
-and logging in — all through the `api` crate (`crates/api`) plus the host
-tick and the encrypted vault.
+settling, navigating, and logging in — all through the `api` crate
+(`crates/api`) plus `nav` (`crates/nav`) and the host tick.
 
-- [snapshot.md](snapshot.md) — generation-stamped world reads (families + gens)
-- [interact.md](interact.md) — acting (`doAction` path), the `LEGAL_SEND`/`ClientProt` table
-- [nav.md](nav.md) — baked nav pack, A* router, per-tick traveller, WalkTo picker
+- [snapshot.md](snapshot.md) — the full gen-stamped world read model
+  (`GameSnapshot` + `ReadContext`)
+- [query.md](query.md) — the fluent `Query<T>` read DSL + typed filters
+- [interact.md](interact.md) — `Driver` + the `Interactions` orchestration layer
+- [settle.md](settle.md) — pollable `Settle`/`Outcome`/`Evidence`
+- [nav.md](nav.md) — whole-world collision + transport graph + Dijkstra
+  router + `Traveller::follow` + WalkTo picker
 - [login.md](login.md) — login FIFO throttle numbers
 - [vault.md](vault.md) — encrypted profile vault, `BOT_VAULT_PASS` / `--vault-pass`
-- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox wall (rail/grid/chooser), renderer vs capture, scripts
-- [script.md](script.md) — compiled `tick` vs Load isolate; picker; PLAYER_INFO wake
+- [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox wall, renderer, scripts
+- [script.md](script.md) — compiled `tick` vs Load isolate; PLAYER_INFO wake
 
 ## Layout
 
 | Crate | Role |
 | --- | --- |
-| `api` | Read model (`snapshot`, `query`), act primitives (`interact`, `settle`), legal send table (`prot`) |
-| `nav` | Nav pack bake/load, A* router, per-tick traveller, WalkTo picker grid |
-| `host` | One OS thread per client slot; drains gens per frame; snapshot/settle/think after drain |
+| `api` | Read model (`snapshot` + `query`), act primitives (`interact`), settle/evidence (`settle`), legal send table (`prot`), item/loc defs (`obj_names`) |
+| `nav` | Whole-world collision bake, transport graph, Dijkstra router, pollable `Traveller::follow`, WalkTo picker grid |
+| `host` | One OS thread per client slot; drains gens per frame; snapshot/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM) |
 | `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |
 | `script` | Compiled `Script` trait + Load isolate (`rustyscript`); picker ids |
-| `panel` | Native dear-app/ImGui UI (`panel-play`): profile combo, credentials, script Browse/Start/Pause/Stop, MultiBox wall |
+| `panel` | Native UI (`panel-play`): profile combo, credentials, script Browse/Start/Pause/Stop, MultiBox wall |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)
@@ -32,28 +36,15 @@ never writes a bare opcode outside those two paths.
 ## Tick model
 
 274 has **no tick-end opcode** in its server protocol. The host synthesizes
-the tick edge instead:
+the tick edge:
 
 1. One thread per slot runs `client.mainloop()` once every **20 ms** frame.
-2. After each pass the drain `Pump` diffs `Client.gens` (`crates/host/src/slot.rs`)
-   and returns `DrainResult.dirty` (computed **before** committing `last`).
-3. Families whose gens moved are rebuilt on the slot’s `GameSnapshot`. Settle
-   runs when any family is dirty. Auto-run think runs every `after_drain`
-   (energy can move on `UPDATE_RUNENERGY` without `PLAYER_INFO`).
+2. After each pass the drain `Pump` diffs `Client.gens` and returns
+   `DrainResult.dirty` (computed **before** committing `last`).
+3. Families whose gens moved are rebuilt on the slot’s `GameSnapshot`.
 
 `player_info` true ⇔ `gens.player` moved since the last drain — that is the
-**server-tick** edge (compiled scripts `tick` here; lean counts inbound
-`PLAYER_INFO` on `LeanSnapshot.tick`). A drain with only e.g. `NPC_INFO`
-marks families dirty and still rebuilds/settles, but is not a player-tick.
-
-## Auto-run
-
-The one behaviour on the think hook today: when run energy crosses **20%**
-(`RUN_ENERGY_THRESHOLD`, 0–100) **and run is off**, the host presses the
-run-on orb (`RUN_ORB_IFACE = 153`) via `set_run(true)` / `IF_BUTTON`.
-`set_run(false)` presses **152**. `run_on` is not process-lifetime sticky:
-energy 0 (cannot be running) clears it so a later 20 crossing sends again.
-Already on (energy ≥20 and run echo) → no extra send.
+**server-tick** edge (compiled scripts `tick` here).
 
 ## Live harnesses
 
@@ -63,6 +54,7 @@ Already on (energy ≥20 and run echo) → no extra send.
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
 ```
 
-`host-play` is the CLI (`BOT_VAULT_PASS` / `--vault-pass`). Verbose only if
-`BOT_DEBUG=1`. Failures print `FAIL:` and `exit(1)`. Wait until
-`ingame && scene_state == 2`.
+`panel-play` is the first-class **headed** harness (`--smoke` whole-window
+capture, and the `crates/scenario` engine via `--live <scenario>` with
+screenshots); `crates/e2e` is the headless twin. Failures print `FAIL:` and
+`exit(1)`. Wait until `ingame && scene_state == 2`.
