@@ -16,7 +16,7 @@ use nav::world::NavWorld;
 
 use crate::evidence::Evidence;
 use crate::proof::Proof;
-use crate::{Scenario, StepKind, Wait, DEFAULT_DEADLINE};
+use crate::{Scenario, StepKind, Wait};
 
 /// The runner's pollable status (the UI and the headless test read it).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +105,11 @@ impl ScenarioRunner {
     }
 
     fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
+        // Settings fields are Copy, so read them out before `scenario`
+        // moves into the runner below.
+        let deadline = scenario.settings.deadline;
+        let terminal_shot = scenario.settings.terminal_shot;
+        let require_mainland_base = scenario.settings.require_mainland_base;
         Self {
             scenario,
             snapshot: GameSnapshot::new(),
@@ -112,17 +117,17 @@ impl ScenarioRunner {
             nav_world,
             traveller: Traveller::new(),
             route: None,
-            terminal_shot: None,
+            terminal_shot,
             phase: Phase::Seeding,
             step: 0,
             step_sent: false,
             ticks_waited: 0,
             total_ticks: 0,
             started: Instant::now(),
-            deadline: DEFAULT_DEADLINE,
+            deadline,
             scene_settle: Duration::from_secs(2),
             scene2_since: None,
-            require_mainland_base: true,
+            require_mainland_base,
             evidence: None,
             shot_sink: None,
         }
@@ -158,6 +163,12 @@ impl ScenarioRunner {
     /// Override the whole-run wall-clock deadline (tests use short ones).
     pub fn set_deadline(&mut self, deadline: Duration) {
         self.deadline = deadline;
+    }
+
+    /// The whole-run wall-clock deadline (from `scenario.settings` unless
+    /// overridden by [`ScenarioRunner::set_deadline`]).
+    pub fn deadline(&self) -> Duration {
+        self.deadline
     }
 
     /// Override the scene-settle wall-clock hold. Tests use
@@ -621,6 +632,29 @@ mod tests {
     }
 
     #[test]
+    fn new_reads_deadline_and_terminal_shot_from_settings() {
+        let runner = ScenarioRunner::new(crate::get("nav_full").unwrap());
+        assert_eq!(runner.deadline(), Duration::from_secs(360));
+        assert_eq!(runner.terminal_shot(), Some("nav_full terminal"));
+    }
+
+    #[test]
+    fn new_leaves_the_mainland_base_gate_off_by_default() {
+        let mut c = Client::new(cfg());
+        let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
+        runner.set_scene_settle(Duration::ZERO);
+        c.ingame = true;
+        c.scene_state = 2;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "default gate off: scene 2 on a tutorial-scale base starts steps"
+        );
+    }
+
+    #[test]
     fn perform_send_then_arm_fires_and_proof_passes() {
         let mut c = seeded_client();
         let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
@@ -673,7 +707,12 @@ mod tests {
     #[test]
     fn seeding_waits_for_ingame_scene2_and_mainland_base() {
         let mut c = Client::new(cfg());
-        let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
+        // The gate is opt-in: this test exercises it, so the scenario
+        // turns it on. `new_leaves_the_mainland_base_gate_off_by_default`
+        // covers the default-off path.
+        let mut scenario = stat_scenario(1, 10);
+        scenario.settings.require_mainland_base = true;
+        let mut runner = ScenarioRunner::new(scenario);
         runner.set_scene_settle(Duration::ZERO);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
