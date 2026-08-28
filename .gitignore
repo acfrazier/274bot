@@ -1,6 +1,8 @@
 /target
 *.navpack
 docs/superpowers/
+.superpowers/
+.worktrees/
 .DS_Store
 imgui.ini
 274bot-panel.ini

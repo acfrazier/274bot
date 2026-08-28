@@ -16,9 +16,9 @@ submodule (headed default; `BOT_CPU=1` is CpuPix3D). Compiled scripts
 and WalkTo are in-tree; do not invent a tick-end opcode or put 274bot
 crates in the client repo.
 
-**SDD models (operator):** task implementer `deepseek-v4-flash`, per-task reviewer `deepseek-v4-pro` (or flash if it behaves), **whole-branch review: grok**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
+**SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
-**Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Commit on `main`. Write the report file the orch named.
+**Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Work on a **branch** (or git worktree). Do **not** commit campaign work on `main`. Write the report file the orch named.
 
 **Do not:** invent a tick-end opcode; deep-copy the world every read; skip the brief; wander into scripts; hunt for a longer AGENTS.md.
 
