@@ -181,13 +181,15 @@ pub fn trail_tones(tiles: &[WorldTile], run_on: bool) -> Vec<(WorldTile, TrailTo
         .collect()
 }
 
-/// Trim a client-trail to the tiles from `here` onward. If `here` is not
-/// on the list (pushed off the BFS), the full list is kept. The trail is
-/// every tryMove BFS tile — not the entity walk buffer (max 9).
+/// Trim a client-trail to the tiles **ahead** of `here`. The occupied
+/// tile is dropped so dest does not persist under the player after
+/// arrival. If `here` is not on the list (pushed off the BFS), the full
+/// list is kept. The trail is every tryMove BFS tile — not the entity
+/// walk buffer (max 9).
 pub fn remaining_trail(tiles: &[WorldTile], here: Option<WorldTile>) -> Vec<WorldTile> {
     if let Some(h) = here {
         if let Some(i) = tiles.iter().position(|t| t.x == h.x && t.z == h.z) {
-            return tiles[i..].to_vec();
+            return tiles[i + 1..].to_vec();
         }
     }
     tiles.to_vec()
@@ -531,13 +533,21 @@ mod tests {
     }
 
     #[test]
-    fn remaining_trail_keeps_the_whole_bfs_from_here() {
+    fn remaining_trail_drops_the_occupied_tile() {
         let tiles: Vec<WorldTile> = (0..21).map(|x| tile(x, 0, 0)).collect();
         assert_eq!(remaining_trail(&tiles, None).len(), 21);
         let rest = remaining_trail(&tiles, Some(tile(5, 0, 0)));
-        assert_eq!(rest.len(), 16, "a 21-tile BFS is not capped at 9");
-        assert_eq!(rest[0], tile(5, 0, 0));
+        assert_eq!(rest.len(), 15, "a 21-tile BFS is not capped at 9");
+        assert_eq!(
+            rest[0],
+            tile(6, 0, 0),
+            "the tile under the player is not painted"
+        );
         assert_eq!(rest.last().copied(), Some(tile(20, 0, 0)));
+        assert!(
+            remaining_trail(&tiles, Some(tile(20, 0, 0))).is_empty(),
+            "arrived dest must not persist under the player"
+        );
         // Off the path: keep the full click, do not invent a trim.
         assert_eq!(remaining_trail(&tiles, Some(tile(99, 0, 0))).len(), 21);
     }
