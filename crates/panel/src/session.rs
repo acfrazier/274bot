@@ -31,7 +31,8 @@ use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::paint::{
-    collision_at, hull_targets, remaining_path_tiles, select_draw_indices, trail_tones, TrailTone,
+    collision_at, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
+    trail_tones, TrailTone,
 };
 use nav::router::{find, find_allow_teleports, Route};
 use nav::tile::Tile;
@@ -258,14 +259,7 @@ fn publish_nav_debug(
                 if x < ox || z < oz || x - ox >= ow || z - oz >= oh {
                     continue;
                 }
-                let fb = collision_at(
-                    &world.collision,
-                    WorldTile {
-                        x,
-                        z,
-                        level,
-                    },
-                );
+                let fb = collision_at(&world.collision, WorldTile { x, z, level });
                 let mut bits = 0u8;
                 if fb.n {
                     bits |= FACE_N;
@@ -691,7 +685,8 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
-        self.mainland.store(scenario.seed.mainland, Ordering::Relaxed);
+        self.mainland
+            .store(scenario.seed.mainland, Ordering::Relaxed);
         self.scatter.store(false, Ordering::Relaxed);
         // Fleet scenario (2+ seed profiles): open the MultiBox wall like
         // `live_prepare_null_raster`/`live_prepare_stress`, so the rail
@@ -785,31 +780,25 @@ impl Session {
                             z: c.map_build_base_z + lp.route_z[0],
                             level: 0,
                         });
-                        // The snapshot's player-run bit reads the same
-                        // animation state; default off with no player.
-                        let run_on = c.local_player.as_ref().is_some_and(|lp| {
-                            lp.entity.primary_anim == lp.entity.runanim
-                        });
-                        // The trail is the local player's last `tryMove`
-                        // route buffer (`route_x/z[0..route_length]`), in
-                        // world tiles — not just the route head.
-                        let trail_world: Vec<WorldTile> = c
-                            .local_player
-                            .as_ref()
-                            .map(|lp| {
-                                let len =
-                                    lp.route_length.clamp(0, lp.route_x.len() as i32) as usize;
-                                let base_x = c.map_build_base_x;
-                                let base_z = c.map_build_base_z;
-                                (0..len)
-                                    .map(|i| WorldTile {
-                                        x: base_x + lp.route_x[i],
-                                        z: base_z + lp.route_z[i],
-                                        level: 0,
-                                    })
-                                    .collect()
+                        // Run orb (varp 173 / 274 overlay), not the run
+                        // animation — the anim is only true while a run
+                        // cycle plays.
+                        let run_on = c.run_enabled();
+                        // Full tryMove BFS (every scene tile, src→dest),
+                        // not the entity walk buffer (capped at 9) or the
+                        // MOVE waypoint list (capped at 25).
+                        let base_x = c.map_build_base_x;
+                        let base_z = c.map_build_base_z;
+                        let trail_all: Vec<WorldTile> = c
+                            .try_move_path
+                            .iter()
+                            .map(|&(sx, sz)| WorldTile {
+                                x: base_x + sx,
+                                z: base_z + sz,
+                                level: 0,
                             })
-                            .unwrap_or_default();
+                            .collect();
+                        let trail_world = remaining_trail(&trail_all, here);
                         publish_nav_debug(
                             c,
                             world,
@@ -2038,11 +2027,11 @@ mod tests {
         script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
         stream_capture, Session, SlotIo,
     };
-    use host::{FrameBuf, InputEv, SlotInput};
-    use host_play::{SlotArm, SlotStatus};
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
     use client::render::nav_debug::{FACE_N, FACE_S};
+    use host::{FrameBuf, InputEv, SlotInput};
+    use host_play::{SlotArm, SlotStatus};
     use nav::collision::{derive_walkable, WorldCollision};
     use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
@@ -2186,7 +2175,17 @@ mod tests {
             z: 3252,
             level: 0,
         });
-        publish_nav_debug(&mut c, &world, Some(&route), here, &[], false, click, &layers, true);
+        publish_nav_debug(
+            &mut c,
+            &world,
+            Some(&route),
+            here,
+            &[],
+            false,
+            click,
+            &layers,
+            true,
+        );
         let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
         assert!(
             !paint.collision.is_empty(),
@@ -2426,10 +2425,7 @@ mod tests {
             !paint.show_hulls && paint.hulls.is_empty(),
             "show_nav_path masters the hulls"
         );
-        assert!(
-            paint.click.is_none(),
-            "no nav path, no walk-target paint"
-        );
+        assert!(paint.click.is_none(), "no nav path, no walk-target paint");
         assert!(
             !paint.show_trail && paint.trail.is_empty(),
             "show_nav_path masters the trail"
@@ -2551,7 +2547,17 @@ mod tests {
             show_nav_path: true,
             ..NavSettings::default()
         };
-        publish_nav_debug(&mut c, &world, Some(&route), None, &[], false, None, &layers, true);
+        publish_nav_debug(
+            &mut c,
+            &world,
+            Some(&route),
+            None,
+            &[],
+            false,
+            None,
+            &layers,
+            true,
+        );
         let paint = c.nav_debug_paint().unwrap();
         assert!(
             paint.path.len() <= MAX_DRAW_TILES,
@@ -2973,7 +2979,10 @@ mod tests {
         );
         session.ui.nav.allow_teleports = true;
         session.arm_walk_on(&world, origin, dest_tile);
-        assert!(session.error.is_none(), "allow_teleports routes the teleport");
+        assert!(
+            session.error.is_none(),
+            "allow_teleports routes the teleport"
+        );
         let arm = session.travellers.lock().unwrap();
         let route = arm
             .get(&session.focused_name().unwrap())
@@ -3265,21 +3274,14 @@ mod tests {
             "one full Client slot per profile — no lean channels"
         );
         assert!(
-            s.play
-                .as_ref()
-                .unwrap()
-                .arm("carol")
-                .is_some(),
+            s.play.as_ref().unwrap().arm("carol").is_some(),
             "every member has a control arm"
         );
         // Focus is pure bookkeeping: selecting bob redirects the sampled
         // slot without touching a socket.
         s.select("bob");
         assert_eq!(s.focused_name().as_deref(), Some("bob"));
-        assert_eq!(
-            s.play.as_ref().unwrap().focused().as_deref(),
-            Some("bob")
-        );
+        assert_eq!(s.play.as_ref().unwrap().focused().as_deref(), Some("bob"));
         assert_eq!(
             s.play.as_ref().unwrap().statuses().len(),
             3,
