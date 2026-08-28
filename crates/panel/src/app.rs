@@ -15,9 +15,7 @@ use dear_imgui_rs::{
     TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
 
-use crate::chrome::{
-    button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW,
-};
+use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
@@ -25,8 +23,8 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{
-    cap_title, os_window_size, traffic_light, Light, REMOVE_GLYPH, STATUS_GLYPH, BASE_WINDOW_H,
-    BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+    cap_title, os_window_size, traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W,
+    REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
 };
 use host::debug_enabled;
 
@@ -216,7 +214,9 @@ enum Boot {
 enum LiveBoot {
     NullRaster,
     Stress50,
-    Script { name: String },
+    Script {
+        name: String,
+    },
     /// `--smoke`: the `render_smoke` scenario with the shot sink armed.
     /// The scenario's own settings carry the 300 s deadline and the off
     /// mainland-base gate; `live_smoke_tick` keeps its outer ceiling.
@@ -289,10 +289,12 @@ fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
         Some("nav_full") => Some(Boot::Live(LiveBoot::Script {
             name: "nav_full".to_string(),
         })),
-        Some(name) if name.starts_with("script_") => {
-            Some(Boot::Live(LiveBoot::Script { name: name.to_string() }))
-        }
-        _ => vault_pass.map(|pass| Boot::Unlock { pass: pass.to_string() }),
+        Some(name) if name.starts_with("script_") => Some(Boot::Live(LiveBoot::Script {
+            name: name.to_string(),
+        })),
+        _ => vault_pass.map(|pass| Boot::Unlock {
+            pass: pass.to_string(),
+        }),
     }
 }
 
@@ -460,7 +462,12 @@ const SMOKE_SETTLE: Duration = Duration::from_secs(3);
 /// first reaches `ingame && scene_state == 2`. Pure so the trigger path
 /// is a table test; the smoke watch calls it against the focused slot's
 /// status every frame.
-fn smoke_should_fire(smoke_armed: bool, already_fired: bool, ingame: bool, scene_state: i32) -> bool {
+fn smoke_should_fire(
+    smoke_armed: bool,
+    already_fired: bool,
+    ingame: bool,
+    scene_state: i32,
+) -> bool {
     smoke_armed && !already_fired && ingame && scene_state == 2
 }
 
@@ -632,10 +639,7 @@ fn live_script_tick(
         )
     };
     let record = |evidence: &Option<scenario::Evidence>| {
-        evidence
-            .as_ref()
-            .map(|ev| ev.to_json())
-            .unwrap_or_default()
+        evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default()
     };
     match status {
         Some(scenario::RunnerStatus::Passed) => {
@@ -670,12 +674,7 @@ fn live_script_tick(
                 if step >= total {
                     println!("live {}: proving proof predicate", live.name);
                 } else {
-                    println!(
-                        "live {}: running step {}/{}",
-                        live.name,
-                        step + 1,
-                        total
-                    );
+                    println!("live {}: running step {}/{}", live.name, step + 1, total);
                 }
             }
             None
@@ -725,7 +724,9 @@ fn live_smoke_tick(
         slot.map_or(0, |s| s.scene_state),
     ) {
         live.saw_scene2_at = Some(Instant::now());
-        println!("smoke: focused slot at scene 2; waiting for the render to settle before the capture");
+        println!(
+            "smoke: focused slot at scene 2; waiting for the render to settle before the capture"
+        );
     }
     // Mirror the shared runner so a scenario failure is the failure.
     let status = session
@@ -1948,12 +1949,7 @@ fn cell_body(
         // `take` moves the stored frame out; `present` routes it: the
         // `PixMap` (CPU) arm uploads into the tile's owned texture, the
         // `Texture` (GPU) arm binds the client's frame view directly.
-        if let Some(frame) = state
-            .session
-            .slots
-            .get(name)
-            .and_then(|s| s.pixels.take())
-        {
+        if let Some(frame) = state.session.slots.get(name).and_then(|s| s.pixels.take()) {
             tv.view.present(gpu, frame);
         }
     }
@@ -2108,7 +2104,11 @@ fn arm_scenario_shots(state: &mut PanelState) {
         runner.set_shot_sink(Box::new(
             move |label: &str, snap: &api::snapshot::GameSnapshot| {
                 let json = serde_json::to_string_pretty(snap).unwrap_or_default();
-                shots.lock().unwrap().requests.push((label.to_string(), json));
+                shots
+                    .lock()
+                    .unwrap()
+                    .requests
+                    .push((label.to_string(), json));
             },
         ));
     }
@@ -2290,8 +2290,8 @@ mod tests {
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_for, chooser_should_open_popup,
         edit_parameters_enabled, live_null_tick, live_script_tick, live_smoke_tick,
-        live_stress_tick, manual_shot_label, parse_live_args, runner_config, smoke_should_fire,
-        smoke_settled, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode,
+        live_stress_tick, manual_shot_label, parse_live_args, runner_config, smoke_settled,
+        smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode,
         BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
@@ -2503,10 +2503,7 @@ mod tests {
 
     #[test]
     fn parse_live_args_smoke_flag_maps_to_smoke_mode() {
-        assert_eq!(
-            parse_live_args(["--smoke"], None),
-            Ok(RunMode::Smoke)
-        );
+        assert_eq!(parse_live_args(["--smoke"], None), Ok(RunMode::Smoke));
         // A stray BOT_LIVE env does not demote --smoke.
         assert_eq!(
             parse_live_args(["--smoke"], Some("stress50")),
@@ -2568,6 +2565,10 @@ mod tests {
             parse_live_args(["--live", "script_render_smoke"], None),
             Ok(RunMode::Live("script_render_smoke".into()))
         );
+        assert_eq!(
+            parse_live_args(["--live", "script_nav_routes"], None),
+            Ok(RunMode::Live("script_nav_routes".into()))
+        );
     }
 
     #[test]
@@ -2612,10 +2613,34 @@ mod tests {
         let t0 = Instant::now();
         let cases: &[(&str, Option<Instant>, Instant, bool, bool)] = &[
             ("no scene 2 yet", None, t0, true, false),
-            ("before the settle window", Some(t0), t0 + Duration::from_secs(1), true, false),
-            ("at the settle boundary", Some(t0), t0 + SMOKE_SETTLE, true, true),
-            ("after the settle window", Some(t0), t0 + Duration::from_secs(5), true, true),
-            ("settled but logged out", Some(t0), t0 + Duration::from_secs(5), false, false),
+            (
+                "before the settle window",
+                Some(t0),
+                t0 + Duration::from_secs(1),
+                true,
+                false,
+            ),
+            (
+                "at the settle boundary",
+                Some(t0),
+                t0 + SMOKE_SETTLE,
+                true,
+                true,
+            ),
+            (
+                "after the settle window",
+                Some(t0),
+                t0 + Duration::from_secs(5),
+                true,
+                true,
+            ),
+            (
+                "settled but logged out",
+                Some(t0),
+                t0 + Duration::from_secs(5),
+                false,
+                false,
+            ),
         ];
         for (name, at, now, ingame, expect) in cases {
             assert_eq!(smoke_settled(*at, *now, *ingame), *expect, "{name}");
@@ -2869,9 +2894,11 @@ mod tests {
         let mut s = crate::session::Session::new();
         s.focus.lock().unwrap().focused = Some("test".into());
         let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
-        let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0)
-            .expect("deadline");
-        assert!(err.contains("never reached scene 2 within 300s"), "err: {err}");
+        let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0).expect("deadline");
+        assert!(
+            err.contains("never reached scene 2 within 300s"),
+            "err: {err}"
+        );
         assert!(live.failed.is_some(), "the deadline latches the failure");
     }
 
@@ -2928,9 +2955,7 @@ mod tests {
     }
 
     fn ready_n(n: usize) -> Vec<host_play::SlotStatus> {
-        (0..n)
-            .map(|i| st(&format!("s{i:02}"), true, 2))
-            .collect()
+        (0..n).map(|i| st(&format!("s{i:02}"), true, 2)).collect()
     }
 
     #[test]

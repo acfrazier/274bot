@@ -18,13 +18,13 @@
 
 pub mod evidence;
 pub mod proof;
-pub mod shot;
 mod runner;
+pub mod shot;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::interact::{cheat, op_loc, Driver};
+use api::interact::{cheat, op_loc, tele_args, Driver};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 
@@ -159,13 +159,14 @@ pub fn get(name: &str) -> Option<Scenario> {
         "render_smoke" => Some(render_smoke_scenario()),
         "nav_full" => Some(nav_full_scenario()),
         "nav_door" => Some(nav_door_scenario()),
+        "nav_routes" => Some(nav_routes_scenario()),
         _ => None,
     }
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
-    vec!["walk", "render_smoke", "nav_full", "nav_door"]
+    vec!["walk", "render_smoke", "nav_full", "nav_door", "nav_routes"]
 }
 
 /// The `render_smoke` scenario: log in `test`/`test`, do nothing, and
@@ -491,7 +492,10 @@ fn stage_closer_tele(c: &mut Client, here: WorldTile, s: &mut CloserSlot) -> boo
     }
     if !at_lumbridge(here) && here.x <= 3100 {
         if debug_enabled() {
-            eprintln!("[nav-closer] waiting mainland, here={here:?} scene={}", c.scene_state);
+            eprintln!(
+                "[nav-closer] waiting mainland, here={here:?} scene={}",
+                c.scene_state
+            );
         }
         return false;
     }
@@ -556,6 +560,234 @@ fn at_catherby(here: WorldTile) -> bool {
     here.x >= 2800 && here.x < 2860 && here.z >= 3420 && here.z < 3460
 }
 
+/// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
+/// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
+/// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
+const NAV_ROUTES: &[(&'static str, WorldTile, WorldTile)] = &[
+    // HARD COMMUTE-14-R
+    (
+        "Seers bank → RockCrab field",
+        WorldTile {
+            x: 2725,
+            z: 3491,
+            level: 0,
+        },
+        WorldTile {
+            x: 2710,
+            z: 3720,
+            level: 0,
+        },
+    ),
+    // HARD WALK-5-4
+    (
+        "Taverley → Rellekka",
+        WorldTile {
+            x: 2895,
+            z: 3435,
+            level: 0,
+        },
+        WorldTile {
+            x: 2668,
+            z: 3660,
+            level: 0,
+        },
+    ),
+    // HARD WALK-3-10
+    (
+        "Ardougne → Yanille",
+        WorldTile {
+            x: 2661,
+            z: 3301,
+            level: 0,
+        },
+        WorldTile {
+            x: 2612,
+            z: 3092,
+            level: 0,
+        },
+    ),
+    // HARD BOT-ClueSolver-8-6 (stairs, upstairs houses)
+    (
+        "Falador house → Rimmington house",
+        WorldTile {
+            x: 3040,
+            z: 3364,
+            level: 1,
+        },
+        WorldTile {
+            x: 2970,
+            z: 3215,
+            level: 1,
+        },
+    ),
+    // Boat: Port Sarim seaman (npc 378 @ 3026,3217) 30-coin fare → Musa dock.
+    (
+        "Port Sarim → Musa Point",
+        WorldTile {
+            x: 3029,
+            z: 3217,
+            level: 0,
+        },
+        WorldTile {
+            x: 2956,
+            z: 3146,
+            level: 0,
+        },
+    ),
+    // Boat back: customs officer @ 2955,3146.
+    (
+        "Musa Point → Port Sarim",
+        WorldTile {
+            x: 2954,
+            z: 3146,
+            level: 0,
+        },
+        WorldTile {
+            x: 3029,
+            z: 3217,
+            level: 0,
+        },
+    ),
+    // rs2b0t two-route smoke: Yanille bank → chaos-druid field (web + stairs + ledge).
+    (
+        "Yanille bank → dungeon warriors",
+        WorldTile {
+            x: 2612,
+            z: 3092,
+            level: 0,
+        },
+        WorldTile {
+            x: 2580,
+            z: 9501,
+            level: 0,
+        },
+    ),
+    // TH-glider-gandius-hub (varp grandtree >= 160).
+    (
+        "Gandius glider → Grand Tree hub",
+        WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        },
+        WorldTile {
+            x: 2465,
+            z: 3501,
+            level: 3,
+        },
+    ),
+    // TH-glider-hub-karhewo.
+    (
+        "Grand Tree hub → Kar-Hewo",
+        WorldTile {
+            x: 2465,
+            z: 3501,
+            level: 3,
+        },
+        WorldTile {
+            x: 3284,
+            z: 3211,
+            level: 0,
+        },
+    ),
+    // Live door we just proved.
+    (
+        "Catherby range-house door",
+        WorldTile {
+            x: 2813,
+            z: 3436,
+            level: 0,
+        },
+        WorldTile {
+            x: 2817,
+            z: 3443,
+            level: 0,
+        },
+    ),
+];
+
+/// Headed corpus smoke: seed knife + coins + glider quest, then tele+Follow
+/// each borrowed OD pair. Proof is arrival at the last dest. Teleports off.
+fn nav_routes_scenario() -> Scenario {
+    let last = NAV_ROUTES[NAV_ROUTES.len() - 1].2;
+    let mut steps = vec![nav_routes_seed_step()];
+    for (note, from, to) in NAV_ROUTES {
+        steps.push(tele_step(note, *from));
+        steps.push(follow_step(note, *to));
+    }
+    Scenario {
+        name: "nav_routes",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps,
+        proof: Proof::Arrived {
+            x: last.x,
+            z: last.z,
+            level: last.level,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            deadline: Duration::from_secs(3600),
+            ..Default::default()
+        },
+    }
+}
+
+/// Knife (slashable webs / Yanille dungeon), coins (Karamja 30-coin fare),
+/// Grand Tree complete so gnome glider edges are offered live.
+fn nav_routes_seed_step() -> Step {
+    Step {
+        name: "seed knife, coins, grandtree",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "give knife 1");
+                cheat(c, "give coins 10000");
+                cheat(c, "setvar grandtree 160");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 5,
+        },
+    }
+}
+
+fn tele_step(note: &'static str, tile: WorldTile) -> Step {
+    Step {
+        name: note,
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| cheat(c, &tele_args(tile.level, tile.x, tile.z))),
+        },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            },
+            budget_ticks: 120,
+        },
+    }
+}
+
+fn follow_step(note: &'static str, dest: WorldTile) -> Step {
+    Step {
+        name: note,
+        kind: StepKind::Follow { dest },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+            },
+            budget_ticks: 600,
+        },
+    }
+}
+
 /// 377 `fail()`: print and exit 1. The headed runner calls this on a
 /// `Failed` status; the headless twin maps the same status through its own
 /// `common::fail` (same exit-1 contract).
@@ -588,7 +820,10 @@ mod tests {
         assert_eq!(s.seed.profiles, [("test", "test")]);
         assert!(!s.seed.mainland, "no hop needed for a smoke capture");
         assert_eq!(s.steps.len(), 1, "one capture step");
-        assert!(matches!(s.steps[0].kind, StepKind::Shot { label: "scene2" }));
+        assert!(matches!(
+            s.steps[0].kind,
+            StepKind::Shot { label: "scene2" }
+        ));
         assert_eq!(s.proof.name(), "stat(16)>=0");
     }
 
@@ -612,10 +847,20 @@ mod tests {
         // The destination is a concrete pack tile ~44 tiles north of the
         // mainland landing, crossing the z=3264 mapsquare boundary into
         // (50,51) — a square the old 2-square pack never baked.
-        assert_eq!(dest, WorldTile { x: 3220, z: 3264, level: 0 });
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 3220,
+                z: 3264,
+                level: 0
+            }
+        );
         assert_eq!(arm, (3220, 3264, 0));
         assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
-        assert_eq!(names(), ["walk", "render_smoke", "nav_full", "nav_door"]);
+        assert_eq!(
+            names(),
+            ["walk", "render_smoke", "nav_full", "nav_door", "nav_routes"]
+        );
     }
 
     #[test]
@@ -629,9 +874,7 @@ mod tests {
             z: 3438,
             level: 0,
         };
-        let found = nearest_door_loc(packed, |x, z| {
-            (x == 2816 && z == 3439).then_some(OPEN_ID)
-        });
+        let found = nearest_door_loc(packed, |x, z| (x == 2816 && z == 3439).then_some(OPEN_ID));
         assert_eq!(
             found,
             Some((
@@ -664,7 +907,10 @@ mod tests {
         let s = get("nav_door").expect("nav_door is registered");
         assert_eq!(s.name, "nav_door");
         assert_eq!(s.seed.profiles, [("test", "test"), ("test2", "test2")]);
-        assert!(s.seed.mainland, "the hop lands the walker before the Catherby tele");
+        assert!(
+            s.seed.mainland,
+            "the hop lands the walker before the Catherby tele"
+        );
         assert_eq!(s.steps.len(), 2, "tele the walker, then follow the route");
         assert!(
             matches!(s.steps[0].kind, StepKind::Perform { .. }),
@@ -680,11 +926,21 @@ mod tests {
             ),
             _ => panic!("nav_door step 2 must be Follow"),
         };
-        assert_eq!(dest, WorldTile { x: 2817, z: 3443, level: 0 });
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 2817,
+                z: 3443,
+                level: 0
+            }
+        );
         assert_eq!(arm, (2817, 3443, 0));
         assert_eq!(s.proof.name(), "arrived(2817,3443,0)");
         assert_eq!(s.companions.len(), 1, "the closer is the one companion");
-        assert_eq!(s.companions[0].profile, 1, "profile 1 (test2) is the closer");
+        assert_eq!(
+            s.companions[0].profile, 1,
+            "profile 1 (test2) is the closer"
+        );
         assert!(names().contains(&"nav_door"));
     }
 
@@ -733,5 +989,30 @@ mod tests {
     fn walk_settings_are_defaults() {
         let s = get("walk").expect("walk");
         assert_eq!(s.settings, ScenarioSettings::default());
+    }
+
+    #[test]
+    fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
+        let s = get("nav_routes").expect("nav_routes is registered");
+        assert_eq!(s.name, "nav_routes");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(!s.seed.mainland);
+        assert_eq!(NAV_ROUTES.len(), 10);
+        // Seed + tele+follow per OD.
+        assert_eq!(s.steps.len(), 1 + NAV_ROUTES.len() * 2);
+        assert!(
+            matches!(s.steps[0].kind, StepKind::Perform { .. }),
+            "first step seeds knife/coins/grandtree"
+        );
+        let last = NAV_ROUTES[9].2;
+        let dest = match &s.steps[s.steps.len() - 1].kind {
+            StepKind::Follow { dest } => *dest,
+            _ => panic!("last step must be Follow"),
+        };
+        assert_eq!(dest, last);
+        assert_eq!(s.proof.name(), "arrived(2817,3443,0)");
+        assert!(s.settings.full_rate);
+        assert_eq!(s.settings.deadline, Duration::from_secs(3600));
+        assert!(names().contains(&"nav_routes"));
     }
 }
