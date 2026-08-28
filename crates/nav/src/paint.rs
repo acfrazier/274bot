@@ -227,9 +227,22 @@ pub fn hull_targets(
     let mut out: Vec<HullTarget> = Vec::new();
     let mut tile_idx = 0usize;
     let mut seen_loc_hop = false;
-    for l in route.legs.iter().skip(leg) {
+    for (i, l) in route.legs.iter().enumerate().skip(leg) {
         match l {
-            Leg::Walk { tiles } => tile_idx += tiles.len(),
+            Leg::Walk { tiles } => {
+                // The first remaining walk leg counts from `here` onward,
+                // exactly like `remaining_path_tiles` trims it, so the
+                // window is measured from the same remaining start.
+                let mut count = tiles.len();
+                if i == leg {
+                    if let Some(here) = here {
+                        if let Some(pos) = tiles.iter().position(|t| *t == here) {
+                            count = tiles.len() - pos;
+                        }
+                    }
+                }
+                tile_idx += count;
+            }
             Leg::Transport { edge } => {
                 if is_loc_backed(edge.kind) {
                     let hop = HullTarget {
@@ -579,6 +592,43 @@ mod tests {
                     at: tile(5, 0, 0)
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn hull_targets_window_counts_from_the_trimmed_start() {
+        // `here` mid-walk trims the first walk leg, so `next_only_plus` is
+        // measured from the same remaining start `remaining_path_tiles`
+        // uses. Walk (0..5), door A, walk (6..12), door B, here=(3,0),
+        // next_only_plus=12: the un-trimmed count puts door B at tile 13
+        // (dropped), the trimmed count at tile 10 (kept).
+        let r = route(vec![
+            Leg::Walk {
+                tiles: (0..5).map(|x| tile(x, 0, 0)).collect(),
+            },
+            Leg::Transport {
+                edge: edge(TransportKind::Door, tile(5, 0, 0), tile(6, 0, 0), 1530),
+            },
+            Leg::Walk {
+                tiles: (6..12).map(|x| tile(x, 0, 0)).collect(),
+            },
+            Leg::Transport {
+                edge: edge(TransportKind::Door, tile(12, 0, 0), tile(13, 0, 0), 1531),
+            },
+        ]);
+        assert_eq!(
+            hull_targets(&r, Some(tile(3, 0, 0)), 12),
+            vec![
+                HullTarget {
+                    loc_id: 1530,
+                    at: tile(5, 0, 0)
+                },
+                HullTarget {
+                    loc_id: 1531,
+                    at: tile(12, 0, 0)
+                },
+            ],
+            "the follow-on door is in the window from the trimmed start"
         );
     }
 
