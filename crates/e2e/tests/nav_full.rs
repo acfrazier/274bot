@@ -20,11 +20,10 @@ use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use scenario::{RunnerStatus, ScenarioRunner};
 
-/// The whole run's wall-clock ceiling: the mainland seed can take ~90s
-/// and the ~150-tile walk another ~2 minutes, so the default 180s
-/// scenario deadline would fail a healthy run (the panel uses the same
-/// 360s for `nav_full`). The runner's own deadline is what fails a stuck
-/// run; this outer clock is a backstop.
+/// The whole run's wall-clock backstop: the mainland seed can take ~90s
+/// and the ~150-tile walk another ~2 minutes. The runner's deadline is
+/// `settings.deadline` (360s for `nav_full`); 400s is the process
+/// backstop.
 const RUN_DEADLINE: Duration = Duration::from_secs(400);
 
 #[test]
@@ -41,9 +40,9 @@ fn nav_full() {
     {
         let mut r = runner.lock().unwrap();
         // The headless twin never writes shots: explicit no-op sink (the
-        // same behavior as the runner's default).
+        // same behavior as the runner's default). Runner deadline is
+        // `settings.deadline` (360s); 400s is the process backstop.
         r.set_shot_sink(Box::new(|_, _| {}));
-        r.set_deadline(RUN_DEADLINE);
     }
     let mut opts = options();
     opts.mainland = mainland;
