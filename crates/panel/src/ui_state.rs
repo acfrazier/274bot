@@ -4,11 +4,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::nav_settings::NavSettings;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelUiState {
     pub last_focus: Option<String>,
     #[serde(default)]
     pub collapsed: HashMap<String, HashMap<String, bool>>,
+    #[serde(default)]
+    pub nav: NavSettings,
 }
 
 /// Default closed (collapsed) when no persisted entry: script + parameters only.
@@ -76,13 +80,32 @@ thread_local! {
         std::cell::RefCell::new(PanelUiState {
             last_focus: None,
             collapsed: HashMap::new(),
+            nav: NavSettings::default(),
         });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{load, load_at, path, pick_focus, save, save_at, PanelUiState};
+    use super::{load, load_at, path, pick_focus, save, save_at, NavSettings, PanelUiState};
     use std::collections::HashMap;
+
+    #[test]
+    fn panel_ui_roundtrip_keeps_nav() {
+        let mut s = PanelUiState::default();
+        s.nav.show_nav_path = true;
+        s.nav.color_path = "#AABBCC".into();
+        let bytes = serde_json::to_vec(&s).unwrap();
+        let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
+        assert!(back.nav.show_nav_path);
+        assert_eq!(back.nav.color_path, "#AABBCC");
+    }
+
+    #[test]
+    fn panel_ui_without_nav_key_is_defaults() {
+        let back: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert_eq!(back.nav, NavSettings::default());
+    }
 
     #[test]
     fn pick_focus_prefers_last_when_present() {
