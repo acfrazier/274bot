@@ -101,8 +101,7 @@ struct PanelState {
     game_dock_node: Option<Id>,
     docked_game_title: String,
     last_upload: Option<(String, u64)>,
-    /// Cached path overlay; rebuilt at the 1 s raster cadence or on a new
-    /// arm (see `overlay`).
+    /// Cached queue-card overlay for the focused slot (see `overlay`).
     overlay: PathOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
@@ -926,9 +925,9 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
-        // Nav path overlay: amber polyline of the armed route's
-        // remaining tiles, drawn over the Image (rebuilds at the
-        // 1 s raster cadence or on a new arm, not per frame).
+        // Queue-card overlay: the armed route's remaining tiles are
+        // painted by the client's 3D renderer and on the pack map, so the
+        // Image only carries the focused slot's queue card.
         state
             .overlay
             .frame(ui, &state.session, ui.item_rect_min(), size);

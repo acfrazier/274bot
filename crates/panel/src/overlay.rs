@@ -1,110 +1,14 @@
-//! Schematic nav-path overlay for the Game Image.
+//! Queue-card overlay for the Game Image.
 //!
-//! The 274 client renders a perspective 3D view, so there is no exact
-//! tile→pixel transform. The overlay treats the Image as a flat tile grid
-//! centred on the focused slot's observed tile and rebuilds its polyline
-//! vertices at the 1 s raster cadence (or immediately when a new route
-//! arms) instead of every 50 fps UI frame.
+//! The armed route's remaining tiles are painted by the client's 3D
+//! renderer and on the pack map, so this overlay draws only the focused
+//! slot's queue card over the Image.
 
-use std::time::{Duration, Instant};
-
-use api::snapshot::WorldTile;
 use dear_imgui_rs::Ui;
-use nav::paint::remaining_path_tiles;
-use nav::tile::Tile;
 
 use crate::queue_card::{queue_ahead_label, queue_k_of_n, QUEUE_CARD_TITLE};
 use crate::session::Session;
 use crate::theme::ACCENT;
-
-/// How often the overlay recomputes its vertices: the watch-only raster
-/// cadence (50 ticks × 20 ms).
-const REFRESH: Duration = Duration::from_millis(1000);
-
-/// The Image is treated as a flat tile grid centred on the player. The
-/// client culls world rendering past ±26 tiles from the camera, so the
-/// grid is 52 tiles wide, aspect-corrected to the 765×503 applet.
-const VIEW_TILES_W: i32 = 52;
-const VIEW_TILES_H: i32 = 34;
-
-/// Map a world tile to image-local pixels: the inverse of
-/// [`host::map_image_to_applet`] conceptually (applet pixel → world tile is
-/// the forward direction; here a tile lands on the centre of its cell in a
-/// `tiles_w`×`tiles_h` grid whose top-left tile is `origin`).
-pub fn tile_to_local(
-    t: Tile,
-    origin: Tile,
-    tiles_w: i32,
-    tiles_h: i32,
-    img_w: f32,
-    img_h: f32,
-) -> [f32; 2] {
-    let cell_w = img_w / tiles_w.max(1) as f32;
-    let cell_h = img_h / tiles_h.max(1) as f32;
-    [
-        (t.x - origin.x) as f32 * cell_w + cell_w / 2.0,
-        (t.z - origin.z) as f32 * cell_h + cell_h / 2.0,
-    ]
-}
-
-/// Whether the cached polyline is stale: the route generation moved (a new
-/// arm / focus switch) or `REFRESH` has elapsed since the last rebuild.
-fn needs_refresh(cached_gen: u64, gen: u64, since: Duration) -> bool {
-    gen != cached_gen || since >= REFRESH
-}
-
-/// The panel tile of a world tile (structurally identical fields).
-fn tile_from(w: WorldTile) -> Tile {
-    Tile {
-        x: w.x,
-        z: w.z,
-        level: w.level,
-    }
-}
-
-/// Window-space vertices for the focused walk arm's remaining route, or
-/// empty when nothing is armed. The schematic grid is anchored on the
-/// focused slot's observed tile; before the first position report the
-/// route's own first tile (the tile it was routed from) anchors instead.
-fn points_for(session: &Session, min: [f32; 2], size: [f32; 2]) -> Vec<[f32; 2]> {
-    let Some(name) = session.focused_name() else {
-        return Vec::new();
-    };
-    let Some(arm) = session.travellers.lock().unwrap().get(&name).cloned() else {
-        return Vec::new();
-    };
-    let here = session
-        .focused_tile()
-        .map(|(x, z)| WorldTile { x, z, level: 0 });
-    let route = arm.lock().unwrap().route.clone();
-    let Some(route) = route else {
-        return Vec::new();
-    };
-    let tiles = remaining_path_tiles(&route, here);
-    if tiles.is_empty() {
-        return Vec::new();
-    }
-    let anchor = here.map(tile_from).unwrap_or(tile_from(tiles[0].tile));
-    let origin = Tile {
-        x: anchor.x - VIEW_TILES_W / 2,
-        z: anchor.z - VIEW_TILES_H / 2,
-        level: anchor.level,
-    };
-    tiles
-        .iter()
-        .map(|pt| {
-            let local = tile_to_local(
-                tile_from(pt.tile),
-                origin,
-                VIEW_TILES_W,
-                VIEW_TILES_H,
-                size[0],
-                size[1],
-            );
-            [min[0] + local[0], min[1] + local[1]]
-        })
-        .collect()
-}
 
 /// Amber queue-card lines for a focused FIFO place: title, `k of n`,
 /// ahead label. Empty when the slot is not queued, so the card disappears
@@ -120,10 +24,10 @@ fn queue_card_lines(queue: Option<(i32, i32)>) -> Vec<String> {
     }
 }
 
-/// Draw the queue card as a dark amber-bordered block over the Image,
-/// using the same WindowDrawList as the nav polyline. `min` is the Image's
-/// top-left corner. Width is an estimate (no font measurement at this
-/// layer), so the block only needs to be legible, not pixel-perfect.
+/// Draw the queue card as a dark amber-bordered block over the Image.
+/// `min` is the Image's top-left corner. Width is an estimate (no font
+/// measurement at this layer), so the block only needs to be legible, not
+/// pixel-perfect.
 fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
     const PAD: f32 = 8.0;
     const LINE_H: f32 = 15.0;
@@ -163,16 +67,10 @@ pub fn draw_focused_queue_card(ui: &Ui, session: &Session, min: [f32; 2]) {
     }
 }
 
-/// Cached overlay polyline: window-space vertices rebuilt only when the
-/// route generation changes (rising edge on a new arm / focus switch) or
-/// [`REFRESH`] elapsed, so an unchanged route does not recompute or
-/// re-allocate vertices every 50 fps UI frame.
+/// Cached queue-card state for the focused slot. The card must appear
+/// immediately on enqueue, so it is cached on the FIFO tuple, not a
+/// timer.
 pub struct PathOverlay {
-    points: Vec<[f32; 2]>,
-    gen: u64,
-    last: Instant,
-    /// Cached focused FIFO place; the queue card must appear immediately
-    /// on enqueue, so the tuple (not the 1 s raster cadence) is the gen.
     queue: Option<(i32, i32)>,
     queue_lines: Vec<String>,
 }
@@ -180,36 +78,21 @@ pub struct PathOverlay {
 impl PathOverlay {
     pub fn new() -> Self {
         Self {
-            points: Vec::new(),
-            gen: 0,
-            last: Instant::now(),
             queue: None,
             queue_lines: Vec::new(),
         }
     }
 
-    /// The cached window-space vertices (empty while nothing is armed).
+    /// Always empty: the path polyline is gone — the client paints the
+    /// route in 3D and the pack map shows the tiles.
     pub fn points(&self) -> &[[f32; 2]] {
-        &self.points
+        &[]
     }
 
-    /// Rebuild-if-stale, then stroke the amber polyline over the Image.
-    /// `min`/`size` are the Image widget's top-left corner and size.
-    pub fn frame(&mut self, ui: &Ui, session: &Session, min: [f32; 2], size: [f32; 2]) {
-        let gen = session.route_gen();
-        let now = Instant::now();
-        if needs_refresh(self.gen, gen, now.duration_since(self.last)) {
-            self.gen = gen;
-            self.last = now;
-            self.points = points_for(session, min, size);
-        }
-        if !self.points.is_empty() {
-            ui.get_window_draw_list()
-                .add_polyline(self.points.clone(), ACCENT)
-                .closed(false)
-                .thickness(2.0)
-                .build();
-        }
+    /// Draw the focused slot's queue card over the Image. `min` is the
+    /// Image widget's top-left corner; `size` is unused now that the
+    /// polyline is gone.
+    pub fn frame(&mut self, ui: &Ui, session: &Session, min: [f32; 2], _size: [f32; 2]) {
         let queue = session.queue_place();
         if queue != self.queue {
             self.queue = queue;
@@ -229,15 +112,13 @@ impl Default for PathOverlay {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use api::snapshot::WorldTile;
     use nav::collision::WorldCollision;
     use nav::tile::Tile;
     use nav::transport::TransportGraph;
     use nav::world::NavWorld;
 
-    use super::{needs_refresh, queue_card_lines, tile_to_local, PathOverlay};
+    use super::{queue_card_lines, PathOverlay};
     use crate::session::Session;
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -259,83 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_tile_to_image_roundtrip() {
-        // tile 0,0 in a 3x3 at image [0,0]-[90,90] → center of cell
-        let p = tile_to_local(
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            3,
-            3,
-            90.0,
-            90.0,
-        );
-        assert!(p[0] >= 0.0 && p[0] <= 30.0);
-    }
-
-    #[test]
-    fn tile_to_local_centers_cells_from_origin() {
-        // origin (1,1): tile (2,2) is the image centre of a 3x3 grid.
-        let p = tile_to_local(
-            Tile {
-                x: 2,
-                z: 2,
-                level: 0,
-            },
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-            3,
-            3,
-            90.0,
-            90.0,
-        );
-        assert!((p[0] - 45.0).abs() < 0.001);
-        assert!((p[1] - 45.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn tile_to_local_scales_to_image_size() {
-        // Cells follow the image aspect: a 2x2 grid in a 100x60 image has
-        // 50x30 cells, so tile (1,1) centres at (75,45).
-        let p = tile_to_local(
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            2,
-            2,
-            100.0,
-            60.0,
-        );
-        assert!((p[0] - 75.0).abs() < 0.001);
-        assert!((p[1] - 45.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn refresh_is_due_on_new_generation_or_one_second() {
-        assert!(needs_refresh(0, 1, Duration::ZERO));
-        assert!(needs_refresh(1, 1, Duration::from_secs(1)));
-        assert!(!needs_refresh(1, 1, Duration::from_millis(999)));
-    }
-
-    #[test]
-    fn overlay_builds_points_when_route_armed() {
+    fn overlay_does_not_stroke_a_path_polyline() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
@@ -364,95 +169,10 @@ mod tests {
             overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
         });
         ctx.render();
-        assert!(!overlay.points().is_empty(), "an armed route must paint");
         assert!(
-            s.route_gen() != 0,
-            "arming must bump the overlay generation"
+            overlay.points().is_empty(),
+            "polyline is gone; 3D paints the path"
         );
-    }
-
-    #[test]
-    fn overlay_skips_draw_without_route() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let ui = ctx.frame();
-        let s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        let mut overlay = PathOverlay::new();
-        ui.window("##overlay-test").build(|| {
-            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
-        });
-        ctx.render();
-        assert!(overlay.points().is_empty(), "no route -> no polyline");
-    }
-
-    #[test]
-    fn overlay_refreshes_when_route_changes() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
-        let world = open_world(3, 3);
-        s.arm_walk_on(
-            &world,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-        );
-        let mut overlay = PathOverlay::new();
-        {
-            let ui = ctx.frame();
-            ui.window("##overlay-test").build(|| {
-                overlay.frame(ui, &s, [0.0, 0.0], [90.0, 90.0]);
-            });
-        }
-        ctx.render();
-        let first = overlay.points()[0];
-        let last = *overlay.points().last().unwrap();
-        // Re-arm a longer route: the new generation must rebuild now. Both
-        // routes start on the same tile so the first point is stable, but
-        // the line must reach the new dest.
-        s.arm_walk_on(
-            &world,
-            Tile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            Tile {
-                x: 2,
-                z: 2,
-                level: 0,
-            },
-        );
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        {
-            let ui = ctx.frame();
-            ui.window("##overlay-test").build(|| {
-                overlay.frame(ui, &s, [0.0, 0.0], [90.0, 90.0]);
-            });
-        }
-        ctx.render();
-        assert_eq!(overlay.points()[0], first);
-        assert_ne!(overlay.points().last().copied(), Some(last));
     }
 
     #[test]
