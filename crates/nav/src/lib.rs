@@ -5,6 +5,7 @@ pub mod arrival;
 pub mod collision;
 pub mod grid;
 pub mod pack;
+pub mod paint;
 pub mod router;
 pub mod tile;
 pub mod transport;

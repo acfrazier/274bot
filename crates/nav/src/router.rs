@@ -323,7 +323,7 @@ fn find_bounded_impl(
 /// x/z grid (the whole-world mapsquare bbox); on other levels the bake
 /// carries no flags yet — transports may land there — so steps are
 /// unrestricted within that plane.
-fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
+pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
     let nb = WorldTile {
         x: cur.x + d.0,
         z: cur.z + d.1,
