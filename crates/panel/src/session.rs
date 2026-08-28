@@ -205,6 +205,11 @@ pub struct Session {
     pub walkto_open: bool,
     /// Tile highlighted in the WalkTo picker; armed only on confirm.
     pub picker_sel: Option<Tile>,
+    /// Nav settings modal open flag (the modal window in `app.rs`).
+    pub nav_settings_open: bool,
+    /// Live-harness overlay: force the paint-layer toggles on for this
+    /// session without writing prefs (`NavSettings::effective`).
+    pub nav_live_force_layers: bool,
     /// Overlay generation: bumped whenever the focused traveller's route
     /// can change (a new arm, or the focused profile switching). The path
     /// overlay rebuilds immediately on a bump instead of waiting for its
@@ -331,6 +336,8 @@ impl Session {
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walkto_open: false,
             picker_sel: None,
+            nav_settings_open: false,
+            nav_live_force_layers: false,
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
             scatter: Arc::new(AtomicBool::new(false)),

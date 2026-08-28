@@ -87,10 +87,11 @@ pub fn multibox_tooltip(on: bool) -> &'static str {
     }
 }
 
-/// Global/Nav/Loadouts are controls inside parameters, still listed.
-/// MultiBox was a title-row mock before campaign 4; it is now wired.
-/// Script chrome (Browse…/Start/Pause/Stop) is wired as of campaign 5.
-pub const MOCK_BUTTONS: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
+/// Global/Loadouts are controls inside parameters, still listed. Nav
+/// settings opened its own modal. MultiBox was a title-row mock before
+/// campaign 4; it is now wired. Script chrome (Browse…/Start/Pause/Stop)
+/// is wired as of campaign 5.
+pub const MOCK_BUTTONS: &[&str] = &["Global settings", "Loadouts"];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
 pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
@@ -143,7 +144,7 @@ mod tests {
             !MOCK_BUTTONS.contains(&"MultiBox"),
             "MultiBox is a live toggle; only parameter chrome stays mocked"
         );
-        for b in ["Global settings", "Nav settings", "Loadouts"] {
+        for b in ["Global settings", "Loadouts"] {
             assert!(
                 MOCK_BUTTONS.contains(&b),
                 "param mock {b:?} must still be listed"
@@ -155,6 +156,17 @@ mod tests {
                 "script {b:?} is wired, not a mock"
             );
         }
+    }
+
+    #[test]
+    fn nav_settings_is_wired_on_param_row() {
+        assert!(PARAM_ROW.contains(&"Nav settings"));
+        assert!(
+            !MOCK_BUTTONS.contains(&"Nav settings"),
+            "Nav settings opens a modal; Global settings and Loadouts stay mocked"
+        );
+        assert!(MOCK_BUTTONS.contains(&"Global settings"));
+        assert!(MOCK_BUTTONS.contains(&"Loadouts"));
     }
 
     #[test]

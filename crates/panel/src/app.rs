@@ -1225,15 +1225,10 @@ fn mock_button(ui: &Ui, label: &str, hint: &str, size: [f32; 2]) {
     ui.set_item_tooltip(hint);
 }
 
-fn mock_button_row(ui: &Ui, labels: &[&str], hint: &str) {
-    let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, labels.len());
-    for (i, label) in labels.iter().enumerate() {
-        if !stack && i > 0 {
-            ui.same_line();
-        }
-        mock_button(ui, label, hint, [w, 0.0]);
-    }
+/// `hop_label_px` write path: clamp to the `NavSettings` 8..=28 field
+/// invariant (the struct has no setter; the modal is the only writer).
+fn clamp_hop_label_px(px: i32) -> i32 {
+    px.clamp(8, 28)
 }
 
 /// profile: vault combo; password prompt until unlocked.
@@ -1552,6 +1547,102 @@ fn load_window(ui: &Ui, session: &mut Session) {
     session.script_load_open = open;
 }
 
+/// True while the Nav settings modal was wanted last frame; drives the
+/// rising-edge `open_popup` (same latch as the chooser) so Esc cannot be
+/// defeated by a per-frame reopen.
+static PREV_NAV_SETTINGS: AtomicBool = AtomicBool::new(false);
+
+/// Nav settings modal (un-mocked this task): Routing, Display, Path paint
+/// (only while the path is shown), and Debug groups. Every toggle or
+/// colour writes `session.ui.nav` + `ui_state::save`; Esc / Close writes
+/// nothing new. WalkTo, capture, and full-rate stay on the rail.
+fn nav_settings_modal(ui: &Ui, session: &mut Session) {
+    let want = session.nav_settings_open;
+    let (open_popup, new_prev) =
+        chooser_should_open_popup(want, PREV_NAV_SETTINGS.load(Ordering::Relaxed));
+    PREV_NAV_SETTINGS.store(new_prev, Ordering::Relaxed);
+    if open_popup {
+        ui.open_popup("Nav settings");
+    }
+    let mut open = want;
+    if let Some(_t) = ui
+        .begin_modal_popup_config("Nav settings")
+        .opened(&mut open)
+        .begin()
+    {
+        let mut nav = session.ui.nav.clone();
+        let mut changed = false;
+
+        ui.text_colored(ACCENT, "Routing");
+        if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
+            changed = true;
+        }
+
+        ui.spacing();
+        ui.text_colored(ACCENT, "Display");
+        if ui.checkbox("show nav path", &mut nav.show_nav_path) {
+            changed = true;
+        }
+
+        if nav.show_nav_path {
+            ui.spacing();
+            ui.text_colored(ACCENT, "Path paint");
+            changed |= nav_color_field(ui, "path", &mut nav.color_path);
+            changed |= nav_color_field(ui, "transport", &mut nav.color_transport);
+            changed |= nav_color_field(ui, "click", &mut nav.color_click);
+            changed |= nav_color_field(ui, "text", &mut nav.color_text);
+            if ui.checkbox("hop labels", &mut nav.hop_labels) {
+                changed = true;
+            }
+            if ui.input_int("hop label px", &mut nav.hop_label_px) {
+                nav.hop_label_px = clamp_hop_label_px(nav.hop_label_px);
+                changed = true;
+            }
+        }
+
+        ui.spacing();
+        ui.text_colored(ACCENT, "Debug");
+        if ui.checkbox("collision fill", &mut nav.collision_fill) {
+            changed = true;
+        }
+        changed |= nav_color_field(ui, "collision", &mut nav.color_collision);
+        if ui.checkbox("NSEW labels", &mut nav.nsew_labels) {
+            changed = true;
+        }
+        if ui.checkbox("client trail", &mut nav.client_trail) {
+            changed = true;
+        }
+        changed |= nav_color_field(ui, "client", &mut nav.color_client);
+        changed |= nav_color_field(ui, "client run-alt", &mut nav.color_client_run_alt);
+        if ui.checkbox("component flood", &mut nav.component_flood) {
+            changed = true;
+        }
+
+        if changed {
+            session.ui.nav = nav;
+            crate::ui_state::save(&session.ui);
+        }
+
+        ui.spacing();
+        let w = ui.content_region_avail()[0];
+        if ui.button_with_size("Close", [w, 0.0]) {
+            ui.close_current_popup();
+        }
+    }
+    session.nav_settings_open = open;
+}
+
+/// `#RRGGBB` field for one nav paint colour. The raw string is stored;
+/// the paint side falls back through `parse_html_color` when invalid.
+fn nav_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
+    ui.set_next_item_width(110.0);
+    ui.input_text(format!("{label}##nav-color-{label}"), color)
+        .hint("#RRGGBB")
+        .chars_uppercase(true)
+        .chars_no_blank(true)
+        .build()
+}
+
 /// parameters: uncollapses the selected compiled script's default key/value
 /// rows (`script::defaults`; `(no parameters)` until ports fill a schema),
 /// then the Edit button — always gray until `edit_parameters_enabled`
@@ -1577,7 +1668,22 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     } else {
         mock_button(ui, "Edit parameters", "not in v1", [w, 0.0]);
     }
-    mock_button_row(ui, PARAM_ROW, "campaign 5");
+    // Global settings and Loadouts stay mocked; Nav settings is a live
+    // button that opens the modal below.
+    let avail = ui.content_region_avail()[0];
+    let (w, stack) = button_row_layout(avail, PARAM_ROW.len());
+    mock_button(ui, "Global settings", "campaign 5", [w, 0.0]);
+    if !stack {
+        ui.same_line();
+    }
+    if ui.button_with_size("Nav settings", [w, 0.0]) {
+        session.nav_settings_open = true;
+    }
+    ui.set_item_tooltip("nav debug paints and labels");
+    if !stack {
+        ui.same_line();
+    }
+    mock_button(ui, "Loadouts", "campaign 5", [w, 0.0]);
 }
 
 /// Parameter editing is a v1 gap: always `false` until a params modal ships.
@@ -2278,6 +2384,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     chooser_window(ui, &mut state.session);
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
+    nav_settings_modal(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
 }
 
@@ -2289,10 +2396,11 @@ mod tests {
 
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_for, chooser_should_open_popup,
-        edit_parameters_enabled, live_null_tick, live_script_tick, live_smoke_tick,
-        live_stress_tick, manual_shot_label, parse_live_args, runner_config, smoke_settled,
-        smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode,
-        BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        clamp_hop_label_px, edit_parameters_enabled, live_null_tick, live_script_tick,
+        live_smoke_tick, live_stress_tick, manual_shot_label, parse_live_args, runner_config,
+        smoke_settled, smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
+        LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
+        SMOKE_SETTLE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use crate::window::RedrawMode;
@@ -2366,6 +2474,17 @@ mod tests {
     #[test]
     fn edit_parameters_is_a_v1_gap() {
         assert!(!edit_parameters_enabled(), "no params modal in v1");
+    }
+
+    #[test]
+    fn hop_label_px_writes_clamp_to_8_28() {
+        // The settings UI is the only writer of `hop_label_px`; it must
+        // hold the NavSettings 8..=28 field invariant.
+        assert_eq!(clamp_hop_label_px(0), 8);
+        assert_eq!(clamp_hop_label_px(8), 8);
+        assert_eq!(clamp_hop_label_px(11), 11);
+        assert_eq!(clamp_hop_label_px(28), 28);
+        assert_eq!(clamp_hop_label_px(100), 28);
     }
 
     #[test]
