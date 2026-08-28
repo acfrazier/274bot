@@ -245,6 +245,10 @@ pub struct Session {
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
     audio: Arc<AudioGate<AudioOut>>,
+    /// Whether focus/multibox writes land on disk prefs. `true` in
+    /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
+    /// live boot never touches the operator's `last_focus`.
+    pub persist_ui: bool,
 }
 
 /// Keep each per-name panel log bounded.
@@ -344,6 +348,7 @@ impl Session {
             load_scratch: String::new(),
             scenario: Arc::new(Mutex::new(None)),
             audio: Arc::new(AudioGate::new()),
+            persist_ui: true,
             options: PlayOptions {
                 host: "127.0.0.1".into(),
                 port: DEFAULT_PORT,
@@ -400,6 +405,7 @@ impl Session {
     /// wall of both, only-render-selected + focus `test`, renderer on,
     /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
+        self.persist_ui = false;
         let path = temp_live_vault(&[("test", "test"), ("test2", "test2")]);
         if !self.unlock_at(&path, "bot") {
             return Err(self
@@ -431,6 +437,7 @@ impl Session {
 
     /// Headed flat wall of `n` profiles (`s00`…`s{n-1}`).
     fn live_prepare_stress(&mut self, n: usize) -> Result<(), String> {
+        self.persist_ui = false;
         let n = n.max(1);
         let names: Vec<(String, String)> = (0..n)
             .map(|i| {
@@ -471,6 +478,10 @@ impl Session {
     /// [`scenario::ScenarioRunner`] installed for the slot thread's
     /// per-frame hook. The UI frame reads the runner's status/evidence.
     pub fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+        // Ephemeral boot: never persist focus/last_focus from a live run.
+        self.persist_ui = false;
+        // Copy the view knobs before `scenario` moves into the runner.
+        let view = scenario.settings.clone();
         let entries: Vec<(&str, &str)> = scenario
             .seed
             .profiles
@@ -503,6 +514,14 @@ impl Session {
             self.load(name);
         }
         self.select(&names[0]);
+        // Apply the scenario's view knobs now the wall is up; the slot
+        // threads re-read the focus within a frame.
+        self.set_renderer(view.renderer);
+        self.focus.lock().unwrap().only_render_selected = view.only_render_selected;
+        self.set_capture(view.capture);
+        self.set_live_full_rate(view.full_rate);
+        // NEVER assign sidecar_50 — it stays the operator knob.
+        self.sync_sidecar_cadence();
         let mut runner = scenario::ScenarioRunner::new(scenario);
         if let Some(play) = &self.play {
             runner.set_obj_names(play.obj_names());
@@ -831,7 +850,7 @@ impl Session {
     }
 
     fn apply_focus(&mut self, name: &str) {
-        {
+        if self.persist_ui {
             // Reload so an injected/disk collapsed map is not clobbered.
             let mut ui = crate::ui_state::load();
             ui.last_focus = Some(name.to_string());
@@ -907,6 +926,15 @@ impl Session {
     /// 1 s watch bound.
     pub fn set_sidecar_50(&mut self, on: bool) {
         self.focus.lock().unwrap().sidecar_50 = on;
+        self.wake_all_slots();
+    }
+
+    /// Ephemeral live overlay: every drawing slot at 50 fps, focused
+    /// included (the scenario's `full_rate` knob). Not sidecar-50, not
+    /// persisted; raising the frame cadence needs a kick so a parked
+    /// member re-reads it within a frame.
+    pub fn set_live_full_rate(&mut self, on: bool) {
+        self.focus.lock().unwrap().live_full_rate = on;
         self.wake_all_slots();
     }
 
@@ -1341,7 +1369,13 @@ impl Session {
                 Some(f) => !self.wall.members.iter().any(|m| m == f),
             };
             if need {
-                let last = crate::ui_state::load().last_focus;
+                // Live boots never restore the operator's disk last_focus;
+                // the first wall member / later `select(&names[0])` wins.
+                let last = if self.persist_ui {
+                    crate::ui_state::load().last_focus
+                } else {
+                    None
+                };
                 if let Some(name) = crate::ui_state::pick_focus(&self.wall.members, last.as_deref())
                 {
                     self.select(&name);
@@ -1655,8 +1689,12 @@ fn temp_live_vault(entries: &[(&str, &str)]) -> PathBuf {
 
 /// Same as [`temp_live_vault`] with an explicit uid base (`base + i`).
 fn temp_live_vault_from(entries: &[(&str, &str)], uid_base: i32) -> PathBuf {
+    // Unique per call: parallel tests boot several scenarios and must not
+    // race on one temp vault path.
+    static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-live-{}-{}-{}",
+        "274bot-panel-live-{}-{}-{}-{serial}",
         std::process::id(),
         entries.len(),
         uid_base
@@ -2586,6 +2624,74 @@ mod tests {
             "no wall members, no extra rasters"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn live_prepare_script_does_not_write_last_focus() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: Some("alice".into()),
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        let fleet = scenario::get("nav_door").expect("nav_door");
+        s.live_prepare_script(fleet).expect("prepare");
+        assert_eq!(
+            crate::ui_state::load().last_focus.as_deref(),
+            Some("alice"),
+            "live boot must not clobber the operator last profile"
+        );
+    }
+
+    #[test]
+    fn live_prepare_nav_door_applies_full_rate_and_leaves_sidecar_off() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        let fleet = scenario::get("nav_door").expect("nav_door");
+        s.live_prepare_script(fleet).expect("prepare");
+        let f = s.focus.lock().unwrap();
+        assert!(f.live_full_rate);
+        assert!(!f.only_render_selected, "closer must paint");
+        assert!(!f.capture);
+        assert!(f.renderer);
+        assert!(!f.sidecar_50, "sidecar stays the operator knob");
+    }
+
+    #[test]
+    fn live_full_rate_sync_raises_focus_and_members() {
+        let mut s = Session::new();
+        let a_in = SlotInput::new();
+        let b_in = SlotInput::new();
+        s.slots.insert(
+            "a".into(),
+            SlotIo {
+                input: Arc::clone(&a_in),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.slots.insert(
+            "b".into(),
+            SlotIo {
+                input: Arc::clone(&b_in),
+                pixels: FrameBuf::new(),
+            },
+        );
+        {
+            let mut f = s.focus.lock().unwrap();
+            f.focused = Some("a".into());
+            f.only_render_selected = false;
+            f.wall_open = true;
+            f.wall = vec!["a".into(), "b".into()];
+            f.renderer_by =
+                std::collections::HashMap::from([("a".into(), true), ("b".into(), true)]);
+            f.sidecar_50 = false;
+            f.live_full_rate = true;
+        }
+        s.sync_sidecar_cadence();
+        assert!(a_in.full_rate(), "focused slot is 50 fps via live overlay");
+        assert!(b_in.full_rate(), "member is 50 fps via live overlay");
     }
 
     #[test]
