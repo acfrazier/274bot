@@ -1616,12 +1616,15 @@ impl GameSnapshot {
 
     /// Loc-family rebuild: sweep the sim world's four layers at
     /// `minusedlevel` (locs sit on scene tiles, so the world tile is
-    /// `base + scene` with no pixel conversion). Gated on the scene gen —
-    /// loc changes arrive on scene-family packets.
+    /// `base + scene` with no pixel conversion). The dirty flag still
+    /// tracks the scene gen (loc packets bump it), but the sweep always
+    /// runs — typecodes can change on the world after the observer already
+    /// consumed that gen (map restamp after `REBUILD_NORMAL`, a door
+    /// multiloc applied in the same drain). A gen-gated copy leaves nav
+    /// reading the previous build's door. Same pattern as
+    /// [`GameSnapshot::rebuild_scene`]'s always-fresh `scene_state`.
     fn rebuild_loc(&mut self, client: &Client) -> bool {
-        if !track(client.gens.scene, &mut self.loc_gen) {
-            return false;
-        }
+        let moved = track(client.gens.scene, &mut self.loc_gen);
         let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
@@ -1684,7 +1687,7 @@ impl GameSnapshot {
                 }
             }
         }
-        true
+        moved
     }
 
     /// Ground-item rebuild: iterate each `ground_obj` list at

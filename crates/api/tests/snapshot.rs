@@ -812,6 +812,41 @@ fn loc_view_rebuild_reads_world_locs() {
     );
 }
 
+/// Loc typecodes can change on the sim world after the observer already
+/// consumed `gens.scene` (map restamp after REBUILD_NORMAL, a door
+/// multiloc the packet applied before the gen latch). A gen-gated copy
+/// would leave nav reading the previous build's door. Same pattern as
+/// `scene_status_is_always_fresh_without_a_gen_bump`.
+#[test]
+fn loc_view_is_always_fresh_without_a_gen_bump() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    let closed = 0x4000_0000 + (1530 << 14) + 3 + (4 << 7);
+    let open = 0x4000_0000 + (1531 << 14) + 3 + (4 << 7);
+    c.world
+        .set_wall(0, 3, 4, 0, 0, 0, closed, 1 << 6, 0, 0, 0, 0);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&mut c, Family::Loc));
+    assert_eq!(snap.locs()[0].id, 1530, "first rebuild sees the closed door");
+
+    // The live loc flips with no packet / no scene gen — the snapshot
+    // must still read the open leaf.
+    c.world
+        .set_wall(0, 3, 4, 0, 0, 0, open, 1 << 6, 0, 0, 0, 0);
+    assert!(
+        !snap.rebuild_family(&mut c, Family::Loc),
+        "no scene gen moved"
+    );
+    assert_eq!(
+        snap.locs()[0].id,
+        1531,
+        "loc view is always fresh, even when the scene gen did not bump"
+    );
+}
+
 /// The loc sweep reads all four layers, each into its own `LocLayer`.
 #[test]
 fn loc_view_reads_all_four_layers() {
