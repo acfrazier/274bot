@@ -1,8 +1,13 @@
-//! Persisted nav-debug settings (`PanelUiState.nav`, rs2b0t Path-paint
-//! defaults) plus the live-harness overlay that forces paint layers on
-//! for a run without writing prefs.
-
+/// Persisted nav-debug settings (`PanelUiState.nav`, rs2b0t Path-paint
+/// defaults) plus the live-harness overlay that forces paint layers on
+/// for a run without writing prefs.
+///
+/// `#[serde(default)]`: a prefs file written before a field existed (e.g.
+/// `allow_wilderness`) still loads, with missing fields filled from
+/// [`Default`] — otherwise `load_at` would fail the whole `PanelUiState`
+/// deserialize and wipe focus/collapsed/colors.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct NavSettings {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,

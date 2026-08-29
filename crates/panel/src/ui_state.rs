@@ -108,6 +108,60 @@ mod tests {
     }
 
     #[test]
+    fn old_nav_object_without_allow_wilderness_keeps_focus_and_colors() {
+        // A pre-Task-1 prefs file carries a `nav` object with no
+        // `allow_wilderness` key. It must load with the new field defaulted
+        // (false) instead of failing deserialize and resetting the whole
+        // `PanelUiState` (`load_at` falls back to `PanelUiState::default()`,
+        // wiping focus / collapsed / colors).
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-ui-old-nav-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("panel-ui.json");
+        std::fs::write(
+            &p,
+            r##"{
+  "last_focus": "alice",
+  "collapsed": {"bob": {"nav": true}},
+  "nav": {
+    "allow_teleports": false,
+    "show_nav_path": true,
+    "hop_labels": true,
+    "hop_label_px": 11,
+    "color_path": "#AABBCC",
+    "color_transport": "#00FF00",
+    "color_click": "#FFFFFF",
+    "color_text": "#FFFFFF",
+    "collision_fill": false,
+    "nsew_labels": false,
+    "client_trail": false,
+    "color_collision": "#0080FF",
+    "color_client": "#00D4FF",
+    "color_client_run_alt": "#FFFF00",
+    "component_flood": false
+  }
+}"##,
+        )
+        .unwrap();
+        let back = load_at(&p);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            back.last_focus.as_deref(),
+            Some("alice"),
+            "focus must survive an old nav object"
+        );
+        assert!(back.collapsed["bob"]["nav"]);
+        assert!(
+            !back.nav.allow_wilderness,
+            "missing allow_wilderness defaults false"
+        );
+        assert!(back.nav.show_nav_path, "present fields keep their values");
+        assert_eq!(back.nav.color_path, "#AABBCC");
+    }
+
+    #[test]
     fn pick_focus_prefers_last_when_present() {
         let names = vec!["a".into(), "b".into()];
         assert_eq!(pick_focus(&names, Some("b")).as_deref(), Some("b"));
