@@ -456,35 +456,42 @@ fn color_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
     [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
 }
 
-/// The "WalkTo" picker window. Draws the collision-dot map when the world
-/// loads; shows a run-nav-pack hint otherwise.
-pub fn picker_window(ui: &Ui, session: &mut Session) {
-    let mut open = session.walkto_open;
-    match pack() {
-        Some(world) => picker_map_window(ui, session, world, &mut open),
-        None => picker_no_pack_window(ui, &mut open),
-    }
-    session.walkto_open = open;
-    if !open {
-        PREV_OPEN.store(false, Ordering::Relaxed);
-    }
+/// Call when the Game pane is not showing WalkTo so the next open resets
+/// the view (the WalkTo chrome button toggles without running the body).
+pub fn note_closed() {
+    PREV_OPEN.store(false, Ordering::Relaxed);
 }
 
-/// Missing/corrupt pack: a hint instead of the map.
-fn picker_no_pack_window(ui: &Ui, open: &mut bool) {
-    let _ = ui
-        .window("WalkTo")
-        .opened(open)
-        .flags(WindowFlags::NO_DOCKING)
-        .size([360.0, 120.0], Condition::FirstUseEver)
-        .build(|| {
+/// WalkTo map in the Game pane (same dock space as the applet).
+pub fn draw_picker(ui: &Ui, session: &mut Session) {
+    match pack() {
+        Some(world) => picker_map_body(ui, session, world),
+        None => {
             ui.text_wrapped("no nav pack — run nav-pack");
-        });
+        }
+    }
+    if !session.walkto_open {
+        PREV_OPEN.store(false, Ordering::Relaxed);
+        session.picker_sel = None;
+    }
 }
 
 /// The collision-dot map window. `open` is the window's live open flag;
-/// confirm Walk closes it.
+/// confirm Walk closes it. Headless tests wrap the body in a window.
 fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mut bool) {
+    let _ = ui
+        .window("WalkTo")
+        .opened(open)
+        .flags(walkto_window_flags())
+        .size([720.0, 560.0], Condition::FirstUseEver)
+        .size_constraints([480.0, 360.0], [f32::MAX, f32::MAX])
+        .build(|| {
+            picker_map_body(ui, session, world);
+        });
+}
+
+/// Toolbar, canvas, and footer. Used inside the Game pane and the test window.
+fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
     // Reset the view when the picker opens fresh.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
         let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
@@ -495,72 +502,53 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
         LEVEL.store(available_levels(world)[0], Ordering::Relaxed);
         session.picker_sel = None;
     }
-    let confirmed = ui
-        .window("WalkTo")
-        .opened(open)
-        .flags(walkto_window_flags())
-        .size([720.0, 560.0], Condition::FirstUseEver)
-        .size_constraints([480.0, 360.0], [f32::MAX, f32::MAX])
-        .build(|| {
-            let levels = available_levels(world);
-            let mut lvl_idx = levels
-                .iter()
-                .position(|l| *l == LEVEL.load(Ordering::Relaxed))
-                .unwrap_or(0);
-            ui.set_next_item_width(TOOLBAR_COMBO_W);
-            if ui.combo("##walkto-level", &mut lvl_idx, &levels, |l: &i32| {
-                Cow::Owned(format!("level {l}"))
-            }) {
-                LEVEL.store(levels[lvl_idx], Ordering::Relaxed);
-            }
-            ui.same_line();
-            let mut zoom = ZOOM.load(Ordering::Relaxed) as usize;
-            ui.set_next_item_width(TOOLBAR_COMBO_W);
-            if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
-                Cow::Owned(format!("{z:.0}px/tile"))
-            }) {
-                ZOOM.store(zoom as i32, Ordering::Relaxed);
-            }
-            // Canvas fills the remaining height below the toolbar and above
-            // the footer row (~frame height + item spacing, not a baked 24).
-            let footer_h = ui.frame_height() + ui.clone_style().item_spacing()[1];
-            let avail = ui.content_region_avail();
-            let canvas_h = (avail[1] - footer_h).max(120.0);
-            draw_canvas(ui, session, world, canvas_h);
-            match session.picker_sel {
-                Some(t) => ui.text_disabled(format!("selected {} {} {}", t.x, t.z, t.level)),
-                None => ui.text_disabled("click a tile, then Walk"),
-            }
-            // Recentre lives with Walk on the footer (right cluster), not
-            // on the Level/Zoom row where a full-width combo shoved it.
-            let spacing = ui.clone_style().item_spacing()[0];
-            let cluster =
-                button_w(ui, "recentre") + spacing + button_w(ui, "Walk");
-            let x = right_align_x(
-                ui.cursor_pos()[0],
-                ui.content_region_avail()[0],
-                cluster,
-            );
-            ui.same_line_with_pos(x);
-            if ui.button("recentre") {
-                let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
-                CENTRE_X.store(cx, Ordering::Relaxed);
-                CENTRE_Z.store(cz, Ordering::Relaxed);
-                PAN_REM_X.store(0, Ordering::Relaxed);
-                PAN_REM_Z.store(0, Ordering::Relaxed);
-            }
-            ui.same_line();
-            let can_walk = session.picker_sel.is_some();
-            let _off = ui.begin_disabled_with_cond(!can_walk);
-            ui.button("Walk") && can_walk && session.confirm_picker_walk(world)
-        })
-        .unwrap_or(false);
-    if !*open {
-        PREV_OPEN.store(false, Ordering::Relaxed);
-        session.picker_sel = None;
+    let levels = available_levels(world);
+    let mut lvl_idx = levels
+        .iter()
+        .position(|l| *l == LEVEL.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    if ui.combo("##walkto-level", &mut lvl_idx, &levels, |l: &i32| {
+        Cow::Owned(format!("level {l}"))
+    }) {
+        LEVEL.store(levels[lvl_idx], Ordering::Relaxed);
     }
-    if confirmed {
-        *open = false;
+    ui.same_line();
+    let mut zoom = ZOOM.load(Ordering::Relaxed) as usize;
+    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
+        Cow::Owned(format!("{z:.0}px/tile"))
+    }) {
+        ZOOM.store(zoom as i32, Ordering::Relaxed);
+    }
+    let footer_h = ui.frame_height() + ui.clone_style().item_spacing()[1];
+    let avail = ui.content_region_avail();
+    let canvas_h = (avail[1] - footer_h).max(120.0);
+    draw_canvas(ui, session, world, canvas_h);
+    match session.picker_sel {
+        Some(t) => ui.text_disabled(format!("selected {} {} {}", t.x, t.z, t.level)),
+        None => ui.text_disabled("click a tile, then Walk"),
+    }
+    let spacing = ui.clone_style().item_spacing()[0];
+    let cluster = button_w(ui, "recentre") + spacing + button_w(ui, "Walk");
+    let x = right_align_x(
+        ui.cursor_pos()[0],
+        ui.content_region_avail()[0],
+        cluster,
+    );
+    ui.same_line_with_pos(x);
+    if ui.button("recentre") {
+        let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
+        CENTRE_X.store(cx, Ordering::Relaxed);
+        CENTRE_Z.store(cz, Ordering::Relaxed);
+        PAN_REM_X.store(0, Ordering::Relaxed);
+        PAN_REM_Z.store(0, Ordering::Relaxed);
+    }
+    ui.same_line();
+    let can_walk = session.picker_sel.is_some();
+    let _off = ui.begin_disabled_with_cond(!can_walk);
+    if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
+        session.walkto_open = false;
         PREV_OPEN.store(false, Ordering::Relaxed);
     }
 }
@@ -569,18 +557,27 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
 /// (does not arm).
 fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
     let mut rect: Option<([f32; 2], [f32; 2])> = None;
+    let mut pick: Option<[f32; 2]> = None;
+    let mut hovered = false;
     ui.child_window("##walkto-canvas")
         .size([0.0, height])
         .flags(walkto_canvas_flags())
         .build(ui, || {
             let draw = ui.get_window_draw_list();
-            let pos = ui.window_pos();
+            let origin = ui.cursor_screen_pos();
             let size = ui.content_region_avail();
-            // Fill the child so its content size matches the view: a zero-
-            // content child still lets the parent eat the wheel, and once
-            // the window scrollbar appears map pan stops.
+            // Hit target matches the painted rect (content origin, not the
+            // child window's padded outer pos). Clicks on this item, not
+            // `is_item_hovered` after EndChild — that missed the button.
             ui.invisible_button("##walkto-hit", size);
-            let (min, max) = (pos, [pos[0] + size[0], pos[1] + size[1]]);
+            hovered = ui.is_item_hovered();
+            if hovered
+                && ui.is_item_clicked()
+                && !ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0)
+            {
+                pick = Some(ui.io().mouse_pos());
+            }
+            let (min, max) = (origin, [origin[0] + size[0], origin[1] + size[1]]);
             rect = Some((min, max));
             let (cx, cz) = (
                 CENTRE_X.load(Ordering::Relaxed) as f32,
@@ -710,7 +707,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
     let Some((min, max)) = rect else {
         return;
     };
-    if !ui.is_item_hovered() {
+    if !hovered {
         return;
     }
     let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
@@ -763,10 +760,9 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
         PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
         PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
     }
-    if !ui.is_mouse_clicked(MouseButton::Left) {
+    let Some(mouse) = pick else {
         return;
-    }
-    let mouse = ui.io().mouse_pos();
+    };
     let size = [max[0] - min[0], max[1] - min[1]];
     let centre = (
         CENTRE_X.load(Ordering::Relaxed),

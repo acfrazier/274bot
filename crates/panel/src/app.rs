@@ -872,16 +872,25 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
 
 /// The Game pane: the single focused applet, or — while MultiBox is in
 /// Grid mode — one cell per wall member.
+fn game_window_flags() -> WindowFlags {
+    WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
+}
+
 fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     let built = ui
         .window(title)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::HORIZONTAL_SCROLLBAR)
+        .flags(game_window_flags())
         .build(|| {
             let avail = ui.content_region_avail();
-            if state.session.multibox && state.session.wall.grid {
-                grid_pane(ui, gpu, state, avail);
+            if state.session.walkto_open {
+                picker::draw_picker(ui, &mut state.session);
             } else {
-                game_pane(ui, gpu, state, avail);
+                picker::note_closed();
+                if state.session.multibox && state.session.wall.grid {
+                    grid_pane(ui, gpu, state, avail);
+                } else {
+                    game_pane(ui, gpu, state, avail);
+                }
             }
         });
     state.session.set_game_pane_open(built.is_some());
@@ -1344,9 +1353,9 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
     ui.spacing();
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("WalkTo", [w, 0.0]) {
-        session.walkto_open = true;
+        session.walkto_open = !session.walkto_open;
     }
-    ui.set_item_tooltip("open tile picker");
+    ui.set_item_tooltip("toggle tile picker in the Game pane");
 }
 
 /// script: real Browse/Start/Pause/Stop with the rs2b0t disable rules.
@@ -2372,9 +2381,6 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let class = single_bot_window_class();
     ui.set_next_window_class(&class);
     panel_window(ui, &mut state.session);
-    if state.session.walkto_open {
-        picker::picker_window(ui, &mut state.session);
-    }
     ui.set_next_window_class(&class);
     game_window(ui, gpu, state, &title);
     if state.session.multibox && !state.session.wall.grid {
@@ -2394,11 +2400,12 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
-    use dear_imgui_rs::ConfigFlags;
+    use dear_imgui_rs::{ConfigFlags, WindowFlags};
 
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_for, chooser_should_open_popup,
-        clamp_hop_label_px, edit_parameters_enabled, live_null_tick, live_script_tick,
+        clamp_hop_label_px, edit_parameters_enabled, game_window_flags, live_null_tick,
+        live_script_tick,
         live_smoke_tick, live_stress_tick, manual_shot_label, parse_live_args, runner_config,
         smoke_settled, smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
         LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
@@ -2545,11 +2552,19 @@ mod tests {
     #[test]
     fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
         assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
-        // Small pane must not downscale — native 765×503 floor.
-        assert_eq!(fit_applet([382.5, 251.5]), [765.0, 503.0]);
+        // Small pane downscales so the Game window needs no scrollbar.
+        assert_eq!(fit_applet([382.5, 251.5]), [382.5, 251.5]);
         let wide = fit_applet([2000.0, 503.0]);
         assert!((wide[1] - 503.0).abs() < 0.01);
         assert!(wide[0] <= 2000.0);
+    }
+
+    #[test]
+    fn game_window_flags_have_no_scrollbar() {
+        let f = game_window_flags();
+        assert!(f.contains(WindowFlags::NO_SCROLLBAR));
+        assert!(f.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
+        assert!(!f.contains(WindowFlags::HORIZONTAL_SCROLLBAR));
     }
 
     #[test]

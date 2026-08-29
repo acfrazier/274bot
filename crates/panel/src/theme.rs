@@ -43,13 +43,14 @@ pub fn integer_ui_scale(dpi: f32) -> f32 {
     dpi.max(1.0).round().max(1.0)
 }
 
-/// 765:503 game stage sized to `avail`, never below native 765×503.
+/// 765:503 game stage sized to `avail`. Scales down when the pane is
+/// smaller so the Game window does not need a scrollbar.
 pub fn fit_applet(avail: [f32; 2]) -> [f32; 2] {
     const AW: f32 = 765.0;
     const AH: f32 = 503.0;
     let w = avail[0].max(1.0);
     let h = avail[1].max(1.0);
-    let scale = (w / AW).min(h / AH).max(1.0);
+    let scale = (w / AW).min(h / AH).max(0.01);
     [AW * scale, AH * scale]
 }
 
