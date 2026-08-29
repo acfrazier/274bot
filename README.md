@@ -29,7 +29,7 @@ git clone --recurse-submodules https://github.com/acfrazier/274bot.git
 cd 274bot
 ```
 
-You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the pack cache. Default cache path if unset: `$HOME/experiments/Server/engine/data/pack/client` (override with `--cache`).
+You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the pack cache. This repo does **not** ship or download Jagex assets. Default cache path: `$HOME/experiments/Server/engine/data/pack/client` (override with `--cache`). On first `maininit` the client GETs `/crc` and jag files from the engine HTTP into that directory; later boots reuse the files on disk. Contributors: run the engine, point `--cache` at its `data/pack/client`, `git submodule update --init`, bake RSA from the engine `private.pem` (`LOGIN_RSAN` / `vendor/fr-client-rust/tools/redeploy.sh`), then `cargo run --release -p panel --bin panel-play`. Nav pack is a separate bake (`cargo run -p nav --bin nav-pack`) over the engine `maps/`.
 
 **RSA bake:** cargo’s `TARGET` is the rustc triple, so the live/prod switch is **`BOT_TARGET`**. Local (default) still uses `LOGIN_RSAN` / `LOGIN_RSAE` or `vendor/fr-client-rust/tools/redeploy.sh` from the engine `private.pem`. Live rs2b2t is **not** that pem — scrape the public modulus from the served client:
 

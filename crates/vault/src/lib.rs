@@ -39,6 +39,10 @@ pub struct ProfileSettings {
     pub lowmem: bool,
     #[serde(default)]
     pub auto_login: bool,
+    /// Local-engine TutSkip already sent for this profile (`setvar tutorial
+    /// 1000`). Hand/live tests can set this so they skip the cheat.
+    #[serde(default)]
+    pub tutorial_skipped: bool,
 }
 
 impl Default for ProfileSettings {
@@ -46,6 +50,7 @@ impl Default for ProfileSettings {
         Self {
             lowmem: true,
             auto_login: false,
+            tutorial_skipped: false,
         }
     }
 }
@@ -278,6 +283,7 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: false,
                 auto_login: false,
+                tutorial_skipped: false,
             },
         }
     }
@@ -294,6 +300,7 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
+                tutorial_skipped: false,
             },
         })
         .unwrap();
@@ -303,6 +310,7 @@ mod tests {
         let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
         assert!(missing.lowmem);
         assert!(!missing.auto_login);
+        assert!(!missing.tutorial_skipped);
     }
 
     #[test]

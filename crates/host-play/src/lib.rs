@@ -1402,6 +1402,7 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
+                tutorial_skipped: false,
             },
         };
         let loud = Profile {
@@ -1411,6 +1412,7 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: false,
                 auto_login: false,
+                tutorial_skipped: false,
             },
         };
         assert!(bot_client_config(&opt, &quiet).lowmem);
@@ -2044,6 +2046,7 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
+                tutorial_skipped: false,
             },
         }
     }

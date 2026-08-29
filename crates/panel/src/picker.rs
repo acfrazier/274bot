@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use api::snapshot::WorldTile;
-use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
+use dear_imgui_rs::{Key, MouseButton, Ui, WindowFlags};
+#[cfg(test)]
+use dear_imgui_rs::Condition;
 use nav::paint::{collision_at, flood_components, remaining_path_tiles};
 use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
@@ -218,6 +220,7 @@ pub(crate) fn pan_by(
 /// WalkTo window flags: no docking, and the imgui window must not steal
 /// wheel (that pans the map). `NO_SCROLLBAR` hides the bar; without
 /// `NO_SCROLL_WITH_MOUSE` the window still scrolls once content overflows.
+#[cfg(test)]
 fn walkto_window_flags() -> WindowFlags {
     WindowFlags::NO_DOCKING | WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
 }
@@ -487,6 +490,7 @@ pub fn draw_picker(ui: &Ui, session: &mut Session) {
 
 /// The collision-dot map window. `open` is the window's live open flag;
 /// confirm Walk closes it. Headless tests wrap the body in a window.
+#[cfg(test)]
 fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mut bool) {
     let _ = ui
         .window("WalkTo")

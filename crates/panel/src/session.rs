@@ -78,116 +78,119 @@ pub struct DebugDest {
 
 /// Named dest cheats for the Teles popup (`[debugproc]` names).
 pub fn debug_dest_cheats() -> &'static [DebugDest] {
+    // Engine debugprocs are `::<debugProcChar><name>` with debugProcChar
+    // default `~` (`::~home`). Engine commands (`tele`, `setvar`,
+    // `setstat`) have no tilde.
     &[
         DebugDest {
             label: "Lumbridge",
-            cheat: "home",
-            tooltip: "Lumbridge",
+            cheat: "~home",
+            tooltip: "Lumbridge courtyard",
         },
         DebugDest {
             label: "Varrock",
-            cheat: "varrock",
-            tooltip: "Varrock",
+            cheat: "~varrock",
+            tooltip: "Varrock square",
         },
         DebugDest {
             label: "Falador",
-            cheat: "falador",
-            tooltip: "Falador",
+            cheat: "~falador",
+            tooltip: "Falador square",
         },
         DebugDest {
             label: "Draynor",
-            cheat: "draynor",
-            tooltip: "Draynor",
+            cheat: "~draynor",
+            tooltip: "Draynor Village",
         },
         DebugDest {
             label: "PortSarim",
-            cheat: "portsarim",
-            tooltip: "Port Sarim",
+            cheat: "~portsarim",
+            tooltip: "Port Sarim docks",
         },
         DebugDest {
             label: "Rimmington",
-            cheat: "rimmington",
+            cheat: "~rimmington",
             tooltip: "Rimmington",
         },
         DebugDest {
             label: "AlKharid",
-            cheat: "alkharid",
+            cheat: "~alkharid",
             tooltip: "Al Kharid",
         },
         DebugDest {
             label: "Seers",
-            cheat: "seers",
-            tooltip: "Seers",
+            cheat: "~seers",
+            tooltip: "Seers' Village",
         },
         DebugDest {
             label: "Giants",
-            cheat: "giants",
-            tooltip: "Giants",
+            cheat: "~giants",
+            tooltip: "Hill Giants (Edgeville dungeon)",
         },
         DebugDest {
             label: "Entrana",
-            cheat: "entrana",
-            tooltip: "Entrana",
+            cheat: "~entrana",
+            tooltip: "Entrana (no weapons/armour)",
         },
         DebugDest {
             label: "Brimhaven",
-            cheat: "brimhaven",
+            cheat: "~brimhaven",
             tooltip: "Brimhaven",
         },
         DebugDest {
             label: "Ardy",
-            cheat: "ardy",
-            tooltip: "Ardy",
+            cheat: "~ardy",
+            tooltip: "East Ardougne",
         },
         DebugDest {
             label: "Kbd",
-            cheat: "kbd",
-            tooltip: "Kbd",
+            cheat: "~kbd",
+            tooltip: "King Black Dragon lair",
         },
         DebugDest {
             label: "Elvarg",
-            cheat: "elvarg",
-            tooltip: "Elvarg",
+            cheat: "~elvarg",
+            tooltip: "Elvarg on Crandor",
         },
         DebugDest {
             label: "Greenland",
-            cheat: "greenland",
-            tooltip: "Green area north of Gnome Stronghold (2428,3567,0)",
+            cheat: "~greenland",
+            tooltip: "Fields north of Tree Gnome Stronghold (not green dragons)",
         },
         DebugDest {
             label: "Gb",
-            cheat: "gb",
-            tooltip: "Gnomeball",
+            cheat: "~gb",
+            tooltip: "Gnome Ball pitch",
         },
         DebugDest {
             label: "Ma",
-            cheat: "ma",
-            tooltip: "Mage Arena",
+            cheat: "~ma",
+            tooltip: "Mage Arena (Wilderness)",
         },
         DebugDest {
             label: "Pvp",
-            cheat: "pvp",
-            tooltip: "Pvp",
+            cheat: "~pvp",
+            tooltip: "PvP / bounty area",
         },
         DebugDest {
             label: "Duel",
-            cheat: "duel",
-            tooltip: "Duel",
+            cheat: "~duel",
+            tooltip: "Duel Arena",
         },
         DebugDest {
             label: "Trawler",
-            cheat: "trawler",
-            tooltip: "Trawler",
+            cheat: "~trawler",
+            tooltip: "Fishing Trawler",
         },
         DebugDest {
             label: "Gamesroom",
-            cheat: "gamesroom",
-            tooltip: "Gamesroom",
+            cheat: "~gamesroom",
+            tooltip: "Burthorpe Games Room",
         },
         DebugDest {
             label: "Mortton",
-            cheat: "mortton",
-            tooltip: "Mortton",
+            cheat: "~mortton",
+            tooltip: "Mort'ton",
         },
     ]
 }
@@ -1252,6 +1255,36 @@ impl Session {
         is_local_engine(&self.options.host)
     }
 
+    /// Focused profile already ran TutSkip (`setvar tutorial 1000`).
+    pub fn focused_tutorial_skipped(&self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        self.vault
+            .as_ref()
+            .and_then(|v| v.get(&name))
+            .map(|p| p.settings.tutorial_skipped)
+            .unwrap_or(false)
+    }
+
+    /// Persist TutSkip on the focused vault profile (debugprefs).
+    pub fn mark_tutorial_skipped(&mut self) {
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        let Some(vault) = self.vault.as_mut() else {
+            return;
+        };
+        let Some(mut profile) = vault.get(&name).cloned() else {
+            return;
+        };
+        if profile.settings.tutorial_skipped {
+            return;
+        }
+        profile.settings.tutorial_skipped = true;
+        let _ = vault.upsert(profile);
+    }
+
     /// Frames for the Game pane (the focused slot's mailbox). Every
     /// wall member owns its own `FrameBuf` in the flat model; fall back to
     /// the first spawned slot when nothing is focused.
@@ -2253,8 +2286,8 @@ mod tests {
     #[test]
     fn debug_dest_lumbridge_sends_home() {
         let d = debug_dest_cheats();
-        assert!(d.iter().any(|x| x.label == "Lumbridge" && x.cheat == "home"));
-        assert!(d.iter().any(|x| x.label == "Seers" && x.cheat == "seers"));
+        assert!(d.iter().any(|x| x.label == "Lumbridge" && x.cheat == "~home"));
+        assert!(d.iter().any(|x| x.label == "Seers" && x.cheat == "~seers"));
         assert!(!d.iter().any(|x| x.label == "North"));
     }
 
@@ -2264,7 +2297,7 @@ mod tests {
             .iter()
             .find(|x| x.label == "Greenland")
             .expect("greenland dest");
-        assert_eq!(g.cheat, "greenland");
+        assert_eq!(g.cheat, "~greenland");
         assert!(
             g.tooltip.contains("Gnome Stronghold"),
             "hover must say where this is, got {:?}",
@@ -2280,6 +2313,31 @@ mod tests {
             level: 0,
         };
         assert_eq!(walkto_tele_cmd(t), "tele 0,50,51,53,2");
+    }
+
+    #[test]
+    fn mark_tutorial_skipped_persists_on_focused_profile() {
+        let path = tmp_vault("tutskip-pref.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        assert!(!s.focused_tutorial_skipped());
+        s.mark_tutorial_skipped();
+        assert!(s.focused_tutorial_skipped());
+        assert!(
+            s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .tutorial_skipped
+        );
     }
 
     #[test]

@@ -1411,13 +1411,21 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                 ui.set_item_tooltip("v2 — full cheat catalog");
             }
             "TutSkip" => {
-                if ui.button_with_size("TutSkip", [w, 0.0]) {
+                let skipped = session.focused_tutorial_skipped();
+                let _off = ui.begin_disabled_with_cond(skipped);
+                if ui.button_with_size("TutSkip", [w, 0.0]) && !skipped {
                     session.cheat_focused("setvar tutorial 1000");
+                    session.mark_tutorial_skipped();
                 }
+                ui.set_item_tooltip(if skipped {
+                    "tutorial already skipped on this profile"
+                } else {
+                    "setvar tutorial 1000"
+                });
             }
             "Lumbridge" => {
                 if ui.button_with_size("Lumbridge", [w, 0.0]) {
-                    session.cheat_focused("home");
+                    session.cheat_focused("~home");
                 }
             }
             "maxme" => {
