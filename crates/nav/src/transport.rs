@@ -1,9 +1,9 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
-//! shortcuts, boats, gnome gliders, and magic teleports as directed
-//! transport edges built from the Server's own content — `scripts/{doors,
-//! ladders+stairs, interface_boat, skill_magic, skill_agility}`,
-//! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
-//! hand-authored table.
+//! shortcuts, boats, gnome gliders, spirit trees, and magic teleports as
+//! directed transport edges built from the Server's own content —
+//! `scripts/{doors, ladders+stairs, interface_boat, skill_magic,
+//! skill_agility}`, `pack/loc.pack`, and the `maps/*.jm2` loc placements —
+//! instead of a hand-authored table.
 //!
 //! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
@@ -49,6 +49,11 @@ pub enum TransportKind {
     AgilityShortcut,
     /// A gnome-glider flight between two fixed platforms.
     Glider,
+    /// A spirit-tree journey between a tree loc tile and a sibling tree's
+    /// tile (the `^…_tree` destination constant).
+    SpiritTree,
+    /// Reserved for the NPC-triggered transport layer; no edge emits it yet.
+    Npc,
 }
 
 /// The crossing direction of a door edge (step 2 derives it from the door
@@ -114,10 +119,11 @@ pub struct TransportGraph {
 /// (`dir` and its opposite, each with its own far-side walk-out); `at` the
 /// loc tile, `to` the resolved landing (no walkability filter — the router
 /// applies the collision map). Boats and gnome gliders are the explicit
-/// 2004 route
-/// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
-/// land in [`TransportGraph::teleports`], never in the `at` index. Rows
-/// that do not resolve are counted per reason on stderr, never faked.
+/// 2004 route tables below, and spirit trees the `area_gnome` network (see
+/// `spirit_tree_edges`). Teleports (spells + jewellery rubs) are any-tile
+/// edges and land in [`TransportGraph::teleports`], never in the `at`
+/// index. Rows that do not resolve are counted per reason on stderr, never
+/// faked.
 pub fn derive_transports(
     content_root: &Path,
     loc_defs: &LocDefs,
@@ -134,6 +140,7 @@ pub fn derive_transports(
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
     glider_edges(&mut graph);
+    spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -160,6 +167,7 @@ const SKIP_NO_DOOR_CONFIGS: &str = "no door configs parsed under scripts/doors/c
 const SKIP_TELEPORT_BAD_DEST: &str = "teleport destination does not parse";
 const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.pack";
 const SKIP_TELEPORT_UNRESOLVED_ITEM: &str = "jewellery item name not in pack/obj.pack";
+const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destination";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -183,6 +191,9 @@ const TELEPORT_PLACEHOLDER_AT: WorldTile = WorldTile { x: 0, z: 0, level: 0 };
 const SPELL_TELEPORT_TICKS: i32 = 3;
 /// Jewellery rub teleport ticks: OP_BASE 1 + the rub script's `p_delay(1)`.
 const JEWELLERY_TELEPORT_TICKS: i32 = 2;
+/// Spirit-tree teleport ticks: OP_BASE 1 + the `spirit_tree_tele` label's
+/// `p_delay(0)` (the tree's whole channel).
+const SPIRIT_TREE_TICKS: i32 = 1;
 
 fn in_world_box(t: &WorldTile) -> bool {
     (0..LEVELS).contains(&t.level) && (X0..X1).contains(&t.x) && (Z0..Z1).contains(&t.z)
@@ -279,7 +290,7 @@ fn report(
         .count();
     let jewel_teles = graph.teleports.len() - spell_teles;
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders); {} teleports ({} spells, {} jewellery); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders, {} spirit trees); {} teleports ({} spells, {} jewellery); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
@@ -288,6 +299,7 @@ fn report(
         by_kind.get(&TransportKind::AgilityShortcut).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Boat).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Glider).copied().unwrap_or(0),
+        by_kind.get(&TransportKind::SpiritTree).copied().unwrap_or(0),
         graph.teleports.len(),
         spell_teles,
         jewel_teles,
@@ -1876,6 +1888,178 @@ fn glider_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Spirit trees: the `area_gnome` network (three script blocks, content-read).
+// ---------------------------------------------------------------------------
+
+/// Spirit-tree edges from `scripts/areas/area_gnome/scripts/spirit_tree.rs2`
+/// plus the same folder's `spirit_tree.constant`: each `[oploc1,<loc>]`
+/// block lists its destinations as `^…_tree` constants (a `$end_pos = ^…`
+/// assignment on every `case` line, or a direct `@spirit_tree_tele(^…)`
+/// call for the young tree's single destination). One directed edge per
+/// tree loc placement per destination: `at` the tree loc tile (jm2
+/// placement, like every loc-backed edge), `to` the destination constant's
+/// tile, `Talk-to` op 1, one tick. `varp_req` carries the quest gate the
+/// block checks (`%grandtree` / `%treequest` complete values, the same
+/// varps the gliders gate on); the members check in `spirit_tree_tele` is
+/// not a varp and is left off until WorldState.
+fn spirit_tree_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let Ok(script) = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("areas")
+            .join("area_gnome")
+            .join("scripts")
+            .join("spirit_tree.rs2"),
+    ) else {
+        return;
+    };
+    let Ok(constants) = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("areas")
+            .join("area_gnome")
+            .join("configs")
+            .join("spirit_tree.constant"),
+    ) else {
+        return;
+    };
+    // `^name` → the tree's tile (`0_mx_mz_lx_lz`, decoded like every other
+    // coord literal).
+    let mut tree_dests: HashMap<String, WorldTile> = HashMap::new();
+    for raw in constants.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix('^') else {
+            continue;
+        };
+        let Some((name, coord)) = rest.split_once('=') else {
+            continue;
+        };
+        if let Some((level, x, z)) = coord_literal(coord) {
+            let name = name.trim();
+            if !name.is_empty() {
+                tree_dests.insert(name.to_string(), WorldTile { x, z, level });
+            }
+        }
+    }
+    let all_consts = script_constants(content_root);
+    let varps = varp_ids_by_name(content_root);
+
+    for (op, name, body) in script_blocks(&script) {
+        if op != "oploc1" {
+            continue;
+        }
+        let Some(&loc_id) = ids.get(&name) else {
+            continue;
+        };
+        let Some(placements) = positions.get(&loc_id) else {
+            continue;
+        };
+        let mut dests = Vec::new();
+        for const_name in spirit_tree_dest_names(&body) {
+            if let Some(to) = tree_dests.get(&const_name) {
+                dests.push(*to);
+            }
+        }
+        if dests.is_empty() {
+            bump(skipped, SKIP_SPIRIT_NO_DEST, 1);
+            continue;
+        }
+        let varp_req = spirit_tree_gate(&body)
+            .and_then(|(varp, complete)| {
+                let varp_id = varps.get(&varp)?;
+                let value = all_consts.get(&complete)?;
+                Some(vec![(*varp_id, *value)])
+            })
+            .unwrap_or_default();
+        for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
+            for to in &dests {
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::SpiritTree,
+                    at,
+                    to: *to,
+                    loc_id,
+                    option: 1,
+                    ticks: SPIRIT_TREE_TICKS,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: varp_req.clone(),
+                });
+            }
+        }
+    }
+}
+
+/// The `^<const>` destination names a spirit-tree `[oploc1,…]` block lists:
+/// the `$end_pos = ^…` assignments on `case` lines and direct
+/// `@spirit_tree_tele(^…)` calls. The block's initial `def_coord $end_pos =
+/// ^…` default is the tree's own tile (overridden by every case), never a
+/// destination.
+fn spirit_tree_dest_names(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.starts_with("case") {
+            if let Some(i) = line.find("$end_pos = ^") {
+                if let Some(name) = const_token(&line[i + "$end_pos = ^".len()..]) {
+                    out.push(name.to_string());
+                }
+            }
+        }
+        if let Some(i) = line.find("spirit_tree_tele(^") {
+            if let Some(name) = const_token(&line[i + "spirit_tree_tele(^".len()..]) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The leading identifier token (alphanumerics + `_`).
+fn const_token(rest: &str) -> Option<&str> {
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    if end > 0 {
+        Some(&rest[..end])
+    } else {
+        None
+    }
+}
+
+/// The `(varp name, complete constant)` gate a spirit-tree block declares
+/// (`if(%<varp> ! ^<complete>)` — the tree refuses to talk until the quest
+/// is done), or `None` for an un-gated block.
+fn spirit_tree_gate(body: &str) -> Option<(String, String)> {
+    for raw in body.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix("if(%") else {
+            continue;
+        };
+        let varp = const_token(rest)?;
+        let rest = rest[varp.len()..].trim_start().strip_prefix('!')?;
+        let complete = const_token(rest.trim_start().strip_prefix('^')?)?;
+        if !varp.is_empty() {
+            return Some((varp.to_string(), complete.to_string()));
+        }
+    }
+    None
+}
+
 /// Teleport edges (the any-tile layer): the seven spell teleports from
 /// `skill_magic/configs/magic_spells.dbrow` plus the jewellery rub
 /// teleports from `general/scripts/enchanted_jewellry/*.rs2`, all into
@@ -2533,6 +2717,19 @@ mod tests {
         Some(LocDefs::from_locs(&cache.locs))
     }
 
+    /// Derive the transport graph from the real Server content (the
+    /// collision bake the graph's doors walk against); `None` when the
+    /// content root or client cache is absent, so the content-backed
+    /// tests skip with a message instead of faking coordinates.
+    fn derive_from_real_content() -> Option<(TransportGraph, WorldCollision)> {
+        let root = real_content_root()?;
+        let defs = real_loc_defs()?;
+        let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+            .expect("real Server content bakes");
+        let graph = derive_transports(&root, &defs, &wc);
+        Some((graph, wc))
+    }
+
     /// A throwaway content root written on demand, removed on drop.
     struct Fixture {
         root: PathBuf,
@@ -2684,6 +2881,103 @@ mod tests {
             !gates.is_empty(),
             "no Door edges for the Sinclair wooden gates (loc 1551/1553) from the real content"
         );
+    }
+
+    /// The real content must derive the spirit-tree network: the stronghold
+    /// tree (ent) flies to village/varrock/khazard, the village tree
+    /// (stronghold_ent) back to khazard/varrock/stronghold, and each young
+    /// tree (loc_1317, placed twice) to the village — 8 directed hops, the
+    /// same count the rs2b0t catalog carries. Skips with a message when the
+    /// Server content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_spirit_tree_edges() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let trees: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::SpiritTree)
+            .collect();
+        let n = trees.len();
+        assert!(n >= 8, "rs2b0t catalog is 8 directed hops, got {n}");
+        // The stronghold tree carries the Grand Tree gate
+        // (`%grandtree >= ^grandtree_complete`), the village and young
+        // trees the Tree Gnome Village gate (`%treequest >= ^tree_complete`)
+        // — the same varps the gliders gate on.
+        for e in &trees {
+            assert_eq!(e.option, 1, "Talk-to");
+            assert_eq!(e.ticks, SPIRIT_TREE_TICKS);
+            assert_eq!(e.dir, None);
+            match e.loc_id {
+                1293 => assert_eq!(e.varp_req, vec![(150, 160)]),
+                1294 | 1317 => assert_eq!(e.varp_req, vec![(111, 9)]),
+                other => panic!("unexpected spirit-tree loc id {other}"),
+            }
+        }
+        // The stronghold tree (ent, loc 1293) reaches the village, varrock,
+        // and khazard trees; the village tree (stronghold_ent, loc 1294)
+        // reaches back to khazard, varrock, and the stronghold.
+        let dests = |loc_id: i32| -> Vec<WorldTile> {
+            let mut v: Vec<WorldTile> = trees
+                .iter()
+                .filter(|e| e.loc_id == loc_id)
+                .map(|e| e.to)
+                .collect();
+            v.sort_by_key(|t| (t.x, t.z));
+            v.dedup();
+            v
+        };
+        assert_eq!(
+            dests(1293),
+            vec![
+                WorldTile {
+                    x: 2542,
+                    z: 3169,
+                    level: 0
+                }, // ^village_tree
+                WorldTile {
+                    x: 2555,
+                    z: 3259,
+                    level: 0
+                }, // ^khazard_tree
+                WorldTile {
+                    x: 3179,
+                    z: 3507,
+                    level: 0
+                }, // ^varrock_tree
+            ]
+        );
+        assert_eq!(
+            dests(1294),
+            vec![
+                WorldTile {
+                    x: 2461,
+                    z: 3444,
+                    level: 0
+                }, // ^stronghold_tree
+                WorldTile {
+                    x: 2555,
+                    z: 3259,
+                    level: 0
+                }, // ^khazard_tree
+                WorldTile {
+                    x: 3179,
+                    z: 3507,
+                    level: 0
+                }, // ^varrock_tree
+            ]
+        );
+        // The young tree (loc_1317) is placed twice and only reaches the
+        // village.
+        let young: Vec<_> = trees.iter().filter(|e| e.loc_id == 1317).collect();
+        assert_eq!(young.len(), 2);
+        assert!(young.iter().all(|e| e.to == WorldTile {
+            x: 2542,
+            z: 3169,
+            level: 0
+        }));
     }
 
     /// The process nav pack path (`$NAV_PACK` or `~/.274bot/274bot.navpack`,

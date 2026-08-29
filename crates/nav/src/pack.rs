@@ -42,7 +42,8 @@ const VERSION: u8 = 1;
 const MAGIC: &[u8; 4] = b"274N";
 /// V2 pack format version (collision flags + transport graph; v3 adds the
 /// per-edge `dir`/`open_loc_id` fields, v4 stores the four collision
-/// planes).
+/// planes). The v4 wire also carries the spirit-tree (7) and reserved NPC
+/// (8) transport kinds on the same kind byte — no version bump.
 const VERSION_V2: u8 = 4;
 /// V2 file magic.
 const MAGIC_V2: &[u8; 4] = b"274V";
@@ -337,6 +338,8 @@ fn kind_to_u8(k: TransportKind) -> u8 {
         TransportKind::Teleport => 4,
         TransportKind::AgilityShortcut => 5,
         TransportKind::Glider => 6,
+        TransportKind::SpiritTree => 7,
+        TransportKind::Npc => 8,
     }
 }
 
@@ -350,6 +353,8 @@ fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
         4 => Ok(TransportKind::Teleport),
         5 => Ok(TransportKind::AgilityShortcut),
         6 => Ok(TransportKind::Glider),
+        7 => Ok(TransportKind::SpiritTree),
+        8 => Ok(TransportKind::Npc),
         _ => Err(PackError::BadLength(format!(
             "unknown transport kind {b}"
         ))),
@@ -1011,6 +1016,56 @@ mod tests {
         };
         let gi = graph.edges.len();
         graph.edges.push(glider);
+        // A spirit-tree edge (kind 7) and the reserved NPC kind (8) ride
+        // the same wire byte without a version bump.
+        let spirit = TransportEdge {
+            kind: TransportKind::SpiritTree,
+            at: WorldTile {
+                x: 2460,
+                z: 3445,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2542,
+                z: 3169,
+                level: 0,
+            },
+            loc_id: 1293,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![(150, 160)],
+        };
+        let si = graph.edges.len();
+        graph.edges.push(spirit);
+        let npc = TransportEdge {
+            kind: TransportKind::Npc,
+            at: WorldTile {
+                x: 2500,
+                z: 3500,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2600,
+                z: 3400,
+                level: 0,
+            },
+            loc_id: 1,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        };
+        let ni = graph.edges.len();
+        graph.edges.push(npc);
         // The any-tile teleport layer (Varrock spell): stored as a kind-4
         // edge in the same array, split back out on decode.
         graph.teleports.push(TransportEdge {
@@ -1030,6 +1085,8 @@ mod tests {
         graph.at.entry(graph.edges[di].at).or_default().push(di);
         graph.at.entry(graph.edges[li].at).or_default().push(li);
         graph.at.entry(graph.edges[gi].at).or_default().push(gi);
+        graph.at.entry(graph.edges[si].at).or_default().push(si);
+        graph.at.entry(graph.edges[ni].at).or_default().push(ni);
 
         let bytes = encode_v2(&collision, &graph);
         let (c, g) = decode_v2(&bytes).unwrap();
@@ -1041,6 +1098,10 @@ mod tests {
         // The door edge's new fields round-trip on the wire.
         assert_eq!(g.edges[di].dir, Some(DoorDir::N));
         assert_eq!(g.edges[di].open_loc_id, Some(1531));
+        // The new kinds round-trip on the v4 wire (7 spirit tree, 8 NPC).
+        assert_eq!(g.edges[si].kind, TransportKind::SpiritTree);
+        assert_eq!(g.edges[si].varp_req, vec![(150, 160)]);
+        assert_eq!(g.edges[ni].kind, TransportKind::Npc);
         // Teleports round-trip in their own layer, and the at-index is
         // rebuilt from the ordinary edges only.
         assert_eq!(g.teleports, graph.teleports);
