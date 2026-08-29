@@ -50,6 +50,169 @@ fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
 
+/// Loopback hosts get the debug heading / WalkTo Teleport. Public
+/// `w1.rs2b2t.com` and LAN IPs do not.
+pub fn is_local_engine(host: &str) -> bool {
+    matches!(
+        host.trim().trim_end_matches('.').to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
+}
+
+/// One Teles-popup dest: button label, `CLIENT_CHEAT` body, hover text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugDest {
+    pub label: &'static str,
+    pub cheat: &'static str,
+    pub tooltip: &'static str,
+}
+
+/// Named dest cheats for the Teles popup (`[debugproc]` names).
+pub fn debug_dest_cheats() -> &'static [DebugDest] {
+    &[
+        DebugDest {
+            label: "Lumbridge",
+            cheat: "home",
+            tooltip: "Lumbridge",
+        },
+        DebugDest {
+            label: "Varrock",
+            cheat: "varrock",
+            tooltip: "Varrock",
+        },
+        DebugDest {
+            label: "Falador",
+            cheat: "falador",
+            tooltip: "Falador",
+        },
+        DebugDest {
+            label: "Draynor",
+            cheat: "draynor",
+            tooltip: "Draynor",
+        },
+        DebugDest {
+            label: "PortSarim",
+            cheat: "portsarim",
+            tooltip: "Port Sarim",
+        },
+        DebugDest {
+            label: "Rimmington",
+            cheat: "rimmington",
+            tooltip: "Rimmington",
+        },
+        DebugDest {
+            label: "AlKharid",
+            cheat: "alkharid",
+            tooltip: "Al Kharid",
+        },
+        DebugDest {
+            label: "Seers",
+            cheat: "seers",
+            tooltip: "Seers",
+        },
+        DebugDest {
+            label: "Giants",
+            cheat: "giants",
+            tooltip: "Giants",
+        },
+        DebugDest {
+            label: "Entrana",
+            cheat: "entrana",
+            tooltip: "Entrana",
+        },
+        DebugDest {
+            label: "Brimhaven",
+            cheat: "brimhaven",
+            tooltip: "Brimhaven",
+        },
+        DebugDest {
+            label: "Ardy",
+            cheat: "ardy",
+            tooltip: "Ardy",
+        },
+        DebugDest {
+            label: "Kbd",
+            cheat: "kbd",
+            tooltip: "Kbd",
+        },
+        DebugDest {
+            label: "Elvarg",
+            cheat: "elvarg",
+            tooltip: "Elvarg",
+        },
+        DebugDest {
+            label: "Greenland",
+            cheat: "greenland",
+            tooltip: "Green area north of Gnome Stronghold (2428,3567,0)",
+        },
+        DebugDest {
+            label: "Gb",
+            cheat: "gb",
+            tooltip: "Gnomeball",
+        },
+        DebugDest {
+            label: "Ma",
+            cheat: "ma",
+            tooltip: "Mage Arena",
+        },
+        DebugDest {
+            label: "Pvp",
+            cheat: "pvp",
+            tooltip: "Pvp",
+        },
+        DebugDest {
+            label: "Duel",
+            cheat: "duel",
+            tooltip: "Duel",
+        },
+        DebugDest {
+            label: "Trawler",
+            cheat: "trawler",
+            tooltip: "Trawler",
+        },
+        DebugDest {
+            label: "Gamesroom",
+            cheat: "gamesroom",
+            tooltip: "Gamesroom",
+        },
+        DebugDest {
+            label: "Mortton",
+            cheat: "mortton",
+            tooltip: "Mortton",
+        },
+    ]
+}
+
+/// `setstat <skill> 99` for the skills `[debugproc,maxme]` advances.
+pub fn debug_maxme_cheats() -> &'static [&'static str] {
+    &[
+        "setstat attack 99",
+        "setstat defence 99",
+        "setstat strength 99",
+        "setstat hitpoints 99",
+        "setstat ranged 99",
+        "setstat prayer 99",
+        "setstat magic 99",
+        "setstat cooking 99",
+        "setstat woodcutting 99",
+        "setstat fletching 99",
+        "setstat fishing 99",
+        "setstat firemaking 99",
+        "setstat crafting 99",
+        "setstat smithing 99",
+        "setstat mining 99",
+        "setstat herblore 99",
+        "setstat agility 99",
+        "setstat thieving 99",
+        "setstat runecraft 99",
+    ]
+}
+
+/// Engine `::tele` body for a WalkTo tile.
+pub fn walkto_tele_cmd(tile: Tile) -> String {
+    api::interact::tele_args(tile.level, tile.x, tile.z)
+}
+
 /// Cooldown between cpal open retries after a device failure: a machine
 /// without an audio device must not re-open (and re-log) every 20 ms frame.
 const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
@@ -1064,6 +1227,22 @@ impl Session {
         self.focus.lock().unwrap().focused.clone()
     }
 
+    /// Queue a `CLIENT_CHEAT` on the focused slot. No-op without play/focus.
+    pub fn cheat_focused(&self, cmd: &str) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        play.cheat(&name, cmd);
+    }
+
+    /// True when this session's world host is a local engine.
+    pub fn debug_ui(&self) -> bool {
+        is_local_engine(&self.options.host)
+    }
+
     /// Frames for the Game pane (the focused slot's mailbox). Every
     /// wall member owns its own `FrameBuf` in the flat model; fall back to
     /// the first spawned slot when nothing is focused.
@@ -2030,9 +2209,10 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        arm_login_all, combo_index, maybe_send_click, publish_nav_debug, script_active,
-        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        stream_capture, Session, SlotIo,
+        arm_login_all, combo_index, debug_dest_cheats, debug_maxme_cheats, is_local_engine,
+        maybe_send_click, publish_nav_debug, script_active, script_pause_enabled,
+        script_status_text, script_stop_enabled, seed_on_first_world, stream_capture,
+        walkto_tele_cmd, Session, SlotIo,
     };
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
@@ -2051,6 +2231,55 @@ mod tests {
     use vault::{Profile, ProfileSettings, Vault};
 
     use crate::nav_settings::{effective, NavSettings};
+
+    #[test]
+    fn is_local_engine_is_loopback_only() {
+        assert!(is_local_engine("127.0.0.1"));
+        assert!(is_local_engine("localhost"));
+        assert!(is_local_engine("::1"));
+        assert!(!is_local_engine("w1.rs2b2t.com"));
+        assert!(!is_local_engine("192.168.1.5"));
+    }
+
+    #[test]
+    fn debug_dest_lumbridge_sends_home() {
+        let d = debug_dest_cheats();
+        assert!(d.iter().any(|x| x.label == "Lumbridge" && x.cheat == "home"));
+        assert!(d.iter().any(|x| x.label == "Seers" && x.cheat == "seers"));
+        assert!(!d.iter().any(|x| x.label == "North"));
+    }
+
+    #[test]
+    fn debug_dest_greenland_tooltip_is_the_script_comment() {
+        let g = debug_dest_cheats()
+            .iter()
+            .find(|x| x.label == "Greenland")
+            .expect("greenland dest");
+        assert_eq!(g.cheat, "greenland");
+        assert!(
+            g.tooltip.contains("Gnome Stronghold"),
+            "hover must say where this is, got {:?}",
+            g.tooltip
+        );
+    }
+
+    #[test]
+    fn walkto_tele_cmd_is_engine_tele_args() {
+        let t = Tile {
+            x: 3253,
+            z: 3266,
+            level: 0,
+        };
+        assert_eq!(walkto_tele_cmd(t), "tele 0,50,51,53,2");
+    }
+
+    #[test]
+    fn debug_maxme_is_setstat_99_not_maxme_proc() {
+        let cmds = debug_maxme_cheats();
+        assert!(!cmds.iter().any(|c| *c == "maxme"));
+        assert!(cmds.contains(&"setstat attack 99"));
+        assert_eq!(cmds.len(), 19);
+    }
 
     fn empty_play() -> host_play::Play {
         host_play::run_with_io(
