@@ -2037,6 +2037,52 @@ fn make_products_read_the_make_modal() {
     );
 }
 
+/// The mysterious-cube random event is a main modal with three TYPE_MODEL
+/// obj displays and no Make/Smelt buttons. Walking it as a make-X tree
+/// used to panic: `buttons[4..0]` on an empty slice.
+#[test]
+fn make_products_ignores_mysterious_cube_obj_models() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 3063, "Red triangle");
+    plant_obj(&mut c, 3069, "Red square");
+    plant_obj(&mut c, 3081, "Red star");
+    set_iface(
+        &mut c,
+        6554,
+        IfType {
+            id: 6554,
+            layer_id: 6554,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![6555, 6557, 6559]),
+            ..Default::default()
+        },
+    );
+    for (id, obj) in [(6555, 3063), (6557, 3069), (6559, 3081)] {
+        set_iface(
+            &mut c,
+            id as usize,
+            IfType {
+                id,
+                layer_id: 6554,
+                r#type: ComponentType::TYPE_MODEL,
+                model1_type: 4,
+                model1_id: obj,
+                ..Default::default()
+            },
+        );
+    }
+    c.main_modal_id = 6554;
+    c.chat_modal_id = -1;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    assert!(snap.rebuild_family(&mut c, Family::MakeProducts));
+    assert!(
+        snap.make_products().is_empty(),
+        "cube obj models are not make-X products"
+    );
+}
+
 /// Quest statuses read the quest tab's (side tab 2) TYPE_TEXT entries
 /// with their colours.
 #[test]

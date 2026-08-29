@@ -1471,6 +1471,13 @@ impl GameSnapshot {
             }
             queue.extend(children_of(com));
         }
+        // Make-X groups four quantity buttons per obj-model. A modal can
+        // carry TYPE_MODEL objs with no Make/Smelt buttons (the
+        // mysterious-cube random event) — do not invent products, and never
+        // slice `buttons[i*4..]` past the end.
+        if buttons.is_empty() {
+            return true;
+        }
         for (i, obj) in objs.iter().enumerate() {
             let name = client
                 .cache
@@ -1479,11 +1486,16 @@ impl GameSnapshot {
                 .map(|o| o.name.clone())
                 .unwrap_or_default();
             let start = i * 4;
-            let end = (start + 4).min(buttons.len());
+            let chunk = if start >= buttons.len() {
+                Vec::new()
+            } else {
+                let end = (start + 4).min(buttons.len());
+                buttons[start..end].to_vec()
+            };
             self.make_products.push(MakeProductView {
                 object_id: *obj,
                 name,
-                buttons: buttons[start..end].to_vec(),
+                buttons: chunk,
             });
         }
         true
