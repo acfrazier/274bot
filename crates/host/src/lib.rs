@@ -280,6 +280,13 @@ impl Host {
         // A drawing slot lazily builds its `Renderer` on the first paint
         // tick; a headless (draw off) slot constructs none and never
         // enters a draw.
+        // Draw off detaches: an unheaded slot must not keep headed data
+        // (GPU textures, chrome) around. Cadence skips (1 fps watch, draw
+        // still on) keep the renderer — this runs before the paint branch
+        // and only on a real draw toggle.
+        if !client.draw {
+            slot.renderer = None;
+        }
         let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
@@ -872,6 +879,25 @@ mod tests {
         assert_eq!(slot.skip_n, 3);
         assert_eq!(slot.paint_n, 0);
         assert!(slot.loop_ns > 0, "mainloop still ran");
+    }
+
+    #[test]
+    fn draw_off_drops_renderer_draw_on_reattaches() {
+        force_cpu_backend();
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(slot.renderer.is_some());
+        let loop_after_on = slot.loop_ns;
+        c.set_draw(false);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(slot.renderer.is_none(), "unheaded must drop headed data");
+        assert!(slot.loop_ns > loop_after_on, "sim still ticks");
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(slot.renderer.is_some(), "attach at any time");
     }
 
     #[test]
