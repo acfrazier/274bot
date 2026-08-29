@@ -8,15 +8,15 @@ Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
 **Client fork:** Patch `FR-client-bothost` `r274-bh-modular` (instrumentation, skip-paint, wgpu). `r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork — do not push there. **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 
-**Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,e2e}` (`panel` is this campaign's native UI).
+**Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,script,scenario,e2e}` (`panel` is the native UI).
 
-**Scope:** the **wall** is **in-scope** this campaign — MultiBox sidecar
-rail, grid mode, profile chooser (rail/grid/chooser). **Nav** remains
-in-scope (pack bake, router/traveller, WalkTo picker, live door harness).
-Still no dummy tick-end opcode. GPU 3D (wgpu) lives in the client
-submodule (headed default; `BOT_CPU=1` is CpuPix3D). Compiled scripts
-and WalkTo are in-tree; do not invent a tick-end opcode or put 274bot
-crates in the client repo.
+**Scope (v0.1.0 alpha):** the **wall** is landed — MultiBox sidecar rail,
+grid mode, profile chooser. **Nav** is landed (pack bake, router/traveller,
+WalkTo picker, live door harness). Still no dummy tick-end opcode. GPU 3D
+(wgpu) lives in the client submodule (headed default; `BOT_CPU=1` is
+CpuPix3D). Compiled script *kernel* and WalkTo are in-tree; do not start
+honest script ports unless the human says so. Do not invent a tick-end
+opcode or put 274bot crates in the client repo.
 
 **SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
@@ -29,4 +29,4 @@ Copied “commit on main” in a plan or a stale session snapshot is not consent
 
 **Do not:** invent a tick-end opcode; deep-copy the world every read; skip the brief; wander into scripts; hunt for a longer AGENTS.md.
 
-**Live:** automated harnesses in `crates/e2e` (`LIVE=1 cargo test -p e2e -- --ignored`). FAIL + exit 1. Wait `ingame && scene_state==2`. Not Playwright. Verbose only if `BOT_DEBUG=1`. Do not skip the live task.
+**Live:** automated harnesses in `crates/e2e` and `crates/host-play` (`LIVE=1 cargo test -p e2e -- --ignored`; same for `-p host-play`). FAIL + exit 1. Wait `ingame && scene_state==2`. Not Playwright. Verbose only if `BOT_DEBUG=1`. Do not skip the live task.

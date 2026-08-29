@@ -50,20 +50,19 @@ fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
 
-/// World host for a new session: `TARGET=live` bakes point at rs2b2t.
+/// World host for a new session: `BOT_TARGET=live` points at rs2b2t.
 fn default_play_host() -> String {
-    if env::var("TARGET").as_deref() == Ok("live") {
-        "w1.rs2b2t.com".into()
-    } else {
-        "127.0.0.1".into()
-    }
+    host_play::default_world_host()
 }
 
 /// Loopback hosts get the debug heading / WalkTo Teleport. Public
 /// `w1.rs2b2t.com` and LAN IPs do not.
 pub fn is_local_engine(host: &str) -> bool {
     matches!(
-        host.trim().trim_end_matches('.').to_ascii_lowercase().as_str(),
+        host.trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
         "127.0.0.1" | "localhost" | "::1"
     )
 }
@@ -241,10 +240,7 @@ pub fn default_vault_path() -> PathBuf {
 }
 
 fn default_cache_dir() -> String {
-    match env::var("HOME") {
-        Ok(home) => format!("{home}/experiments/Server/engine/data/pack/client"),
-        Err(_) => "experiments/Server/engine/data/pack/client".into(),
-    }
+    client::cache_dir().display().to_string()
 }
 
 /// Panel-side per-slot IO: the frame mailbox the slot stores each rendered
@@ -2286,7 +2282,9 @@ mod tests {
     #[test]
     fn debug_dest_lumbridge_sends_home() {
         let d = debug_dest_cheats();
-        assert!(d.iter().any(|x| x.label == "Lumbridge" && x.cheat == "~home"));
+        assert!(d
+            .iter()
+            .any(|x| x.label == "Lumbridge" && x.cheat == "~home"));
         assert!(d.iter().any(|x| x.label == "Seers" && x.cheat == "~seers"));
         assert!(!d.iter().any(|x| x.label == "North"));
     }

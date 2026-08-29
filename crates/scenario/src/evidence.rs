@@ -53,7 +53,10 @@ impl Evidence {
     /// The compact JSON record both runners print on PASS/FAIL.
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|e| {
-            format!("{{\"scenario\":{},\"outcome\":{},\"serialize_error\":{}}}", self.scenario, self.outcome, e)
+            format!(
+                "{{\"scenario\":{},\"outcome\":{},\"serialize_error\":{}}}",
+                self.scenario, self.outcome, e
+            )
         })
     }
 
@@ -124,7 +127,12 @@ mod tests {
         c.map_build_base_z = 3200;
         c.local_player = Some(ClientPlayer::at(20, 12));
         c.runenergy = 42;
-        match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
+        match c
+            .ifaces
+            .iter_mut()
+            .flatten()
+            .find(|f| f.r#type == ComponentType::TYPE_INV)
+        {
             Some(inv) => {
                 // stored = obj_id + 1: a real Bones id 526 stores as 527.
                 inv.link_obj_type = Some(vec![527]);
@@ -206,6 +214,9 @@ mod tests {
             v["message"],
             "step 1: arrived(3220,3216,0) not seen within 90 ticks"
         );
-        assert!(v["inv"][0].get("name").is_none(), "no obj table -> no names");
+        assert!(
+            v["inv"][0].get("name").is_none(),
+            "no obj table -> no names"
+        );
     }
 }

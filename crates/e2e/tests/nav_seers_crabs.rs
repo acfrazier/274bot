@@ -67,7 +67,12 @@ fn nav_seers_crabs() {
     // is the live-gate the brief requires).
     let mut opts = options();
     opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&[("test", "test")]), |_| (None, None), |_, _| {});
+    let play = run_with_io(
+        &opts,
+        profiles(&[("test", "test")]),
+        |_| (None, None),
+        |_, _| {},
+    );
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_seers_crabs");
 
     // Find the same OD on the pack the process loaded.

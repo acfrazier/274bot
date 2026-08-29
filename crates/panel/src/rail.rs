@@ -85,8 +85,8 @@ pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_title, os_window_size, traffic_light, Light, REMOVE_GLYPH, STATUS_GLYPH, BASE_WINDOW_H,
-        BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+        cap_title, os_window_size, traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W,
+        REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
     };
 
     #[test]

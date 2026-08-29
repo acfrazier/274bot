@@ -7,8 +7,8 @@
 use api::interact::{
     answer_count, cheat, close_modal, create_interactions, interact, login, mainland_hop,
     offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present, tele_args,
-    walk, ActionSpec, Driver, Interactions, MAX_OPERATIONS, OpTarget, SCENE_READY, SendReason,
-    SendResult, WireCommand, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
+    walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult, WireCommand,
+    MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
 };
 use api::obj_names::ItemDefView;
 use api::prot::{LegalSend, LEGAL_SEND};
@@ -609,7 +609,11 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
     use std::collections::HashSet;
     use std::mem::discriminant;
 
-    let tile = WorldTile { x: 1, z: 2, level: 0 };
+    let tile = WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    };
     let npc = NpcView {
         index: 0,
         r#type: None,
@@ -708,8 +712,15 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         OpTarget::GroundItem(&gi),
         OpTarget::Item(&item),
     ];
-    let distinct = targets.iter().map(|t| discriminant(t)).collect::<HashSet<_>>();
-    assert_eq!(distinct.len(), targets.len(), "OpTarget discriminants collide");
+    let distinct = targets
+        .iter()
+        .map(|t| discriminant(t))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        distinct.len(),
+        targets.len(),
+        "OpTarget discriminants collide"
+    );
 
     let commands = [
         WireCommand::Op {
@@ -739,8 +750,15 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         },
         WireCommand::ClearLocalModal { component_id: 18 },
     ];
-    let distinct = commands.iter().map(|c| discriminant(c)).collect::<HashSet<_>>();
-    assert_eq!(distinct.len(), commands.len(), "WireCommand discriminants collide");
+    let distinct = commands
+        .iter()
+        .map(|c| discriminant(c))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        distinct.len(),
+        commands.len(),
+        "WireCommand discriminants collide"
+    );
 
     let reasons = [
         SendReason::NotAttached,
@@ -789,8 +807,15 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         };
         assert!(!label.is_empty());
     }
-    let distinct = reasons.iter().map(|r| discriminant(r)).collect::<HashSet<_>>();
-    assert_eq!(distinct.len(), reasons.len(), "SendReason discriminants collide");
+    let distinct = reasons
+        .iter()
+        .map(|r| discriminant(r))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        distinct.len(),
+        reasons.len(),
+        "SendReason discriminants collide"
+    );
 
     match (SendResult::Sent {
         tick: 7,
@@ -1083,7 +1108,11 @@ fn operation_of_matches_label_case_insensitively_skipping_hidden() {
         "hidden/empty slots are skipped"
     );
     assert_eq!(operation_of(&target, "Examine"), Some(5));
-    assert_eq!(operation_of(&target, "Sixth"), None, "beyond MAX_OPERATIONS");
+    assert_eq!(
+        operation_of(&target, "Sixth"),
+        None,
+        "beyond MAX_OPERATIONS"
+    );
     assert_eq!(operation_of(&target, "Nope"), None);
     assert_eq!(MAX_OPERATIONS, 5);
 }
@@ -1151,7 +1180,12 @@ fn interactions_walk_refuses_off_scene_and_sends_when_ok() {
 #[test]
 fn interact_dispatches_npc_op_through_menu() {
     let mut s = scene();
-    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack", "Pickpocket", "Examine"]);
+    plant_npc_type(
+        &mut s.client,
+        9,
+        "Goblin",
+        &["Attack", "Pickpocket", "Examine"],
+    );
     plant_npc(&mut s.client, 7, 9);
     let snap = rebuild(&mut s.client);
     let mut rec = Recorder::default();
@@ -1208,7 +1242,14 @@ fn interact_dispatches_loc_op_through_scene_coords() {
     }
     let snap = rebuild(&mut s.client);
     let loc = &snap.locs()[0];
-    assert_eq!(loc.tile, WorldTile { x: 3203, z: 3204, level: 0 });
+    assert_eq!(
+        loc.tile,
+        WorldTile {
+            x: 3203,
+            z: 3204,
+            level: 0
+        }
+    );
     let mut rec = Recorder {
         base: (3200, 3200),
         ..Recorder::default()
@@ -1223,7 +1264,10 @@ fn interact_dispatches_loc_op_through_scene_coords() {
         }
     }
     assert_eq!(rec.actions, vec![0]);
-    assert_eq!(rec.menus, vec![(0, MiniMenuAction::OP_LOC1, typecode, 3, 4)]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::OP_LOC1, typecode, 3, 4)]
+    );
 }
 
 /// A ground-item target dispatches through the scene coords with the obj
@@ -1247,7 +1291,14 @@ fn interact_dispatches_ground_item_op_through_scene_coords() {
     s.client.ground_obj[0][10][12] = Some(list);
     let snap = rebuild(&mut s.client);
     let gi = &snap.ground_items()[0];
-    assert_eq!(gi.tile, WorldTile { x: 3210, z: 3212, level: 0 });
+    assert_eq!(
+        gi.tile,
+        WorldTile {
+            x: 3210,
+            z: 3212,
+            level: 0
+        }
+    );
     let mut rec = Recorder {
         base: (3200, 3200),
         ..Recorder::default()
@@ -1453,7 +1504,10 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
             SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
         }
     }
-    assert_eq!(rec.menus, vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 201)]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 201)]
+    );
 
     let mut s = scene();
     let snap = rebuild(&mut s.client);

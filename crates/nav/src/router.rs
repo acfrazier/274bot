@@ -360,10 +360,13 @@ fn find_bounded_impl(
                 let nd = n.cost + edge.ticks as f64;
                 if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
                     dist.insert(edge.to, nd);
-                    came_from.insert(edge.to, Back::Teleport {
-                        from: cur,
-                        index: ti,
-                    });
+                    came_from.insert(
+                        edge.to,
+                        Back::Teleport {
+                            from: cur,
+                            index: ti,
+                        },
+                    );
                     heap.push(HeapNode {
                         cost: nd,
                         tile: edge.to,
@@ -952,10 +955,8 @@ mod tests {
 
     impl FixDir {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "274bot-nav-router-{name}-{}",
-                std::process::id()
-            ));
+            let dir = std::env::temp_dir()
+                .join(format!("274bot-nav-router-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             FixDir(dir)
@@ -1088,7 +1089,12 @@ mod tests {
         let g = TransportGraph::default();
         let r = find(&wc, &g, tile(1, 1, 0), tile(1, 1, 0)).unwrap();
         assert_eq!(r.ticks, 0.0); // no steps walked
-        assert_eq!(r.legs, vec![Leg::Walk { tiles: vec![tile(1, 1, 0)] }]);
+        assert_eq!(
+            r.legs,
+            vec![Leg::Walk {
+                tiles: vec![tile(1, 1, 0)]
+            }]
+        );
     }
 
     #[test]
@@ -1114,16 +1120,17 @@ mod tests {
         // two run steps from the far side (1.0).
         assert_eq!(r.ticks, 3.5);
         assert_eq!(r.legs.len(), 3);
-        let (
-            Leg::Walk { tiles: w0 },
-            Leg::Transport { edge },
-            Leg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
         assert_eq!(w0.first(), Some(&tile(0, 0, 0)));
-        assert_eq!(w0.len(), 2, "walk up to an adjacent take-off, not from (0,0)");
+        assert_eq!(
+            w0.len(),
+            2,
+            "walk up to an adjacent take-off, not from (0,0)"
+        );
         assert_eq!(edge.loc_id, 1530);
         assert_eq!(edge.ticks, 2);
         assert_eq!(edge.at, tile(1, 2, 0));
@@ -1156,11 +1163,8 @@ mod tests {
         assert_eq!(r.dest, tile(4, 2, 0));
         // The 2-tick door taken from (1,0) + 2 run steps from (2,2) (1.0).
         assert_eq!(r.ticks, 3.0);
-        let (
-            Leg::Walk { tiles: w0 },
-            Leg::Transport { edge },
-            Leg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
@@ -1300,11 +1304,8 @@ mod tests {
         assert_eq!(r.dest, tile(3, 1, 1));
         // The 3-tick ladder plus 2 run steps on level 1 (1.0).
         assert_eq!(r.ticks, 4.0);
-        let (
-            Leg::Walk { tiles: w0 },
-            Leg::Transport { edge },
-            Leg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
@@ -1394,8 +1395,8 @@ mod tests {
         // pace (1/tile).
         let wc = bake(5, 5, &[]);
         let g = TransportGraph::default();
-        let run = find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), CostModel::running())
-            .unwrap();
+        let run =
+            find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), CostModel::running()).unwrap();
         assert_eq!(run.ticks, 2.0);
         let walk = CostModel {
             run_per_step: PER_STEP_WALK,
@@ -1415,8 +1416,8 @@ mod tests {
         let dest = tile(4, 4, 0);
         let g = teleport(
             dest,
-            3, // OP_BASE 1 + the cast p_delay(2)
-            vec![(6, 25)], // Magic level 25 (Varrock)
+            3,                                  // OP_BASE 1 + the cast p_delay(2)
+            vec![(6, 25)],                      // Magic level 25 (Varrock)
             vec![(554, 1), (556, 3), (563, 1)], // fire + air + law runes
         );
         assert!(matches!(
@@ -1474,10 +1475,7 @@ mod tests {
             let r = find_allow_teleports(&wc, &g, origin, dest).unwrap();
             assert_eq!(r.dest, dest);
             assert_eq!(r.ticks, 2.0, "teleport from {origin:?} costs the rub only");
-            assert!(r
-                .legs
-                .iter()
-                .any(|l| matches!(l, Leg::Transport { .. })));
+            assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
         }
     }
 
@@ -1510,10 +1508,26 @@ mod tests {
 
     #[test]
     fn find_does_not_enter_wilderness_without_the_flag() {
-        let wc = open_world(WorldTile { x: 3099, z: 3518, level: 0 }, 5, 12);
+        let wc = open_world(
+            WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            5,
+            12,
+        );
         let g = TransportGraph::default();
-        let from = WorldTile { x: 3100, z: 3519, level: 0 }; // z 3519 < 3520
-        let to = WorldTile { x: 3100, z: 3525, level: 0 };   // in zone
+        let from = WorldTile {
+            x: 3100,
+            z: 3519,
+            level: 0,
+        }; // z 3519 < 3520
+        let to = WorldTile {
+            x: 3100,
+            z: 3525,
+            level: 0,
+        }; // in zone
         assert!(matches!(find(&wc, &g, from, to), Err(RouteError::NoPath)));
         let ok = find_with(
             &wc,
@@ -1530,10 +1544,26 @@ mod tests {
 
     #[test]
     fn already_in_wilderness_can_walk_out_without_the_flag() {
-        let wc = open_world(WorldTile { x: 3099, z: 3518, level: 0 }, 5, 12);
+        let wc = open_world(
+            WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            5,
+            12,
+        );
         let g = TransportGraph::default();
-        let from = WorldTile { x: 3100, z: 3525, level: 0 };
-        let to = WorldTile { x: 3100, z: 3519, level: 0 };
+        let from = WorldTile {
+            x: 3100,
+            z: 3525,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3100,
+            z: 3519,
+            level: 0,
+        };
         assert!(find(&wc, &g, from, to).is_ok());
     }
 

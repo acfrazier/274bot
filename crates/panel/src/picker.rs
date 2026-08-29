@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use api::snapshot::WorldTile;
-use dear_imgui_rs::{Key, MouseButton, Ui, WindowFlags};
 #[cfg(test)]
 use dear_imgui_rs::Condition;
+use dear_imgui_rs::{Key, MouseButton, Ui, WindowFlags};
 use nav::paint::{collision_at, flood_components, remaining_path_tiles};
 use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
@@ -122,14 +122,11 @@ pub fn snap(world: &NavWorld, x: f32, z: f32, level: i32) -> Option<Tile> {
         z: z.round() as i32,
         level,
     };
-    if world
-        .collision
-        .walkable(WorldTile {
-            x: target.x,
-            z: target.z,
-            level: target.level,
-        })
-    {
+    if world.collision.walkable(WorldTile {
+        x: target.x,
+        z: target.z,
+        level: target.level,
+    }) {
         return Some(target);
     }
     world_dots(world, level).min_by_key(|t| {
@@ -156,13 +153,7 @@ pub fn click_to_tile(
 /// Canvas-local px of world tile `(tx, tz)`: +x east is right, +z north is
 /// up (imgui Y grows down, so z is negated). The old mapping put north at
 /// the bottom (south-facing).
-fn canvas_from_world(
-    centre: (i32, i32),
-    scale: f32,
-    size: [f32; 2],
-    tx: f32,
-    tz: f32,
-) -> [f32; 2] {
+fn canvas_from_world(centre: (i32, i32), scale: f32, size: [f32; 2], tx: f32, tz: f32) -> [f32; 2] {
     [
         size[0] / 2.0 + (tx - centre.0 as f32) * scale,
         size[1] / 2.0 - (tz - centre.1 as f32) * scale,
@@ -422,10 +413,7 @@ pub(crate) fn pack_map_tiles(
             let t = Tile { x, z, level };
             let wt = WorldTile { x, z, level };
             let blocked = layers.collision_fill && collision_at(&world.collision, wt).blocked;
-            let (is_path, transport) = path
-                .get(&t)
-                .map(|&tr| (true, tr))
-                .unwrap_or((false, false));
+            let (is_path, transport) = path.get(&t).map(|&tr| (true, tr)).unwrap_or((false, false));
             let flood = if floods.is_empty() {
                 None
             } else {
@@ -545,16 +533,9 @@ fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
     let spacing = ui.clone_style().item_spacing()[0];
     let local = session.debug_ui();
     let labels = walkto_footer_labels(local);
-    let cluster = labels
-        .iter()
-        .map(|l| button_w(ui, l))
-        .sum::<f32>()
+    let cluster = labels.iter().map(|l| button_w(ui, l)).sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
-    let x = right_align_x(
-        ui.cursor_pos()[0],
-        ui.content_region_avail()[0],
-        cluster,
-    );
+    let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
     ui.same_line_with_pos(x);
     if ui.button("recentre") {
         let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
@@ -630,8 +611,14 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             let layers = effective(&session.ui.nav, session.nav_live_force_layers);
             let any_layer = layers.collision_fill || layers.show_nav_path || layers.component_flood;
             let level = LEVEL.load(Ordering::Relaxed);
-            let here = session.focused_tile().map(|(x, z)| WorldTile { x, z, level });
-            let dest = session.walk_dest.map(|t| WorldTile { x: t.x, z: t.z, level });
+            let here = session
+                .focused_tile()
+                .map(|(x, z)| WorldTile { x, z, level });
+            let dest = session.walk_dest.map(|t| WorldTile {
+                x: t.x,
+                z: t.z,
+                level,
+            });
             let view = PackView {
                 x0: wx0.ceil() as i32,
                 z0: wz0.ceil() as i32,
@@ -667,8 +654,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 let t = pt.tile;
                 let (tx, tz) = (t.x as f32, t.z as f32);
                 let [sx, sy] = canvas_from_world(centre_i, scale, size, tx, tz);
-                let [sx1, sy1] =
-                    canvas_from_world(centre_i, scale, size, tx + 1.0, tz + 1.0);
+                let [sx1, sy1] = canvas_from_world(centre_i, scale, size, tx + 1.0, tz + 1.0);
                 let (x0, y0) = (sx.min(sx1) + min[0], sy.min(sy1) + min[1]);
                 let (x1, y1) = (sx.max(sx1) + min[0], sy.max(sy1) + min[1]);
                 let color = if pt.path {
@@ -693,8 +679,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 if sel.is_some_and(|s| s == t) {
                     let d = (dot + 2.0).min(scale.max(3.0));
                     let h = d / 2.0;
-                    let [mx, my] =
-                        canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
+                    let [mx, my] = canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
                     draw.add_rect(
                         [min[0] + mx - h, min[1] + my - h],
                         [min[0] + mx + h, min[1] + my + h],
@@ -708,9 +693,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             for z in view.z0..view.z0 + view.height {
                 for x in view.x0..view.x0 + view.width {
                     let t = Tile { x, z, level };
-                    if !world
-                        .collision
-                        .walkable(WorldTile { x, z, level })
+                    if !world.collision.walkable(WorldTile { x, z, level })
                         || (any_layer && painted.contains(&t))
                     {
                         continue;
@@ -723,8 +706,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                         (ACCENT, dot)
                     };
                     let h = d / 2.0;
-                    let [mx, my] =
-                        canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
+                    let [mx, my] = canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
                     draw.add_rect(
                         [min[0] + mx - h, min[1] + my - h],
                         [min[0] + mx + h, min[1] + my + h],
@@ -827,9 +809,9 @@ mod tests {
         picker_map_window, right_align_x, snap, walkto_canvas_flags, walkto_footer_labels,
         walkto_window_flags, PackView,
     };
-    use dear_imgui_rs::WindowFlags;
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
+    use dear_imgui_rs::WindowFlags;
     use nav::router::{Leg, Route};
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -1228,12 +1210,12 @@ mod tests {
     #[test]
     fn pack_map_marks_remaining_path_in_view() {
         let world = bake_world(5, 1, &[]);
-        let tiles: Vec<WorldTile> = (0..5)
-            .map(|x| WorldTile { x, z: 0, level: 0 })
-            .collect();
+        let tiles: Vec<WorldTile> = (0..5).map(|x| WorldTile { x, z: 0, level: 0 }).collect();
         let route = Route {
             dest: tiles[4],
-            legs: vec![Leg::Walk { tiles: tiles.clone() }],
+            legs: vec![Leg::Walk {
+                tiles: tiles.clone(),
+            }],
             ticks: 0.0,
         };
         let layers = NavSettings {
@@ -1249,34 +1231,55 @@ mod tests {
         let marks = pack_map_tiles(&world, view, Some(&route), None, None, &layers, 0);
         let path: Vec<i32> = marks.iter().filter(|t| t.path).map(|t| t.tile.x).collect();
         assert_eq!(path, vec![0, 1, 2, 3, 4]);
-        assert!(marks.iter().all(|t| !t.transport), "a walk-only route has no hops");
+        assert!(
+            marks.iter().all(|t| !t.transport),
+            "a walk-only route has no hops"
+        );
     }
 
     #[test]
     fn pack_map_flood_report_line_reports_each_arm() {
-        let player = WorldTile { x: 0, z: 0, level: 0 };
-        let dest = WorldTile { x: 5, z: 5, level: 0 };
+        let player = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let dest = WorldTile {
+            x: 5,
+            z: 5,
+            level: 0,
+        };
         let first = super::flood_report_line(None, 1, player, dest, 9, 1).unwrap();
         assert_eq!(first, "nav-flood: player 9 dest 1");
         // A second arm with the same tiles still reports: the arm
         // generation is part of the report key.
-        let second = super::flood_report_line(Some((1, player, dest, 9, 1)), 2, player, dest, 9, 1)
-            .unwrap();
+        let second =
+            super::flood_report_line(Some((1, player, dest, 9, 1)), 2, player, dest, 9, 1).unwrap();
         assert_eq!(second, first);
         // The same arm and sizes do not re-report; a size change does.
         assert!(
-            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 1).is_none()
+            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 1)
+                .is_none()
         );
         assert!(
-            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 9).is_some()
+            super::flood_report_line(Some((2, player, dest, 9, 1)), 2, player, dest, 9, 9)
+                .is_some()
         );
     }
 
     #[test]
     fn pack_map_flood_report_sizes_from_cached_sets() {
         let world = disconnected_world();
-        let player = WorldTile { x: 0, z: 0, level: 0 };
-        let dest = WorldTile { x: 5, z: 5, level: 0 };
+        let player = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let dest = WorldTile {
+            x: 5,
+            z: 5,
+            level: 0,
+        };
         let comps = super::flood_sets_for(&world, &[player, dest]);
         assert_eq!(
             super::flood_report_sizes(&comps, dest),
@@ -1284,7 +1287,11 @@ mod tests {
             "the 3x3 corner and the isolated dest tile"
         );
         // Connected seeds (the dest inside the player's flood) share one size.
-        let inside = WorldTile { x: 1, z: 1, level: 0 };
+        let inside = WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        };
         let comps = super::flood_sets_for(&world, &[player, inside]);
         assert_eq!(super::flood_report_sizes(&comps, inside), (9, 9));
     }

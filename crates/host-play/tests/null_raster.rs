@@ -12,7 +12,7 @@
 //! counter keeps the wiring liveness check that used to ride on the draw
 //! counters.
 //!
-//! LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1 --nocapture
+//! LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1 --nocapture
 
 mod common;
 
@@ -53,7 +53,11 @@ fn live_draw_off_never_paints() {
         {
             let frames = Arc::clone(&frames);
             move |c, name| {
-                *frames.lock().unwrap().entry(name.to_string()).or_insert(0u64) += 1;
+                *frames
+                    .lock()
+                    .unwrap()
+                    .entry(name.to_string())
+                    .or_insert(0u64) += 1;
                 c.set_draw(name == "test");
             }
         },

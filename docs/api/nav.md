@@ -8,22 +8,22 @@ follower. It acts only through the kernel API (`api::interact`,
 ## Pack bake
 
 `nav-pack` reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
-and writes a **v2** nav pack:
+and writes the current whole-world pack (`encode_v2` in
+`crates/nav/src/pack.rs`):
 
 ```bash
 cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_DIR] [CONFIG_DIR]
 ```
 
-Defaults: `MAPS_DIR=/Users/acfrazier/experiments/Server/content/maps`,
-`DOORS_DIR=/Users/acfrazier/experiments/Server/content/scripts/doors/configs`,
-`CONFIG_DIR=/Users/acfrazier/experiments/Server/engine/data/pack/config`.
-Output goes to `$NAV_PACK` or `~/.274bot/274bot.navpack`.
+Defaults are `$HOME/experiments/Server/content/maps` and siblings. Pass
+the three dirs if yours lives elsewhere. Output goes to `$NAV_PACK` or
+`~/.274bot/274bot.navpack`. `gates.loc` is derived from the maps dir's
+parent (`content/scripts/general_use/configs/gates.loc`).
 
-The pack serializes the whole-world `WorldCollision` (one `CollisionFlag`
-bitmask per tile, row-major z-then-x, u32 each) plus the derived
-`TransportGraph` (doors, ladders, stairs, agility shortcuts, with their
-requirements and tick costs). Magic `b"274V"`, version 2 — see
-`crates/nav/src/pack.rs` `encode_v2`/`decode_v2`.
+The pack serializes the whole-world `WorldCollision` (four planes, one
+`CollisionFlag` bitmask per tile, row-major z-then-x, u32 each) plus the
+derived `TransportGraph`. Magic `b"274V"`, version byte **5** (v4 streams
+still decode with empty `worn_req`; older v2/v3 streams are rejected).
 
 ## Collision (`nav::collision`)
 
@@ -41,25 +41,38 @@ standable check (`WALK_BLOCK_FLAGS | WALK_SCENERY | WR_GRND == 0`); the
 
 `TransportGraph { edges: Vec<TransportEdge>, from: HashMap<WorldTile, Vec<usize>> }`.
 `derive_transports(content_root)` parses the 2004 content: `doors/*.loc`
-(openable doors), `ladders+stairs/` and `areas/` rs2 scripts
-(`p_telejump`/`p_teleport`/`~climb_ladder`, `movecoord` landings),
-`skill_magic/` teleports, and `skill_agility/` shortcuts. A
-`TransportEdge` carries `kind` (Door/Ladder/Stairs/Boat/Teleport/
-AgilityShortcut), `from`/`to`, `loc_id`, the 1-based menu `option`,
-`ticks`, and `skill_req`/`item_req`/`quest_req`/`varp_req`. Boats and
-teleport spells have no content-derivable fixed origin, so they are
-skipped with a stderr count, never faked.
+(openable doors), `gates.loc` fence/gate hops, `ladders+stairs/` and
+`areas/` rs2 scripts (`p_telejump`/`p_teleport`/`~climb_ladder`,
+`movecoord` landings), `skill_magic/` teleports, `skill_agility/`
+shortcuts, spirit trees, Shilo↔Brimhaven cart NPC hops, Ardougne
+wilderness levers, Al Kharid toll / Shantay northbound, essence-mine
+wizard **entry**, Elkoy maze escorts, Zanaris shed door with worn Dramen
+req. A `TransportEdge` carries `kind` (Door/Ladder/Stairs/Boat/Teleport/
+AgilityShortcut/Glider/SpiritTree/Npc), `from`/`to`, `loc_id`, the
+1-based menu `option`, `ticks`, and requirement vectors including
+`worn_req`. Spell teleports have no fixed origin: they live on
+`TransportGraph::teleports` and stay out of Dijkstra unless
+`FindOptions::allow_teleports`. Wilderness tiles stay out unless
+`FindOptions::allow_wilderness`. Both default **off**.
 
 ## Router (`nav::router`)
 
-`find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra:
-0-cost 8-directional tile steps through a deque, transport edges through a
-min-heap at `edge.ticks` cost. Tile steps use the client's directional
-`PL_WALK_*` masks (face + corner + scenery + ground), **not** the blanket
-`walkable()`. `Route { legs, dest, ticks }`; `Leg::Walk { tiles }` runs
+`find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra
+with safe defaults (no wilderness, no any-tile teleports).
+`find_with(..., FindOptions { allow_teleports, allow_wilderness })` opts
+those in. Tile steps use the client's directional `PL_WALK_*` masks,
+**not** the blanket `walkable()`. Transport take-off is any standable
+tile within **`INTERACT_RADIUS` 1** of the edge `at` (adjacent only — a
+radius of 3 let cow-pen routes “use” the north-west road gate through a
+fence). `Route { legs, dest, ticks }`; `Leg::Walk { tiles }` runs
 collapse, `Leg::Transport { edge }` is one per transport. `RouteError` is
 `NoPath` or `BudgetExhausted` (a node-expansion cap). `find` is CPU-heavy;
 run it off-pump (a short-lived worker) and arm the result.
+
+`Traveller::follow` still walks door/ladder-style loc hops. **OP_NPC
+execute** (cart / essence wizard / Elkoy), EssenceSession return, Shantay
+free-exit, and tele **execution** are not in this tag: the pack can
+contain the edges, the walker does not yet fire those ops.
 
 ## Traveller (`nav::traveller`)
 
@@ -81,26 +94,29 @@ on_leg, troll_doors }`.
 
 ## WalkTo picker
 
-The panel's main-chrome **WalkTo** button opens a collision-dot map
-(`crates/panel/src/picker.rs`): walkable level-0 tiles from
-`NavWorld.collision` as amber dots, drag to pan, click highlights the
-nearest walkable tile, **Walk** arms `find` and the panel drives `follow`
-on the focused slot's pump. `walk_status_text` mirrors the armed dest and
-clears on any terminal outcome.
+The panel's main-chrome **WalkTo** button fills the Game pane
+(`crates/panel/src/picker.rs`): north-up walkable tiles from
+`NavWorld.collision` as amber dots, drag/wheel to pan, click (canvas rect,
+`is_mouse_hovering_rect`) highlights the nearest walkable tile, footer
+**Recentre** / **Walk** arms `find` and the panel drives `follow` on the
+focused slot's pump. Local engines also get **Teleport** (cheat to the
+pick). `walk_status_text` mirrors the armed dest and clears on any
+terminal outcome.
 
 ## Live tests
 
 ```bash
 LIVE=1 cargo test -p e2e --test nav_full -- --ignored --test-threads=1
-LIVE=1 cargo test -p e2e --test nav_walk -- --ignored --test-threads=1
 LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
-`nav_full`/`nav_walk`: a `find` + `follow` route across formerly-missing
-squares (Lumbridge courtyard → (3220,3264,0) for `nav_full`).
-`nav_door`: two slots — the walker crosses Catherby door 1530 to
-(2817,3443,0) with `troll_doors: true` while a tick-perfect closer keeps
-the door closed; PASS on `Arrived`, FAIL on any other terminal outcome.
+`nav_full`: `find` + `follow` (Lumbridge courtyard → (3220,3264,0)).
+`nav_door` is the gold fixture if something regresses: two slots — the
+walker crosses Catherby door 1530 to (2817,3443,0) with `troll_doors:
+true` while a tick-perfect closer keeps the door closed; PASS on
+`Arrived`. Additional live tests under `crates/e2e/tests`: `nav_gates`,
+`nav_cart`, `nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`,
+`nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`.
 
 ## Credit
 

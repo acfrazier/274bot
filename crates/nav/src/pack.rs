@@ -195,12 +195,15 @@ pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
 /// [`decode_v2`]), older v2/v3 streams are rejected rather than mis-read.
 pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
-    let mut out = Vec::with_capacity(
-        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + edge_count * 96,
-    );
+    let mut out =
+        Vec::with_capacity(4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + edge_count * 96);
     out.extend_from_slice(MAGIC_V2);
     out.push(VERSION_V2);
-    for v in [collision.origin.x, collision.origin.z, collision.origin.level] {
+    for v in [
+        collision.origin.x,
+        collision.origin.z,
+        collision.origin.level,
+    ] {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&(collision.width as u32).to_le_bytes());
@@ -212,15 +215,7 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
     for e in graph.edges.iter().chain(&graph.teleports) {
         out.push(kind_to_u8(e.kind));
         for v in [
-            e.at.x,
-            e.at.z,
-            e.at.level,
-            e.to.x,
-            e.to.z,
-            e.to.level,
-            e.loc_id,
-            e.option,
-            e.ticks,
+            e.at.x, e.at.z, e.at.level, e.to.x, e.to.z, e.to.level, e.loc_id, e.option, e.ticks,
         ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -371,9 +366,7 @@ fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
         6 => Ok(TransportKind::Glider),
         7 => Ok(TransportKind::SpiritTree),
         8 => Ok(TransportKind::Npc),
-        _ => Err(PackError::BadLength(format!(
-            "unknown transport kind {b}"
-        ))),
+        _ => Err(PackError::BadLength(format!("unknown transport kind {b}"))),
     }
 }
 
@@ -655,8 +648,15 @@ pub fn parse_mapsquare_jm2(
     collision: &WorldCollision,
 ) -> Result<Mapsquare, PackError> {
     let text = std::fs::read_to_string(path).map_err(PackError::Io)?;
-    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids, passable, collision)
-        .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
+    parse_mapsquare_text(
+        &text,
+        mapsquare_x,
+        mapsquare_z,
+        door_ids,
+        passable,
+        collision,
+    )
+    .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
 }
 
 /// Parse jm2 text into a [`Mapsquare`], or None without a MAP section.
@@ -1135,8 +1135,16 @@ mod tests {
         // edge in the same array, split back out on decode.
         graph.teleports.push(TransportEdge {
             kind: TransportKind::Teleport,
-            at: WorldTile { x: 0, z: 0, level: 0 },
-            to: WorldTile { x: 3213, z: 3424, level: 0 },
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3213,
+                z: 3424,
+                level: 0,
+            },
             loc_id: 0,
             option: 0,
             ticks: 3,
@@ -1173,11 +1181,18 @@ mod tests {
         // rebuilt from the ordinary edges only.
         assert_eq!(g.teleports, graph.teleports);
         assert_eq!(g.at, graph.at);
-        assert!(!g.at.contains_key(&WorldTile { x: 0, z: 0, level: 0 }));
+        assert!(!g.at.contains_key(&WorldTile {
+            x: 0,
+            z: 0,
+            level: 0
+        }));
         // The two formats do not cross-decode: v1 rejects v2 magic and
         // vice versa.
         assert!(matches!(decode(&bytes), Err(PackError::BadMagic)));
-        assert!(matches!(decode_v2(&encode(&StepGrid::fixture_open_3x3())), Err(PackError::BadMagic)));
+        assert!(matches!(
+            decode_v2(&encode(&StepGrid::fixture_open_3x3())),
+            Err(PackError::BadMagic)
+        ));
     }
 
     #[test]
@@ -1204,15 +1219,9 @@ mod tests {
         let mut bytes = encode_v2(&collision, &graph);
         // The version byte sits right after the 4-byte magic.
         bytes[4] = 3;
-        assert!(matches!(
-            decode_v2(&bytes),
-            Err(PackError::BadVersion(3))
-        ));
+        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(3))));
         bytes[4] = 2;
-        assert!(matches!(
-            decode_v2(&bytes),
-            Err(PackError::BadVersion(2))
-        ));
+        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(2))));
     }
 
     #[test]
@@ -1513,15 +1522,19 @@ op1=Open
             53,
             &[
                 (1, 0, CollisionFlag::WR_GRND as u32),
-                (0, 46, CollisionFlag::WR_GRND as u32
-                    | CollisionFlag::W_N as u32
-                    | CollisionFlag::W_E as u32),
+                (
+                    0,
+                    46,
+                    CollisionFlag::WR_GRND as u32
+                        | CollisionFlag::W_N as u32
+                        | CollisionFlag::W_E as u32,
+                ),
                 (1, 46, CollisionFlag::W_W as u32),
                 (0, 47, CollisionFlag::W_S as u32),
             ],
         );
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision)
-            .unwrap();
+        let sq =
+            parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision).unwrap();
         // (0,0): no f flag -> walkable; (1,0): f1 bit 0 -> blocked;
         // (0,1): f16 bit 0 clear -> walkable; (2,0): no MAP line -> blocked.
         assert_eq!(sq.walk[0], 1);
@@ -1597,9 +1610,8 @@ blockwalk=yes
 0 0 45: 980 0 0
 ";
         let collision = square_collision(44, 53, &[]);
-        let sq =
-            parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new(), &collision)
-                .unwrap();
+        let sq = parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new(), &collision)
+            .unwrap();
         let grid = merge_squares(&[sq]);
         assert!(!grid.walkable(Tile {
             x: 2816,
@@ -1632,8 +1644,8 @@ blockwalk=yes
                 (0, 47, CollisionFlag::W_S as u32),
             ],
         );
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision)
-            .unwrap();
+        let sq =
+            parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision).unwrap();
         assert_eq!(sq.doors.len(), 2);
         let south = Tile {
             x: 2816,
@@ -1645,14 +1657,8 @@ blockwalk=yes
             z: 3440,
             level: 0,
         };
-        assert!(sq
-            .doors
-            .iter()
-            .any(|d| d.from == south && d.to == north));
-        assert!(sq
-            .doors
-            .iter()
-            .any(|d| d.from == north && d.to == south));
+        assert!(sq.doors.iter().any(|d| d.from == south && d.to == north));
+        assert!(sq.doors.iter().any(|d| d.from == north && d.to == south));
         let grid = merge_squares(&[sq]);
         assert!(!grid.walkable(Tile {
             x: 2816,

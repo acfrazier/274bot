@@ -144,8 +144,22 @@ pub fn derive_transports(
     let positions = loc_positions(content_root);
 
     door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
-    ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
-    shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
+    ladder_stair_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
+    shortcut_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
     boat_edges(&mut graph);
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
@@ -199,7 +213,11 @@ const SKILL_MAGIC: i32 = 6;
 /// Teleport edges have no origin tile (cast/rubbed from anywhere); `at` is
 /// a wire-only placeholder that is never indexed into
 /// [`TransportGraph::at`].
-const TELEPORT_PLACEHOLDER_AT: WorldTile = WorldTile { x: 0, z: 0, level: 0 };
+const TELEPORT_PLACEHOLDER_AT: WorldTile = WorldTile {
+    x: 0,
+    z: 0,
+    level: 0,
+};
 /// Spell teleport ticks: OP_BASE 1 + the `player_teleport_normal` cast
 /// `p_delay(2)` (the spell's whole channel).
 const SPELL_TELEPORT_TICKS: i32 = 3;
@@ -294,11 +312,7 @@ fn bump(skipped: &mut HashMap<&'static str, usize>, reason: &'static str, n: usi
     }
 }
 
-fn report(
-    content_root: &Path,
-    graph: &TransportGraph,
-    skipped: &HashMap<&'static str, usize>,
-) {
+fn report(content_root: &Path, graph: &TransportGraph, skipped: &HashMap<&'static str, usize>) {
     let mut by_kind: HashMap<TransportKind, usize> = HashMap::new();
     for e in &graph.edges {
         *by_kind.entry(e.kind).or_default() += 1;
@@ -919,7 +933,10 @@ fn switch_case(line: &str) -> Option<(Vec<String>, Option<&str>)> {
 /// `if (%<varp> (>=|=) ^<const> [& …]) { <arm> }` in a block: every
 /// `(varp, const value)` condition and the arm body. The first matching
 /// guard is read.
-fn if_varp_gate(block: &str, constants: &HashMap<String, i32>) -> Option<(Vec<(String, i32)>, String)> {
+fn if_varp_gate(
+    block: &str,
+    constants: &HashMap<String, i32>,
+) -> Option<(Vec<(String, i32)>, String)> {
     let bytes = block.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
@@ -1153,7 +1170,9 @@ fn parse_script(
         if let Some((kind, target)) = sw {
             switch_on = Some(match (kind, target.as_str()) {
                 (SwitchKind::Int, "loc_angle") => SwitchOn::Angle,
-                (SwitchKind::Coord, t) if t == "loc_coord" || aliases.contains(t) => SwitchOn::Coord,
+                (SwitchKind::Coord, t) if t == "loc_coord" || aliases.contains(t) => {
+                    SwitchOn::Coord
+                }
                 _ => SwitchOn::Unknown,
             });
             switch_brace = before;
@@ -1462,7 +1481,11 @@ fn shortcut_edges(
             continue;
         };
         let Some(extra) = extra_ticks(loc_name) else {
-            bump(skipped, SKIP_UNPRICED, positions.get(&id).map_or(0, Vec::len));
+            bump(
+                skipped,
+                SKIP_UNPRICED,
+                positions.get(&id).map_or(0, Vec::len),
+            );
             continue;
         };
         let ticks = 1 + extra;
@@ -2420,8 +2443,7 @@ fn lever_edges(
     let Ok(script) = fs::read_to_string(dir.join("scripts").join("wilderness_lever.rs2")) else {
         return;
     };
-    let Ok(constants) =
-        fs::read_to_string(dir.join("configs").join("wilderness_lever.constant"))
+    let Ok(constants) = fs::read_to_string(dir.join("configs").join("wilderness_lever.constant"))
     else {
         return;
     };
@@ -2956,7 +2978,9 @@ fn jewellery_categories(content_root: &Path) -> HashMap<String, Vec<String>> {
         }
         if let Some(cat) = line.strip_prefix("category=") {
             if let Some(name) = cur {
-                out.entry(cat.trim().to_string()).or_default().push(name.to_string());
+                out.entry(cat.trim().to_string())
+                    .or_default()
+                    .push(name.to_string());
             }
         }
     }
@@ -3133,7 +3157,10 @@ fn def_coord_alias(line: &str) -> Option<String> {
     if !name.starts_with('$') || name.len() == 1 {
         return None;
     }
-    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'$' || b == b'_') {
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'$' || b == b'_')
+    {
         return None;
     }
     if !rhs.trim_start().starts_with("loc_coord") {
@@ -3356,9 +3383,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
+    use crate::collision::{bake_from_maps, WorldCollision};
     use client::config::{Cache, LocType};
     use client::io::JagFile;
-    use crate::collision::{bake_from_maps, WorldCollision};
 
     /// The real Server content root this machine bakes against (the same
     /// path `nav-pack` defaults to); `None` when the checkout is absent,
@@ -3426,11 +3453,7 @@ mod tests {
             })
             .cloned()
             .collect();
-        assert!(
-            ess.len() >= 4,
-            "Aubury+Sedridor+…, got {}",
-            ess.len()
-        );
+        assert!(ess.len() >= 4, "Aubury+Sedridor+…, got {}", ess.len());
         // Each edge is the wizard NPC placement -> the enclosed mine pad.
         for e in &ess {
             assert_eq!(
@@ -3451,11 +3474,46 @@ mod tests {
         }
         // The five known wizards pin their mined placement tiles.
         let wizards = [
-            (553, WorldTile { x: 3253, z: 3402, level: 0 }), // aubury (Varrock)
-            (300, WorldTile { x: 3103, z: 9571, level: 0 }), // head_wizard (tower cellar)
-            (462, WorldTile { x: 2594, z: 3089, level: 0 }), // guild_wizard (Yanille)
-            (844, WorldTile { x: 2683, z: 3326, level: 0 }), // ardounge_wizard (Cromperty)
-            (171, WorldTile { x: 2390, z: 9810, level: 0 }), // gnome_brimstail
+            (
+                553,
+                WorldTile {
+                    x: 3253,
+                    z: 3402,
+                    level: 0,
+                },
+            ), // aubury (Varrock)
+            (
+                300,
+                WorldTile {
+                    x: 3103,
+                    z: 9571,
+                    level: 0,
+                },
+            ), // head_wizard (tower cellar)
+            (
+                462,
+                WorldTile {
+                    x: 2594,
+                    z: 3089,
+                    level: 0,
+                },
+            ), // guild_wizard (Yanille)
+            (
+                844,
+                WorldTile {
+                    x: 2683,
+                    z: 3326,
+                    level: 0,
+                },
+            ), // ardounge_wizard (Cromperty)
+            (
+                171,
+                WorldTile {
+                    x: 2390,
+                    z: 9810,
+                    level: 0,
+                },
+            ), // gnome_brimstail
         ];
         for (npc, at) in wizards {
             assert!(
@@ -3486,7 +3544,12 @@ mod tests {
             })
             .cloned()
             .collect();
-        assert_eq!(elk.len(), 2, "maze-side + village escort, got {}", elk.len());
+        assert_eq!(
+            elk.len(),
+            2,
+            "maze-side + village escort, got {}",
+            elk.len()
+        );
         // The maze-side Elkoy (npc 473) sits at the maze entrance
         // (m39_49 local (8,55) = (2504,3191)) and escorts into the village;
         // the village Elkoy (npc 474, local (18,23) = (2514,3159)) escorts
@@ -3502,16 +3565,42 @@ mod tests {
         }
         let into_maze = elk
             .iter()
-            .find(|e| e.at == WorldTile { x: 2504, z: 3191, level: 0 })
+            .find(|e| {
+                e.at == WorldTile {
+                    x: 2504,
+                    z: 3191,
+                    level: 0,
+                }
+            })
             .expect("maze-side Elkoy placement");
         assert_eq!(into_maze.loc_id, 473);
-        assert_eq!(into_maze.to, WorldTile { x: 2515, z: 3159, level: 0 });
+        assert_eq!(
+            into_maze.to,
+            WorldTile {
+                x: 2515,
+                z: 3159,
+                level: 0
+            }
+        );
         let out_maze = elk
             .iter()
-            .find(|e| e.at == WorldTile { x: 2514, z: 3159, level: 0 })
+            .find(|e| {
+                e.at == WorldTile {
+                    x: 2514,
+                    z: 3159,
+                    level: 0,
+                }
+            })
             .expect("village Elkoy placement");
         assert_eq!(out_maze.loc_id, 474);
-        assert_eq!(out_maze.to, WorldTile { x: 2504, z: 3192, level: 0 });
+        assert_eq!(
+            out_maze.to,
+            WorldTile {
+                x: 2504,
+                z: 3192,
+                level: 0
+            }
+        );
     }
 
     /// The real content must derive the Zanaris shed door: the
@@ -3547,10 +3636,8 @@ mod tests {
         fn new() -> Self {
             static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
             let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "nav-transport-fixture-{}-{n}",
-                std::process::id()
-            ));
+            let root = std::env::temp_dir()
+                .join(format!("nav-transport-fixture-{}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(&root).unwrap();
             Fixture { root }
@@ -3648,16 +3735,37 @@ mod tests {
             .find(|e| e.dir == Some(DoorDir::S))
             .expect("south-bound door edge");
         for d in [n, s] {
-            assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+            assert_eq!(
+                d.at,
+                WorldTile {
+                    x: 2816,
+                    z: 3438,
+                    level: 0
+                }
+            );
             assert_eq!(d.open_loc_id, Some(1531));
             assert_eq!(d.option, 1);
             assert_eq!(d.ticks, 1);
             assert!(d.varp_req.is_empty());
         }
-        assert_eq!(n.to, WorldTile { x: 2816, z: 3439, level: 0 });
+        assert_eq!(
+            n.to,
+            WorldTile {
+                x: 2816,
+                z: 3439,
+                level: 0
+            }
+        );
         // The south-bound walk-out stops on wall 980's own tile: its W_S
         // face flag stands (the wall's face flag never disqualifies).
-        assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
+        assert_eq!(
+            s.to,
+            WorldTile {
+                x: 2816,
+                z: 3437,
+                level: 0
+            }
+        );
         // The at-index keys the door loc tile with both directed edges.
         assert_eq!(graph.at[&n.at].len(), 2);
     }
@@ -3781,11 +3889,12 @@ mod tests {
         // village.
         let young: Vec<_> = trees.iter().filter(|e| e.loc_id == 1317).collect();
         assert_eq!(young.len(), 2);
-        assert!(young.iter().all(|e| e.to == WorldTile {
-            x: 2542,
-            z: 3169,
-            level: 0
-        }));
+        assert!(young.iter().all(|e| e.to
+            == WorldTile {
+                x: 2542,
+                z: 3169,
+                level: 0
+            }));
     }
 
     /// The real content must derive at least one `TransportKind::Npc` edge
@@ -3919,7 +4028,10 @@ mod tests {
                 "10-coin toll on {e:?}"
             );
             assert_eq!(e.option, 1, "Open op");
-            assert_eq!(e.open_loc_id, Some(if e.loc_id == 2882 { 1562 } else { 1563 }));
+            assert_eq!(
+                e.open_loc_id,
+                Some(if e.loc_id == 2882 { 1562 } else { 1563 })
+            );
         }
         // The Shantay henge carries exactly the one gated northbound hop.
         let henge: Vec<_> = graph
@@ -3951,7 +4063,10 @@ mod tests {
             }
         );
         assert!(
-            henge[0].item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1),
+            henge[0]
+                .item_req
+                .iter()
+                .any(|(id, n)| *id == 1854 && *n >= 1),
             "Shantay pass on the northbound hop"
         );
         assert_eq!(henge[0].option, 1, "Go-through op");
@@ -4041,10 +4156,7 @@ mes(\"...And teleport into the wilderness.\");
 
         // Default find: the enter-wildy hop is never relaxed, and no walk
         // path can reach the landing — NoPath.
-        assert!(matches!(
-            find(&wc, &graph, at, to),
-            Err(RouteError::NoPath)
-        ));
+        assert!(matches!(find(&wc, &graph, at, to), Err(RouteError::NoPath)));
         // find_with(allow_wilderness): the same hop routes through.
         let route = find_with(
             &wc,
@@ -4111,8 +4223,9 @@ mes(\"...And teleport into the wilderness.\");
                 (wc, graph)
             }
         };
-        let route = find(&collision, &graph, from, to)
-            .unwrap_or_else(|e| panic!("Seers street -> rock crabs must route once gates join: {e:?}"));
+        let route = find(&collision, &graph, from, to).unwrap_or_else(|e| {
+            panic!("Seers street -> rock crabs must route once gates join: {e:?}")
+        });
         assert_eq!(route.dest, to);
     }
 
@@ -4172,15 +4285,36 @@ switch_coord (loc_coord) {
             .find(|e| e.dir == Some(DoorDir::S))
             .expect("south-bound door edge");
         for d in [n, s] {
-            assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+            assert_eq!(
+                d.at,
+                WorldTile {
+                    x: 2816,
+                    z: 3438,
+                    level: 0
+                }
+            );
             assert_eq!(d.option, 1);
             assert_eq!(d.ticks, 1);
         }
         // (2816,3439) carries the closed door's own south-face stamp, which
         // stands (face flags never disqualify); the south far side is the
         // open tile straight below the door.
-        assert_eq!(n.to, WorldTile { x: 2816, z: 3439, level: 0 });
-        assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
+        assert_eq!(
+            n.to,
+            WorldTile {
+                x: 2816,
+                z: 3439,
+                level: 0
+            }
+        );
+        assert_eq!(
+            s.to,
+            WorldTile {
+                x: 2816,
+                z: 3437,
+                level: 0
+            }
+        );
 
         // One ladder placement (id 1747 @ 2826,3402,0) climbing to
         // (1,2826,3468): one edge per placement — `at` the loc tile
@@ -4197,7 +4331,14 @@ switch_coord (loc_coord) {
             level: 1,
         };
         let ladder = &ladders[0];
-        assert_eq!(ladder.at, WorldTile { x: 2826, z: 3402, level: 0 });
+        assert_eq!(
+            ladder.at,
+            WorldTile {
+                x: 2826,
+                z: 3402,
+                level: 0
+            }
+        );
         assert_eq!(ladder.to, landing);
         assert_eq!(ladder.dir, None);
         assert_eq!(ladder.open_loc_id, None);
@@ -4277,7 +4418,14 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
         };
         let e = &edges[0];
         // One edge per placement: `at` the loc tile, `to` the shortcut dest.
-        assert_eq!(e.at, WorldTile { x: 2821, z: 3397, level: 0 });
+        assert_eq!(
+            e.at,
+            WorldTile {
+                x: 2821,
+                z: 3397,
+                level: 0
+            }
+        );
         assert_eq!(e.to, landing);
         assert_eq!(e.dir, None);
         assert_eq!(e.open_loc_id, None);
@@ -4330,7 +4478,9 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
     #[test]
     fn parse_statement_classifies_handoffs_and_dialogs() {
         assert!(matches!(
-            parse_statement("@ladder_options(movecoord(coord(), 0, 1, 0), movecoord(coord(), 0, -1, 0));"),
+            parse_statement(
+                "@ladder_options(movecoord(coord(), 0, 1, 0), movecoord(coord(), 0, -1, 0));"
+            ),
             Some(Outcome::Skipped(SKIP_DIALOG))
         ));
         assert!(matches!(
@@ -4416,10 +4566,7 @@ p_arrivedelay;
             &mut rules,
         );
         let (_, rule) = rules.get(&("laddermiddle".to_string(), 1)).unwrap();
-        assert!(matches!(
-            rule.fallback,
-            Some(Outcome::Skipped(SKIP_DIALOG))
-        ));
+        assert!(matches!(rule.fallback, Some(Outcome::Skipped(SKIP_DIALOG))));
     }
 
     #[test]
@@ -4503,10 +4650,7 @@ p_arrivedelay;
         let defs = loc_defs(&[(1530, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let graph = derive_transports(fx.path(), &defs, &wc);
-        assert!(graph
-            .edges
-            .iter()
-            .all(|e| e.kind != TransportKind::Door));
+        assert!(graph.edges.iter().all(|e| e.kind != TransportKind::Door));
     }
 
     #[test]
@@ -4543,7 +4687,14 @@ p_arrivedelay;
                 level: 0,
             },
         );
-        assert_eq!(ps_musa.to, WorldTile { x: 2956, z: 3146, level: 0 });
+        assert_eq!(
+            ps_musa.to,
+            WorldTile {
+                x: 2956,
+                z: 3146,
+                level: 0
+            }
+        );
         assert_eq!(ps_musa.option, 1); // Talk-to
         assert_eq!(ps_musa.ticks, 9); // set_sail delay 7 + gangplank crossing 2
         assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
@@ -4561,7 +4712,14 @@ p_arrivedelay;
                 level: 0,
             },
         );
-        assert_eq!(musa_ps.to, WorldTile { x: 3029, z: 3217, level: 0 });
+        assert_eq!(
+            musa_ps.to,
+            WorldTile {
+                x: 3029,
+                z: 3217,
+                level: 0
+            }
+        );
         assert_eq!(musa_ps.ticks, 9);
 
         // No boat edge lands on a boat-interior/water tile: every `to` is a
@@ -4599,11 +4757,24 @@ p_arrivedelay;
                 level: 1,
             },
         );
-        assert_eq!(khazard.to, WorldTile { x: 2680, z: 3150, level: 0 });
+        assert_eq!(
+            khazard.to,
+            WorldTile {
+                x: 2680,
+                z: 3150,
+                level: 0
+            }
+        );
         assert_eq!(khazard.ticks, 9); // set_sail_cairn delay 9, direct landing
         let shanks_sarim = shanks
             .iter()
-            .find(|s| s.to == WorldTile { x: 3047, z: 3235, level: 0 })
+            .find(|s| {
+                s.to == WorldTile {
+                    x: 3047,
+                    z: 3235,
+                    level: 0,
+                }
+            })
             .expect("Shilo → Port Sarim boat");
         assert_eq!(shanks_sarim.ticks, 15);
     }
@@ -4748,18 +4919,12 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             z: 3430,
             level: 0,
         };
-        let hub_edges: Vec<_> = gliders
-            .iter()
-            .filter(|e| e.at == hub)
-            .collect();
+        let hub_edges: Vec<_> = gliders.iter().filter(|e| e.at == hub).collect();
         assert_eq!(hub_edges.len(), 4);
         assert!(hub_edges.iter().any(|e| e.to == sindarpos));
         assert!(hub_edges.iter().any(|e| e.to == gandius));
         assert!(hub_edges.iter().any(|e| e.to == lemanto_andra));
-        let sindarpos_edges: Vec<_> = gliders
-            .iter()
-            .filter(|e| e.at == sindarpos)
-            .collect();
+        let sindarpos_edges: Vec<_> = gliders.iter().filter(|e| e.at == sindarpos).collect();
         assert_eq!(sindarpos_edges.len(), 1);
         assert_eq!(sindarpos_edges[0].to, hub);
         // Lemanto Andra is one-way: no pad → hub flight exists in
@@ -4813,7 +4978,13 @@ data=tele_coord,0_45_57_10_31
         let varrock = graph
             .teleports
             .iter()
-            .find(|e| e.to == WorldTile { x: 3213, z: 3424, level: 0 })
+            .find(|e| {
+                e.to == WorldTile {
+                    x: 3213,
+                    z: 3424,
+                    level: 0,
+                }
+            })
             .expect("Varrock teleport");
         assert_eq!(varrock.kind, TransportKind::Teleport);
         assert_eq!(varrock.skill_req, vec![(SKILL_MAGIC, 25)]);
@@ -4823,7 +4994,13 @@ data=tele_coord,0_45_57_10_31
         let trollheim = graph
             .teleports
             .iter()
-            .find(|e| e.to == WorldTile { x: 2890, z: 3679, level: 0 })
+            .find(|e| {
+                e.to == WorldTile {
+                    x: 2890,
+                    z: 3679,
+                    level: 0,
+                }
+            })
             .expect("Trollheim teleport");
         // The trailing `null,null` rune-slot padding is dropped.
         assert_eq!(trollheim.item_req, vec![(554, 2), (563, 2)]);
@@ -4892,12 +5069,18 @@ p_delay(1);
             assert_eq!(e.option, 4); // Rub (opheld4)
             assert!(e.skill_req.is_empty());
         }
-        assert!(glory
-            .iter()
-            .any(|e| e.to == WorldTile { x: 3087, z: 3496, level: 0 })); // Edgeville
-        assert!(glory
-            .iter()
-            .any(|e| e.to == WorldTile { x: 3293, z: 3163, level: 0 })); // Al Kharid
+        assert!(glory.iter().any(|e| e.to
+            == WorldTile {
+                x: 3087,
+                z: 3496,
+                level: 0
+            })); // Edgeville
+        assert!(glory.iter().any(|e| e.to
+            == WorldTile {
+                x: 3293,
+                z: 3163,
+                level: 0
+            })); // Al Kharid
 
         // Dueling: the `_category_136` script applies to every
         // `category=category_136` obj in enchanted_jewelry.obj.
@@ -4906,7 +5089,14 @@ p_delay(1);
             .iter()
             .find(|e| e.loc_id == 2552)
             .expect("ring of dueling teleport");
-        assert_eq!(duel.to, WorldTile { x: 3315, z: 3235, level: 0 });
+        assert_eq!(
+            duel.to,
+            WorldTile {
+                x: 3315,
+                z: 3235,
+                level: 0
+            }
+        );
         assert_eq!(duel.item_req, vec![(2552, 1)]);
         assert_eq!(duel.ticks, JEWELLERY_TELEPORT_TICKS);
 

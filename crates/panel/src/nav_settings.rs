@@ -129,7 +129,11 @@ mod tests {
         let saved = NavSettings::default();
         let e = effective(&saved, true);
         assert!(
-            e.show_nav_path && e.collision_fill && e.nsew_labels && e.client_trail && e.component_flood
+            e.show_nav_path
+                && e.collision_fill
+                && e.nsew_labels
+                && e.client_trail
+                && e.component_flood
         );
         assert!(!e.allow_teleports);
         assert!(!e.allow_wilderness);

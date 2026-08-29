@@ -77,7 +77,8 @@ fn nav_essence() {
             && !(e.at.x == 3103 && e.at.z == 9571) // head_wizard (tower cellar)
             && !(e.at.x == 2594 && e.at.z == 3089) // guild_wizard (Yanille)
             && !(e.at.x == 2683 && e.at.z == 3326) // ardounge_wizard (Cromperty)
-            && !(e.at.x == 2390 && e.at.z == 9810) // gnome_brimstail
+            && !(e.at.x == 2390 && e.at.z == 9810)
+        // gnome_brimstail
         {
             fail(&format!(
                 "nav_essence: entry edge {e:?} is not on a known wizard tile \

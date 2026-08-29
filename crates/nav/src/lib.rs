@@ -1,5 +1,6 @@
-//! Nav: tile coordinates, Chebyshev distance, walkability grids, routing,
-//! and arrival detection.
+//! Nav: whole-world collision bake, transport graph, Dijkstra router
+//! (`find` / `find_with`), pollable `Traveller::follow`, WalkTo grid, and
+//! arrival detection. Pack magic `274V`, version byte 5.
 
 pub mod arrival;
 pub mod collision;

@@ -253,7 +253,10 @@ fn inv_ids_match_inventory_def_ids() {
     let inv_id = c
         .ifaces
         .iter()
-        .position(|f| f.as_ref().is_some_and(|f| f.r#type == ComponentType::TYPE_INV))
+        .position(|f| {
+            f.as_ref()
+                .is_some_and(|f| f.r#type == ComponentType::TYPE_INV)
+        })
         .unwrap_or_else(|| {
             c.ifaces.push(None);
             c.ifaces.len() - 1
@@ -830,12 +833,15 @@ fn loc_view_is_always_fresh_without_a_gen_bump() {
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     let mut snap = GameSnapshot::new();
     assert!(snap.rebuild_family(&mut c, Family::Loc));
-    assert_eq!(snap.locs()[0].id, 1530, "first rebuild sees the closed door");
+    assert_eq!(
+        snap.locs()[0].id,
+        1530,
+        "first rebuild sees the closed door"
+    );
 
     // The live loc flips with no packet / no scene gen — the snapshot
     // must still read the open leaf.
-    c.world
-        .set_wall(0, 3, 4, 0, 0, 0, open, 1 << 6, 0, 0, 0, 0);
+    c.world.set_wall(0, 3, 4, 0, 0, 0, open, 1 << 6, 0, 0, 0, 0);
     assert!(
         !snap.rebuild_family(&mut c, Family::Loc),
         "no scene gen moved"
@@ -2443,7 +2449,10 @@ fn scene_rebuild_reads_attached_from_the_socket() {
 
     c.stream = Some(stream);
     assert!(!snap.rebuild_family(&mut c, Family::Scene));
-    assert!(snap.attached(), "a connected stream marks the slot attached");
+    assert!(
+        snap.attached(),
+        "a connected stream marks the slot attached"
+    );
 }
 
 /// The varp family rebuilds the whole `client.var` table (one view per
@@ -2589,7 +2598,8 @@ fn read_context_round_trips_every_family() {
     c.var = vec![42, 0];
     // a loc (straight wall, angle 1) and a ground-item stack
     let typecode = 0x4000_0000 + (1 << 14) + 3 + (4 << 7);
-    c.world.set_wall(1, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    c.world
+        .set_wall(1, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     plant_obj(&mut c, 3, "Coins");
     plant_obj(&mut c, 4, "Sword");
     let bones_id = {
@@ -2849,6 +2859,18 @@ fn read_context_round_trips_every_family() {
             ..Default::default()
         },
     );
+    for id in 1..=6 {
+        set_iface(
+            &mut c,
+            id as usize,
+            IfType {
+                id,
+                r#type: ComponentType::TYPE_GRAPHIC,
+                button_type: ButtonType::BUTTON_SELECT,
+                ..Default::default()
+            },
+        );
+    }
     set_iface(
         &mut c,
         1,
@@ -2963,7 +2985,10 @@ fn read_context_round_trips_every_family() {
     let run = ctx.run_controls().expect("run toggle pair");
     assert_eq!((run.on_component_id, run.off_component_id), (6, 5));
     let retaliate = ctx.retaliate_controls().expect("retaliate toggle pair");
-    assert_eq!((retaliate.on_component_id, retaliate.off_component_id), (3, 4));
+    assert_eq!(
+        (retaliate.on_component_id, retaliate.off_component_id),
+        (3, 4)
+    );
     // world tile comes from the local player view (real scene level)
     assert_eq!(
         ctx.world_tile(),

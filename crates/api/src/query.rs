@@ -9,9 +9,9 @@
 //! `widget_search`/`loc_approach` hold the free helper fns.
 
 use crate::snapshot::{
-    ActorTargetView, ChatLineView, GroundItemView, ItemView, LocalTile, LocLayer, LocView,
-    NpcView, PlayerView, SceneView, SideTabView, StatView, VarpView, WidgetRoot,
-    WidgetVarpBindingView, WidgetView, WorldTile,
+    ActorTargetView, ChatLineView, GroundItemView, ItemView, LocLayer, LocView, LocalTile, NpcView,
+    PlayerView, SceneView, SideTabView, StatView, VarpView, WidgetRoot, WidgetVarpBindingView,
+    WidgetView, WorldTile,
 };
 use client::dash3d::CollisionFlag;
 
@@ -36,6 +36,7 @@ impl<'a, T> Values<'a, T> {
 /// the candidate set; terminal methods evaluate the combined predicates.
 pub struct Query<'a, T> {
     values: Values<'a, T>,
+    #[allow(clippy::type_complexity)]
     predicates: Vec<Box<dyn Fn(&T) -> bool + 'a>>,
 }
 
@@ -679,7 +680,8 @@ impl<'a, T: EntityQueryView> EntityQueryExt<'a, T> for Query<'a, T> {
     fn with_name(&mut self, names: &[&str]) -> &mut Self {
         let wanted: Vec<String> = names.iter().map(|n| normalized(n)).collect();
         self.where_(move |v: &T| {
-            v.view_name().is_some_and(|name| wanted.contains(&normalized(name)))
+            v.view_name()
+                .is_some_and(|name| wanted.contains(&normalized(name)))
         })
     }
 
@@ -698,9 +700,10 @@ impl<'a, T: EntityQueryView> EntityQueryExt<'a, T> for Query<'a, T> {
         self.where_(move |v: &T| {
             let actions = v.view_actions();
             !actions.is_empty()
-                && actions
-                    .iter()
-                    .any(|a| a.as_deref().is_some_and(|a| wanted.contains(&normalized(a))))
+                && actions.iter().any(|a| {
+                    a.as_deref()
+                        .is_some_and(|a| wanted.contains(&normalized(a)))
+                })
         })
     }
 
@@ -728,7 +731,7 @@ impl<'a, T: EntityQueryView> EntityQueryExt<'a, T> for Query<'a, T> {
     where
         F: Fn(&str) -> bool + 'a,
     {
-        self.where_(move |v: &T| v.view_name().is_some_and(|name| matcher(name)))
+        self.where_(move |v: &T| v.view_name().is_some_and(&matcher))
     }
 
     fn with_name_or_id(&mut self, values: &[NameOrId]) -> &mut Self {
@@ -1209,9 +1212,7 @@ pub trait StatQueryExt<'a, T> {
 impl<'a, T: StatQueryView> StatQueryExt<'a, T> for Query<'a, T> {
     fn with_name(&mut self, names: &[&str]) -> &mut Self {
         let wanted: Vec<String> = names.iter().map(|n| normalized(n)).collect();
-        self.where_(move |v: &T| {
-            !wanted.is_empty() && wanted.contains(&normalized(v.view_name()))
-        })
+        self.where_(move |v: &T| !wanted.is_empty() && wanted.contains(&normalized(v.view_name())))
     }
 
     fn with_index(&mut self, indexes: &[i32]) -> &mut Self {
@@ -1360,9 +1361,7 @@ impl<'a, T: WidgetQueryView> WidgetQueryExt<'a, T> for Query<'a, T> {
 
     fn with_root_component_id(&mut self, root_component_ids: &[i32]) -> &mut Self {
         let root_component_ids: Vec<i32> = root_component_ids.to_vec();
-        self.where_(move |v: &T| {
-            root_component_ids.contains(&v.view_root_component_id())
-        })
+        self.where_(move |v: &T| root_component_ids.contains(&v.view_root_component_id()))
     }
 
     fn with_root(&mut self, roots: &[WidgetRoot]) -> &mut Self {
@@ -1403,16 +1402,14 @@ impl<'a, T: WidgetQueryView> WidgetQueryExt<'a, T> for Query<'a, T> {
 
     fn with_model_object_id(&mut self, item_ids: &[i32]) -> &mut Self {
         let item_ids: Vec<i32> = item_ids.to_vec();
-        self.where_(move |v: &T| {
-            v.view_model_type() == 4 && item_ids.contains(&v.view_model_id())
-        })
+        self.where_(move |v: &T| v.view_model_type() == 4 && item_ids.contains(&v.view_model_id()))
     }
 
     fn bound_to_varp(&mut self, varp: i32, value: Option<i32>) -> &mut Self {
         self.where_(move |v: &T| {
             v.view_varp_bindings()
                 .iter()
-                .any(|b| b.varp == varp && value.map_or(true, |want| b.value == Some(want)))
+                .any(|b| b.varp == varp && value.is_none_or(|want| b.value == Some(want)))
         })
     }
 
@@ -1443,9 +1440,11 @@ impl<'a, T: WidgetQueryView> WidgetQueryExt<'a, T> for Query<'a, T> {
                 .chain(v.view_alternate_text())
                 .collect();
             !wanted.is_empty()
-                && texts
-                    .iter()
-                    .any(|t| wanted.iter().any(|term| normalized(t).contains(term.as_str())))
+                && texts.iter().any(|t| {
+                    wanted
+                        .iter()
+                        .any(|term| normalized(t).contains(term.as_str()))
+                })
         })
     }
 
@@ -1454,17 +1453,17 @@ impl<'a, T: WidgetQueryView> WidgetQueryExt<'a, T> for Query<'a, T> {
         F: Fn(&str) -> bool + 'a,
     {
         self.where_(move |v: &T| {
-            v.view_text().is_some_and(|t| matcher(t))
-                || v.view_alternate_text().is_some_and(|t| matcher(t))
+            v.view_text().is_some_and(&matcher) || v.view_alternate_text().is_some_and(&matcher)
         })
     }
 
     fn with_action(&mut self, actions: &[&str]) -> &mut Self {
         let wanted: Vec<String> = actions.iter().map(|a| normalized(a)).collect();
         self.where_(move |v: &T| {
-            v.view_actions()
-                .iter()
-                .any(|a| a.as_deref().is_some_and(|a| wanted.contains(&normalized(a))))
+            v.view_actions().iter().any(|a| {
+                a.as_deref()
+                    .is_some_and(|a| wanted.contains(&normalized(a)))
+            })
         })
     }
 
@@ -1485,9 +1484,10 @@ impl<'a, T: WidgetQueryView> WidgetQueryExt<'a, T> for Query<'a, T> {
         let wanted: Vec<String> = actions.iter().map(|a| normalized(a)).collect();
         self.where_(move |v: &T| {
             v.view_items().iter().any(|item| {
-                item.actions
-                    .iter()
-                    .any(|a| a.as_deref().is_some_and(|a| wanted.contains(&normalized(a))))
+                item.actions.iter().any(|a| {
+                    a.as_deref()
+                        .is_some_and(|a| wanted.contains(&normalized(a)))
+                })
             })
         })
     }
@@ -1564,7 +1564,8 @@ impl<'a, T: SideTabQueryView> SideTabQueryExt<'a, T> for Query<'a, T> {
 /// Chat filters plus the sequence terminals (the m8aq `ChatQuery`).
 pub trait ChatQueryExt<'a, T> {
     fn with_type_(&mut self, types: &[i32]) -> &mut Self;
-    fn from_sender(&mut self, usernames: &[&str]) -> &mut Self;
+    /// Chat lines whose username is one of `usernames` (case-insensitive).
+    fn sent_by(&mut self, usernames: &[&str]) -> &mut Self;
     fn with_sender(&mut self) -> &mut Self;
     fn without_sender(&mut self) -> &mut Self;
     fn with_text(&mut self, texts: &[&str]) -> &mut Self;
@@ -1582,7 +1583,7 @@ impl<'a, T: ChatQueryView> ChatQueryExt<'a, T> for Query<'a, T> {
         self.where_(move |v: &T| types.contains(&v.view_if_type()))
     }
 
-    fn from_sender(&mut self, usernames: &[&str]) -> &mut Self {
+    fn sent_by(&mut self, usernames: &[&str]) -> &mut Self {
         let wanted: Vec<String> = usernames.iter().map(|u| normalized(u)).collect();
         self.where_(move |v: &T| {
             v.view_username()
@@ -1591,15 +1592,11 @@ impl<'a, T: ChatQueryView> ChatQueryExt<'a, T> for Query<'a, T> {
     }
 
     fn with_sender(&mut self) -> &mut Self {
-        self.where_(|v: &T| {
-            v.view_username().is_some_and(|u| !u.trim().is_empty())
-        })
+        self.where_(|v: &T| v.view_username().is_some_and(|u| !u.trim().is_empty()))
     }
 
     fn without_sender(&mut self) -> &mut Self {
-        self.where_(|v: &T| {
-            v.view_username().map_or(true, |u| u.trim().is_empty())
-        })
+        self.where_(|v: &T| v.view_username().is_none_or(|u| u.trim().is_empty()))
     }
 
     fn with_text(&mut self, texts: &[&str]) -> &mut Self {
@@ -1638,21 +1635,12 @@ impl<'a, T: ChatQueryView> ChatQueryExt<'a, T> for Query<'a, T> {
 // --- SceneQuery -----------------------------------------------------------
 
 /// Options for `SceneQuery::can_reach` (the m8aq `SceneReachOptions`).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SceneReachOptions {
     /// Max BFS expansions; the m8aq default is 400 when `None`.
     pub max_steps: Option<u32>,
     /// Allow stopping one tile away from a blocked destination.
     pub adjacent_ok: bool,
-}
-
-impl Default for SceneReachOptions {
-    fn default() -> Self {
-        SceneReachOptions {
-            max_steps: None,
-            adjacent_ok: false,
-        }
-    }
 }
 
 /// The eight walk directions (N/E/S/W then the diagonals), the m8aq
@@ -1959,7 +1947,12 @@ pub mod widget_search {
         snapshot
             .widgets()
             .iter()
-            .chain(snapshot.side_tabs().iter().flat_map(|tab| tab.widgets.iter()))
+            .chain(
+                snapshot
+                    .side_tabs()
+                    .iter()
+                    .flat_map(|tab| tab.widgets.iter()),
+            )
             .filter(move |w| w.root_component_id == root_component_id)
     }
 
@@ -1987,7 +1980,11 @@ pub mod widget_search {
 
     /// The BUTTON_TARGET component whose target base equals `base`
     /// (trimmed, case-insensitive), -1 when none matches.
-    pub fn target_button_by_base(snapshot: &GameSnapshot, root_component_id: i32, base: &str) -> i32 {
+    pub fn target_button_by_base(
+        snapshot: &GameSnapshot,
+        root_component_id: i32,
+        base: &str,
+    ) -> i32 {
         let wanted = base.trim().to_ascii_lowercase();
         all_widgets(snapshot, root_component_id)
             .find(|w| {

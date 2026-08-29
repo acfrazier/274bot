@@ -18,7 +18,6 @@ use host::{FrameBuf, InputEv, SlotInput};
 use host_play::run_with_io;
 
 const W: usize = 765;
-const H: usize = 503;
 const VX: usize = 4;
 const VY: usize = 4;
 const VW: usize = 512;
@@ -193,7 +192,14 @@ fn dump_bank_locs() {
                     walls.push((loc.tile.x, loc.tile.z, loc.tile.level, loc.shape, loc.angle));
                 }
                 if loc.id == 2213 || loc.id == 2214 || loc.id == 2215 {
-                    booths.push((loc.id, loc.tile.x, loc.tile.z, loc.tile.level, loc.shape, loc.angle));
+                    booths.push((
+                        loc.id,
+                        loc.tile.x,
+                        loc.tile.z,
+                        loc.tile.level,
+                        loc.shape,
+                        loc.angle,
+                    ));
                 }
             }
             eprintln!("booths={} walls_1602={}", booths.len(), walls.len());
@@ -204,10 +210,18 @@ fn dump_bank_locs() {
                     .copied()
                     .collect();
                 let west = walls.iter().any(|(wx, wz, wl, sh, an)| {
-                    *wl == *bl && *sh == 0 && (*an == 2 || *an == 0) && *wz == *bz && (*wx == *bx - 1 || *wx == *bx)
+                    *wl == *bl
+                        && *sh == 0
+                        && (*an == 2 || *an == 0)
+                        && *wz == *bz
+                        && (*wx == *bx - 1 || *wx == *bx)
                 });
                 let south = walls.iter().any(|(wx, wz, wl, sh, an)| {
-                    *wl == *bl && *sh == 0 && *an == 3 && *wx == *bx && (*wz == *bz || *wz == *bz - 1)
+                    *wl == *bl
+                        && *sh == 0
+                        && *an == 3
+                        && *wx == *bx
+                        && (*wz == *bz || *wz == *bz - 1)
                 });
                 eprintln!(
                     "booth {bid} @({bx},{bz},{bl}) shape={bshape} angle={} same_tile_1602={same:?} west_adj_or_same={west} south_adj_or_same={south}",

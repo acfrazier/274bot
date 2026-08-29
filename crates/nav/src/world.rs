@@ -247,11 +247,8 @@ mod tests {
         // The 1-tick door taken from the origin + 1 walk tile (0.5).
         assert_eq!(r.ticks, 1.5);
         assert_eq!(r.legs.len(), 3);
-        let (
-            Leg::Walk { .. },
-            Leg::Transport { edge },
-            Leg::Walk { .. },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { .. }, Leg::Transport { edge }, Leg::Walk { .. }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
@@ -298,7 +295,13 @@ mod tests {
             64,
             64,
         ));
-        let r = find(&w.collision, &w.graph, tile(3200, 3200, 0), tile(3263, 3263, 0)).unwrap();
+        let r = find(
+            &w.collision,
+            &w.graph,
+            tile(3200, 3200, 0),
+            tile(3263, 3263, 0),
+        )
+        .unwrap();
         assert_eq!(r.ticks, 31.5); // 63 run steps at 0.5 ticks each
         let Leg::Walk { tiles } = &r.legs[0] else {
             panic!("walk-only route");

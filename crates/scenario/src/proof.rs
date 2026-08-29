@@ -22,11 +22,7 @@ pub enum Proof {
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
     /// An NPC of `r#type` stands on the tile.
-    NpcAt {
-        r#type: usize,
-        x: i32,
-        z: i32,
-    },
+    NpcAt { r#type: usize, x: i32, z: i32 },
 }
 
 impl Proof {
@@ -117,7 +113,12 @@ mod tests {
         // The client's iface template already has the TYPE_INV widget;
         // fill it the way the server's `UPDATE_INV_FULL` does (stored
         // values are `obj_id + 1`: a real Bones id 526 stores as 527).
-        match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
+        match c
+            .ifaces
+            .iter_mut()
+            .flatten()
+            .find(|f| f.r#type == ComponentType::TYPE_INV)
+        {
             Some(inv) => {
                 inv.link_obj_type = Some(vec![527, 996]);
                 inv.link_obj_number = Some(vec![1, 100]);
@@ -228,14 +229,8 @@ mod tests {
     #[test]
     fn chat_matches_the_ring_head_line() {
         let s = snap(&mut seeded());
-        assert!(Proof::Chat {
-            needle: "Welcome"
-        }
-        .check(&s, None));
-        assert!(!Proof::Chat {
-            needle: "arrived"
-        }
-        .check(&s, None));
+        assert!(Proof::Chat { needle: "Welcome" }.check(&s, None));
+        assert!(!Proof::Chat { needle: "arrived" }.check(&s, None));
     }
 
     #[test]

@@ -89,7 +89,10 @@ fn nav_zanaris() {
         ));
     }
     if e.loc_id != 2406 {
-        fail(&format!("nav_zanaris: shed door loc is {}, expected zanarisdoor 2406", e.loc_id));
+        fail(&format!(
+            "nav_zanaris: shed door loc is {}, expected zanarisdoor 2406",
+            e.loc_id
+        ));
     }
     if !e.worn_req.contains(&DRAMEN_STAFF) {
         fail(&format!(

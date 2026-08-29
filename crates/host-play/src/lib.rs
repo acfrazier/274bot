@@ -26,13 +26,23 @@ pub use host::set_debug;
 pub use host::Host;
 mod rss;
 mod scatter;
-use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use api::snapshot::{GameSnapshot, WorldTile};
+use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use nav::router::{find_with, FindOptions, Route};
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
 pub use rss::sample_process;
 pub use scatter::{scatter_tile_for, tele_args};
+
+/// [`client::bot_target::world_host_for`] from a `BOT_TARGET` string.
+pub fn world_host_for_bot_target(target: Option<&str>) -> String {
+    client::bot_target::world_host_for(client::bot_target::bot_target_from_env(target)).into()
+}
+
+/// Active world host (`BOT_TARGET` / `--prod`).
+pub fn default_world_host() -> String {
+    client::world_host()
+}
 
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
 type SlotFrame = Arc<dyn Fn(&mut Client, &str) + Send + Sync>;
@@ -325,7 +335,11 @@ impl WalkArm {
         {
             return false;
         }
-        let from = WorldTile { x: hx, z: hz, level: hl };
+        let from = WorldTile {
+            x: hx,
+            z: hz,
+            level: hl,
+        };
         let to = WorldTile { x, z, level };
         let world = Arc::clone(world);
         let navs = Arc::clone(&self.navs);
@@ -338,12 +352,7 @@ impl WalkArm {
             .name(format!("nav-find-{name}"))
             .spawn(move || {
                 if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts) {
-                    navs
-                        .lock()
-                        .unwrap()
-                        .entry(name)
-                        .or_default()
-                        .route = Some(route);
+                    navs.lock().unwrap().entry(name).or_default().route = Some(route);
                 }
             })
             .is_ok()
@@ -888,7 +897,6 @@ impl Play {
             &mut self.handles,
         );
     }
-
 }
 
 /// Spawn one slot thread per profile. Each slot waits for a login-queue
@@ -1378,6 +1386,14 @@ mod tests {
     use client::client::ClientConfig;
     use client::config::Cache;
     use vault::ProfileSettings;
+
+    #[test]
+    fn world_host_live_is_rs2b2t_everything_else_is_loopback() {
+        assert_eq!(world_host_for_bot_target(Some("live")), "w1.rs2b2t.com");
+        assert_eq!(world_host_for_bot_target(Some("prod")), "w1.rs2b2t.com");
+        assert_eq!(world_host_for_bot_target(Some("local")), "127.0.0.1");
+        assert_eq!(world_host_for_bot_target(None), "127.0.0.1");
+    }
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {
         let dir =
@@ -2321,13 +2337,19 @@ mod tests {
             vec![],
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
-        script_observe(&mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats, &navs, &world);
+        script_observe(
+            &mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats, &navs, &world,
+        );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
-        script_observe(&mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &navs, &world);
+        script_observe(
+            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &navs, &world,
+        );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
-        script_observe(&mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &navs, &world);
+        script_observe(
+            &mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &navs, &world,
+        );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
@@ -2454,8 +2476,7 @@ mod tests {
         objs[1].name = "Bones".into();
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let seen = Arc::new(Mutex::new(None));
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (navs, world) = empty_nav();
@@ -2642,7 +2663,11 @@ mod tests {
         // directly (no pack file on disk in unit tests).
         let world = Some(Arc::new(NavWorld {
             collision: nav::collision::WorldCollision {
-                origin: WorldTile { x: 0, z: 0, level: 0 },
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
                 width: 40,
                 height: 1,
                 flags: vec![0; 40],
@@ -2764,10 +2789,12 @@ mod tests {
             "ctx.walk queued the route request"
         );
         assert!(
-            wait_until(
-                100,
-                || queued(&navs) == Some(WorldTile { x: 4, z: 0, level: 0 })
-            ),
+            wait_until(100, || queued(&navs)
+                == Some(WorldTile {
+                    x: 4,
+                    z: 0,
+                    level: 0
+                })),
             "the worker armed the route"
         );
 
@@ -2813,18 +2840,7 @@ mod tests {
 
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
-            &mut d,
-            "alice",
-            true,
-            true,
-            1,
-            None,
-            None,
-            None,
-            &scripts,
-            &cheats,
-            &navs,
-            &world,
+            &mut d, "alice", true, true, 1, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 
@@ -2889,10 +2905,12 @@ mod tests {
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
-            wait_until(
-                100,
-                || queued(&navs) == Some(WorldTile { x: 2, z: 0, level: 0 })
-            ),
+            wait_until(100, || queued(&navs)
+                == Some(WorldTile {
+                    x: 2,
+                    z: 0,
+                    level: 0
+                })),
             "the worker armed the queued route"
         );
 
@@ -2920,7 +2938,11 @@ mod tests {
         );
         assert_eq!(
             queued(&navs),
-            Some(WorldTile { x: 2, z: 0, level: 0 }),
+            Some(WorldTile {
+                x: 2,
+                z: 0,
+                level: 0
+            }),
             "the armed route is untouched"
         );
     }

@@ -172,8 +172,8 @@ fn nav_collision() {
     }
 
     for (wx, wz, pack, live) in &mismatches {
-        let lb = cap_data.link_below[(wx - cap_data.base_x) as usize]
-            [(wz - cap_data.base_z) as usize];
+        let lb =
+            cap_data.link_below[(wx - cap_data.base_x) as usize][(wz - cap_data.base_z) as usize];
         println!("FAIL: pack vs live ({wx},{wz}) pack={pack:#x} live={live:#x}");
         if lb {
             println!("  (LINK_BELOW on mapl[1]: the client shifts this loc's plane)");

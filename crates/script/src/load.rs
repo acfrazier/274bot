@@ -326,9 +326,10 @@ mod isolate {
                 self.terminate.terminate_execution();
                 // `in_flight` was released before this lock, so the lock
                 // order (never `in_flight` -> `logs`) holds everywhere.
-                self.logs.lock().unwrap().push(format!(
-                    "interrupted slow tick {tick} ({elapsed:?})"
-                ));
+                self.logs
+                    .lock()
+                    .unwrap()
+                    .push(format!("interrupted slow tick {tick} ({elapsed:?})"));
             }
             let _ = self.tx.send(IsolateCmd::Tick(snap_tick));
         }

@@ -38,25 +38,27 @@ removed slot does not sit in the FIFO.
 
 ## Mainland hop (tutorial skip)
 
-New accounts spawn on Tutorial Island. The cheap rs2b0t `mainlandAccount` **send** is `api::interact::mainland_hop` after `ingame && scene_state == 2`: `CLIENT_CHEAT` `tele 0,50,50,20,20` then `setvar tutorial 1000`. host-play: `--mainland` or `BOT_MAINLAND=1`.
+New accounts spawn on Tutorial Island. Two different local-engine paths:
+
+- **host-play** `--mainland` / `BOT_MAINLAND=1`: `api::interact::mainland_hop` after `ingame && scene_state == 2` — cheat body `tele 0,50,50,20,20` then `setvar tutorial 1000` (not a `~` debugproc).
+- **panel TutSkip** (loopback only): `setvar tutorial 1000` only, then persist `ProfileSettings.tutorial_skipped`. No courtyard tele.
+
+`tele` / `setvar` / `setstat` have **no** tilde. Engine debugprocs are cheat bodies that **start with `~`** (`~home` from the panel Lumbridge button; type `::~name` in chat). Panel capture must pass colon, tilde, and comma.
 
 This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](interact.md)). Local engine grants staff cheats when not `production`.
 
-## RSA bake (`BOT_TARGET`)
+## RSA (local engine)
 
-Cargo already uses `TARGET` for the rustc triple, so the live/prod switch
-on the bothost `client` crate is **`BOT_TARGET`**.
+No compile-time key bake. Stock Lost City Server uses the **Java default**
+public pair; that is the usual local-dev login and needs no env.
 
-| Bake | Env | Modulus |
-| --- | --- | --- |
-| local (default) | `LOGIN_RSAN` / `LOGIN_RSAE` | engine `private.pem` / Java default |
-| live | `BOT_TARGET=live` **and** `LIVE_RSAN` (abort if empty) | **not** the local pem. Public half scraped from `https://w1.rs2b2t.com/client/client.js` (first 250+ digit run — rs2b0t `tools/b0t.sh`) |
-| prod | `BOT_TARGET=prod` **and** `PROD_RSAN` | same scrape of the hosted client |
+If you rotated the engine key, login reads the public half from
+`$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
+layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
-Live/prod exponent is **65537**. Runtime login **code 6** retries **once**
-after GET `/loginkey` (plain decimal) then scrape `{origin}/client/client.js`.
-`host-play` `TARGET=live` (process env, not bake) defaults host to
-`w1.rs2b2t.com:43594` TCP. No WSS.
+`$ENGINE_DIR` defaults to `$HOME/experiments/Server/engine`. Cache and
+nav-pack paths follow it. Cargo `TARGET` is the rustc triple, not a world
+switch. Alpha’s supported scenario is this local engine.
 
 ## Wiring
 

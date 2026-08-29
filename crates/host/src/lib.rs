@@ -20,7 +20,9 @@ use client::render::Renderer;
 use vault::Profile;
 
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
-pub use slot_io::{map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake};
+pub use slot_io::{
+    map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake,
+};
 
 /// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
 /// via [`debug_enabled`] regardless.
@@ -283,20 +285,18 @@ impl Host {
         let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
-            let renderer = slot
-                .renderer
-                .get_or_insert_with(|| {
-                    // GPU-first (the host default): the slot's renderer
-                    // prefers the wgpu backend, with `CpuBackend` as the
-                    // fallback on wgpu init failure (`Renderer::new`
-                    // selects, `Renderer::backend_kind` reports). The
-                    // preference is process-wide and idempotent, so the
-                    // first paint of any slot opts the process in;
-                    // `BOT_CPU=1` forces the CPU fidelity path.
-                    let cpu = std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false);
-                    Renderer::set_prefer_gpu(!cpu);
-                    Renderer::new(client.config.lowmem)
-                });
+            let renderer = slot.renderer.get_or_insert_with(|| {
+                // GPU-first (the host default): the slot's renderer
+                // prefers the wgpu backend, with `CpuBackend` as the
+                // fallback on wgpu init failure (`Renderer::new`
+                // selects, `Renderer::backend_kind` reports). The
+                // preference is process-wide and idempotent, so the
+                // first paint of any slot opts the process in;
+                // `BOT_CPU=1` forces the CPU fidelity path.
+                let cpu = std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false);
+                Renderer::set_prefer_gpu(!cpu);
+                Renderer::new(client.config.lowmem)
+            });
             // `mainredraw` is the fidelity seam: it runs the `check_minimap`
             // render half (loading splash + minimap image) and
             // `follow_camera` before dispatching game/title draw.
@@ -360,11 +360,7 @@ fn watch_only(client: &Client, input: Option<&SlotInput>) -> bool {
 
 /// Payload bytes the client's stream has consumed; 0 when no stream.
 fn stream_bytes(client: &Client) -> u64 {
-    client
-        .stream
-        .as_ref()
-        .map(|s| s.bytes_in())
-        .unwrap_or(0)
+    client.stream.as_ref().map(|s| s.bytes_in()).unwrap_or(0)
 }
 
 /// Why a park returned.
@@ -922,8 +918,7 @@ mod tests {
         assert_ne!(c.minimap_level, c.minusedlevel);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert_eq!(
-            c.minimap_level,
-            c.minusedlevel,
+            c.minimap_level, c.minusedlevel,
             "mainredraw must run the check_minimap render half"
         );
         assert_eq!(slot.paint_n, 1);

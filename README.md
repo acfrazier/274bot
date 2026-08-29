@@ -1,6 +1,8 @@
 # 274bot
 
-Headless **RuneScape revision 274** (~2004) **bot host**: N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, and whole-world nav.
+**Alpha `0.1.0`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, and whole-world nav.
+
+This tag is the public surface for the **host + API + nav**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — that campaign comes after this tag. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 | | |
 |--|--|
@@ -11,9 +13,9 @@ Headless **RuneScape revision 274** (~2004) **bot host**: N clients in one proce
 
 ## What it is
 
-A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the operator window (dear-app/ImGui): credentials, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness.
+A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): credentials, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`host-play`** is the headless CLI over the same kernel.
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack, Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte 5), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -29,18 +31,11 @@ git clone --recurse-submodules https://github.com/acfrazier/274bot.git
 cd 274bot
 ```
 
-You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the pack cache. This repo does **not** ship or download Jagex assets. Default cache path: `$HOME/experiments/Server/engine/data/pack/client` (override with `--cache`). On first `maininit` the client GETs `/crc` and jag files from the engine HTTP into that directory; later boots reuse the files on disk. Contributors: run the engine, point `--cache` at its `data/pack/client`, `git submodule update --init`, bake RSA from the engine `private.pem` (`LOGIN_RSAN` / `vendor/fr-client-rust/tools/redeploy.sh`), then `cargo run --release -p panel --bin panel-play`. Nav pack is a separate bake (`cargo run -p nav --bin nav-pack`) over the engine `maps/`.
+You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the pack cache. This repo does **not** ship or download Jagex assets. Point **`$ENGINE_DIR`** at the engine root (default `$HOME/experiments/Server/engine`). Cache is `$ENGINE_DIR/data/pack/client` (override with `--cache`). On first `maininit` the client GETs `/crc` and jag files from the engine HTTP into that directory; later boots reuse the files on disk.
 
-**RSA bake:** cargo’s `TARGET` is the rustc triple, so the live/prod switch is **`BOT_TARGET`**. Local (default) still uses `LOGIN_RSAN` / `LOGIN_RSAE` or `vendor/fr-client-rust/tools/redeploy.sh` from the engine `private.pem`. Live rs2b2t is **not** that pem — scrape the public modulus from the served client:
+Stock Lost City Server uses the **Java default login RSA**. That is the usual local-dev case — no key bake. If you rotated the engine `private.pem`, 274bot reads the public half from `$ENGINE_DIR/data/config/private.pem` at login (or `LOGIN_RSAN` / `LOGIN_RSAE`). Then `cargo run --release -p panel --bin panel-play`. Nav pack: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
 
-```bash
-MOD=$(curl -s --max-time 15 https://w1.rs2b2t.com/client/client.js \
-  | grep -oE '[0-9]+' | awk 'length($0) >= 250 { print; exit }')
-BOT_TARGET=live LIVE_RSAN="$MOD" cargo build -p client
-# host-play live host: TARGET=live (runtime env, not the bake triple)
-```
-
-Login response **6** retries once after `/loginkey` then that `client.js` scrape. `prod` bake requires `PROD_RSAN`. TCP `w1.rs2b2t.com:43594` — no WSS.
+Alpha’s supported world is the **local engine**. Cargo `TARGET` is the rustc triple, not a world switch.
 
 ```bash
 export BOT_VAULT_PASS=bot
@@ -52,10 +47,10 @@ cargo run --release -p panel --bin panel-play
 
 # Headed live (BOT_VAULT_PASS unused): FAIL+exit 1; PASS keeps the window up
 cargo run --release -p panel --bin panel-play -- --live null_raster
-# or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
+# or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 
 # Headless RSS ladder (all slots Null / set_draw=false). One N per process.
-LIVE=1 RSS_N=1 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
 
 # 50-bot MultiBox wall watch (temp vault s00…s49; 10 min timeout; local engine)
 cargo run --release -p panel --bin panel-play -- --live stress50
@@ -69,9 +64,9 @@ cargo test -p api --offline
 
 The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid, with bulk **Login all / Logout all**. Auto-login defaults **off** per profile.
 
-**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. `--vault-pass` is equivalent to `BOT_VAULT_PASS`. Empty passphrase is rejected. **host-play** upserts named users (`--user test` defaults to `test`/`test`). `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` (or `BOT_MAINLAND=1`) after scene 2 sends the rs2b0t tutorial skip.
+**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** accepts `--vault-pass` (same as `BOT_VAULT_PASS`) and upserts named users (`--user test` defaults to `test`/`test`). The panel has no `--vault-pass` flag — passphrase is `BOT_VAULT_PASS` or the in-window prompt. Empty passphrase is rejected. `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is `setvar tutorial 1000` only, latched on `ProfileSettings.tutorial_skipped`.
 
-**Scripts:** panel **Browse / Start / Pause / Stop** are live. Compiled cards tick on the **PLAYER_INFO** edge. Idle slots have no V8. **Load** a `.ts`/`.js` to add a picker card tagged JS. WalkTo on the main chrome is host nav, not a script card (compiled names like WalkTo are reserved). Persist: `~/.274bot/js-scripts.json`.
+**Scripts:** panel **Browse / Start / Pause / Stop** are live. Compiled cards tick on the **PLAYER_INFO** edge. Idle slots have no V8. **Load** a `.ts`/`.js` to add a picker card tagged JS. WalkTo on the main chrome is host nav, not a script card (compiled names like WalkTo are reserved). Persist: `~/.274bot/js-scripts.json`. There are no honest skilling/farming ports in this tag.
 
 **Windows:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Watch **1 fps**, capture **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
 
@@ -83,7 +78,7 @@ Bake the collision + transport pack, then WalkTo / `Traveller::follow` over it:
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack`. Live twins: `nav_full`, `nav_walk`, `nav_door` (`LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`).
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte 5). Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `nav_full` and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests
 

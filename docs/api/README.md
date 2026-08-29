@@ -1,8 +1,10 @@
 # Agent API
 
-The kernel surface a bot agent codes against: reading world state, acting,
-settling, navigating, and logging in — all through the `api` crate
-(`crates/api`) plus `nav` (`crates/nav`) and the host tick.
+Alpha `0.1.0` kernel surface a bot agent codes against: reading world
+state, acting, settling, navigating, and logging in — all through the
+`api` crate (`crates/api`) plus `nav` (`crates/nav`) and the host tick.
+Honest bot scripts are **not** in this tag; the script crate is the
+runner kernel only.
 
 - [snapshot.md](snapshot.md) — the full gen-stamped world read model
   (`GameSnapshot` + `ReadContext`)
@@ -26,7 +28,9 @@ settling, navigating, and logging in — all through the `api` crate
 | `vault` | Encrypted profile store (AES-256-GCM) |
 | `host-play` | CLI: unlock vault (`BOT_VAULT_PASS` / `--vault-pass`) and run slots |
 | `script` | Compiled `Script` trait + Load isolate (`rustyscript`); picker ids |
-| `panel` | Native UI (`panel-play`): profile combo, credentials, script Browse/Start/Pause/Stop, MultiBox wall |
+| `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
+| `e2e` | Headless live twins (`LIVE=1`); ignored unless that env is set |
+| `panel` | Native UI (`panel-play`): profile combo, credentials, WalkTo, debug heading, script Browse/Start/Pause/Stop, MultiBox wall |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)
@@ -48,10 +52,12 @@ the tick edge:
 
 ## Live harnesses
 
-`crates/e2e` lives here. Operator command:
+`crates/e2e` lives here (nav / panel / scenario twins). Login, RSS, and
+null-raster twins live in `crates/host-play`.
 
 ```bash
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
+LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
 ```
 
 `panel-play` is the first-class **headed** harness (`--smoke` whole-window

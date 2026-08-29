@@ -152,7 +152,14 @@ fn nav_wildy() {
     // The Ardougne→wilderness hop is enter-wildy: default find from the
     // lever tile is NoPath, and allow_wilderness routes through the lever
     // alone (no other edge is needed for this leg).
-    if find(&world.collision, &world.graph, ARDOUGNE_LEVER, WILDY_LEVER_LANDING).is_ok() {
+    if find(
+        &world.collision,
+        &world.graph,
+        ARDOUGNE_LEVER,
+        WILDY_LEVER_LANDING,
+    )
+    .is_ok()
+    {
         fail("nav_wildy: default find must not route the Ardougne→wildy lever");
     }
     find_with(

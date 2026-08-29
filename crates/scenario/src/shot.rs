@@ -124,7 +124,15 @@ pub fn write_shot(
     height: u32,
     snapshot_json: &str,
 ) -> io::Result<PathBuf> {
-    write_shot_at(dir, label, rgba, width, height, snapshot_json, SystemTime::now())
+    write_shot_at(
+        dir,
+        label,
+        rgba,
+        width,
+        height,
+        snapshot_json,
+        SystemTime::now(),
+    )
 }
 
 #[cfg(test)]
@@ -191,10 +199,7 @@ mod tests {
     #[test]
     fn default_shot_root_prefers_the_env_override() {
         std::env::set_var(SHOT_ROOT_ENV, "/tmp/274bot-shots-test");
-        assert_eq!(
-            default_shot_root(),
-            PathBuf::from("/tmp/274bot-shots-test")
-        );
+        assert_eq!(default_shot_root(), PathBuf::from("/tmp/274bot-shots-test"));
         std::env::remove_var(SHOT_ROOT_ENV);
         // Home fallback: `~/.274bot/smoke` (the 377 DEFAULT_SHOT_DIR).
         assert!(default_shot_root().ends_with(".274bot/smoke"));
@@ -233,7 +238,10 @@ mod tests {
     fn write_shot_rejects_a_mismatched_rgba_buffer() {
         let dir = temp_dir("bad");
         let err = write_shot_at(&dir, "bad", &[0u8; 3], 2, 2, "{}", SystemTime::now());
-        assert!(err.is_err(), "a 3-byte buffer for a 2x2 RGBA shot is invalid");
+        assert!(
+            err.is_err(),
+            "a 3-byte buffer for a 2x2 RGBA shot is invalid"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

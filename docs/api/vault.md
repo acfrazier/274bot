@@ -31,6 +31,9 @@ v.upsert(profile)?                              // rewrites the file; error leav
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
 blobs that only carried `lowmem` deserialize with the box unchecked; the
 panel's "auto-login on title" checkbox reads and upserts it.
+`ProfileSettings.tutorial_skipped` (serde default `false`) latches local-engine
+**TutSkip** (`setvar tutorial 1000`) so the panel does not resend it; live
+tests can set the flag to skip the cheat.
 
 Errors: `EmptyPassphrase`, `AlreadyExists`, `NotFound`, `WrongPassphrase`
 (the file is left unmodified), `Corrupt`, `Io`.

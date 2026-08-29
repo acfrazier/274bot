@@ -77,7 +77,9 @@ pub struct WorldCollision {
 impl WorldCollision {
     /// The plane index for `level` (0..=3), `None` for unknown levels.
     fn plane(&self, level: i32) -> Option<usize> {
-        (0..LEVELS as i32).contains(&level).then_some(level as usize)
+        (0..LEVELS as i32)
+            .contains(&level)
+            .then_some(level as usize)
     }
 
     /// Tiles in one level plane (`width × height`).
@@ -190,10 +192,22 @@ impl WorldCollision {
                 && (x - self.origin.x) < self.width as i32
                 && (z - self.origin.z) < self.height as i32;
             if !inside {
-                return WorldTile { x: t.x + dx, z: t.z + dz, level: t.level };
+                return WorldTile {
+                    x: t.x + dx,
+                    z: t.z + dz,
+                    level: t.level,
+                };
             }
-            if self.walkable(WorldTile { x, z, level: t.level }) {
-                return WorldTile { x, z, level: t.level };
+            if self.walkable(WorldTile {
+                x,
+                z,
+                level: t.level,
+            }) {
+                return WorldTile {
+                    x,
+                    z,
+                    level: t.level,
+                };
             }
         }
     }
@@ -248,8 +262,16 @@ pub fn bake_from_maps(
     squares.sort_unstable();
 
     // Bounding box in tiles (the existing merge_squares geometry).
-    let min_x = squares.iter().map(|(x, _)| x * SQUARE as i32).min().unwrap();
-    let min_z = squares.iter().map(|(_, z)| z * SQUARE as i32).min().unwrap();
+    let min_x = squares
+        .iter()
+        .map(|(x, _)| x * SQUARE as i32)
+        .min()
+        .unwrap();
+    let min_z = squares
+        .iter()
+        .map(|(_, z)| z * SQUARE as i32)
+        .min()
+        .unwrap();
     let max_x = squares
         .iter()
         .map(|(x, _)| (x + 1) * SQUARE as i32)
@@ -268,15 +290,7 @@ pub fn bake_from_maps(
         let path = maps_dir.join(format!("m{square_x}_{square_z}.jm2"));
         let text = std::fs::read_to_string(&path).map_err(PackError::Io)?;
         stamp_square(
-            &mut flags,
-            width,
-            height,
-            min_x,
-            min_z,
-            *square_x,
-            *square_z,
-            &text,
-            loc_defs,
+            &mut flags, width, height, min_x, min_z, *square_x, *square_z, &text, loc_defs,
             door_ids,
         )?;
     }
@@ -449,15 +463,7 @@ fn stamp_square(
         // level-0 squash.
         if door_ids.contains(&loc.loc_id) && loc.shape == LocShape::WALL_STRAIGHT {
             add_wall(
-                flags,
-                width,
-                height,
-                lx,
-                lz,
-                loc.shape,
-                loc.angle,
-                blockrange,
-                true_level,
+                flags, width, height, lx, lz, loc.shape, loc.angle, blockrange, true_level,
             );
         } else {
             // The client `addLoc` collision table (build.rs): ground decor
@@ -486,16 +492,7 @@ fn stamp_square(
                     if blockwalk {
                         let (w, l) = def.map_or((1, 1), |d| (d.width, d.length));
                         add_loc(
-                            flags,
-                            width,
-                            height,
-                            lx,
-                            lz,
-                            w,
-                            l,
-                            loc.angle,
-                            blockrange,
-                            true_level,
+                            flags, width, height, lx, lz, w, l, loc.angle, blockrange, true_level,
                         );
                     }
                 }
@@ -505,14 +502,7 @@ fn stamp_square(
                 | LocShape::WALL_SQUARE_CORNER => {
                     if blockwalk {
                         add_wall(
-                            flags,
-                            width,
-                            height,
-                            lx,
-                            lz,
-                            loc.shape,
-                            loc.angle,
-                            blockrange,
+                            flags, width, height, lx, lz, loc.shape, loc.angle, blockrange,
                             true_level,
                         );
                     }
@@ -582,9 +572,7 @@ fn add_wall(
             set_at(flags, width, height, x, z, level, south);
             set_at(flags, width, height, x, z - 1, level, north);
         }
-    } else if shape == LocShape::WALL_DIAGONAL_CORNER
-        || shape == LocShape::WALL_SQUARE_CORNER
-    {
+    } else if shape == LocShape::WALL_DIAGONAL_CORNER || shape == LocShape::WALL_SQUARE_CORNER {
         if angle == LocAngle::WEST {
             set_at(flags, width, height, x, z, level, north_west);
             set_at(flags, width, height, x - 1, z + 1, level, south_east);
@@ -682,7 +670,8 @@ mod tests {
 
     impl FixtureDir {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("274bot-nav-{name}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("274bot-nav-{name}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             FixtureDir(dir)
@@ -778,10 +767,7 @@ mod tests {
         let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
         // f1 (bit 0, BLOCK) stamps WR_GRND; f2 (bit 1, LINK_BELOW) alone
         // never stamps ground.
-        assert_ne!(
-            wc.flag(3200, 3200, 0) & CollisionFlag::WR_GRND as u32,
-            0
-        );
+        assert_ne!(wc.flag(3200, 3200, 0) & CollisionFlag::WR_GRND as u32, 0);
         assert_eq!(wc.flag(3200, 3201, 0), 0);
     }
 
@@ -864,10 +850,7 @@ mod tests {
         let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
         // Ground decor blocks via the client's `block_ground` (WR_GRND)
         // only when both blockwalk and active are set.
-        assert_ne!(
-            wc.flag(3200, 3201, 0) & CollisionFlag::WR_GRND as u32,
-            0
-        );
+        assert_ne!(wc.flag(3200, 3201, 0) & CollisionFlag::WR_GRND as u32, 0);
         assert_eq!(wc.flag(3200, 3202, 0), 0);
     }
 
@@ -881,10 +864,7 @@ mod tests {
         fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
         let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
         // A level-1 MAP block stamps the level-1 plane, never level 0.
-        assert_ne!(
-            wc.flag(3200, 3200, 1) & CollisionFlag::WR_GRND as u32,
-            0
-        );
+        assert_ne!(wc.flag(3200, 3200, 1) & CollisionFlag::WR_GRND as u32, 0);
         assert_eq!(wc.flag(3200, 3200, 0), 0);
     }
 
@@ -900,10 +880,7 @@ mod tests {
         // Client `finishBuild`: a level-1 BLOCK tile whose level-1 map
         // flags carry LINK_BELOW stamps `true_level = level - 1` (TS
         // 79-87), landing on level 0's grid.
-        assert_ne!(
-            wc.flag(3200, 3200, 0) & CollisionFlag::WR_GRND as u32,
-            0
-        );
+        assert_ne!(wc.flag(3200, 3200, 0) & CollisionFlag::WR_GRND as u32, 0);
         assert_eq!(wc.flag(3200, 3200, 1) & CollisionFlag::WR_GRND as u32, 0);
     }
 
@@ -945,14 +922,8 @@ mod tests {
         // loc on the level-0 collision (the Lumbridge castle battlements
         // and the drawbridge walls stamp exactly this way). A south wall
         // stamps W_S on its tile and W_N one tile north.
-        assert_ne!(
-            wc.flag(3200, 3201, 0) & CollisionFlag::W_S as u32,
-            0
-        );
-        assert_ne!(
-            wc.flag(3200, 3200, 0) & CollisionFlag::W_N as u32,
-            0
-        );
+        assert_ne!(wc.flag(3200, 3201, 0) & CollisionFlag::W_S as u32, 0);
+        assert_ne!(wc.flag(3200, 3200, 0) & CollisionFlag::W_N as u32, 0);
         assert_eq!(wc.flag(3200, 3200, 1), 0);
     }
 
@@ -1169,11 +1140,7 @@ mod tests {
     #[test]
     fn bake_rejects_mapsquare_without_a_map_section() {
         let fix = FixtureDir::new("no-map");
-        fs::write(
-            fix.0.join("m50_50.jm2"),
-            "==== NPC ====\n0 0 0: 1234\n",
-        )
-        .unwrap();
+        fs::write(fix.0.join("m50_50.jm2"), "==== NPC ====\n0 0 0: 1234\n").unwrap();
         assert!(matches!(
             bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()),
             Err(PackError::BadLength(_))

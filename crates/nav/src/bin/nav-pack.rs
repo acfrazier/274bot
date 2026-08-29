@@ -1,14 +1,16 @@
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
-//! the Server content, and write the v2 nav pack to `$NAV_PACK` or
+//! the Server content, and write the nav pack (magic `274V`, version
+//! byte 5; `encode_v2`) to `$NAV_PACK` or
 //! `~/.274bot/274bot.navpack` (default). Usage:
 //! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where the defaults
-//! are `/Users/acfrazier/experiments/Server/content/maps`,
-//! `/Users/acfrazier/experiments/Server/content/scripts/doors/configs`, and
-//! the compiled client cache `/Users/acfrazier/experiments/Server/engine/data/pack/config`.
+//! are `$ENGINE_DIR/../content/maps` (default
+//! `$HOME/experiments/Server/engine` → `.../content/maps`), matching doors
+//! under that content tree, and `$ENGINE_DIR/data/pack/config`.
 //! Door loc ids come from the `*.loc` door configs plus
-//! `scripts/general_use/configs/gates.loc`; the loc definitions
+//! `scripts/general_use/configs/gates.loc` (derived from the maps dir's
+//! parent, the Server `content/` root); the loc definitions
 //! (blockwalk, width/length, active) come from the client cache's `config`
 //! jag. Every `.jm2` under the maps dir bakes or the run fails; non-`.jm2`
 //! files (`ignore.csv`/`free2play.csv`) are metadata and skipped. The
@@ -29,11 +31,25 @@ use nav::collision::{bake_from_maps, WorldCollision};
 use nav::pack::encode_v2;
 use nav::transport::derive_transports;
 
-const MAPS_DIR: &str = "/Users/acfrazier/experiments/Server/content/maps";
-const DOORS_DIR: &str = "/Users/acfrazier/experiments/Server/content/scripts/doors/configs";
-const GATES_LOC: &str = "/Users/acfrazier/experiments/Server/content/scripts/general_use/configs/gates.loc";
-const CONFIG_JAG: &str = "/Users/acfrazier/experiments/Server/engine/data/pack/config";
 const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
+
+fn default_maps_dir() -> PathBuf {
+    client::bot_target::content_dir().join("maps")
+}
+
+fn default_doors_dir() -> PathBuf {
+    client::bot_target::content_dir().join("scripts/doors/configs")
+}
+
+fn default_config_jag() -> PathBuf {
+    client::bot_target::config_jag()
+}
+
+/// `gates.loc` lives under the Server `content/` tree, sibling of `maps/`.
+fn gates_loc(maps_dir: &Path) -> PathBuf {
+    let content_root = maps_dir.parent().unwrap_or(maps_dir);
+    content_root.join("scripts/general_use/configs/gates.loc")
+}
 
 fn default_out() -> PathBuf {
     match env::var("HOME") {
@@ -44,9 +60,19 @@ fn default_out() -> PathBuf {
 
 fn main() -> ExitCode {
     let mut it = env::args().skip(1);
-    let maps_dir = it.next().unwrap_or_else(|| MAPS_DIR.into());
-    let doors_dir = it.next().unwrap_or_else(|| DOORS_DIR.into());
-    let config_jag = it.next().unwrap_or_else(|| CONFIG_JAG.into());
+    let maps_dir = it
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_maps_dir);
+    let doors_dir = it
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_doors_dir);
+    let config_jag = it
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_config_jag);
+    let gates = gates_loc(&maps_dir);
     let out = env::var("NAV_PACK")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_out());
@@ -67,7 +93,7 @@ fn main() -> ExitCode {
     // Fence gates (`scripts/general_use/configs/gates.loc`) join the door
     // set so their tiles do not stamp blocked in the bake; the transport
     // graph derives the same set itself in `door_edges`.
-    match std::fs::read_to_string(GATES_LOC) {
+    match std::fs::read_to_string(&gates) {
         Ok(text) => door_ids.extend(nav::pack::parse_door_config(&text)),
         Err(e) => {
             eprintln!("nav-pack: skipping gates.loc: {e}");
@@ -76,8 +102,10 @@ fn main() -> ExitCode {
     }
     if config_failed == DOOR_CONFIGS.len() + 1 {
         eprintln!(
-            "nav-pack: no door configs parsed (need {} in {doors_dir} plus {GATES_LOC})",
-            DOOR_CONFIGS.join(", ")
+            "nav-pack: no door configs parsed (need {} in {} plus {})",
+            DOOR_CONFIGS.join(", "),
+            doors_dir.display(),
+            gates.display()
         );
         return ExitCode::FAILURE;
     }
@@ -92,14 +120,14 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!(
                 "nav-pack: cannot load loc defs from {}: {e}",
-                Path::new(&config_jag).display()
+                config_jag.display()
             );
             return ExitCode::FAILURE;
         }
     };
 
     // Whole-world collision bake (the walkability source of truth).
-    let collision = match bake_from_maps(Path::new(&maps_dir), &loc_defs, &door_ids) {
+    let collision = match bake_from_maps(&maps_dir, &loc_defs, &door_ids) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("nav-pack: collision bake failed: {e}");
@@ -111,9 +139,7 @@ fn main() -> ExitCode {
     // The transport graph from the Server content tree (maps/scripts/pack
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
-    let content_root = Path::new(&maps_dir)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let content_root = maps_dir.parent().unwrap_or_else(|| Path::new("."));
     let graph = derive_transports(content_root, &loc_defs, &collision);
 
     // The v2 pack write: collision flags + transport edges.
@@ -136,7 +162,7 @@ fn main() -> ExitCode {
 }
 
 /// Count `.jm2` files under `maps_dir` (for the summary line).
-fn squares_baked(maps_dir: &str) -> usize {
+fn squares_baked(maps_dir: &Path) -> usize {
     std::fs::read_dir(maps_dir)
         .map(|entries| {
             entries
@@ -150,9 +176,40 @@ fn squares_baked(maps_dir: &str) -> usize {
 /// Count tiles with no walk-blocking flag on the bake's level-0 plane.
 fn walkable_tiles(c: &WorldCollision) -> usize {
     (0..c.height)
-        .flat_map(|z| {
-            (0..c.width).map(move |x| (c.origin.x + x as i32, c.origin.z + z as i32))
+        .flat_map(|z| (0..c.width).map(move |x| (c.origin.x + x as i32, c.origin.z + z as i32)))
+        .filter(|(x, z)| {
+            c.walkable(WorldTile {
+                x: *x,
+                z: *z,
+                level: 0,
+            })
         })
-        .filter(|(x, z)| c.walkable(WorldTile { x: *x, z: *z, level: 0 }))
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gates_loc_sits_under_content_next_to_maps() {
+        let maps = Path::new("/tmp/Server/content/maps");
+        assert_eq!(
+            gates_loc(maps),
+            PathBuf::from("/tmp/Server/content/scripts/general_use/configs/gates.loc")
+        );
+    }
+
+    #[test]
+    fn default_paths_follow_engine_dir() {
+        let engine = client::engine_dir();
+        let content = client::bot_target::content_dir();
+        assert_eq!(default_maps_dir(), content.join("maps"));
+        assert_eq!(default_doors_dir(), content.join("scripts/doors/configs"));
+        assert_eq!(default_config_jag(), engine.join("data/pack/config"));
+        assert_eq!(
+            gates_loc(&default_maps_dir()),
+            content.join("scripts/general_use/configs/gates.loc")
+        );
+    }
 }

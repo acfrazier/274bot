@@ -14,7 +14,9 @@
 
 use std::collections::VecDeque;
 
-use api::interact::{op_loc, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult};
+use api::interact::{
+    op_loc, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
+};
 use api::query::{ChatQueryExt, Query, SceneQuery};
 use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, ReadContext, WorldTile};
@@ -516,9 +518,7 @@ impl FollowRun {
             }
             // No active hop: work the next leg (or finish).
             let Some(leg) = self.legs.pop_front() else {
-                return Some(TravelOutcome::Arrived {
-                    at: here(snapshot),
-                });
+                return Some(TravelOutcome::Arrived { at: here(snapshot) });
             };
             match leg {
                 Leg::Walk { .. } => {
@@ -561,10 +561,7 @@ impl FollowRun {
                         }
                         SendResult::Refused { reason, .. } => {
                             fire_leg(options, &leg, LegPhase::Failed);
-                            return Some(TravelOutcome::Refused {
-                                at: here,
-                                reason,
-                            });
+                            return Some(TravelOutcome::Refused { at: here, reason });
                         }
                     }
                 }
@@ -599,10 +596,7 @@ impl FollowRun {
                             }
                             SendResult::Refused { reason, .. } => {
                                 fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Refused {
-                                    at: here,
-                                    reason,
-                                });
+                                return Some(TravelOutcome::Refused { at: here, reason });
                             }
                         }
                     }
@@ -656,10 +650,7 @@ impl FollowRun {
                             }
                             SendResult::Refused { reason, .. } => {
                                 fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Refused {
-                                    at: here,
-                                    reason,
-                                });
+                                return Some(TravelOutcome::Refused { at: here, reason });
                             }
                         }
                     }
@@ -667,7 +658,9 @@ impl FollowRun {
                         Some(loc) => {
                             let to = edge.to;
                             let mut ix = Interactions::new(snapshot, d);
-                            match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
+                            match ix
+                                .interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option))
+                            {
                                 SendResult::Sent { .. } => {
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
@@ -684,10 +677,7 @@ impl FollowRun {
                                 }
                                 SendResult::Refused { reason, .. } => {
                                     fire_leg(options, &leg, LegPhase::Failed);
-                                    return Some(TravelOutcome::Refused {
-                                        at: here,
-                                        reason,
-                                    });
+                                    return Some(TravelOutcome::Refused { at: here, reason });
                                 }
                             }
                         }
@@ -859,28 +849,28 @@ impl FollowRun {
             }
         } else if hop.approach.is_none() {
             if let Leg::Transport { edge } = &hop.leg {
-            // Cheap hop: Open was sent; the live open leaf can sit a tile
-            // off `at`. Walk through as soon as it reads open — do not sit
-            // until the troll budget while the door is already open.
-            if edge.kind == TransportKind::Door
-                && edge_loc_open(snapshot, edge)
-                && !door_crossed(edge, here)
-            {
-                let mut ix = Interactions::new(snapshot, d);
-                match ix.walk(hop.to) {
-                    SendResult::Sent { .. } => {
-                        if crate::debug_enabled() {
-                            eprintln!("[nav-transport] cheap hop walk-through to {:?}", hop.to);
+                // Cheap hop: Open was sent; the live open leaf can sit a tile
+                // off `at`. Walk through as soon as it reads open — do not sit
+                // until the troll budget while the door is already open.
+                if edge.kind == TransportKind::Door
+                    && edge_loc_open(snapshot, edge)
+                    && !door_crossed(edge, here)
+                {
+                    let mut ix = Interactions::new(snapshot, d);
+                    match ix.walk(hop.to) {
+                        SendResult::Sent { .. } => {
+                            if crate::debug_enabled() {
+                                eprintln!("[nav-transport] cheap hop walk-through to {:?}", hop.to);
+                            }
+                        }
+                        SendResult::Refused { reason, .. } => {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
                         }
                     }
-                    SendResult::Refused { reason, .. } => {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
-                    }
+                    self.transport = Some(hop);
+                    return Poll::Watching;
                 }
-                self.transport = Some(hop);
-                return Poll::Watching;
-            }
             }
         }
         // The pre-interact approach: the player must stand within chebyshev
@@ -961,7 +951,8 @@ impl FollowRun {
             );
         }
         let close_enough = self.close_enough;
-        let arrived_arm: Evidence<'static> = if edge.kind == TransportKind::Door && edge.dir.is_some()
+        let arrived_arm: Evidence<'static> = if edge.kind == TransportKind::Door
+            && edge.dir.is_some()
         {
             Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
                 let Some(here) = now.world_tile() else {
@@ -997,7 +988,9 @@ impl FollowRun {
             ReadContext::new(snapshot),
         );
         match settle.poll(ReadContext::new(snapshot)) {
-            Some(Outcome::Matched { arm: "unreachable", .. }) => {
+            Some(Outcome::Matched {
+                arm: "unreachable", ..
+            }) => {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
                 Poll::Terminal(TravelOutcome::Refused {
                     at: here,
@@ -1223,9 +1216,7 @@ impl FollowRun {
             .filter(|loc| {
                 loc.tile.level == tile.level
                     && (loc.id == edge.loc_id
-                        || edge
-                            .open_loc_id
-                            .is_some_and(|open_id| loc.id == open_id))
+                        || edge.open_loc_id.is_some_and(|open_id| loc.id == open_id))
             })
             .map(|loc| (loc, cheb(loc.tile, tile)))
             .filter(|(_, gap)| *gap <= 3)
@@ -1426,7 +1417,11 @@ const APPROACH_RING: [(i32, i32); 8] = [
 /// [`scene_standable`] mirrors `WorldCollision::standable` against the
 /// loaded scene's collision flags. `None` when no adjacent tile is
 /// standable.
-fn approach_tile(snapshot: &GameSnapshot, edge: &TransportEdge, here: WorldTile) -> Option<WorldTile> {
+fn approach_tile(
+    snapshot: &GameSnapshot,
+    edge: &TransportEdge,
+    here: WorldTile,
+) -> Option<WorldTile> {
     APPROACH_RING
         .iter()
         .map(|(dx, dz)| WorldTile {
@@ -1447,7 +1442,8 @@ fn scene_standable(snapshot: &GameSnapshot, tile: WorldTile) -> bool {
     SceneQuery::new(snapshot.scene(), None)
         .collision_at(tile)
         .is_some_and(|flags| {
-            flags & (CollisionFlag::WALK_SCENERY | CollisionFlag::WR_GRND | CollisionFlag::SQ_BLOCKED)
+            flags
+                & (CollisionFlag::WALK_SCENERY | CollisionFlag::WR_GRND | CollisionFlag::SQ_BLOCKED)
                 == 0
         })
 }
@@ -2233,7 +2229,8 @@ mod tests {
                 ..Default::default()
             };
         }
-        c.world.set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+        c.world
+            .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     }
 
     /// A wall loc at scene (`scene_x`, 0) — the `at` tile of [`door_edge`]
@@ -2381,9 +2378,17 @@ mod tests {
         let mut options = TravelOptions::default();
         // One tile to the leg end: the run sends one walk and the arrived
         // arm completes the hop once the player steps onto the tile.
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            plant_player(c, 0, 1);
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 0, 1);
+            },
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3200, z: 3201, level: 0 }
@@ -2416,13 +2421,16 @@ mod tests {
         };
         let mut options = TravelOptions::default(); // close_enough = 2
 
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert_eq!(rec.walked, vec![(0, 2)], "walk aims at the last tile");
 
         plant_player(&mut c, 0, 1);
         bump_rebuild(&mut c, &mut snap);
         assert!(
-            t.follow(&mut rec, &snap, route.clone(), &mut options).is_none(),
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
             "a walk leg must not finish one tile short of its last tile"
         );
 
@@ -2430,7 +2438,14 @@ mod tests {
         bump_rebuild(&mut c, &mut snap);
         match t.follow(&mut rec, &snap, route.clone(), &mut options) {
             Some(TravelOutcome::Arrived { at }) => {
-                assert_eq!(at, WorldTile { x: 3200, z: 3202, level: 0 });
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3200,
+                        z: 3202,
+                        level: 0
+                    }
+                );
             }
             other => panic!("expected Arrived on the last tile, got {other:?}"),
         }
@@ -2441,7 +2456,7 @@ mod tests {
         let mut t = Traveller::new();
         assert_eq!(t.current_aim(), None, "idle traveller has no aim");
         let mut c = scene_client();
-        let mut snap = snap_at(&mut c, 0, 0);
+        let snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
             route: Some((0, 0)),
             ..FollowRec::default()
@@ -2457,7 +2472,8 @@ mod tests {
         };
         let mut options = TravelOptions::default();
         assert!(
-            t.follow(&mut rec, &snap, route.clone(), &mut options).is_none(),
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
             "the run must be active after the first poll"
         );
         // A short leg aims at its last tile (the same `pick_aim` the walk
@@ -2494,7 +2510,15 @@ mod tests {
         let mut options = TravelOptions::default();
         // A single-tile leg (the find(from == to) shape) is a no-op: no
         // walk is sent, the run arrives immediately.
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |_| {});
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |_| {},
+        );
         assert!(matches!(outcome, TravelOutcome::Arrived { .. }));
         assert_eq!(rec.walked.len(), 0, "no walk for a single-tile leg");
     }
@@ -2521,9 +2545,17 @@ mod tests {
             ticks: 2.0, // the ladder edge's ticks
         };
         let mut options = TravelOptions::default();
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            plant_player(c, 2, 5);
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 2, 5);
+            },
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
@@ -2563,20 +2595,31 @@ mod tests {
         let mut options = TravelOptions::default();
         // Poll 1: the hop walks to the adjacent standable tile, never the
         // interact (the click would be dropped from 3 tiles away).
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert_eq!(rec.walked, vec![(2, 3)], "the approach walk goes out first");
         assert_eq!(rec.loc_ops, 0, "no OP_LOC1 before the player is adjacent");
         // The player steps onto the approach tile: the hop sends `op_loc`.
         plant_player(&mut c, 2, 3);
         bump_rebuild(&mut c, &mut snap);
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 once adjacent");
         // The ladder carries the player to `edge.to`: the run arrives.
         plant_player(&mut c, 2, 5);
         bump_rebuild(&mut c, &mut snap);
         match t.follow(&mut rec, &snap, route.clone(), &mut options) {
             Some(TravelOutcome::Arrived { at }) => {
-                assert_eq!(at, WorldTile { x: 3202, z: 3205, level: 0 });
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3202,
+                        z: 3205,
+                        level: 0
+                    }
+                );
             }
             other => panic!("expected Arrived, got {other:?}"),
         }
@@ -2698,18 +2741,24 @@ mod tests {
         };
 
         // Cheap hop: interact, then sit the budget out.
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         let ops_after_cheap = rec.loc_ops;
         assert!(ops_after_cheap >= 1, "cheap hop sent OP_LOC1");
         for _ in 0..3 {
             bump_rebuild(&mut c, &mut snap);
-            assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
         }
 
         plant_door(&mut c, true, 1);
         bump_rebuild(&mut c, &mut snap);
         let ops_before_open = rec.loc_ops;
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert_eq!(
             rec.loc_ops, ops_before_open,
             "troll must not OP_LOC1 an open door (that Closes it)"
@@ -2828,15 +2877,26 @@ mod tests {
             ticks: 1.0,
         };
         let mut options = TravelOptions::default();
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            plant_player(c, 3, 0);
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 3, 0);
+            },
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3203, z: 3200, level: 0 }
         ));
         assert_eq!(rec.loc_ops, 0, "no OP_LOC1 through an open leaf");
-        assert!(rec.walked.contains(&(3, 0)), "walk straight through the open door");
+        assert!(
+            rec.walked.contains(&(3, 0)),
+            "walk straight through the open door"
+        );
     }
 
     #[test]
@@ -2864,15 +2924,26 @@ mod tests {
             ticks: 1.0,
         };
         let mut options = TravelOptions::default();
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            plant_player(c, 3, 0);
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 3, 0);
+            },
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3203, z: 3200, level: 0 }
         ));
         assert_eq!(rec.loc_ops, 0, "no OP_LOC1 through a close leaf");
-        assert!(rec.walked.contains(&(3, 0)), "walk straight through the open door");
+        assert!(
+            rec.walked.contains(&(3, 0)),
+            "walk straight through the open door"
+        );
     }
 
     #[test]
@@ -2905,14 +2976,18 @@ mod tests {
         };
         let mut options = TravelOptions::default();
 
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert_eq!(rec.loc_ops, 1, "cheap hop Opens the closed door");
 
         c.world.del_wall(0, 1, 0);
         plant_door_at(&mut c, true, 1, 1); // open leaf at (3201, 3201)
         bump_rebuild(&mut c, &mut snap);
         let walks = rec.walked.len();
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert!(
             rec.walked.len() > walks,
             "cheap hop must walk through once the offset open leaf appears"
@@ -2955,7 +3030,9 @@ mod tests {
             ..TravelOptions::default()
         };
         // Poll 1: the interact is sent and the hop starts watching.
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
         // One tick later the game reports the pathfind failed.
         c.add_chat(0, "I can't reach that!", "");
@@ -2965,7 +3042,14 @@ mod tests {
                 at,
                 reason: SendReason::Unreachable,
             }) => {
-                assert_eq!(at, WorldTile { x: 3202, z: 3203, level: 0 });
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3202,
+                        z: 3203,
+                        level: 0
+                    }
+                );
             }
             other => panic!("expected Refused(Unreachable), got {other:?}"),
         }
@@ -3009,7 +3093,15 @@ mod tests {
             ..TravelOptions::default()
         };
         // The player never leaves the send tile: the hop lapses as Dropped.
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |_| {});
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |_| {},
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Stalled { at, aiming, why: HopFailure::Dropped, .. }
@@ -3053,13 +3145,24 @@ mod tests {
         // never arrives within the tiny hop budget: the hop lapses as
         // Expired (progress was made).
         let mut z = 0;
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            z += 1;
-            plant_player(c, 0, z);
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                z += 1;
+                plant_player(c, 0, z);
+            },
+        );
         assert!(matches!(
             outcome,
-            TravelOutcome::Stalled { why: HopFailure::Expired, .. }
+            TravelOutcome::Stalled {
+                why: HopFailure::Expired,
+                ..
+            }
         ));
     }
 
@@ -3091,10 +3194,21 @@ mod tests {
         let mut options = TravelOptions::default();
         // The driver rejects the multi-tile hop: `Interactions::walk`
         // refuses with `Unreachable`, and follow reports it verbatim.
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |_| {});
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |_| {},
+        );
         assert!(matches!(
             outcome,
-            TravelOutcome::Refused { reason: SendReason::Unreachable, .. }
+            TravelOutcome::Refused {
+                reason: SendReason::Unreachable,
+                ..
+            }
         ));
     }
 
@@ -3124,7 +3238,15 @@ mod tests {
         };
         // A loose close-enough matches every poll, so each call starts a
         // fresh hop until the hop cap trips `GaveUp`.
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |_| {});
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |_| {},
+        );
         assert!(matches!(outcome, TravelOutcome::GaveUp { hops: 2, .. }));
     }
 
@@ -3153,9 +3275,17 @@ mod tests {
             })),
             ..TravelOptions::default()
         };
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            plant_player(c, 0, 2);
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 0, 2);
+            },
+        );
         assert!(matches!(outcome, TravelOutcome::Arrived { .. }));
         // `options` borrows `phases` through the on_leg callback; dropping
         // it ends the borrow so the recording can be asserted.
@@ -3196,7 +3326,15 @@ mod tests {
             ..TravelOptions::default()
         };
         // The loc never appears: after the loc-wait budget, the leg blocks.
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |_| {});
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |_| {},
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Blocked { leg: 0, detail, .. } if detail.contains("99")
@@ -3244,13 +3382,21 @@ mod tests {
             ..TravelOptions::default()
         };
         let mut step = 0;
-        let outcome = drive(&mut t, &mut rec, &mut c, &mut snap, &route, &mut options, |c| {
-            step += 1;
-            match step {
-                1 => plant_player(c, 1, 3), // reach the walk leg's end (adjacent to the ladder)
-                _ => plant_player(c, 2, 5), // cross the transport to edge.to
-            }
-        });
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                step += 1;
+                match step {
+                    1 => plant_player(c, 1, 3), // reach the walk leg's end (adjacent to the ladder)
+                    _ => plant_player(c, 2, 5), // cross the transport to edge.to
+                }
+            },
+        );
         assert!(matches!(
             outcome,
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
@@ -3263,8 +3409,14 @@ mod tests {
         assert_eq!(phases.len(), 4, "start/done per leg");
         assert!(matches!(&phases[0], (Leg::Walk { .. }, LegPhase::Start)));
         assert!(matches!(&phases[1], (Leg::Walk { .. }, LegPhase::Done)));
-        assert!(matches!(&phases[2], (Leg::Transport { .. }, LegPhase::Start)));
-        assert!(matches!(&phases[3], (Leg::Transport { .. }, LegPhase::Done)));
+        assert!(matches!(
+            &phases[2],
+            (Leg::Transport { .. }, LegPhase::Start)
+        ));
+        assert!(matches!(
+            &phases[3],
+            (Leg::Transport { .. }, LegPhase::Done)
+        ));
     }
 
     /// Recording driver for the follow tests: the build base matches the
@@ -3366,13 +3518,16 @@ mod tests {
             ..TravelOptions::default()
         };
         // Poll 1: the run sends the hop's walk.
-        assert!(t.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
         // Poll 2: the player is mid-leg — the settle must still be watching
         // (the call returns `None`), never a stall from an intra-call spin.
         plant_player(&mut c, 0, 2);
         bump_rebuild(&mut c, &mut snap);
         assert!(
-            t.follow(&mut rec, &snap, route.clone(), &mut options).is_none(),
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
             "a mid-walk poll must not stall"
         );
         // Poll 3: the player reaches the leg end — the run arrives.

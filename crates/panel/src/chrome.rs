@@ -104,8 +104,8 @@ pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
 #[cfg(test)]
 mod tests {
     use crate::chrome::{
-        button_row_layout, equal_button_width, multibox_tooltip, sections, BUTTON_GAP,
-        MIN_BUTTON, MOCK_BUTTONS, PARAM_ROW, SCRIPT_ROW,
+        button_row_layout, equal_button_width, multibox_tooltip, sections, BUTTON_GAP, MIN_BUTTON,
+        MOCK_BUTTONS, PARAM_ROW, SCRIPT_ROW,
     };
     use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
 

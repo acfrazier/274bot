@@ -495,7 +495,11 @@ mod tests {
             4,
             "the PixMap frame must re-register the panel texture"
         );
-        assert_eq!(view.tex_id.id(), 4, "the Image must draw the panel's texture again");
+        assert_eq!(
+            view.tex_id.id(),
+            4,
+            "the Image must draw the panel's texture again"
+        );
         assert_eq!(
             gpu.last_registered(),
             Some(&view.texture),

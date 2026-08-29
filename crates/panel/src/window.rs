@@ -491,7 +491,9 @@ impl AppWindow {
             // Fallback render target: the imgui pass draws here, then the
             // offscreen texture is blitted to the surface for present.
             Some(offscreen) => offscreen.create_view(&wgpu::TextureViewDescriptor::default()),
-            None => frame.texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            None => frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
         };
         let mut encoder = self
             .device
@@ -643,12 +645,10 @@ impl AppWindow {
                         flag.store(true, Ordering::Release);
                     }
                 });
-                let _ = self
-                    .device
-                    .poll(wgpu::PollType::Wait {
-                        submission_index: None,
-                        timeout: None,
-                    });
+                let _ = self.device.poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: None,
+                });
                 // A failed map (device lost) drops the shot instead of
                 // panicking the loop, which recovers GPU state on render
                 // errors — the shot is a smoke artifact, not the run.
@@ -859,7 +859,9 @@ where
                         &full_event,
                     );
 
-                    if let Err(e) = window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref()) {
+                    if let Err(e) =
+                        window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref())
+                    {
                         eprintln!(
                             "Render error: {e}; attempting to recover by recreating GPU state"
                         );
@@ -1139,7 +1141,10 @@ mod tests {
         let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = imgui::Context::create();
         let (quincunx, ballot_x) = add_glyph_font(&mut ctx);
-        assert!(quincunx, "U+2059 (status dot) must resolve in the merged font");
+        assert!(
+            quincunx,
+            "U+2059 (status dot) must resolve in the merged font"
+        );
         assert!(ballot_x, "U+2717 (remove) must resolve in the merged font");
     }
 }

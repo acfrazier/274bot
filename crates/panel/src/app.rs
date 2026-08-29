@@ -880,22 +880,19 @@ fn game_window_flags() -> WindowFlags {
 }
 
 fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
-    let built = ui
-        .window(title)
-        .flags(game_window_flags())
-        .build(|| {
-            let avail = ui.content_region_avail();
-            if state.session.walkto_open {
-                picker::draw_picker(ui, &mut state.session);
+    let built = ui.window(title).flags(game_window_flags()).build(|| {
+        let avail = ui.content_region_avail();
+        if state.session.walkto_open {
+            picker::draw_picker(ui, &mut state.session);
+        } else {
+            picker::note_closed();
+            if state.session.multibox && state.session.wall.grid {
+                grid_pane(ui, gpu, state, avail);
             } else {
-                picker::note_closed();
-                if state.session.multibox && state.session.wall.grid {
-                    grid_pane(ui, gpu, state, avail);
-                } else {
-                    game_pane(ui, gpu, state, avail);
-                }
+                game_pane(ui, gpu, state, avail);
             }
-        });
+        }
+    });
     state.session.set_game_pane_open(built.is_some());
 }
 

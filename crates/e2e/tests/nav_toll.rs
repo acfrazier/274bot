@@ -98,7 +98,9 @@ fn nav_toll() {
             ));
         }
         if !e.item_req.iter().any(|(id, n)| *id == 995 && *n >= 10) {
-            fail(&format!("nav_toll: toll-gate edge {e:?} lacks the 10-coin toll"));
+            fail(&format!(
+                "nav_toll: toll-gate edge {e:?} lacks the 10-coin toll"
+            ));
         }
     }
 

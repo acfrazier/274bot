@@ -29,10 +29,7 @@ fn scenario_walk() {
     let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
     // The headless twin never writes shots: explicit no-op sink (the same
     // behavior as the runner's default).
-    runner
-        .lock()
-        .unwrap()
-        .set_shot_sink(Box::new(|_, _| {}));
+    runner.lock().unwrap().set_shot_sink(Box::new(|_, _| {}));
     let mut opts = options();
     opts.mainland = mainland;
     let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
@@ -54,10 +51,7 @@ fn scenario_walk() {
             let r = runner.lock().unwrap();
             (r.status(), r.evidence().cloned())
         };
-        let record = evidence
-            .as_ref()
-            .map(|ev| ev.to_json())
-            .unwrap_or_default();
+        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
         match status {
             RunnerStatus::Passed => {
                 println!("PASS: scenario walk {record}");

@@ -251,13 +251,22 @@ mod tests {
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
         };
-        assert!(full_rate_for(&f, "a"), "focused slot is 50 fps without capture");
-        assert!(full_rate_for(&f, "b"), "drawing member is 50 fps without sidecar_50");
+        assert!(
+            full_rate_for(&f, "a"),
+            "focused slot is 50 fps without capture"
+        );
+        assert!(
+            full_rate_for(&f, "b"),
+            "drawing member is 50 fps without sidecar_50"
+        );
         f.live_full_rate = false;
         assert!(!full_rate_for(&f, "a"));
         assert!(!full_rate_for(&f, "b"));
         f.sidecar_50 = true;
-        assert!(!full_rate_for(&f, "a"), "sidecar still does not raise focused");
+        assert!(
+            !full_rate_for(&f, "a"),
+            "sidecar still does not raise focused"
+        );
         assert!(full_rate_for(&f, "b"));
     }
 }

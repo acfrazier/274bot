@@ -65,9 +65,7 @@ fn nav_elkoy() {
         .graph
         .edges
         .iter()
-        .filter(|e| {
-            e.kind == TransportKind::Npc && (e.to == ENTRANCE || e.to == MAZE)
-        })
+        .filter(|e| e.kind == TransportKind::Npc && (e.to == ENTRANCE || e.to == MAZE))
         .cloned()
         .collect();
     if elk.len() != 2 {
@@ -91,13 +89,11 @@ fn nav_elkoy() {
     }
     for e in &elk {
         if e.option != 1 {
-            fail(&format!("nav_elkoy: escort edge {e:?} is not Talk-to (op 1)"));
+            fail(&format!(
+                "nav_elkoy: escort edge {e:?} is not Talk-to (op 1)"
+            ));
         }
-        if !e
-            .quest_req
-            .iter()
-            .any(|q| q == "Tree Gnome Village")
-        {
+        if !e.quest_req.iter().any(|q| q == "Tree Gnome Village") {
             fail(&format!(
                 "nav_elkoy: escort edge {e:?} lacks the Tree Gnome Village quest req"
             ));

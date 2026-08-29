@@ -66,26 +66,31 @@ fn nav_spirit() {
         ));
     }
     // The two trees are reachable on the pack (walk and/or spirit-tree hop).
-    find(&world.collision, &world.graph, STRONGHOLD_TREE, VARROCK_TREE)
-        .map(|route| {
-            if route.dest != VARROCK_TREE {
-                fail(&format!(
-                    "nav_spirit: route ends at {:?}, not the varrock tree {:?}",
-                    route.dest, VARROCK_TREE
-                ));
-            }
-            if nav::debug_enabled() {
-                println!(
-                    "nav_spirit: stronghold tree -> varrock tree routed ({:.0} ticks, {} legs)",
-                    route.ticks,
-                    route.legs.len()
-                );
-            }
-        })
-        .unwrap_or_else(|e| {
+    find(
+        &world.collision,
+        &world.graph,
+        STRONGHOLD_TREE,
+        VARROCK_TREE,
+    )
+    .map(|route| {
+        if route.dest != VARROCK_TREE {
             fail(&format!(
-                "nav_spirit: stronghold tree {STRONGHOLD_TREE:?} -> varrock tree {VARROCK_TREE:?} \
+                "nav_spirit: route ends at {:?}, not the varrock tree {:?}",
+                route.dest, VARROCK_TREE
+            ));
+        }
+        if nav::debug_enabled() {
+            println!(
+                "nav_spirit: stronghold tree -> varrock tree routed ({:.0} ticks, {} legs)",
+                route.ticks,
+                route.legs.len()
+            );
+        }
+    })
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_spirit: stronghold tree {STRONGHOLD_TREE:?} -> varrock tree {VARROCK_TREE:?} \
                  is NoPath ({e:?})"
-            ))
-        });
+        ))
+    });
 }

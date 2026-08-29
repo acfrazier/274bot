@@ -5,7 +5,7 @@
 //! ladder across N headless `Client` slots.
 //!
 //! One N per process (peak RSS is process-lifetime):
-//! `LIVE=1 RSS_N=1 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture`
+//! `LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture`
 
 mod common;
 
@@ -97,9 +97,7 @@ fn live_rss_ladder_all_null() {
         .statuses()
         .iter()
         .fold((0, 0), |(i, o), s| (i + s.bytes_in, o + s.bytes_out));
-    println!(
-        "rss_ladder n={n} rss={rss} bytes_in={bytes_in} bytes_out={bytes_out}"
-    );
+    println!("rss_ladder n={n} rss={rss} bytes_in={bytes_in} bytes_out={bytes_out}");
     println!("PASS: rss_ladder n={n} rss={rss}");
 }
 

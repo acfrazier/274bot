@@ -2,11 +2,11 @@
 
 `crates/panel` is the native **dear-app / ImGui** UI over the same kernel
 slots `host-play` runs ([login.md](login.md), [vault.md](vault.md)).
-Campaign 2 built the single-bot chrome; campaign 4 adds the **MultiBox
-wall** (sidecar rail, grid mode, profile chooser) below.
+Single-bot chrome plus the **MultiBox wall** (sidecar rail, grid mode,
+profile chooser).
 It does **not** reimplement the client UI — there is **no Present**, no client
-window feature. The client stays headless (`set_draw` only rasters into a
-pixel buffer); the panel displays those pixels and feeds input back.
+window feature. The client rasters into a frame (wgpu GPU 3D by default,
+CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.
 
 ## Run
 
@@ -24,8 +24,12 @@ slot on the login FIFO, and select it. Unlike the CLI there is **no
 the in-panel prompt (which also covers interactive use). When
 `BOT_VAULT_PASS` is set, the panel unlocks **before** the window opens so the
 headless path works unchanged. There is **no mainland checkbox** in the
-panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues the
-mainland hop after scene 2.
+panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues
+`mainland_hop` after scene 2. On a **loopback** engine the **Debug**
+section is shown: **TutSkip** (`setvar tutorial 1000`, latched on
+`tutorial_skipped`), **Lumbridge** (`~home`), **maxme** (19× `setstat`
+99), **Teles** popup, and a disabled **DebugPanel** stub (v2 later).
+Public `w1.rs2b2t.com` hides that heading.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`). Collapsible section open/closed state persists there per
@@ -53,14 +57,11 @@ thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
 generation is unchanged.
 
-The Game Image is an ImGui **wgpu texture** (GPU *composite* of the blit).
-The 274 scene behind it is still **CPU Pix3D** into `draw_area` — same
-painter as the headless client, not a GPU 3D backend, and not the client's
-`Present` (that applet is `client-play --window` on bothost). Unfocused /
-renderer-off slots skip `game_draw`. Watch-only is a **1 fps rail**;
-capture is 50 fps. CpuPix3D holds for the wall. A GPU 3D rasterizer is
-not in 274bot and not on Fairy-Ring; optional bothost **last**, if ever:
-tech demo of 50 clients at full rate on one GPU.
+The Game Image is an ImGui **wgpu texture**. The 274 scene behind it is
+the client submodule's **wgpu GPU 3D** renderer by default (CpuPix3D
+when `BOT_CPU=1`). That is not the client's `Present` applet
+(`client-play --window` on bothost). Unfocused / renderer-off slots skip
+`game_draw`. Watch-only is a **1 fps rail**; capture is 50 fps.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
@@ -98,7 +99,7 @@ Capture follows focus (never two keyboards) and implies renderer.
 Capture still keeps the focused slot on the 20 ms loop for click-through;
 it is not how tests get fps.
 
-## MultiBox wall (campaign 4)
+## MultiBox wall
 
 The title-row **MultiBox** toggle raises the wall. On the first toggle the
 wall seeds with every already-running slot and opens the **chooser** once;
@@ -173,7 +174,7 @@ cargo run --release -p panel --bin panel-play -- --live null_raster
 Headless twin:
 
 ```bash
-LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
+LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 ```
 
 ### Headless `rss_ladder`
@@ -185,9 +186,9 @@ size. FAIL if Null breaks (`paint_n>0` or `game_draw` grows in the hold)
 or `rss=0`.
 
 ```bash
-LIVE=1 RSS_N=1 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
-LIVE=1 RSS_N=2 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
-LIVE=1 RSS_N=4 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=2 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=4 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
 ```
 
 ### `--live stress50`
@@ -230,11 +231,17 @@ the `PROCESS` key.
 **Script** Browse / Start / Pause / Stop are wired ([script.md](script.md)).
 Load is enabled except while a script is active. Parameters **Edit** stays
 disabled (`not in v1`); uncollapse shows schema defaults (empty until a
-port fills them). Remaining mocks: Global / Nav / Loadouts. Text and
+port fills them). **Nav settings** is live (debug paints / labels / FindOptions
+toggles). Remaining mocks: **Global settings** and **Loadouts**. Text and
 buttons wrap or equal-width-squish — **no horizontal scroll**. `chrome.rs`
 keeps the section inventory (`wired: bool`). Title (MultiBox is a live
-toggle), dim build line, banner, profile, status key/value rows,
-rendering, and input fill out the strip.
+toggle), dim build line, banner, profile, **debug** (loopback), status
+key/value rows, rendering, and input fill out the strip.
+
+**WalkTo** (title row) fills the Game pane: north-up collision dots,
+click-to-pick uses the canvas rect (`is_mouse_hovering_rect`), footer
+**Recentre** / **Walk**, and **Teleport** (local-engine cheat to the
+highlighted tile). Status `walk` mirrors the armed dest.
 
 ## Headless proof
 

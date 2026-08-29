@@ -114,10 +114,8 @@ mod tests {
         // (false) instead of failing deserialize and resetting the whole
         // `PanelUiState` (`load_at` falls back to `PanelUiState::default()`,
         // wiping focus / collapsed / colors).
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-ui-old-nav-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-ui-old-nav-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("panel-ui.json");
         std::fs::write(

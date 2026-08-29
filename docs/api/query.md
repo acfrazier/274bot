@@ -53,7 +53,7 @@ returns `Vec<&T>`.
   `with_item_id`, `with_any_item`, `with_item_action`, `items`.
 - `SideTabQueryExt` — `with_index`, `with_root_component_id`, `available`,
   `unavailable`, `active`, `inactive`, `visible`, `not_visible`, `widgets`.
-- `ChatQueryExt` — `with_type`, `from_sender`, `with_sender`,
+- `ChatQueryExt` — `with_type_`, `sent_by`, `with_sender`,
   `without_sender`, `with_text`, `text_contains`, `text_matches`, `since`,
   `latest_sequence`.
 
