@@ -2309,6 +2309,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         }
     }
 
@@ -2335,6 +2336,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         }
     }
 
@@ -3462,6 +3464,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         };
         let route = Route {
             legs: vec![Leg::Transport { edge }],

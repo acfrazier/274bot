@@ -80,7 +80,9 @@ pub enum DoorDir {
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare (empty when the source
-/// declares nothing).
+/// declares nothing). `worn_req` is the list of obj ids that must be
+/// equipped (worn) to take the hop, read from the source's own `worn`
+/// inventory checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
@@ -95,6 +97,7 @@ pub struct TransportEdge {
     pub item_req: Vec<(i32, i32)>,
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
+    pub worn_req: Vec<i32>,
 }
 
 /// All transport edges, indexed by interact target (`graph.at[tile]` lists
@@ -151,6 +154,7 @@ pub fn derive_transports(
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     lever_edges(content_root, &ids, &positions, &mut graph);
     toll_edges(content_root, &ids, &positions, &mut graph, collision);
+    zanaris_door_edges(content_root, &ids, &positions, &mut graph);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -559,6 +563,7 @@ fn door_edges(
                     item_req: vec![],
                     quest_req: vec![],
                     varp_req: door_reqs.get(id).cloned().unwrap_or_default(),
+                    worn_req: vec![],
                 });
             }
         }
@@ -1397,6 +1402,7 @@ fn ladder_stair_edges(
                         item_req: vec![],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     });
                 }
             }
@@ -1491,6 +1497,7 @@ fn shortcut_edges(
                     item_req: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
+                    worn_req: vec![],
                 });
             }
         }
@@ -1809,6 +1816,7 @@ fn boat_edges(graph: &mut TransportGraph) {
             item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
             quest_req: vec![],
             varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
+            worn_req: vec![],
         });
     }
 }
@@ -1900,6 +1908,7 @@ fn cart_edges(graph: &mut TransportGraph) {
             item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
             quest_req: r.quest.map(|q| vec![q.to_string()]).unwrap_or_default(),
             varp_req: vec![],
+            worn_req: vec![],
         });
     }
 }
@@ -2021,6 +2030,7 @@ fn essence_mine_edges(graph: &mut TransportGraph) {
             item_req: vec![],
             quest_req: vec!["Rune Mysteries".to_string()],
             varp_req: vec![],
+            worn_req: vec![],
         });
     }
 }
@@ -2109,6 +2119,7 @@ fn elkoy_edges(graph: &mut TransportGraph) {
             item_req: vec![],
             quest_req: vec!["Tree Gnome Village".to_string()],
             varp_req: vec![],
+            worn_req: vec![],
         });
     }
 }
@@ -2203,6 +2214,7 @@ fn glider_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
         item_req: vec![],
         quest_req: vec![],
         varp_req: vec![GLIDER_QUEST_REQ],
+        worn_req: vec![],
     }
 }
 
@@ -2316,6 +2328,7 @@ fn spirit_tree_edges(
                     item_req: vec![],
                     quest_req: vec![],
                     varp_req: varp_req.clone(),
+                    worn_req: vec![],
                 });
             }
         }
@@ -2470,6 +2483,7 @@ fn lever_edges(
                     item_req: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
+                    worn_req: vec![],
                 });
             }
         }
@@ -2573,6 +2587,7 @@ fn toll_edges(
                     item_req: vec![(coins_id, AL_KHARID_TOLL_COINS)],
                     quest_req: vec![],
                     varp_req: vec![],
+                    worn_req: vec![],
                 });
             }
         }
@@ -2608,6 +2623,106 @@ fn toll_edges(
             item_req: vec![(pass_id, 1)],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
+// ---------------------------------------------------------------------------
+
+/// The Zanaris shed door ticks: OP_BASE 1 + the door block's `p_delay(1)`
+/// + the `player_teleport_normal` cast `p_delay(2)` (the whole Open
+/// channel; the shimmer `mes` and the open anim add no delay).
+const ZANARIS_DOOR_TICKS: i32 = 4;
+
+/// The Zanaris shed door edge from `scripts/quests/quest_zanaris/scripts/
+/// quest_zanaris.rs2`'s `[oploc1,zanarisdoor]` block: the door opens
+/// (`~open_and_close_door2(loc_1532, $entering, door_open)` —
+/// `open_loc_id` the `loc_1532` open leaf) and, approached from the
+/// outside, teleports through to Zanaris
+/// (`~player_teleport_normal(0_50_149_20_56)` = (3220,9592)) when the
+/// player wears the Dramen staff (`inv_total(worn, dramen_staff) > 0` →
+/// `worn_req`) and is a member (`map_members = ^true` — the members flag
+/// the bot host already tracks in WorldState, so nothing extra is stored).
+/// The Lost City quest varp (`%zanaris`) gates the content, carried as the
+/// quest name. One edge per placement (a single m50_49 placement at the
+/// Lumbridge swamp shed): `at` the door loc tile, `to` the Zanaris
+/// landing. No other Zanaris locs derive — no fairy rings, no Entrana
+/// dungeon magic door, no `zanarismagicdoor`/`zanarismarketdoor`/
+/// `zanarisladderout` hops.
+fn zanaris_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+) {
+    let Ok(script) = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("quests")
+            .join("quest_zanaris")
+            .join("scripts")
+            .join("quest_zanaris.rs2"),
+    ) else {
+        return;
+    };
+    let Some((_, name, body)) = script_blocks(&script)
+        .into_iter()
+        .find(|(op, name, _)| op.as_str() == "oploc1" && name.as_str() == "zanarisdoor")
+    else {
+        return;
+    };
+    let Some(&loc_id) = ids.get(&name) else {
+        return;
+    };
+    // The open leaf: `~open_and_close_door2(loc_1532, $entering, …)`.
+    let open_loc_id = call_args(&body, "open_and_close_door2")
+        .and_then(|args| args.first().cloned())
+        .and_then(|leaf| {
+            leaf.trim()
+                .strip_prefix("loc_")
+                .and_then(|n| n.parse::<i32>().ok())
+        });
+    // The teleport landing: `~player_teleport_normal(0_50_149_20_56)`.
+    let Some(to) = call_args(&body, "player_teleport_normal")
+        .and_then(|args| args.first().cloned())
+        .and_then(|dest| coord_literal(&dest))
+        .map(|(level, x, z)| WorldTile { x, z, level })
+    else {
+        return;
+    };
+    // The Dramen staff id (`pack/obj.pack`); a missing pack skips the
+    // door instead of faking an id.
+    let Some(&staff_id) = obj_ids_by_name(content_root).get("dramen_staff") else {
+        return;
+    };
+    let Some(placements) = positions.get(&loc_id) else {
+        return;
+    };
+    for loc in placements {
+        if loc.level != 0 || loc.shape != 0 {
+            continue;
+        }
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            },
+            to,
+            loc_id,
+            option: 1, // Open (oploc1)
+            ticks: ZANARIS_DOOR_TICKS,
+            dir: None,
+            open_loc_id,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Lost City".to_string()],
+            varp_req: vec![],
+            worn_req: vec![staff_id],
         });
     }
 }
@@ -2741,6 +2856,7 @@ fn push_spell_teleport(
         item_req,
         quest_req: vec![],
         varp_req: vec![],
+        worn_req: vec![],
     });
 }
 
@@ -2807,6 +2923,7 @@ fn jewellery_teleports(
                         item_req: vec![(obj_id, 1)],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     });
                 }
             }
@@ -3395,6 +3512,30 @@ mod tests {
             .expect("village Elkoy placement");
         assert_eq!(out_maze.loc_id, 474);
         assert_eq!(out_maze.to, WorldTile { x: 2504, z: 3192, level: 0 });
+    }
+
+    /// The real content must derive the Zanaris shed door: the
+    /// `[oploc1,zanarisdoor]` block's Open channel teleports through to
+    /// Zanaris (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is
+    /// worn, so the door edge carries the staff's obj id as `worn_req`
+    /// and the Lost City quest name. Skips with a message when the Server
+    /// content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_zanaris_shed_door_with_worn_dramen() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let e = graph
+            .edges
+            .iter()
+            .find(|e| e.kind == TransportKind::Door && !e.worn_req.is_empty())
+            .expect("shed door");
+        assert!(!e.worn_req.is_empty());
+        assert!(
+            e.to.x > 3000 && e.to.z > 9000,
+            "Zanaris landing, not Lumbridge swamp"
+        );
     }
 
     /// A throwaway content root written on demand, removed on drop.

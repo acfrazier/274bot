@@ -1030,6 +1030,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(at).or_default().push(0);
@@ -1058,6 +1059,7 @@ mod tests {
             item_req,
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         graph
     }
@@ -1285,6 +1287,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         };
         let mut g = TransportGraph::default();
         g.at.entry(ladder.at).or_default().push(0);

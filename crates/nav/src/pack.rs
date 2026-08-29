@@ -10,19 +10,22 @@
 //! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
 //! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
 //!
-//! V2 format: magic `b"274V"`, version `u8` 4, collision origin
+//! V2 format: magic `b"274V"`, version `u8` 5, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`] `flags`
 //! u32le per tile per level — four planes, level-major, each `width ×
 //! height` (row-major z then x) — then the transport edge count u32le
 //! and per edge `(kind u8, at x/z/level, to x/z/level, loc_id, option,
-//! ticks, dir u8, open_loc_id)` i32le plus the four requirement vectors
+//! ticks, dir u8, open_loc_id)` i32le plus the five requirement vectors
 //! (count u32le, then `(id, value)` i32le pairs; quest names as
-//! length-prefixed UTF-8). `dir` encodes [`DoorDir`] as `0=None,
+//! length-prefixed UTF-8; `worn_req` as plain i32le ids). `dir` encodes
+//! [`DoorDir`] as `0=None,
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode_v2`] splits them back out
 //! and never indexes them into `at`. The
 //! v1 decode stays for old `.navpack` files; `nav-pack` now writes v2.
+//! Version-4 streams (pre-`worn_req`) still decode with it empty; older
+//! v2/v3 streams are rejected.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -42,9 +45,11 @@ const VERSION: u8 = 1;
 const MAGIC: &[u8; 4] = b"274N";
 /// V2 pack format version (collision flags + transport graph; v3 adds the
 /// per-edge `dir`/`open_loc_id` fields, v4 stores the four collision
-/// planes). The v4 wire also carries the spirit-tree (7) and reserved NPC
-/// (8) transport kinds on the same kind byte — no version bump.
-const VERSION_V2: u8 = 4;
+/// planes, v5 adds the per-edge worn-item id list `worn_req`). The v4
+/// wire also carries the spirit-tree (7) and reserved NPC (8) transport
+/// kinds on the same kind byte — no version bump. [`decode_v2`] still
+/// accepts v4 streams, decoding them with an empty `worn_req`.
+const VERSION_V2: u8 = 5;
 /// V2 file magic.
 const MAGIC_V2: &[u8; 4] = b"274V";
 /// Mapsquare edge length in tiles.
@@ -184,10 +189,10 @@ pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
 /// Serialize the whole-world collision + transport graph to the v2 pack
 /// byte format. The graph's `at` index is not stored; [`decode_v2`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array. The v4 wire (version byte 4)
-/// carries the [`WorldCollision`] as four level-major planes; earlier v2/v3
-/// streams are rejected by [`decode_v2`]'s version check rather than
-/// mis-read.
+/// the ordinary edges in the same array. The v5 wire (version byte 5)
+/// carries the [`WorldCollision`] as four level-major planes plus the
+/// per-edge `worn_req` id list; version-4 streams still decode (see
+/// [`decode_v2`]), older v2/v3 streams are rejected rather than mis-read.
 pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
@@ -225,6 +230,7 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
         write_req_pairs(&mut out, &e.item_req);
         write_req_strings(&mut out, &e.quest_req);
         write_req_pairs(&mut out, &e.varp_req);
+        write_req_ids(&mut out, &e.worn_req);
     }
     out
 }
@@ -232,6 +238,8 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
 /// Deserialize a v2 pack, validating magic, version, and lengths. The
 /// `at` index is rebuilt from the decoded edges; kind-4 (teleport) edges
 /// split back into [`TransportGraph::teleports`] and are excluded from it.
+/// Version-4 streams (the pre-`worn_req` wire) decode with an empty
+/// `worn_req`; older v2/v3 streams are rejected rather than mis-read.
 pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -242,9 +250,12 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
     let mut version = [0u8; 1];
     r.read_exact(&mut version)
         .map_err(|_| PackError::Truncated)?;
-    if version[0] != VERSION_V2 {
+    if version[0] != VERSION_V2 && version[0] != 4 {
         return Err(PackError::BadVersion(version[0]));
     }
+    // v5 (and newer when the wire adds nothing after `worn_req`) carries
+    // the per-edge worn-item list; v4 streams predate it.
+    let has_worn_req = version[0] >= 5;
     let origin = WorldTile {
         x: read_i32(&mut r)?,
         z: read_i32(&mut r)?,
@@ -304,6 +315,11 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             item_req: read_req_pairs(&mut r)?,
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
+            worn_req: if has_worn_req {
+                read_req_ids(&mut r)?
+            } else {
+                Vec::new()
+            },
         };
         if edge.kind == TransportKind::Teleport {
             graph.teleports.push(edge);
@@ -425,6 +441,25 @@ fn read_req_strings(r: &mut Cursor<&[u8]>) -> Result<Vec<String>, PackError> {
         let s = String::from_utf8(buf)
             .map_err(|_| PackError::BadLength("quest req is not UTF-8".into()))?;
         out.push(s);
+    }
+    Ok(out)
+}
+
+/// A worn-item requirement vector as i32le ids, count-prefixed.
+fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
+    out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
+    for id in reqs {
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+}
+
+/// Read a count-prefixed i32le id vector (the `worn_req` list).
+fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
+    let n = read_u32(r)? as usize;
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let mut out = Vec::with_capacity(n.min(remaining / 4));
+    for _ in 0..n {
+        out.push(read_i32(r)?);
     }
     Ok(out)
 }
@@ -927,7 +962,7 @@ mod tests {
     use super::{
         decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
         parse_door_config_ids, parse_door_open_ids, parse_mapsquare_text, parse_passable_locs,
-        walkable_dots, Mapsquare, SQUARE,
+        walkable_dots, Mapsquare, SQUARE, VERSION_V2,
     };
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
@@ -990,6 +1025,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![772], // dramen_staff on the Zanaris shed door
         };
         let ladder = TransportEdge {
             kind: TransportKind::Ladder,
@@ -1012,6 +1048,7 @@ mod tests {
             item_req: vec![(995, 10)],
             quest_req: vec!["Restless Ghost".into()],
             varp_req: vec![(4, 1)],
+            worn_req: vec![],
         };
         let di = graph.edges.len();
         graph.edges.push(door);
@@ -1038,6 +1075,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![(150, 160)],
+            worn_req: vec![],
         };
         let gi = graph.edges.len();
         graph.edges.push(glider);
@@ -1064,6 +1102,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![(150, 160)],
+            worn_req: vec![],
         };
         let si = graph.edges.len();
         graph.edges.push(spirit);
@@ -1088,6 +1127,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         };
         let ni = graph.edges.len();
         graph.edges.push(npc);
@@ -1106,6 +1146,7 @@ mod tests {
             item_req: vec![(554, 1), (556, 3), (563, 1)],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         graph.at.entry(graph.edges[di].at).or_default().push(di);
         graph.at.entry(graph.edges[li].at).or_default().push(li);
@@ -1123,6 +1164,7 @@ mod tests {
         // The door edge's new fields round-trip on the wire.
         assert_eq!(g.edges[di].dir, Some(DoorDir::N));
         assert_eq!(g.edges[di].open_loc_id, Some(1531));
+        assert_eq!(g.edges[di].worn_req, vec![772]);
         // The new kinds round-trip on the v4 wire (7 spirit tree, 8 NPC).
         assert_eq!(g.edges[si].kind, TransportKind::SpiritTree);
         assert_eq!(g.edges[si].varp_req, vec![(150, 160)]);
@@ -1142,7 +1184,8 @@ mod tests {
     fn v2_decode_rejects_old_version_streams() {
         // A version-2 or version-3 stream (pre-four-plane wire) is
         // rejected, not mis-read: the re-bake immediately rewrites it at
-        // the current version.
+        // the current version. Version 4 stays decodable (see
+        // `pack_v5_roundtrips_worn_req_and_v4_still_decodes`).
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
@@ -1165,6 +1208,74 @@ mod tests {
             decode_v2(&bytes),
             Err(PackError::BadVersion(3))
         ));
+        bytes[4] = 2;
+        assert!(matches!(
+            decode_v2(&bytes),
+            Err(PackError::BadVersion(2))
+        ));
+    }
+
+    #[test]
+    fn pack_v5_roundtrips_worn_req_and_v4_still_decodes() {
+        // v5 adds a fifth per-edge req list (the worn-item ids); a v4
+        // buffer (no worn_req) still decodes with it empty.
+        let plane = vec![0, 0, 1, 0, 0, 0];
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 3,
+            height: 2,
+            flags: flags.clone(),
+            walkable: crate::collision::derive_walkable(&flags),
+        };
+        let door = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 2406,
+            option: 1,
+            ticks: 1,
+            dir: Some(DoorDir::N),
+            open_loc_id: Some(1532),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Lost City".into()],
+            varp_req: vec![],
+            worn_req: vec![772],
+        };
+        let mut graph = TransportGraph::default();
+        graph.edges.push(door.clone());
+        graph.at.entry(door.at).or_default().push(0);
+        let bytes = encode_v2(&collision, &graph);
+        // The version byte sits right after the 4-byte magic: v5 now.
+        assert_eq!(bytes[4], VERSION_V2);
+        let (_, g) = decode_v2(&bytes).unwrap();
+        assert_eq!(g.edges, graph.edges);
+        assert_eq!(g.edges[0].worn_req, vec![772]);
+        assert_eq!(g.at, graph.at);
+        // A v4-shaped buffer — version byte 4 and the worn_req count (the
+        // trailing 4 bytes) dropped — decodes with empty worn_req.
+        let mut v4 = bytes.clone();
+        v4.truncate(v4.len() - 4);
+        v4[4] = 4;
+        let (_, g4) = decode_v2(&v4).unwrap();
+        let mut expected = door.clone();
+        expected.worn_req = Vec::new();
+        assert_eq!(g4.edges, [expected]);
+        assert_eq!(g4.edges[0].worn_req, Vec::<i32>::new());
     }
 
     #[test]

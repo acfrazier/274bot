@@ -403,6 +403,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         }
     }
 

@@ -2343,6 +2343,7 @@ mod tests {
                         item_req: vec![],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     },
                 },
             ],
@@ -2544,6 +2545,7 @@ mod tests {
                         item_req: vec![],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     },
                 },
             ],
@@ -2958,6 +2960,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         let world = NavWorld {
             collision: WorldCollision {
@@ -3047,6 +3050,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         let world = NavWorld {
             collision: WorldCollision {

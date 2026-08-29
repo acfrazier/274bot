@@ -99,6 +99,7 @@ impl NavWorld {
                 item_req: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
+                worn_req: vec![],
             });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
@@ -335,6 +336,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         graph.at.entry(tile(1, 0, 0)).or_default().push(0);
 
@@ -394,6 +396,7 @@ mod tests {
             item_req: vec![(554, 1), (556, 3), (563, 1)],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
 
         let dir = std::env::temp_dir().join(format!(
