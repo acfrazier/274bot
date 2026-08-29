@@ -34,7 +34,7 @@ use nav::paint::{
     collision_at, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
     trail_tones, TrailTone,
 };
-use nav::router::{find, find_allow_teleports, Route};
+use nav::router::{find_with, FindOptions, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
@@ -1721,9 +1721,11 @@ impl Session {
     /// player's observed tile). On `Ok(route)` the focused username's walk
     /// arm stores the route so the observe tick can step it via
     /// [`Traveller::follow`]; on `NoPath` only the dest is stored and
-    /// `error` carries a short message. When `ui.nav.allow_teleports` is
-    /// set, the search also considers the any-tile teleport layer. Callers
-    /// that do not know the player's tile fall back to [`Session::arm_walk`].
+    /// `error` carries a short message. The Nav settings' [`FindOptions`]
+    /// apply: `ui.nav.allow_teleports` unions the any-tile teleport layer
+    /// in and `ui.nav.allow_wilderness` allows entering the wilderness.
+    /// Callers that do not know the player's tile fall back to
+    /// [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
@@ -1737,11 +1739,16 @@ impl Session {
             z: dest.z,
             level: dest.level,
         };
-        let routed = if self.ui.nav.allow_teleports {
-            find_allow_teleports(&world.collision, &world.graph, from_w, dest_w)
-        } else {
-            find(&world.collision, &world.graph, from_w, dest_w)
-        };
+        let routed = find_with(
+            &world.collision,
+            &world.graph,
+            from_w,
+            dest_w,
+            FindOptions {
+                allow_teleports: self.ui.nav.allow_teleports,
+                allow_wilderness: self.ui.nav.allow_wilderness,
+            },
+        );
         match routed {
             Ok(route) => {
                 self.error = None;
@@ -2982,6 +2989,102 @@ mod tests {
         assert!(
             session.error.is_none(),
             "allow_teleports routes the teleport"
+        );
+        let arm = session.travellers.lock().unwrap();
+        let route = arm
+            .get(&session.focused_name().unwrap())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .route
+            .clone();
+        assert!(route.unwrap().legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if edge.kind == TransportKind::Teleport
+        )));
+    }
+
+    #[test]
+    fn arm_walk_on_uses_find_with_options() {
+        // The tele fixture moved to wildy-north coords, with the teleport
+        // landing on a wilderness tile: the teleport edge is the only way
+        // across the wall, and its landing is inside the zone. Neither
+        // flag alone may route — `arm_walk_on` must pass both
+        // `ui.nav.allow_teleports` and `ui.nav.allow_wilderness` through
+        // to `find_with`.
+        let mut session = Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let mut flags = vec![0u32; 5 * 12];
+        for z in 0..12 {
+            flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
+        }
+        let dest_tile = Tile {
+            x: 3102,
+            z: 3525,
+            level: 0,
+        };
+        let dest = WorldTile {
+            x: 3102,
+            z: 3525,
+            level: 0,
+        };
+        let mut graph = TransportGraph::default();
+        graph.teleports.push(TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: dest,
+            loc_id: 0,
+            option: 0,
+            ticks: 3,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 3099,
+                    z: 3518,
+                    level: 0,
+                },
+                width: 5,
+                height: 12,
+                walkable: nav::collision::derive_walkable(&flags),
+                flags,
+            },
+            graph,
+        };
+        let origin = Tile {
+            x: 3100,
+            z: 3519,
+            level: 0,
+        };
+        session.ui.nav.allow_teleports = false;
+        session.ui.nav.allow_wilderness = false;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.as_ref().unwrap().contains("no path"),
+            "default find must not route into the wilderness"
+        );
+        session.ui.nav.allow_teleports = true;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.as_ref().unwrap().contains("no path"),
+            "a teleport landing inside the wilderness stays blocked without allow_wilderness"
+        );
+        session.ui.nav.allow_wilderness = true;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.is_none(),
+            "both UI flags must route the teleport into the wilderness"
         );
         let arm = session.travellers.lock().unwrap();
         let route = arm

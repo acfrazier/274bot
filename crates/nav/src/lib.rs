@@ -10,6 +10,7 @@ pub mod router;
 pub mod tile;
 pub mod transport;
 pub mod traveller;
+pub mod wilderness;
 pub mod world;
 
 /// Verbose nav/traveller dumps (`BOT_DEBUG=1`). Cached once per process.

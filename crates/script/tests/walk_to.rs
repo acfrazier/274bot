@@ -96,6 +96,7 @@ fn ctx_with<'a>(
         tick: 1,
         here,
         walk,
+        walk_with: None,
         inv: None,
         obj_names: None,
     }

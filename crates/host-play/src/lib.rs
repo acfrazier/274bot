@@ -28,7 +28,7 @@ mod rss;
 mod scatter;
 use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{find, Route};
+use nav::router::{find_with, FindOptions, Route};
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
 pub use rss::sample_process;
@@ -172,15 +172,16 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// any cheats the panel queued. `driver` is the slot body's own `Client`
 /// (the only `Driver`); `here` is the local player's world tile
 /// `(x, z, level)` when the body decoded one, else `None` (then the walk
-/// hook refuses to arm). `navs`/`world` back the `ctx.walk` closure:
-/// the closure refuses synchronously only when there is no tile, no nav
-/// world, or a route already queued; `find` runs off-pump on a short-lived
-/// worker per request, storing the route in the uid's nav bot when one
-/// exists (a walk that would panic on the first follow step must not
-/// succeed when no route can arm). Returns whether the driver's out buffer
-/// was written (the slot's own `Client` sends on its next mainloop pass). A
-/// slot whose script is Idle/Paused publishes nothing — no dispatch, no
-/// flush.
+/// hooks refuse to arm). `navs`/`world` back the `ctx.walk` and
+/// `ctx.walk_with` closures — one shared arm ([`WalkArm`]) takes the
+/// [`FindOptions`] (`walk` passes the defaults): the arm refuses
+/// synchronously only when there is no tile, no nav world, or a route
+/// already queued; `find_with` runs off-pump on a short-lived worker per
+/// request, storing the route in the uid's nav bot when one exists (a walk
+/// that would panic on the first follow step must not succeed when no
+/// route can arm). Returns whether the driver's out buffer was written
+/// (the slot's own `Client` sends on its next mainloop pass). A slot whose
+/// script is Idle/Paused publishes nothing — no dispatch, no flush.
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
 #[allow(clippy::too_many_arguments)]
@@ -205,52 +206,35 @@ fn script_observe(
             slot.on_is_up(up);
             // skip script snapshot unless SlotScript is Running.
             if tick_edge && slot.state() == script::RunState::Running {
+                // One shared arm for both hooks: `walk_with` carries the
+                // script's options through to `find_with`; `walk` is the
+                // default-options adapter (rs2b0t `walk` semantics stay
+                // default-off for teleports and wilderness). Each closure
+                // owns its own clone of the arm.
+                let arm = WalkArm {
+                    here,
+                    world: world.clone(),
+                    navs: Arc::clone(navs),
+                    name: name.to_string(),
+                };
+                let mut walk_with = {
+                    let arm = arm.clone();
+                    move |x: i32, z: i32, level: i32, o: script::FindOptions| -> bool {
+                        arm.route(
+                            x,
+                            z,
+                            level,
+                            FindOptions {
+                                allow_teleports: o.allow_teleports,
+                                allow_wilderness: o.allow_wilderness,
+                            },
+                        )
+                    }
+                };
                 let mut walk = {
-                    let world = world.clone();
-                    let navs = Arc::clone(navs);
-                    let name = name.to_string();
+                    let arm = arm.clone();
                     move |x: i32, z: i32, level: i32| -> bool {
-                        let Some((hx, hz, hl)) = here else {
-                            return false;
-                        };
-                        let Some(world) = world.as_ref() else {
-                            return false;
-                        };
-                        // One route in flight per uid: a script spamming
-                        // walk every tick must not spawn a worker each tick.
-                        if navs
-                            .lock()
-                            .unwrap()
-                            .get(&name)
-                            .is_some_and(|b| b.route.is_some())
-                        {
-                            return false;
-                        }
-                        let from = WorldTile { x: hx, z: hz, level: hl };
-                        let to = WorldTile { x, z, level };
-                        let world = Arc::clone(world);
-                        let navs = Arc::clone(&navs);
-                        let name = name.clone();
-                        // Routing is the expensive part: run `find` off-pump
-                        // on a short-lived worker. The worker is detached
-                        // and exits right after storing the route; it never
-                        // touches the scripts map (lock order stays
-                        // scripts → navs).
-                        thread::Builder::new()
-                            .name(format!("nav-find-{name}"))
-                            .spawn(move || {
-                                if let Ok(route) =
-                                    find(&world.collision, &world.graph, from, to)
-                                {
-                                    navs
-                                        .lock()
-                                        .unwrap()
-                                        .entry(name)
-                                        .or_default()
-                                        .route = Some(route);
-                                }
-                            })
-                            .is_ok()
+                        arm.route(x, z, level, FindOptions::default())
                     }
                 };
                 slot.on_game_tick(&mut ScriptCtx {
@@ -258,6 +242,7 @@ fn script_observe(
                     tick,
                     here,
                     walk: Some(&mut walk),
+                    walk_with: Some(&mut walk_with),
                     inv,
                     obj_names,
                 });
@@ -301,6 +286,68 @@ fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str)
 struct NavBot {
     traveller: Traveller,
     route: Option<Route>,
+}
+
+/// The shared script walk arm: both `ctx.walk` (default options) and
+/// `ctx.walk_with` (explicit options) route through [`WalkArm::route`].
+/// Each observe clones the arm once per hook (all fields are `Clone`), so
+/// the two `&mut` hooks never share a mutable borrow.
+#[derive(Clone)]
+struct WalkArm {
+    here: Option<(i32, i32, i32)>,
+    world: Option<Arc<NavWorld>>,
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    name: String,
+}
+
+impl WalkArm {
+    /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
+    /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
+    /// Refuses synchronously only when there is no player tile, no nav
+    /// world, or a route already queued for the uid; the worker stores the
+    /// route in the uid's nav bot when one exists. Returns whether the
+    /// worker was spawned — not whether a path exists.
+    fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
+        let Some((hx, hz, hl)) = self.here else {
+            return false;
+        };
+        let Some(world) = self.world.as_ref() else {
+            return false;
+        };
+        // One route in flight per uid: a script spamming walk every tick
+        // must not spawn a worker each tick.
+        if self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .is_some_and(|b| b.route.is_some())
+        {
+            return false;
+        }
+        let from = WorldTile { x: hx, z: hz, level: hl };
+        let to = WorldTile { x, z, level };
+        let world = Arc::clone(world);
+        let navs = Arc::clone(&self.navs);
+        let name = self.name.clone();
+        // Routing is the expensive part: run `find_with` off-pump on a
+        // short-lived worker. The worker is detached and exits right after
+        // storing the route; it never touches the scripts map (lock order
+        // stays scripts → navs).
+        thread::Builder::new()
+            .name(format!("nav-find-{name}"))
+            .spawn(move || {
+                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts) {
+                    navs
+                        .lock()
+                        .unwrap()
+                        .entry(name)
+                        .or_default()
+                        .route = Some(route);
+                }
+            })
+            .is_ok()
+    }
 }
 
 /// One pump step of a uid's nav bot: poll the armed route through
@@ -2483,6 +2530,7 @@ mod tests {
             tick: 0,
             here: None,
             walk: None,
+            walk_with: None,
             inv: Some(&inv),
             obj_names: Some(&names),
         };

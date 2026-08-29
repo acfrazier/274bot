@@ -1576,6 +1576,9 @@ fn nav_settings_modal(ui: &Ui, session: &mut Session) {
         if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
             changed = true;
         }
+        if ui.checkbox("allow wilderness", &mut nav.allow_wilderness) {
+            changed = true;
+        }
 
         ui.spacing();
         ui.text_colored(ACCENT, "Display");

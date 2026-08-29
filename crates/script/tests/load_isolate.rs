@@ -332,6 +332,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         tick: 7,
         here: None,
         walk: None,
+        walk_with: None,
         inv: None,
         obj_names: None,
     });
@@ -340,6 +341,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         tick: 8,
         here: None,
         walk: None,
+        walk_with: None,
         inv: None,
         obj_names: None,
     });

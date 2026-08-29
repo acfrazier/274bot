@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::router::Route;
+use nav::router::{FindOptions, Route};
 use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 
@@ -403,9 +403,10 @@ impl ScenarioRunner {
     }
 
     /// Send the current step's action once. `Perform` runs its closure;
-    /// `Walk` and `Follow` both arm the whole-world route (`find` over the
-    /// collision + transport graph) and drive `Traveller::follow`; `Shot`
-    /// sends nothing (the step only waits for its arm to capture it).
+    /// `Walk` and `Follow` both arm the whole-world route (`find_with`
+    /// over the collision + transport graph, default options) and drive
+    /// `Traveller::follow`; `Shot` sends nothing (the step only waits for
+    /// its arm to capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
@@ -415,7 +416,9 @@ impl ScenarioRunner {
                 return Err("driver rejected the send".into());
             }
             StepKind::Shot { .. } => return Ok(()),
-            StepKind::Walk { dest } | StepKind::Follow { dest } => self.arm_route(*dest),
+            StepKind::Walk { dest } | StepKind::Follow { dest } => {
+                self.arm_route(*dest, FindOptions::default())
+            }
         }
     }
 
@@ -425,7 +428,7 @@ impl ScenarioRunner {
     /// maps, so it matches the live world). The origin is the observed
     /// player tile — a loc-blocked tele landing is fine, the router only
     /// tests tiles stepped *onto*.
-    fn arm_route(&mut self, dest: WorldTile) -> Result<(), String> {
+    fn arm_route(&mut self, dest: WorldTile, opts: FindOptions) -> Result<(), String> {
         let Some((hx, hz, hl)) = self.snapshot.tile() else {
             return Err("no player tile to route from".into());
         };
@@ -437,7 +440,7 @@ impl ScenarioRunner {
             z: hz,
             level: hl,
         };
-        match nav::router::find(&world.collision, &world.graph, from, dest) {
+        match nav::router::find_with(&world.collision, &world.graph, from, dest, opts) {
             Ok(route) => {
                 self.route = Some(route);
                 Ok(())

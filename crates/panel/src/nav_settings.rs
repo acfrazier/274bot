@@ -5,6 +5,7 @@
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NavSettings {
     pub allow_teleports: bool,
+    pub allow_wilderness: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
     /// 11px default; the settings UI clamps writes to 8..=28.
@@ -28,6 +29,7 @@ impl Default for NavSettings {
     fn default() -> Self {
         Self {
             allow_teleports: false,
+            allow_wilderness: false,
             show_nav_path: false,
             hop_labels: true,
             hop_label_px: 11,
@@ -105,6 +107,7 @@ mod tests {
     fn defaults_match_rs2b0t_path_paint() {
         let d = NavSettings::default();
         assert!(!d.allow_teleports);
+        assert!(!d.allow_wilderness);
         assert!(!d.show_nav_path);
         assert_eq!(d.color_path, "#FF0000");
         assert_eq!(d.color_transport, "#00FF00");
@@ -124,6 +127,7 @@ mod tests {
             e.show_nav_path && e.collision_fill && e.nsew_labels && e.client_trail && e.component_flood
         );
         assert!(!e.allow_teleports);
+        assert!(!e.allow_wilderness);
         assert_eq!(e.color_path, "#FF0000");
     }
 
