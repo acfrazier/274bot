@@ -1,6 +1,7 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
 //! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, the
-//! Al Kharid toll / Shantay pass item gates, and magic teleports as
+//! Al Kharid toll / Shantay pass item gates, the Rune Mysteries
+//! essence-mine wizard entries, and magic teleports as
 //! directed transport edges built from the Server's own
 //! content — `scripts/{doors, ladders+stairs, interface_boat, skill_magic,
 //! skill_agility}` and the Ardougne wilderness_lever pair, `pack/loc.pack`,
@@ -119,8 +120,9 @@ pub struct TransportGraph {
 /// destinations that resolve emit an edge — doors emit two per placement
 /// (`dir` and its opposite, each with its own far-side walk-out); `at` the
 /// loc tile, `to` the resolved landing (no walkability filter — the router
-/// applies the collision map). Boats and gnome gliders are the explicit
-/// 2004 route tables below, and spirit trees the `area_gnome` network (see
+/// applies the collision map). Boats, gnome gliders and the Rune Mysteries
+/// essence-mine wizards are the explicit 2004 route/placement tables
+/// below, and spirit trees the `area_gnome` network (see
 /// `spirit_tree_edges`). Teleports (spells + jewellery rubs) are any-tile
 /// edges and land in [`TransportGraph::teleports`], never in the `at`
 /// index. Rows that do not resolve are counted per reason on stderr, never
@@ -141,6 +143,7 @@ pub fn derive_transports(
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
     cart_edges(&mut graph);
+    essence_mine_edges(&mut graph);
     glider_edges(&mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     lever_edges(content_root, &ids, &positions, &mut graph);
@@ -202,6 +205,9 @@ const SPIRIT_TREE_TICKS: i32 = 1;
 /// `wilderness_lever.rs2` (the pull channel's whole channel; the once-only
 /// warning dialog is execute, not search).
 const LEVER_TICKS: i32 = 2;
+/// Essence-mine wizard teleport ticks: OP_BASE 1 + the `p_delay(4)` in
+/// `teleport_to_essence_mine` (the portal channel's whole channel).
+const ESSENCE_MINE_TICKS: i32 = 5;
 
 fn in_world_box(t: &WorldTile) -> bool {
     (0..LEVELS).contains(&t.level) && (X0..X1).contains(&t.x) && (Z0..Z1).contains(&t.z)
@@ -298,7 +304,7 @@ fn report(
         .count();
     let jewel_teles = graph.teleports.len() - spell_teles;
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders, {} spirit trees, {} npc carts); {} teleports ({} spells, {} jewellery); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders, {} spirit trees, {} npc hops); {} teleports ({} spells, {} jewellery); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
@@ -1896,6 +1902,127 @@ fn cart_edges(graph: &mut TransportGraph) {
 }
 
 // ---------------------------------------------------------------------------
+// Rune Mysteries essence mine: wizard entry teleports
+// (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
+/// One essence-mine wizard journey: `at` the wizard NPC's placement tile
+/// (jm2 `==== NPC ====` placement, id resolved through `pack/npc.pack`),
+/// `to` the Rune Essence mine pad. The whole hop is the wizard's direct
+/// teleport op — `[opnpc3,<name>]` calls `@teleport_to_essence_mine`, and
+/// the `teleport_to_essence_mine` proc refuses below
+/// `%runemysteries >= ^runemysteries_complete`, so the edge carries the
+/// Rune Mysteries quest name.
+#[derive(Debug, Clone, Copy)]
+struct EssenceWizard {
+    /// npc.pack id of the wizard who opens the portal.
+    npc: i32,
+    at: WorldTile,
+    /// The wizard's direct teleport op (the `[opnpcN,…]` block that calls
+    /// `@teleport_to_essence_mine`).
+    option: i32,
+}
+
+/// The 2004 essence-mine wizards: placement tiles from the `==== NPC ====`
+/// entries in `content/maps/*.jm2`, ids from `pack/npc.pack`, and the
+/// direct-teleport op from each wizard script (`[opnpc4,aubury]` vs the
+/// others' `[opnpc3,…]`). The proc lands the player at a random
+/// `essence_mine_teleports` coord inside the enclosed mine (m45_75) and
+/// stores the wizard's `^essence_mine_to_<wizard>` return anchor for the
+/// exit portal, so the entry `to` is the mine's walkable centre pad and
+/// the executor accepts any landing in the mine.
+const ESSENCE_WIZARDS: &[EssenceWizard] = &[
+    // Aubury (aubury, npc 553) in the Varrock rune shop (m50_53 local
+    // (53,10)); `[opnpc4,aubury]`.
+    EssenceWizard {
+        npc: 553,
+        at: WorldTile {
+            x: 3253,
+            z: 3402,
+            level: 0,
+        },
+        option: 4,
+    },
+    // Sedridor (head_wizard, npc 300) in the Wizards' Tower cellar
+    // (m48_149 local (31,35) — the 6400-cellar band of (3103,3171));
+    // `[opnpc3,head_wizard]`.
+    EssenceWizard {
+        npc: 300,
+        at: WorldTile {
+            x: 3103,
+            z: 9571,
+            level: 0,
+        },
+        option: 3,
+    },
+    // Distentor (guild_wizard, npc 462) at the Magicians' Guild, Yanille
+    // (m40_48 local (34,17)); `[opnpc3,guild_wizard]`.
+    EssenceWizard {
+        npc: 462,
+        at: WorldTile {
+            x: 2594,
+            z: 3089,
+            level: 0,
+        },
+        option: 3,
+    },
+    // Cromperty (ardounge_wizard, npc 844) in East Ardougne (m41_51
+    // local (59,62)); `[opnpc3,ardounge_wizard]`.
+    EssenceWizard {
+        npc: 844,
+        at: WorldTile {
+            x: 2683,
+            z: 3326,
+            level: 0,
+        },
+        option: 3,
+    },
+    // Brimstail (gnome_brimstail, npc 171) in his cave (m37_153 local
+    // (22,18) — the 6400-cellar band of (2390,3410));
+    // `[opnpc3,gnome_brimstail]`.
+    EssenceWizard {
+        npc: 171,
+        at: WorldTile {
+            x: 2390,
+            z: 9810,
+            level: 0,
+        },
+        option: 3,
+    },
+];
+
+/// The Rune Essence mine pad (m45_75 local (32,33)): the walkable centre
+/// anchor the entry edges land on. The real landing is randomised among
+/// the `essence_mine_teleports` enum coords, so the executor accepts any
+/// landing inside the enclosed mine instead of this exact tile.
+const ESSENCE_MINE_PAD: WorldTile = WorldTile {
+    x: 2912,
+    z: 4833,
+    level: 0,
+};
+
+/// Essence-mine entry edges from the fixed wizard table: one direct
+/// teleport hop per wizard, landing on the mine pad.
+fn essence_mine_edges(graph: &mut TransportGraph) {
+    for w in ESSENCE_WIZARDS {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Npc,
+            at: w.at,
+            to: ESSENCE_MINE_PAD,
+            loc_id: w.npc,
+            option: w.option,
+            ticks: ESSENCE_MINE_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Rune Mysteries".to_string()],
+            varp_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Gnome gliders: the 2004 Gnome Air network (fixed platform table).
 // ---------------------------------------------------------------------------
 
@@ -3064,6 +3191,72 @@ mod tests {
         Some((graph, wc))
     }
 
+    /// The real content must derive the Rune Mysteries essence-mine
+    /// entries — one `TransportKind::Npc` edge per wizard who knows the
+    /// teleport (Aubury, Sedridor, Distentor, Cromperty, Brimstail), each
+    /// carrying the Rune Mysteries quest name and landing on the mine pad
+    /// (m45_75, the walkable centre anchor of the enclosed mine; the real
+    /// landing is randomised among the `essence_mine_teleports` enum
+    /// coords, so the executor accepts any landing in the mine). The gate
+    /// is the script's `%runemysteries >= ^runemysteries_complete` — the
+    /// `teleport_to_essence_mine` proc refuses below it. Skips with a
+    /// message when the Server content tree or the client cache is absent;
+    /// never fakes coordinates.
+    #[test]
+    fn derive_transports_emits_essence_mine_entries() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let ess: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| {
+                e.kind == TransportKind::Npc
+                    && e.quest_req.iter().any(|q| {
+                        q.to_ascii_lowercase().contains("rune mysteries") || q == "runemysteries"
+                    })
+            })
+            .cloned()
+            .collect();
+        assert!(
+            ess.len() >= 4,
+            "Aubury+Sedridor+…, got {}",
+            ess.len()
+        );
+        // Each edge is the wizard NPC placement -> the enclosed mine pad.
+        for e in &ess {
+            assert_eq!(
+                e.to,
+                WorldTile {
+                    x: 2912,
+                    z: 4833,
+                    level: 0
+                },
+                "every wizard lands on the mine pad: {e:?}"
+            );
+            assert!(
+                e.quest_req
+                    .iter()
+                    .any(|q| q.to_ascii_lowercase().contains("rune mysteries")),
+                "Rune Mysteries on the entry: {e:?}"
+            );
+        }
+        // The five known wizards pin their mined placement tiles.
+        let wizards = [
+            (553, WorldTile { x: 3253, z: 3402, level: 0 }), // aubury (Varrock)
+            (300, WorldTile { x: 3103, z: 9571, level: 0 }), // head_wizard (tower cellar)
+            (462, WorldTile { x: 2594, z: 3089, level: 0 }), // guild_wizard (Yanille)
+            (844, WorldTile { x: 2683, z: 3326, level: 0 }), // ardounge_wizard (Cromperty)
+            (171, WorldTile { x: 2390, z: 9810, level: 0 }), // gnome_brimstail
+        ];
+        for (npc, at) in wizards {
+            assert!(
+                ess.iter().any(|e| e.loc_id == npc && e.at == at),
+                "no entry edge from {at:?} (npc {npc})"
+            );
+        }
+    }
+
     /// A throwaway content root written on demand, removed on drop.
     struct Fixture {
         root: PathBuf,
@@ -3973,7 +4166,8 @@ p_arrivedelay;
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let graph = derive_transports(fx.path(), &defs, &wc);
         // The unknown ladder name resolves nothing; the only edges are the
-        // explicit 2004 boat route, cart, and gnome-glider tables.
+        // explicit 2004 boat route, cart, essence-wizard, and gnome-glider
+        // tables.
         let explicit = graph
             .edges
             .iter()
@@ -3992,13 +4186,14 @@ p_arrivedelay;
                 .count(),
             8
         );
+        // 2 carts + the 5 essence-mine wizard entries.
         assert_eq!(
             graph
                 .edges
                 .iter()
                 .filter(|e| e.kind == TransportKind::Npc)
                 .count(),
-            2
+            7
         );
         assert_eq!(
             graph
