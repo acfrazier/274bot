@@ -954,6 +954,16 @@ mod tests {
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
         assert_eq!(c.login_uid, uid);
         assert!(slot.renderer.is_some());
+        // Under `force_cpu_backend` both preferences land on
+        // `BackendKind::Cpu`, so the kind alone cannot prove a rebuild:
+        // the head must carry the *new* `prefer_cpu` request, and the flip
+        // tick must have repainted with it.
+        assert_eq!(
+            slot.renderer_prefer_cpu,
+            Some(true),
+            "the flip must rebuild the head for the new prefer_cpu"
+        );
+        assert_eq!(slot.paint_n, 2, "the flip tick must repaint the new head");
         assert_eq!(
             slot.renderer.as_ref().unwrap().backend_kind(),
             client::render::backend::BackendKind::Cpu
