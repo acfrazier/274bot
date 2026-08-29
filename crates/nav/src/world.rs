@@ -123,6 +123,74 @@ mod tests {
         WorldTile { x, z, level }
     }
 
+    /// The default nav pack path (`$NAV_PACK` or `~/.274bot/274bot.navpack`),
+    /// matching `nav-pack`'s write target and the live harnesses' read rule.
+    fn default_pack_path() -> std::path::PathBuf {
+        match std::env::var("NAV_PACK") {
+            Ok(p) => std::path::PathBuf::from(p),
+            Err(_) => match std::env::var("HOME") {
+                Ok(home) => std::path::PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
+                Err(_) => std::path::PathBuf::from(".274bot/274bot.navpack"),
+            },
+        }
+    }
+
+    #[test]
+    fn seers_street_walks_to_rock_crabs_on_foot() {
+        // Task 4: Seers street (2725,3485) -> rock crabs (2710,3720) is on
+        // foot after the L0 stamper rebake. Requires the pack: run
+        // `cargo run -p nav --bin nav-pack` first.
+        let world = NavWorld::load_pack(&default_pack_path()).expect("rebake first");
+        let from = WorldTile {
+            x: 2725,
+            z: 3485,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 2710,
+            z: 3720,
+            level: 0,
+        };
+        let r = find(&world.collision, &world.graph, from, to)
+            .expect("on-foot path after stamper rebake");
+        assert_eq!(r.dest, to);
+        assert!(r.legs.iter().any(|l| matches!(l, Leg::Walk { .. })));
+        let walked: Vec<WorldTile> = r
+            .legs
+            .iter()
+            .flat_map(|l| match l {
+                Leg::Walk { tiles } => tiles.clone(),
+                Leg::Transport { .. } => vec![],
+            })
+            .collect();
+        // No fake hop: every walked tile stays on plane 0 and the walk
+        // must span the whole 235-tile north gap (a single invented cliff
+        // transport would walk ~nothing).
+        assert!(
+            walked.iter().all(|t| t.level == 0),
+            "every Walk tile stays on plane 0"
+        );
+        let north = to.z - from.z;
+        assert!(north > 0);
+        assert!(
+            walked.len() >= north as usize,
+            "walk spans the north gap ({} walked tiles for {north} north)",
+            walked.len()
+        );
+        // Transports, if any, are road doors the player would Open — never
+        // an invented cliff/teleport hop.
+        for l in &r.legs {
+            if let Leg::Transport { edge } = l {
+                assert_eq!(
+                    edge.kind,
+                    TransportKind::Door,
+                    "transport at {:?} is a road door, not a cliff hop",
+                    edge.at
+                );
+            }
+        }
+    }
+
     #[test]
     fn open_grid_derives_an_all_walkable_world() {
         let w = NavWorld::from_grid(&StepGrid::fixture_open_3x3());
