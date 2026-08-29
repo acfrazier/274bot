@@ -429,7 +429,7 @@ fn step_nav_bot<D: Driver>(
 /// against — the same convention as `api::snapshot`'s inv view.
 /// Short-lived: rebuilt per observe while the slot script is Running;
 /// `None` when no TYPE_INV iface is loaded yet.
-fn inventory_from_ifaces(ifaces: &[Option<IfType>]) -> Option<Vec<(i32, i32)>> {
+fn inventory_from_ifaces(ifaces: &[Option<Box<IfType>>]) -> Option<Vec<(i32, i32)>> {
     let inv = ifaces
         .iter()
         .flatten()
@@ -506,7 +506,7 @@ fn on_login_success(arm: &SlotArm) {
 /// (keep running until `!ingame`); only then may `stop` end the body. The
 /// press is the only place a clean logout can go out while the slot is
 /// inside [`Host::run_client`].
-fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> bool {
+fn tick_flags(client: &mut Client, ifaces: &[Option<Box<IfType>>], arm: &SlotArm) -> bool {
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
         api::interact::logout(client, ifaces);
         arm.want_logout.store(false, Ordering::Relaxed);
@@ -539,7 +539,7 @@ pub struct Play {
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
-    ifaces: Vec<Option<IfType>>,
+    ifaces: Vec<Option<Box<IfType>>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
@@ -1005,7 +1005,7 @@ fn spawn_slot_thread(
     park: Option<SlotPark>,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
-    ifaces_template: Vec<Option<IfType>>,
+    ifaces_template: Vec<Option<Box<IfType>>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
@@ -1298,7 +1298,7 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// Unpack the config/interface jags once and share the tables across slots
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
-fn load_template(cache_dir: &str) -> (Cache, Vec<Option<IfType>>) {
+fn load_template(cache_dir: &str) -> (Cache, Vec<Option<Box<IfType>>>) {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
         Ok(bytes) => {
             std::panic::catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
@@ -1860,7 +1860,7 @@ mod tests {
             client_code: api::interact::CC_LOGOUT,
             ..Default::default()
         };
-        ifaces[7] = Some(com);
+        ifaces[7] = Some(Box::new(com));
         let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), ifaces.clone());
         client.ingame = true;
         let arm = SlotArm::new(0, false);
@@ -2536,12 +2536,12 @@ mod tests {
         // resolve `has_item` against the 0-based ObjNames table, so the
         // view must carry `id - 1` and drop the empties.
         let mut ifaces = vec![None; 3];
-        ifaces[1] = Some(IfType {
+        ifaces[1] = Some(Box::new(IfType {
             r#type: ComponentType::TYPE_INV,
             link_obj_type: Some(vec![2, 0, 1]),
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
-        });
+        }));
         let inv = inventory_from_ifaces(&ifaces).expect("TYPE_INV iface present");
         assert_eq!(
             inv,

@@ -41,7 +41,9 @@ part of this release.
   rail, Game 50 fps). `--live stress50_full` is the same wall with every
   Game + sidecar renderer at 50 fps. Neither fails on RSS size; PASS
   prints `rss=… up=50/50`.
-- Skip-paint RAM: empty scene tiles / player / NPC slots are boxed
+- Skip-paint RAM: overlay ground verts are inline (no 9 Vecs per tile).
+  Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
+  client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
   inject, slots do not prefetch the whole 15 MB map archive; map-build
   byte buffers are dropped once the sim world is stamped.

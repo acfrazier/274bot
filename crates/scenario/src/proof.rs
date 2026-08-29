@@ -123,19 +123,19 @@ mod tests {
                 inv.link_obj_type = Some(vec![527, 996]);
                 inv.link_obj_number = Some(vec![1, 100]);
             }
-            None => c.ifaces.push(Some(IfType {
+            None => c.ifaces.push(Some(Box::new(IfType {
                 r#type: ComponentType::TYPE_INV,
                 link_obj_type: Some(vec![527, 996]),
                 link_obj_number: Some(vec![1, 100]),
                 ..Default::default()
-            })),
+            }))),
         }
         c.chat_text[0] = "Welcome to RuneScape".into();
         let mut npc = ClientNpc::default();
         npc.r#type = Some(708);
         npc.entity.x = 100;
         npc.entity.z = 200;
-        c.npc[3] = Some(npc);
+        c.npc[3] = Some(Box::new(npc));
         c.npc_ids[0] = 3;
         c.npc_count = 1;
         for prot in [

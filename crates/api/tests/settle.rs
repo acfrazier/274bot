@@ -78,7 +78,7 @@ fn set_iface(c: &mut Client, id: usize, com: IfType) {
     if c.ifaces.len() <= id {
         c.ifaces.resize(id + 1, None);
     }
-    c.ifaces[id] = Some(com);
+    c.ifaces[id] = Some(Box::new(com));
 }
 
 /// The inventory tab (side tab 3) with `(stored, count)` slots; stored ids
@@ -142,7 +142,7 @@ fn plant_npc(c: &mut Client, health: i32) {
     npc.entity.health = health;
     npc.entity.total_health = health;
     npc.r#type = Some(9);
-    c.npc[7] = Some(npc);
+    c.npc[7] = Some(Box::new(npc));
     c.npc_ids[0] = 7;
     c.npc_count = 1;
 }

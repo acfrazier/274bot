@@ -138,12 +138,12 @@ mod tests {
                 inv.link_obj_type = Some(vec![527]);
                 inv.link_obj_number = Some(vec![1]);
             }
-            None => c.ifaces.push(Some(IfType {
+            None => c.ifaces.push(Some(Box::new(IfType {
                 r#type: ComponentType::TYPE_INV,
                 link_obj_type: Some(vec![527]),
                 link_obj_number: Some(vec![1]),
                 ..Default::default()
-            })),
+            }))),
         }
         c.bump_gens(ServerProt::PLAYER_INFO);
         c.bump_gens(ServerProt::UPDATE_INV_FULL);

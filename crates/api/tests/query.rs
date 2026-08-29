@@ -1116,7 +1116,7 @@ fn set_iface(c: &mut Client, id: usize, com: IfType) {
     if c.ifaces.len() <= id {
         c.ifaces.resize(id + 1, None);
     }
-    c.ifaces[id] = Some(com);
+    c.ifaces[id] = Some(Box::new(com));
 }
 
 #[test]

@@ -278,7 +278,7 @@ pub fn login<D: Driver + ?Sized>(
 pub const CC_LOGOUT: i32 = 205;
 
 /// The slot index of the first iface whose client code is [`CC_LOGOUT`].
-pub fn logout_iface_id(ifaces: &[Option<client::config::IfType>]) -> Option<i32> {
+pub fn logout_iface_id(ifaces: &[Option<Box<client::config::IfType>>]) -> Option<i32> {
     ifaces.iter().enumerate().find_map(|(i, c)| {
         c.as_ref()
             .filter(|c| c.client_code == CC_LOGOUT)
@@ -290,7 +290,7 @@ pub fn logout_iface_id(ifaces: &[Option<client::config::IfType>]) -> Option<i32>
 /// doAction path. Missing iface → `false`, no panic.
 pub fn logout<D: Driver + ?Sized>(
     driver: &mut D,
-    ifaces: &[Option<client::config::IfType>],
+    ifaces: &[Option<Box<client::config::IfType>>],
 ) -> bool {
     let Some(id) = logout_iface_id(ifaces) else {
         return false;

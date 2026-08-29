@@ -577,18 +577,18 @@ fn legal_row(prot: ClientProt) -> LegalSend {
 fn logout_presses_cc_logout_iface_and_missing_is_false() {
     use api::interact::{logout, CC_LOGOUT};
     use client::config::IfType;
-    let empty: Vec<Option<IfType>> = Vec::new();
+    let empty: Vec<Option<Box<IfType>>> = Vec::new();
     let mut rec = Recorder::default();
     assert!(!logout(&mut rec, &empty));
     assert!(rec.actions.is_empty());
     assert!(rec.menus.is_empty());
 
-    let mut ifaces: Vec<Option<IfType>> = vec![None; 10];
+    let mut ifaces: Vec<Option<Box<IfType>>> = vec![None; 10];
     let com = IfType {
         client_code: CC_LOGOUT,
         ..Default::default()
     };
-    ifaces[7] = Some(com);
+    ifaces[7] = Some(Box::new(com));
     let mut rec = Recorder::default();
     assert!(logout(&mut rec, &ifaces));
     assert_eq!(rec.actions, vec![0]);
@@ -896,7 +896,7 @@ fn set_iface(c: &mut Client, id: usize, com: IfType) {
     if c.ifaces.len() <= id {
         c.ifaces.resize(id + 1, None);
     }
-    c.ifaces[id] = Some(com);
+    c.ifaces[id] = Some(Box::new(com));
 }
 
 /// Plant an npc type whose menu ops the snapshot's npc view carries.
@@ -920,7 +920,7 @@ fn plant_npc(c: &mut Client, slot: usize, id: i32) {
     npc.entity.x = 50 * 128;
     npc.entity.z = 50 * 128;
     npc.r#type = Some(id as usize);
-    c.npc[slot] = Some(npc);
+    c.npc[slot] = Some(Box::new(npc));
     c.npc_ids = vec![slot as i32];
     c.npc_count = 1;
 }
@@ -1909,7 +1909,7 @@ fn still_present_matches_identity_per_kind() {
     other.name = Some("Other".into());
     other.combat_level = 3;
     other.skill_level = 5;
-    s.client.players[3] = Some(other);
+    s.client.players[3] = Some(Box::new(other));
     s.client.player_ids = vec![3];
     s.client.player_count = 1;
     // a loc (wall) and a ground-item stack
@@ -1989,7 +1989,7 @@ fn still_present_matches_identity_per_kind() {
     s2.client.self_slot = 3;
     let mut other = ClientPlayer::at(15, 16);
     other.name = Some("Other".into());
-    s2.client.players[3] = Some(other);
+    s2.client.players[3] = Some(Box::new(other));
     s2.client.player_ids = vec![3];
     s2.client.player_count = 1;
     let snap2 = rebuild(&mut s2.client);

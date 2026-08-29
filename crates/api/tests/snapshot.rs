@@ -35,7 +35,7 @@ fn client_with_npc() -> Client {
     npc.entity.health = 7;
     npc.entity.total_health = 7;
     npc.r#type = Some(9);
-    c.npc[7] = Some(npc);
+    c.npc[7] = Some(Box::new(npc));
     c.npc_ids[0] = 7;
     c.npc_count = 1;
     c
@@ -167,7 +167,7 @@ fn stat_rebuild_copies_runenergy() {
 #[test]
 fn queries_borrow_by_index_and_tile() {
     let mut c = client_with_npc();
-    c.npc[3] = Some(ClientNpc::default());
+    c.npc[3] = Some(Box::new(ClientNpc::default()));
     c.npc_ids[1] = 3;
     c.npc_count = 2;
     let mut snap = GameSnapshot::new();
@@ -222,12 +222,12 @@ fn inv_rebuild_reads_the_type_inv_iface() {
             inv.link_obj_type = Some(vec![526, 995]); // stored = obj id + 1
             inv.link_obj_number = Some(vec![1, 100]);
         }
-        None => c.ifaces.push(Some(IfType {
+        None => c.ifaces.push(Some(Box::new(IfType {
             r#type: ComponentType::TYPE_INV,
             link_obj_type: Some(vec![526, 995]),
             link_obj_number: Some(vec![1, 100]),
             ..Default::default()
-        })),
+        }))),
     }
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
@@ -602,7 +602,7 @@ fn npc_face_target_encodes_npc_and_player_kinds() {
     other.entity.z = 100;
     other.r#type = Some(9);
     other.entity.face_entity = 7 + 32768;
-    c.npc[3] = Some(other);
+    c.npc[3] = Some(Box::new(other));
     c.npc_ids[1] = 3;
     c.npc_count = 2;
     c.local_player = Some(ClientPlayer::at(20, 12));
@@ -660,7 +660,7 @@ fn player_rebuild_reads_local_and_remote_players() {
     other.combat_level = 3;
     other.skill_level = 5;
     other.entity.face_entity = 7 + 32768; // facing the local player
-    c.players[3] = Some(other);
+    c.players[3] = Some(Box::new(other));
     c.player_ids[0] = 3;
     c.player_count = 1;
 
@@ -1151,7 +1151,7 @@ fn set_iface(c: &mut Client, id: usize, com: IfType) {
     if c.ifaces.len() <= id {
         c.ifaces.resize(id + 1, None);
     }
-    c.ifaces[id] = Some(com);
+    c.ifaces[id] = Some(Box::new(com));
 }
 
 /// Plant an obj def at `id` so def-name resolution reads it.
@@ -1780,10 +1780,10 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert!(!snap.trade().offer_open);
 
     // A partner label with no prefix keeps the raw name.
-    c.ifaces[3417] = Some(IfType {
+    c.ifaces[3417] = Some(Box::new(IfType {
         text: "  Smithy Bob".into(),
-        ..c.ifaces[3417].as_ref().unwrap().clone()
-    });
+        ..c.ifaces[3417].as_deref().unwrap().clone()
+    }));
     c.bump_gens(ServerProt::IF_SETTEXT);
     assert!(snap.rebuild_family(&mut c, Family::Trade));
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));
@@ -2585,7 +2585,7 @@ fn read_context_round_trips_every_family() {
     other.name = Some("Other".into());
     other.combat_level = 3;
     other.skill_level = 5;
-    c.players[3] = Some(other);
+    c.players[3] = Some(Box::new(other));
     c.player_ids[0] = 3;
     c.player_count = 1;
     // varps

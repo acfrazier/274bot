@@ -70,7 +70,7 @@ pub fn prepare_client(
     config: ClientConfig,
     uid: i32,
     cache: Arc<Cache>,
-    ifaces: Vec<Option<IfType>>,
+    ifaces: Vec<Option<Box<IfType>>>,
 ) -> Client {
     let mut client = Client::from_shared(config, cache, ifaces);
     client.login_uid = uid;
@@ -86,7 +86,7 @@ impl Host {
         config: ClientConfig,
         profile: Profile,
         cache: Arc<Cache>,
-        ifaces_template: Vec<Option<IfType>>,
+        ifaces_template: Vec<Option<Box<IfType>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let mut client = prepare_client(config, profile.uid, cache, ifaces_template);
@@ -720,14 +720,14 @@ mod tests {
         use client::config::if_type::ComponentType;
 
         let mut ifaces = vec![None; 1000];
-        ifaces[500] = Some(IfType {
+        ifaces[500] = Some(Box::new(IfType {
             id: 500,
             r#type: ComponentType::TYPE_INV,
             link_obj_type: Some(vec![4, 5, 0]),
             link_obj_number: Some(vec![1, 100, 0]),
             obj_ops: true,
             ..IfType::default()
-        });
+        }));
         let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), ifaces);
         client.side_icon[3] = 500;
         let mut slot = SlotLoop::new();
@@ -779,14 +779,14 @@ mod tests {
     #[test]
     fn already_running_echo_does_not_send() {
         let mut ifaces = vec![None; 154];
-        ifaces[152] = Some(IfType {
+        ifaces[152] = Some(Box::new(IfType {
             hide: false,
             ..IfType::default()
-        });
-        ifaces[153] = Some(IfType {
+        }));
+        ifaces[153] = Some(Box::new(IfType {
             hide: true,
             ..IfType::default()
-        });
+        }));
         let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), ifaces);
         client.runenergy = 20;
         client.gens.stat = 1;
@@ -799,8 +799,8 @@ mod tests {
     #[test]
     fn unpacked_ifaces_both_visible_still_sends() {
         let mut ifaces = vec![None; 154];
-        ifaces[152] = Some(IfType::default());
-        ifaces[153] = Some(IfType::default());
+        ifaces[152] = Some(Box::new(IfType::default()));
+        ifaces[153] = Some(Box::new(IfType::default()));
         let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), ifaces);
         client.runenergy = 20;
         client.gens.stat = 1;
