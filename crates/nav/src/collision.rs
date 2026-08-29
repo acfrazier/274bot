@@ -205,8 +205,11 @@ impl WorldCollision {
 /// plane (the client's `finishBuild`); LOC placements stamp flags by
 /// shape/angle exactly like the client's `CollisionMap` (`add_wall` for
 /// walls, `add_loc` footprints for scenery — roofs included — and
-/// `block_ground` for active ground decor), each on its own level plane.
-/// Openable doors (`door_ids`) are stamped blocked-when-closed.
+/// `block_ground` for active ground decor), each on its own
+/// LINK_BELOW-corrected plane (the client's `loadLocations` drops a loc
+/// whose `mapl[1]` tile carries LINK_BELOW below the grid and shifts a
+/// level-1 loc down to level 0 — the Lumbridge castle battlements stamp
+/// this way). Openable doors (`door_ids`) are stamped blocked-when-closed.
 /// All squares merge into one 4-plane bounding grid (levels 0..=3).
 ///
 /// Any `.jm2` that cannot be read, has no MAP section, or has an
@@ -419,6 +422,17 @@ fn stamp_square(
     }
 
     for loc in &locs {
+        // Client `loadLocations` (ClientBuild.ts): a loc whose tile has
+        // LINK_BELOW on the level-1 map flags is placed on `level - 1`;
+        // `level - 1 < 0` drops the loc entirely (no collision plane).
+        let true_level = if link_below.contains(&(loc.x, loc.z)) {
+            loc.level - 1
+        } else {
+            loc.level
+        };
+        if true_level < 0 {
+            continue;
+        }
         // Local (origin-relative) tile coords; wall stamps may reach into
         // neighbouring squares of the same bbox.
         let (lx, lz) = (
@@ -431,7 +445,8 @@ fn stamp_square(
         let blockrange = def.map_or(true, |d| d.block_range);
         // Openable wall doors are stamped blocked-when-closed, even though
         // the door-edge extraction is the transport task's. Everything
-        // stamps its own level plane (`loc.level`), never a level-0 squash.
+        // stamps its own (LINK_BELOW-corrected) level plane, never a
+        // level-0 squash.
         if door_ids.contains(&loc.loc_id) && loc.shape == LocShape::WALL_STRAIGHT {
             add_wall(
                 flags,
@@ -442,7 +457,7 @@ fn stamp_square(
                 loc.shape,
                 loc.angle,
                 blockrange,
-                loc.level,
+                true_level,
             );
         } else {
             // The client `addLoc` collision table (build.rs): ground decor
@@ -459,7 +474,7 @@ fn stamp_square(
                             height,
                             lx,
                             lz,
-                            loc.level,
+                            true_level,
                             CollisionFlag::WR_GRND as u32,
                         );
                     }
@@ -480,7 +495,7 @@ fn stamp_square(
                             l,
                             loc.angle,
                             blockrange,
-                            loc.level,
+                            true_level,
                         );
                     }
                 }
@@ -498,7 +513,7 @@ fn stamp_square(
                             loc.shape,
                             loc.angle,
                             blockrange,
-                            loc.level,
+                            true_level,
                         );
                     }
                 }
@@ -904,6 +919,65 @@ mod tests {
         let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
         // A level-0 BLOCK with LINK_BELOW on the level-1 map resolves to
         // true_level -1: the client never stamps a negative plane.
+        assert_eq!(wc.flag(3200, 3200, 0), 0);
+    }
+
+    #[test]
+    fn link_below_shifts_a_level1_loc_down_to_level0() {
+        let fix = FixtureDir::new("link-below-loc-shift");
+        let text = "\
+==== MAP ====
+1 0 0: h1 o5 f2 u48
+1 0 1: h1 o5 f2 u48
+==== LOC ====
+1 0 1: 994 0 3
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[LocType {
+            id: 994,
+            width: 1,
+            length: 1,
+            blockwalk: true,
+            ..LocType::default()
+        }]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // Client `loadLocations`: LINK_BELOW on mapl[1] places a level-1
+        // loc on the level-0 collision (the Lumbridge castle battlements
+        // and the drawbridge walls stamp exactly this way). A south wall
+        // stamps W_S on its tile and W_N one tile north.
+        assert_ne!(
+            wc.flag(3200, 3201, 0) & CollisionFlag::W_S as u32,
+            0
+        );
+        assert_ne!(
+            wc.flag(3200, 3200, 0) & CollisionFlag::W_N as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3200, 1), 0);
+    }
+
+    #[test]
+    fn link_below_drops_a_level0_loc_off_the_grid() {
+        let fix = FixtureDir::new("link-below-loc-drop");
+        let text = "\
+==== MAP ====
+0 0 0: h1 f1 u48
+1 0 0: h1 f2 u48
+==== LOC ====
+0 0 0: 1013 10 0
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[LocType {
+            id: 1013,
+            width: 1,
+            length: 1,
+            blockwalk: true,
+            ..LocType::default()
+        }]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // A level-0 loc on a LINK_BELOW tile resolves to current_level -1:
+        // the client never stamps a negative plane, so the loc vanishes
+        // (the L0 BLOCK f1 also resolves below the grid).
         assert_eq!(wc.flag(3200, 3200, 0), 0);
     }
 
