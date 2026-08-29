@@ -566,18 +566,20 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             let draw = ui.get_window_draw_list();
             let origin = ui.cursor_screen_pos();
             let size = ui.content_region_avail();
-            // Hit target matches the painted rect (content origin, not the
-            // child window's padded outer pos). Clicks on this item, not
-            // `is_item_hovered` after EndChild — that missed the button.
+            // Fill the child so its content size matches the view. Hit
+            // testing is the painted rect (`is_mouse_hovering_rect`): the
+            // InvisibleButton's `is_item_hovered` is false when imgui's
+            // hovered window is the parent Game/WalkTo pane, not this
+            // child — that is why click-to-pick never fired.
             ui.invisible_button("##walkto-hit", size);
-            hovered = ui.is_item_hovered();
+            let (min, max) = (origin, [origin[0] + size[0], origin[1] + size[1]]);
+            hovered = ui.is_mouse_hovering_rect(min, max);
             if hovered
-                && ui.is_item_clicked()
+                && ui.is_mouse_clicked(MouseButton::Left)
                 && !ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0)
             {
                 pick = Some(ui.io().mouse_pos());
             }
-            let (min, max) = (origin, [origin[0] + size[0], origin[1] + size[1]]);
             rect = Some((min, max));
             let (cx, cz) = (
                 CENTRE_X.load(Ordering::Relaxed) as f32,
@@ -1000,6 +1002,50 @@ mod tests {
         picker_map_window(ui, &mut s, &open_world(3, 3), &mut open);
         ctx.render();
         assert!(open, "the window must stay open until Walk is confirmed");
+    }
+
+    fn picker_click_frame(
+        ctx: &mut dear_imgui_rs::Context,
+        session: &mut Session,
+        world: &NavWorld,
+        mouse: [f32; 2],
+        left_down: bool,
+    ) {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        ctx.io_mut().add_mouse_pos_event(mouse);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        {
+            let ui = ctx.frame();
+            let mut open = true;
+            picker_map_window(ui, session, world, &mut open);
+        }
+        ctx.render();
+    }
+
+    #[test]
+    fn picker_click_selects_a_walkable_tile() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::note_closed();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let world = open_world(3, 3);
+        let mut s = Session::new();
+        s.walkto_open = true;
+        // FirstUseEver WalkTo is 720×560 at the default imgui origin; the
+        // canvas sits under the toolbar. A click in the window interior
+        // must set picker_sel — not pan, not miss the hit target.
+        let mouse = [360.0, 320.0];
+        picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
+        picker_click_frame(&mut ctx, &mut s, &world, mouse, true);
+        picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
+        assert!(
+            s.picker_sel.is_some(),
+            "click on the WalkTo canvas must snap a tile, got {:?}",
+            s.picker_sel
+        );
     }
 
     /// A `w`×`h` level-0 bake at (0,0) with the given per-tile flags OR'd in.
