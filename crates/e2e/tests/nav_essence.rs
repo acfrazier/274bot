@@ -38,7 +38,7 @@ const MINE_PAD: WorldTile = WorldTile {
 };
 
 #[test]
-#[ignore = "requires a local 274 engine, a rebaked v4 nav pack, and LIVE=1"]
+#[ignore = "requires a local 274 engine, a rebaked v5 nav pack, and LIVE=1"]
 fn nav_essence() {
     if !live() {
         return;

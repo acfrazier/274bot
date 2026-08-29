@@ -10,7 +10,7 @@
 //! the pack. Either failure exits 1 (rs2b0t style). Route detail prints
 //! only under `BOT_DEBUG=1`.
 //!
-//! Run with the engine up and the rebaked v4 pack at the standard path:
+//! Run with the engine up and the rebaked v5 pack at the standard path:
 //! `LIVE=1 cargo test -p e2e --test nav_elkoy -- --ignored --test-threads=1 --nocapture`
 
 mod common;
@@ -46,7 +46,7 @@ const ELKOY_MAZE_SIDE: WorldTile = WorldTile {
 };
 
 #[test]
-#[ignore = "requires a local 274 engine, a rebaked v4 nav pack, and LIVE=1"]
+#[ignore = "requires a local 274 engine, a rebaked v5 nav pack, and LIVE=1"]
 fn nav_elkoy() {
     if !live() {
         return;
