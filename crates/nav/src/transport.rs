@@ -1,9 +1,9 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
-//! shortcuts, boats, gnome gliders, spirit trees, and magic teleports as
-//! directed transport edges built from the Server's own content —
-//! `scripts/{doors, ladders+stairs, interface_boat, skill_magic,
-//! skill_agility}`, `pack/loc.pack`, and the `maps/*.jm2` loc placements —
-//! instead of a hand-authored table.
+//! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, and
+//! magic teleports as directed transport edges built from the Server's own
+//! content — `scripts/{doors, ladders+stairs, interface_boat, skill_magic,
+//! skill_agility}` and the Ardougne wilderness_lever pair, `pack/loc.pack`,
+//! and the `maps/*.jm2` loc placements — instead of a hand-authored table.
 //!
 //! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
@@ -142,6 +142,7 @@ pub fn derive_transports(
     cart_edges(&mut graph);
     glider_edges(&mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    lever_edges(content_root, &ids, &positions, &mut graph);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -195,6 +196,10 @@ const JEWELLERY_TELEPORT_TICKS: i32 = 2;
 /// Spirit-tree teleport ticks: OP_BASE 1 + the `spirit_tree_tele` label's
 /// `p_delay(0)` (the tree's whole channel).
 const SPIRIT_TREE_TICKS: i32 = 1;
+/// Lever teleport ticks: OP_BASE 1 + the `p_delay(1)` + `p_delay(0)` in
+/// `wilderness_lever.rs2` (the pull channel's whole channel; the once-only
+/// warning dialog is execute, not search).
+const LEVER_TICKS: i32 = 2;
 
 fn in_world_box(t: &WorldTile) -> bool {
     (0..LEVELS).contains(&t.level) && (X0..X1).contains(&t.x) && (Z0..Z1).contains(&t.z)
@@ -2153,6 +2158,104 @@ fn spirit_tree_gate(body: &str) -> Option<(String, String)> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// Wilderness levers: the Ardougne↔wilderness teleport pair.
+// ---------------------------------------------------------------------------
+
+/// Wilderness lever edges from `scripts/areas/area_ardougne_east/scripts/
+/// wilderness_lever.rs2` plus the folder's `wilderness_lever.constant`:
+/// each `[oploc1,<loc>]` block's `~player_teleport_normal(^…_coord)` call
+/// resolves through the constant's 5-part coord literal. One directed edge
+/// per lever loc placement: `at` the lever loc tile (jm2 placement, like
+/// every loc-backed edge), `to` the constant's tile, `Pull` op 1, two
+/// ticks. Kind stays [`TransportKind::Door`] (the pack wire already
+/// carries it; no version bump). The Ardougne→wilderness landing is inside
+/// the wilderness zone, so the router only relaxes that edge under
+/// `FindOptions::allow_wilderness`; the wilderness→Ardougne landing is not
+/// and is always legal. The `%warning_wilderness_teleport_lever` confirm
+/// dialog is execute, not search, and carries no edge.
+fn lever_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+) {
+    let dir = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_ardougne_east");
+    let Ok(script) = fs::read_to_string(dir.join("scripts").join("wilderness_lever.rs2")) else {
+        return;
+    };
+    let Ok(constants) =
+        fs::read_to_string(dir.join("configs").join("wilderness_lever.constant"))
+    else {
+        return;
+    };
+    // `^name` → the teleport tile (`0_mx_mz_lx_lz`, decoded like every
+    // other coord literal).
+    let mut lever_dests: HashMap<String, WorldTile> = HashMap::new();
+    for raw in constants.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix('^') else {
+            continue;
+        };
+        let Some((name, coord)) = rest.split_once('=') else {
+            continue;
+        };
+        if let Some((level, x, z)) = coord_literal(coord) {
+            let name = name.trim();
+            if !name.is_empty() {
+                lever_dests.insert(name.to_string(), WorldTile { x, z, level });
+            }
+        }
+    }
+
+    for (op, name, body) in script_blocks(&script) {
+        if op != "oploc1" {
+            continue;
+        }
+        let Some(&loc_id) = ids.get(&name) else {
+            continue;
+        };
+        let Some(placements) = positions.get(&loc_id) else {
+            continue;
+        };
+        let mut tos = Vec::new();
+        for args in call_args_all(&body, "~player_teleport_normal") {
+            let Some(dest) = args.first().and_then(|a| a.trim().strip_prefix('^')) else {
+                continue;
+            };
+            if let Some(to) = lever_dests.get(dest) {
+                tos.push(*to);
+            }
+        }
+        for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
+            for to in &tos {
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to: *to,
+                    loc_id,
+                    option: 1, // Pull (oploc1)
+                    ticks: LEVER_TICKS,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                });
+            }
+        }
+    }
+}
+
 /// Teleport edges (the any-tile layer): the seven spell teleports from
 /// `skill_magic/configs/magic_spells.dbrow` plus the jewellery rub
 /// teleports from `general/scripts/enchanted_jewellry/*.rs2`, all into
@@ -3103,6 +3206,143 @@ mod tests {
             carts.iter().any(|e| !e.quest_req.is_empty()),
             "Shilo complete on Brim→Shilo"
         );
+    }
+
+    /// The real content must derive the two wilderness lever hops
+    /// (`wilderness_lever.rs2` locs 1814/1815): the Ardougne lever's `to`
+    /// is inside the wilderness zone and the wilderness lever's `to` is
+    /// not. Skips with a message when the Server content tree or the
+    /// client cache is absent; never fakes coordinates.
+    #[test]
+    fn derive_transports_emits_wildy_ardougne_levers() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let levers: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 1814 || e.loc_id == 1815)
+            .cloned()
+            .collect();
+        assert!(
+            levers.len() >= 2,
+            "both lever directions derive, got {}",
+            levers.len()
+        );
+        assert!(
+            levers
+                .iter()
+                .any(|e| crate::wilderness::in_wilderness(e.to)),
+            "the Ardougne→wildy lever must land inside the wilderness"
+        );
+        assert!(
+            levers
+                .iter()
+                .any(|e| !crate::wilderness::in_wilderness(e.to)),
+            "the wildy→Ardougne lever must land outside the wilderness"
+        );
+    }
+
+    /// The Ardougne→wilderness lever is an enter-wildy hop: default
+    /// [`crate::router::find`] must never relax it (its `to` is inside the
+    /// wilderness zone), and [`crate::router::find_with`] with
+    /// `allow_wilderness` must route through it. Fixture: an isolated
+    /// content root whose only lever is that one (same placement and
+    /// `p_teleport` destination constant the real content declares).
+    #[test]
+    fn default_find_skips_the_ardougne_to_wildy_lever() {
+        use crate::router::{find, find_with, FindOptions, RouteError};
+        use crate::wilderness::in_wilderness;
+
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1814=wildinlever\n");
+        fx.write(
+            "scripts/areas/area_ardougne_east/configs/wilderness_lever.constant",
+            "^ardougne_to_wilderness_coord = 0_49_61_18_20\n",
+        );
+        fx.write(
+            "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
+            "\
+[oploc1,wildinlever]
+p_arrivedelay;
+if (%warning_wilderness_teleport_lever = ^false) {
+    ~mesbox(\"Warning! Pulling the lever will teleport you deep into the wilderness.\");
+    def_int $choice = ~p_choice3_header(\"Yes I'm brave.\", 1, \"Eep! The wilderness... No thank you.\", 2, \"Yes please, don't show this message again.\", 3, \"Are you sure you wish to pull it?\");
+    if ($choice = 2) {
+        return;
+    }
+    if ($choice = 3) {
+        %warning_wilderness_teleport_lever = ^true;
+    }
+}
+anim(human_leverdown, 0);
+sound_synth(lever, 1, 0);
+loc_change(hauntedleverdown, 7);
+if_close;
+p_delay(1);
+mes(\"You pull the lever...\");
+p_delay(0);
+~player_teleport_normal(^ardougne_to_wilderness_coord);
+mes(\"...And teleport into the wilderness.\");
+",
+        );
+        // m40_51 local (1,47) = absolute (2561,3311,0); the constant
+        // `0_49_61_18_20` = (3154,3924,0), inside the surface zone.
+        fx.write(
+            "maps/m40_51.jm2",
+            "\
+==== MAP ====
+0 1 47: h1 o6 u50
+==== LOC ====
+0 1 47: 1814 4
+",
+        );
+        let defs = loc_defs(&[(1814, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        let at = WorldTile {
+            x: 2561,
+            z: 3311,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3154,
+            z: 3924,
+            level: 0,
+        };
+        let levers: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1814)
+            .cloned()
+            .collect();
+        assert_eq!(levers.len(), 1, "one placement, one Pull edge");
+        assert_eq!(levers[0].at, at);
+        assert_eq!(levers[0].to, to);
+        assert_eq!(levers[0].option, 1); // Pull (oploc1)
+        assert_eq!(levers[0].dir, None);
+        assert!(in_wilderness(to));
+
+        // Default find: the enter-wildy hop is never relaxed, and no walk
+        // path can reach the landing — NoPath.
+        assert!(matches!(
+            find(&wc, &graph, at, to),
+            Err(RouteError::NoPath)
+        ));
+        // find_with(allow_wilderness): the same hop routes through.
+        let route = find_with(
+            &wc,
+            &graph,
+            at,
+            to,
+            FindOptions {
+                allow_teleports: false,
+                allow_wilderness: true,
+            },
+        )
+        .expect("allow_wilderness routes the Ardougne→wildy lever");
+        assert_eq!(route.dest, to);
     }
 
     /// The process nav pack path (`$NAV_PACK` or `~/.274bot/274bot.navpack`,
