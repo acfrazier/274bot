@@ -236,7 +236,9 @@ impl Host {
     /// click, run one `mainloop` pass, render the frame (the slot's
     /// optional `Renderer` — `client.draw` gates the paint; a drawing
     /// slot stores the rendered `FrameOutput` into the optional mailbox,
-    /// mirroring `Client::run`), then drain gens. The panel takes the
+    /// mirroring `Client::run`), then drain gens. A GPU↔CPU or lowmem
+    /// flip drops the `Renderer` here and reattaches it on the next paint
+    /// — the `Client` and its socket never restart. The panel takes the
     /// mailbox: `FrameBuf::take` hands the whole `FrameOutput` off (the
     /// `Texture` binds / reads back at the panel, the `PixMap` packs via
     /// [`FrameBuf::snapshot`]). `run_sends` is
@@ -270,6 +272,40 @@ impl Host {
         // Capture still holds the 20 ms loop (`frame_cadence`) so input
         // drains; it does not raise paint.
         let full_rate = input.map(|i| i.full_rate()).unwrap_or(false);
+        // The backend the slot's head must be built for: the per-slot
+        // CpuPix3D latch, else the process `BOT_CPU` env (both false is
+        // GPU-first, the host default).
+        let want_cpu = input
+            .map(|i| i.prefer_cpu())
+            .unwrap_or_else(|| std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false));
+        // A drawing slot lazily builds its `Renderer` on the first paint
+        // tick; a headless (draw off) slot constructs none and never
+        // enters a draw.
+        // Draw off detaches: an unheaded slot must not keep headed data
+        // (GPU textures, chrome) around. Cadence skips (1 fps watch, draw
+        // still on) keep the renderer. A head that no longer matches the
+        // live slot also detaches: GPU↔CPU and lowmem flips drop the head
+        // and reattach the right backend on the **same** `Client` — never
+        // a restart. The head's build *request* is compared, not the
+        // fallback kind: `GpuBackend::try_new` failure lands a
+        // GPU-requested head on `BackendKind::Cpu`, and dropping a head
+        // whose request is unchanged would rebuild it every paint. A
+        // backend/mem flip repaints this tick (like the draw toggle's
+        // rising edge) so the new head attaches immediately, not on the
+        // next 1 fps watch bound.
+        let backend_flip = slot.renderer.is_some()
+            && client.draw
+            && (slot.renderer_prefer_cpu != Some(want_cpu)
+                || slot.renderer_lowmem != Some(client.config.lowmem));
+        if !client.draw || backend_flip {
+            slot.renderer = None;
+            slot.renderer_prefer_cpu = None;
+            slot.renderer_lowmem = None;
+            if backend_flip {
+                slot.raster_last = None;
+                slot.raster_was_on = false;
+            }
+        }
         let paint = raster_this_tick(
             client.draw,
             zap || full_rate,
@@ -277,19 +313,14 @@ impl Host {
             &mut slot.raster_last,
             &mut slot.raster_was_on,
         );
-        // A drawing slot lazily builds its `Renderer` on the first paint
-        // tick; a headless (draw off) slot constructs none and never
-        // enters a draw.
-        // Draw off detaches: an unheaded slot must not keep headed data
-        // (GPU textures, chrome) around. Cadence skips (1 fps watch, draw
-        // still on) keep the renderer — this runs before the paint branch
-        // and only on a real draw toggle.
-        if !client.draw {
-            slot.renderer = None;
-        }
         let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
+            // The head's build request is latched beside it so the detach
+            // check above can see a GPU↔CPU or mem flip without deriving
+            // it again.
+            slot.renderer_prefer_cpu = Some(want_cpu);
+            slot.renderer_lowmem = Some(client.config.lowmem);
             let renderer = slot.renderer.get_or_insert_with(|| {
                 // GPU-first (the host default): the slot's renderer
                 // prefers the wgpu backend, with `CpuBackend` as the
@@ -298,10 +329,7 @@ impl Host {
                 // preference is process-wide and idempotent, so the
                 // first paint of any slot opts the process in;
                 // `BOT_CPU=1` forces the CPU fidelity path.
-                let cpu = input
-                    .map(|i| i.prefer_cpu())
-                    .unwrap_or_else(|| std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false));
-                Renderer::new_prefer(client.config.lowmem, !cpu)
+                Renderer::new_prefer(client.config.lowmem, !want_cpu)
             });
             // `mainredraw` is the fidelity seam: it runs the `check_minimap`
             // render half (loading splash + minimap image) and
@@ -489,6 +517,15 @@ struct SlotLoop {
     run_on: bool,
     run_sends: u32,
     renderer: Option<Renderer>,
+    /// The `prefer_cpu` request the attached head was built with, so a
+    /// GPU↔CPU flip on a live slot is a drop+reattach, not a restart.
+    /// `None` while no head is attached (kept in sync with
+    /// [`SlotLoop::renderer`]).
+    renderer_prefer_cpu: Option<bool>,
+    /// The `config.lowmem` the attached head was built with, so a mem
+    /// flip on a live slot (the `Client` flips `set_lowmem`, never a
+    /// restart) drops the head until the next paint rebuilds it.
+    renderer_lowmem: Option<bool>,
     /// `Instant` of the last paint of any kind; the watch-only 1 fps
     /// decision repaints when this is ≥1 s old.
     raster_last: Option<Instant>,
@@ -511,6 +548,8 @@ impl SlotLoop {
             run_on: false,
             run_sends: 0,
             renderer: None,
+            renderer_prefer_cpu: None,
+            renderer_lowmem: None,
             raster_last: None,
             raster_was_on: false,
             loop_ns: 0,
@@ -898,6 +937,49 @@ mod tests {
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         assert!(slot.renderer.is_some(), "attach at any time");
+    }
+
+    #[test]
+    fn prefer_cpu_rebuilds_renderer_not_client() {
+        force_cpu_backend();
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let inp = SlotInput::new();
+        inp.set_prefer_cpu(false);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        let uid = c.login_uid;
+        inp.set_prefer_cpu(true);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        assert_eq!(c.login_uid, uid);
+        assert!(slot.renderer.is_some());
+        assert_eq!(
+            slot.renderer.as_ref().unwrap().backend_kind(),
+            client::render::backend::BackendKind::Cpu
+        );
+    }
+
+    #[test]
+    fn lowmem_flip_rebuilds_renderer_not_client() {
+        force_cpu_backend();
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        assert!(c.config.lowmem, "cfg() spawns lowmem");
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert_eq!(slot.renderer_lowmem, Some(true));
+        let uid = c.login_uid;
+        c.set_lowmem(false);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert_eq!(c.login_uid, uid);
+        assert!(slot.renderer.is_some());
+        assert_eq!(
+            slot.renderer_lowmem,
+            Some(false),
+            "a mem flip must drop the head so the next paint reads the new config.lowmem"
+        );
     }
 
     #[test]

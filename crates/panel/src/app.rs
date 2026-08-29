@@ -2081,7 +2081,7 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     if ui.button_with_size(mem, [w, 0.0]) {
         ui.open_popup(MEM_POPUP);
     }
-    ui.set_item_tooltip("Game pane highmem / lowmem — switching mem logs that client out");
+    ui.set_item_tooltip("Game pane highmem / lowmem — switching mem reattaches the renderer on the live client");
     mem_popup(ui, session);
 }
 
@@ -2092,7 +2092,7 @@ fn config_heading(ui: &Ui, label: &str) {
 /// rendering: none/GPU/CPU picker; `set_draw` is applied by the slot
 /// threads from the shared focus on every frame.
 fn slot_render_section(ui: &Ui, session: &mut Session) {
-    ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem logs the Game client out.");
+    ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem drops + reattaches the renderer — the client stays logged in.");
     raster_picker(ui, session);
     let mut focused_50 = session.focus.lock().unwrap().focused_50;
     if ui.checkbox("focused 50 fps", &mut focused_50) {
@@ -2700,36 +2700,6 @@ fn settings_window(ui: &Ui, session: &mut Session) {
     session.global_settings_open = open;
 }
 
-fn restart_confirm_window(ui: &Ui, session: &mut Session) {
-    if !session.restart_confirm_open {
-        return;
-    }
-    let mut open = true;
-    ui.window("Restart slot?")
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
-        .build(|| {
-            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
-            ui.text_wrapped(session.restart_confirm_body());
-            ui.spacing();
-            let avail = ui.content_region_avail()[0];
-            let (w, stack) = button_row_layout(avail, 2);
-            if ui.button_with_size("OK", [w, 0.0]) {
-                session.confirm_restart();
-            }
-            if !stack {
-                ui.same_line();
-            }
-            if ui.button_with_size("Cancel", [w, 0.0]) {
-                session.cancel_restart();
-            }
-        });
-    if !open {
-        session.cancel_restart();
-    }
-}
-
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
 /// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
 fn chooser_row(ui: &Ui, name: &str, selected: bool) -> (bool, bool, bool) {
@@ -2953,7 +2923,6 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session);
-    restart_confirm_window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
 }
 

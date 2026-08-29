@@ -99,7 +99,8 @@ pub struct SlotInput {
     /// here so the panel can reach it).
     full_rate: AtomicBool,
     /// Per-slot CpuPix3D (else GPU). Applied when the slot lazily builds
-    /// its `Renderer` — flipping it on a live slot requires a restart.
+    /// its `Renderer` — flipping it on a live slot drops + reattaches the
+    /// head (the `Client` and its socket stay up).
     prefer_cpu: AtomicBool,
     rx: Mutex<Option<Receiver<InputEv>>>,
 }

@@ -581,16 +581,12 @@ pub struct Session {
     pub global_settings_open: bool,
     /// Usernames we already sent `getvar tutorial` for this session.
     tutorial_getvar_sent: HashSet<String>,
-    /// Confirm before GPU↔CPU or lowmem/highmem restarts a spawned slot.
-    pub restart_confirm_open: bool,
     /// Forgotten-password confirm: delete the vault file (locked only).
     pub vault_reset_open: bool,
     pub vault_reset_understood: bool,
     /// Chooser ✕ waiting on the same confirm popup; `None` not pending.
     pub pending_profile_delete: Option<String>,
     pub delete_understood: bool,
-    pending_raster: Option<vault::RasterMode>,
-    pending_lowmem: Option<bool>,
     /// Live-harness overlay: force the paint-layer toggles on for this
     /// session without writing prefs (`NavSettings::effective`).
     pub nav_live_force_layers: bool,
@@ -732,13 +728,10 @@ impl Session {
             nav_settings_open: false,
             global_settings_open: false,
             tutorial_getvar_sent: HashSet::new(),
-            restart_confirm_open: false,
             vault_reset_open: false,
             vault_reset_understood: false,
             pending_profile_delete: None,
             delete_understood: false,
-            pending_raster: None,
-            pending_lowmem: None,
             nav_live_force_layers: false,
             nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
             route_gen: 0,
@@ -919,8 +912,9 @@ impl Session {
             f.only_render_selected = !full_rate;
         }
         // Spawn every member onto the wall without applying focus on each
-        // load (that would demote/promote raster/mem and `restart_slot`
-        // joins `maininit` on the UI thread — the window never presents).
+        // load (that would demote/promote raster/mem and join `maininit`
+        // on the UI thread — the window never presents). Raster/mem flips
+        // are drop+reattach now, but focus apply still joins handshakes.
         // s00 is focused last so it is FIFO head.
         for (name, _) in &names {
             let _ = self.wall.load(name);
@@ -1850,8 +1844,10 @@ impl Session {
         }
     }
 
-    /// Apply Game-pane raster. Off is `set_draw` on the focused client only.
-    /// Gpu↔Cpu restarts **that** client. Rail members are not touched.
+    /// Apply Game-pane raster. Off is `set_draw` on the focused client
+    /// only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
+    /// the `Renderer` and reattaches the right backend on the **same**
+    /// client — never a restart. Rail members are not touched.
     pub fn set_focused_raster(&mut self, raster: vault::RasterMode) -> bool {
         self.ui.raster = raster;
         self.persist_game_render_prefs();
@@ -1863,50 +1859,10 @@ impl Session {
             return true;
         }
         let want_cpu = raster == vault::RasterMode::Cpu;
-        let was_cpu = self
-            .slots
-            .get(&name)
-            .map(|s| s.input.prefer_cpu())
-            .unwrap_or(want_cpu);
         if let Some(slot) = self.slots.get(&name) {
             slot.input.set_prefer_cpu(want_cpu);
         }
-        if was_cpu != want_cpu {
-            self.restart_slot(&name);
-        }
         true
-    }
-
-    fn restart_slot(&mut self, name: &str) {
-        let keep_focus = self.focused_name().as_deref() == Some(name);
-        if let Some(play) = &self.play {
-            let ingame = play
-                .statuses()
-                .iter()
-                .any(|s| s.username == name && s.ingame);
-            if ingame {
-                if let Some(arm) = play.arm(name) {
-                    arm.want_logout.store(true, Ordering::Relaxed);
-                }
-                play.wake(name);
-                play.wait_until_not_ingame(name, Duration::from_secs(10));
-            }
-        }
-        if let Some(play) = &mut self.play {
-            play.stop_slot(name);
-        }
-        self.slots.remove(name);
-        self.audio.release(name);
-        self.ensure_slot(name, self.arm_for_profile(name));
-        if keep_focus {
-            self.apply_focus(name);
-        }
-        self.sync_wall_focus();
-        push_log(
-            &mut self.log_by.lock().unwrap(),
-            name,
-            format!("{name}: slot restarted (raster/mem)"),
-        );
     }
 
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
@@ -1916,10 +1872,11 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return true;
         };
+        // The audio gate is the slot threads' lowmem channel: each frame
+        // the slot applies `c.set_lowmem(!audio.music_on(name))`, and the
+        // host drops the `Renderer` when `config.lowmem` changes so the
+        // next paint attaches with the new mode. No restart.
         self.audio.set_music(&name, !lowmem);
-        if self.slots.contains_key(&name) {
-            self.restart_slot(&name);
-        }
         true
     }
 
@@ -1932,96 +1889,35 @@ impl Session {
         }
     }
 
-    /// GPU↔CPU (not Off) on a spawned slot needs the logout/restart confirm.
+    /// GPU↔CPU (not Off) on a spawned slot is a drop+reattach — the
+    /// `Client` and its socket stay up, so no logout/restart confirm is
+    /// ever required (Off is `set_draw`; mem flips are live too).
     pub fn raster_switch_needs_confirm(
-        next: vault::RasterMode,
-        prefer_cpu: bool,
-        slot_spawned: bool,
+        _next: vault::RasterMode,
+        _prefer_cpu: bool,
+        _slot_spawned: bool,
     ) -> bool {
-        if !slot_spawned {
-            return false;
-        }
-        match next {
-            vault::RasterMode::Off => false,
-            vault::RasterMode::Gpu => prefer_cpu,
-            vault::RasterMode::Cpu => !prefer_cpu,
-        }
+        false
     }
 
     /// Pick a raster. Off is `set_draw`. GPU↔CPU on the Game-pane client
-    /// opens the restart confirm. Rail members stay GPU/lowmem.
+    /// drops + reattaches the renderer (never a logout). Rail members stay
+    /// GPU/lowmem.
     pub fn request_focused_raster(&mut self, raster: vault::RasterMode) {
         if self.focused_raster() == raster {
-            return;
-        }
-        let spawned = self
-            .focused_name()
-            .is_some_and(|n| self.slots.contains_key(&n));
-        let prefer_cpu = self
-            .focused_name()
-            .and_then(|n| self.slots.get(&n))
-            .is_some_and(|s| s.input.prefer_cpu());
-        if Self::raster_switch_needs_confirm(raster, prefer_cpu, spawned) {
-            self.pending_raster = Some(raster);
-            self.pending_lowmem = None;
-            self.restart_confirm_open = true;
             return;
         }
         let _ = self.set_focused_raster(raster);
     }
 
-    /// Pick highmem/lowmem for the Game pane. A spawned Game client opens
-    /// the restart confirm. Rail members stay lowmem.
+    /// Pick highmem/lowmem for the Game pane. The live `Client` flips mem
+    /// (the host drops + reattaches the renderer); never a restart. Rail
+    /// members stay lowmem.
     pub fn request_focused_lowmem(&mut self, lowmem: bool) {
         if self.focused_lowmem() == lowmem {
             return;
         }
-        let spawned = self
-            .focused_name()
-            .is_some_and(|n| self.slots.contains_key(&n));
-        if spawned {
-            self.pending_raster = None;
-            self.pending_lowmem = Some(lowmem);
-            self.restart_confirm_open = true;
-            return;
-        }
         let _ = self.set_focused_lowmem(lowmem);
-    }
-
-    pub fn restart_confirm_body(&self) -> String {
-        if let Some(r) = self.pending_raster {
-            let name = match r {
-                vault::RasterMode::Off => "none",
-                vault::RasterMode::Gpu => "GPU",
-                vault::RasterMode::Cpu => "CPU",
-            };
-            return format!(
-                "Switch the Game client to {name}? This logs that client out and restarts it. Rail members stay GPU / lowmem at 1 fps."
-            );
-        }
-        if let Some(low) = self.pending_lowmem {
-            let name = Self::mem_status_text(low);
-            return format!(
-                "Switch the Game client to {name}? This logs that client out and restarts it. Rail members stay lowmem."
-            );
-        }
-        "This logs the Game client out and restarts it.".into()
-    }
-
-    pub fn confirm_restart(&mut self) {
-        self.restart_confirm_open = false;
-        if let Some(r) = self.pending_raster.take() {
-            let _ = self.set_focused_raster(r);
-        }
-        if let Some(low) = self.pending_lowmem.take() {
-            let _ = self.set_focused_lowmem(low);
-        }
-    }
-
-    pub fn cancel_restart(&mut self) {
-        self.restart_confirm_open = false;
-        self.pending_raster = None;
-        self.pending_lowmem = None;
     }
 
     /// Load a wall member: ensure its slot and select it. Auto-login
@@ -5108,10 +5004,13 @@ mod tests {
     #[test]
     fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
         use vault::RasterMode::*;
+        // GPU↔CPU on a spawned slot is a drop+reattach (the Client and its
+        // socket stay), so no logout/restart confirm is ever required —
+        // not even Off↔Gpu/Cpu or a spawned slot.
         assert!(!Session::raster_switch_needs_confirm(Off, false, true));
         assert!(!Session::raster_switch_needs_confirm(Gpu, false, true));
-        assert!(Session::raster_switch_needs_confirm(Cpu, false, true));
-        assert!(Session::raster_switch_needs_confirm(Gpu, true, true));
+        assert!(!Session::raster_switch_needs_confirm(Cpu, false, true));
+        assert!(!Session::raster_switch_needs_confirm(Gpu, true, true));
         assert!(!Session::raster_switch_needs_confirm(Cpu, true, true));
         assert!(!Session::raster_switch_needs_confirm(Cpu, false, false));
         assert_eq!(Session::mem_status_text(true), "lowmem");
@@ -5119,8 +5018,8 @@ mod tests {
     }
 
     #[test]
-    fn request_raster_cpu_on_spawned_slot_opens_confirm() {
-        let path = tmp_vault("raster-confirm.vault");
+    fn request_raster_cpu_on_spawned_slot_applies_immediately() {
+        let path = tmp_vault("raster-no-confirm.vault");
         let mut s = Session::new();
         s.vault = Some(Vault::create(&path, "bot").unwrap());
         s.vault
@@ -5130,14 +5029,87 @@ mod tests {
             .unwrap();
         s.select("alice");
         s.request_focused_raster(vault::RasterMode::Cpu);
-        assert!(s.restart_confirm_open);
-        assert_eq!(s.focused_raster(), vault::RasterMode::Gpu);
-        s.confirm_restart();
-        assert!(!s.restart_confirm_open);
-        assert_eq!(s.focused_raster(), vault::RasterMode::Cpu);
+        assert_eq!(
+            s.focused_raster(),
+            vault::RasterMode::Cpu,
+            "GPU→CPU applies at once: drop+reattach, never a logout"
+        );
         s.request_focused_raster(vault::RasterMode::Off);
-        assert!(!s.restart_confirm_open);
         assert_eq!(s.focused_raster(), vault::RasterMode::Off);
+        assert!(s.slots.contains_key("alice"), "Off must keep the slot");
+    }
+
+    #[test]
+    fn request_focused_lowmem_applies_without_confirm_and_keeps_slot() {
+        let path = tmp_vault("mem-no-confirm.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        s.request_focused_lowmem(false);
+        assert!(!s.focused_lowmem(), "mem flip applies at once");
+        assert!(s.slots.contains_key("alice"), "mem flip must keep the slot");
+    }
+
+    #[test]
+    fn raster_switch_keeps_slot_frame_buf_and_input() {
+        let path = tmp_vault("raster-no-restart.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        let slot = s.slots.get("alice").expect("select spawns the slot");
+        let buf = Arc::clone(&slot.pixels);
+        let inp = Arc::clone(&slot.input);
+        assert!(s.set_focused_raster(vault::RasterMode::Cpu));
+        assert!(inp.prefer_cpu(), "GPU→CPU sets the slot's prefer_cpu latch");
+        assert!(s.set_focused_raster(vault::RasterMode::Gpu));
+        assert!(!inp.prefer_cpu(), "CPU→GPU clears the prefer_cpu latch");
+        let slot = s.slots.get("alice").expect("GPU↔CPU must keep the slot");
+        assert!(
+            Arc::ptr_eq(&slot.pixels, &buf),
+            "a GPU↔CPU flip must keep the same FrameBuf (no restart)"
+        );
+        assert!(
+            Arc::ptr_eq(&slot.input, &inp),
+            "a GPU↔CPU flip must keep the same SlotInput (no restart)"
+        );
+    }
+
+    #[test]
+    fn lowmem_flip_keeps_slot_frame_buf_and_input() {
+        let path = tmp_vault("mem-no-restart.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        let slot = s.slots.get("alice").expect("select spawns the slot");
+        let buf = Arc::clone(&slot.pixels);
+        let inp = Arc::clone(&slot.input);
+        assert!(s.set_focused_lowmem(false));
+        assert!(s.set_focused_lowmem(true));
+        let slot = s.slots.get("alice").expect("a mem flip must keep the slot");
+        assert!(
+            Arc::ptr_eq(&slot.pixels, &buf),
+            "a mem flip must keep the same FrameBuf (no restart)"
+        );
+        assert!(
+            Arc::ptr_eq(&slot.input, &inp),
+            "a mem flip must keep the same SlotInput (no restart)"
+        );
+        assert!(s.focused_lowmem());
     }
 
     #[test]

@@ -35,7 +35,8 @@ const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 /// auto-login defaults off so v1 blobs (which only carried `lowmem`)
 /// deserialize with the box unchecked.
 /// How this slot paints the 274 scene. Off is `set_draw` only. Gpu↔Cpu
-/// (or lowmem) on a live slot logs it out and respawns.
+/// (or lowmem) on a live slot drops + reattaches the `Renderer`; the
+/// `Client` and its socket stay up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RasterMode {
