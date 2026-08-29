@@ -11,16 +11,52 @@ part of this release.
 ### Host and panel
 
 - One OS thread per client, 20 ms loop, login FIFO, AES-256-GCM vault.
-- Native `panel-play` (dear-app / ImGui): credentials 2×2, status, log,
-  MultiBox rail/grid/chooser, click-through capture.
+  Login throttle matches Lost City production (`30` / 60 s per address,
+  `4` then remaining of 15 s per device). No 2.5 s inter-grant gap — the
+  engine has none; local `production: false` does not apply the counters.
+- Native `panel-play` (dear-app / ImGui): accent profile name + **Profiles**
+  picker (user/pass only while editing), **Log in** / **Logout** above
+  WalkTo (shown disabled if the vault is locked or no profile is
+  focused), status, log, MultiBox rail/grid, click-through capture.
+  Host-window resize is **grid-only**; panel/rail stay 330/264 wide and
+  grow vertically. Non-grid Game blit is native 765×503, flush to the
+  panel. Opening MultiBox **grows** the OS window if needed so the blit
+  is not covered; it does not shrink a larger window. No dock splitters
+  / tab-bar corner menu. DPI is OS/winit. Wrong passphrase never
+  replaces the vault; **Reset vault** is explicit.
+- Under WalkTo, above profile/debug: **General config** (**slot**
+  capture + auto-login, **render** none/GPU/CPU + focused 50 fps,
+  **global** sidecar 50), **Nav config** (its own window), **Loadouts**
+  mocked until the TS shim. Add-bot is a window, not a blocking modal.
+  Per-slot **none / GPU / CPU**; click lowmem/highmem for a sticky mem
+  popup (like Teles). Status shows mem. **focused 50 fps** is Game-pane
+  only (not capture, does
+  not follow that client onto the rail). **sidecar 50 fps** is all
+  rail/grid members. Switching GPU↔CPU or mem confirms, then logs that
+  slot out and restarts it.
+- Rail fold (`▂` / `▅`) next to ✕; focused blit is folded by default.
+- Build line is `alpha 1 ·` git short SHA (`-dirty` if the tree was dirty).
+  Hover is crate version (`0.1.0`) then full commit + build time.
+- Headed `--live stress50` is the **release** 50-head RAM watch (cap-only
+  rail, Game 50 fps). `--live stress50_full` is the same wall with every
+  Game + sidecar renderer at 50 fps. Neither fails on RSS size; PASS
+  prints `rss=… up=50/50`.
+- Skip-paint RAM: empty scene tiles / player / NPC slots are boxed
+  pointers (was ~29 MB of unused `Square`s per client). After a snapshot
+  inject, slots do not prefetch the whole 15 MB map archive; map-build
+  byte buffers are dropped once the sim world is stamped.
+- Snapshot inject (`~/.274bot/unpack`) is **once per process**. A later
+  slot's `maininit` no longer wipes the process-wide model/anim stores or
+  re-reads `models.bin` (that print was every client, not a 12 GB jag).
 - Headed default is the client submodule's **wgpu** 3D renderer
-  (`BOT_CPU=1` forces CpuPix3D).
+  (`BOT_CPU=1` still forces CpuPix3D on CLI slots without a raster pref).
 - WalkTo picker in the Game pane (north-up, click-to-pick, Recentre /
   Walk; **Teleport** cheat on loopback engines).
-- Local-engine debug heading: TutSkip latch, Lumbridge (`~home`), maxme
+- Local-engine debug heading: TutSkip is omitted once the profile is
+  known skipped (`getvar tutorial` first when unknown), Lumbridge (`~home`), maxme
   (`setstat`), Teles popup. DebugPanel v2 is a disabled stub.
-- Script chrome Browse / Start / Pause / Stop + JS Load. Parameters Edit,
-  Global settings, and Loadouts stay mocked.
+- Script chrome Browse / Start / Pause / Stop + JS Load. Parameters Edit
+  stays mocked. Loadouts stays mocked until the TS shim.
 
 ### Nav
 
@@ -60,6 +96,14 @@ Each component should do one job well (old-school, Gower-era). Memory is
 a first-class product concern — that is why this host is Rust. RSS
 ladder stays the measurement surface; do not “optimize” by lying.
 
+### After 0.1.0 / beta (deferred)
+
+- 3-platform bins; live cache fetch / turnkey rs2b2t; `--prod` as a
+  supported scenario.
+- Client source comments that still mention `$HOME/experiments/Server`
+  as the TS port path; tests use `engine_dir` / `cache_dir` / `content_dir`.
+- Nav OP_NPC execute (v0.1.1). Script UI polish (not this alpha).
+
 ### After 0.1.0 (planned, not this tag)
 
 - **v0.1.1 — nav strikes again:** Traveller OP_NPC execute, EssenceSession
@@ -73,5 +117,5 @@ ladder stays the measurement surface; do not “optimize” by lying.
   **rs2b0t** API load and run. “Just work” means the scripts we name,
   not every historical rs2b0t bot.
 
-Alpha gaps (honest, not this tag): DebugPanel v2, Global settings /
-Loadouts / parameter Edit, crates.io publish.
+Alpha gaps (honest, not this tag): DebugPanel v2, Loadouts / parameter
+Edit, crates.io publish. Nav config is a window (not a blocking modal).

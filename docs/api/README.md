@@ -30,7 +30,7 @@ runner kernel only.
 | `script` | Compiled `Script` trait + Load isolate (`rustyscript`); picker ids |
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`); ignored unless that env is set |
-| `panel` | Native UI (`panel-play`): profile combo, credentials, WalkTo, debug heading, script Browse/Start/Pause/Stop, MultiBox wall |
+| `panel` | Native UI (`panel-play`): profile name + Profiles picker, Log in/Logout, WalkTo, debug heading, script Browse/Start/Pause/Stop, MultiBox wall |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)

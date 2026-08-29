@@ -358,10 +358,10 @@ impl AppWindow {
         // The rail draws U+2059 (⁙) and U+2717 (✗) as text, which the
         // default Latin-1 font cannot render: merge an embedded DejaVu
         // Sans so they rasterize. Fail loudly rather than draw '?' again.
-        let (quincunx, ballot_x) = add_glyph_font(&mut context);
+        let (quincunx, ballot_x, folds) = add_glyph_font(&mut context);
         assert!(
-            quincunx && ballot_x,
-            "merged glyph font must cover U+2059 and U+2717"
+            quincunx && ballot_x && folds,
+            "merged glyph font must cover U+2059, U+2717, U+2582, U+2585"
         );
 
         let mut platform = imgui_winit::WinitPlatform::new(&mut context);
@@ -385,6 +385,8 @@ impl AppWindow {
                 flags = ConfigFlags::from_bits_retain(merged);
             }
             io.set_config_flags(flags);
+            io.set_config_windows_resize_from_edges(false);
+            io.set_config_docking_always_tab_bar(false);
         }
 
         let imgui = ImguiState {
@@ -734,7 +736,7 @@ const GLYPH_FONT_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
 /// The two codepoints the rail draws beyond the default font's Latin-1,
 /// as a Dear ImGui `(start, end)` pair list: `U+2059` (status quincunx)
 /// and `U+2717` (remove), NUL-terminated.
-const GLYPH_FONT_RANGES: [u32; 5] = [0x2059, 0x2059, 0x2717, 0x2717, 0];
+const GLYPH_FONT_RANGES: [u32; 7] = [0x2059, 0x2059, 0x2582, 0x2585, 0x2717, 0x2717, 0];
 
 /// Merge the embedded DejaVu Sans into the atlas's default font so the
 /// rail's `U+2059` and `U+2717` glyphs rasterize (they render as `?` in
@@ -743,7 +745,7 @@ const GLYPH_FONT_RANGES: [u32; 5] = [0x2059, 0x2059, 0x2717, 0x2717, 0];
 /// default font's reference size (`size_pixels: 0.0`; an explicit size
 /// would trip imgui's merge/implicit-reference-size assert). Returns the
 /// two codepoints' presence in the merged font; the unit test pins it.
-fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool) {
+fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool) {
     let mut fonts = ctx.fonts();
     fonts.add_font_default(None);
     let merged = fonts
@@ -761,6 +763,7 @@ fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool) {
     (
         merged.is_glyph_in_font('\u{2059}'),
         merged.is_glyph_in_font('\u{2717}'),
+        merged.is_glyph_in_font('\u{2582}') && merged.is_glyph_in_font('\u{2585}'),
     )
 }
 
@@ -1140,11 +1143,12 @@ mod tests {
     fn glyph_font_merges_status_and_remove_codepoints() {
         let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = imgui::Context::create();
-        let (quincunx, ballot_x) = add_glyph_font(&mut ctx);
+        let (quincunx, ballot_x, folds) = add_glyph_font(&mut ctx);
         assert!(
             quincunx,
             "U+2059 (status dot) must resolve in the merged font"
         );
         assert!(ballot_x, "U+2717 (remove) must resolve in the merged font");
+        assert!(folds, "U+2582/U+2585 (fold/unfold) must resolve");
     }
 }

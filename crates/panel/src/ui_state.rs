@@ -6,13 +6,43 @@ use std::path::{Path, PathBuf};
 
 use crate::nav_settings::NavSettings;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelUiState {
     pub last_focus: Option<String>,
     #[serde(default)]
     pub collapsed: HashMap<String, HashMap<String, bool>>,
     #[serde(default)]
     pub nav: NavSettings,
+    /// Per-member rail blit override. Absent = focused folded, others open.
+    #[serde(default)]
+    pub rail_preview: HashMap<String, bool>,
+    /// Global none/GPU/CPU for every slot (General config).
+    #[serde(default)]
+    pub raster: vault::RasterMode,
+    /// Global lowmem for every slot. Default true (headless default).
+    #[serde(default = "default_true")]
+    pub lowmem: bool,
+    /// Strip collapsing-header order. Empty = [`crate::chrome::HEADING_ORDER`].
+    #[serde(default)]
+    pub section_order: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for PanelUiState {
+    fn default() -> Self {
+        Self {
+            last_focus: None,
+            collapsed: HashMap::new(),
+            nav: NavSettings::default(),
+            rail_preview: HashMap::new(),
+            raster: vault::RasterMode::Gpu,
+            lowmem: true,
+            section_order: Vec::new(),
+        }
+    }
 }
 
 /// Default closed (collapsed) when no persisted entry: script + parameters only.
@@ -77,11 +107,7 @@ pub fn save_at(p: &Path, state: &PanelUiState) {
 #[cfg(test)]
 thread_local! {
     static TEST_STATE: std::cell::RefCell<PanelUiState> =
-        std::cell::RefCell::new(PanelUiState {
-            last_focus: None,
-            collapsed: HashMap::new(),
-            nav: NavSettings::default(),
-        });
+        std::cell::RefCell::new(PanelUiState::default());
 }
 
 #[cfg(test)]

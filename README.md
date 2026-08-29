@@ -13,7 +13,7 @@ This tag is the public surface for the **host + API + nav**. The script *kernel*
 
 ## What it is
 
-A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): credentials, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`host-play`** is the headless CLI over the same kernel.
+A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`host-play`** is the headless CLI over the same kernel.
 
 The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte 5), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
@@ -52,8 +52,10 @@ cargo run --release -p panel --bin panel-play -- --live null_raster
 # Headless RSS ladder (all slots Null / set_draw=false). One N per process.
 LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
 
-# 50-bot MultiBox wall watch (temp vault s00…s49; 10 min timeout; local engine)
+# 50-bot RAM watch (cap-only; Game 50 fps; rail skip-paint; 10 min; local engine)
 cargo run --release -p panel --bin panel-play -- --live stress50
+# 50-bot full-rate Game + sidecar (run after stress50 holds)
+cargo run --release -p panel --bin panel-play -- --live stress50_full
 
 # Unit tests (no engine). CI: fmt + clippy --no-deps + cargo test (no LIVE=1)
 cargo test -p nav --offline
@@ -64,7 +66,7 @@ cargo test -p api --offline
 
 The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid, with bulk **Login all / Logout all**. Auto-login defaults **off** per profile.
 
-**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** accepts `--vault-pass` (same as `BOT_VAULT_PASS`) and upserts named users (`--user test` defaults to `test`/`test`). The panel has no `--vault-pass` flag — passphrase is `BOT_VAULT_PASS` or the in-window prompt. Empty passphrase is rejected. `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is `setvar tutorial 1000` only, latched on `ProfileSettings.tutorial_skipped`.
+**panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** accepts `--vault-pass` (same as `BOT_VAULT_PASS`) and upserts named users (`--user test` defaults to `test`/`test`). The panel has no `--vault-pass` flag — passphrase is `BOT_VAULT_PASS` or the in-window prompt. Empty passphrase is rejected. `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is omitted until `getvar tutorial` says the tutorial is still open; press is `setvar tutorial 1000` and caches `tutorial_skipped`.
 
 **Scripts:** panel **Browse / Start / Pause / Stop** are live. Compiled cards tick on the **PLAYER_INFO** edge. Idle slots have no V8. **Load** a `.ts`/`.js` to add a picker card tagged JS. WalkTo on the main chrome is host nav, not a script card (compiled names like WalkTo are reserved). Persist: `~/.274bot/js-scripts.json`. There are no honest skilling/farming ports in this tag.
 

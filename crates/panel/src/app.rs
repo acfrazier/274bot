@@ -1,7 +1,6 @@
 //! Panel shell: docking enabled, multi-viewport disabled, amber chrome,
 //! running on the panel-owned window loop in `crate::window`.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -11,12 +10,14 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::window::{self, Gpu, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
-    Condition, DockBuilder, DockNodeFlags, Id, Key, MouseButton, SplitDirection, StyleColor,
-    TreeNodeFlags, Ui, WindowClass, WindowFlags,
+    ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder, DockNodeFlags,
+    DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, TreeNodeFlags, Ui,
+    WindowClass, WindowFlags,
 };
 
 use crate::chrome::{
-    button_row_layout, equal_button_width, multibox_tooltip, BUTTON_GAP, MIN_BUTTON, PARAM_ROW,
+    button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
+    multibox_tooltip, resolve_heading_order, BUTTON_GAP, CONFIG_MIN, CONFIG_ROW, MIN_BUTTON,
     SCRIPT_ROW,
 };
 use crate::focus::{draw_for_slot, should_capture, should_draw};
@@ -26,8 +27,9 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{
-    cap_title, os_window_size, traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W,
-    REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
+    cap_title, os_window_size, rail_preview_open, rail_split_ratio, traffic_light, Light,
+    BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
+    UNFOLD_GLYPH,
 };
 use host::debug_enabled;
 
@@ -35,12 +37,13 @@ use crate::resource::{
     cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
 };
 use crate::session::{
-    combo_index, debug_dest_cheats, debug_maxme_cheats, script_active, script_pause_enabled,
+    debug_dest_cheats, debug_main_buttons, debug_maxme_cheats, script_active, script_pause_enabled,
     script_status_text, script_stop_enabled, stream_capture, Session, PROCESS,
 };
 use crate::theme::{
-    apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
-    BUILD_LINE, ERROR, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT_DIM, TITLE,
+    applet_offset, apply_amber, fit_applet, game_window_title, integer_ui_scale, native_applet,
+    panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW,
+    TEXT, TEXT_DIM, TITLE,
 };
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
@@ -55,12 +58,12 @@ pub fn runner_config() -> window::PanelConfig {
         clear_color: BG,
         theme: Some(Theme::Dark),
         redraw: RedrawMode::WaitUntil { fps: 50.0 },
-        ini_filename: Some(PathBuf::from("274bot-panel.ini")),
+        ini_filename: None,
         restore_previous_geometry: false,
         docking: window::DockingConfig {
             enable: true,
             auto_dockspace: false,
-            dockspace_flags: DockNodeFlags::AUTO_HIDE_TAB_BAR,
+            dockspace_flags: dock_flags(),
             ..Default::default()
         },
         io_config_flags: Some(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE),
@@ -120,14 +123,15 @@ struct PanelState {
     /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
     /// first 1 Hz pass (first rate needs two samples).
     last_traffic: Option<(Instant, u64, usize)>,
-    /// Headed `--live` watch (`null_raster`, `stress50`, `script_<name>`)
-    /// or `--smoke`; `None` interactive.
+    /// Headed `--live` watch (`null_raster`, `stress50`, `stress50_full`,
+    /// `script_<name>`) or `--smoke`; `None` interactive.
     live: Option<LiveHarness>,
-    /// winit window cloned from `on_gpu_init` so MultiBox can grow/shrink
-    /// the OS inner size by [`RAIL_W`] without shrinking the Game pane.
+    /// Last dock-host viewport size; a width/height change rebuilds the
+    /// split so the panel stays 330 and the rail 264.
+    dock_size: Option<[f32; 2]>,
+    /// winit window so MultiBox can grow the OS inner size when the rail
+    /// would cover the 765×503 blit.
     os_window: Option<std::sync::Arc<winit::window::Window>>,
-    /// Last `request_inner_size` rail-open flag; skip no-op resizes.
-    rail_window_applied: Option<bool>,
     /// Whole-window shot coordination: the scenario sink (slot thread)
     /// → the render readback (`window::ShotState`) → the shot files.
     shot_state: Arc<Mutex<crate::window::ShotState>>,
@@ -137,9 +141,9 @@ struct PanelState {
     shot_dir: Option<PathBuf>,
 }
 
-/// Headed live harness: null_raster (2 slots), stress50 (50 slots), a
-/// shared scenario (`script_<name>`), or `--smoke` (one whole-window shot
-/// at scene 2, then exit 0).
+/// Headed live harness: null_raster (2 slots), stress50 / stress50_full
+/// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one
+/// whole-window shot at scene 2, then exit 0).
 enum LiveHarness {
     Null(LiveNull),
     Stress(LiveStress),
@@ -154,11 +158,13 @@ struct LiveNull {
     passed: bool,
 }
 
-/// Headed `stress50` harness. `started` is the 600s login clock.
+/// Headed `stress50` / `stress50_full` harness. `started` is the 600s
+/// login clock. `name` is the `--live` token used in PASS/FAIL lines.
 struct LiveStress {
     started: Instant,
     last_announced: u8,
     passed: bool,
+    name: &'static str,
 }
 
 /// Headed `script_<name>` watch. The shared `ScenarioRunner` lives on the
@@ -216,6 +222,9 @@ enum Boot {
 enum LiveBoot {
     NullRaster,
     Stress50,
+    /// Same 50-head wall as [`LiveBoot::Stress50`], every member painting
+    /// at 50 fps (Game + sidecar).
+    Stress50Full,
     Script {
         name: String,
     },
@@ -244,6 +253,16 @@ impl LiveBoot {
                     started: Instant::now(),
                     last_announced: 0,
                     passed: false,
+                    name: "stress50",
+                }));
+            }
+            LiveBoot::Stress50Full => {
+                state.session.live_prepare_stress50_full()?;
+                state.live = Some(LiveHarness::Stress(LiveStress {
+                    started: Instant::now(),
+                    last_announced: 0,
+                    passed: false,
+                    name: "stress50_full",
                 }));
             }
             LiveBoot::Script { name } => {
@@ -288,6 +307,7 @@ fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
     match mode.live_name() {
         Some("null_raster") => Some(Boot::Live(LiveBoot::NullRaster)),
         Some("stress50") => Some(Boot::Live(LiveBoot::Stress50)),
+        Some("stress50_full") => Some(Boot::Live(LiveBoot::Stress50Full)),
         Some("nav_full") => Some(Boot::Live(LiveBoot::Script {
             name: "nav_full".to_string(),
         })),
@@ -406,8 +426,8 @@ impl Default for PanelState {
             res_traffic: Metric::Measuring,
             last_traffic: None,
             live: None,
+            dock_size: None,
             os_window: None,
-            rail_window_applied: None,
             shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
             shot_dir: None,
         }
@@ -415,7 +435,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--smoke] [--live null_raster|stress50|nav_full|script_<name>]";
+    "usage: panel-play [--smoke] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -540,7 +560,12 @@ pub fn parse_live_args(
         let script_ok = name
             .strip_prefix("script_")
             .is_some_and(|n| scenario::get(n).is_some());
-        if name != "null_raster" && name != "stress50" && name != "nav_full" && !script_ok {
+        if name != "null_raster"
+            && name != "stress50"
+            && name != "stress50_full"
+            && name != "nav_full"
+            && !script_ok
+        {
             return Err((2, LIVE_USAGE.into()));
         }
     }
@@ -590,30 +615,33 @@ fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Op
 
 /// Headed watch: count Clients that are up — every slot is a full Client,
 /// so "up" is `ingame && scene_state==2` for all of them. Announce 1, 10,
-/// then 50. At 50 print PASS and stay open. Timeout 600s. Does **not**
-/// freeze-assert (operator may click). Does **not** fail on RSS magnitude.
+/// then 50. At 50 print PASS (with RSS) and stay open. Timeout 600s. Does
+/// **not** freeze-assert (operator may click). Does **not** fail on RSS
+/// magnitude — `stress50` is the release RAM check; `stress50_full` is
+/// the same wall with every renderer at 50 fps.
 fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -> Option<String> {
     if live.passed {
         return None;
     }
+    let name = live.name;
     let n = statuses.iter().filter(|s| s.is_up()).count();
     if n >= 1 && live.last_announced < 1 {
-        println!("live stress50: 1/50 up");
+        println!("live {name}: 1/50 up");
         live.last_announced = 1;
     }
     if n >= 10 && live.last_announced < 10 {
-        println!("live stress50: 10/50 up");
+        println!("live {name}: 10/50 up");
         live.last_announced = 10;
     }
     if n >= 50 {
         let (rss, _) = sample_process();
-        println!("PASS: live stress50 rss={rss} up50");
+        println!("PASS: live {name} rss={rss} up={n}/50");
         live.last_announced = 50;
         live.passed = true;
         return None;
     }
     if live.started.elapsed() >= Duration::from_secs(600) {
-        return Some(format!("live stress50: {n}/50 up after 600s"));
+        return Some(format!("live {name}: {n}/50 up after 600s"));
     }
     None
 }
@@ -762,45 +790,58 @@ fn live_smoke_tick(
     None
 }
 
+/// Dock leaves: no splitter, no undock, no extra splits. Tab bar hides
+/// when a node has one window.
+fn dock_flags() -> DockNodeFlags {
+    DockNodeFlags::AUTO_HIDE_TAB_BAR
+        | DockNodeFlags::NO_RESIZE
+        | DockNodeFlags::NO_UNDOCKING
+        | DockNodeFlags::NO_DOCKING_SPLIT
+}
+
 /// Leaf dock nodes hide the tab bar while they host a single window.
 fn single_bot_window_class() -> WindowClass {
     WindowClass::new(Id::from(1u32))
-        .dock_node_flags_override_set(DockNodeFlags::AUTO_HIDE_TAB_BAR)
+        .dock_node_flags_override_set(dock_flags())
         .docking_always_tab_bar(false)
 }
 
-/// Grow/shrink the OS window with the sidecar rail. Game pane width is
-/// unchanged: the extra pixels are the rail.
-fn sync_os_window_size(state: &mut PanelState, rail_open: bool) {
-    if state.rail_window_applied == Some(rail_open) {
-        return;
+fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
+    match prev {
+        None => true,
+        Some(p) => (p[0] - size[0]).abs() > 1.0 || (p[1] - size[1]).abs() > 1.0,
     }
+}
+
+/// Grow the OS window when the rail (or a too-narrow host) would cover
+/// the native blit. Never shrinks a larger window.
+fn ensure_window_fits(state: &mut PanelState, rail_open: bool) {
     let Some(window) = state.os_window.as_ref() else {
         return;
     };
-    let (w, h) = os_window_size(rail_open);
-    let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w as f64, h as f64));
-    state.rail_window_applied = Some(rail_open);
+    let (need_w, need_h) = os_window_size(rail_open);
+    let scale = window.scale_factor();
+    let logical: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(scale);
+    let w = logical.width.max(need_w as f64);
+    let h = logical.height.max(need_h as f64);
+    if (w - logical.width).abs() > 1.0 || (h - logical.height).abs() > 1.0 {
+        let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
+    }
 }
 
-/// Fullscreen dock host: game fills the left, 330px-class panel on the right.
-/// MultiBox (rail mode) splits an extra `RAIL_W` node on the far right and
-/// grows the OS window by that width so the Game pane stays 765×503.
+/// Fullscreen dock host: game left, 330px panel right, optional 264px rail.
+/// Rebuilds when MultiBox/grid toggles or the OS window size changes so
+/// panel/rail widths stay fixed; they only grow vertically.
 fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
+    let rail_open = state.session.multibox && !state.session.wall.grid;
+    ensure_window_fits(state, rail_open);
     let viewport = ui.main_viewport();
     let pos = viewport.pos();
-    let rail_open = state.session.multibox && !state.session.wall.grid;
-    sync_os_window_size(state, rail_open);
-    let (want_w, want_h) = os_window_size(rail_open);
     let vs = viewport.size();
-    // Prefer the live viewport once winit has applied the resize; otherwise
-    // split against the target so the first rail frame does not steal Game
-    // width.
-    let size = if (vs[0] - want_w).abs() < 16.0 {
-        vs
-    } else {
-        [want_w, want_h]
-    };
+    let (need_w, _) = os_window_size(rail_open);
+    // Until winit applies a grow, lay out against the need so the blit
+    // is not parked under the panel/rail for a frame.
+    let size = [vs[0].max(need_w), vs[1].max(1.0)];
     ui.window("##274bot-dockhost")
         .flags(
             WindowFlags::NO_TITLE_BAR
@@ -815,26 +856,16 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
         .size([size[0], size[1]], Condition::Always)
         .build(|| {
             let dock_id = ui.get_id("274bot-dockspace");
-            // Single-bot default: each split leaf hosts one window, so hide
-            // the tab strip. MultiBox (campaign 4) can stack windows in a
-            // node and the bar comes back.
-            let _ = ui.dock_space_with_class(
-                dock_id,
-                [0.0, 0.0],
-                DockNodeFlags::AUTO_HIDE_TAB_BAR,
-                None,
-            );
+            let _ = ui.dock_space_with_class(dock_id, [0.0, 0.0], dock_flags(), None);
             let want = if state.session.multibox && !state.session.wall.grid {
                 DockLayout::Rail
             } else {
                 DockLayout::Single
             };
-            if state.dock_layout != Some(want) {
-                // A MultiBox toggle rebuilds the whole tree. The next
-                // frame's DockSpace call above re-creates the node, so
-                // windows are re-docked a frame after the toggle.
+            if state.dock_layout != Some(want) || size_changed(state.dock_size, size) {
                 DockBuilder::remove_node(ui, dock_id);
                 state.dock_layout = Some(want);
+                state.dock_size = Some(size);
                 state.dock_inited = false;
             }
             if !state.dock_inited && DockBuilder::node_exists(ui, dock_id) {
@@ -849,7 +880,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         state.game_dock_node = Some(left);
                     }
                     DockLayout::Rail => {
-                        let rail_ratio = (RAIL_W / size[0]).clamp(0.1, 0.9);
+                        let rail_ratio = rail_split_ratio(size[0]);
                         let (rail, main) =
                             DockBuilder::split_node(ui, dock_id, SplitDirection::Right, rail_ratio);
                         let panel_ratio = panel_split_ratio((size[0] - RAIL_W).max(1.0));
@@ -876,7 +907,10 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
 /// The Game pane: the single focused applet, or — while MultiBox is in
 /// Grid mode — one cell per wall member.
 fn game_window_flags() -> WindowFlags {
-    WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
+    WindowFlags::NO_COLLAPSE
+        | WindowFlags::NO_SCROLLBAR
+        | WindowFlags::NO_SCROLL_WITH_MOUSE
+        | WindowFlags::NO_RESIZE
 }
 
 fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
@@ -896,15 +930,13 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     state.session.set_game_pane_open(built.is_some());
 }
 
-/// Single-bot Game pane: the focused slot's applet, 765:503 fitted and
-/// centred, with the nav overlay, capture, and queue card.
+/// Single-bot / rail Game pane: native 765×503, flush to the panel (right).
+/// Does not scale with the host window; grid mode fits cells to avail.
 fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
-    let size = fit_applet(avail);
+    let size = native_applet();
     let cursor = ui.cursor_pos();
-    ui.set_cursor_pos([
-        cursor[0] + ((avail[0] - size[0]) * 0.5).max(0.0),
-        cursor[1] + ((avail[1] - size[1]) * 0.5).max(0.0),
-    ]);
+    let off = applet_offset(avail, size);
+    ui.set_cursor_pos([cursor[0] + off[0], cursor[1] + off[1]]);
     if state.game_view.is_none() {
         state.game_view = Some(GameView::init(gpu));
     }
@@ -964,11 +996,10 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     }
 }
 
-/// MultiBox grid-mode Game pane: one cell per wall member, row-major from
-/// [`grid_cells`]. Clicking a cell selects the member; capture reaches
-/// only the focused cell; the queue card overlays the focused cell. While
-/// `only_render_selected` is on (the safe default) each cell collapses to
-/// a cap row (dot, name + brief, ✗) with no preview body.
+/// MultiBox grid-mode Game pane: same cap as the sidecar (dot, name +
+/// brief, fold, ✗) over a bigger blit. Status stays visible with the
+/// 330px panel collapsed. `only_render_selected` / fold hide the blit
+/// only. Capture reaches the focused cell's body.
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let members = state.session.wall.members.clone();
     if members.is_empty() {
@@ -990,53 +1021,66 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let [cx, cy, cw, ch] = cells[i];
         let is_focused = focused.as_deref() == Some(name.as_str());
         ui.set_cursor_pos([cx, cy]);
-        if only_selected {
-            // Collapsed cell: cap row only, no preview body.
-            let status = statuses.iter().find(|s| &s.username == name);
-            let running = status.is_some_and(|s| s.walk_x != -1)
-                || state
-                    .session
-                    .play
-                    .as_ref()
-                    .is_some_and(|p| p.script_state(name) == script::RunState::Running);
-            let light = traffic_light(
-                status.is_some_and(|s| s.ingame),
-                status.is_some_and(|s| s.error.is_some()),
-                running,
-            );
-            let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref(), cw);
-            if cap_remove {
-                state.session.rail_remove(name);
-            } else if cap_select {
-                state.session.select(name);
+        let status = statuses.iter().find(|s| &s.username == name);
+        let running = status.is_some_and(|s| s.walk_x != -1)
+            || state
+                .session
+                .play
+                .as_ref()
+                .is_some_and(|p| p.script_state(name) == script::RunState::Running);
+        let light = traffic_light(
+            status.is_some_and(|s| s.ingame),
+            status.is_some_and(|s| s.error.is_some()),
+            running,
+        );
+        let preview = rail_preview_open(
+            name,
+            focused.as_deref(),
+            only_selected,
+            true,
+            &state.session.ui.rail_preview,
+        );
+        let (cap_select, cap_remove, cap_fold) =
+            rail_cap(ui, name, light, focused.as_deref(), cw, preview);
+        let mut body_clicked = false;
+        if preview {
+            let after = ui.cursor_pos();
+            let remain_h = (cy + ch - after[1]).max(1.0);
+            let size = fit_applet([cw, remain_h]);
+            ui.set_cursor_pos([
+                cx + ((cw - size[0]) * 0.5).max(0.0),
+                after[1] + ((remain_h - size[1]) * 0.5).max(0.0),
+            ]);
+            let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
+            body_clicked = cell_body(ui, gpu, state, name, size, draw);
+            if is_focused && capture && ui.is_item_hovered() {
+                let mouse = ui.io().mouse_pos();
+                let min = ui.item_rect_min();
+                stream_capture(
+                    &state.session.capture_tx,
+                    mouse[0] - min[0],
+                    mouse[1] - min[1],
+                    size[0],
+                    size[1],
+                    ui.is_mouse_clicked(MouseButton::Left),
+                    ui.is_mouse_clicked(MouseButton::Right),
+                    ui.is_mouse_released(MouseButton::Left),
+                    ui.is_mouse_released(MouseButton::Right),
+                    &capture_keys(ui),
+                );
             }
-            continue;
+            if is_focused {
+                draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
+            }
         }
-        let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
-        let clicked = cell_body(ui, gpu, state, name, [cw, ch], draw);
-        // Capture only on the focused cell; a click on another cell is a
-        // select, not a click-through.
-        if is_focused && capture && ui.is_item_hovered() {
-            let mouse = ui.io().mouse_pos();
-            let min = ui.item_rect_min();
-            stream_capture(
-                &state.session.capture_tx,
-                mouse[0] - min[0],
-                mouse[1] - min[1],
-                cw,
-                ch,
-                ui.is_mouse_clicked(MouseButton::Left),
-                ui.is_mouse_clicked(MouseButton::Right),
-                ui.is_mouse_released(MouseButton::Left),
-                ui.is_mouse_released(MouseButton::Right),
-                &capture_keys(ui),
-            );
-        }
-        if clicked {
+        if cap_fold {
+            let next = !preview;
+            state.session.ui.rail_preview.insert(name.clone(), next);
+            crate::ui_state::save(&state.session.ui);
+        } else if cap_remove {
+            state.session.rail_remove(name);
+        } else if cap_select || body_clicked {
             state.session.select(name);
-        }
-        if is_focused {
-            draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
         }
     }
 }
@@ -1164,23 +1208,31 @@ fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
 fn panel_window(ui: &Ui, session: &mut Session) {
-    ui.window(PANEL_WINDOW).build(|| {
-        let _width = ui.push_item_width(-1.0);
-        let _wrap = ui.push_text_wrap_pos(0.0);
-        title_row(ui, session);
-        ui.text_colored(TEXT_DIM, BUILD_LINE);
-        banner(ui, session);
-        profile_section(ui, session);
-        credentials_section(ui, session);
-        walkto_button(ui, session);
-        debug_section(ui, session);
-        script_section(ui, session);
-        parameters_section(ui, session);
-        status_section(ui, session);
-        log_section(ui, session);
-        rendering_section(ui, session);
-        input_section(ui, session);
-    });
+    ui.window(PANEL_WINDOW)
+        .flags(WindowFlags::NO_RESIZE | WindowFlags::NO_COLLAPSE)
+        .build(|| {
+            let _width = ui.push_item_width(-1.0);
+            let _wrap = ui.push_text_wrap_pos(0.0);
+            title_row(ui, session);
+            ui.text_colored(TEXT_DIM, crate::build_info::build_line());
+            ui.set_item_tooltip(crate::build_info::build_tooltip());
+            banner(ui, session);
+            login_logout_row(ui, session);
+            walkto_button(ui, session);
+            slot_config_row(ui, session);
+            let order = resolve_heading_order(&session.ui.section_order);
+            for id in order {
+                match id.as_str() {
+                    "status" => status_section(ui, session),
+                    "profile" => profile_section(ui, session),
+                    "script" => script_section(ui, session),
+                    "parameters" => parameters_section(ui, session),
+                    "debug" => debug_section(ui, session),
+                    "log" => log_section(ui, session),
+                    _ => {}
+                }
+            }
+        });
 }
 
 fn title_row(ui: &Ui, session: &mut Session) {
@@ -1197,7 +1249,7 @@ fn title_row(ui: &Ui, session: &mut Session) {
     }
     ui.set_item_tooltip(multibox_tooltip(session.multibox));
     if !stack {
-        ui.same_line();
+        gap_line(ui);
     }
     // Grid is a MultiBox submode: hide the rail, Game pane lays members.
     let _grid_disabled = if !session.multibox {
@@ -1235,6 +1287,8 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
     let desired = !closed;
     ui.set_next_item_open(desired);
     let open = ui.collapsing_header(id, TreeNodeFlags::NONE);
+    ui.set_item_tooltip("drag to reorder");
+    heading_dnd(ui, session, id);
     if open != desired {
         session
             .ui
@@ -1247,10 +1301,52 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
     open
 }
 
+fn heading_key(id: &str) -> [u8; 16] {
+    let mut a = [0u8; 16];
+    let b = id.as_bytes();
+    let n = b.len().min(16);
+    a[..n].copy_from_slice(&b[..n]);
+    a
+}
+
+fn heading_from_key(a: [u8; 16]) -> Option<String> {
+    let n = a.iter().position(|&c| c == 0).unwrap_or(16);
+    std::str::from_utf8(&a[..n]).ok().map(str::to_string)
+}
+
+/// Drag a collapsing header onto another to reorder the strip. Persists.
+fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
+    if let Some(_tip) = ui
+        .drag_drop_source_config("274bot-heading")
+        .begin_payload(heading_key(id))
+    {
+        ui.text(id);
+    }
+    if let Some(tgt) = ui.drag_drop_target() {
+        if let Some(Ok(p)) =
+            tgt.accept_payload::<[u8; 16], _>("274bot-heading", DragDropTargetFlags::NONE)
+        {
+            if p.delivery {
+                if let Some(from) = heading_from_key(p.data) {
+                    let mut order = resolve_heading_order(&session.ui.section_order);
+                    move_heading(&mut order, &from, id);
+                    session.ui.section_order = order;
+                    crate::ui_state::save(&session.ui);
+                }
+            }
+        }
+    }
+}
+
 fn kv_row(ui: &Ui, key: &str, value: &str) {
     ui.text_disabled(key);
     ui.same_line();
     ui.text_wrapped(value);
+}
+
+/// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
+fn gap_line(ui: &Ui) {
+    ui.same_line_with_spacing(0.0, BUTTON_GAP);
 }
 
 fn mock_button(ui: &Ui, label: &str, hint: &str, size: [f32; 2]) {
@@ -1267,7 +1363,9 @@ fn clamp_hop_label_px(px: i32) -> i32 {
     px.clamp(8, 28)
 }
 
-/// profile: vault combo; password prompt until unlocked.
+/// profile: orange current name (like script) plus Profiles (opens the
+/// picker). Unlock prompt until the vault is open. Sits under WalkTo /
+/// config, above debug.
 fn profile_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "profile") {
         return;
@@ -1278,112 +1376,160 @@ fn profile_section(ui: &Ui, session: &mut Session) {
             .hint("vault passphrase")
             .build();
         let w = ui.content_region_avail()[0];
-        if ui.button_with_size("Unlock vault", [w, 0.0]) {
+        let exists = Session::default_vault_exists();
+        let label = if exists {
+            "Unlock vault"
+        } else {
+            "Create vault"
+        };
+        if ui.button_with_size(label, [w, 0.0]) {
             let pass = session.pass_scratch.trim().to_string();
             if !pass.is_empty() {
                 session.unlock(&pass);
                 session.pass_scratch.clear();
             }
         }
+        if exists {
+            if ui.button_with_size("Reset vault", [w, 0.0]) {
+                session.vault_reset_understood = false;
+                ui.open_popup(VAULT_RESET_POPUP);
+            }
+            ui.set_item_tooltip("delete the vault file — forgotten passphrase");
+        }
+        if scary_confirm_popup(
+            ui,
+            VAULT_RESET_POPUP,
+            "This deletes the vault file on disk. Every saved profile is gone. \
+             You will Create vault with a new passphrase. Wrong-passphrase unlock \
+             never does this on its own.",
+            "Reset",
+            &mut session.vault_reset_understood,
+        ) {
+            session.reset_vault();
+        }
         return;
     }
-    let names = session.profile_names();
-    if names.is_empty() {
-        ui.text_disabled("no profiles in vault");
-    } else if let Some(mut idx) = combo_index(session.focused_name().as_deref(), &names) {
-        if ui.combo("##profile", &mut idx, &names, |n: &String| {
-            Cow::Borrowed(n.as_str())
-        }) {
-            session.select(&names[idx]);
-        }
-    } else {
-        ui.text_disabled("no focused profile");
+    profile_combo(ui, session);
+    let w = ui.content_region_avail()[0];
+    if ui.button_with_size("Profiles", [w, 0.0]) {
+        session.wall.chooser_open = true;
     }
+    ui.set_item_tooltip("pick or edit a vault profile");
 }
 
-/// credentials: editable user/pass fields. Save upserts the vault profile,
-/// spawns the slot if it is not running, then selects it. Usable with an
-/// empty first-run vault (no focused profile required). Log in focuses an
-/// already-spawned slot; Logout (enabled while the focused slot is ingame)
-/// arms a clean IF logout and latches auto-login; Clear empties the two
-/// fields without touching the vault. Panel does not auto-create test/test.
-fn credentials_section(ui: &Ui, session: &mut Session) {
-    if !section_open(ui, session, "credentials") {
-        return;
-    }
-    if session.vault.is_none() {
-        ui.text_disabled("vault locked");
-        return;
-    }
-    ui.text_disabled("user");
-    ui.input_text("##cred-user", &mut session.cred_user)
-        .hint("username")
-        .build();
-    ui.text_disabled("pass");
-    ui.input_text("##cred-pass", &mut session.cred_pass)
-        .password(true)
-        .hint("password")
-        .build();
-    let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 2);
-    // Save, same_line Clear
-    if ui.button_with_size("Save", [w, 0.0]) {
-        session.save_credentials();
-    }
-    if !stack {
-        ui.same_line();
-    }
-    if ui.button_with_size("Clear", [w, 0.0]) {
-        session.clear_credentials();
-    }
-    // Log in, same_line Logout (disabled rules unchanged)
-    if ui.button_with_size("Log in", [w, 0.0]) {
-        let name = session.cred_user.trim().to_string();
-        if !name.is_empty() {
-            session.login(&name);
-        }
-    }
-    if !stack {
-        ui.same_line();
-    }
-    {
-        let focused = session.focused_name();
-        let _logout_disabled = if focused.is_some() && session.focused_ingame() {
-            None
-        } else {
-            Some(ui.begin_disabled())
-        };
-        if ui.button_with_size("Logout", [w, 0.0]) {
-            if let Some(name) = focused {
-                session.logout(&name);
+/// Profile switcher: black field, orange current name, inverse arrow
+/// (orange square, black chevron). **Profiles** still opens the picker.
+fn profile_combo(ui: &Ui, session: &mut Session) {
+    let names = session.profile_names();
+    let preview = session
+        .focused_name()
+        .unwrap_or_else(|| "(none)".to_string());
+    ui.set_next_item_width(-1.0);
+    let black = [0.0, 0.0, 0.0, 1.0];
+    let _frame = ui.push_style_color(StyleColor::FrameBg, black);
+    let _frame_h = ui.push_style_color(StyleColor::FrameBgHovered, black);
+    let _frame_a = ui.push_style_color(StyleColor::FrameBgActive, black);
+    let _popup = ui.push_style_color(StyleColor::PopupBg, black);
+    let _text = ui.push_style_color(StyleColor::Text, ACCENT);
+    let opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+    if let Some(_open) = ui.begin_combo_with_flags("##profile", &preview, opts) {
+        for name in &names {
+            let selected = preview.as_str() == name;
+            let _row = ui.push_style_color(StyleColor::Text, if selected { ACCENT } else { TEXT });
+            if ui.selectable_config(name).selected(selected).build() {
+                session.select(name);
+            }
+            if selected {
+                ui.set_item_default_focus();
             }
         }
-        ui.set_item_tooltip("log out the focused slot — it stays in the combo");
     }
-    // Auto-login follows the focused profile's vault setting; toggling
-    // upserts it (never spawns a slot).
+    paint_inverse_combo_arrow(ui);
+}
+
+/// Cover the default combo chevron with an orange chip and a black arrow.
+fn paint_inverse_combo_arrow(ui: &Ui) {
+    let min = ui.item_rect_min();
+    let max = ui.item_rect_max();
+    let h = max[1] - min[1];
+    if h <= 2.0 {
+        return;
+    }
+    let x0 = max[0] - h;
+    let dl = ui.get_window_draw_list();
+    dl.add_rect([x0, min[1]], max, ACCENT).filled(true).build();
+    let cx = x0 + h * 0.5;
+    let cy = (min[1] + max[1]) * 0.5;
+    let s = h * 0.22;
+    dl.add_triangle(
+        [cx - s, cy - s * 0.45],
+        [cx + s, cy - s * 0.45],
+        [cx, cy + s],
+        [0.0, 0.0, 0.0, 1.0],
+    )
+    .filled(true)
+    .build();
+}
+
+/// Log in / Logout above WalkTo. Always drawn; disabled while the vault
+/// is locked or no profile is focused. Logout also needs ingame.
+fn login_logout_row(ui: &Ui, session: &mut Session) {
+    let avail = ui.content_region_avail()[0];
+    let cells = button_cells(avail, 2);
+    let vault_open = session.vault.is_some();
     let focused = session.focused_name();
-    let auto = focused
-        .as_deref()
-        .and_then(|n| session.vault.as_ref().and_then(|v| v.get(n)))
-        .map(|p| p.settings.auto_login)
-        .unwrap_or(false);
-    let mut auto_cur = auto;
-    if ui.checkbox("auto-login on title", &mut auto_cur) {
-        if let Some(name) = focused {
-            session.set_auto_login(&name, auto_cur);
+    let can_login = vault_open && focused.is_some();
+    let can_logout = can_login && session.focused_ingame();
+    {
+        let _off = (!can_login).then(|| ui.begin_disabled());
+        if ui.button_with_size("Log in", [cells[0].0, 0.0]) {
+            if let Some(name) = focused.as_deref() {
+                session.login(name);
+            }
         }
+        ui.set_item_tooltip(if !vault_open {
+            "unlock the vault first"
+        } else if focused.is_none() {
+            "pick a profile"
+        } else {
+            "handshake the focused profile"
+        });
+    }
+    if cells[1].1 {
+        gap_line(ui);
+    }
+    {
+        let _off = (!can_logout).then(|| ui.begin_disabled());
+        if ui.button_with_size("Logout", [cells[1].0, 0.0]) {
+            if let Some(name) = focused.as_deref() {
+                session.logout(name);
+            }
+        }
+        ui.set_item_tooltip(if !vault_open {
+            "unlock the vault first"
+        } else if focused.is_none() {
+            "pick a profile"
+        } else {
+            "log out the focused slot — it stays in the picker"
+        });
     }
 }
 
 /// WalkTo: main-chrome button that opens the collision-dot tile picker.
 fn walkto_button(ui: &Ui, session: &mut Session) {
-    ui.spacing();
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("WalkTo", [w, 0.0]) {
         session.walkto_open = !session.walkto_open;
     }
-    ui.set_item_tooltip("toggle tile picker in the Game pane");
+    ui.set_item_tooltip("open the tile picker — close with the window ✕");
+}
+
+fn debug_caption(id: &str) -> &str {
+    match id {
+        "DebugPanel" => "Panel",
+        "Lumbridge" => "Lumb",
+        s => s,
+    }
 }
 
 /// Local-engine debug cheats. Omitted on rs2b2t.
@@ -1394,46 +1540,47 @@ fn debug_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "debug") {
         return;
     }
-    const MAIN: [&str; 5] = ["DebugPanel", "TutSkip", "Lumbridge", "maxme", "Teles"];
+    let show_tutskip = session.focused_tutorial_skipped() == Some(false);
+    let main = debug_main_buttons(show_tutskip);
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, MAIN.len());
-    for (i, label) in MAIN.iter().enumerate() {
-        if i > 0 && !stack {
-            ui.same_line();
+    // Packed one row even when a scrollbar trims avail below MIN_BUTTON —
+    // stacking turns DebugPanel/Lumbridge/maxme/Teles into four strip-width
+    // buttons.
+    let w = equal_button_width(avail, main.len());
+    for (i, label) in main.iter().enumerate() {
+        if i > 0 {
+            gap_line(ui);
         }
+        let caption = debug_caption(label);
         match *label {
             "DebugPanel" => {
                 let _off = ui.begin_disabled();
-                let _ = ui.button_with_size("DebugPanel", [w, 0.0]);
-                ui.set_item_tooltip("v2 — full cheat catalog");
+                let _ = ui.button_with_size(caption, [w, 0.0]);
+                ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
             "TutSkip" => {
-                let skipped = session.focused_tutorial_skipped();
-                let _off = ui.begin_disabled_with_cond(skipped);
-                if ui.button_with_size("TutSkip", [w, 0.0]) && !skipped {
+                if ui.button_with_size(caption, [w, 0.0]) {
                     session.cheat_focused("setvar tutorial 1000");
                     session.mark_tutorial_skipped();
                 }
-                ui.set_item_tooltip(if skipped {
-                    "tutorial already skipped on this profile"
-                } else {
-                    "setvar tutorial 1000"
-                });
+                ui.set_item_tooltip("setvar tutorial 1000");
             }
             "Lumbridge" => {
-                if ui.button_with_size("Lumbridge", [w, 0.0]) {
+                if ui.button_with_size(caption, [w, 0.0]) {
                     session.cheat_focused("~home");
                 }
+                ui.set_item_tooltip("~home — Lumbridge courtyard");
             }
             "maxme" => {
-                if ui.button_with_size("maxme", [w, 0.0]) {
+                if ui.button_with_size(caption, [w, 0.0]) {
                     for cmd in debug_maxme_cheats() {
                         session.cheat_focused(cmd);
                     }
                 }
+                ui.set_item_tooltip("19× setstat 99");
             }
             "Teles" => {
-                if ui.button_with_size("Teles", [w, 0.0]) {
+                if ui.button_with_size(caption, [w, 0.0]) {
                     ui.open_popup("##debug-teles");
                 }
             }
@@ -1450,7 +1597,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         let (bw, _) = button_row_layout(avail, cols);
         for (i, dest) in dests.iter().enumerate() {
             if i > 0 && i % cols != 0 {
-                ui.same_line();
+                gap_line(ui);
             }
             if ui.button_with_size(dest.label, [bw, 0.0]) {
                 session.cheat_focused(dest.cheat);
@@ -1497,7 +1644,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
     }
     if !stack {
-        ui.same_line();
+        gap_line(ui);
     }
     {
         let _load = if active {
@@ -1523,7 +1670,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         }
     }
     if !sstack {
-        ui.same_line();
+        gap_line(ui);
     }
     {
         let _pause = if script_pause_enabled(state) {
@@ -1536,7 +1683,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         }
     }
     if !sstack {
-        ui.same_line();
+        gap_line(ui);
     }
     {
         let _stop = if script_stop_enabled(state) {
@@ -1658,91 +1805,75 @@ fn load_window(ui: &Ui, session: &mut Session) {
     session.script_load_open = open;
 }
 
-/// True while the Nav settings modal was wanted last frame; drives the
-/// rising-edge `open_popup` (same latch as the chooser) so Esc cannot be
-/// defeated by a per-frame reopen.
-static PREV_NAV_SETTINGS: AtomicBool = AtomicBool::new(false);
-
-/// Nav settings modal (un-mocked this task): Routing, Display, Path paint
-/// (only while the path is shown), and Debug groups. Every toggle or
-/// colour writes `session.ui.nav` + `ui_state::save`; Esc / Close writes
-/// nothing new. WalkTo, capture, and full-rate stay on the rail.
-fn nav_settings_modal(ui: &Ui, session: &mut Session) {
-    let want = session.nav_settings_open;
-    let (open_popup, new_prev) =
-        chooser_should_open_popup(want, PREV_NAV_SETTINGS.load(Ordering::Relaxed));
-    PREV_NAV_SETTINGS.store(new_prev, Ordering::Relaxed);
-    if open_popup {
-        ui.open_popup("Nav settings");
+/// Nav config window: Routing, Display, Path paint (only while the path
+/// is shown), and Debug groups. Every toggle or colour writes
+/// `session.ui.nav` + `ui_state::save`. Not a blocking modal.
+fn nav_settings_window(ui: &Ui, session: &mut Session) {
+    if !session.nav_settings_open {
+        return;
     }
-    let mut open = want;
-    if let Some(_t) = ui
-        .begin_modal_popup_config("Nav settings")
+    let mut open = true;
+    ui.window("Nav config")
         .opened(&mut open)
-        .begin()
-    {
-        let mut nav = session.ui.nav.clone();
-        let mut changed = false;
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([360.0, 480.0], Condition::FirstUseEver)
+        .build(|| {
+            let mut nav = session.ui.nav.clone();
+            let mut changed = false;
 
-        ui.text_colored(ACCENT, "Routing");
-        if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
-            changed = true;
-        }
-        if ui.checkbox("allow wilderness", &mut nav.allow_wilderness) {
-            changed = true;
-        }
+            ui.text_colored(ACCENT, "Routing");
+            if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
+                changed = true;
+            }
+            if ui.checkbox("allow wilderness", &mut nav.allow_wilderness) {
+                changed = true;
+            }
 
-        ui.spacing();
-        ui.text_colored(ACCENT, "Display");
-        if ui.checkbox("show nav path", &mut nav.show_nav_path) {
-            changed = true;
-        }
-
-        if nav.show_nav_path {
             ui.spacing();
-            ui.text_colored(ACCENT, "Path paint");
-            changed |= nav_color_field(ui, "path", &mut nav.color_path);
-            changed |= nav_color_field(ui, "transport", &mut nav.color_transport);
-            changed |= nav_color_field(ui, "click", &mut nav.color_click);
-            changed |= nav_color_field(ui, "text", &mut nav.color_text);
-            if ui.checkbox("hop labels", &mut nav.hop_labels) {
+            ui.text_colored(ACCENT, "Display");
+            if ui.checkbox("show nav path", &mut nav.show_nav_path) {
                 changed = true;
             }
-            if ui.input_int("hop label px", &mut nav.hop_label_px) {
-                nav.hop_label_px = clamp_hop_label_px(nav.hop_label_px);
+
+            if nav.show_nav_path {
+                ui.spacing();
+                ui.text_colored(ACCENT, "Path paint");
+                changed |= nav_color_field(ui, "path", &mut nav.color_path);
+                changed |= nav_color_field(ui, "transport", &mut nav.color_transport);
+                changed |= nav_color_field(ui, "click", &mut nav.color_click);
+                changed |= nav_color_field(ui, "text", &mut nav.color_text);
+                if ui.checkbox("hop labels", &mut nav.hop_labels) {
+                    changed = true;
+                }
+                if ui.input_int("hop label px", &mut nav.hop_label_px) {
+                    nav.hop_label_px = clamp_hop_label_px(nav.hop_label_px);
+                    changed = true;
+                }
+            }
+
+            ui.spacing();
+            ui.text_colored(ACCENT, "Debug");
+            if ui.checkbox("collision fill", &mut nav.collision_fill) {
                 changed = true;
             }
-        }
+            changed |= nav_color_field(ui, "collision", &mut nav.color_collision);
+            if ui.checkbox("NSEW labels", &mut nav.nsew_labels) {
+                changed = true;
+            }
+            if ui.checkbox("client trail", &mut nav.client_trail) {
+                changed = true;
+            }
+            changed |= nav_color_field(ui, "client", &mut nav.color_client);
+            changed |= nav_color_field(ui, "client run-alt", &mut nav.color_client_run_alt);
+            if ui.checkbox("component flood", &mut nav.component_flood) {
+                changed = true;
+            }
 
-        ui.spacing();
-        ui.text_colored(ACCENT, "Debug");
-        if ui.checkbox("collision fill", &mut nav.collision_fill) {
-            changed = true;
-        }
-        changed |= nav_color_field(ui, "collision", &mut nav.color_collision);
-        if ui.checkbox("NSEW labels", &mut nav.nsew_labels) {
-            changed = true;
-        }
-        if ui.checkbox("client trail", &mut nav.client_trail) {
-            changed = true;
-        }
-        changed |= nav_color_field(ui, "client", &mut nav.color_client);
-        changed |= nav_color_field(ui, "client run-alt", &mut nav.color_client_run_alt);
-        if ui.checkbox("component flood", &mut nav.component_flood) {
-            changed = true;
-        }
-
-        if changed {
-            session.ui.nav = nav;
-            crate::ui_state::save(&session.ui);
-        }
-
-        ui.spacing();
-        let w = ui.content_region_avail()[0];
-        if ui.button_with_size("Close", [w, 0.0]) {
-            ui.close_current_popup();
-        }
-    }
+            if changed {
+                session.ui.nav = nav;
+                crate::ui_state::save(&session.ui);
+            }
+        });
     session.nav_settings_open = open;
 }
 
@@ -1782,22 +1913,34 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     } else {
         mock_button(ui, "Edit parameters", "not in v1", [w, 0.0]);
     }
-    // Global settings and Loadouts stay mocked; Nav settings is a live
-    // button that opens the modal below.
+}
+
+/// Under WalkTo, above profile: per-slot renderer/mem, nav paints,
+/// Loadouts (mocked until the TS shim). Wraps so "General config" is not clipped.
+fn slot_config_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, PARAM_ROW.len());
-    mock_button(ui, "Global settings", "campaign 5", [w, 0.0]);
-    if !stack {
-        ui.same_line();
+    let cells = button_cells_min(avail, CONFIG_ROW.len(), CONFIG_MIN);
+    for (i, &(w, same_line)) in cells.iter().enumerate() {
+        if same_line {
+            gap_line(ui);
+        }
+        match CONFIG_ROW[i] {
+            "General config" => {
+                if ui.button_with_size("General config", [w, 0.0]) {
+                    session.global_settings_open = true;
+                }
+                ui.set_item_tooltip("slot render + global cadence / capture");
+            }
+            "Nav config" => {
+                if ui.button_with_size("Nav config", [w, 0.0]) {
+                    session.nav_settings_open = true;
+                }
+                ui.set_item_tooltip("nav debug paints and labels");
+            }
+            "Loadouts" => mock_button(ui, "Loadouts", "until TS shim", [w, 0.0]),
+            _ => {}
+        }
     }
-    if ui.button_with_size("Nav settings", [w, 0.0]) {
-        session.nav_settings_open = true;
-    }
-    ui.set_item_tooltip("nav debug paints and labels");
-    if !stack {
-        ui.same_line();
-    }
-    mock_button(ui, "Loadouts", "campaign 5", [w, 0.0]);
 }
 
 /// Parameter editing is a v1 gap: always `false` until a params modal ships.
@@ -1818,6 +1961,11 @@ fn status_section(ui: &Ui, session: &mut Session) {
         kv_row(ui, "walk", &session.walk_status_text());
         kv_row(ui, "queue", "—");
         kv_row(ui, "modals", "—");
+        kv_row(
+            ui,
+            "mem",
+            Session::mem_status_text(session.focused_lowmem()),
+        );
         return;
     }
     // Focused slot if present, else the first runner. One bot's rows, not a
@@ -1848,6 +1996,11 @@ fn status_section(ui: &Ui, session: &mut Session) {
     let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
     kv_row(ui, "queue", &queue);
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
+    kv_row(
+        ui,
+        "mem",
+        Session::mem_status_text(session.focused_lowmem()),
+    );
 }
 
 /// log: focused slot's status-transition lines (or PROCESS when none).
@@ -1871,32 +2024,125 @@ fn log_section(ui: &Ui, session: &mut Session) {
         });
 }
 
-/// rendering: game renderer checkbox; `set_draw` is applied by the slot
-/// threads from the shared focus on every frame.
-fn rendering_section(ui: &Ui, session: &mut Session) {
-    if !section_open(ui, session, "rendering") {
-        return;
+/// Selected picker button: amber fill, dark text (illuminated invert).
+fn inverted_button(ui: &Ui, label: &str, selected: bool, size: [f32; 2]) -> bool {
+    let _b = selected.then(|| ui.push_style_color(StyleColor::Button, ACCENT));
+    let _h = selected.then(|| ui.push_style_color(StyleColor::ButtonHovered, ACCENT_HOVER));
+    let _a = selected.then(|| ui.push_style_color(StyleColor::ButtonActive, ACCENT));
+    let _t = selected.then(|| ui.push_style_color(StyleColor::Text, BG));
+    ui.button_with_size(label, size)
+}
+
+const MEM_POPUP: &str = "mem-pick";
+
+/// Sticky highmem/lowmem popup (click-away to close), opened by the mem
+/// button the same way Teles opens dests.
+fn mem_popup(ui: &Ui, session: &mut Session) {
+    ui.popup(MEM_POPUP, || {
+        ui.text_disabled("mem");
+        let low = session.focused_lowmem();
+        if inverted_button(ui, "highmem", !low, [0.0, 0.0]) {
+            session.request_focused_lowmem(false);
+        }
+        gap_line(ui);
+        if inverted_button(ui, "lowmem", low, [0.0, 0.0]) {
+            session.request_focused_lowmem(true);
+        }
+    });
+}
+
+/// none / GPU / CPU row. Click the mem button (current highmem/lowmem) for
+/// the sticky picker, like Teles.
+fn raster_picker(ui: &Ui, session: &mut Session) {
+    let cur = session.focused_raster();
+    let avail = ui.content_region_avail()[0];
+    let cells = button_cells(avail, 3);
+    if inverted_button(ui, "none", cur == vault::RasterMode::Off, [cells[0].0, 0.0]) {
+        session.request_focused_raster(vault::RasterMode::Off);
     }
-    let on = session.focus.lock().unwrap().renderer;
+    if cells[1].1 {
+        gap_line(ui);
+    }
+    if inverted_button(ui, "GPU", cur == vault::RasterMode::Gpu, [cells[1].0, 0.0]) {
+        session.request_focused_raster(vault::RasterMode::Gpu);
+    }
+    if cells[2].1 {
+        gap_line(ui);
+    }
+    if inverted_button(ui, "CPU", cur == vault::RasterMode::Cpu, [cells[2].0, 0.0]) {
+        session.request_focused_raster(vault::RasterMode::Cpu);
+    }
+    let mem = if session.focused_lowmem() {
+        "lowmem"
+    } else {
+        "highmem"
+    };
+    let w = ui.content_region_avail()[0];
+    if ui.button_with_size(mem, [w, 0.0]) {
+        ui.open_popup(MEM_POPUP);
+    }
+    ui.set_item_tooltip("Game pane highmem / lowmem — switching mem logs that client out");
+    mem_popup(ui, session);
+}
+
+fn config_heading(ui: &Ui, label: &str) {
+    ui.text_colored(ACCENT, label);
+}
+
+/// rendering: none/GPU/CPU picker; `set_draw` is applied by the slot
+/// threads from the shared focus on every frame.
+fn slot_render_section(ui: &Ui, session: &mut Session) {
+    ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem logs the Game client out.");
+    raster_picker(ui, session);
+    let mut focused_50 = session.focus.lock().unwrap().focused_50;
+    if ui.checkbox("focused 50 fps", &mut focused_50) {
+        session.set_focused_50(focused_50);
+    }
+    ui.text_wrapped("Game pane only; this client on the rail uses the rail cadence.");
+}
+
+fn slot_capture_section(ui: &Ui, session: &mut Session) {
+    let on = session.focus.lock().unwrap().capture;
     let mut cur = on;
-    if ui.checkbox("game renderer", &mut cur) {
-        session.set_renderer(cur);
+    if ui.checkbox("capture input", &mut cur) {
+        session.set_capture(cur);
     }
     ui.text_wrapped(if on {
-        "1 fps watch; capture (focused), sidecar (members), and the live overlay all raise to 50 fps. Never pauses the bot."
+        "the focused grid/Game member; at most one keyboard. Does not raise fps."
     } else {
-        "renderer off — bot still runs."
+        "watch-only; no input work"
     });
-    // Sidecar 50 fps: a render-cadence pref for wall/grid members (the
-    // focused slot's 50 fps is the capture path, not this knob).
+    let focused = session.focused_name();
+    let auto = focused
+        .as_deref()
+        .and_then(|n| session.vault.as_ref().and_then(|v| v.get(n)))
+        .map(|p| p.settings.auto_login)
+        .unwrap_or(false);
+    let mut auto_cur = auto;
+    if ui.checkbox("auto-login on title", &mut auto_cur) {
+        if let Some(name) = focused {
+            session.set_auto_login(&name, auto_cur);
+        }
+    }
+    ui.text_wrapped("this profile; handshake on spawn unless latched out");
+}
+
+fn global_config_section(ui: &Ui, session: &mut Session) {
     let mut sidecar = session.focus.lock().unwrap().sidecar_50;
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
     }
-    ui.text_wrapped("wall/grid members repaint every 20 ms, not 1 s");
-    // Live-only "full rate (this run)": the ephemeral live overlay, shown
-    // only while a `--live script_*` / smoke runner is up (scenarios never
-    // flip the sidecar knob, and the checkbox cannot outlive the run).
+    ui.text_wrapped("all rail/grid members; all-or-nothing");
+    let current = session.focus.lock().unwrap().only_render_selected;
+    let mut only = current;
+    if ui.checkbox("only render selected", &mut only) {
+        let (next, open_warn) = apply_only_render_selected(current, only);
+        session.focus.lock().unwrap().only_render_selected = next;
+        if open_warn {
+            session.wall.render_all_warn_open = true;
+        }
+        session.wake_all_slots();
+    }
     let live = session.scenario.lock().unwrap().is_some();
     if live {
         let mut full = session.focus.lock().unwrap().live_full_rate;
@@ -1905,30 +2151,6 @@ fn rendering_section(ui: &Ui, session: &mut Session) {
         }
         ui.text_wrapped("every drawing slot at 50 fps; not sidecar, not capture, not saved");
     }
-    // Music / SFX: the focused profile's vault lowmem. The toggle
-    // retargets the focused slot's cpal speaker live.
-    let mut music = !session.focused_lowmem();
-    if ui.checkbox("Music / SFX", &mut music) {
-        session.set_focused_lowmem(!music);
-    }
-    ui.text_wrapped("highmem audio; the focused slot's speaker opens live");
-}
-
-/// input: per-focused-bot capture toggle. Off = watch-only, zero input work.
-fn input_section(ui: &Ui, session: &mut Session) {
-    if !section_open(ui, session, "input") {
-        return;
-    }
-    let on = session.focus.lock().unwrap().capture;
-    let mut cur = on;
-    if ui.checkbox("capture input", &mut cur) {
-        session.set_capture(cur);
-    }
-    ui.text_wrapped(if on {
-        "click-through on; at most one keyboard"
-    } else {
-        "watch-only; no input work"
-    });
 }
 
 /// Sidecar rail window: only while MultiBox is on and Grid is off. Bulk
@@ -1939,7 +2161,7 @@ fn input_section(ui: &Ui, session: &mut Session) {
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.sample_resources();
     ui.window(RAIL_WINDOW)
-        .flags(WindowFlags::NO_COLLAPSE)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE | WindowFlags::NO_TITLE_BAR)
         .build(|| {
             rail_bulk_row(ui, state);
             rail_tiles(ui, gpu, state);
@@ -1993,61 +2215,111 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     }
 }
 
-/// True while the render-all warning was wanted last frame; drives the
-/// rising-edge `open_popup` (same latch as the chooser) so Esc cannot be
-/// defeated by a per-frame reopen.
-static PREV_RENDER_ALL_WARN: AtomicBool = AtomicBool::new(false);
+/// Fitted dialog width: wrap + auto-resize so first open is not a sliver.
+const DIALOG_W: f32 = 400.0;
+const VAULT_RESET_POPUP: &str = "Reset vault?";
+const PROFILE_DELETE_POPUP: &str = "Delete profile?";
 
-/// Scary confirm before "only render selected" can be unchecked: OK stays
-/// disabled until "I understand" is ticked, then writes
-/// `only_render_selected = false`. Cancel/Esc keep the safe default; the
-/// box that triggered this stays checked either way.
-fn render_all_warn_window(ui: &Ui, session: &mut Session) {
-    let want = session.wall.render_all_warn_open;
-    let (open_popup, new_prev) =
-        chooser_should_open_popup(want, PREV_RENDER_ALL_WARN.load(Ordering::Relaxed));
-    PREV_RENDER_ALL_WARN.store(new_prev, Ordering::Relaxed);
-    if open_popup {
-        ui.open_popup("Render all wall members?");
-    }
-    let mut open = want;
-    if let Some(_t) = ui
-        .begin_modal_popup_config("Render all wall members?")
-        .opened(&mut open)
-        .begin()
-    {
-        ui.text_wrapped(
-            "This runs a GPU renderer for every client. Much lighter than the old CPU path, \
-             but a full wall still drives real GPU load on this machine.",
-        );
-        ui.spacing();
-        let mut understood = session.wall.render_all_understood;
-        if ui.checkbox("I understand", &mut understood) {
-            session.wall.render_all_understood = understood;
+/// Teles-style confirm: click-out / Escape / any of these keys / Cancel
+/// dismisses. Only I understand then the confirm button commits.
+fn confirm_dismiss_key(ui: &Ui) -> bool {
+    use Key::*;
+    [
+        Escape, Enter, Tab, Backspace, Delete, Space, LeftArrow, RightArrow, UpArrow, DownArrow,
+    ]
+    .into_iter()
+    .any(|k| ui.is_key_pressed(k))
+}
+
+/// Returns true when the operator checked I understand and pressed confirm.
+fn scary_confirm_popup(
+    ui: &Ui,
+    id: &str,
+    body: &str,
+    confirm: &str,
+    understood: &mut bool,
+) -> bool {
+    let mut did = false;
+    ui.popup(id, || {
+        if confirm_dismiss_key(ui) {
+            *understood = false;
+            ui.close_current_popup();
+            return;
         }
+        let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+        ui.text_wrapped(body);
+        ui.spacing();
+        ui.checkbox("I understand", understood);
         ui.spacing();
         let avail = ui.content_region_avail()[0];
         let (w, stack) = button_row_layout(avail, 2);
-        let ok_clicked = {
-            let _disabled = ui.begin_disabled_with_cond(!understood);
-            ui.button_with_size("OK", [w, 0.0])
+        let ok = {
+            let _off = ui.begin_disabled_with_cond(!*understood);
+            ui.button_with_size(confirm, [w, 0.0])
         };
-        if ok_clicked && understood {
-            session.focus.lock().unwrap().only_render_selected = false;
-            // Every member now draws; kick the parked slots so the
-            // renderers start within a frame.
-            session.wake_all_slots();
+        if ok && *understood {
+            did = true;
+            *understood = false;
             ui.close_current_popup();
         }
         if !stack {
-            ui.same_line();
+            gap_line(ui);
         }
         if ui.button_with_size("Cancel", [w, 0.0]) {
+            *understood = false;
             ui.close_current_popup();
         }
+    });
+    did
+}
+
+/// Scary confirm before "only render selected" can be unchecked: OK stays
+/// disabled until "I understand" is ticked, then writes
+/// `only_render_selected = false`. Cancel keeps the safe default; the
+/// box that triggered this stays checked either way.
+fn render_all_warn_window(ui: &Ui, session: &mut Session) {
+    if !session.wall.render_all_warn_open {
+        return;
     }
-    session.wall.render_all_warn_open = open;
+    let mut open = true;
+    ui.window("Render all wall members?")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            ui.text_wrapped(
+                "This runs a GPU renderer for every client. Much lighter than the old CPU path, \
+                 but a full wall still drives real GPU load on this machine.",
+            );
+            ui.spacing();
+            let mut understood = session.wall.render_all_understood;
+            if ui.checkbox("I understand", &mut understood) {
+                session.wall.render_all_understood = understood;
+            }
+            ui.spacing();
+            let avail = ui.content_region_avail()[0];
+            let (w, stack) = button_row_layout(avail, 2);
+            let ok_clicked = {
+                let _disabled = ui.begin_disabled_with_cond(!understood);
+                ui.button_with_size("OK", [w, 0.0])
+            };
+            if ok_clicked && understood {
+                session.focus.lock().unwrap().only_render_selected = false;
+                session.wake_all_slots();
+                session.wall.render_all_warn_open = false;
+            }
+            if !stack {
+                ui.same_line();
+            }
+            if ui.button_with_size("Cancel", [w, 0.0]) {
+                session.wall.render_all_warn_open = false;
+            }
+        });
     if !open {
+        session.wall.render_all_warn_open = false;
+    }
+    if !session.wall.render_all_warn_open {
         session.wall.render_all_understood = false;
     }
 }
@@ -2086,14 +2358,25 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             (focus.focused.clone(), draw_for_slot(&focus, name))
         };
         let avail = ui.content_region_avail()[0];
-        let (cap_select, cap_remove) = rail_cap(ui, name, light, focused.as_deref(), avail);
-        let body_clicked = if only_selected {
-            // Collapsed strip: no preview body until "render all" is accepted.
-            false
-        } else {
+        let preview = rail_preview_open(
+            name,
+            focused.as_deref(),
+            only_selected,
+            false,
+            &state.session.ui.rail_preview,
+        );
+        let (cap_select, cap_remove, cap_fold) =
+            rail_cap(ui, name, light, focused.as_deref(), avail, preview);
+        let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
+        } else {
+            false
         };
-        if cap_remove {
+        if cap_fold {
+            let next = !preview;
+            state.session.ui.rail_preview.insert(name.clone(), next);
+            crate::ui_state::save(&state.session.ui);
+        } else if cap_remove {
             state.session.rail_remove(name);
         } else if cap_select || body_clicked {
             state.session.select(name);
@@ -2106,22 +2389,39 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 /// (click selects), and a small red ✗ (rail remove: logout arm then
 /// `stop_slot`, never `vault`). `width` is the strip the row must fit
 /// (rail avail or grid cell width). Returns `(selected, removed)`.
-fn rail_cap(ui: &Ui, name: &str, light: Light, focused: Option<&str>, width: f32) -> (bool, bool) {
-    const X_W: f32 = 24.0;
-    const DOT_W: f32 = 16.0;
+fn rail_cap(
+    ui: &Ui,
+    name: &str,
+    light: Light,
+    focused: Option<&str>,
+    width: f32,
+    preview: bool,
+) -> (bool, bool, bool) {
+    const BTN: f32 = 28.0;
+    const DOT_W: f32 = 18.0;
     ui.text_colored(light.rgb(), STATUS_GLYPH);
-    ui.same_line();
+    gap_line(ui);
     let selected = focused == Some(name);
+    let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
         .selectable_config(cap_title(name, light))
         .selected(selected)
-        .size([(width - X_W - DOT_W).max(10.0), 0.0])
+        .size([name_w, 0.0])
         .build();
-    ui.same_line();
+    gap_line(ui);
+    let fold_g = if preview { FOLD_GLYPH } else { UNFOLD_GLYPH };
+    let folded = ui.button_with_size(format!("{fold_g}##fold-{name}"), [BTN, 0.0]);
+    ui.set_item_tooltip(if preview {
+        "fold preview"
+    } else {
+        "show preview"
+    });
+    gap_line(ui);
     let red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(format!("{REMOVE_GLYPH}##{name}"), [X_W, 0.0]);
+    let removed = ui.button_with_size(format!("{REMOVE_GLYPH}##{name}"), [BTN, 0.0]);
+    ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     red.pop();
-    (clicked, removed)
+    (clicked, removed, folded)
 }
 
 /// Tile body: the member's `FrameBuf` blitted into a `size` box via a
@@ -2182,8 +2482,7 @@ fn rail_body(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, name: &str, draw: b
     cell_body(ui, gpu, state, name, [TILE_W, TILE_H], draw)
 }
 
-/// `+ add bot`: opens the chooser modal again (first MultiBox-on opened it
-/// once already; this button always reopens).
+/// `+ add bot`: opens the profile picker (same window as Profiles).
 fn add_bot_button(ui: &Ui, state: &mut PanelState) {
     ui.spacing();
     let w = ui.content_region_avail()[0];
@@ -2224,10 +2523,6 @@ fn resource_card(ui: &Ui, state: &mut PanelState) {
     }
 }
 
-/// True while the chooser modal was wanted last frame; drives the
-/// rising-edge `open_popup` so Esc cannot be defeated by a per-frame reopen.
-static PREV_CHOOSER: AtomicBool = AtomicBool::new(false);
-
 /// Rising-edge helper: `(open_popup, new_prev)`. `open_popup` is true only
 /// on the `want` false→true edge, so `+ add bot` reopens after a close;
 /// `new_prev` tracks `want` on **both** values, or a closed chooser would
@@ -2236,74 +2531,224 @@ pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
     (want && !prev, want)
 }
 
-/// Chooser modal: one row per vault profile. Click a row to load it onto
-/// the wall; the row ✕ deletes the vault profile only (a live wall member
-/// is untouched); Load all loads every profile. Esc (native popup
-/// behavior) closes without loading.
+/// Profile picker (single-bot and MultiBox). Click a row to focus it
+/// (and load onto the wall while MultiBox is on); Edit opens user/pass;
+/// ✕ deletes the vault row only. Load all is MultiBox-only.
 fn chooser_window(ui: &Ui, session: &mut Session) {
-    let want = session.wall.chooser_open;
-    // Rising edge only: re-calling OpenPopup every frame would re-open the
-    // modal the moment Esc closes it (BeginPopupModal writes `opened` false
-    // when the popup is not open). The prev latch is updated on both true
-    // and false so a later `+ add bot` is a fresh edge.
-    let (open_popup, new_prev) =
-        chooser_should_open_popup(want, PREV_CHOOSER.load(Ordering::Relaxed));
-    PREV_CHOOSER.store(new_prev, Ordering::Relaxed);
-    if open_popup {
-        ui.open_popup("274bot-chooser");
+    if !session.wall.chooser_open {
+        return;
     }
-    let mut open = want;
-    if let Some(_t) = ui
-        .begin_modal_popup_config("274bot-chooser")
+    let mut open = true;
+    ui.window("Profiles")
         .opened(&mut open)
-        .begin()
-    {
-        let names: Vec<String> = session
-            .vault
-            .as_ref()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
-        let w = ui.content_region_avail()[0];
-        if ui.button_with_size("Load all", [w, 0.0]) {
-            session.load_all();
-        }
-        ui.spacing();
-        if names.is_empty() {
-            ui.text_disabled("vault is empty — Save creates the first profile");
-        }
-        for name in &names {
-            let on_wall = session.wall.members.iter().any(|m| m == name);
-            let (loaded, removed) = chooser_row(ui, name, on_wall);
-            if loaded {
-                session.load(name);
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 120.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            let names: Vec<String> = session
+                .vault
+                .as_ref()
+                .map(|v| v.profiles().map(|p| p.username.clone()).collect())
+                .unwrap_or_default();
+            let w = ui.content_region_avail()[0];
+            let focused = session.focused_name();
+            let members = session.wall.members.clone();
+            let multibox = session.multibox;
+            if multibox {
+                if ui.button_with_size("Load all", [w, 0.0]) {
+                    session.load_all();
+                }
             }
-            if removed {
-                session.vault_remove(name);
+            if ui.button_with_size("New profile", [w, 0.0]) {
+                session.begin_edit_profile(None);
             }
-        }
-        ui.spacing();
-        let w = ui.content_region_avail()[0];
-        if ui.button_with_size("Close", [w, 0.0]) {
-            ui.close_current_popup();
-        }
+            ui.spacing();
+            let mut picked: Option<String> = None;
+            let mut removed: Option<String> = None;
+            let mut edit: Option<String> = None;
+            if names.is_empty() {
+                ui.text_disabled("vault is empty — New profile then Save");
+            } else {
+                const ROW_H: f32 = 24.0;
+                let vp_h = ui.main_viewport().size()[1];
+                let max_list = (vp_h - 240.0).clamp(88.0, 480.0);
+                let need = (names.len() as f32) * ROW_H + 8.0;
+                let list_h = need.min(max_list);
+                ui.child_window("##profiles-list")
+                    .size([0.0, list_h])
+                    .build(ui, || {
+                        for name in &names {
+                            let selected = if multibox {
+                                members.iter().any(|m| m == name)
+                            } else {
+                                focused.as_deref() == Some(name.as_str())
+                            };
+                            let (p, r, e) = chooser_row(ui, name, selected);
+                            if e {
+                                edit = Some(name.clone());
+                            } else if r {
+                                removed = Some(name.clone());
+                            } else if p {
+                                picked = Some(name.clone());
+                            }
+                        }
+                    });
+            }
+            if let Some(name) = edit {
+                session.begin_edit_profile(Some(&name));
+            } else if let Some(name) = removed {
+                session.delete_understood = false;
+                session.pending_profile_delete = Some(name);
+                ui.open_popup(PROFILE_DELETE_POPUP);
+            } else if let Some(name) = picked {
+                if session.multibox {
+                    session.load(&name);
+                } else {
+                    session.select(&name);
+                    session.wall.chooser_open = false;
+                    session.cancel_edit_profile();
+                }
+            }
+            if let Some(edit_name) = session.chooser_edit.clone() {
+                ui.spacing();
+                ui.separator();
+                if edit_name.is_empty() {
+                    ui.text_colored(ACCENT, "new profile");
+                } else {
+                    ui.text_colored(ACCENT, format!("edit {edit_name}"));
+                }
+                ui.text_disabled("user");
+                ui.input_text("##cred-user", &mut session.cred_user)
+                    .hint("username")
+                    .build();
+                ui.text_disabled("pass");
+                ui.input_text("##cred-pass", &mut session.cred_pass)
+                    .password(true)
+                    .hint("password")
+                    .build();
+                let avail = ui.content_region_avail()[0];
+                let (bw, stack) = button_row_layout(avail, 2);
+                if ui.button_with_size("Save", [bw, 0.0]) {
+                    if session.save_credentials() {
+                        session.cancel_edit_profile();
+                    }
+                }
+                if !stack {
+                    ui.same_line();
+                }
+                if ui.button_with_size("Cancel", [bw, 0.0]) {
+                    session.cancel_edit_profile();
+                }
+            }
+            ui.spacing();
+            let w = ui.content_region_avail()[0];
+            if ui.button_with_size("Close", [w, 0.0]) {
+                session.wall.chooser_open = false;
+                session.cancel_edit_profile();
+            }
+            let pending = session.pending_profile_delete.clone();
+            let body = match pending.as_deref() {
+                Some(n) => format!(
+                    "Remove {n} from the vault? A running wall member stays up. This cannot be undone."
+                ),
+                None => "Remove this profile from the vault?".into(),
+            };
+            if scary_confirm_popup(
+                ui,
+                PROFILE_DELETE_POPUP,
+                &body,
+                "Delete",
+                &mut session.delete_understood,
+            ) {
+                if let Some(name) = session.pending_profile_delete.take() {
+                    if session.chooser_edit.as_deref() == Some(name.as_str()) {
+                        session.cancel_edit_profile();
+                    }
+                    session.vault_remove(&name);
+                }
+            } else if !ui.is_popup_open(PROFILE_DELETE_POPUP) {
+                session.pending_profile_delete = None;
+            }
+        });
+    if !open {
+        session.cancel_edit_profile();
     }
-    session.wall.chooser_open = open;
+    session.wall.chooser_open = session.wall.chooser_open && open;
 }
 
-/// One chooser row: a selectable name (click loads; stays open so more
-/// rows can be clicked) plus a small ✕ (vault row delete). The ✕ is a
-/// sibling item, so its click never also loads the row.
-fn chooser_row(ui: &Ui, name: &str, on_wall: bool) -> (bool, bool) {
+fn settings_window(ui: &Ui, session: &mut Session) {
+    if !session.global_settings_open {
+        return;
+    }
+    let mut open = true;
+    ui.window("General config")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            config_heading(ui, "slot");
+            let slot = session.focused_name().unwrap_or_else(|| "—".into());
+            ui.text_disabled(slot);
+            slot_capture_section(ui, session);
+            ui.spacing();
+            config_heading(ui, "render");
+            slot_render_section(ui, session);
+            ui.spacing();
+            config_heading(ui, "global");
+            global_config_section(ui, session);
+        });
+    session.global_settings_open = open;
+}
+
+fn restart_confirm_window(ui: &Ui, session: &mut Session) {
+    if !session.restart_confirm_open {
+        return;
+    }
+    let mut open = true;
+    ui.window("Restart slot?")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            ui.text_wrapped(session.restart_confirm_body());
+            ui.spacing();
+            let avail = ui.content_region_avail()[0];
+            let (w, stack) = button_row_layout(avail, 2);
+            if ui.button_with_size("OK", [w, 0.0]) {
+                session.confirm_restart();
+            }
+            if !stack {
+                ui.same_line();
+            }
+            if ui.button_with_size("Cancel", [w, 0.0]) {
+                session.cancel_restart();
+            }
+        });
+    if !open {
+        session.cancel_restart();
+    }
+}
+
+/// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
+/// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
+fn chooser_row(ui: &Ui, name: &str, selected: bool) -> (bool, bool, bool) {
+    const EDIT_W: f32 = 44.0;
+    const X_W: f32 = 28.0;
     let avail = ui.content_region_avail()[0];
+    let name_w = (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0);
     let loaded = ui
         .selectable_config(name)
-        .selected(on_wall)
+        .selected(selected)
         .close_popups(false)
-        .size([(avail - 26.0).max(10.0), 0.0])
+        .size([name_w, 0.0])
         .build();
-    ui.same_line();
-    let removed = ui.button_with_size(format!("✕##{name}"), [24.0, 0.0]);
-    (loaded, removed)
+    gap_line(ui);
+    let edit = ui.button_with_size(format!("Edit##edit-{name}"), [EDIT_W, 0.0]);
+    gap_line(ui);
+    let _red = ui.push_style_color(StyleColor::Text, ERROR);
+    let removed = ui.button_with_size(format!("✕##{name}"), [X_W, 0.0]);
+    (loaded, removed, edit)
 }
 
 /// Install the whole-window shot plumbing for a headed scenario run: the
@@ -2343,13 +2788,15 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
 
-    // Deferred boot: the unlock / live-harness flows spawn slot threads,
-    // and a slot renderer is built lazily at its first paint — spawning
-    // before GPU init would let a slot construct its own wgpu device
-    // ahead of `on_gpu_init`'s `inject_device`. The boot runs at the top
-    // of the first `on_frame`, which the loop guarantees runs after GPU
-    // init, so every slot renderer is built on the injected device.
+    // Deferred boot: unlock / live-harness spawn slot threads, and a slot
+    // renderer is built lazily at its first paint — spawning before GPU
+    // init would let a slot construct its own wgpu device ahead of
+    // `on_gpu_init`'s `inject_device`. The first UI frame presents an
+    // empty panel (so the OS window actually appears); boot runs on the
+    // next frame, after that present. Slot `maininit` (snapshot / maps)
+    // must not sit on the first-present path.
     let mut boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
+    let mut presented = false;
 
     let cfg = runner_config();
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
@@ -2362,6 +2809,8 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
             // context with the panel's device before any slot renderer can
             // construct (slots spawn on the first frame, after this).
             client::render::backend::inject_device(device.clone(), queue.clone());
+            // Observed only: HiDpiMode::Default already maps logical
+            // pixels. Applying ScaleAllSizes here would double Retina.
             scale.store(
                 integer_ui_scale(window.scale_factor() as f32).to_bits(),
                 Ordering::Relaxed,
@@ -2370,17 +2819,24 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
         },
         Arc::clone(&state.shot_state),
         move |ui, gpu| {
-            // First frame: run the deferred boot (slot spawns) after GPU
-            // init — a slot renderer can now only ever be built on the
-            // injected device.
-            if let Some(boot) = boot.take() {
-                if let Err(e) = boot_execute(&mut state, boot) {
-                    eprintln!("FAIL: {e}");
-                    std::process::exit(1);
+            // Frame 0 presents chrome with no slots. Frame 1+ runs boot so
+            // a blocking `maininit` cannot hide the window.
+            if presented {
+                if let Some(boot) = boot.take() {
+                    if let Err(e) = boot_execute(&mut state, boot) {
+                        eprintln!("FAIL: {e}");
+                        std::process::exit(1);
+                    }
                 }
             }
+            presented = true;
             if state.os_window.is_none() {
                 state.os_window = os_window.lock().unwrap().clone();
+            }
+            if boot.is_some() {
+                if let Some(w) = state.os_window.as_ref() {
+                    w.request_redraw();
+                }
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             ui_frame(ui, gpu, &mut state);
@@ -2493,9 +2949,11 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     // Every frame, not only while open: the prev latches must track
     // the close so the next open is a fresh rising edge.
     chooser_window(ui, &mut state.session);
+    settings_window(ui, &mut state.session);
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
-    nav_settings_modal(ui, &mut state.session);
+    nav_settings_window(ui, &mut state.session);
+    restart_confirm_window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
 }
 
@@ -2507,13 +2965,15 @@ mod tests {
 
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_for, capture_key_ch,
-        chooser_should_open_popup, clamp_hop_label_px, edit_parameters_enabled, game_window_flags,
-        live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick, manual_shot_label,
-        parse_live_args, runner_config, smoke_settled, smoke_should_fire, Boot, LiveBoot, LiveNull,
-        LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
-        SMOKE_DEADLINE, SMOKE_SETTLE,
+        chooser_should_open_popup, clamp_hop_label_px, debug_caption, edit_parameters_enabled,
+        game_window_flags, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
+        manual_shot_label, parse_live_args, runner_config, smoke_settled, smoke_should_fire, Boot,
+        LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
-    use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
+    use crate::theme::{
+        applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
+    };
     use crate::window::RedrawMode;
 
     #[test]
@@ -2521,8 +2981,8 @@ mod tests {
         // Every slot-spawning path is deferred (returns a Boot to run on
         // the first frame after GPU init), never executed eagerly: mapping
         // a mode to a Boot must not unlock or call live_prepare — those
-        // run only in `boot_execute`, after `on_gpu_init` injected the
-        // panel's device.
+        // run only in `boot_execute`, after the first frame presents and
+        // `on_gpu_init` injected the panel's device.
         assert!(matches!(
             boot_for(&RunMode::Live("null_raster".into()), None),
             Some(Boot::Live(LiveBoot::NullRaster))
@@ -2530,6 +2990,10 @@ mod tests {
         assert!(matches!(
             boot_for(&RunMode::Live("stress50".into()), None),
             Some(Boot::Live(LiveBoot::Stress50))
+        ));
+        assert!(matches!(
+            boot_for(&RunMode::Live("stress50_full".into()), None),
+            Some(Boot::Live(LiveBoot::Stress50Full))
         ));
         match boot_for(&RunMode::Live("script_walk".into()), Some("pass")) {
             Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_walk"),
@@ -2588,6 +3052,15 @@ mod tests {
     }
 
     #[test]
+    fn debug_captions_fit_the_strip() {
+        assert_eq!(debug_caption("DebugPanel"), "Panel");
+        assert_eq!(debug_caption("Lumbridge"), "Lumb");
+        assert_eq!(debug_caption("maxme"), "maxme");
+        assert_eq!(debug_caption("Teles"), "Teles");
+        assert_eq!(debug_caption("TutSkip"), "TutSkip");
+    }
+
+    #[test]
     fn hop_label_px_writes_clamp_to_8_28() {
         // The settings UI is the only writer of `hop_label_px`; it must
         // hold the NavSettings 8..=28 field invariant.
@@ -2624,6 +3097,13 @@ mod tests {
                 .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR),
             "single-bot hides the game/panel tab strip"
         );
+        assert!(
+            c.docking
+                .dockspace_flags
+                .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE),
+            "dock splitters stay off — only grid uses OS-window resize"
+        );
+        assert!(c.ini_filename.is_none(), "no imgui.ini to restore");
         let flags = c.io_config_flags.expect("flags");
         assert!(flags.contains(ConfigFlags::DOCKING_ENABLE));
         assert!(!flags.contains(ConfigFlags::VIEWPORTS_ENABLE));
@@ -2637,6 +3117,9 @@ mod tests {
         assert!(c
             .dock_node_flags_override_set
             .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR));
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
         assert!(!c.docking_always_tab_bar);
     }
 
@@ -2653,8 +3136,15 @@ mod tests {
 
     #[test]
     fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
+        assert_eq!(native_applet(), [765.0, 503.0]);
         assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
-        // Small pane downscales so the Game window needs no scrollbar.
+        let off = applet_offset([1200.0, 700.0], [765.0, 503.0]);
+        assert!(
+            (off[0] - (1200.0 - 765.0)).abs() < 0.01,
+            "flush to the panel"
+        );
+        assert!((off[1] - (700.0 - 503.0) * 0.5).abs() < 0.01);
+        // Grid cells downscale; the non-grid Game blit stays native_applet.
         assert_eq!(fit_applet([382.5, 251.5]), [382.5, 251.5]);
         let wide = fit_applet([2000.0, 503.0]);
         assert!((wide[1] - 503.0).abs() < 0.01);
@@ -2666,6 +3156,7 @@ mod tests {
         let f = game_window_flags();
         assert!(f.contains(WindowFlags::NO_SCROLLBAR));
         assert!(f.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
+        assert!(f.contains(WindowFlags::NO_RESIZE));
         assert!(!f.contains(WindowFlags::HORIZONTAL_SCROLLBAR));
     }
 
@@ -2691,8 +3182,13 @@ mod tests {
     #[test]
     fn panel_split_is_a_thin_right_slice() {
         let r = panel_split_ratio(1120.0);
-        assert!((r - 330.0 / 1120.0).abs() < 0.001);
-        assert!(r < 0.4);
+        assert!((r - PANEL_WIDTH / 1120.0).abs() < 0.001);
+        let wide = panel_split_ratio(2000.0);
+        assert!(
+            (wide * 2000.0 - PANEL_WIDTH).abs() < 0.01,
+            "panel stays 330px on a wide host window, got {}",
+            wide * 2000.0
+        );
     }
 
     #[test]
@@ -2728,6 +3224,14 @@ mod tests {
         assert_eq!(
             parse_live_args(["--live", "stress50"], None),
             Ok(RunMode::Live("stress50".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "stress50_full"], None),
+            Ok(RunMode::Live("stress50_full".into()))
+        );
+        assert_eq!(
+            parse_live_args([] as [&str; 0], Some("stress50_full")),
+            Ok(RunMode::Live("stress50_full".into()))
         );
     }
 
@@ -3207,6 +3711,7 @@ mod tests {
             started,
             last_announced: 0,
             passed: false,
+            name: "stress50",
         }
     }
 
@@ -3247,6 +3752,18 @@ mod tests {
         assert_eq!(err, "live stress50: 1/50 up after 600s");
         assert!(!live.passed);
         assert_eq!(live.last_announced, 1);
+    }
+
+    #[test]
+    fn live_stress_tick_full_name_in_timeout() {
+        let mut live = LiveStress {
+            started: Instant::now() - Duration::from_secs(600),
+            last_announced: 0,
+            passed: false,
+            name: "stress50_full",
+        };
+        let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
+        assert_eq!(err, "live stress50_full: 1/50 up after 600s");
     }
 
     #[test]

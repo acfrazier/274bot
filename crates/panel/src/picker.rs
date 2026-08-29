@@ -12,9 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use api::snapshot::WorldTile;
-#[cfg(test)]
-use dear_imgui_rs::Condition;
-use dear_imgui_rs::{Key, MouseButton, Ui, WindowFlags};
+use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use nav::paint::{collision_at, flood_components, remaining_path_tiles};
 use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
@@ -211,9 +209,12 @@ pub(crate) fn pan_by(
 /// WalkTo window flags: no docking, and the imgui window must not steal
 /// wheel (that pans the map). `NO_SCROLLBAR` hides the bar; without
 /// `NO_SCROLL_WITH_MOUSE` the window still scrolls once content overflows.
-#[cfg(test)]
+/// `.opened` supplies the title-bar ✕.
 fn walkto_window_flags() -> WindowFlags {
-    WindowFlags::NO_DOCKING | WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
+    WindowFlags::NO_DOCKING
+        | WindowFlags::NO_SCROLLBAR
+        | WindowFlags::NO_SCROLL_WITH_MOUSE
+        | WindowFlags::NO_COLLAPSE
 }
 
 /// Canvas child: same wheel capture. A default child grows a scrollbar
@@ -462,15 +463,24 @@ pub fn note_closed() {
     PREV_OPEN.store(false, Ordering::Relaxed);
 }
 
-/// WalkTo map in the Game pane (same dock space as the applet).
+/// WalkTo map in the Game pane as its own window so the title-bar ✕ closes it.
 pub fn draw_picker(ui: &Ui, session: &mut Session) {
-    match pack() {
-        Some(world) => picker_map_body(ui, session, world),
-        None => {
-            ui.text_wrapped("no nav pack — run nav-pack");
-        }
-    }
-    if !session.walkto_open {
+    let pos = ui.cursor_screen_pos();
+    let avail = ui.content_region_avail();
+    let mut open = true;
+    ui.window("WalkTo")
+        .opened(&mut open)
+        .flags(walkto_window_flags() | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+        .position(pos, Condition::Always)
+        .size(avail, Condition::Always)
+        .build(|| match pack() {
+            Some(world) => picker_map_body(ui, session, world),
+            None => {
+                ui.text_wrapped("no nav pack — run nav-pack");
+            }
+        });
+    if !open {
+        session.walkto_open = false;
         PREV_OPEN.store(false, Ordering::Relaxed);
         session.picker_sel = None;
     }
