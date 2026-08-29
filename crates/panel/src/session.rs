@@ -1499,58 +1499,16 @@ impl Session {
         } else {
             self.capture_tx = None;
         }
-        // Credentials fields follow the newly focused profile.
+        // Credentials fields follow the newly focused profile; the General
+        // config mirrors the profile's raster/mem so the pane shows what the
+        // slot actually runs (display only — no write-back, no re-role).
         if let Some(vault) = &self.vault {
             if let Some(p) = vault.get(name) {
                 self.cred_user = p.username.clone();
                 self.cred_pass = p.password.clone();
+                self.ui.raster = p.settings.raster;
+                self.ui.lowmem = p.settings.lowmem;
             }
-        }
-        if let Some(old) = old.as_deref() {
-            if old != name {
-                self.fit_slot_to_role(old);
-            }
-        }
-        self.fit_slot_to_role(name);
-    }
-
-    /// Game pane uses General config raster/mem. Rail members stay GPU +
-    /// lowmem (1 fps unless sidecar 50). Restart only if GPU↔CPU or mem
-    /// actually change.
-    fn fit_slot_to_role(&mut self, name: &str) {
-        let game = self.focused_name().as_deref() == Some(name);
-        let raster = if game {
-            self.ui.raster
-        } else {
-            vault::RasterMode::Gpu
-        };
-        let lowmem = if game { self.ui.lowmem } else { true };
-        {
-            let mut f = self.focus.lock().unwrap();
-            f.renderer_by
-                .insert(name.to_string(), raster != vault::RasterMode::Off);
-        }
-        let was_low = !self.audio.music_on(name);
-        self.audio.set_music(name, !lowmem);
-        if raster == vault::RasterMode::Off {
-            if let Some(play) = self.play.as_ref() {
-                play.wake(name);
-            }
-            return;
-        }
-        let want_cpu = raster == vault::RasterMode::Cpu;
-        let was_cpu = self
-            .slots
-            .get(name)
-            .map(|s| s.input.prefer_cpu())
-            .unwrap_or(want_cpu);
-        if let Some(slot) = self.slots.get(name) {
-            slot.input.set_prefer_cpu(want_cpu);
-        }
-        if self.slots.contains_key(name) && (was_cpu != want_cpu || was_low != lowmem) {
-            self.restart_slot(name);
-        } else if let Some(play) = self.play.as_ref() {
-            play.wake(name);
         }
     }
 
@@ -1758,15 +1716,10 @@ impl Session {
             return;
         };
         let input = SlotInput::new();
-        // Rail (unfocused) stays GPU + lowmem. The Game pane uses General
-        // config (`ui.raster` / `ui.lowmem`).
-        let game = self.focused_name().as_deref() == Some(username);
-        let raster = if game {
-            self.ui.raster
-        } else {
-            vault::RasterMode::Gpu
-        };
-        let lowmem = if game { self.ui.lowmem } else { true };
+        // Raster/mem come from the vault profile (the same source as
+        // `bot_client_config`); a focus change never re-roles a live slot.
+        let raster = profile.settings.raster;
+        let lowmem = profile.settings.lowmem;
         input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
         {
             let mut f = self.focus.lock().unwrap();
@@ -4153,6 +4106,68 @@ mod tests {
         // bounded HTTP retry (host-play shrinks it only under its own
         // `#[cfg(test)]`), so a join would block the suite for minutes.
         // The threads are detached and die at process exit.
+    }
+
+    #[test]
+    fn sidecar_select_does_not_restart_when_game_is_highmem() {
+        let path = tmp_vault("select-no-restart.vault");
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.ui.lowmem = false;
+        s.select("alice");
+        s.load("bob");
+        let alice_px = std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels);
+        let bob_px = std::sync::Arc::as_ptr(&s.slots.get("bob").unwrap().pixels);
+        s.select("bob");
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert_eq!(
+            std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels),
+            alice_px
+        );
+        assert_eq!(
+            std::sync::Arc::as_ptr(&s.slots.get("bob").unwrap().pixels),
+            bob_px
+        );
+        let log = s.log_by.lock().unwrap();
+        assert!(!log.values().flatten().any(|l| l.contains("slot restarted")));
+    }
+
+    #[test]
+    fn sidecar_select_does_not_restart_when_game_is_cpu() {
+        let path = tmp_vault("select-no-restart-cpu.vault");
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.ui.raster = vault::RasterMode::Cpu;
+        s.select("alice");
+        s.load("bob");
+        let alice_px = std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels);
+        s.select("bob");
+        assert_eq!(
+            std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels),
+            alice_px
+        );
     }
 
     #[test]
