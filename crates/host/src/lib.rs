@@ -262,19 +262,17 @@ impl Host {
         slot.loop_ns = slot
             .loop_ns
             .wrapping_add(t_loop.elapsed().as_nanos() as u64);
-        let capture = input.map(|i| i.enabled()).unwrap_or(false);
         // Channel-tune / first rebuild: TV static must re-roll every 20 ms,
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
         // a second and looks like a frozen splash).
         let zap = client.ingame && client.scene_state != 2;
-        // The 50 fps cadence latch: `client.draw` is the renderer switch
-        // the panel latches via `Client::set_draw`; `full_rate` is the
-        // per-slot knob the panel's sidecar-50 pref drives through the
-        // shared `SlotInput`.
+        // 50 fps paint is `full_rate` (focused-50 / sidecar-50 / live overlay).
+        // Capture still holds the 20 ms loop (`frame_cadence`) so input
+        // drains; it does not raise paint.
         let full_rate = input.map(|i| i.full_rate()).unwrap_or(false);
         let paint = raster_this_tick(
             client.draw,
-            capture || zap || full_rate,
+            zap || full_rate,
             t_loop,
             &mut slot.raster_last,
             &mut slot.raster_was_on,
@@ -293,9 +291,10 @@ impl Host {
                 // preference is process-wide and idempotent, so the
                 // first paint of any slot opts the process in;
                 // `BOT_CPU=1` forces the CPU fidelity path.
-                let cpu = std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false);
-                Renderer::set_prefer_gpu(!cpu);
-                Renderer::new(client.config.lowmem)
+                let cpu = input
+                    .map(|i| i.prefer_cpu())
+                    .unwrap_or_else(|| std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false));
+                Renderer::new_prefer(client.config.lowmem, !cpu)
             });
             // `mainredraw` is the fidelity seam: it runs the `check_minimap`
             // render half (loading splash + minimap image) and
@@ -1110,7 +1109,7 @@ mod tests {
         let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), vec![]);
         let buf = FrameBuf::new();
         let inp = SlotInput::new();
-        inp.set_enabled(true);
+        inp.set_full_rate(true);
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
