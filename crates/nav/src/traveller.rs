@@ -2533,8 +2533,9 @@ mod tests {
 
     #[test]
     fn follow_approaches_a_transport_loc_before_interacting() {
-        // The router may arm a transport leg from a take-off tile up to
-        // `INTERACT_RADIUS` (3) from `at`, but the game only accepts an
+        // The router arms a transport leg from an adjacent take-off. This
+        // test starts 3 tiles south of the ladder (a follow that still has
+        // to close the last gap). The game only accepts an
         // `op_loc` from adjacent. The player starts 3 tiles south of the
         // ladder loc: `follow` must first walk to the nearest standable
         // tile within chebyshev 1 of `at` (here (3202, 3203)) and only

@@ -104,8 +104,11 @@ const NODE_BUDGET: usize = 4_000_000;
 
 /// The interact radius (chebyshev) a transport edge is usable from: any
 /// standable tile within this distance of the edge's `at` is a valid
-/// take-off. The approach is derived at expansion time, never baked.
-const INTERACT_RADIUS: i32 = 3;
+/// take-off. The game only accepts `op_loc` from adjacent (1). A radius
+/// of 3 let Dijkstra "use" a door through a fence (Lumbridge cow pen:
+/// inside tile to the north-west road gate) and the walker then walked
+/// into the wall. The approach is derived at expansion time, never baked.
+const INTERACT_RADIUS: i32 = 1;
 
 /// The eight step deltas (client coordinates: +x east, +z north).
 const STEPS: [(i32, i32); 8] = [
@@ -314,7 +317,7 @@ fn find_bounded_impl(
         // never baked. `at` itself is the interact target and may be
         // blocked (a wall loc or NPC); only the take-off tile needs to be
         // standable. Each edge is indexed under its unique `at`, so the
-        // fixed offset sweep finds it exactly once per node (a radius-3
+        // fixed offset sweep finds it exactly once per node (a radius-1
         // square may cover several `at` tiles — each is a distinct edge).
         if collision.standable(cur) {
             for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
@@ -1106,10 +1109,10 @@ mod tests {
         let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 4, 0));
-        // The origin sits within the door's interact radius of at=(1,2),
-        // so the door is taken straight from it (2.0) plus 3 walk steps
-        // from its far side (1.0, two run steps).
-        assert_eq!(r.ticks, 3.0);
+        // Origin (0,0) is chebyshev 2 from at=(1,2), so the search walks
+        // one step to an adjacent take-off (0.5) then the 2-tick door plus
+        // two run steps from the far side (1.0).
+        assert_eq!(r.ticks, 3.5);
         assert_eq!(r.legs.len(), 3);
         let (
             Leg::Walk { tiles: w0 },
@@ -1119,7 +1122,8 @@ mod tests {
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
-        assert_eq!(w0, &vec![tile(0, 0, 0)]);
+        assert_eq!(w0.first(), Some(&tile(0, 0, 0)));
+        assert_eq!(w0.len(), 2, "walk up to an adjacent take-off, not from (0,0)");
         assert_eq!(edge.loc_id, 1530);
         assert_eq!(edge.ticks, 2);
         assert_eq!(edge.at, tile(1, 2, 0));
@@ -1577,5 +1581,55 @@ mod tests {
             },
         );
         assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn lumbridge_cow_pen_to_varrock_uses_the_south_gate() {
+        // (3253,3282) is inside the cow pen. The south gate (loc 1551/1553
+        // at 3253,3266/3267) is adjacent from inside. The north-west road
+        // gate at (3241,3301) is three tiles through the north fence —
+        // INTERACT_RADIUS 3 lets find "use" it from inside and the walker
+        // then aims at the fence.
+        let pack = match std::env::var("NAV_PACK") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => PathBuf::from(format!(
+                "{}/.274bot/274bot.navpack",
+                std::env::var("HOME").unwrap()
+            )),
+        };
+        let world = crate::world::NavWorld::load_pack(&pack)
+            .unwrap_or_else(|e| panic!("nav pack {}: {e:?}", pack.display()));
+        let from = WorldTile {
+            x: 3253,
+            z: 3282,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0,
+        };
+        let route = find(&world.collision, &world.graph, from, to)
+            .unwrap_or_else(|e| panic!("cow pen -> Varrock must route: {e:?}"));
+        let first_door = route.legs.iter().find_map(|l| match l {
+            Leg::Transport { edge } if edge.kind == TransportKind::Door => Some(edge),
+            _ => None,
+        });
+        let door = first_door.expect("must exit the pen through a door");
+        assert!(
+            (door.at.x == 3253 && (door.at.z == 3266 || door.at.z == 3267))
+                || (door.at.x == 3253 && (door.to.z == 3266 || door.to.z == 3267)),
+            "first door must be the south cow-pen gate (3253,3266/3267), got at=({}, {}) to=({}, {}) loc={}",
+            door.at.x,
+            door.at.z,
+            door.to.x,
+            door.to.z,
+            door.loc_id
+        );
+        assert_ne!(
+            (door.at.x, door.at.z),
+            (3241, 3301),
+            "must not clip through the north fence to the road gate"
+        );
     }
 }
