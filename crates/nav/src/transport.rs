@@ -1,11 +1,12 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
 //! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, the
 //! Al Kharid toll / Shantay pass item gates, the Rune Mysteries
-//! essence-mine wizard entries, and magic teleports as
-//! directed transport edges built from the Server's own
-//! content — `scripts/{doors, ladders+stairs, interface_boat, skill_magic,
-//! skill_agility}` and the Ardougne wilderness_lever pair, `pack/loc.pack`,
-//! and the `maps/*.jm2` loc placements — instead of a hand-authored table.
+//! essence-mine wizard and Elkoy's Tree Gnome Village maze escort NPC
+//! hops, and magic teleports as directed transport edges built from the
+//! Server's own content — `scripts/{doors, ladders+stairs, interface_boat,
+//! skill_magic, skill_agility}` and the Ardougne wilderness_lever pair,
+//! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
+//! hand-authored table.
 //!
 //! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
@@ -54,7 +55,8 @@ pub enum TransportKind {
     /// A spirit-tree journey between a tree loc tile and a sibling tree's
     /// tile (the `^…_tree` destination constant).
     SpiritTree,
-    /// Reserved for the NPC-triggered transport layer; no edge emits it yet.
+    /// An NPC-triggered transport hop (carts, essence-mine wizards,
+    /// Elkoy's maze escorts).
     Npc,
 }
 
@@ -120,10 +122,10 @@ pub struct TransportGraph {
 /// destinations that resolve emit an edge — doors emit two per placement
 /// (`dir` and its opposite, each with its own far-side walk-out); `at` the
 /// loc tile, `to` the resolved landing (no walkability filter — the router
-/// applies the collision map). Boats, gnome gliders and the Rune Mysteries
-/// essence-mine wizards are the explicit 2004 route/placement tables
-/// below, and spirit trees the `area_gnome` network (see
-/// `spirit_tree_edges`). Teleports (spells + jewellery rubs) are any-tile
+/// applies the collision map). Boats, gnome gliders, the Rune Mysteries
+/// essence-mine wizards and Elkoy's maze escorts are the explicit 2004
+/// route/placement tables below, and spirit trees the `area_gnome` network
+/// (see `spirit_tree_edges`). Teleports (spells + jewellery rubs) are any-tile
 /// edges and land in [`TransportGraph::teleports`], never in the `at`
 /// index. Rows that do not resolve are counted per reason on stderr, never
 /// faked.
@@ -144,6 +146,7 @@ pub fn derive_transports(
     boat_edges(&mut graph);
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
+    elkoy_edges(&mut graph);
     glider_edges(&mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     lever_edges(content_root, &ids, &positions, &mut graph);
@@ -2023,6 +2026,94 @@ fn essence_mine_edges(graph: &mut TransportGraph) {
 }
 
 // ---------------------------------------------------------------------------
+// Elkoy's Tree Gnome Village maze escorts (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
+/// One Elkoy escort journey: `at` the Elkoy NPC's placement tile (jm2
+/// `==== NPC ====` placement, id resolved through `pack/npc.pack`), `to`
+/// the coord the script's `p_telejump(` literal lands on. The whole hop
+/// is one `Talk-to` (`opnpc1`) — the "Yes please."/"Can you show me
+/// out…" choice is execute, never a search arm — and the scripts carry no
+/// `p_delay`, so `ticks` is the 1 op base like the carts and spirit trees.
+#[derive(Debug, Clone, Copy)]
+struct ElkoyEscort {
+    /// npc.pack id of the Elkoy who escorts the player.
+    npc: i32,
+    at: WorldTile,
+    to: WorldTile,
+}
+
+/// The 2004 Elkoy escorts: the two `p_telejump(` destinations from
+/// `content/scripts/areas/area_gnome/scripts/elkoy.rs2` —
+/// `^elkoy_maze_coord` (the maze-side `[opnpc1,elkoy]` escort into the
+/// village) and `^elkoy_entrance_coord` (the village `[opnpc1,elkoy_village]`
+/// escort out) — resolved through `content/scripts/quests/quest_tree/
+/// configs/quest_tree.constant` (`0_39_49_8_56` → (2504,3192),
+/// `0_39_49_19_23` → (2515,3159)); origin tiles from the `==== NPC ====`
+/// placements in `content/maps/m39_49.jm2` (npc 473 elkoy at local
+/// (8,55) = (2504,3191), one tile south of the entrance coord; npc 474
+/// elkoy_village at local (18,23) = (2514,3159), one tile west of the maze
+/// coord); ids from `pack/npc.pack`. The edges carry the Tree Gnome
+/// Village journal name — `elkoy.rs2`'s `[opnpc1,…]` blocks gate on
+/// `%treequest` at every stage. The traveller walks no maze tiles: the
+/// hop lands straight on the village/entrance coord (the script's own
+/// landing, never a snap).
+const ELKOY_ESCORTS: &[ElkoyEscort] = &[
+    // elkoy (npc 473) by the maze entrance (m39_49 local (8,55)):
+    // `p_telejump(^elkoy_maze_coord)` lands in the village (2515,3159).
+    ElkoyEscort {
+        npc: 473,
+        at: WorldTile {
+            x: 2504,
+            z: 3191,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2515,
+            z: 3159,
+            level: 0,
+        },
+    },
+    // elkoy_village (npc 474) in the village (m39_49 local (18,23)):
+    // `p_telejump(^elkoy_entrance_coord)` lands at the maze entrance
+    // (2504,3192).
+    ElkoyEscort {
+        npc: 474,
+        at: WorldTile {
+            x: 2514,
+            z: 3159,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2504,
+            z: 3192,
+            level: 0,
+        },
+    },
+];
+
+/// Elkoy escort edges from the fixed 2004 route table: one `Talk-to` edge
+/// per escort, keyed from the Elkoy NPC's tile.
+fn elkoy_edges(graph: &mut TransportGraph) {
+    for e in ELKOY_ESCORTS {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Npc,
+            at: e.at,
+            to: e.to,
+            loc_id: e.npc,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Tree Gnome Village".to_string()],
+            varp_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Gnome gliders: the 2004 Gnome Air network (fixed platform table).
 // ---------------------------------------------------------------------------
 
@@ -3257,6 +3348,55 @@ mod tests {
         }
     }
 
+    /// The real content must derive Elkoy's two Tree Gnome Village maze
+    /// escorts (`elkoy_edges`): the maze-side Elkoy (npc 473) escorts into
+    /// the village (`p_telejump(^elkoy_maze_coord)` → (2515,3159)) and the
+    /// village Elkoy (npc 474) escorts out (`p_telejump(^elkoy_entrance_coord)`
+    /// → (2504,3192)), each `Talk-to` op 1 carrying the Tree Gnome Village
+    /// quest name. Skips with a message when the Server content tree or the
+    /// client cache is absent; never fakes coordinates.
+    #[test]
+    fn derive_transports_emits_elkoy_escort_both_ways() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let elk: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| {
+                e.kind == TransportKind::Npc
+                    && ((e.to.x == 2504 && e.to.z == 3192) || (e.to.x == 2515 && e.to.z == 3159))
+            })
+            .cloned()
+            .collect();
+        assert_eq!(elk.len(), 2, "maze-side + village escort, got {}", elk.len());
+        // The maze-side Elkoy (npc 473) sits at the maze entrance
+        // (m39_49 local (8,55) = (2504,3191)) and escorts into the village;
+        // the village Elkoy (npc 474, local (18,23) = (2514,3159)) escorts
+        // back out to the entrance. Both hops land on the script's own
+        // `p_telejump` coords (the quest_tree.constant values), never a
+        // snap.
+        for e in &elk {
+            assert_eq!(e.option, 1, "Talk-to: {e:?}");
+            assert!(
+                e.quest_req.iter().any(|q| q == "Tree Gnome Village"),
+                "Tree Gnome Village on the escort: {e:?}"
+            );
+        }
+        let into_maze = elk
+            .iter()
+            .find(|e| e.at == WorldTile { x: 2504, z: 3191, level: 0 })
+            .expect("maze-side Elkoy placement");
+        assert_eq!(into_maze.loc_id, 473);
+        assert_eq!(into_maze.to, WorldTile { x: 2515, z: 3159, level: 0 });
+        let out_maze = elk
+            .iter()
+            .find(|e| e.at == WorldTile { x: 2514, z: 3159, level: 0 })
+            .expect("village Elkoy placement");
+        assert_eq!(out_maze.loc_id, 474);
+        assert_eq!(out_maze.to, WorldTile { x: 2504, z: 3192, level: 0 });
+    }
+
     /// A throwaway content root written on demand, removed on drop.
     struct Fixture {
         root: PathBuf,
@@ -4186,14 +4326,15 @@ p_arrivedelay;
                 .count(),
             8
         );
-        // 2 carts + the 5 essence-mine wizard entries.
+        // 2 carts + the 5 essence-mine wizard entries + the 2 Elkoy maze
+        // escorts.
         assert_eq!(
             graph
                 .edges
                 .iter()
                 .filter(|e| e.kind == TransportKind::Npc)
                 .count(),
-            7
+            9
         );
         assert_eq!(
             graph
