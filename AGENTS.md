@@ -4,6 +4,8 @@ Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
 **What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bh-modular`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` **in this checkout** (not Fairy-Ring, not GitHub).
 
+**Resume:** read `docs/superpowers/STATE.md` once. Then stop. Do not crawl `docs/superpowers/`. Do not paste STATE into a flash brief — name one spec/plan for this task.
+
 **Client fork:** Patch `FR-client-bothost` `r274-bh-modular` (instrumentation, skip-paint, wgpu). `r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork — do not push there. **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 
 **Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,e2e}` (`panel` is this campaign's native UI).
@@ -18,7 +20,12 @@ crates in the client repo.
 
 **SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
-**Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Work on a **branch** (or git worktree). Do **not** commit campaign work on `main`. Write the report file the orch named.
+**Git (this is the only copy of the rule — plans must not restate it):**
+- **Flash / SDD implementer / spawned subagent:** forbidden on `main`. Run `git branch --show-current`. If it is `main`, **stop** and tell the orch. Commit only on the orch-named branch or a worktree (`isolation: worktree`). Never merge, never push remotes, never `checkout main`.
+- **Orch / grok with the human on this checkout:** `main` only when the human said **inline**. Campaign SDD still uses a branch; orch merges.
+Copied “commit on main” in a plan or a stale session snapshot is not consent.
+
+**Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Write the report file the orch named.
 
 **Do not:** invent a tick-end opcode; deep-copy the world every read; skip the brief; wander into scripts; hunt for a longer AGENTS.md.
 
