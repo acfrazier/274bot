@@ -23,6 +23,7 @@ leave a truncated vault at the target path.
 ```rust
 let mut v = Vault::create(path, passphrase)?;   // fails if the file exists
 let v = Vault::unlock(path, passphrase)?;       // WrongPassphrase on a bad key
+Vault::reset_file(path)?;                       // delete the file (forgotten passphrase)
 v.get(username) -> Option<&Profile>             // { username, password, uid, settings }
 v.upsert(profile)?                              // rewrites the file; error leaves state unchanged
 ```
@@ -30,13 +31,19 @@ v.upsert(profile)?                              // rewrites the file; error leav
 `Profile.settings.lowmem` defaults to `true` (headless clients).
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
 blobs that only carried `lowmem` deserialize with the box unchecked; the
-panel's "auto-login on title" checkbox reads and upserts it.
-`ProfileSettings.tutorial_skipped` (serde default `false`) latches local-engine
-**TutSkip** (`setvar tutorial 1000`) so the panel does not resend it; live
+panel's General config → slot "auto-login on title" checkbox reads and upserts it.
+`ProfileSettings.tutorial_skipped` is `Option<bool>` (serde default
+`None` = unknown). The panel `getvar tutorial`s unknown profiles, then
+caches `Some(true)` once skipped (`>= 1000` or TutSkip); live
 tests can set the flag to skip the cheat.
 
 Errors: `EmptyPassphrase`, `AlreadyExists`, `NotFound`, `WrongPassphrase`
-(the file is left unmodified), `Corrupt`, `Io`.
+(the file is left unmodified), `Corrupt`, `Io`. A missing file is
+`NotFound`; other read failures are `Io` (never treated as missing, so
+`open_vault` will not create over an unreadable path). Wrong passphrase
+and corrupt files never delete or replace the vault — the panel's
+**Reset vault** (confirm + “I understand”) is the only wipe. First-run
+**Create vault** only runs when the file is absent.
 
 ## Passphrase sourcing
 

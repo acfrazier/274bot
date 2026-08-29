@@ -34,15 +34,34 @@ const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 /// Per-profile settings. Low-memory is the default for headless clients;
 /// auto-login defaults off so v1 blobs (which only carried `lowmem`)
 /// deserialize with the box unchecked.
+/// How this slot paints the 274 scene. Off is `set_draw` only. Gpu↔Cpu
+/// (or lowmem) on a live slot logs it out and respawns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RasterMode {
+    Off,
+    Gpu,
+    Cpu,
+}
+
+impl Default for RasterMode {
+    fn default() -> Self {
+        Self::Gpu
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileSettings {
     pub lowmem: bool,
     #[serde(default)]
     pub auto_login: bool,
-    /// Local-engine TutSkip already sent for this profile (`setvar tutorial
-    /// 1000`). Hand/live tests can set this so they skip the cheat.
+    /// Cached TutSkip. `None` = never read (`getvar tutorial` pending).
+    /// `Some(true)` = skipped (`>= 1000` or TutSkip pressed). `Some(false)`
+    /// = engine reported the tutorial still open.
     #[serde(default)]
-    pub tutorial_skipped: bool,
+    pub tutorial_skipped: Option<bool>,
+    #[serde(default)]
+    pub raster: RasterMode,
 }
 
 impl Default for ProfileSettings {
@@ -50,7 +69,8 @@ impl Default for ProfileSettings {
         Self {
             lowmem: true,
             auto_login: false,
-            tutorial_skipped: false,
+            tutorial_skipped: None,
+            raster: RasterMode::Gpu,
         }
     }
 }
@@ -120,7 +140,13 @@ impl Vault {
     /// Opens the vault at `path` with the given passphrase.
     pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
         require_passphrase(passphrase)?;
-        let blob = std::fs::read(path).map_err(|_| VaultError::NotFound(path.to_path_buf()))?;
+        let blob = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(VaultError::NotFound(path.to_path_buf()));
+            }
+            Err(e) => return Err(VaultError::Io(e)),
+        };
         let (salt, rounds, payload) = parse_header(&blob)?;
         let key = derive_key(passphrase, &salt, rounds);
         let plaintext = decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?;
@@ -168,6 +194,16 @@ impl Vault {
         self.persist_map(&next)?;
         self.profiles = next;
         Ok(true)
+    }
+
+    /// Delete the vault file. Forgotten-password recovery — does **not**
+    /// create a replacement. A missing file is already gone (`Ok`).
+    pub fn reset_file(path: &Path) -> Result<(), VaultError> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn persist_map(&self, profiles: &BTreeMap<String, Profile>) -> Result<(), VaultError> {
@@ -283,7 +319,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: false,
                 auto_login: false,
-                tutorial_skipped: false,
+                tutorial_skipped: None,
+                raster: super::RasterMode::Gpu,
             },
         }
     }
@@ -300,7 +337,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
-                tutorial_skipped: false,
+                tutorial_skipped: None,
+                raster: super::RasterMode::Gpu,
             },
         })
         .unwrap();
@@ -310,7 +348,8 @@ mod tests {
         let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
         assert!(missing.lowmem);
         assert!(!missing.auto_login);
-        assert!(!missing.tutorial_skipped);
+        assert_eq!(missing.tutorial_skipped, None);
+        assert_eq!(missing.raster, super::RasterMode::Gpu);
     }
 
     #[test]
@@ -394,6 +433,30 @@ mod tests {
             Vault::create(&path, "bot"),
             Err(VaultError::AlreadyExists(_))
         ));
+    }
+
+    #[test]
+    fn unlock_directory_is_io_not_not_found() {
+        let dir = tmp_path("vault-as-dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        match Vault::unlock(&dir, "bot") {
+            Err(VaultError::Io(_)) => {}
+            Err(e) => panic!("expected Io, got {e}"),
+            Ok(_) => panic!("expected Io, unlocked a directory"),
+        }
+        assert!(dir.is_dir(), "must not replace the path with a vault file");
+    }
+
+    #[test]
+    fn reset_file_removes_vault_missing_is_ok() {
+        let path = tmp_path("reset.vault");
+        Vault::create(&path, "bot").unwrap();
+        assert!(path.is_file());
+        Vault::reset_file(&path).unwrap();
+        assert!(!path.exists());
+        Vault::reset_file(&path).unwrap();
+        Vault::create(&path, "newpass").unwrap();
+        assert!(path.is_file());
     }
 
     #[test]
