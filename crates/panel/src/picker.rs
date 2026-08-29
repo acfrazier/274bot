@@ -147,9 +147,37 @@ pub fn click_to_tile(
     size: [f32; 2],
     level: i32,
 ) -> Option<Tile> {
-    let tx = centre.0 as f32 + (click[0] - size[0] / 2.0) / scale;
-    let tz = centre.1 as f32 + (click[1] - size[1] / 2.0) / scale;
+    let (tx, tz) = world_from_canvas(centre, scale, size, click);
     snap(world, tx, tz, level)
+}
+
+/// Canvas-local px of world tile `(tx, tz)`: +x east is right, +z north is
+/// up (imgui Y grows down, so z is negated). The old mapping put north at
+/// the bottom (south-facing).
+fn canvas_from_world(
+    centre: (i32, i32),
+    scale: f32,
+    size: [f32; 2],
+    tx: f32,
+    tz: f32,
+) -> [f32; 2] {
+    [
+        size[0] / 2.0 + (tx - centre.0 as f32) * scale,
+        size[1] / 2.0 - (tz - centre.1 as f32) * scale,
+    ]
+}
+
+/// Inverse of [`canvas_from_world`].
+fn world_from_canvas(
+    centre: (i32, i32),
+    scale: f32,
+    size: [f32; 2],
+    click: [f32; 2],
+) -> (f32, f32) {
+    (
+        centre.0 as f32 + (click[0] - size[0] / 2.0) / scale,
+        centre.1 as f32 - (click[1] - size[1] / 2.0) / scale,
+    )
 }
 
 /// Apply a pixel pan. `rem` is the leftover tile fraction in (-1, 1) from
@@ -559,12 +587,13 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 CENTRE_Z.load(Ordering::Relaxed) as f32,
             );
             let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
-            // Only draw tiles inside the visible window.
+            let centre_i = (
+                CENTRE_X.load(Ordering::Relaxed),
+                CENTRE_Z.load(Ordering::Relaxed),
+            );
+            // Only draw tiles inside the visible window (north-up).
             let (wx0, wx1) = (cx - size[0] / 2.0 / scale, cx + size[0] / 2.0 / scale);
             let (wz0, wz1) = (cz - size[1] / 2.0 / scale, cz + size[1] / 2.0 / scale);
-            // Screen origin of tile (0,0) for this view.
-            let ox = min[0] + size[0] / 2.0 - cx * scale;
-            let oz = min[1] + size[1] / 2.0 - cz * scale;
             let dot = (scale * 0.72).clamp(1.5, 5.0);
             let sel = session.picker_sel;
             // The visible tile rectangle and the pack-map paints inside it.
@@ -609,6 +638,11 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             for pt in &paints {
                 let t = pt.tile;
                 let (tx, tz) = (t.x as f32, t.z as f32);
+                let [sx, sy] = canvas_from_world(centre_i, scale, size, tx, tz);
+                let [sx1, sy1] =
+                    canvas_from_world(centre_i, scale, size, tx + 1.0, tz + 1.0);
+                let (x0, y0) = (sx.min(sx1) + min[0], sy.min(sy1) + min[1]);
+                let (x1, y1) = (sx.max(sx1) + min[0], sy.max(sy1) + min[1]);
                 let color = if pt.path {
                     if pt.transport {
                         transport_col
@@ -625,21 +659,21 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                     debug_assert!(pt.blocked, "pack_map_tiles returns only painted tiles");
                     collision_col
                 };
-                draw.add_rect(
-                    [ox + tx * scale, oz + tz * scale],
-                    [ox + tx * scale + scale, oz + tz * scale + scale],
-                    color,
-                )
-                .filled(true)
-                .build();
+                draw.add_rect([x0, y0], [x1, y1], color)
+                    .filled(true)
+                    .build();
                 if sel.is_some_and(|s| s == t) {
                     let d = (dot + 2.0).min(scale.max(3.0));
                     let h = d / 2.0;
-                    let x0 = ox + tx * scale - h;
-                    let y0 = oz + tz * scale - h;
-                    draw.add_rect([x0, y0], [x0 + d, y0 + d], TEXT)
-                        .filled(true)
-                        .build();
+                    let [mx, my] =
+                        canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
+                    draw.add_rect(
+                        [min[0] + mx - h, min[1] + my - h],
+                        [min[0] + mx + h, min[1] + my + h],
+                        TEXT,
+                    )
+                    .filled(true)
+                    .build();
                 }
             }
             // Amber dots: walkable view tiles no layer coloured.
@@ -661,11 +695,15 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                         (ACCENT, dot)
                     };
                     let h = d / 2.0;
-                    let x0 = ox + tx * scale - h;
-                    let y0 = oz + tz * scale - h;
-                    draw.add_rect([x0, y0], [x0 + d, y0 + d], color)
-                        .filled(true)
-                        .build();
+                    let [mx, my] =
+                        canvas_from_world(centre_i, scale, size, tx + 0.5, tz + 0.5);
+                    draw.add_rect(
+                        [min[0] + mx - h, min[1] + my - h],
+                        [min[0] + mx + h, min[1] + my + h],
+                        color,
+                    )
+                    .filled(true)
+                    .build();
                 }
             }
         });
@@ -688,7 +726,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
             ),
             delta[0],
-            delta[1],
+            -delta[1],
             scale,
         );
         CENTRE_X.store(centre.0, Ordering::Relaxed);
@@ -717,7 +755,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
             ),
             (wheel_h + if shift { wheel } else { 0.0 }) * tiles_per_notch * scale,
-            wheel * tiles_per_notch * scale,
+            -wheel * tiles_per_notch * scale,
             scale,
         );
         CENTRE_X.store(centre.0, Ordering::Relaxed);
@@ -874,13 +912,23 @@ mod tests {
                 level: 0
             }
         );
-        // 14px right of centre at 10px/tile -> (2.4, 1.4) -> snaps to (2,1).
+        // 14px right of centre at 10px/tile -> east (higher x).
         let t = click_to_tile(&w, (1, 1), 10.0, [64.0, 50.0], [100.0, 100.0], 0).unwrap();
         assert_eq!(
             t,
             Tile {
                 x: 2,
                 z: 1,
+                level: 0
+            }
+        );
+        // 20px below centre is south (lower z): north is up on the canvas.
+        let t = click_to_tile(&w, (1, 1), 10.0, [50.0, 70.0], [100.0, 100.0], 0).unwrap();
+        assert_eq!(
+            t,
+            Tile {
+                x: 1,
+                z: 0,
                 level: 0
             }
         );
