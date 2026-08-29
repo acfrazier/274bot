@@ -97,6 +97,9 @@ pub struct SlotStatus {
     /// Payload bytes from `Client.stream` (0 when no stream).
     pub bytes_in: u64,
     pub bytes_out: u64,
+    /// Newest `MESSAGE_GAME` / chat-ring head (`chat_text[0]`). Used to
+    /// parse `getvar` replies (`get tutorial: 1000`).
+    pub chat_head: String,
 }
 
 impl SlotStatus {
@@ -154,6 +157,7 @@ impl Default for SlotStatus {
             queue_total: -1,
             bytes_in: 0,
             bytes_out: 0,
+            chat_head: String::new(),
         }
     }
 }
@@ -1165,6 +1169,7 @@ fn spawn_slot_thread(
                                         s.run_sends = run_sends;
                                         s.main_modal_id = c.main_modal_id;
                                         copy_stream_bytes(c, s);
+                                        s.chat_head = c.chat_text[0].clone();
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,
@@ -1263,6 +1268,7 @@ fn spawn_slot_thread(
                 if let Some(s) = all.iter_mut().find(|s| s.username == username) {
                     s.ingame = client.ingame;
                     s.scene_state = client.scene_state;
+                    s.chat_head = client.chat_text[0].clone();
                 }
             }
             })
@@ -1418,7 +1424,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
-                tutorial_skipped: false,
+                tutorial_skipped: None,
+                raster: vault::RasterMode::Gpu,
             },
         };
         let loud = Profile {
@@ -1428,7 +1435,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: false,
                 auto_login: false,
-                tutorial_skipped: false,
+                tutorial_skipped: None,
+                raster: vault::RasterMode::Gpu,
             },
         };
         assert!(bot_client_config(&opt, &quiet).lowmem);
@@ -1539,15 +1547,15 @@ mod tests {
         };
         play.handles.insert("alice".into(), watchdog);
         play.spawned.insert("alice".into());
-        // uid 7 sits queued behind a granted head; stop_slot must drop it
-        // from the FIFO even though the thread is still running.
+        // uid 7 sits on the FIFO behind a full 30/60s address window;
+        // stop_slot must drop it even though the thread is still running.
         {
             let mut q = play.queue.lock().unwrap();
-            assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
-            assert!(matches!(
-                q.request_permit(7, Instant::now()),
-                Permit::Wait(_)
-            ));
+            let now = Instant::now();
+            for i in 0..30 {
+                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            }
+            assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
         }
 
         play.statuses.lock().unwrap().push(SlotStatus {
@@ -1640,15 +1648,15 @@ mod tests {
             |_| (None, None),
             |_, _| {},
         );
-        // The profile uid 42 sits queued behind a granted head; stopping
-        // must drop 42 from the FIFO, not the arm's stale uid 0.
+        // The profile uid 42 sits queued behind a full address window;
+        // stopping must drop 42 from the FIFO, not the arm's stale uid 0.
         {
             let mut q = play.queue.lock().unwrap();
-            assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
-            assert!(matches!(
-                q.request_permit(42, Instant::now()),
-                Permit::Wait(_)
-            ));
+            let now = Instant::now();
+            for i in 0..30 {
+                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            }
+            assert!(matches!(q.request_permit(42, now), Permit::Wait(_)));
         }
         play.spawn_slot(
             Profile {
@@ -1891,15 +1899,15 @@ mod tests {
             ..SlotStatus::default()
         }]));
         let stop = AtomicBool::new(false);
-        // Occupy the FIFO head so alice waits.
-        assert!(matches!(
-            queue.lock().unwrap().request_permit(1, Instant::now()),
-            Permit::Grant
-        ));
-        assert!(matches!(
-            queue.lock().unwrap().request_permit(7, Instant::now()),
-            Permit::Wait(_)
-        ));
+        // Fill the 30/60s address window so alice waits on the FIFO.
+        {
+            let mut q = queue.lock().unwrap();
+            let now = Instant::now();
+            for i in 0..30 {
+                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            }
+            assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
+        }
         // Simulate stop_slot: leave then set stop; the waiter must not
         // request_permit again (which would Grant or re-queue uid 7).
         queue.lock().unwrap().leave(7);
@@ -2062,7 +2070,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
-                tutorial_skipped: false,
+                tutorial_skipped: None,
+                raster: vault::RasterMode::Gpu,
             },
         }
     }

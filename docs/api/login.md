@@ -1,23 +1,38 @@
 # Login: FIFO throttle numbers
 
-`crates/host/src/login_queue.rs` serializes login handshakes under the 274
-server's default throttle. `LoginQueue::request_permit(uid, now)` returns
+`crates/host/src/login_queue.rs` stays under Lost City's **production**
+login rate limits. `LoginQueue::request_permit(uid, now)` returns
 `Permit::Grant` or `Permit::Wait(duration)` — retry after `duration`. Only
 the FIFO head may be granted.
+
+## Where the server stores this
+
+In the engine checkout (`$ENGINE_DIR`, default `$HOME/experiments/Server/engine`):
+
+| File | What |
+| --- | --- |
+| `src/util/WorldConfig.ts` | defaults `rateLimitAddressLogin: 30`, `rateLimitDeviceLogin: 5`; `NODE_RATELIMIT_ADDRESS_LOGIN` / `NODE_RATELIMIT_DEVICE_LOGIN` override |
+| `src/engine/World.ts` | `loginAddressAttempts` TTL **60 s**, `loginDeviceAttempts` TTL **15 s**. Counters increment on opcode 14 (address) and 16/18 (device = `uid@ip`). **`>=` the cap sends response 16.** Both run **only** when `node.production` is true. |
+
+Local default is `production: false` (`NODE_PRODUCTION`). A loopback engine
+does **not** apply these counters. The host still stays under the production
+numbers so flipping production on does not 16 the wall.
+
+There is **no** inter-grant spacing in the engine. A previous 2.5 s host
+gap was invented (rs2b0t used 1 s); it is not a server default.
 
 ## Constants (the numbers agents must respect)
 
 | Rule | Value | Meaning |
 | --- | --- | --- |
-| spacing | **2.5 s** (`Duration::from_millis(2500)`) | between consecutive grants |
-| per-IP window | **30 grants / 60 s** | `ip_cap = 30`, `ip_window = 60 s` |
-| per-uid cap | **4 grants, then 16 s cooldown** | `UID_GRANT_CAP = 4`, measured from the latest grant |
+| spacing | **0** | engine has none; not-head polls every **20 ms** |
+| per-IP window | **30 grants / 60 s** | production `rateLimitAddressLogin` + address TTL |
+| per-uid cap | **4 grants, then remaining of 15 s** | production device cap is 5 (`>= 5` rejects); stay under with 4, cooldown = device TTL from the latest grant |
 | backoff (response 16, world full) | **20 s + 45 s per prior hit** | `LoginBackoff::delay()` escalates; `reset()` clears |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
 exists for tests. A blocked requester waits the longest unmet constraint:
-time since the last grant vs spacing, the per-IP window roll-off, or the
-per-uid cooldown.
+the per-IP window roll-off or the per-uid cooldown.
 
 ## Backoff
 
@@ -41,7 +56,9 @@ removed slot does not sit in the FIFO.
 New accounts spawn on Tutorial Island. Two different local-engine paths:
 
 - **host-play** `--mainland` / `BOT_MAINLAND=1`: `api::interact::mainland_hop` after `ingame && scene_state == 2` — cheat body `tele 0,50,50,20,20` then `setvar tutorial 1000` (not a `~` debugproc).
-- **panel TutSkip** (loopback only): `setvar tutorial 1000` only, then persist `ProfileSettings.tutorial_skipped`. No courtyard tele.
+- **panel TutSkip** (loopback only): hidden until `getvar tutorial` says
+  the tutorial is still open; press sends `setvar tutorial 1000` and
+  caches `tutorial_skipped = Some(true)`. No courtyard tele.
 
 `tele` / `setvar` / `setstat` have **no** tilde. Engine debugprocs are cheat bodies that **start with `~`** (`~home` from the panel Lumbridge button; type `::~name` in chat). Panel capture must pass colon, tilde, and comma.
 
@@ -77,7 +94,7 @@ The panel arms logins through `SlotArm` flags (host-play), not
   latch, cancels any pending logout, and arms the handshake. Once the grant
   lands the arm disarms, so an unexpected DC leaves the slot on the title
   until the next explicit arm.
-- **Auto-login** (the credentials **auto-login on title** checkbox, backed
+- **Auto-login** (General config → **slot**, **auto-login on title**, backed
   by `ProfileSettings.auto_login`, default **off**) keeps the arm armed
   after a successful handshake, so a DC re-handshakes. An explicit
   **Logout / Logout all** latches the member, which blocks even an
