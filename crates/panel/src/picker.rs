@@ -637,16 +637,16 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
         PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
         return;
     }
-    // Wheel pans over the canvas: the vertical wheel moves z, the horizontal
-    // wheel (or Shift+wheel) moves x. 16px per notch keeps the step in tiles
-    // zoom-independent (`tiles_per_notch = 16 / scale`).
+    // Wheel pans over the canvas: the vertical wheel always moves z, the
+    // horizontal wheel moves x. Shift+vertical wheel also adds to x (mice
+    // with no horizontal wheel) without cancelling z; both axes may apply in
+    // the same frame (trackpad diagonal). 16px per notch keeps the step in
+    // tiles zoom-independent (`tiles_per_notch = 16 / scale`).
     let wheel = ui.io().mouse_wheel();
     let wheel_h = ui.io().mouse_wheel_h();
     if wheel != 0.0 || wheel_h != 0.0 {
         let shift = ui.is_key_down(Key::LeftShift) || ui.is_key_down(Key::RightShift);
         let tiles_per_notch = 16.0 / scale;
-        // Shift turns the vertical wheel into horizontal panning only, so the
-        // vertical pan argument is zeroed (no diagonal move).
         let (centre, rem) = pan_by(
             (
                 CENTRE_X.load(Ordering::Relaxed),
@@ -657,7 +657,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
             ),
             (wheel_h + if shift { wheel } else { 0.0 }) * tiles_per_notch * scale,
-            (if shift { 0.0 } else { wheel }) * tiles_per_notch * scale,
+            wheel * tiles_per_notch * scale,
             scale,
         );
         CENTRE_X.store(centre.0, Ordering::Relaxed);
