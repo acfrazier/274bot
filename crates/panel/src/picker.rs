@@ -207,8 +207,9 @@ pub(crate) struct PackMapTile {
     pub flood: Option<u32>,
 }
 
-/// The visible canvas as a tile rectangle on the bake's level-0 plane:
-/// `width`×`height` tiles starting at `(x0, z0)`.
+/// The visible canvas as a tile rectangle on the selected plane:
+/// `width`×`height` tiles starting at `(x0, z0)`. The plane itself is
+/// passed with the paints (see [`pack_map_tiles`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PackView {
     pub x0: i32,
@@ -329,8 +330,8 @@ pub(crate) fn pack_map_tiles(
     here: Option<WorldTile>,
     dest: Option<WorldTile>,
     layers: &NavSettings,
+    level: i32,
 ) -> Vec<PackMapTile> {
-    let level = world.collision.origin.level;
     let path: HashMap<Tile, bool> = if layers.show_nav_path {
         route
             .map(|r| remaining_path_tiles(r, here))
@@ -533,7 +534,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             // never iterated.
             let layers = effective(&session.ui.nav, session.nav_live_force_layers);
             let any_layer = layers.collision_fill || layers.show_nav_path || layers.component_flood;
-            let level = world.collision.origin.level;
+            let level = LEVEL.load(Ordering::Relaxed);
             let here = session.focused_tile().map(|(x, z)| WorldTile { x, z, level });
             let dest = session.walk_dest.map(|t| WorldTile { x: t.x, z: t.z, level });
             let view = PackView {
@@ -543,7 +544,15 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                 height: (wz1.floor() as i32 - wz0.ceil() as i32 + 1).max(0),
             };
             let paints = if any_layer {
-                pack_map_tiles(world, view, focused_route(session).as_ref(), here, dest, &layers)
+                pack_map_tiles(
+                    world,
+                    view,
+                    focused_route(session).as_ref(),
+                    here,
+                    dest,
+                    &layers,
+                    level,
+                )
             } else {
                 Vec::new()
             };
@@ -939,7 +948,7 @@ mod tests {
             collision_fill: true,
             ..Default::default()
         };
-        let tiles = pack_map_tiles(&world, view, None, None, None, &layers);
+        let tiles = pack_map_tiles(&world, view, None, None, None, &layers, 0);
         let in_view = |t: super::Tile| {
             t.x >= view.x0
                 && t.x < view.x0 + view.width
@@ -948,6 +957,50 @@ mod tests {
         };
         assert!(tiles.iter().all(|t| in_view(t.tile)));
         assert!(tiles.iter().any(|t| t.blocked));
+    }
+
+    #[test]
+    fn pack_map_paints_the_selected_plane() {
+        // A 3x3 two-plane world: level 0 is open, level 1 carries a WR_GRND
+        // wall at (1,1). Painting must read the passed level, not the bake's
+        // origin plane.
+        let mut flags = vec![0u32; 2 * 9];
+        flags[9 + 1 * 3 + 1] = CollisionFlag::WR_GRND as u32;
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 3,
+                height: 3,
+                walkable: nav::collision::derive_walkable(&flags),
+                flags,
+            },
+            graph: TransportGraph::default(),
+        };
+        let view = PackView {
+            x0: 0,
+            z0: 0,
+            width: 3,
+            height: 3,
+        };
+        let layers = NavSettings {
+            collision_fill: true,
+            ..Default::default()
+        };
+        let tiles = pack_map_tiles(&world, view, None, None, None, &layers, 1);
+        assert!(
+            tiles.iter().all(|p| p.tile.level == 1),
+            "paints live on the selected plane, not the bake's origin plane"
+        );
+        assert!(
+            tiles
+                .iter()
+                .any(|p| p.blocked && p.tile.x == 1 && p.tile.z == 1),
+            "the level-1 wall blocks its own plane"
+        );
     }
 
     #[test]
@@ -976,6 +1029,7 @@ mod tests {
                 level: 0,
             }),
             &layers,
+            0,
         );
         let ids: std::collections::HashSet<_> = tiles.iter().filter_map(|t| t.flood).collect();
         assert_eq!(ids.len(), 2, "the player and dest components both flood");
@@ -1002,7 +1056,7 @@ mod tests {
             width: 5,
             height: 1,
         };
-        let marks = pack_map_tiles(&world, view, Some(&route), None, None, &layers);
+        let marks = pack_map_tiles(&world, view, Some(&route), None, None, &layers, 0);
         let path: Vec<i32> = marks.iter().filter(|t| t.path).map(|t| t.tile.x).collect();
         assert_eq!(path, vec![0, 1, 2, 3, 4]);
         assert!(marks.iter().all(|t| !t.transport), "a walk-only route has no hops");
