@@ -1041,88 +1041,115 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     }
 }
 
+/// Named GameShell `ch` values (arrows 1–4, ASCII controls, space).
+const CAPTURE_NAMED: &[(Key, i32)] = &[
+    (Key::LeftArrow, 1),
+    (Key::RightArrow, 2),
+    (Key::UpArrow, 3),
+    (Key::DownArrow, 4),
+    (Key::Backspace, 8),
+    (Key::Delete, 8),
+    (Key::Tab, 9),
+    (Key::Enter, 10),
+    (Key::Escape, 27),
+    (Key::Space, 32),
+];
+const CAPTURE_LETTERS: [Key; 26] = [
+    Key::A,
+    Key::B,
+    Key::C,
+    Key::D,
+    Key::E,
+    Key::F,
+    Key::G,
+    Key::H,
+    Key::I,
+    Key::J,
+    Key::K,
+    Key::L,
+    Key::M,
+    Key::N,
+    Key::O,
+    Key::P,
+    Key::Q,
+    Key::R,
+    Key::S,
+    Key::T,
+    Key::U,
+    Key::V,
+    Key::W,
+    Key::X,
+    Key::Y,
+    Key::Z,
+];
+const CAPTURE_DIGITS: [(Key, u8, u8); 10] = [
+    (Key::Key0, b'0', b')'),
+    (Key::Key1, b'1', b'!'),
+    (Key::Key2, b'2', b'@'),
+    (Key::Key3, b'3', b'#'),
+    (Key::Key4, b'4', b'$'),
+    (Key::Key5, b'5', b'%'),
+    (Key::Key6, b'6', b'^'),
+    (Key::Key7, b'7', b'&'),
+    (Key::Key8, b'8', b'*'),
+    (Key::Key9, b'9', b'('),
+];
+/// Punctuation: same `ch` as client-play `key_codes::lookup` / KeyCodes.ts
+/// 48–80. Without this, `::` (`:`) and `~` never reach chat.
+const CAPTURE_PUNCT: [(Key, u8, u8); 11] = [
+    (Key::GraveAccent, b'`', b'~'),
+    (Key::Minus, b'-', b'_'),
+    (Key::Equal, b'=', b'+'),
+    (Key::LeftBracket, b'[', b'{'),
+    (Key::RightBracket, b']', b'}'),
+    (Key::Backslash, b'\\', b'|'),
+    (Key::Semicolon, b';', b':'),
+    (Key::Apostrophe, b'\'', b'"'),
+    (Key::Comma, b',', b'<'),
+    (Key::Period, b'.', b'>'),
+    (Key::Slash, b'/', b'?'),
+];
+
+/// GameShell `ch` for one ImGui key, Shift applied the way client-play
+/// maps DOM `KeyboardEvent.key` (`:` is 58, `~` is 126).
+fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
+    for &(k, ch) in CAPTURE_NAMED {
+        if k == key {
+            return Some(ch);
+        }
+    }
+    for (i, &k) in CAPTURE_LETTERS.iter().enumerate() {
+        if k == key {
+            let base = if shift { b'A' } else { b'a' };
+            return Some((base + i as u8) as i32);
+        }
+    }
+    for &(k, unshifted, shifted) in &CAPTURE_DIGITS {
+        if k == key {
+            return Some(if shift { shifted } else { unshifted } as i32);
+        }
+    }
+    for &(k, unshifted, shifted) in &CAPTURE_PUNCT {
+        if k == key {
+            return Some(if shift { shifted } else { unshifted } as i32);
+        }
+    }
+    None
+}
+
 /// Map hovered ImGui keys to GameShell `ch` values (arrows 1–4, ASCII).
 fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
     let shift = ui.is_key_down(Key::LeftShift) || ui.is_key_down(Key::RightShift);
     let mut keys = Vec::new();
-    const NAMED: &[(Key, i32)] = &[
-        (Key::LeftArrow, 1),
-        (Key::RightArrow, 2),
-        (Key::UpArrow, 3),
-        (Key::DownArrow, 4),
-        (Key::Backspace, 8),
-        (Key::Delete, 8),
-        (Key::Tab, 9),
-        (Key::Enter, 10),
-        (Key::Escape, 27),
-        (Key::Space, 32),
-    ];
-    for &(key, ch) in NAMED {
-        if ui.is_key_pressed_with_repeat(key, false) {
-            keys.push((true, ch));
-        }
-        if ui.is_key_released(key) {
-            keys.push((false, ch));
-        }
-    }
-    const LETTERS: [Key; 26] = [
-        Key::A,
-        Key::B,
-        Key::C,
-        Key::D,
-        Key::E,
-        Key::F,
-        Key::G,
-        Key::H,
-        Key::I,
-        Key::J,
-        Key::K,
-        Key::L,
-        Key::M,
-        Key::N,
-        Key::O,
-        Key::P,
-        Key::Q,
-        Key::R,
-        Key::S,
-        Key::T,
-        Key::U,
-        Key::V,
-        Key::W,
-        Key::X,
-        Key::Y,
-        Key::Z,
-    ];
-    for (i, &key) in LETTERS.iter().enumerate() {
-        let ch = if shift {
-            (b'A' + i as u8) as i32
-        } else {
-            (b'a' + i as u8) as i32
-        };
-        if ui.is_key_pressed_with_repeat(key, false) {
-            keys.push((true, ch));
-        }
-        if ui.is_key_released(key) {
-            keys.push((false, ch));
-        }
-    }
-    const DIGITS: [(Key, u8, u8); 10] = [
-        (Key::Key0, b'0', b')'),
-        (Key::Key1, b'1', b'!'),
-        (Key::Key2, b'2', b'@'),
-        (Key::Key3, b'3', b'#'),
-        (Key::Key4, b'4', b'$'),
-        (Key::Key5, b'5', b'%'),
-        (Key::Key6, b'6', b'^'),
-        (Key::Key7, b'7', b'&'),
-        (Key::Key8, b'8', b'*'),
-        (Key::Key9, b'9', b'('),
-    ];
-    for &(key, unshifted, shifted) in &DIGITS {
-        let ch = if shift {
-            shifted as i32
-        } else {
-            unshifted as i32
+    let all = CAPTURE_NAMED
+        .iter()
+        .map(|&(k, _)| k)
+        .chain(CAPTURE_LETTERS)
+        .chain(CAPTURE_DIGITS.iter().map(|&(k, _, _)| k))
+        .chain(CAPTURE_PUNCT.iter().map(|&(k, _, _)| k));
+    for key in all {
+        let Some(ch) = capture_key_ch(key, shift) else {
+            continue;
         };
         if ui.is_key_pressed_with_repeat(key, false) {
             keys.push((true, ch));
@@ -2400,16 +2427,15 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
-    use dear_imgui_rs::{ConfigFlags, WindowFlags};
+    use dear_imgui_rs::{ConfigFlags, Key, WindowFlags};
 
     use super::{
-        apply_only_render_selected, apply_ui_scale, boot_for, chooser_should_open_popup,
-        clamp_hop_label_px, edit_parameters_enabled, game_window_flags, live_null_tick,
-        live_script_tick,
-        live_smoke_tick, live_stress_tick, manual_shot_label, parse_live_args, runner_config,
-        smoke_settled, smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
-        LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
-        SMOKE_SETTLE,
+        apply_only_render_selected, apply_ui_scale, boot_for, capture_key_ch,
+        chooser_should_open_popup, clamp_hop_label_px, edit_parameters_enabled, game_window_flags,
+        live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick, manual_shot_label,
+        parse_live_args, runner_config, smoke_settled, smoke_should_fire, Boot, LiveBoot, LiveNull,
+        LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
+        SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{fit_applet, game_window_title, panel_split_ratio};
     use crate::window::RedrawMode;
@@ -2565,6 +2591,18 @@ mod tests {
         assert!(f.contains(WindowFlags::NO_SCROLLBAR));
         assert!(f.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
         assert!(!f.contains(WindowFlags::HORIZONTAL_SCROLLBAR));
+    }
+
+    #[test]
+    fn capture_keys_pass_colon_and_tilde_like_client_play() {
+        // client-play KeyCodes.ts: `:` ch 58, `~` ch 126. Panel capture
+        // used to map only letters+digits, so `::` / `~` never reached chat.
+        assert_eq!(capture_key_ch(Key::Semicolon, true), Some(b':' as i32));
+        assert_eq!(capture_key_ch(Key::Semicolon, false), Some(b';' as i32));
+        assert_eq!(capture_key_ch(Key::GraveAccent, true), Some(b'~' as i32));
+        assert_eq!(capture_key_ch(Key::GraveAccent, false), Some(b'`' as i32));
+        assert_eq!(capture_key_ch(Key::Comma, false), Some(b',' as i32));
+        assert_eq!(capture_key_ch(Key::Minus, true), Some(b'_' as i32));
     }
 
     #[test]
