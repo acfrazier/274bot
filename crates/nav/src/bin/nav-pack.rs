@@ -7,7 +7,8 @@
 //! are `/Users/acfrazier/experiments/Server/content/maps`,
 //! `/Users/acfrazier/experiments/Server/content/scripts/doors/configs`, and
 //! the compiled client cache `/Users/acfrazier/experiments/Server/engine/data/pack/config`.
-//! Door loc ids come from the `*.loc` door configs; the loc definitions
+//! Door loc ids come from the `*.loc` door configs plus
+//! `scripts/general_use/configs/gates.loc`; the loc definitions
 //! (blockwalk, width/length, active) come from the client cache's `config`
 //! jag. Every `.jm2` under the maps dir bakes or the run fails; non-`.jm2`
 //! files (`ignore.csv`/`free2play.csv`) are metadata and skipped. The
@@ -30,6 +31,7 @@ use nav::transport::derive_transports;
 
 const MAPS_DIR: &str = "/Users/acfrazier/experiments/Server/content/maps";
 const DOORS_DIR: &str = "/Users/acfrazier/experiments/Server/content/scripts/doors/configs";
+const GATES_LOC: &str = "/Users/acfrazier/experiments/Server/content/scripts/general_use/configs/gates.loc";
 const CONFIG_JAG: &str = "/Users/acfrazier/experiments/Server/engine/data/pack/config";
 const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
 
@@ -62,9 +64,19 @@ fn main() -> ExitCode {
             }
         }
     }
-    if config_failed == DOOR_CONFIGS.len() {
+    // Fence gates (`scripts/general_use/configs/gates.loc`) join the door
+    // set so their tiles do not stamp blocked in the bake; the transport
+    // graph derives the same set itself in `door_edges`.
+    match std::fs::read_to_string(GATES_LOC) {
+        Ok(text) => door_ids.extend(nav::pack::parse_door_config(&text)),
+        Err(e) => {
+            eprintln!("nav-pack: skipping gates.loc: {e}");
+            config_failed += 1;
+        }
+    }
+    if config_failed == DOOR_CONFIGS.len() + 1 {
         eprintln!(
-            "nav-pack: no door configs parsed (need {} in {doors_dir})",
+            "nav-pack: no door configs parsed (need {} in {doors_dir} plus {GATES_LOC})",
             DOOR_CONFIGS.join(", ")
         );
         return ExitCode::FAILURE;

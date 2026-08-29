@@ -450,8 +450,10 @@ pub struct Mapsquare {
 
 /// Door loc ids from `content/scripts/doors/configs/*.loc` text: every
 /// `[loc_N]` block that can open, i.e. has `op1=Open` or
-/// `category=door_closed`. Non-numeric blocks (e.g. `[membergatel]`) are
-/// ignored, as are the `op1=Close`/`*_opened` counterpart states.
+/// `category=door_closed`/`category=gate_main_closed`/
+/// `category=gate_outer_closed` (the fence-gate closed categories, same
+/// openability as `door_closed`). Non-numeric blocks (e.g. `[membergatel]`)
+/// are ignored, as are the `op1=Close`/`*_open` counterpart states.
 pub fn parse_door_config(text: &str) -> HashSet<i32> {
     let mut ids = HashSet::new();
     let mut cur: Option<i32> = None;
@@ -466,7 +468,12 @@ pub fn parse_door_config(text: &str) -> HashSet<i32> {
             }
             cur = Some(n);
             openable = false;
-        } else if cur.is_some() && (line == "op1=Open" || line == "category=door_closed") {
+        } else if cur.is_some()
+            && (line == "op1=Open"
+                || line == "category=door_closed"
+                || line == "category=gate_main_closed"
+                || line == "category=gate_outer_closed")
+        {
             openable = true;
         }
     }
@@ -1163,6 +1170,32 @@ op1=Open
         assert!(ids.contains(&1530));
         assert!(!ids.contains(&1514));
         assert!(!ids.contains(&1531));
+    }
+
+    #[test]
+    fn parse_door_config_collects_gate_closed_categories() {
+        // Mirrors gates.loc: closed/open counterpart blocks carrying the
+        // fence-gate categories. `gate_main_closed` / `gate_outer_closed`
+        // are openable like `door_closed`; the `*_open` counterpart states
+        // (`op1=Close`) are not.
+        let text = "\
+[loc_1551]
+name=Gate
+op1=Open
+category=gate_main_closed
+
+[loc_1552]
+op1=Close
+category=gate_main_open
+
+[loc_1553]
+op1=Open
+category=gate_outer_closed
+";
+        let ids = parse_door_config(text);
+        assert!(ids.contains(&1551));
+        assert!(!ids.contains(&1552));
+        assert!(ids.contains(&1553));
     }
 
     #[test]

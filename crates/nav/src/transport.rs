@@ -431,8 +431,10 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 // Doors.
 // ---------------------------------------------------------------------------
 
-/// Door edges from `scripts/doors/configs/*.loc` openable ids + the jm2 LOC
-/// placements, two edges per placement: `at` = the door loc tile, `dir` =
+/// Door edges from `scripts/doors/configs/*.loc` plus
+/// `scripts/general_use/configs/gates.loc` (fence gates) openable ids +
+/// the jm2 LOC placements, two edges per placement: `at` = the door loc
+/// tile, `dir` =
 /// the placement angle's wall orientation and its opposite (a door is
 /// bidirectional), `to` = each direction's far-side tile (walking outward
 /// from `at` in the wall's far direction until
@@ -464,6 +466,18 @@ fn door_edges(
                 open_ids.extend(parse_door_open_ids(&text, ids));
             }
         }
+    }
+    // Fence gates live outside the door configs dir: `gates.loc` under
+    // `scripts/general_use/configs`. The closed gate categories count as
+    // openable like `door_closed`, so the same parse collects them.
+    let gates = content_root
+        .join("scripts")
+        .join("general_use")
+        .join("configs")
+        .join("gates.loc");
+    if let Ok(text) = fs::read_to_string(&gates) {
+        door_ids.extend(parse_door_config(&text));
+        open_ids.extend(parse_door_open_ids(&text, ids));
     }
     let door_reqs = {
         let constants = script_constants(content_root);
@@ -2489,8 +2503,35 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use client::config::LocType;
+    use client::config::{Cache, LocType};
+    use client::io::JagFile;
     use crate::collision::{bake_from_maps, WorldCollision};
+
+    /// The real Server content root this machine bakes against (the same
+    /// path `nav-pack` defaults to); `None` when the checkout is absent,
+    /// so the content-backed tests skip with a message instead of faking
+    /// coordinates.
+    fn real_content_root() -> Option<PathBuf> {
+        let root = PathBuf::from("/Users/acfrazier/experiments/Server/content");
+        if root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file() {
+            Some(root)
+        } else {
+            eprintln!(
+                "SKIP: Server content not found at {} (content-backed tests skipped)",
+                root.display()
+            );
+            None
+        }
+    }
+
+    /// The real client-cache loc defs (`nav-pack`'s collision table), or
+    /// `None` when the cache jag is absent.
+    fn real_loc_defs() -> Option<LocDefs> {
+        let jag = PathBuf::from("/Users/acfrazier/experiments/Server/engine/data/pack/config");
+        let bytes = std::fs::read(&jag).ok()?;
+        let cache = Cache::unpack(&JagFile::new(bytes));
+        Some(LocDefs::from_locs(&cache.locs))
+    }
 
     /// A throwaway content root written on demand, removed on drop.
     struct Fixture {
@@ -2614,6 +2655,91 @@ mod tests {
         assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
         // The at-index keys the door loc tile with both directed edges.
         assert_eq!(graph.at[&n.at].len(), 2);
+    }
+
+    /// The real content must derive at least one `TransportKind::Door`
+    /// edge for the Sinclair wooden fence gates (loc 1551 / 1553):
+    /// `door_edges` reads `scripts/general_use/configs/gates.loc` into the
+    /// door set, not only `scripts/doors/configs/*.loc`. Skips with a
+    /// message when the Server content tree or the client cache is absent;
+    /// never fakes coordinates.
+    #[test]
+    fn derive_transports_content_emits_sinclair_gate_edges() {
+        let Some(root) = real_content_root() else {
+            return;
+        };
+        let Some(defs) = real_loc_defs() else {
+            eprintln!("SKIP: client cache config jag missing");
+            return;
+        };
+        let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+            .expect("real Server content bakes");
+        let graph = derive_transports(&root, &defs, &wc);
+        let gates: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 1551 || e.loc_id == 1553))
+            .collect();
+        assert!(
+            !gates.is_empty(),
+            "no Door edges for the Sinclair wooden gates (loc 1551/1553) from the real content"
+        );
+    }
+
+    /// The process nav pack path (`$NAV_PACK` or `~/.274bot/274bot.navpack`,
+    /// the same default `nav-pack` writes and the panel reads).
+    fn default_pack_path() -> PathBuf {
+        match std::env::var("NAV_PACK") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => match std::env::var("HOME") {
+                Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
+                Err(_) => PathBuf::from(".274bot/274bot.navpack"),
+            },
+        }
+    }
+
+    /// The gates seam: a route must now exist from Seers street
+    /// (2725,3485,0) to the rock-crab shore (2710,3720,0) once the fence
+    /// gates join the door set. Loads the baked process pack (the rebaked
+    /// one carries the gate edges) if present, else bakes + derives from
+    /// the Server content. A `NoPath` here is the honest two-component
+    /// signal — the test must fail, never be papered over with a fake
+    /// corridor or a bank door.
+    #[test]
+    fn seers_street_reaches_rock_crabs_after_gates() {
+        use crate::router::find;
+        use crate::world::NavWorld;
+
+        let from = WorldTile {
+            x: 2725,
+            z: 3485,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 2710,
+            z: 3720,
+            level: 0,
+        };
+        let pack = default_pack_path();
+        let (collision, graph) = match NavWorld::load_pack(&pack) {
+            Ok(world) => (world.collision, world.graph),
+            Err(e) => {
+                let Some(root) = real_content_root() else {
+                    panic!(
+                        "no nav pack at {} ({e:?}) and no Server content to bake the fallback",
+                        pack.display()
+                    );
+                };
+                let defs = real_loc_defs().expect("client cache config jag");
+                let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+                    .expect("real Server content bakes");
+                let graph = derive_transports(&root, &defs, &wc);
+                (wc, graph)
+            }
+        };
+        let route = find(&collision, &graph, from, to)
+            .unwrap_or_else(|e| panic!("Seers street -> rock crabs must route once gates join: {e:?}"));
+        assert_eq!(route.dest, to);
     }
 
     #[test]
