@@ -460,15 +460,27 @@ pub struct Mapsquare {
 /// openability as `door_closed`). Non-numeric blocks (e.g. `[membergatel]`)
 /// are ignored, as are the `op1=Close`/`*_open` counterpart states.
 pub fn parse_door_config(text: &str) -> HashSet<i32> {
-    let mut ids = HashSet::new();
+    parse_door_config_ids(text, &HashMap::new())
+}
+
+/// The [`parse_door_config`] rule with the `scripts/areas/*/configs`
+/// header style: `[loc_N]` blocks parse directly and `[name]` blocks
+/// resolve through `ids` (the `pack/loc.pack` map), so e.g. the Al Kharid
+/// toll gates (`border_gate.loc`'s `[border_gate_toll_left/_right]`,
+/// `op1=Open`) join the door set under their own names. Numeric blocks
+/// behave exactly as in [`parse_door_config`].
+pub fn parse_door_config_ids(text: &str, ids: &HashMap<String, i32>) -> HashSet<i32> {
+    let mut door_ids = HashSet::new();
     let mut cur: Option<i32> = None;
     let mut openable = false;
     for raw in text.lines() {
         let line = raw.trim();
-        if let Some(n) = loc_header(line) {
+        let header =
+            loc_header(line).or_else(|| named_loc_header(line).and_then(|n| ids.get(n).copied()));
+        if let Some(n) = header {
             if let Some(id) = cur {
                 if openable {
-                    ids.insert(id);
+                    door_ids.insert(id);
                 }
             }
             cur = Some(n);
@@ -484,14 +496,15 @@ pub fn parse_door_config(text: &str) -> HashSet<i32> {
     }
     if let Some(id) = cur {
         if openable {
-            ids.insert(id);
+            door_ids.insert(id);
         }
     }
-    ids
+    door_ids
 }
 
-/// Closed door loc id → its open leaf id: every `[loc_N]` block's
-/// `param=next_loc_stage,loc_M` (the id the door changes into when opened).
+/// Closed door loc id → its open leaf id: every `[loc_N]` (or `[name]`,
+/// resolved through `ids`) block's `param=next_loc_stage,loc_M` (the id
+/// the door changes into when opened).
 /// Name-valued params (`param=next_loc_stage,<name>`) resolve through the
 /// loc id map; unparseable values carry nothing.
 pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
@@ -499,7 +512,9 @@ pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i3
     let mut cur: Option<(i32, Option<i32>)> = None;
     for raw in text.lines() {
         let line = raw.trim();
-        if let Some(n) = loc_header(line) {
+        let header =
+            loc_header(line).or_else(|| named_loc_header(line).and_then(|n| ids.get(n).copied()));
+        if let Some(n) = header {
             if let Some((id, open)) = cur {
                 if let Some(open) = open {
                     out.insert(id, open);
@@ -570,6 +585,16 @@ pub fn parse_passable_locs(text: &str) -> HashSet<i32> {
 /// `[loc_N]` block header -> `N`.
 fn loc_header(line: &str) -> Option<i32> {
     line.strip_prefix("[loc_")?.strip_suffix(']')?.parse().ok()
+}
+
+/// `[<name>]` block header -> the name (the `scripts/areas/*/configs`
+/// style, e.g. `[border_gate_toll_left]`).
+fn named_loc_header(line: &str) -> Option<&str> {
+    let name = line.strip_prefix('[')?.strip_suffix(']')?;
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return None;
+    }
+    Some(name)
 }
 
 /// Parse one mapsquare jm2 file (level 0 only). A MAP flag with bit 0 set
@@ -897,12 +922,12 @@ fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use super::{
         decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
-        parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare,
-        SQUARE,
+        parse_door_config_ids, parse_door_open_ids, parse_mapsquare_text, parse_passable_locs,
+        walkable_dots, Mapsquare, SQUARE,
     };
     use crate::collision::WorldCollision;
     use crate::grid::StepGrid;
@@ -1231,6 +1256,39 @@ op1=Open
         assert!(ids.contains(&1530));
         assert!(!ids.contains(&1514));
         assert!(!ids.contains(&1531));
+    }
+
+    #[test]
+    fn parse_door_config_ids_resolves_named_blocks() {
+        // Mirrors `scripts/areas/area_alkharid/configs/border_gate.loc`:
+        // name-keyed blocks that `parse_door_config` (numeric-only) skips.
+        let text = "\
+[border_gate_toll_left]
+name=Gate
+op1=Open
+category=border_gate_toll_left
+param=next_loc_stage,loc_1562
+
+[border_gate_toll_right]
+name=Gate
+op1=Open
+category=border_gate_toll_right
+param=next_loc_stage,loc_1563
+";
+        let mut ids = HashMap::new();
+        ids.insert("border_gate_toll_left".to_string(), 2882);
+        ids.insert("border_gate_toll_right".to_string(), 2883);
+        ids.insert("loc_1562".to_string(), 1562);
+        ids.insert("loc_1563".to_string(), 1563);
+        let doors = parse_door_config_ids(text, &ids);
+        assert!(doors.contains(&2882));
+        assert!(doors.contains(&2883));
+        // The numeric-only view still ignores the name-keyed blocks.
+        assert!(!parse_door_config(text).contains(&2882));
+        // The open-leaf params resolve under the named blocks too.
+        let open = parse_door_open_ids(text, &ids);
+        assert_eq!(open.get(&2882), Some(&1562));
+        assert_eq!(open.get(&2883), Some(&1563));
     }
 
     #[test]

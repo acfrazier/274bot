@@ -1,6 +1,7 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
-//! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, and
-//! magic teleports as directed transport edges built from the Server's own
+//! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, the
+//! Al Kharid toll / Shantay pass item gates, and magic teleports as
+//! directed transport edges built from the Server's own
 //! content — `scripts/{doors, ladders+stairs, interface_boat, skill_magic,
 //! skill_agility}` and the Ardougne wilderness_lever pair, `pack/loc.pack`,
 //! and the `maps/*.jm2` loc placements — instead of a hand-authored table.
@@ -30,7 +31,7 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
-use crate::pack::{parse_door_config, parse_door_open_ids};
+use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
 
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -143,6 +144,7 @@ pub fn derive_transports(
     glider_edges(&mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     lever_edges(content_root, &ids, &positions, &mut graph);
+    toll_edges(content_root, &ids, &positions, &mut graph, collision);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -2256,6 +2258,142 @@ fn lever_edges(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Al Kharid border toll and the Shantay northbound hop (item-gated gates).
+// ---------------------------------------------------------------------------
+
+/// The Al Kharid border toll: 10 coins (`inv_del(inv, coins, 10)` in
+/// `border_gate.rs2`'s `pass_toll_gate`, guarded by
+/// `inv_total(inv, coins) < 10`).
+const AL_KHARID_TOLL_COINS: i32 = 10;
+/// The Shantay henge doorway's `to`: `p_teleport(0_51_48_40_46)`
+/// (3304,3118) then `p_telejump(movecoord(coord,0,0,-3))` → (3304,3115)
+/// in `shantay_pass.rs2`'s `[queue,shantay_pass_enter]`.
+const SHANTAY_NORTH_TO: WorldTile = WorldTile {
+    x: 3304,
+    z: 3115,
+    level: 0,
+};
+/// The Shantay henge edge ticks: OP_BASE 1 + the `p_teleport` tick + the
+/// `p_telejump` tick (both `p_delay(0)` in the queue block).
+const SHANTAY_NORTH_TICKS: i32 = 3;
+
+/// Al Kharid border-toll and Shantay-pass edges: `TransportKind::Door`
+/// edges that cost an item, derived from `scripts/areas/area_alkharid/
+/// configs/border_gate.loc` and `shantay_pass.rs2` plus the jm2
+/// placements. The toll gates (`border_gate_toll_left`/`_right`, loc
+/// 2882/2883) parse as doors under the same [`parse_door_config`] rule
+/// (`op1=Open`) once their config's name-keyed blocks resolve through the
+/// loc id map ([`parse_door_config_ids`]), and derive their two
+/// crossings like every door: `at` the placement tile (m51_50 (4,27)/
+/// (4,28) = (3268,3227)/(3268,3228)), `to` the far-side walk-out,
+/// `open_loc_id` the config's `next_loc_stage` leaf (loc 1562/1563),
+/// `item_req` the 10-coin toll. The Shantay henge doorway (loc 4031,
+/// `op1=Go-through`) derives exactly the gated northbound hop — `at` the
+/// m51_48 (38,44) placement = (3302,3116), `to` [`SHANTAY_NORTH_TO`],
+/// `item_req` one Shantay pass (`inv_del(inv, shantay_pass, 1)` in the
+/// same block). The free desert exit — the same block's `coordz(coord)
+/// <= coordz(loc_coord)` teleport-jump — emits no edge; it stays a plain
+/// walk.
+fn toll_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    collision: &WorldCollision,
+) {
+    // The toll charge and the Shantay pass resolve by name through
+    // `pack/obj.pack`; a missing pack skips the family instead of faking
+    // an item id.
+    let objs = obj_ids_by_name(content_root);
+    let Some(&coins_id) = objs.get("coins") else {
+        return;
+    };
+    let Some(&pass_id) = objs.get("shantay_pass") else {
+        return;
+    };
+
+    let alkharid = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_alkharid");
+    let Ok(config) = fs::read_to_string(alkharid.join("configs").join("border_gate.loc")) else {
+        return;
+    };
+    let toll_ids = parse_door_config_ids(&config, ids);
+    let open_ids = parse_door_open_ids(&config, ids);
+    for id in toll_ids {
+        let Some(placements) = positions.get(&id) else {
+            continue;
+        };
+        for p in placements {
+            if p.level != 0 || p.shape != 0 {
+                continue;
+            }
+            let Some(dir) = door_dir(p.angle) else {
+                continue;
+            };
+            let at = WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            };
+            for dir in [dir, opposite(dir)] {
+                let Some(to) = door_far_side(at, dir, collision) else {
+                    continue;
+                };
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1, // Open (oploc1, `@find_and_talk_to_border_guard`)
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: open_ids.get(&id).copied(),
+                    skill_req: vec![],
+                    item_req: vec![(coins_id, AL_KHARID_TOLL_COINS)],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                });
+            }
+        }
+    }
+
+    // The Shantay henge: exactly the gated northbound hop, `at` the loc's
+    // placement tile (shape 10, unlike the wall doors).
+    let Some(&henge_id) = ids.get("shantay_pass_henge_doorway") else {
+        return;
+    };
+    let Some(placements) = positions.get(&henge_id) else {
+        return;
+    };
+    for p in placements {
+        if p.level != 0 {
+            continue;
+        }
+        let at = WorldTile {
+            x: p.x,
+            z: p.z,
+            level: p.level,
+        };
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at,
+            to: SHANTAY_NORTH_TO,
+            loc_id: henge_id,
+            option: 1, // Go-through (oploc1)
+            ticks: SHANTAY_NORTH_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(pass_id, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+        });
+    }
+}
+
 /// Teleport edges (the any-tile layer): the seven spell teleports from
 /// `skill_magic/configs/magic_spells.dbrow` plus the jewellery rub
 /// teleports from `general/scripts/enchanted_jewellry/*.rs2`, all into
@@ -3241,6 +3379,109 @@ mod tests {
                 .any(|e| !crate::wilderness::in_wilderness(e.to)),
             "the wildy→Ardougne lever must land outside the wilderness"
         );
+    }
+
+    /// The real content must derive the Al Kharid border toll and the
+    /// Shantay northbound hop as item-gated `TransportKind::Door` edges.
+    /// The toll gates (`border_gate_toll_left`/`_right`, loc 2882/2883 —
+    /// the m51_50 (4,27)/(4,28) placements = (3268,3227)/(3268,3228))
+    /// carry the 10-coin toll (`inv_del(inv, coins, 10)` in
+    /// border_gate.rs2's `pass_toll_gate`); the Shantay henge doorway
+    /// (loc 4031, m51_48 (38,44) = (3302,3116)) derives exactly one gated
+    /// hop into the desert — `to` (3304,3115), the landing of the
+    /// `[queue,shantay_pass_enter]` `p_teleport(0_51_48_40_46)` +
+    /// `p_telejump(movecoord(coord,0,0,-3))`, `item_req` one Shantay pass
+    /// (obj 1854). The free desert exit (the `coordz(coord) <=
+    /// coordz(loc_coord)` teleport-jump in the same `[oploc1,...]` block)
+    /// must NOT become an edge. Skips with a message when the Server
+    /// content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_alkharid_toll_and_shantay_north() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        // Both toll gates derive their two crossings (dir + opposite),
+        // pinned to the mined placements.
+        let tolls: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 2882 || e.loc_id == 2883))
+            .cloned()
+            .collect();
+        assert!(
+            !tolls.is_empty(),
+            "no Door edges for the Al Kharid toll gates (loc 2882/2883)"
+        );
+        assert_eq!(
+            tolls.iter().filter(|e| e.loc_id == 2882).count(),
+            2,
+            "left toll gate derives both crossings"
+        );
+        assert_eq!(
+            tolls.iter().filter(|e| e.loc_id == 2883).count(),
+            2,
+            "right toll gate derives both crossings"
+        );
+        for e in &tolls {
+            assert_eq!(
+                e.at,
+                if e.loc_id == 2882 {
+                    WorldTile {
+                        x: 3268,
+                        z: 3227,
+                        level: 0,
+                    }
+                } else {
+                    WorldTile {
+                        x: 3268,
+                        z: 3228,
+                        level: 0,
+                    }
+                }
+            );
+            assert!(
+                e.item_req.iter().any(|(id, n)| *id == 995 && *n >= 10),
+                "10-coin toll on {e:?}"
+            );
+            assert_eq!(e.option, 1, "Open op");
+            assert_eq!(e.open_loc_id, Some(if e.loc_id == 2882 { 1562 } else { 1563 }));
+        }
+        // The Shantay henge carries exactly the one gated northbound hop.
+        let henge: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 4031)
+            .cloned()
+            .collect();
+        assert_eq!(
+            henge.len(),
+            1,
+            "only the gated northbound hop derives, got {}",
+            henge.len()
+        );
+        assert_eq!(
+            henge[0].at,
+            WorldTile {
+                x: 3302,
+                z: 3116,
+                level: 0,
+            }
+        );
+        assert_eq!(
+            henge[0].to,
+            WorldTile {
+                x: 3304,
+                z: 3115,
+                level: 0,
+            }
+        );
+        assert!(
+            henge[0].item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1),
+            "Shantay pass on the northbound hop"
+        );
+        assert_eq!(henge[0].option, 1, "Go-through op");
+        assert_eq!(henge[0].dir, None);
     }
 
     /// The Ardougne→wilderness lever is an enter-wildy hop: default
