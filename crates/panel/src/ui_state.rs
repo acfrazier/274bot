@@ -247,5 +247,6 @@ mod tests {
         assert!(!default_section_closed("log"));
         assert!(!default_section_closed("rendering"));
         assert!(!default_section_closed("input"));
+        assert!(!default_section_closed("debug"));
     }
 }

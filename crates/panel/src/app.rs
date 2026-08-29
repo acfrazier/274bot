@@ -15,7 +15,10 @@ use dear_imgui_rs::{
     TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
 
-use crate::chrome::{button_row_layout, multibox_tooltip, BUTTON_GAP, PARAM_ROW, SCRIPT_ROW};
+use crate::chrome::{
+    button_row_layout, equal_button_width, multibox_tooltip, BUTTON_GAP, MIN_BUTTON, PARAM_ROW,
+    SCRIPT_ROW,
+};
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
@@ -32,12 +35,12 @@ use crate::resource::{
     cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
 };
 use crate::session::{
-    combo_index, script_active, script_pause_enabled, script_status_text, script_stop_enabled,
-    stream_capture, Session, PROCESS,
+    combo_index, debug_dest_cheats, debug_maxme_cheats, script_active, script_pause_enabled,
+    script_status_text, script_stop_enabled, stream_capture, Session, PROCESS,
 };
 use crate::theme::{
     apply_amber, fit_applet, game_window_title, integer_ui_scale, panel_split_ratio, ACCENT, BG,
-    BUILD_LINE, ERROR, PANEL_WINDOW, RAIL_WINDOW, TEXT_DIM, TITLE,
+    BUILD_LINE, ERROR, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT_DIM, TITLE,
 };
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
@@ -1173,6 +1176,7 @@ fn panel_window(ui: &Ui, session: &mut Session) {
         profile_section(ui, session);
         credentials_section(ui, session);
         walkto_button(ui, session);
+        debug_section(ui, session);
         script_section(ui, session);
         parameters_section(ui, session);
         status_section(ui, session);
@@ -1383,6 +1387,73 @@ fn walkto_button(ui: &Ui, session: &mut Session) {
         session.walkto_open = !session.walkto_open;
     }
     ui.set_item_tooltip("toggle tile picker in the Game pane");
+}
+
+/// Local-engine debug cheats. Omitted on rs2b2t.
+fn debug_section(ui: &Ui, session: &mut Session) {
+    if !session.debug_ui() {
+        return;
+    }
+    if !section_open(ui, session, "debug") {
+        return;
+    }
+    const MAIN: [&str; 5] = ["DebugPanel", "TutSkip", "Lumbridge", "maxme", "Teles"];
+    let avail = ui.content_region_avail()[0];
+    let (w, stack) = button_row_layout(avail, MAIN.len());
+    for (i, label) in MAIN.iter().enumerate() {
+        if i > 0 && !stack {
+            ui.same_line();
+        }
+        match *label {
+            "DebugPanel" => {
+                let _off = ui.begin_disabled();
+                let _ = ui.button_with_size("DebugPanel", [w, 0.0]);
+                ui.set_item_tooltip("v2 — full cheat catalog");
+            }
+            "TutSkip" => {
+                if ui.button_with_size("TutSkip", [w, 0.0]) {
+                    session.cheat_focused("setvar tutorial 1000");
+                }
+            }
+            "Lumbridge" => {
+                if ui.button_with_size("Lumbridge", [w, 0.0]) {
+                    session.cheat_focused("home");
+                }
+            }
+            "maxme" => {
+                if ui.button_with_size("maxme", [w, 0.0]) {
+                    for cmd in debug_maxme_cheats() {
+                        session.cheat_focused(cmd);
+                    }
+                }
+            }
+            "Teles" => {
+                if ui.button_with_size("Teles", [w, 0.0]) {
+                    ui.open_popup("##debug-teles");
+                }
+            }
+            _ => {}
+        }
+    }
+    ui.popup("##debug-teles", || {
+        let dests = debug_dest_cheats();
+        let avail = PANEL_WIDTH;
+        let cols = (1usize..=6)
+            .rev()
+            .find(|&n| equal_button_width(avail, n) >= MIN_BUTTON)
+            .unwrap_or(1);
+        let (bw, _) = button_row_layout(avail, cols);
+        for (i, dest) in dests.iter().enumerate() {
+            if i > 0 && i % cols != 0 {
+                ui.same_line();
+            }
+            if ui.button_with_size(dest.label, [bw, 0.0]) {
+                session.cheat_focused(dest.cheat);
+                ui.close_current_popup();
+            }
+            ui.set_item_tooltip(dest.tooltip);
+        }
+    });
 }
 
 /// script: real Browse/Start/Pause/Stop with the rs2b0t disable rules.

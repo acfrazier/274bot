@@ -25,6 +25,11 @@ pub fn sections() -> &'static [Section] {
             campaign_hint: None,
         },
         Section {
+            id: "debug",
+            wired: true,
+            campaign_hint: None,
+        },
+        Section {
             id: "parameters",
             wired: false,
             campaign_hint: Some("campaign 5"),
@@ -116,6 +121,7 @@ mod tests {
             "log",
             "rendering",
             "input",
+            "debug",
         ] {
             assert!(ids.contains(&id), "missing section id {id:?}");
         }
