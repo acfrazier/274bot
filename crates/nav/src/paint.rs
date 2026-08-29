@@ -372,12 +372,14 @@ mod tests {
     }
 
     /// A `width`×`height` level-0 bake at (0,0) with the given per-tile
-    /// flags OR'd in.
+    /// flags OR'd in. Planes 1..=3 stay empty (the per-level bake shape).
     fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollision {
-        let mut flags = vec![0u32; width * height];
+        let mut plane = vec![0u32; width * height];
         for &(x, z, f) in extras {
-            flags[z as usize * width + x as usize] |= f;
+            plane[z as usize * width + x as usize] |= f;
         }
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
         WorldCollision {
             origin: tile(0, 0, 0),
             width,

@@ -65,10 +65,10 @@ pub(crate) fn pack() -> Option<&'static NavWorld> {
         .as_ref()
 }
 
-/// The walkable tiles of the world's level-0 bake, row-major (z then x): a
+/// The walkable tiles of the world on `level`, row-major (z then x): a
 /// tile is a "dot" when the collision's blanket `walkable` check passes
 /// (the standable test, not a directional mask).
-fn world_dots(world: &NavWorld) -> impl Iterator<Item = Tile> + '_ {
+fn world_dots(world: &NavWorld, level: i32) -> impl Iterator<Item = Tile> + '_ {
     let c = &world.collision;
     let o = c.origin;
     (0..c.height)
@@ -76,7 +76,7 @@ fn world_dots(world: &NavWorld) -> impl Iterator<Item = Tile> + '_ {
             (0..c.width).map(move |x| Tile {
                 x: o.x + x as i32,
                 z: o.z + z as i32,
-                level: o.level,
+                level,
             })
         })
         .filter(move |t| {
@@ -88,18 +88,31 @@ fn world_dots(world: &NavWorld) -> impl Iterator<Item = Tile> + '_ {
         })
 }
 
-/// Levels that contain at least one walkable tile. The v2 world is a
-/// level-0 bake, so this is always `[0]`; the combo stays for shape.
-pub fn available_levels(_world: &NavWorld) -> Vec<i32> {
-    vec![0]
+/// Levels with a baked plane: level 0 is the ground plane and always
+/// exists; every level 1..=3 whose plane carries any collision flag (MAP
+/// blocks, loc footprints, walls) is listed too. Empty planes are not —
+/// this is the WalkTo level dropdown's option list.
+pub fn available_levels(world: &NavWorld) -> Vec<i32> {
+    let c = &world.collision;
+    let plane = c.width * c.height;
+    let mut levels = vec![0];
+    for level in 1..4 {
+        let base = level * plane;
+        // The len guard keeps synthetic single-plane test worlds on [0].
+        if c.flags.len() >= base + plane && c.flags[base..base + plane].iter().any(|&f| f != 0) {
+            levels.push(level as i32);
+        }
+    }
+    levels
 }
 
-/// The nearest walkable tile on the world's level-0 bake to the float point
-/// `(x, z)`, or the click's own tile when it is already walkable. Distance
-/// is Chebyshev with Manhattan breaking ties. `None` when the level has no
-/// walkable tile (only level 0 is baked).
+/// The nearest walkable tile on the world's `level` plane to the float
+/// point `(x, z)`, or the click's own tile when it is already walkable.
+/// Distance is Chebyshev with Manhattan breaking ties. `None` when the
+/// level is not one of the baked planes (see [`available_levels`]) or has
+/// no walkable tile.
 pub fn snap(world: &NavWorld, x: f32, z: f32, level: i32) -> Option<Tile> {
-    if level != world.collision.origin.level {
+    if !available_levels(world).contains(&level) {
         return None;
     }
     let target = Tile {
@@ -117,7 +130,7 @@ pub fn snap(world: &NavWorld, x: f32, z: f32, level: i32) -> Option<Tile> {
     {
         return Some(target);
     }
-    world_dots(world).min_by_key(|t| {
+    world_dots(world, level).min_by_key(|t| {
         let manhattan = (t.x - target.x).abs() + (t.z - target.z).abs();
         (chebyshev(*t, target), manhattan)
     })
@@ -775,9 +788,28 @@ mod tests {
     }
 
     #[test]
-    fn available_levels_lists_only_the_level0_bake() {
+    fn available_levels_lists_planes_with_content() {
         let w = open_world(3, 3);
+        // An all-walkable single-plane world lists the ground plane only.
         assert_eq!(available_levels(&w), vec![0]);
+        // A 4-plane world with a stamped level-1 plane lists it too.
+        let mut flags = vec![0u32; 4 * 9];
+        flags[9 + 4] = CollisionFlag::WALK_SCENERY as u32;
+        let w2 = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 3,
+                height: 3,
+                walkable: nav::collision::derive_walkable(&flags),
+                flags,
+            },
+            graph: TransportGraph::default(),
+        };
+        assert_eq!(available_levels(&w2), vec![0, 1]);
     }
 
     #[test]

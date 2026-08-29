@@ -1,8 +1,10 @@
-//! Whole-world level-0 collision bake: every mapsquare's MAP f-flags and
+//! Whole-world per-level collision bake: every mapsquare's MAP f-flags and
 //! LOC placements → one [`WorldCollision`] of `client::dash3d::CollisionFlag`
 //! bitmasks, mirroring the client's `CollisionMap` stamping, plus the
 //! derived per-tile walkable word ([`derive_walkable`]) the router's
-//! directional step test reads.
+//! directional step test reads. The bake holds four planes (levels 0..=3)
+//! like the client's `collision[4]`; each loc/MAP row stamps its own
+//! plane, never a level-0 squash.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -16,7 +18,11 @@ use crate::pack::{parse_loc_fields, parse_map_line, section, PackError};
 /// Mapsquare edge length in tiles.
 const SQUARE: usize = 64;
 
-/// Flags that make a level-0 tile unwalkable: any wall direction, a scenery
+/// The number of collision planes the bake keeps (levels 0..=3), like the
+/// client's `collision[4]`.
+const LEVELS: usize = 4;
+
+/// Flags that make a tile unwalkable: any wall direction, a scenery
 /// footprint, or MAP-blocked ground.
 const WALK_BLOCK: u32 = CollisionFlag::WALK_BLOCK_FLAGS as u32
     | CollisionFlag::WALK_SCENERY as u32
@@ -41,36 +47,51 @@ const WALK_BITS: [(u32, u32); 8] = [
     (CollisionFlag::W_SW as u32, CollisionFlag::PL_WALK_SW as u32),
 ];
 
-/// Whole-world level-0 collision: one `CollisionFlag` bitmask per tile,
-/// row-major `z` then `x`, mirroring the client's `CollisionMap` build.
+/// Whole-world per-level collision: one `CollisionFlag` bitmask per tile
+/// per level, four planes (levels 0..=3) like the client's `collision[4]`.
+/// Both buffers are level-major: `buf[level * width * height + z * width +
+/// x]`, row-major `z` then `x` within each plane. A plane is only as dense
+/// as the maps stamped it; levels with no content are empty (walkable,
+/// never a level-0 reuse).
 pub struct WorldCollision {
     /// The tile at `flags[0]`; the grid spans `width` tiles in +x then
-    /// `height` rows in +z, all on level 0.
+    /// `height` rows in +z, replicated across all four level planes.
     pub origin: WorldTile,
     pub width: usize,
     pub height: usize,
-    /// The raw baked word per tile: the client's `W_*`/`V_*` wall bits,
-    /// `WALK_SCENERY` footprints, and `WR_GRND` ground blocks, exactly as
-    /// `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp them. Face
-    /// flags alone do not reject every direction — see [`derive_walkable`].
+    /// The raw baked word per tile per level: the client's `W_*`/`V_*`
+    /// wall bits, `WALK_SCENERY` footprints, and `WR_GRND` ground blocks,
+    /// exactly as `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp
+    /// them. Face flags alone do not reject every direction — see
+    /// [`derive_walkable`].
     pub flags: Vec<u32>,
-    /// The derived walkable word per tile, mirroring the client's movement
-    /// masks: a raw wall bit `W_D` sets the full `PL_WALK_D` mask (which
-    /// carries the shared `SQ_BLOCKED` base), so any wall flag — like
-    /// blocked ground or scenery — makes the tile reject entry from every
-    /// direction. The router's `step_ok` reads this word, never the raw
-    /// `flags`.
+    /// The derived walkable word per tile per level, mirroring the client's
+    /// movement masks: a raw wall bit `W_D` sets the full `PL_WALK_D` mask
+    /// (which carries the shared `SQ_BLOCKED` base), so any wall flag —
+    /// like blocked ground or scenery — makes the tile reject entry from
+    /// every direction. The router's `step_ok` reads this word, never the
+    /// raw `flags`.
     pub walkable: Vec<u32>,
 }
 
 impl WorldCollision {
+    /// The plane index for `level` (0..=3), `None` for unknown levels.
+    fn plane(&self, level: i32) -> Option<usize> {
+        (0..LEVELS as i32).contains(&level).then_some(level as usize)
+    }
+
+    /// Tiles in one level plane (`width × height`).
+    fn plane_cells(&self) -> usize {
+        self.width * self.height
+    }
+
     /// The collision bitmask at `(x, z, level)`, `0` for tiles outside the
-    /// grid. The bake is one level-0 plane; other levels reuse that x,z cell.
+    /// grid and for unknown levels (an empty plane is never a level-0
+    /// reuse).
     pub fn flag(&self, x: i32, z: i32, level: i32) -> u32 {
-        // The bake is a single level-0 plane. Other levels reuse the same
-        // x,z cell — returning 0 for off-level looked like "no flags", so
-        // the router treated upstairs as an empty world and flooded it.
-        let _ = level;
+        let Some(plane) = self.plane(level) else {
+            return 0;
+        };
         let lx = x - self.origin.x;
         let lz = z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -80,14 +101,16 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return 0;
         }
-        self.flags[lz * self.width + lx]
+        self.flags[plane * self.plane_cells() + lz * self.width + lx]
     }
 
     /// The derived directional walkable word at `(x, z, level)`, `0` for
-    /// tiles outside the grid (same indexing as [`Self::flag`]; off-level
-    /// reuses the level-0 cell).
+    /// tiles outside the grid and for unknown levels (same indexing as
+    /// [`Self::flag`]).
     pub fn walkable_word(&self, x: i32, z: i32, level: i32) -> u32 {
-        let _ = level;
+        let Some(plane) = self.plane(level) else {
+            return 0;
+        };
         let lx = x - self.origin.x;
         let lz = z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -97,13 +120,18 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return 0;
         }
-        self.walkable[lz * self.width + lx]
+        self.walkable[plane * self.plane_cells() + lz * self.width + lx]
     }
 
-    /// True when `t` sits on this bake's level-0 plane, inside its bounds,
-    /// and has no walk-blocking flag. Tiles outside the grid are not
-    /// walkable (the grid covers the whole world; beyond it is not a map).
+    /// True when `t` sits on a baked level plane (0..=3), inside the grid
+    /// bounds, and has no walk-blocking flag on that plane. Tiles outside
+    /// the grid or on unknown levels are not walkable (the grid covers the
+    /// whole world; beyond it is not a map). An empty plane has no blocks,
+    /// so its tiles are walkable.
     pub fn walkable(&self, t: WorldTile) -> bool {
+        let Some(plane) = self.plane(t.level) else {
+            return false;
+        };
         let lx = t.x - self.origin.x;
         let lz = t.z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -113,17 +141,21 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return false;
         }
-        self.flags[lz * self.width + lx] & WALK_BLOCK == 0
+        self.flags[plane * self.plane_cells() + lz * self.width + lx] & WALK_BLOCK == 0
     }
 
-    /// True when `t` sits on this bake's level-0 plane, inside its bounds,
-    /// and has no footprint block: no `WALK_SCENERY` footprint, no `WR_GRND`
-    /// ground block, and no `SQ_BLOCKED` base. Directional face flags
-    /// (`W_N`/`W_S`/`V_*`/…) do NOT disqualify standing — a wall's
-    /// face-flagged floor tile can be stood on even though the router can
-    /// never walk onto it. The transport interact-target neighbourhood is
-    /// tested against this, never the stricter [`Self::walkable`].
+    /// True when `t` sits on a baked level plane, inside the grid bounds,
+    /// and has no footprint block on that plane: no `WALK_SCENERY`
+    /// footprint, no `WR_GRND` ground block, and no `SQ_BLOCKED` base.
+    /// Directional face flags (`W_N`/`W_S`/`V_*`/…) do NOT disqualify
+    /// standing — a wall's face-flagged floor tile can be stood on even
+    /// though the router can never walk onto it. The transport
+    /// interact-target neighbourhood is tested against this, never the
+    /// stricter [`Self::walkable`].
     pub fn standable(&self, t: WorldTile) -> bool {
+        let Some(plane) = self.plane(t.level) else {
+            return false;
+        };
         let lx = t.x - self.origin.x;
         let lz = t.z - self.origin.z;
         if lx < 0 || lz < 0 {
@@ -133,7 +165,7 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return false;
         }
-        self.flags[lz * self.width + lx]
+        self.flags[plane * self.plane_cells() + lz * self.width + lx]
             & (CollisionFlag::WALK_SCENERY as u32
                 | CollisionFlag::WR_GRND as u32
                 | CollisionFlag::SQ_BLOCKED as u32)
@@ -145,13 +177,14 @@ impl WorldCollision {
     /// land on a wall loc right outside the door (wall 980 south of the
     /// Catherby range-house door), and the router can no longer step onto
     /// that tile. A door at the edge of the bake keeps its blind ±1
-    /// neighbour rather than walking off the grid.
+    /// neighbour rather than walking off the grid. The snap walks `t`'s own
+    /// plane.
     pub fn nearest_walkable(&self, t: WorldTile, dx: i32, dz: i32) -> WorldTile {
         let (mut x, mut z) = (t.x, t.z);
         loop {
             x += dx;
             z += dz;
-            let inside = t.level == self.origin.level
+            let inside = self.plane(t.level).is_some()
                 && x >= self.origin.x
                 && z >= self.origin.z
                 && (x - self.origin.x) < self.width as i32
@@ -168,11 +201,13 @@ impl WorldCollision {
 
 /// Bake the whole world: every `m<x>_<z>.jm2` under `maps_dir` (other files
 /// are metadata, e.g. `ignore.csv`/`free2play.csv`, and are skipped). MAP
-/// flags with bit 0 set stamp `WR_GRND`; LOC placements stamp flags by
+/// flags with bit 0 set stamp `WR_GRND` on their LINK_BELOW-corrected
+/// plane (the client's `finishBuild`); LOC placements stamp flags by
 /// shape/angle exactly like the client's `CollisionMap` (`add_wall` for
-/// walls, `add_loc` footprints for scenery, `block_ground` for ground
-/// decor). Openable doors (`door_ids`) are stamped blocked-when-closed.
-/// All squares merge into one level-0 bounding grid.
+/// walls, `add_loc` footprints for scenery — roofs included — and
+/// `block_ground` for active ground decor), each on its own level plane.
+/// Openable doors (`door_ids`) are stamped blocked-when-closed.
+/// All squares merge into one 4-plane bounding grid (levels 0..=3).
 ///
 /// Any `.jm2` that cannot be read, has no MAP section, or has an
 /// unrecognizable mapsquare name is an error: the whole world bakes or none
@@ -223,7 +258,8 @@ pub fn bake_from_maps(
         .max()
         .unwrap();
     let (width, height) = ((max_x - min_x) as usize, (max_z - min_z) as usize);
-    let mut flags = vec![0u32; width * height];
+    let plane_cells = width * height;
+    let mut flags = vec![0u32; LEVELS * plane_cells];
 
     for (square_x, square_z) in &squares {
         let path = maps_dir.join(format!("m{square_x}_{square_z}.jm2"));
@@ -243,8 +279,11 @@ pub fn bake_from_maps(
     }
 
     // Tiles no mapsquare covers (bbox gaps, non-rectangular world) are
-    // blocked ground, like the walk-byte bake's un-stamped cells.
-    let mut covered = vec![false; width * height];
+    // blocked ground. Level 0 is the ground plane and is always blocked at
+    // the gaps; an upper plane is only blocked at the gaps when the bake
+    // actually stamped it — an unused plane stays empty (walkable) so gap
+    // fill never fabricates it into an "existing" level.
+    let mut covered = vec![false; plane_cells];
     for (square_x, square_z) in &squares {
         let (ox, oz) = (
             (square_x * SQUARE as i32 - min_x) as usize,
@@ -256,9 +295,15 @@ pub fn bake_from_maps(
             }
         }
     }
-    for (i, c) in covered.iter().enumerate() {
-        if !c {
-            flags[i] |= CollisionFlag::WR_GRND as u32;
+    for level in 0..LEVELS {
+        let base = level * plane_cells;
+        if level > 0 && !flags[base..base + plane_cells].iter().any(|&f| f != 0) {
+            continue;
+        }
+        for (i, c) in covered.iter().enumerate() {
+            if !c {
+                flags[base + i] |= CollisionFlag::WR_GRND as u32;
+            }
         }
     }
 
@@ -312,6 +357,7 @@ fn stamp_square(
     let mut in_map = false;
     let mut in_loc = false;
     let mut saw_map = false;
+    let mut map_rows: Vec<(i32, usize, usize, u32)> = Vec::new();
     let mut locs = Vec::new();
     for raw in text.lines() {
         let line = raw.trim();
@@ -325,17 +371,8 @@ fn stamp_square(
             continue;
         }
         if in_map {
-            if let Some((x, z, blocked)) = parse_map_line(line) {
-                if blocked {
-                    set_at(
-                        flags,
-                        width,
-                        height,
-                        square_x * SQUARE as i32 + x as i32 - min_x,
-                        square_z * SQUARE as i32 + z as i32 - min_z,
-                        CollisionFlag::WR_GRND as u32,
-                    );
-                }
+            if let Some(row) = parse_map_line(line) {
+                map_rows.push(row);
             }
         } else if in_loc {
             if let Some(loc) = parse_loc_fields(line) {
@@ -347,6 +384,38 @@ fn stamp_square(
         return Err(PackError::BadLength(format!(
             "m{square_x}_{square_z}.jm2: no MAP section"
         )));
+    }
+
+    // The client's `finishBuild` reads the LINK_BELOW bit from the level-1
+    // map flags (`mapl[1]`) for every level's BLOCK tiles, so the MAP pass
+    // is two-stage: collect the rows, then stamp with the corrected level.
+    let link_below: HashSet<(usize, usize)> = map_rows
+        .iter()
+        .filter(|&&(level, _, _, f)| level == 1 && f & 2 != 0)
+        .map(|&(_, x, z, _)| (x, z))
+        .collect();
+    for &(level, x, z, f) in &map_rows {
+        if f & 1 == 0 {
+            continue;
+        }
+        // Client `finishBuild` (TS 76-90): a BLOCK tile blocks its
+        // LINK_BELOW-corrected plane; `true_level < 0` is never stamped.
+        let true_level = if link_below.contains(&(x, z)) {
+            level - 1
+        } else {
+            level
+        };
+        if true_level >= 0 {
+            set_at(
+                flags,
+                width,
+                height,
+                square_x * SQUARE as i32 + x as i32 - min_x,
+                square_z * SQUARE as i32 + z as i32 - min_z,
+                true_level,
+                CollisionFlag::WR_GRND as u32,
+            );
+        }
     }
 
     for loc in &locs {
@@ -361,32 +430,82 @@ fn stamp_square(
         let blockwalk = def.map_or(true, |d| d.block_walk);
         let blockrange = def.map_or(true, |d| d.block_range);
         // Openable wall doors are stamped blocked-when-closed, even though
-        // the door-edge extraction is the transport task's.
+        // the door-edge extraction is the transport task's. Everything
+        // stamps its own level plane (`loc.level`), never a level-0 squash.
         if door_ids.contains(&loc.loc_id) && loc.shape == LocShape::WALL_STRAIGHT {
-            add_wall(flags, width, height, lx, lz, loc.shape, loc.angle, blockrange);
-        } else if matches!(loc.shape, 0..=3) {
-            if blockwalk {
-                add_wall(flags, width, height, lx, lz, loc.shape, loc.angle, blockrange);
-            }
-        } else if loc.shape == LocShape::WALL_DIAGONAL
-            || loc.shape == LocShape::CENTREPIECE_STRAIGHT
-            || loc.shape == LocShape::CENTREPIECE_DIAGONAL
-            || (LocShape::ROOF_STRAIGHT..=LocShape::ROOFEDGE_SQUARE_CORNER).contains(&loc.shape)
-        {
-            if blockwalk {
-                let (w, l) = def.map_or((1, 1), |d| (d.width, d.length));
-                add_loc(flags, width, height, lx, lz, w, l, loc.angle, blockrange);
-            }
-        } else if loc.shape == LocShape::GROUND_DECOR {
-            // The client's `block_ground` (WR_GRND) is what blocks walk on
-            // a blockwalk, active ground decor — the brief's original
-            // WR_GROUND_DECOR semantic was wrong vs the client (that flag
-            // is not in the walk mask).
-            if blockwalk && def.map_or(false, |d| d.active) {
-                set_at(flags, width, height, lx, lz, CollisionFlag::WR_GRND as u32);
+            add_wall(
+                flags,
+                width,
+                height,
+                lx,
+                lz,
+                loc.shape,
+                loc.angle,
+                blockrange,
+                loc.level,
+            );
+        } else {
+            // The client `addLoc` collision table (build.rs): ground decor
+            // uses `block_ground`, centrepieces/roofs/wall-diagonal use
+            // `add_loc`, walls use `add_wall`, wall decor carries nothing.
+            match loc.shape {
+                LocShape::GROUND_DECOR => {
+                    // The client's `block_ground` (WR_GRND) is what blocks
+                    // walk on a blockwalk, active ground decor.
+                    if blockwalk && def.map_or(false, |d| d.active) {
+                        set_at(
+                            flags,
+                            width,
+                            height,
+                            lx,
+                            lz,
+                            loc.level,
+                            CollisionFlag::WR_GRND as u32,
+                        );
+                    }
+                }
+                LocShape::CENTREPIECE_STRAIGHT
+                | LocShape::CENTREPIECE_DIAGONAL
+                | LocShape::WALL_DIAGONAL
+                | LocShape::ROOF_STRAIGHT..=LocShape::ROOFEDGE_SQUARE_CORNER => {
+                    if blockwalk {
+                        let (w, l) = def.map_or((1, 1), |d| (d.width, d.length));
+                        add_loc(
+                            flags,
+                            width,
+                            height,
+                            lx,
+                            lz,
+                            w,
+                            l,
+                            loc.angle,
+                            blockrange,
+                            loc.level,
+                        );
+                    }
+                }
+                LocShape::WALL_STRAIGHT
+                | LocShape::WALL_DIAGONAL_CORNER
+                | LocShape::WALL_L
+                | LocShape::WALL_SQUARE_CORNER => {
+                    if blockwalk {
+                        add_wall(
+                            flags,
+                            width,
+                            height,
+                            lx,
+                            lz,
+                            loc.shape,
+                            loc.angle,
+                            blockrange,
+                            loc.level,
+                        );
+                    }
+                }
+                // Wall decor (4..=8) and unknown shapes carry no collision.
+                _ => {}
             }
         }
-        // Wall decor (4..=8) and unknown shapes carry no collision.
     }
     Ok(())
 }
@@ -402,6 +521,7 @@ fn add_wall(
     shape: i32,
     angle: i32,
     blockrange: bool,
+    level: i32,
 ) {
     let (west, east, north, south) = if blockrange {
         (
@@ -435,55 +555,55 @@ fn add_wall(
     };
     if shape == LocShape::WALL_STRAIGHT {
         if angle == LocAngle::WEST {
-            set_at(flags, width, height, x, z, west);
-            set_at(flags, width, height, x - 1, z, east);
+            set_at(flags, width, height, x, z, level, west);
+            set_at(flags, width, height, x - 1, z, level, east);
         } else if angle == LocAngle::NORTH {
-            set_at(flags, width, height, x, z, north);
-            set_at(flags, width, height, x, z + 1, south);
+            set_at(flags, width, height, x, z, level, north);
+            set_at(flags, width, height, x, z + 1, level, south);
         } else if angle == LocAngle::EAST {
-            set_at(flags, width, height, x, z, east);
-            set_at(flags, width, height, x + 1, z, west);
+            set_at(flags, width, height, x, z, level, east);
+            set_at(flags, width, height, x + 1, z, level, west);
         } else if angle == LocAngle::SOUTH {
-            set_at(flags, width, height, x, z, south);
-            set_at(flags, width, height, x, z - 1, north);
+            set_at(flags, width, height, x, z, level, south);
+            set_at(flags, width, height, x, z - 1, level, north);
         }
     } else if shape == LocShape::WALL_DIAGONAL_CORNER
         || shape == LocShape::WALL_SQUARE_CORNER
     {
         if angle == LocAngle::WEST {
-            set_at(flags, width, height, x, z, north_west);
-            set_at(flags, width, height, x - 1, z + 1, south_east);
+            set_at(flags, width, height, x, z, level, north_west);
+            set_at(flags, width, height, x - 1, z + 1, level, south_east);
         } else if angle == LocAngle::NORTH {
-            set_at(flags, width, height, x, z, north_east);
-            set_at(flags, width, height, x + 1, z + 1, south_west);
+            set_at(flags, width, height, x, z, level, north_east);
+            set_at(flags, width, height, x + 1, z + 1, level, south_west);
         } else if angle == LocAngle::EAST {
-            set_at(flags, width, height, x, z, south_east);
-            set_at(flags, width, height, x + 1, z - 1, north_west);
+            set_at(flags, width, height, x, z, level, south_east);
+            set_at(flags, width, height, x + 1, z - 1, level, north_west);
         } else if angle == LocAngle::SOUTH {
-            set_at(flags, width, height, x, z, south_west);
-            set_at(flags, width, height, x - 1, z - 1, north_east);
+            set_at(flags, width, height, x, z, level, south_west);
+            set_at(flags, width, height, x - 1, z - 1, level, north_east);
         }
     } else if shape == LocShape::WALL_L {
         if angle == LocAngle::WEST {
-            set_at(flags, width, height, x, z, north | west);
-            set_at(flags, width, height, x - 1, z, east);
-            set_at(flags, width, height, x, z + 1, south);
+            set_at(flags, width, height, x, z, level, north | west);
+            set_at(flags, width, height, x - 1, z, level, east);
+            set_at(flags, width, height, x, z + 1, level, south);
         } else if angle == LocAngle::NORTH {
-            set_at(flags, width, height, x, z, north | east);
-            set_at(flags, width, height, x, z + 1, south);
-            set_at(flags, width, height, x + 1, z, west);
+            set_at(flags, width, height, x, z, level, north | east);
+            set_at(flags, width, height, x, z + 1, level, south);
+            set_at(flags, width, height, x + 1, z, level, west);
         } else if angle == LocAngle::EAST {
-            set_at(flags, width, height, x, z, south | east);
-            set_at(flags, width, height, x + 1, z, west);
-            set_at(flags, width, height, x, z - 1, north);
+            set_at(flags, width, height, x, z, level, south | east);
+            set_at(flags, width, height, x + 1, z, level, west);
+            set_at(flags, width, height, x, z - 1, level, north);
         } else if angle == LocAngle::SOUTH {
-            set_at(flags, width, height, x, z, south | west);
-            set_at(flags, width, height, x, z - 1, north);
-            set_at(flags, width, height, x - 1, z, east);
+            set_at(flags, width, height, x, z, level, south | west);
+            set_at(flags, width, height, x, z - 1, level, north);
+            set_at(flags, width, height, x - 1, z, level, east);
         }
     }
     if blockrange {
-        add_wall(flags, width, height, x, z, shape, angle, false);
+        add_wall(flags, width, height, x, z, shape, angle, false, level);
     }
 }
 
@@ -499,6 +619,7 @@ fn add_loc(
     size_z: i32,
     angle: i32,
     blockrange: bool,
+    level: i32,
 ) {
     let mut f = CollisionFlag::WALK_SCENERY as u32;
     if blockrange {
@@ -511,14 +632,18 @@ fn add_loc(
     };
     for tx in x..x + sx {
         for tz in z..z + sz {
-            set_at(flags, width, height, tx, tz, f);
+            set_at(flags, width, height, tx, tz, level, f);
         }
     }
 }
 
-/// OR `f` into the tile at local grid coords `(x, z)`, dropping tiles
-/// outside the bbox (the client drops region-edge stamps the same way).
-fn set_at(flags: &mut [u32], width: usize, height: usize, x: i32, z: i32, f: u32) {
+/// OR `f` into the tile at local grid coords `(x, z, level)`, dropping
+/// tiles outside the bbox or on unknown levels (the client drops region-
+/// edge stamps the same way).
+fn set_at(flags: &mut [u32], width: usize, height: usize, x: i32, z: i32, level: i32, f: u32) {
+    if level < 0 || level >= LEVELS as i32 {
+        return;
+    }
     if x < 0 || z < 0 {
         return;
     }
@@ -526,7 +651,7 @@ fn set_at(flags: &mut [u32], width: usize, height: usize, x: i32, z: i32, f: u32
     if x >= width || z >= height {
         return;
     }
-    flags[z * width + x] |= f;
+    flags[level as usize * (width * height) + z * width + x] |= f;
 }
 
 #[cfg(test)]
@@ -608,9 +733,12 @@ mod tests {
             wc.flag(door.x, door.z, door.level) & CollisionFlag::W_N as u32,
             CollisionFlag::W_N as u32
         );
-        // Outside the grid: no flags, not walkable. Other levels reuse the
-        // level-0 cell (empty off-level used to flood upstairs).
+        // Outside the grid: no flags, not walkable. The bake is one plane
+        // per level: this fixture has no level-1 content, so the level-1
+        // plane is empty (walkable), never a level-0 reuse.
         assert_eq!(wc.flag(3199, 3200, 0), 0);
+        assert_eq!(wc.flag(3200, 3200, 1), 0);
+        assert_eq!(wc.flag(3200, 3200, 4), 0);
         assert!(wc.walkable(WorldTile {
             x: 3200,
             z: 3200,
@@ -621,6 +749,214 @@ mod tests {
             z: 3200,
             level: 0
         }));
+    }
+
+    #[test]
+    fn f1_is_wr_grnd_f2_link_below_is_not() {
+        let fix = FixtureDir::new("f1-vs-f2");
+        let text = "\
+==== MAP ====
+0 0 0: f1 u48
+0 0 1: f2 u50
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
+        // f1 (bit 0, BLOCK) stamps WR_GRND; f2 (bit 1, LINK_BELOW) alone
+        // never stamps ground.
+        assert_ne!(
+            wc.flag(3200, 3200, 0) & CollisionFlag::WR_GRND as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3201, 0), 0);
+    }
+
+    #[test]
+    fn blockwalk_no_wall_does_not_add_wall() {
+        let fix = FixtureDir::new("no-wall-blockwalk-false");
+        let text = "\
+==== MAP ====
+0 0 0: h1 o6 u48
+==== LOC ====
+0 0 0: 1234 0 0
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[LocType {
+            id: 1234,
+            blockwalk: false,
+            ..LocType::default()
+        }]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // Shape 0 (wall straight) with blockwalk=false carries no collision.
+        assert_eq!(wc.flag(3200, 3200, 0), 0);
+    }
+
+    #[test]
+    fn roof_with_blockwalk_stamps_add_loc_like_the_client() {
+        let fix = FixtureDir::new("roof-blockwalk");
+        let text = "\
+==== MAP ====
+0 0 0: h1 o6 u48
+==== LOC ====
+0 0 0: 1234 12 0
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[LocType {
+            id: 1234,
+            width: 1,
+            length: 1,
+            blockwalk: true,
+            ..LocType::default()
+        }]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // The client `addLoc` roof branch (shape >= ROOF_STRAIGHT) stamps a
+        // WALK_SCENERY footprint like a centrepiece.
+        assert_ne!(
+            wc.flag(3200, 3200, 0) & CollisionFlag::WALK_SCENERY as u32,
+            0
+        );
+        assert!(!wc.walkable(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0
+        }));
+    }
+
+    #[test]
+    fn ground_decor_needs_active_and_blockwalk() {
+        let fix = FixtureDir::new("ground-decor-gates");
+        let text = "\
+==== MAP ====
+0 0 0: h1 o6 u48
+==== LOC ====
+0 0 1: 1248 22 0
+0 0 2: 559 22 0
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[
+            LocType {
+                id: 1248,
+                blockwalk: true,
+                active: true,
+                ..LocType::default()
+            },
+            LocType {
+                id: 559,
+                blockwalk: true,
+                active: false,
+                ..LocType::default()
+            },
+        ]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // Ground decor blocks via the client's `block_ground` (WR_GRND)
+        // only when both blockwalk and active are set.
+        assert_ne!(
+            wc.flag(3200, 3201, 0) & CollisionFlag::WR_GRND as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3202, 0), 0);
+    }
+
+    #[test]
+    fn level1_map_block_stamps_plane1_not_level0() {
+        let fix = FixtureDir::new("l1-map-block");
+        let text = "\
+==== MAP ====
+1 0 0: f1 u48
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
+        // A level-1 MAP block stamps the level-1 plane, never level 0.
+        assert_ne!(
+            wc.flag(3200, 3200, 1) & CollisionFlag::WR_GRND as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3200, 0), 0);
+    }
+
+    #[test]
+    fn link_below_moves_a_level1_block_down_to_level0() {
+        let fix = FixtureDir::new("link-below-down");
+        let text = "\
+==== MAP ====
+1 0 0: f3 u48
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
+        // Client `finishBuild`: a level-1 BLOCK tile whose level-1 map
+        // flags carry LINK_BELOW stamps `true_level = level - 1` (TS
+        // 79-87), landing on level 0's grid.
+        assert_ne!(
+            wc.flag(3200, 3200, 0) & CollisionFlag::WR_GRND as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3200, 1) & CollisionFlag::WR_GRND as u32, 0);
+    }
+
+    #[test]
+    fn link_below_drops_a_level0_block_off_the_grid() {
+        let fix = FixtureDir::new("link-below-off");
+        let text = "\
+==== MAP ====
+0 0 0: f1 u48
+1 0 0: f2 u48
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
+        // A level-0 BLOCK with LINK_BELOW on the level-1 map resolves to
+        // true_level -1: the client never stamps a negative plane.
+        assert_eq!(wc.flag(3200, 3200, 0), 0);
+    }
+
+    #[test]
+    fn level1_loc_stamps_its_own_plane_not_level0() {
+        let fix = FixtureDir::new("l1-loc");
+        let text = "\
+==== MAP ====
+==== LOC ====
+1 0 0: 1234 10 0
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[LocType {
+            id: 1234,
+            width: 1,
+            length: 1,
+            blockwalk: true,
+            ..LocType::default()
+        }]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // A level-1 centrepiece stamps WALK_SCENERY on the level-1 plane;
+        // level 0 stays clean (no squash).
+        assert_ne!(
+            wc.flag(3200, 3200, 1) & CollisionFlag::WALK_SCENERY as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3200, 0), 0);
+    }
+
+    #[test]
+    fn level1_roof_stays_on_level1() {
+        let fix = FixtureDir::new("l1-roof");
+        let text = "\
+==== MAP ====
+==== LOC ====
+1 0 0: 1234 12 0
+";
+        fs::write(fix.0.join("m50_50.jm2"), text).unwrap();
+        let locs = defs(&[LocType {
+            id: 1234,
+            width: 1,
+            length: 1,
+            blockwalk: true,
+            ..LocType::default()
+        }]);
+        let wc = bake_from_maps(&fix.0, &locs, &HashSet::new()).unwrap();
+        // Roofs stamp their own level (ClientBuild `add_loc` on `level`):
+        // an L1+ roof stays L1+, never pushed to the ground plane.
+        assert_ne!(
+            wc.flag(3200, 3200, 1) & CollisionFlag::WALK_SCENERY as u32,
+            0
+        );
+        assert_eq!(wc.flag(3200, 3200, 0), 0);
     }
 
     #[test]
@@ -779,20 +1115,23 @@ mod tests {
         ));
     }
 
-    /// A level-0 world at (3200,3200) with one flag word per tile.
+    /// A level-0 world at (3200,3200) with one flag word per tile. The
+    /// bake is one plane per level, so planes 1..=3 stay empty.
     fn flag_world(flags: Vec<u32>) -> WorldCollision {
-        let wc = WorldCollision {
+        let plane = flags.len();
+        let mut padded = vec![0u32; 4 * plane];
+        padded[..plane].copy_from_slice(&flags);
+        WorldCollision {
             origin: WorldTile {
                 x: 3200,
                 z: 3200,
                 level: 0,
             },
-            width: flags.len(),
+            width: plane,
             height: 1,
-            walkable: derive_walkable(&flags),
-            flags,
-        };
-        wc
+            walkable: derive_walkable(&padded),
+            flags: padded,
+        }
     }
 
     #[test]
@@ -853,8 +1192,9 @@ mod tests {
             z: 3200,
             level: 0
         }));
-        // The bake is one level-0 plane; other levels reuse that x,z cell
-        // (empty off-level used to look like "no flags" and flood upstairs).
+        // The bake is one plane per level; other levels are their own
+        // empty planes (empty off-level used to look like "no flags" and
+        // flood upstairs).
         assert!(wc.standable(WorldTile {
             x: 3200,
             z: 3200,
@@ -863,7 +1203,7 @@ mod tests {
     }
 
     #[test]
-    fn off_level_reuses_the_level0_cell_instead_of_an_empty_plane() {
+    fn off_level_is_an_empty_plane_not_level0_reuse() {
         let wc = flag_world(vec![CollisionFlag::WALK_SCENERY as u32]);
         let l0 = WorldTile {
             x: 3200,
@@ -875,13 +1215,22 @@ mod tests {
             z: 3200,
             level: 1,
         };
-        assert_eq!(wc.flag(l1.x, l1.z, l1.level), wc.flag(l0.x, l0.z, l0.level));
-        assert_eq!(
-            wc.walkable_word(l1.x, l1.z, l1.level),
-            wc.walkable_word(l0.x, l0.z, l0.level)
-        );
-        assert!(!wc.walkable(l1));
-        assert!(!wc.standable(l1));
+        // The level-1 plane is its own empty plane: the L0 cell is never
+        // reused (the old `let _ = level` is gone).
+        assert_eq!(wc.flag(l1.x, l1.z, l1.level), 0);
+        assert_ne!(wc.flag(l0.x, l0.z, l0.level), 0);
+        assert_eq!(wc.walkable_word(l1.x, l1.z, l1.level), 0);
+        // An empty plane has no walk-block flags, so it walks and stands.
+        assert!(wc.walkable(l1));
+        assert!(wc.standable(l1));
+        // Out-of-range levels are empty, never a reuse or a panic.
+        assert_eq!(wc.flag(l1.x, l1.z, 4), 0);
+        assert_eq!(wc.walkable_word(l1.x, l1.z, -1), 0);
+        assert!(!wc.walkable(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 4
+        }));
     }
 
     #[test]

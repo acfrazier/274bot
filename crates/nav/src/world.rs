@@ -49,22 +49,21 @@ impl NavWorld {
     /// stores both directions, so the graph indexes `at` exactly as the
     /// grid authored them.
     pub fn from_grid(grid: &StepGrid) -> Self {
-        let flags = (0..grid.height)
-            .flat_map(|z| {
-                (0..grid.width).map(move |x| {
-                    let t = crate::tile::Tile {
-                        x: grid.origin.x + x as i32,
-                        z: grid.origin.z + z as i32,
-                        level: grid.origin.level,
-                    };
-                    if grid.walkable(t) {
-                        0
-                    } else {
-                        BLOCKED
-                    }
-                })
-            })
-            .collect::<Vec<u32>>();
+        // The v1 grid is one level-0 plane; the 4-plane buffer keeps
+        // upper-level lookups on their own (empty) planes instead of
+        // panicking or reusing level 0.
+        let plane = grid.width * grid.height;
+        let mut flags = vec![0u32; 4 * plane];
+        for z in 0..grid.height {
+            for x in 0..grid.width {
+                let t = crate::tile::Tile {
+                    x: grid.origin.x + x as i32,
+                    z: grid.origin.z + z as i32,
+                    level: grid.origin.level,
+                };
+                flags[z * grid.width + x] = if grid.walkable(t) { 0 } else { BLOCKED };
+            }
+        }
         let collision = WorldCollision {
             origin: WorldTile {
                 x: grid.origin.x,
@@ -243,8 +242,10 @@ mod tests {
     fn load_pack_path_round_trips_a_v2_world() {
         // A 5-tile corridor split by a door: the packed collision and
         // transport graph route exactly like the authored world.
-        let mut flags = vec![0u32; 5];
-        flags[2] = BLOCKED;
+        let mut plane = vec![0u32; 5];
+        plane[2] = BLOCKED;
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
             width: 5,
@@ -297,11 +298,13 @@ mod tests {
     fn v2_world_round_trips_the_teleport_layer_off_the_default_find() {
         // A 5×5 bake walled down the middle: only the packed any-tile
         // teleport can cross it, and only under find_allow_teleports.
-        let mut flags = vec![0u32; 25];
+        let mut plane = vec![0u32; 25];
         for z in 0..5 {
-            flags[z * 5 + 1] = BLOCKED;
-            flags[z * 5 + 2] = BLOCKED;
+            plane[z * 5 + 1] = BLOCKED;
+            plane[z * 5 + 2] = BLOCKED;
         }
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
             width: 5,

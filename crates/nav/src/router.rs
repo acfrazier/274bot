@@ -320,9 +320,8 @@ fn find_bounded_impl(
 /// cardinal masks, exactly like `tryMove`'s BFS. The derived word carries
 /// the `SQ_BLOCKED` base on any wall/scenery/ground tile, so those tiles
 /// reject entry from every direction. Every step stays inside the bake's
-/// x/z grid (the whole-world mapsquare bbox); on other levels the bake
-/// carries no flags yet — transports may land there — so steps are
-/// unrestricted within that plane.
+/// x/z grid (the whole-world mapsquare bbox); each level tests its own
+/// plane (an unstamped plane is unrestricted within it).
 pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
     let nb = WorldTile {
         x: cur.x + d.0,
@@ -860,12 +859,14 @@ mod tests {
     }
 
     /// A `width × height` level-0 bake at (0,0) with the given per-tile
-    /// flags OR'd in.
+    /// flags OR'd in. Planes 1..=3 stay empty (the per-level bake shape).
     fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollision {
-        let mut flags = vec![0u32; width * height];
+        let mut plane = vec![0u32; width * height];
         for &(x, z, f) in extras {
-            flags[z as usize * width + x as usize] |= f;
+            plane[z as usize * width + x as usize] |= f;
         }
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
         WorldCollision {
             origin: tile(0, 0, 0),
             width,

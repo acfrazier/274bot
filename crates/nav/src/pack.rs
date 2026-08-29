@@ -10,9 +10,10 @@
 //! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
 //! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
 //!
-//! V2 format: magic `b"274V"`, version `u8` 3, collision origin
+//! V2 format: magic `b"274V"`, version `u8` 4, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`] `flags`
-//! u32le per tile (row-major z then x), then the transport edge count u32le
+//! u32le per tile per level — four planes, level-major, each `width ×
+//! height` (row-major z then x) — then the transport edge count u32le
 //! and per edge `(kind u8, at x/z/level, to x/z/level, loc_id, option,
 //! ticks, dir u8, open_loc_id)` i32le plus the four requirement vectors
 //! (count u32le, then `(id, value)` i32le pairs; quest names as
@@ -40,8 +41,9 @@ const VERSION: u8 = 1;
 /// File magic.
 const MAGIC: &[u8; 4] = b"274N";
 /// V2 pack format version (collision flags + transport graph; v3 adds the
-/// per-edge `dir`/`open_loc_id` fields).
-const VERSION_V2: u8 = 3;
+/// per-edge `dir`/`open_loc_id` fields, v4 stores the four collision
+/// planes).
+const VERSION_V2: u8 = 4;
 /// V2 file magic.
 const MAGIC_V2: &[u8; 4] = b"274V";
 /// Mapsquare edge length in tiles.
@@ -181,9 +183,10 @@ pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
 /// Serialize the whole-world collision + transport graph to the v2 pack
 /// byte format. The graph's `at` index is not stored; [`decode_v2`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array. The v3 wire (version byte 3)
-/// carries `dir`/`open_loc_id` per edge; v2 streams are rejected by
-/// [`decode_v2`]'s version check rather than mis-read.
+/// the ordinary edges in the same array. The v4 wire (version byte 4)
+/// carries the [`WorldCollision`] as four level-major planes; earlier v2/v3
+/// streams are rejected by [`decode_v2`]'s version check rather than
+/// mis-read.
 pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
@@ -253,8 +256,11 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
         )));
     }
-    let cells = width
+    let plane = width
         .checked_mul(height)
+        .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
+    let cells = plane
+        .checked_mul(4)
         .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
     let mut flags = vec![0u32; cells];
     for f in &mut flags {
@@ -610,12 +616,18 @@ fn parse_mapsquare_text(
             continue;
         }
         if in_map {
-            if let Some((x, z, blocked)) = parse_map_line(line) {
-                walk[z * SQUARE + x] = if blocked { 0 } else { 1 };
+            if let Some((level, x, z, flags)) = parse_map_line(line) {
+                // The v1 walk grid is one level-0 plane; upper-level rows
+                // belong to the whole-world collision bake instead.
+                if level == 0 {
+                    walk[z * SQUARE + x] = if flags & 1 != 0 { 0 } else { 1 };
+                }
             }
         } else if in_loc {
             if let Some(loc) = parse_loc_fields(line) {
-                locs.push(loc);
+                if loc.level == 0 {
+                    locs.push(loc);
+                }
             }
         }
     }
@@ -712,8 +724,8 @@ pub(crate) fn section(line: &str) -> Option<&str> {
     line.strip_prefix("==== ")?.strip_suffix(" ====")
 }
 
-/// Parse a MAP line into `(x, z, blocked)`, level 0 only.
-pub(crate) fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
+/// Parse a MAP line into `(level, x, z, flags)`, levels 0..=3 only.
+pub(crate) fn parse_map_line(line: &str) -> Option<(i32, usize, usize, u32)> {
     let (coords, rest) = line.split_once(':')?;
     let mut c = coords.split_whitespace();
     let level: i32 = c.next()?.parse().ok()?;
@@ -722,23 +734,25 @@ pub(crate) fn parse_map_line(line: &str) -> Option<(usize, usize, bool)> {
     if c.next().is_some() {
         return None;
     }
-    if level != 0 {
+    if !(0..=3).contains(&level) {
         return None;
     }
     let (x, z) = (x as usize, z as usize);
     if x >= SQUARE || z >= SQUARE {
         return None;
     }
-    let blocked = rest.split_whitespace().any(|tok| {
-        tok.strip_prefix('f')
-            .and_then(|n| n.parse::<u32>().ok())
-            .is_some_and(|flag| flag & 1 != 0)
-    });
-    Some((x, z, blocked))
+    // The raw `fN` flag byte (client `mapl[level][x][z]`): bit 0 is
+    // BLOCK, bit 1 is LINK_BELOW. A row with no `f` token carries no flags.
+    let flags = rest
+        .split_whitespace()
+        .find_map(|tok| tok.strip_prefix('f').and_then(|n| n.parse::<u32>().ok()))
+        .unwrap_or(0);
+    Some((level, x, z, flags))
 }
 
-/// One level-0 loc placement inside a mapsquare.
+/// One loc placement inside a mapsquare.
 pub(crate) struct LocOnSquare {
+    pub(crate) level: i32,
     pub(crate) x: usize,
     pub(crate) z: usize,
     pub(crate) loc_id: i32,
@@ -753,7 +767,7 @@ fn loc_blocks_tile(shape: i32) -> bool {
     matches!(shape, 0..=3 | 9..=11)
 }
 
-/// Parse a LOC line into a level-0 placement.
+/// Parse a LOC line into a placement, levels 0..=3 only.
 pub(crate) fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
     let (coords, rest) = line.split_once(':')?;
     let mut c = coords.split_whitespace();
@@ -763,7 +777,7 @@ pub(crate) fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
     if c.next().is_some() {
         return None;
     }
-    if level != 0 {
+    if !(0..=3).contains(&level) {
         return None;
     }
     let (x, z) = (x as usize, z as usize);
@@ -775,6 +789,7 @@ pub(crate) fn parse_loc_fields(line: &str) -> Option<LocOnSquare> {
     let shape: i32 = t.next()?.parse().ok()?;
     let angle: i32 = t.next().map_or(Ok(0), |a| a.parse()).ok()?;
     Some(LocOnSquare {
+        level,
         x,
         z,
         loc_id,
@@ -900,7 +915,11 @@ mod tests {
 
     #[test]
     fn v2_roundtrip_collision_and_transport_graph() {
-        let flags = vec![0, 0, 1, 0, 0, 0];
+        let plane = vec![0, 0, 1, 0, 0, 0];
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
+        // Distinct upper-plane content pins the four-plane wire layout.
+        flags[plane.len()..2 * plane.len()].copy_from_slice(&[7; 6]);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1028,9 +1047,12 @@ mod tests {
 
     #[test]
     fn v2_decode_rejects_old_version_streams() {
-        // A version-2 stream (pre-`dir`/`open_loc_id` wire) is rejected,
-        // not mis-read: the re-bake immediately rewrites it at v3.
-        let flags = vec![0, 0, 1, 0, 0, 0];
+        // A version-2 or version-3 stream (pre-four-plane wire) is
+        // rejected, not mis-read: the re-bake immediately rewrites it at
+        // the current version.
+        let plane = vec![0, 0, 1, 0, 0, 0];
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1045,10 +1067,10 @@ mod tests {
         let graph = TransportGraph::default();
         let mut bytes = encode_v2(&collision, &graph);
         // The version byte sits right after the 4-byte magic.
-        bytes[4] = 2;
+        bytes[4] = 3;
         assert!(matches!(
             decode_v2(&bytes),
-            Err(PackError::BadVersion(2))
+            Err(PackError::BadVersion(3))
         ));
     }
 

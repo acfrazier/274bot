@@ -1,5 +1,6 @@
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
-//! into a level-0 [`WorldCollision`], derive the [`TransportGraph`] from
+//! into a per-level [`WorldCollision`] (four planes like the client's
+//! `collision[4]`), derive the [`TransportGraph`] from
 //! the Server content, and write the v2 nav pack to `$NAV_PACK` or
 //! `~/.274bot/274bot.navpack` (default). Usage:
 //! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where the defaults
