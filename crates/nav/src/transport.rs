@@ -139,6 +139,7 @@ pub fn derive_transports(
     ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
     boat_edges(&mut graph);
+    cart_edges(&mut graph);
     glider_edges(&mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     teleport_edges(content_root, &mut graph, &mut skipped);
@@ -290,7 +291,7 @@ fn report(
         .count();
     let jewel_teles = graph.teleports.len() - spell_teles;
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders, {} spirit trees); {} teleports ({} spells, {} jewellery); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders, {} spirit trees, {} npc carts); {} teleports ({} spells, {} jewellery); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
@@ -300,6 +301,7 @@ fn report(
         by_kind.get(&TransportKind::Boat).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Glider).copied().unwrap_or(0),
         by_kind.get(&TransportKind::SpiritTree).copied().unwrap_or(0),
+        by_kind.get(&TransportKind::Npc).copied().unwrap_or(0),
         graph.teleports.len(),
         spell_teles,
         jewel_teles,
@@ -1796,6 +1798,97 @@ fn boat_edges(graph: &mut TransportGraph) {
 }
 
 // ---------------------------------------------------------------------------
+// Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
+/// One Shilo↔Brimhaven cart journey: `at` the cart driver NPC's spawn tile
+/// (jm2 `==== NPC ====` placement, id resolved through `pack/npc.pack`),
+/// `to` the destination cart tile the script's `p_teleport(` literal lands
+/// on. The whole hop is one `Talk-to` (`opnpc1`), and the scripts carry no
+/// `p_delay`, so `ticks` is the 1 op base like the spirit trees.
+#[derive(Debug, Clone, Copy)]
+struct CartRoute {
+    /// npc.pack id of the cart driver who starts the journey.
+    npc: i32,
+    at: WorldTile,
+    to: WorldTile,
+    /// `(obj id, count)` fare: coins (`obj.pack` 995), count = the
+    /// `calc_shilocart_cost` clamp cap.
+    fare: Option<(i32, i32)>,
+    /// The quest journal name gating the journey, if any.
+    quest: Option<&'static str>,
+}
+
+/// The 2004 cart journeys: destinations from the `p_teleport(` calls in
+/// `content/scripts/areas/area_brimhaven/scripts/hajedy.rs2` /
+/// `content/scripts/areas/area_shilo/scripts/vigroy.rs2`, origin tiles from
+/// the `==== NPC ====` placements in `content/maps/*.jm2`, and ids from
+/// `pack/npc.pack`. The fare is `calc_shilocart_cost` in both scripts:
+/// `(coins carried * 5) / 100`, clamped to 10–200 coins — the table keeps
+/// the 200 cap. Hajedy refuses the ride until Shilo Village is complete
+/// (`%zombiequeen >= ^zombiequeen_complete`); Vigroy's block carries no
+/// gate.
+const CART_ROUTES: &[CartRoute] = &[
+    // Hajedy (brimhavencartdriver, npc 510) by the Brimhaven cart
+    // (m43_50 local (27,11) = 2779,3211): `p_teleport(0_44_46_18_7)`
+    // lands at the Shilo Village cart (2834,2951).
+    CartRoute {
+        npc: 510,
+        at: WorldTile {
+            x: 2779,
+            z: 3211,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2834,
+            z: 2951,
+            level: 0,
+        },
+        fare: Some((995, 200)),
+        quest: Some("Shilo Village"),
+    },
+    // Vigroy (shilocartdriver, npc 511) at the Shilo Village cart
+    // (m44_46 local (18,10) = 2834,2954): `p_teleport(0_43_50_24_14)`
+    // lands at the Brimhaven cart (2776,3214).
+    CartRoute {
+        npc: 511,
+        at: WorldTile {
+            x: 2834,
+            z: 2954,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2776,
+            z: 3214,
+            level: 0,
+        },
+        fare: Some((995, 200)),
+        quest: None,
+    },
+];
+
+/// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
+/// keyed from the cart driver NPC's tile.
+fn cart_edges(graph: &mut TransportGraph) {
+    for r in CART_ROUTES {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Npc,
+            at: r.at,
+            to: r.to,
+            loc_id: r.npc,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
+            quest_req: r.quest.map(|q| vec![q.to_string()]).unwrap_or_default(),
+            varp_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Gnome gliders: the 2004 Gnome Air network (fixed platform table).
 // ---------------------------------------------------------------------------
 
@@ -2980,6 +3073,38 @@ mod tests {
         }));
     }
 
+    /// The real content must derive at least one `TransportKind::Npc` edge
+    /// for the Shilo↔Brimhaven cart (`cart_edges`, the `hajedy.rs2` /
+    /// `vigroy.rs2` route pair): coins on the fare and the Shilo Village
+    /// journal name on the Brim→Shilo hop. Skips with a message when the
+    /// Server content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_shilo_brimhaven_cart() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let carts: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Npc)
+            .cloned()
+            .collect();
+        assert!(
+            carts.len() >= 2,
+            "both cart directions derive, got {}",
+            carts.len()
+        );
+        assert!(
+            carts.iter().any(|e| !e.item_req.is_empty()),
+            "coins on the fare"
+        );
+        assert!(
+            carts.iter().any(|e| !e.quest_req.is_empty()),
+            "Shilo complete on Brim→Shilo"
+        );
+    }
+
     /// The process nav pack path (`$NAV_PACK` or `~/.274bot/274bot.navpack`,
     /// the same default `nav-pack` writes and the panel reads).
     fn default_pack_path() -> PathBuf {
@@ -3367,11 +3492,15 @@ p_arrivedelay;
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let graph = derive_transports(fx.path(), &defs, &wc);
         // The unknown ladder name resolves nothing; the only edges are the
-        // explicit 2004 boat route and gnome-glider tables.
+        // explicit 2004 boat route, cart, and gnome-glider tables.
         let explicit = graph
             .edges
             .iter()
-            .filter(|e| e.kind == TransportKind::Boat || e.kind == TransportKind::Glider)
+            .filter(|e| {
+                e.kind == TransportKind::Boat
+                    || e.kind == TransportKind::Glider
+                    || e.kind == TransportKind::Npc
+            })
             .count();
         assert_eq!(explicit, graph.edges.len());
         assert_eq!(
@@ -3381,6 +3510,14 @@ p_arrivedelay;
                 .filter(|e| e.kind == TransportKind::Boat)
                 .count(),
             8
+        );
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .filter(|e| e.kind == TransportKind::Npc)
+                .count(),
+            2
         );
         assert_eq!(
             graph
