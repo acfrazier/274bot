@@ -187,6 +187,30 @@ pub(crate) fn pan_by(
     ((cx, cz), (rx, rz))
 }
 
+/// WalkTo window flags: no docking, and the imgui window must not steal
+/// wheel (that pans the map). `NO_SCROLLBAR` hides the bar; without
+/// `NO_SCROLL_WITH_MOUSE` the window still scrolls once content overflows.
+fn walkto_window_flags() -> WindowFlags {
+    WindowFlags::NO_DOCKING | WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
+}
+
+/// Canvas child: same wheel capture. A default child grows a scrollbar
+/// when its content rect exceeds the view (the pack-map draw list does
+/// not, but an InvisibleButton fills the child so hover is the grid).
+fn walkto_canvas_flags() -> WindowFlags {
+    WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE
+}
+
+/// Window-relative X so a `width`-wide cluster sits on the content-region
+/// right edge. `cursor_x + avail_x` is that edge in imgui window coords.
+fn right_align_x(cursor_x: f32, avail_x: f32, width: f32) -> f32 {
+    cursor_x + avail_x - width
+}
+
+/// Combo width on the Level/Zoom toolbar so they do not eat the row
+/// (default item width is the remaining content region).
+const TOOLBAR_COMBO_W: f32 = 140.0;
+
 /// The width a text-only button of `label` occupies under the current style,
 /// for right-aligning a button against the content region edge.
 fn button_w(ui: &Ui, label: &str) -> f32 {
@@ -446,7 +470,7 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
     let confirmed = ui
         .window("WalkTo")
         .opened(open)
-        .flags(WindowFlags::NO_DOCKING | WindowFlags::NO_SCROLLBAR)
+        .flags(walkto_window_flags())
         .size([720.0, 560.0], Condition::FirstUseEver)
         .size_constraints([480.0, 360.0], [f32::MAX, f32::MAX])
         .build(|| {
@@ -455,6 +479,7 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
                 .iter()
                 .position(|l| *l == LEVEL.load(Ordering::Relaxed))
                 .unwrap_or(0);
+            ui.set_next_item_width(TOOLBAR_COMBO_W);
             if ui.combo("##walkto-level", &mut lvl_idx, &levels, |l: &i32| {
                 Cow::Owned(format!("level {l}"))
             }) {
@@ -462,20 +487,11 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
             }
             ui.same_line();
             let mut zoom = ZOOM.load(Ordering::Relaxed) as usize;
+            ui.set_next_item_width(TOOLBAR_COMBO_W);
             if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
                 Cow::Owned(format!("{z:.0}px/tile"))
             }) {
                 ZOOM.store(zoom as i32, Ordering::Relaxed);
-            }
-            // Recentre against the toolbar's right edge.
-            let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
-            ui.same_line_with_pos(right - button_w(ui, "recentre"));
-            if ui.button("recentre") {
-                let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
-                CENTRE_X.store(cx, Ordering::Relaxed);
-                CENTRE_Z.store(cz, Ordering::Relaxed);
-                PAN_REM_X.store(0, Ordering::Relaxed);
-                PAN_REM_Z.store(0, Ordering::Relaxed);
             }
             // Canvas fills the remaining height below the toolbar and above
             // the footer row (~frame height + item spacing, not a baked 24).
@@ -487,8 +503,25 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
                 Some(t) => ui.text_disabled(format!("selected {} {} {}", t.x, t.z, t.level)),
                 None => ui.text_disabled("click a tile, then Walk"),
             }
-            let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
-            ui.same_line_with_pos(right - button_w(ui, "Walk"));
+            // Recentre lives with Walk on the footer (right cluster), not
+            // on the Level/Zoom row where a full-width combo shoved it.
+            let spacing = ui.clone_style().item_spacing()[0];
+            let cluster =
+                button_w(ui, "recentre") + spacing + button_w(ui, "Walk");
+            let x = right_align_x(
+                ui.cursor_pos()[0],
+                ui.content_region_avail()[0],
+                cluster,
+            );
+            ui.same_line_with_pos(x);
+            if ui.button("recentre") {
+                let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
+                CENTRE_X.store(cx, Ordering::Relaxed);
+                CENTRE_Z.store(cz, Ordering::Relaxed);
+                PAN_REM_X.store(0, Ordering::Relaxed);
+                PAN_REM_Z.store(0, Ordering::Relaxed);
+            }
+            ui.same_line();
             let can_walk = session.picker_sel.is_some();
             let _off = ui.begin_disabled_with_cond(!can_walk);
             ui.button("Walk") && can_walk && session.confirm_picker_walk(world)
@@ -510,10 +543,15 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
     let mut rect: Option<([f32; 2], [f32; 2])> = None;
     ui.child_window("##walkto-canvas")
         .size([0.0, height])
+        .flags(walkto_canvas_flags())
         .build(ui, || {
             let draw = ui.get_window_draw_list();
             let pos = ui.window_pos();
             let size = ui.content_region_avail();
+            // Fill the child so its content size matches the view: a zero-
+            // content child still lets the parent eat the wheel, and once
+            // the window scrollbar appears map pan stops.
+            ui.invisible_button("##walkto-hit", size);
             let (min, max) = (pos, [pos[0] + size[0], pos[1] + size[1]]);
             rect = Some((min, max));
             let (cx, cz) = (
@@ -721,8 +759,10 @@ mod tests {
 
     use super::{
         available_levels, click_to_tile, default_pack_path, pack_map_tiles, pan_by,
-        picker_map_window, snap, PackView,
+        picker_map_window, right_align_x, snap, walkto_canvas_flags, walkto_window_flags,
+        PackView,
     };
+    use dear_imgui_rs::WindowFlags;
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
     use nav::router::{Leg, Route};
@@ -877,6 +917,28 @@ mod tests {
             Ok(p) => assert_eq!(path, PathBuf::from(p)),
             Err(_) => assert!(path.to_string_lossy().ends_with("274bot.navpack")),
         }
+    }
+
+    #[test]
+    fn walkto_window_flags_capture_wheel_on_the_canvas() {
+        let w = walkto_window_flags();
+        assert!(
+            w.contains(WindowFlags::NO_SCROLLBAR),
+            "hide the imgui window scrollbar"
+        );
+        assert!(
+            w.contains(WindowFlags::NO_SCROLL_WITH_MOUSE),
+            "wheel over WalkTo must pan the map, not scroll the window"
+        );
+        let c = walkto_canvas_flags();
+        assert!(c.contains(WindowFlags::NO_SCROLLBAR));
+        assert!(c.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
+    }
+
+    #[test]
+    fn right_align_x_sits_the_cluster_on_the_content_edge() {
+        // cursor 12, 400px remaining, 80px cluster → 332.
+        assert_eq!(right_align_x(12.0, 400.0, 80.0), 332.0);
     }
 
     #[test]
