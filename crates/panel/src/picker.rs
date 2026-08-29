@@ -235,6 +235,15 @@ fn right_align_x(cursor_x: f32, avail_x: f32, width: f32) -> f32 {
     cursor_x + avail_x - width
 }
 
+/// Footer labels: Teleport only on a local engine.
+fn walkto_footer_labels(local: bool) -> &'static [&'static str] {
+    if local {
+        &["recentre", "Walk", "Teleport"]
+    } else {
+        &["recentre", "Walk"]
+    }
+}
+
 /// Combo width on the Level/Zoom toolbar so they do not eat the row
 /// (default item width is the remaining content region).
 const TOOLBAR_COMBO_W: f32 = 140.0;
@@ -530,7 +539,13 @@ fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
         None => ui.text_disabled("click a tile, then Walk"),
     }
     let spacing = ui.clone_style().item_spacing()[0];
-    let cluster = button_w(ui, "recentre") + spacing + button_w(ui, "Walk");
+    let local = session.debug_ui();
+    let labels = walkto_footer_labels(local);
+    let cluster = labels
+        .iter()
+        .map(|l| button_w(ui, l))
+        .sum::<f32>()
+        + spacing * (labels.len().saturating_sub(1) as f32);
     let x = right_align_x(
         ui.cursor_pos()[0],
         ui.content_region_avail()[0],
@@ -550,6 +565,16 @@ fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
     if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
         session.walkto_open = false;
         PREV_OPEN.store(false, Ordering::Relaxed);
+    }
+    if local {
+        ui.same_line();
+        if ui.button("Teleport") {
+            if let Some(t) = session.picker_sel.take() {
+                session.cheat_focused(&crate::session::walkto_tele_cmd(t));
+                session.walkto_open = false;
+                PREV_OPEN.store(false, Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -795,8 +820,8 @@ mod tests {
 
     use super::{
         available_levels, click_to_tile, default_pack_path, pack_map_tiles, pan_by,
-        picker_map_window, right_align_x, snap, walkto_canvas_flags, walkto_window_flags,
-        PackView,
+        picker_map_window, right_align_x, snap, walkto_canvas_flags, walkto_footer_labels,
+        walkto_window_flags, PackView,
     };
     use dear_imgui_rs::WindowFlags;
     use crate::nav_settings::NavSettings;
@@ -985,6 +1010,15 @@ mod tests {
     fn right_align_x_sits_the_cluster_on_the_content_edge() {
         // cursor 12, 400px remaining, 80px cluster → 332.
         assert_eq!(right_align_x(12.0, 400.0, 80.0), 332.0);
+    }
+
+    #[test]
+    fn walkto_footer_adds_teleport_on_local_engine() {
+        assert_eq!(walkto_footer_labels(false), &["recentre", "Walk"]);
+        assert_eq!(
+            walkto_footer_labels(true),
+            &["recentre", "Walk", "Teleport"]
+        );
     }
 
     #[test]

@@ -50,6 +50,15 @@ fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
 
+/// World host for a new session: `TARGET=live` bakes point at rs2b2t.
+fn default_play_host() -> String {
+    if env::var("TARGET").as_deref() == Ok("live") {
+        "w1.rs2b2t.com".into()
+    } else {
+        "127.0.0.1".into()
+    }
+}
+
 /// Loopback hosts get the debug heading / WalkTo Teleport. Public
 /// `w1.rs2b2t.com` and LAN IPs do not.
 pub fn is_local_engine(host: &str) -> bool {
@@ -703,7 +712,7 @@ impl Session {
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
             options: PlayOptions {
-                host: "127.0.0.1".into(),
+                host: default_play_host(),
                 port: DEFAULT_PORT,
                 cache_dir: default_cache_dir(),
                 lowmem: true,
