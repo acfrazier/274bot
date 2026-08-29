@@ -75,10 +75,7 @@ fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
 }
 
 fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    if c.ifaces.len() <= id {
-        c.ifaces.resize(id + 1, None);
-    }
-    c.ifaces[id] = Some(Box::new(com));
+    c.set_iface(id, com);
 }
 
 /// The inventory tab (side tab 3) with `(stored, count)` slots; stored ids

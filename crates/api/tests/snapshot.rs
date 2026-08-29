@@ -212,22 +212,20 @@ fn player_rebuild_records_base_and_tile() {
 #[test]
 fn inv_rebuild_reads_the_type_inv_iface() {
     let mut c = client_with_npc();
-    match c
-        .ifaces
-        .iter_mut()
-        .flatten()
-        .find(|f| f.r#type == ComponentType::TYPE_INV)
-    {
-        Some(inv) => {
+    match c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+        Some(id) => {
+            let inv = c.iface_mut(id).unwrap();
             inv.link_obj_type = Some(vec![526, 995]); // stored = obj id + 1
             inv.link_obj_number = Some(vec![1, 100]);
         }
-        None => c.ifaces.push(Some(Box::new(IfType {
-            r#type: ComponentType::TYPE_INV,
-            link_obj_type: Some(vec![526, 995]),
-            link_obj_number: Some(vec![1, 100]),
-            ..Default::default()
-        }))),
+        None => {
+            c.push_iface(IfType {
+                r#type: ComponentType::TYPE_INV,
+                link_obj_type: Some(vec![526, 995]),
+                link_obj_number: Some(vec![1, 100]),
+                ..Default::default()
+            });
+        }
     }
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
@@ -251,16 +249,8 @@ fn inv_ids_match_inventory_def_ids() {
     // `rebuild_inv` reads the first TYPE_INV in the table; point the inv
     // tab (side tab 3) at the same component so both families agree.
     let inv_id = c
-        .ifaces
-        .iter()
-        .position(|f| {
-            f.as_ref()
-                .is_some_and(|f| f.r#type == ComponentType::TYPE_INV)
-        })
-        .unwrap_or_else(|| {
-            c.ifaces.push(None);
-            c.ifaces.len() - 1
-        });
+        .iface_id(|f| f.r#type == ComponentType::TYPE_INV)
+        .unwrap_or_else(|| c.push_iface(IfType::default()));
     set_iface(
         &mut c,
         inv_id,
@@ -1148,10 +1138,7 @@ fn map_flag_view_reads_minimap_flag() {
 
 /// Place a component in the iface table at `id` (growing the table).
 fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    if c.ifaces.len() <= id {
-        c.ifaces.resize(id + 1, None);
-    }
-    c.ifaces[id] = Some(Box::new(com));
+    c.set_iface(id, com);
 }
 
 /// Plant an obj def at `id` so def-name resolution reads it.
@@ -1780,10 +1767,13 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert!(!snap.trade().offer_open);
 
     // A partner label with no prefix keeps the raw name.
-    c.ifaces[3417] = Some(Box::new(IfType {
-        text: "  Smithy Bob".into(),
-        ..c.ifaces[3417].as_deref().unwrap().clone()
-    }));
+    c.set_iface(
+        3417,
+        IfType {
+            text: "  Smithy Bob".into(),
+            ..c.if_(3417).unwrap().clone()
+        },
+    );
     c.bump_gens(ServerProt::IF_SETTEXT);
     assert!(snap.rebuild_family(&mut c, Family::Trade));
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));

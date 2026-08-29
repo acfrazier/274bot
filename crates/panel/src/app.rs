@@ -3400,7 +3400,7 @@ mod tests {
             },
             1,
             std::sync::Arc::new(client::config::Cache::default()),
-            vec![],
+            std::sync::Arc::new(vec![]),
         );
         c.ingame = true;
         c.scene_state = 2;

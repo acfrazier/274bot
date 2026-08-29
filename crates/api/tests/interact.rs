@@ -893,10 +893,7 @@ fn rebuild(c: &mut Client) -> GameSnapshot {
 }
 
 fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    if c.ifaces.len() <= id {
-        c.ifaces.resize(id + 1, None);
-    }
-    c.ifaces[id] = Some(Box::new(com));
+    c.set_iface(id, com);
 }
 
 /// Plant an npc type whose menu ops the snapshot's npc view carries.

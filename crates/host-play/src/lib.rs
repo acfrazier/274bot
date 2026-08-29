@@ -428,11 +428,12 @@ fn step_nav_bot<D: Driver>(
 /// the view carries the real 0-based ids scripts resolve `has_item`
 /// against — the same convention as `api::snapshot`'s inv view.
 /// Short-lived: rebuilt per observe while the slot script is Running;
-/// `None` when no TYPE_INV iface is loaded yet.
-fn inventory_from_ifaces(ifaces: &[Option<Box<IfType>>]) -> Option<Vec<(i32, i32)>> {
-    let inv = ifaces
-        .iter()
-        .flatten()
+/// `None` when no TYPE_INV iface is loaded yet. Reads the client's
+/// combined iface view (per-client overlay first) so server-written slots
+/// show, not the shared decode.
+fn inventory_from_ifaces(client: &Client) -> Option<Vec<(i32, i32)>> {
+    let inv = client
+        .ifaces_merged()
         .find(|f| f.r#type == ComponentType::TYPE_INV)?;
     let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
         return None;
@@ -539,7 +540,7 @@ pub struct Play {
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
-    ifaces: Vec<Option<Box<IfType>>>,
+    ifaces: Arc<Vec<Option<Box<IfType>>>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
@@ -588,7 +589,7 @@ impl Play {
             options: options.clone(),
             cache,
             obj_names,
-            ifaces,
+            ifaces: Arc::new(ifaces),
             queue: Arc::new(Mutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str| {}),
             spawned: HashSet::new(),
@@ -1005,7 +1006,7 @@ fn spawn_slot_thread(
     park: Option<SlotPark>,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
-    ifaces_template: Vec<Option<Box<IfType>>>,
+    ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
@@ -1193,7 +1194,7 @@ fn spawn_slot_thread(
                             // ids/counts, rebuilt each observe while the
                             // script is Running (the idle-skip gate).
                             let inv = if script_running(&slot_scripts, name) {
-                                inventory_from_ifaces(&c.ifaces)
+                                inventory_from_ifaces(c)
                             } else {
                                 None
                             };
@@ -1689,7 +1690,7 @@ mod tests {
             members: true,
             lowmem: true,
         };
-        let a = prepare_client(cfg, 1, Arc::clone(&cache), vec![]);
+        let a = prepare_client(cfg, 1, Arc::clone(&cache), Arc::new(vec![]));
         assert!(Arc::ptr_eq(&a.cache, &cache));
         assert!(!a.error_loading);
     }
@@ -1732,7 +1733,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         let mut s = SlotStatus {
             username: "t".into(),
@@ -1767,7 +1768,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         c.login("a", "pw", false).unwrap();
         let mut s = SlotStatus {
@@ -1861,7 +1862,7 @@ mod tests {
             ..Default::default()
         };
         ifaces[7] = Some(Box::new(com));
-        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), ifaces.clone());
+        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), Arc::new(ifaces.clone()));
         client.ingame = true;
         let arm = SlotArm::new(0, false);
         arm.want_logout.store(true, Ordering::Relaxed);
@@ -2343,7 +2344,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
@@ -2387,7 +2388,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
@@ -2432,7 +2433,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         cheats
             .lock()
@@ -2507,7 +2508,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         script_observe(
             &mut c,
@@ -2542,7 +2543,19 @@ mod tests {
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
         }));
-        let inv = inventory_from_ifaces(&ifaces).expect("TYPE_INV iface present");
+        let mut client = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces),
+        );
+        let inv = inventory_from_ifaces(&client).expect("TYPE_INV iface present");
         assert_eq!(
             inv,
             vec![(1, 3), (0, 1)],
@@ -2744,7 +2757,7 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
         );
         c.stream = Some(stream);
         c.ingame = true;

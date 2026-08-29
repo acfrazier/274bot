@@ -1136,9 +1136,7 @@ impl GameSnapshot {
         }
         self.inv.clear();
         if let Some(inv) = client
-            .ifaces
-            .iter()
-            .flatten()
+            .ifaces_merged()
             .find(|f| f.r#type == ComponentType::TYPE_INV)
         {
             if let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) {
@@ -1194,7 +1192,7 @@ impl GameSnapshot {
             self.inventory_size = 0;
             return true;
         };
-        let Some(inv) = client.ifaces.get(inv_id as usize).and_then(|o| o.as_ref()) else {
+        let Some(inv) = client.if_(inv_id as usize) else {
             self.inventory_size = 0;
             return true;
         };
@@ -1331,7 +1329,7 @@ impl GameSnapshot {
         }
         self.widgets.clear();
         let roots = widget_roots(client);
-        let mut visited = vec![false; client.ifaces.len()];
+        let mut visited = vec![false; client.ifaces_len()];
         for (root_id, root) in roots {
             walk_widget_tree(client, root_id, root, &mut visited, &mut self.widgets);
         }
@@ -1345,7 +1343,7 @@ impl GameSnapshot {
             return false;
         }
         self.side_tabs.clear();
-        let mut visited = vec![false; client.ifaces.len()];
+        let mut visited = vec![false; client.ifaces_len()];
         for index in 0..client.side_icon.len() {
             let root_component_id = client.side_icon[index];
             let available = root_component_id != -1;
@@ -1385,17 +1383,11 @@ impl GameSnapshot {
         }
         let root = client.chat_modal_id;
         // The continue button is a direct child of the chat modal.
-        if let Some(children) = client
-            .ifaces
-            .get(root as usize)
-            .and_then(|o| o.as_ref())
+        if let Some(children) = client.if_(root as usize)
             .and_then(|m| m.children.as_ref())
         {
             for child_id in children {
-                if client
-                    .ifaces
-                    .get(*child_id as usize)
-                    .and_then(|c| c.as_ref())
+                if client.if_(*child_id as usize)
                     .is_some_and(|c| c.button_type == ButtonType::BUTTON_CONTINUE)
                 {
                     self.chat_continue_component_id = *child_id;
@@ -1411,7 +1403,7 @@ impl GameSnapshot {
         while head < queue.len() {
             let id = queue[head];
             head += 1;
-            let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+            let Some(com) = client.if_(id as usize) else {
                 continue;
             };
             if com.button_type == ButtonType::BUTTON_OK {
@@ -1455,7 +1447,7 @@ impl GameSnapshot {
         while head < queue.len() {
             let id = queue[head];
             head += 1;
-            let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+            let Some(com) = client.if_(id as usize) else {
                 continue;
             };
             if com.model1_type == 4 && com.model1_id > 0 {
@@ -1519,7 +1511,7 @@ impl GameSnapshot {
         while head < queue.len() {
             let id = queue[head];
             head += 1;
-            let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+            let Some(com) = client.if_(id as usize) else {
                 continue;
             };
             if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
@@ -2404,7 +2396,7 @@ fn walk_widget_tree(
         if id < 0 || (id as usize) >= visited.len() || visited[id as usize] {
             continue;
         }
-        let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+        let Some(com) = client.if_(id as usize) else {
             continue;
         };
         visited[id as usize] = true;
@@ -2575,10 +2567,7 @@ fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<V
     if com_id < 0 {
         return None;
     }
-    let com = client
-        .ifaces
-        .get(com_id as usize)
-        .and_then(|o| o.as_ref())?;
+    let com = client.if_(com_id as usize)?;
     Some(read_inv_component(&client.cache, com, container))
 }
 
@@ -2617,7 +2606,7 @@ where
 {
     let mut queue = vec![root_id];
     while let Some(id) = queue.pop() {
-        let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+        let Some(com) = client.if_(id as usize) else {
             continue;
         };
         if com.r#type == ComponentType::TYPE_INV && accept(com) {
@@ -2643,10 +2632,7 @@ const TRADESIDE_INV: i32 = 3322;
 /// with the prefix stripped and whitespace trimmed (m8aq
 /// `normalizeTradePartner`); `None` for an empty label.
 fn trade_partner(client: &Client) -> Option<String> {
-    let text = client
-        .ifaces
-        .get(TRADEMAIN_OTHER_PLAYER as usize)
-        .and_then(|o| o.as_ref())
+    let text = client.if_(TRADEMAIN_OTHER_PLAYER as usize)
         .map(|c| c.text.clone())
         .unwrap_or_default();
     let name = match text.find(':') {
@@ -2668,7 +2654,7 @@ fn modal_texts(client: &Client, root: i32) -> Vec<String> {
     while head < queue.len() {
         let id = queue[head];
         head += 1;
-        let Some(com) = client.ifaces.get(id as usize).and_then(|c| c.as_ref()) else {
+        let Some(com) = client.if_(id as usize) else {
             continue;
         };
         if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
@@ -2690,15 +2676,12 @@ fn controls_pair(
     on_index: usize,
     off_index: usize,
 ) -> Option<ToggleControlsView> {
-    for com in client.ifaces.iter().flatten() {
+    for com in client.ifaces_merged() {
         let Some(children) = &com.children else {
             continue;
         };
         let has_retaliate = children.iter().any(|id| {
-            client
-                .ifaces
-                .get(*id as usize)
-                .and_then(|c| c.as_ref())
+            client.if_(*id as usize)
                 .is_some_and(|c| c.text == "Auto retaliate")
         });
         if !has_retaliate || children.len() <= min_children {
@@ -2708,8 +2691,8 @@ fn controls_pair(
         let off = children.get(off_index).copied().unwrap_or(-1);
         if on < 0
             || off < 0
-            || !client.ifaces.get(on as usize).is_some_and(Option::is_some)
-            || !client.ifaces.get(off as usize).is_some_and(Option::is_some)
+            || client.if_(on as usize).is_none()
+            || client.if_(off as usize).is_none()
         {
             return None;
         }
