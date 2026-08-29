@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use api::snapshot::WorldTile;
-use dear_imgui_rs::{Condition, MouseButton, Ui, WindowFlags};
+use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use nav::paint::{collision_at, flood_components, remaining_path_tiles};
 use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
@@ -36,6 +36,10 @@ static PACK: OnceLock<Option<NavWorld>> = OnceLock::new();
 /// Persistent picker view state (survives frames, not the process).
 static CENTRE_X: AtomicI32 = AtomicI32::new(DEFAULT_CENTRE.0);
 static CENTRE_Z: AtomicI32 = AtomicI32::new(DEFAULT_CENTRE.1);
+/// Sub-tile pan remainder in millitiles, carried between drag/wheel frames
+/// so a slow drag never loses its fractional tiles.
+static PAN_REM_X: AtomicI32 = AtomicI32::new(0);
+static PAN_REM_Z: AtomicI32 = AtomicI32::new(0);
 static LEVEL: AtomicI32 = AtomicI32::new(0);
 static ZOOM: AtomicI32 = AtomicI32::new(0);
 /// True while the picker window was drawn last frame; drives the view reset
@@ -133,6 +137,49 @@ pub fn click_to_tile(
     let tx = centre.0 as f32 + (click[0] - size[0] / 2.0) / scale;
     let tz = centre.1 as f32 + (click[1] - size[1] / 2.0) / scale;
     snap(world, tx, tz, level)
+}
+
+/// Apply a pixel pan. `rem` is the leftover tile fraction in (-1, 1) from
+/// previous pans, which keeps sub-tile movement instead of rounding it away.
+/// Negative px moves the view the way the mouse dragged (content follows the
+/// cursor): a positive `dx_px` decreases `centre.0`, matching the existing
+/// `CENTRE_X -= delta/scale` sign.
+pub(crate) fn pan_by(
+    centre: (i32, i32),
+    rem: (f32, f32),
+    dx_px: f32,
+    dz_px: f32,
+    scale: f32,
+) -> ((i32, i32), (f32, f32)) {
+    let pan = |c: i32, r: f32, px: f32| {
+        let move_tiles = -px / scale;
+        // Split the move into whole tiles (truncated toward zero) and the
+        // fractional leftover, added to the carried remainder.
+        let whole = move_tiles.trunc() as i32;
+        let mut c = c + whole;
+        let mut r = r + move_tiles - whole as f32;
+        // A remainder that reached a full tile carries into the centre so it
+        // stays in (-1, 1).
+        if r >= 1.0 {
+            c += 1;
+            r -= 1.0;
+        } else if r <= -1.0 {
+            c -= 1;
+            r += 1.0;
+        }
+        (c, r)
+    };
+    let (cx, rx) = pan(centre.0, rem.0, dx_px);
+    let (cz, rz) = pan(centre.1, rem.1, dz_px);
+    ((cx, cz), (rx, rz))
+}
+
+/// The width a text-only button of `label` occupies under the current style,
+/// for right-aligning a button against the content region edge.
+fn button_w(ui: &Ui, label: &str) -> f32 {
+    let font = ui.current_font();
+    let text = font.calc_text_size(ui.current_font_size(), f32::MAX, 0.0, label)[0];
+    text + 2.0 * ui.clone_style().frame_padding()[0]
 }
 
 /// The pack-map paints of one visible tile. Only layers that are on mark
@@ -377,14 +424,17 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
         let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
         CENTRE_X.store(cx, Ordering::Relaxed);
         CENTRE_Z.store(cz, Ordering::Relaxed);
+        PAN_REM_X.store(0, Ordering::Relaxed);
+        PAN_REM_Z.store(0, Ordering::Relaxed);
         LEVEL.store(available_levels(world)[0], Ordering::Relaxed);
         session.picker_sel = None;
     }
     let confirmed = ui
         .window("WalkTo")
         .opened(open)
-        .flags(WindowFlags::NO_DOCKING)
-        .size([440.0, 430.0], Condition::FirstUseEver)
+        .flags(WindowFlags::NO_DOCKING | WindowFlags::NO_SCROLLBAR)
+        .size([720.0, 560.0], Condition::FirstUseEver)
+        .size_constraints([480.0, 360.0], [f32::MAX, f32::MAX])
         .build(|| {
             let levels = available_levels(world);
             let mut lvl_idx = levels
@@ -403,17 +453,28 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
             }) {
                 ZOOM.store(zoom as i32, Ordering::Relaxed);
             }
-            ui.same_line();
+            // Recentre against the toolbar's right edge.
+            let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
+            ui.same_line_with_pos(right - button_w(ui, "recentre"));
             if ui.button("recentre") {
                 let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
                 CENTRE_X.store(cx, Ordering::Relaxed);
                 CENTRE_Z.store(cz, Ordering::Relaxed);
+                PAN_REM_X.store(0, Ordering::Relaxed);
+                PAN_REM_Z.store(0, Ordering::Relaxed);
             }
-            draw_canvas(ui, session, world);
+            // Canvas fills the remaining height below the toolbar and above
+            // the footer row (~frame height + item spacing, not a baked 24).
+            let footer_h = ui.frame_height() + ui.clone_style().item_spacing()[1];
+            let avail = ui.content_region_avail();
+            let canvas_h = (avail[1] - footer_h).max(120.0);
+            draw_canvas(ui, session, world, canvas_h);
             match session.picker_sel {
                 Some(t) => ui.text_disabled(format!("selected {} {} {}", t.x, t.z, t.level)),
                 None => ui.text_disabled("click a tile, then Walk"),
             }
+            let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
+            ui.same_line_with_pos(right - button_w(ui, "Walk"));
             let can_walk = session.picker_sel.is_some();
             let _off = ui.begin_disabled_with_cond(!can_walk);
             ui.button("Walk") && can_walk && session.confirm_picker_walk(world)
@@ -429,13 +490,12 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
     }
 }
 
-/// The child canvas: amber dots, drag-to-pan, click-to-select (does not arm).
-fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld) {
-    let avail = ui.content_region_avail();
-    let canvas_h = (avail[1] - 24.0).max(120.0);
+/// The child canvas: amber dots, drag-to-pan, wheel-to-pan, click-to-select
+/// (does not arm).
+fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
     let mut rect: Option<([f32; 2], [f32; 2])> = None;
     ui.child_window("##walkto-canvas")
-        .size([0.0, canvas_h])
+        .size([0.0, height])
         .build(ui, || {
             let draw = ui.get_window_draw_list();
             let pos = ui.window_pos();
@@ -558,15 +618,50 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld) {
     let scale = ZOOMS[ZOOM.load(Ordering::Relaxed) as usize];
     if ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0) {
         let delta = ui.io().mouse_delta();
-        CENTRE_X.store(
-            CENTRE_X.load(Ordering::Relaxed) - (delta[0] / scale).round() as i32,
-            Ordering::Relaxed,
+        let (centre, rem) = pan_by(
+            (
+                CENTRE_X.load(Ordering::Relaxed),
+                CENTRE_Z.load(Ordering::Relaxed),
+            ),
+            (
+                PAN_REM_X.load(Ordering::Relaxed) as f32 / 1000.0,
+                PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
+            ),
+            delta[0],
+            delta[1],
+            scale,
         );
-        CENTRE_Z.store(
-            CENTRE_Z.load(Ordering::Relaxed) - (delta[1] / scale).round() as i32,
-            Ordering::Relaxed,
-        );
+        CENTRE_X.store(centre.0, Ordering::Relaxed);
+        CENTRE_Z.store(centre.1, Ordering::Relaxed);
+        PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
+        PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
         return;
+    }
+    // Wheel pans over the canvas: the vertical wheel moves z, the horizontal
+    // wheel (or Shift+wheel) moves x. 16px per notch keeps the step in tiles
+    // zoom-independent (`tiles_per_notch = 16 / scale`).
+    let wheel = ui.io().mouse_wheel();
+    let wheel_h = ui.io().mouse_wheel_h();
+    if wheel != 0.0 || wheel_h != 0.0 {
+        let shift = ui.is_key_down(Key::LeftShift) || ui.is_key_down(Key::RightShift);
+        let tiles_per_notch = 16.0 / scale;
+        let (centre, rem) = pan_by(
+            (
+                CENTRE_X.load(Ordering::Relaxed),
+                CENTRE_Z.load(Ordering::Relaxed),
+            ),
+            (
+                PAN_REM_X.load(Ordering::Relaxed) as f32 / 1000.0,
+                PAN_REM_Z.load(Ordering::Relaxed) as f32 / 1000.0,
+            ),
+            (wheel_h + if shift { wheel } else { 0.0 }) * tiles_per_notch * scale,
+            wheel * tiles_per_notch * scale,
+            scale,
+        );
+        CENTRE_X.store(centre.0, Ordering::Relaxed);
+        CENTRE_Z.store(centre.1, Ordering::Relaxed);
+        PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
+        PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
     }
     if !ui.is_mouse_clicked(MouseButton::Left) {
         return;
@@ -601,8 +696,8 @@ mod tests {
     use nav::world::NavWorld;
 
     use super::{
-        available_levels, click_to_tile, default_pack_path, pack_map_tiles, picker_map_window,
-        snap, PackView,
+        available_levels, click_to_tile, default_pack_path, pack_map_tiles, pan_by,
+        picker_map_window, snap, PackView,
     };
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
@@ -706,6 +801,30 @@ mod tests {
                 level: 0
             }
         );
+    }
+
+    #[test]
+    fn pan_by_accumulates_sub_tile_remainder_at_fine_and_coarse_zoom() {
+        // 2px/tile: a 3px drag is 1.5 tiles; the whole tile lands now and the
+        // half tile stays in the remainder. Sign pins "content follows the
+        // cursor": positive mouse dx pans west (smaller centre.x), matching
+        // the existing `CENTRE_X -= delta/scale`.
+        let ((cx, _cz), rem) = pan_by((3200, 3200), (0.0, 0.0), -3.0, 0.0, 2.0);
+        assert_eq!(cx, 3201);
+        assert!((rem.0 - 0.5).abs() < 1e-5);
+        let ((cx, _), rem) = pan_by((3200, 3200), (0.0, 0.0), 3.0, 0.0, 2.0);
+        assert_eq!(cx, 3199);
+        assert!((rem.0 + 0.5).abs() < 1e-5);
+        // The leftover half tile plus another 1px (0.5 tile) completes a
+        // second tile.
+        let ((cx2, _), rem2) = pan_by((cx, 3200), rem, 1.0, 0.0, 2.0);
+        assert_eq!(cx2, 3198);
+        assert!(rem2.0.abs() < 1e-5);
+        // 16px/tile: an 8px drag is 0.5 tile — the centre must not stay stuck
+        // waiting for a full tile.
+        let (c, rem) = pan_by((3200, 3200), (0.0, 0.0), 8.0, 0.0, 16.0);
+        assert_eq!(c.0, 3200);
+        assert!(rem.0.abs() > 0.4);
     }
 
     #[test]
