@@ -623,6 +623,13 @@ impl Play {
         self.focused.clone()
     }
 
+    /// The shared nav world (collision + transport graph) the slots route
+    /// with, cloned from the same `Arc` the picker maps. `None` when no
+    /// pack loaded.
+    pub fn world(&self) -> Option<Arc<NavWorld>> {
+        self.world.clone()
+    }
+
     /// Kick one slot's parked thread (a no-op when the name is not a
     /// running slot or the thread is already awake). The panel/host-play
     /// call this whenever a shared-state change must take effect within a

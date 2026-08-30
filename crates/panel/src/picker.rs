@@ -2,14 +2,14 @@
 //!
 //! Draws the walkable tiles of the loaded [`NavWorld`] as amber dots inside
 //! a child canvas. Click snaps to the nearest walkable tile (highlight
-//! only); **Walk** arms `session.arm_walk_on` and closes. The world is
-//! loaded once per process from `$NAV_PACK` or `~/.274bot/274bot.navpack`.
+//! only); **Walk** arms `session.arm_walk_on` and closes. The world is the
+//! session's [`Play`] world, injected once via [`set_pack`] — the picker
+//! never decodes the pack itself.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
@@ -30,9 +30,10 @@ const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 /// precise.
 const ZOOMS: [f32; 4] = [2.0, 4.0, 8.0, 16.0];
 
-/// The baked world, loaded once per process. `None` when the file is
-/// missing or corrupt (the picker then shows the run-nav-pack hint).
-static PACK: OnceLock<Option<NavWorld>> = OnceLock::new();
+/// The baked world shared with the session's [`Play`], injected by
+/// [`set_pack`]; `None` when no play world is attached (the picker then
+/// shows the run-nav-pack hint).
+static PACK: Mutex<Option<Arc<NavWorld>>> = Mutex::new(None);
 /// Persistent picker view state (survives frames, not the process).
 static CENTRE_X: AtomicI32 = AtomicI32::new(DEFAULT_CENTRE.0);
 static CENTRE_Z: AtomicI32 = AtomicI32::new(DEFAULT_CENTRE.1);
@@ -46,23 +47,23 @@ static ZOOM: AtomicI32 = AtomicI32::new(0);
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 
-/// Pack path: `$NAV_PACK`, else `~/.274bot/274bot.navpack`.
-pub fn default_pack_path() -> PathBuf {
-    match std::env::var("NAV_PACK") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => match std::env::var("HOME") {
-            Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
-            Err(_) => PathBuf::from(".274bot/274bot.navpack"),
-        },
-    }
+/// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
+/// `None` detaches when the play is dropped. The picker never decodes the
+/// pack itself — this is the only source of the world it maps.
+pub fn set_pack(world: Option<Arc<NavWorld>>) {
+    *PACK.lock().unwrap() = world;
 }
 
-/// The baked world, loaded once per process; `None` when the pack is
-/// missing or corrupt. The session's scene-paint publish reads the same
-/// world the picker maps.
+/// The attached nav world; `None` when no play world is set. The returned
+/// reference is the injected `Arc`'s target, so the picker and the session
+/// paint the same bake.
 pub(crate) fn pack() -> Option<&'static NavWorld> {
-    PACK.get_or_init(|| NavWorld::load_pack(&default_pack_path()).ok())
-        .as_ref()
+    let guard = PACK.lock().unwrap();
+    let arc = guard.as_ref()?;
+    // SAFETY: `PACK` keeps the Arc alive for the process, so the target
+    // outlives the guard (and any caller's frame). `set_pack` only runs at
+    // session start/teardown, never while a caller holds a returned ref.
+    Some(unsafe { &*Arc::as_ptr(arc) })
 }
 
 /// The walkable tiles of the world on `level`, row-major (z then x): a
@@ -805,8 +806,6 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
     use nav::collision::WorldCollision;
@@ -814,9 +813,11 @@ mod tests {
     use nav::transport::TransportGraph;
     use nav::world::NavWorld;
 
+    use std::sync::Arc;
+
     use super::{
-        available_levels, click_to_tile, default_pack_path, pack_map_tiles, pan_by,
-        picker_map_window, right_align_x, snap, walkto_canvas_flags, walkto_footer_labels,
+        available_levels, click_to_tile, pack, pack_map_tiles, pan_by, picker_map_window,
+        right_align_x, set_pack, snap, walkto_canvas_flags, walkto_footer_labels,
         walkto_window_flags, PackView,
     };
     use crate::nav_settings::NavSettings;
@@ -975,15 +976,6 @@ mod tests {
         let (c, rem) = pan_by((3200, 3200), (0.0, 0.0), 8.0, 0.0, 16.0);
         assert_eq!(c.0, 3200);
         assert!(rem.0.abs() > 0.4);
-    }
-
-    #[test]
-    fn default_pack_path_follows_nav_pack_then_home_default() {
-        let path = default_pack_path();
-        match std::env::var("NAV_PACK") {
-            Ok(p) => assert_eq!(path, PathBuf::from(p)),
-            Err(_) => assert!(path.to_string_lossy().ends_with("274bot.navpack")),
-        }
     }
 
     #[test]
@@ -1304,5 +1296,16 @@ mod tests {
         };
         let comps = super::flood_sets_for(&world, &[player, inside]);
         assert_eq!(super::flood_report_sizes(&comps, inside), (9, 9));
+    }
+
+    #[test]
+    fn picker_pack_uses_injected_arc_not_a_second_decode() {
+        let world = Arc::new(bake_world(1, 1, &[]));
+        set_pack(Some(Arc::clone(&world)));
+        let p = pack().expect("injected");
+        assert!(
+            std::ptr::eq(p as *const NavWorld, Arc::as_ptr(&world)),
+            "pack() must hand back the injected Arc's target, not a re-decode"
+        );
     }
 }

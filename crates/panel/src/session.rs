@@ -1233,6 +1233,7 @@ impl Session {
             },
         );
         self.play = Some(play);
+        crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         self.vault = Some(vault);
     }
@@ -2506,6 +2507,14 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
             status.walk_z = -1;
             status.walk_level = -1;
         }
+    }
+}
+
+/// Detach the picker's nav world when the session (and its [`Play`]) goes
+/// away, so a dropped `Arc` cannot dangle a `pack()` reference.
+impl Drop for Session {
+    fn drop(&mut self) {
+        crate::picker::set_pack(None);
     }
 }
 
