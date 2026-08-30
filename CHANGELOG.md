@@ -55,7 +55,8 @@ part of this release.
   sprite slots packed as `u32`. The `IfTypeMut` overlay template is one
   `Arc` until a slot writes (`Arc::make_mut`). JagFX synth/delays are one
   process table per `cache_dir`; generate clones one `Sound` into per-slot
-  scratch.
+  scratch. Headed loc decode hits the process LRU as an `Arc` (`SceneModel::Shared`);
+  two heads share the same geometry instead of cloning `Model` per tile.
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
