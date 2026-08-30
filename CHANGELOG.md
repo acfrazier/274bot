@@ -43,6 +43,10 @@ part of this release.
   wall with every Game + sidecar renderer at 50 fps. Neither fails on RSS
   size; PASS prints `rss=… up=50/50`.
 - Skip-paint RAM: overlay ground verts are inline (no 9 Vecs per tile).
+  Headless 50-bot RSS was ~4 GB because every slot loaded a rustysynth
+  sequencer + SF2 at spawn (panel `audio` feature); midi is lazy until
+  `play`, and one process soundfont is shared. Empty ground-obj cells are
+  fat pointers (~346 KB/client, was 3.8 MB of inline lists).
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
