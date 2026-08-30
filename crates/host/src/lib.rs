@@ -301,6 +301,14 @@ impl Host {
             && (slot.renderer_prefer_cpu != Some(want_cpu)
                 || slot.renderer_lowmem != Some(client.config.lowmem));
         if !client.draw || backend_flip {
+            // Drop any GPU `FrameOutput::Texture` *before* the backend:
+            // the handle's view aliases `GpuBackend.frame_texture`. 49
+            // heads detaching at once (only-render-selected) would
+            // otherwise leave mailboxes / ImGui bound to destroyed
+            // textures.
+            if let Some(mailbox) = mailbox {
+                let _ = mailbox.take();
+            }
             slot.renderer = None;
             slot.renderer_prefer_cpu = None;
             slot.renderer_lowmem = None;
@@ -963,6 +971,33 @@ mod tests {
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         assert!(slot.renderer.is_some(), "attach at any time");
+    }
+
+    /// Draw-off (only-render-selected, 49 heads dropping) must drain the
+    /// mailbox so a `FrameOutput::Texture` cannot outlive `frame_texture`.
+    #[test]
+    fn draw_off_drains_the_frame_mailbox_before_dropping_the_head() {
+        force_cpu_backend();
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let buf = FrameBuf::new();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert!(
+            buf.take().is_some(),
+            "a paint tick stores a frame"
+        );
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert!(slot.renderer.is_some());
+        c.set_draw(false);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        assert!(slot.renderer.is_none());
+        assert!(
+            buf.take().is_none(),
+            "draw-off must take the mailbox before dropping the renderer"
+        );
     }
 
     /// Final-review fix: a draw-off detach must dematerialize the headed

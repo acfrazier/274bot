@@ -1025,6 +1025,14 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         (focus.focused.clone(), should_capture(&focus))
     };
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
+    {
+        let focus = state.session.focus.lock().unwrap();
+        for (name, tv) in state.views.iter_mut() {
+            if !draw_for_slot(&focus, name) {
+                tv.view.unbind_client(gpu);
+            }
+        }
+    }
     let statuses = state.session.statuses();
     for (i, name) in members.iter().enumerate() {
         let [cx, cy, cw, ch] = cells[i];
@@ -2349,6 +2357,14 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         .views
         .retain(|name, _| members.iter().any(|m| m == name));
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
+    {
+        let focus = state.session.focus.lock().unwrap();
+        for (name, tv) in state.views.iter_mut() {
+            if !draw_for_slot(&focus, name) {
+                tv.view.unbind_client(gpu);
+            }
+        }
+    }
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
         let running = status.is_some_and(|s| s.walk_x != -1)
@@ -2446,6 +2462,9 @@ fn cell_body(
     draw: bool,
 ) -> bool {
     if !draw {
+        if let Some(tv) = state.views.get_mut(name) {
+            tv.view.unbind_client(gpu);
+        }
         return ui
             .selectable_config(format!("renderer off##{name}"))
             .size(size)
