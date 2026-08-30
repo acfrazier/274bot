@@ -979,6 +979,7 @@ mod tests {
         // A headed overlay mesh, planted on the sim directly (no full
         // map_build needed to exercise the hook).
         c.world.fill_base_level(0);
+        c.set_draw(true);
         c.world.set_ground(
             0,
             2,
@@ -1001,7 +1002,6 @@ mod tests {
             0x99,
             0xaa,
         );
-        c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         assert!(
             c.world

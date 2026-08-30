@@ -904,6 +904,23 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "start_vault failed".into()));
         }
+        // RAM watch: only s00 (Game pane) may grow a GPU head. Rail members
+        // stay raster Off so a flipped only-render-selected cannot attach
+        // 49 extra RenderWorlds (~1 GB of loc Model clones each). Full-rate
+        // keeps Gpu on every member on purpose.
+        if let Some(vault) = self.vault.as_mut() {
+            for (i, (name, _)) in names.iter().enumerate() {
+                if let Some(mut p) = vault.get(name).cloned() {
+                    p.settings.lowmem = true;
+                    p.settings.raster = if full_rate || i == 0 {
+                        vault::RasterMode::Gpu
+                    } else {
+                        vault::RasterMode::Off
+                    };
+                    let _ = vault.upsert(p);
+                }
+            }
+        }
         self.set_multibox(true);
         self.scatter.store(true, Ordering::Relaxed);
         self.wall.chooser_open = false;
@@ -2496,6 +2513,7 @@ mod tests {
         script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
         stream_capture, walkto_tele_cmd, Session, SlotIo,
     };
+    use crate::focus::draw_for_slot;
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
     use client::render::nav_debug::{FACE_N, FACE_S};
@@ -4212,6 +4230,36 @@ mod tests {
                 "{name} must run the 50 fps cadence"
             );
         }
+    }
+
+    /// RAM watch members must be raster Off so a flipped only-render-
+    /// selected cannot attach 49 GPU heads. s00 stays GPU (the Game pane).
+    #[test]
+    fn stress50_rail_members_are_raster_off() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_stress(3, false).expect("prepare");
+        let f = s.focus.lock().unwrap();
+        assert_eq!(f.renderer_by.get("s00").copied(), Some(true));
+        assert_eq!(
+            f.renderer_by.get("s01").copied(),
+            Some(false),
+            "s01 must not be able to grow a GPU head"
+        );
+        assert_eq!(f.renderer_by.get("s02").copied(), Some(false));
+        assert!(draw_for_slot(&f, "s00"));
+        assert!(!draw_for_slot(&f, "s01"));
+        drop(f);
+        s.focus.lock().unwrap().only_render_selected = false;
+        let f = s.focus.lock().unwrap();
+        assert!(
+            !draw_for_slot(&f, "s01"),
+            "raster Off must keep rail members unheaded even with render-all"
+        );
+        assert!(draw_for_slot(&f, "s00"));
     }
 
     #[test]

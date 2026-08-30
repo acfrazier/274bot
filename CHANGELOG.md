@@ -38,9 +38,10 @@ part of this release.
 - Build line is `alpha 1 ·` git short SHA (`-dirty` if the tree was dirty).
   Hover is crate version (`0.1.0`) then full commit + build time.
 - Headed `--live stress50` is the **release** 50-head RAM watch (cap-only
-  rail, Game 50 fps). `--live stress50_full` is the same wall with every
-  Game + sidecar renderer at 50 fps. Neither fails on RSS size; PASS
-  prints `rss=… up=50/50`.
+  rail, Game 50 fps). Rail members are **raster Off** (cannot grow a GPU
+  `RenderWorld`); only `s00` is GPU. `--live stress50_full` is the same
+  wall with every Game + sidecar renderer at 50 fps. Neither fails on RSS
+  size; PASS prints `rss=… up=50/50`.
 - Skip-paint RAM: overlay ground verts are inline (no 9 Vecs per tile).
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
