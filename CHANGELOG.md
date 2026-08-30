@@ -53,7 +53,9 @@ part of this release.
   empty `Square`s (~5.4 MB/slot); occupied tiles are created on place.
   Occupied `Square` is under 200 B (was 496): loc/overlay records boxed,
   sprite slots packed as `u32`. The `IfTypeMut` overlay template is one
-  `Arc` until a slot writes (`Arc::make_mut`).
+  `Arc` until a slot writes (`Arc::make_mut`). JagFX synth/delays are one
+  process table per `cache_dir`; generate clones one `Sound` into per-slot
+  scratch.
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
