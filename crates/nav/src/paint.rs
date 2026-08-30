@@ -8,7 +8,7 @@ use std::collections::{HashSet, VecDeque};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
-use crate::collision::{SQ_BLOCKED, WorldCollision};
+use crate::collision::{WorldCollision, SQ_BLOCKED};
 use crate::router::{step_ok, Leg, Route};
 use crate::transport::{TransportGraph, TransportKind};
 
@@ -316,6 +316,13 @@ const STEPS: [(i32, i32); 8] = [
     (-1, 1),
     (1, 1),
 ];
+
+/// True when a standable tile has at least one `step_ok` neighbour — a
+/// scatter seed must be able to walk off, not a 1-tile cage or a face-locked
+/// wall cell.
+pub fn can_step_off(c: &WorldCollision, t: WorldTile) -> bool {
+    STEPS.iter().any(|&d| step_ok(c, t, d))
+}
 
 /// Every tile reachable from `seed` through the router's directional
 /// `step_ok` test (the same movement the router relaxes with). The seed
