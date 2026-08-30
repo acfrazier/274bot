@@ -72,7 +72,7 @@ pub fn prepare_client(
     uid: i32,
     cache: Arc<Cache>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
-    ifaces_mut: Vec<Option<Box<IfTypeMut>>>,
+    ifaces_mut: impl Into<Arc<Vec<Option<Box<IfTypeMut>>>>>,
 ) -> Client {
     let mut client = Client::from_shared(config, cache, ifaces, ifaces_mut);
     client.login_uid = uid;
@@ -89,7 +89,7 @@ impl Host {
         profile: Profile,
         cache: Arc<Cache>,
         ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
-        ifaces_mut_template: Vec<Option<Box<IfTypeMut>>>,
+        ifaces_mut_template: Arc<Vec<Option<Box<IfTypeMut>>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let mut client = prepare_client(config, profile.uid, cache, ifaces_template, ifaces_mut_template);
