@@ -51,6 +51,8 @@ part of this release.
   `(host, port)` — fifty game logins no longer open fifty extra TCP
   connects (login code −1). `fill_base_level` no longer allocates 10816
   empty `Square`s (~5.4 MB/slot); occupied tiles are created on place.
+  Occupied `Square` is under 200 B (was 496): loc/overlay records boxed,
+  sprite slots packed as `u32`.
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
