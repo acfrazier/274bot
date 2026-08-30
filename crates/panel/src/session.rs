@@ -4355,15 +4355,13 @@ mod tests {
         drop(f);
         for name in ["s00", "s01"] {
             let slot = s.slots.get(name).expect("slot");
-            assert!(
-                slot.input.full_rate(),
-                "{name} must run the 50 fps cadence"
-            );
+            assert!(slot.input.full_rate(), "{name} must run the 50 fps cadence");
         }
     }
 
     /// RAM watch members must be raster Off so a flipped only-render-
-    /// selected cannot attach 49 GPU heads. s00 stays GPU (the Game pane).
+    /// selected cannot attach 49 GPU heads. The Game pane's one seat
+    /// follows focus (click a working member after s00's −1).
     #[test]
     fn stress50_rail_members_are_raster_off() {
         crate::ui_state::save(&crate::ui_state::PanelUiState {
@@ -4383,13 +4381,21 @@ mod tests {
         assert!(draw_for_slot(&f, "s00"));
         assert!(!draw_for_slot(&f, "s01"));
         drop(f);
+        s.select("s01");
+        let f = s.focus.lock().unwrap();
+        assert!(
+            draw_for_slot(&f, "s01"),
+            "focus moves the one GPU seat onto a rail-Off member"
+        );
+        assert!(!draw_for_slot(&f, "s00"));
+        drop(f);
         s.focus.lock().unwrap().only_render_selected = false;
         let f = s.focus.lock().unwrap();
         assert!(
-            !draw_for_slot(&f, "s01"),
-            "raster Off must keep rail members unheaded even with render-all"
+            !draw_for_slot(&f, "s02"),
+            "raster Off must keep unfocused rail members unheaded even with render-all"
         );
-        assert!(draw_for_slot(&f, "s00"));
+        assert!(draw_for_slot(&f, "s01"));
     }
 
     #[test]
