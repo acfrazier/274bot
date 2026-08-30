@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -49,9 +50,12 @@ static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
 /// `None` detaches when the play is dropped. The picker never decodes the
-/// pack itself — this is the only source of the world it maps.
+/// pack itself — this is the only source of the world it maps. Any mapped
+/// flags sidecar is dropped: the next collision paint re-decodes for the
+/// new world's grid instead of indexing stale geometry.
 pub fn set_pack(world: Option<Arc<NavWorld>>) {
     *PACK.lock().unwrap() = world;
+    drop_flags_sidecar();
 }
 
 /// The attached nav world; `None` when no play world is set. The returned
@@ -59,6 +63,88 @@ pub fn set_pack(world: Option<Arc<NavWorld>>) {
 /// session paint the same bake without a second decode.
 pub(crate) fn pack() -> Option<Arc<NavWorld>> {
     PACK.lock().unwrap().clone()
+}
+
+/// The raw baked collision flags decoded from the `.navflags` sidecar,
+/// plus the grid header they were decoded for. Loaded once while a
+/// collision paint toggle (`collision_fill`/`nsew_labels`) is on and
+/// dropped when both go off; the paint only applies them to a
+/// `WorldCollision` with the same geometry. A side table so the shared
+/// [`NavWorld`] `Arc` stays immutable for the router and the walk grid
+/// is never cloned.
+struct FlagSidecar {
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    flags: Arc<[u32]>,
+}
+
+/// The session's decoded flags sidecar; `None` while no collision paint
+/// is on (see [`FlagSidecar`]).
+static FLAGS: Mutex<Option<FlagSidecar>> = Mutex::new(None);
+
+/// The flags sidecar path: `$NAV_FLAGS`, else the pack path with its
+/// extension swapped to `.navflags` (the `nav-pack` write target).
+pub(crate) fn navflags_path() -> PathBuf {
+    match std::env::var("NAV_FLAGS") {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => host_play::default_pack_path().with_extension("navflags"),
+    }
+}
+
+/// Decode the sidecar file at `path` into a [`FlagSidecar`]; `None` when
+/// the file is missing or fails the sidecar decode (the paint then falls
+/// back to the walk word).
+fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
+    let bytes = std::fs::read(path).ok()?;
+    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar(&bytes).ok()?;
+    Some(FlagSidecar {
+        origin,
+        width,
+        height,
+        flags: flags.into(),
+    })
+}
+
+/// Decode the flags sidecar once while a collision paint is on; no-op
+/// when already loaded or the file is missing/unreadable (the paint then
+/// falls back to the walk word).
+pub(crate) fn ensure_flags_sidecar() {
+    let mut guard = FLAGS.lock().unwrap();
+    if guard.is_some() {
+        return;
+    }
+    *guard = decode_sidecar_file(&navflags_path());
+}
+
+/// Drop the decoded sidecar (both collision toggles off); the next
+/// paint-on re-decodes.
+pub(crate) fn drop_flags_sidecar() {
+    *FLAGS.lock().unwrap() = None;
+}
+
+/// The decoded sidecar flags when they match the world's grid header (a
+/// stale or foreign sidecar is never applied), `None` otherwise.
+pub(crate) fn flags_sidecar_for(
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+) -> Option<Arc<[u32]>> {
+    let guard = FLAGS.lock().unwrap();
+    guard
+        .as_ref()
+        .and_then(|s| sidecar_for_grid(s, origin, width, height))
+}
+
+/// The sidecar's flags only when its decoded grid header matches the
+/// world it would be painted onto.
+fn sidecar_for_grid(
+    s: &FlagSidecar,
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+) -> Option<Arc<[u32]>> {
+    (s.origin == origin && s.width == width && s.height == height).then(|| Arc::clone(&s.flags))
 }
 
 /// The walkable tiles of the world on `level`, row-major (z then x): a
@@ -811,9 +897,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        available_levels, click_to_tile, pack, pack_map_tiles, pan_by, picker_map_window,
-        right_align_x, set_pack, snap, walkto_canvas_flags, walkto_footer_labels,
-        walkto_window_flags, PackView,
+        available_levels, click_to_tile, decode_sidecar_file, pack, pack_map_tiles, pan_by,
+        picker_map_window, right_align_x, set_pack, sidecar_for_grid, snap, walkto_canvas_flags,
+        walkto_footer_labels, walkto_window_flags, FlagSidecar, PackView,
     };
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
@@ -1291,6 +1377,100 @@ mod tests {
         };
         let comps = super::flood_sets_for(&world, &[player, inside]);
         assert_eq!(super::flood_report_sizes(&comps, inside), (9, 9));
+    }
+
+    #[test]
+    fn sidecar_file_roundtrips_and_rejects_garbage() {
+        let path = std::env::temp_dir().join(format!(
+            "274bot-panel-sidecar-{}.navflags",
+            std::process::id()
+        ));
+        let flags = vec![
+            CollisionFlag::W_N as u32 | CollisionFlag::WR_GRND as u32,
+            CollisionFlag::W_E as u32,
+            0,
+            CollisionFlag::WALK_SCENERY as u32,
+        ];
+        let bytes = nav::pack::encode_flags_sidecar(
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            1,
+            1,
+            &flags,
+        );
+        std::fs::write(&path, &bytes).unwrap();
+        let s = decode_sidecar_file(&path).expect("valid sidecar decodes");
+        assert_eq!(
+            s.origin,
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0
+            }
+        );
+        assert_eq!((s.width, s.height), (1, 1));
+        assert_eq!(&*s.flags, &flags[..]);
+        // Garbage and missing files fall back to the walk word, never panic.
+        std::fs::write(&path, b"not a sidecar").unwrap();
+        assert!(decode_sidecar_file(&path).is_none());
+        std::fs::remove_file(&path).ok();
+        assert!(decode_sidecar_file(&path).is_none());
+    }
+
+    #[test]
+    fn sidecar_flags_only_apply_to_the_matching_grid() {
+        let s = FlagSidecar {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 64,
+            height: 64,
+            flags: vec![0u32; 4 * 64 * 64].into(),
+        };
+        assert!(
+            sidecar_for_grid(
+                &s,
+                WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0
+                },
+                64,
+                64
+            )
+            .is_some(),
+            "a matching grid header applies the sidecar"
+        );
+        assert!(
+            sidecar_for_grid(
+                &s,
+                WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0
+                },
+                64,
+                64
+            )
+            .is_none(),
+            "a foreign origin must not paint from a stale sidecar"
+        );
+        assert!(sidecar_for_grid(
+            &s,
+            WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0
+            },
+            64,
+            65
+        )
+        .is_none());
     }
 
     #[test]

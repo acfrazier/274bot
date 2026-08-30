@@ -94,6 +94,18 @@ impl WorldCollision {
     /// `None` — the paint then reads the walk word, see
     /// [`crate::paint::collision_at`]).
     pub fn flag(&self, x: i32, z: i32, level: i32) -> u32 {
+        match &self.flags {
+            Some(flags) => self.flag_index(flags, x, z, level),
+            None => 0,
+        }
+    }
+
+    /// Index a raw flags buffer with the same plane/bounds rule as
+    /// [`Self::flag`] — the collision paint's sidecar path indexes a
+    /// panel-held side table this way while the shared world's `flags` is
+    /// `None` (see [`crate::paint::collision_at_with`]). The buffer must
+    /// match the grid header (`origin`/`width`/`height`).
+    pub(crate) fn flag_index(&self, flags: &[u32], x: i32, z: i32, level: i32) -> u32 {
         let Some(plane) = self.plane(level) else {
             return 0;
         };
@@ -106,10 +118,24 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return 0;
         }
-        match &self.flags {
-            Some(flags) => flags[plane * self.plane_cells() + lz * self.width + lx],
-            None => 0,
-        }
+        flags[plane * self.plane_cells() + lz * self.width + lx]
+    }
+
+    /// Load the raw baked flags (a `decode_flags_sidecar` buffer) into the
+    /// collision for debug paints: [`Self::flag`] then answers from the raw
+    /// flags instead of the walk reconstruction. Takes `&mut self` — the
+    /// exclusive-owner attach path; a shared `Arc` world maps the sidecar
+    /// through the panel's side table instead (see
+    /// [`crate::paint::collision_at_with`]).
+    pub fn attach_flags(&mut self, flags: Vec<u32>) {
+        self.flags = Some(flags);
+    }
+
+    /// Drop the loaded flags sidecar (both collision toggles off):
+    /// [`Self::flag`] reads 0 again and the paint falls back to the walk
+    /// word. The walk grid is untouched.
+    pub fn drop_flags(&mut self) {
+        self.flags = None;
     }
 
     /// The derived directional walkable word at `(x, z, level)`, `0` for
@@ -734,6 +760,29 @@ mod tests {
     /// A one-loc `LocDefs` table.
     fn defs(locs: &[LocType]) -> LocDefs {
         LocDefs::from_locs(locs)
+    }
+
+    #[test]
+    fn attach_flags_then_drop_leaves_walk_intact() {
+        let flags = vec![CollisionFlag::W_N as u32; 4];
+        let mut c = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 1,
+            height: 1,
+            walk: pack_walk_u16(&flags),
+            flags: None,
+        };
+        let w = c.walkable_word(0, 0, 0);
+        c.attach_flags(flags.clone());
+        assert!(c.flags.is_some());
+        assert_eq!(c.walkable_word(0, 0, 0), w);
+        c.drop_flags();
+        assert!(c.flags.is_none());
+        assert_eq!(c.walkable_word(0, 0, 0), w);
     }
 
     #[test]

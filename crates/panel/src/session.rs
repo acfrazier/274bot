@@ -31,7 +31,7 @@ use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::paint::{
-    collision_at, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
+    collision_at_with, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
     trail_tones, TrailTone,
 };
 use nav::router::{find_with, FindOptions, Route};
@@ -406,6 +406,16 @@ fn publish_nav_debug(
     settings: &NavSettings,
     drawing: bool,
 ) {
+    // Flags sidecar lifecycle: decoded once while a collision paint
+    // toggle is on (the paint prefers the raw flags — visibility bits
+    // the packed walk u16 drops — when the sidecar is mapped), dropped
+    // when both toggles go off. Never opened for a pack the session only
+    // walks.
+    if settings.collision_fill || settings.nsew_labels {
+        crate::picker::ensure_flags_sidecar();
+    } else {
+        crate::picker::drop_flags_sidecar();
+    }
     if !drawing {
         client.set_nav_debug_paint(None);
         return;
@@ -441,6 +451,14 @@ fn publish_nav_debug(
         let ox = world.collision.origin.x;
         let oz = world.collision.origin.z;
         let (ow, oh) = (world.collision.width as i32, world.collision.height as i32);
+        // Prefer the decoded flags sidecar when it matches this world's
+        // grid; otherwise the walk word answers (the shared world's
+        // `flags` field stays `None` — no walk-grid clone).
+        let side = crate::picker::flags_sidecar_for(
+            world.collision.origin,
+            world.collision.width,
+            world.collision.height,
+        );
         for lz in 0..SCENE_TILES {
             for lx in 0..SCENE_TILES {
                 let x = base_x + lx;
@@ -448,7 +466,8 @@ fn publish_nav_debug(
                 if x < ox || z < oz || x - ox >= ow || z - oz >= oh {
                     continue;
                 }
-                let fb = collision_at(&world.collision, WorldTile { x, z, level });
+                let fb =
+                    collision_at_with(&world.collision, WorldTile { x, z, level }, side.as_deref());
                 let mut bits = 0u8;
                 if fb.n {
                     bits |= FACE_N;

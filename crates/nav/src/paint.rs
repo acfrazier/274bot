@@ -144,13 +144,18 @@ pub struct FaceBits {
 }
 
 /// The collision state a consumer paints at `t`: the raw `W_*` face bits
-/// and the blanket blocked flag. With the flags sidecar loaded the raw
-/// flags answer; without it (the walk-word-only world) the reconstructed
-/// walk word answers — blocked when any `SQ_BLOCKED` constituent is set,
-/// NSEW from the `W_*` face bits.
-pub fn collision_at(c: &WorldCollision, t: WorldTile) -> FaceBits {
-    let (raw, blocked) = match &c.flags {
-        Some(_) => (c.flag(t.x, t.z, t.level), !c.standable(t)),
+/// and the blanket blocked flag. `flags` answers when the caller holds a
+/// loaded flags sidecar (a panel side table — the shared world's `flags`
+/// field is `None` while the sidecar is mapped); without one the
+/// reconstructed walk word answers — blocked when any `SQ_BLOCKED`
+/// constituent is set, NSEW from the `W_*` face bits. The passed buffer
+/// must match the world's grid header.
+pub fn collision_at_with(c: &WorldCollision, t: WorldTile, flags: Option<&[u32]>) -> FaceBits {
+    let (raw, blocked) = match flags {
+        Some(flags) => {
+            let raw = c.flag_index(flags, t.x, t.z, t.level);
+            (raw, raw & SQ_BLOCKED != 0)
+        }
         None => {
             let word = c.walkable_word(t.x, t.z, t.level);
             (word, word & SQ_BLOCKED != 0)
@@ -163,6 +168,14 @@ pub fn collision_at(c: &WorldCollision, t: WorldTile) -> FaceBits {
         w: raw & CollisionFlag::W_W as u32 != 0,
         blocked,
     }
+}
+
+/// The collision state a consumer paints at `t`: the world's own raw
+/// flags answer when the sidecar is attached
+/// ([`WorldCollision::attach_flags`]), else the reconstructed walk word
+/// (see [`collision_at_with`]).
+pub fn collision_at(c: &WorldCollision, t: WorldTile) -> FaceBits {
+    collision_at_with(c, t, c.flags.as_deref())
 }
 
 /// The tone of one client-trail tile: solid, or the run alternate.
