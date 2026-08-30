@@ -1,9 +1,12 @@
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
-//! the Server content, and write the nav pack (magic `274V`, version
-//! byte 5; `encode_v2`) to `$NAV_PACK` or
-//! `~/.274bot/274bot.navpack` (default). Usage:
+//! the Server content, and write the v6 nav pack (magic `274V`, version
+//! byte 6; `encode_v2`) to `$NAV_PACK` or
+//! `~/.274bot/274bot.navpack` (default), plus the raw flags sidecar
+//! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
+//! path with its extension swapped to `.navflags` (default
+//! `~/.274bot/274bot.navflags`). Usage:
 //! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where the defaults
 //! are `$ENGINE_DIR/../content/maps` (default
 //! `$HOME/experiments/Server/engine` → `.../content/maps`), matching doors
@@ -28,7 +31,7 @@ use api::snapshot::WorldTile;
 use client::config::Cache;
 use client::io::JagFile;
 use nav::collision::{bake_from_maps, WorldCollision};
-use nav::pack::encode_v2;
+use nav::pack::{encode_flags_sidecar, encode_v2};
 use nav::transport::derive_transports;
 
 const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -56,6 +59,20 @@ fn default_out() -> PathBuf {
         Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
         Err(_) => PathBuf::from(".274bot/274bot.navpack"),
     }
+}
+
+/// Where the flags sidecar goes: `$NAV_FLAGS` if set, else the pack path
+/// with its extension swapped to `.navflags`.
+fn flags_out(out: &Path) -> PathBuf {
+    env::var("NAV_FLAGS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| flags_path_for(out))
+}
+
+/// The default sidecar path next to a pack path: `274bot.navpack` ->
+/// `274bot.navflags`.
+fn flags_path_for(out: &Path) -> PathBuf {
+    out.with_extension("navflags")
 }
 
 fn main() -> ExitCode {
@@ -127,7 +144,7 @@ fn main() -> ExitCode {
     };
 
     // Whole-world collision bake (the walkability source of truth).
-    let collision = match bake_from_maps(&maps_dir, &loc_defs, &door_ids) {
+    let mut collision = match bake_from_maps(&maps_dir, &loc_defs, &door_ids) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("nav-pack: collision bake failed: {e}");
@@ -142,21 +159,37 @@ fn main() -> ExitCode {
     let content_root = maps_dir.parent().unwrap_or_else(|| Path::new("."));
     let graph = derive_transports(content_root, &loc_defs, &collision);
 
-    // The v2 pack write: collision flags + transport edges.
+    // The raw baked flags ride in the sidecar; the v6 pack carries only
+    // the packed walk words (the router's resident surface).
+    let flags = collision
+        .flags
+        .take()
+        .expect("bake_from_maps always stamps raw flags");
+    let flags_bytes =
+        encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
+    let flags_path = flags_out(&out);
+
+    // The v2 pack write: packed walk words + transport edges.
     let bytes = encode_v2(&collision, &graph);
     if let Err(e) = std::fs::write(&out, &bytes) {
         eprintln!("nav-pack: write {}: {e}", out.display());
         return ExitCode::FAILURE;
     }
+    if let Err(e) = std::fs::write(&flags_path, &flags_bytes) {
+        eprintln!("nav-pack: write {}: {e}", flags_path.display());
+        return ExitCode::FAILURE;
+    }
     eprintln!(
-        "nav-pack: baked {} mapsquares into a {}x{} collision grid, {} walkable tiles, {} transport edges -> {} bytes -> {}",
+        "nav-pack: baked {} mapsquares into a {}x{} collision grid, {} walkable tiles, {} transport edges -> {} bytes -> {}; {} flag bytes -> {}",
         squares_baked(&maps_dir),
         collision.width,
         collision.height,
         walkable,
         graph.edges.len(),
         bytes.len(),
-        out.display()
+        out.display(),
+        flags_bytes.len(),
+        flags_path.display()
     );
     ExitCode::SUCCESS
 }
@@ -197,6 +230,14 @@ mod tests {
         assert_eq!(
             gates_loc(maps),
             PathBuf::from("/tmp/Server/content/scripts/general_use/configs/gates.loc")
+        );
+    }
+
+    #[test]
+    fn flags_path_for_swaps_pack_extension() {
+        assert_eq!(
+            flags_path_for(&PathBuf::from("/tmp/x/274bot.navpack")),
+            PathBuf::from("/tmp/x/274bot.navflags")
         );
     }
 

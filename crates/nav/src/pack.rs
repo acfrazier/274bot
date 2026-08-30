@@ -23,10 +23,12 @@
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode_v2`] splits them back out
 //! and never indexes them into `at`. The raw flags are not on the v6 wire
-//! (the flags sidecar is separate); [`decode_v2`] accepts version 6 only —
-//! any earlier stream is [`PackError::BadVersion`], there is no
-//! flags→walk compat load. The v1 decode stays for old `.navpack` files;
-//! `nav-pack` now writes v6.
+//! — the flags sidecar is separate: magic `b"274F"`, version 1, the same
+//! origin/width/height header as v2, then the level-major u32le flags
+//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). [`decode_v2`]
+//! accepts version 6 only — any earlier stream is [`PackError::BadVersion`],
+//! there is no flags→walk compat load. The v1 decode stays for old
+//! `.navpack` files; `nav-pack` now writes v6.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -56,6 +58,10 @@ const MAGIC: &[u8; 4] = b"274N";
 const VERSION_V2: u8 = 6;
 /// V2 file magic.
 const MAGIC_V2: &[u8; 4] = b"274V";
+/// Flags sidecar format version.
+const VERSION_FLAGS: u8 = 1;
+/// Flags sidecar magic.
+const MAGIC_FLAGS: &[u8; 4] = b"274F";
 /// Mapsquare edge length in tiles.
 const SQUARE: usize = 64;
 /// Bytes per door entry.
@@ -336,6 +342,72 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
         },
         graph,
     ))
+}
+
+/// Serialize the raw baked flags to the sidecar byte format: magic
+/// `b"274F"`, version 1, the same origin/width/height header as v2, then
+/// the level-major u32le flags. The flag count is implicit — the trailing
+/// bytes are the flags, so a `width × height` test grid round-trips
+/// without plane arithmetic ([`decode_flags_sidecar`] reads to the end).
+pub fn encode_flags_sidecar(
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    flags: &[u32],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + flags.len() * 4);
+    out.extend_from_slice(MAGIC_FLAGS);
+    out.push(VERSION_FLAGS);
+    for v in [origin.x, origin.z, origin.level] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&(width as u32).to_le_bytes());
+    out.extend_from_slice(&(height as u32).to_le_bytes());
+    for f in flags {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+/// Deserialize a flags sidecar, validating magic, version, and the grid
+/// header, then reading the trailing u32le flags to the end of the
+/// buffer (a partial trailing u32 is [`PackError::Truncated`]).
+pub fn decode_flags_sidecar(
+    bytes: &[u8],
+) -> Result<(WorldTile, usize, usize, Vec<u32>), PackError> {
+    let mut r = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
+    if &magic != MAGIC_FLAGS {
+        return Err(PackError::BadMagic);
+    }
+    let mut version = [0u8; 1];
+    r.read_exact(&mut version)
+        .map_err(|_| PackError::Truncated)?;
+    if version[0] != VERSION_FLAGS {
+        return Err(PackError::BadVersion(version[0]));
+    }
+    let origin = WorldTile {
+        x: read_i32(&mut r)?,
+        z: read_i32(&mut r)?,
+        level: read_i32(&mut r)?,
+    };
+    let width = read_u32(&mut r)? as usize;
+    let height = read_u32(&mut r)? as usize;
+    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
+        return Err(PackError::BadLength(format!(
+            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
+        )));
+    }
+    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    if !remaining.is_multiple_of(4) {
+        return Err(PackError::Truncated);
+    }
+    let mut flags = Vec::with_capacity(remaining / 4);
+    for _ in 0..remaining / 4 {
+        flags.push(read_u32(&mut r)?);
+    }
+    Ok((origin, width, height, flags))
 }
 
 /// `TransportKind` as a wire byte.
@@ -965,9 +1037,9 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{
-        decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
-        parse_door_config_ids, parse_door_open_ids, parse_mapsquare_text, parse_passable_locs,
-        walkable_dots, Mapsquare, SQUARE, VERSION_V2,
+        decode, decode_flags_sidecar, decode_v2, encode, encode_flags_sidecar, encode_v2,
+        merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
+        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE, VERSION_V2,
     };
     use crate::collision::{derive_walkable, pack_walk_u16, walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
@@ -1043,6 +1115,22 @@ mod tests {
         assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(5))));
         bytes[4] = 4;
         assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(4))));
+    }
+
+    #[test]
+    fn flags_sidecar_roundtrips_origin_and_cells() {
+        let flags = vec![1u32, 2, 3, 4];
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let bytes = encode_flags_sidecar(origin, 2, 2, &flags);
+        assert_eq!(&bytes[..4], b"274F");
+        let (o, w, h, out) = decode_flags_sidecar(&bytes).unwrap();
+        assert_eq!(o, origin);
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(out, flags);
     }
 
     #[test]
