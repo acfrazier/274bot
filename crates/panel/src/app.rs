@@ -165,6 +165,8 @@ struct LiveStress {
     last_announced: u8,
     passed: bool,
     name: &'static str,
+    host: String,
+    port: u16,
 }
 
 /// Headed `script_<name>` watch. The shared `ScenarioRunner` lives on the
@@ -254,6 +256,8 @@ impl LiveBoot {
                     last_announced: 0,
                     passed: false,
                     name: "stress50",
+                    host: state.session.play_options().host.clone(),
+                    port: state.session.play_options().port,
                 }));
             }
             LiveBoot::Stress50Full => {
@@ -263,6 +267,8 @@ impl LiveBoot {
                     last_announced: 0,
                     passed: false,
                     name: "stress50_full",
+                    host: state.session.play_options().host.clone(),
+                    port: state.session.play_options().port,
                 }));
             }
             LiveBoot::Script { name } => {
@@ -635,7 +641,10 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
     }
     if n >= 50 {
         let (rss, _) = sample_process();
-        println!("PASS: live {name} rss={rss} up={n}/50");
+        let workers = client::io::OnDemand::live_workers_for(&live.host, live.port);
+        let tcp = host_play::count_tcp_to(&live.host, live.port);
+        let tcp_s = tcp.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        println!("PASS: live {name} rss={rss} up={n}/50 ondemand={workers} tcp={tcp_s}");
         live.last_announced = 50;
         live.passed = true;
         return None;
@@ -3682,6 +3691,8 @@ mod tests {
             last_announced: 0,
             passed: false,
             name: "stress50",
+            host: "127.0.0.1".into(),
+            port: 43594,
         }
     }
 
@@ -3731,6 +3742,8 @@ mod tests {
             last_announced: 0,
             passed: false,
             name: "stress50_full",
+            host: "127.0.0.1".into(),
+            port: 43594,
         };
         let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
         assert_eq!(err, "live stress50_full: 1/50 up after 600s");

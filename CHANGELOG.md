@@ -57,6 +57,8 @@ part of this release.
   process table per `cache_dir`; generate clones one `Sound` into per-slot
   scratch. Headed loc decode hits the process LRU as an `Arc` (`SceneModel::Shared`);
   two heads share the same geometry instead of cloning `Model` per tile.
+  Live `rss_ladder` prints `ondemand=` / `tcp=` and fails if there is not
+  exactly one OnDemand worker (does not fail on RSS size).
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot

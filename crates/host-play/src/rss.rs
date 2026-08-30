@@ -41,6 +41,39 @@ pub fn sample_process() -> (u64, f64) {
     }
 }
 
+/// Count unique ESTABLISHED TCP names in `lsof -nP -iTCP` stdout.
+/// One socket can appear twice (reader + writer fd); the NAME column
+/// (`host:port->host:port`) is the connection.
+pub fn parse_lsof_established(stdout: &str) -> usize {
+    use std::collections::HashSet;
+    let mut names = HashSet::new();
+    for line in stdout.lines() {
+        if !line.contains("ESTABLISHED") {
+            continue;
+        }
+        let Some(tcp) = line.find("TCP ") else {
+            continue;
+        };
+        let rest = &line[tcp + 4..];
+        if let Some(name) = rest.split_whitespace().next() {
+            names.insert(name);
+        }
+    }
+    names.len()
+}
+
+/// Established TCP from this pid to `host:port`, via `lsof`. `None` if
+/// `lsof` is missing. Empty match is `Some(0)` (`lsof` exits 1).
+pub fn count_tcp_to(host: &str, port: u16) -> Option<usize> {
+    let pid = std::process::id().to_string();
+    let spec = format!("-iTCP@{host}:{port}");
+    let output = std::process::Command::new("lsof")
+        .args(["-nP", "-a", "-p", &pid, &spec])
+        .output()
+        .ok()?;
+    Some(parse_lsof_established(&String::from_utf8_lossy(&output.stdout)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +104,19 @@ mod tests {
     fn linux_ru_maxrss_is_kilobytes() {
         assert_eq!(rss_bytes_from_ru_maxrss(2), 2048);
         assert_eq!(rss_bytes_from_ru_maxrss(-1), 0);
+    }
+
+    #[test]
+    fn lsof_established_counts_unique_sockets_not_fds() {
+        let two_fds_one_socket = "\
+COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+rss_ladder 1 acf   10u  IPv4 0x1      0t0  TCP 127.0.0.1:50000->127.0.0.1:43594 (ESTABLISHED)
+rss_ladder 1 acf   11u  IPv4 0x1      0t0  TCP 127.0.0.1:50000->127.0.0.1:43594 (ESTABLISHED)
+rss_ladder 1 acf   12u  IPv4 0x2      0t0  TCP 127.0.0.1:50001->127.0.0.1:43594 (ESTABLISHED)
+rss_ladder 1 acf   13u  IPv4 0x3      0t0  TCP 127.0.0.1:50002->127.0.0.1:43594 (CLOSE_WAIT)
+";
+        assert_eq!(parse_lsof_established(two_fds_one_socket), 2);
+        assert_eq!(parse_lsof_established(""), 0);
+        assert_eq!(parse_lsof_established("COMMAND PID\n"), 0);
     }
 }

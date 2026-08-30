@@ -31,7 +31,7 @@ use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, 
 use nav::router::{find_with, FindOptions, Route};
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
-pub use rss::sample_process;
+pub use rss::{count_tcp_to, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 
 /// [`client::bot_target::world_host_for`] from a `BOT_TARGET` string.

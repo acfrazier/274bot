@@ -764,6 +764,10 @@ impl Session {
         }
     }
 
+    pub fn play_options(&self) -> &PlayOptions {
+        &self.options
+    }
+
     /// Unlock (or first-run create) the default vault and start the play.
     pub fn unlock(&mut self, pass: &str) -> bool {
         self.unlock_at(&default_vault_path(), pass)

@@ -1,4 +1,5 @@
-//! Live: N headless Clients, every slot `set_draw(false)`, print peak RSS.
+//! Live: N headless Clients, every slot `set_draw(false)`, print peak RSS
+//! plus OnDemand worker count and TCP to the engine port.
 //!
 //! The old `paint_n`/`skip_n`/`game_draw_enters` asserts are gone with the
 //! `SlotStatus` draw counters (M2); the surviving regression is the RSS
@@ -12,8 +13,10 @@ mod common;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use client::io::OnDemand;
 use common::{fail, live, options};
-use host_play::{run_with_io, sample_process, Play};
+use host::debug_enabled;
+use host_play::{count_tcp_to, run_with_io, sample_process, Play};
 use vault::{Profile, ProfileSettings, Vault};
 
 fn parse_rss_n_from(raw: Option<&str>) -> Result<usize, &'static str> {
@@ -80,8 +83,9 @@ fn live_rss_ladder_all_null() {
         Ok(n) => n,
         Err(msg) => fail(msg),
     };
+    let opts = options();
     let play = run_with_io(
-        &options(),
+        &opts,
         ladder_profiles(n),
         |_| (None, None),
         |c, _| c.set_draw(false),
@@ -93,12 +97,38 @@ fn live_rss_ladder_all_null() {
     if rss == 0 {
         fail("rss_ladder: rss=0");
     }
+    let workers = OnDemand::live_workers_for(&opts.host, opts.port);
+    let tcp = count_tcp_to(&opts.host, opts.port);
+    if debug_enabled() {
+        eprintln!(
+            "rss_ladder debug: live_workers_for({}:{})={workers} tcp={tcp:?}",
+            opts.host, opts.port
+        );
+    }
     let (bytes_in, bytes_out): (u64, u64) = play
         .statuses()
         .iter()
         .fold((0, 0), |(i, o), s| (i + s.bytes_in, o + s.bytes_out));
-    println!("rss_ladder n={n} rss={rss} bytes_in={bytes_in} bytes_out={bytes_out}");
-    println!("PASS: rss_ladder n={n} rss={rss}");
+    let tcp_s = tcp.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+    println!(
+        "rss_ladder n={n} rss={rss} ondemand={workers} tcp={tcp_s} bytes_in={bytes_in} bytes_out={bytes_out}"
+    );
+    // Connection contract: one OnDemand worker for every N. Do not fail on RSS size.
+    if workers != 1 {
+        fail(&format!(
+            "rss_ladder: want 1 OnDemand worker for {}:{}, got {workers}",
+            opts.host, opts.port
+        ));
+    }
+    if let Some(tcp) = tcp {
+        if tcp > n + 1 {
+            fail(&format!(
+                "rss_ladder: tcp={tcp} to {}:{} > n+1 (game+ondemand)",
+                opts.host, opts.port
+            ));
+        }
+    }
+    println!("PASS: rss_ladder n={n} rss={rss} ondemand={workers} tcp={tcp_s}");
 }
 
 // keep parse_rss unit tests from Task 3 below this

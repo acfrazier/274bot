@@ -203,9 +203,10 @@ LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 
 Measure-then-cut: N=1, then 2, then 4 headless Clients, **every** slot
 `set_draw(false)`. One N per process. Names `r0`…`r{N-1}`. Wait scene 2
-(180s), hold 10s, print Darwin/Linux peak RSS. Does **not** fail on RSS
-size. FAIL if Null breaks (`paint_n>0` or `game_draw` grows in the hold)
-or `rss=0`.
+(180s), hold 10s, print Darwin/Linux peak RSS plus `ondemand=` worker
+count and unique ESTABLISHED TCP to the engine port. Does **not** fail
+on RSS size. FAIL if `rss=0`, if OnDemand workers ≠ 1, or if TCP exceeds
+n+1 (game + one update socket).
 
 ```bash
 LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
@@ -222,7 +223,7 @@ at focused 50 fps, rail skip-paint. Focus `s00` (FIFO head), scatter-seed
 after scene 2, then `login_all`. **Release RAM check** — debug 50-heads
 spike RSS and look frozen. Timeout **600s**. Announces at 1/50 and 10/50
 up (`ingame && scene_state==2`); at 50 prints
-`PASS: live stress50 rss=… up=50/50` and **keeps the window up**. Does
+`PASS: live stress50 rss=… up=50/50 ondemand=… tcp=…` and **keeps the window up**. Does
 **not** fail on RSS size. FIFO login bursts up to 30 per 60 s (production
 address cap); a 50-head run still waits out the rolling window.
 
