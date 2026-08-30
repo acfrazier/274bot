@@ -32,8 +32,8 @@ part of this release.
   popup (like Teles). Status shows mem. **focused 50 fps** is Game-pane
   only (not capture, does
   not follow that client onto the rail). **sidecar 50 fps** is all
-  rail/grid members. Switching GPU↔CPU or mem confirms, then logs that
-  slot out and restarts it.
+  rail/grid members. Switching GPU↔CPU or mem drops + reattaches the
+  head on the same `Client` — never a logout or restart.
 - Rail fold (`▂` / `▅`) next to ✕; focused blit is folded by default.
 - Build line is `alpha 1 ·` git short SHA (`-dirty` if the tree was dirty).
   Hover is crate version (`0.1.0`) then full commit + build time.
@@ -50,6 +50,18 @@ part of this release.
 - Snapshot inject (`~/.274bot/unpack`) is **once per process**. A later
   slot's `maininit` no longer wipes the process-wide model/anim stores or
   re-reads `models.bin` (that print was every client, not a 12 GB jag).
+- The Game `Renderer` is a **head on the sim**, not a second client.
+  Draw off (`set_draw(false)`) detaches it — GPU textures, chrome, and
+  the decoded 3D scene are freed, the socket and sim keep running — and
+  the next paint reattaches on the **same** `Client`. Clicking a sidecar
+  line is focus (retarget the pane, wake draw), never a restart.
+  GPU↔CPU / lowmem flips drop + reattach the head on the live `Client`.
+- Immutable decode is **one process copy**: IfType tables, fonts/media,
+  and GPU pipelines/shaders are shared `Arc`s. Fifty slots clone
+  pointers; each headed slot pays one frame texture; each unheaded slot
+  holds only its mutable sim. Unheaded `map_build` stamps
+  typecodes/heights/collision, not overlay mesh — the first headed paint
+  materializes the overlay from those.
 - Headed default is the client submodule's **wgpu** 3D renderer
   (`BOT_CPU=1` still forces CpuPix3D on CLI slots without a raster pref).
 - WalkTo picker in the Game pane (north-up, click-to-pick, Recentre /

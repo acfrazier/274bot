@@ -92,17 +92,19 @@ checkboxes on a focused profile:
   do not raster. The Game Image is an RGBA8 texture that is **never below
   765×503** (native, non-grid). Grid tiles `fit_applet` into their cell.
   Rendering never pauses the bot. Renderer-off /
-  `set_draw(false)` still runs `mainloop` and collision, but does not
-  decode loc meshes; flipping the renderer on rebuilds 3D from the same
-  map bytes.
+  `set_draw(false)` detaches the head — GPU textures, chrome, and the
+  decoded 3D scene are freed — while `mainloop` and collision keep
+  running; flipping the renderer on reattaches 3D from the same map
+  bytes on the **same** client (never a logout or restart).
 - **sidecar 50 fps** — unfocused wall members at 50 fps. Interactive /
   non-test. Scenarios never flip it.
 - **full rate (this run)** — `--live script_*` / smoke / `stress50_full`.
   Every drawing slot at 50 fps, focused included. Ephemeral.
 - **lowmem / highmem** — default **lowmem**. Click the current mem
   button (under none/GPU/CPU) for a sticky picker like Teles. Highmem
-  is `Profile.settings.lowmem = false`; switching mem confirms, then
-  logs that slot out and restarts it.
+  is `Profile.settings.lowmem = false`; switching mem (like GPU↔CPU)
+  drops + reattaches the head on the live `Client` — never a logout
+  or restart.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
@@ -166,11 +168,13 @@ traffic samples read "measuring…". Traffic is the sum of each live slot’s
 measuring…). If a slot drops (or the byte sum shrinks), traffic
 **re-baselines** instead of inventing a wrap spike. A failed process sampler
 shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is
-the whole host (Null skip-paint does not free the ~1 GB scene); on macOS the
+the whole host; on macOS the
 RAM row is **peak** (`ru_maxrss`). Draw is the focused slot’s `game_draw`
 enters plus paint/skip counts. `BOT_DEBUG=1` also prints 1 Hz loop vs raster
-timings per slot and the RSS sample (4.5b baseline; 4 bots at ~10 GB is a
-suspected leak, not a closed RAM budget).
+timings per slot and the RSS sample. Draw-off **detaches** the head, so
+unheaded slots hold only their mutable sim + the shared decode pile;
+the RSS ladder is the measurement surface and it prints `rss=…` — it
+never fails on size.
 
 ## Headed live
 
