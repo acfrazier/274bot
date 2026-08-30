@@ -2669,6 +2669,7 @@ mod tests {
             1,
             Arc::new(client::config::Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         c.map_build_base_x = 3200;
         c.map_build_base_z = 3200;

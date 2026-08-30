@@ -103,7 +103,7 @@ mod tests {
     use super::*;
     use api::obj_names::ObjNames;
     use client::client::{Client, ClientConfig};
-    use client::config::if_type::{ComponentType, IfType};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::config::ObjType;
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
@@ -135,12 +135,18 @@ mod tests {
                 inv.link_obj_number = Some(vec![1]);
             }
             None => {
-                c.push_iface(IfType {
+                let id = c.push_iface(IfType {
                     r#type: ComponentType::TYPE_INV,
-                    link_obj_type: Some(vec![527]),
-                    link_obj_number: Some(vec![1]),
                     ..Default::default()
                 });
+                c.set_iface_mut(
+                    id,
+                    IfTypeMut {
+                        link_obj_type: Some(vec![527]),
+                        link_obj_number: Some(vec![1]),
+                        ..Default::default()
+                    },
+                );
             }
         }
         c.bump_gens(ServerProt::PLAYER_INFO);

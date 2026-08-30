@@ -16,7 +16,7 @@ use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
 };
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::ClientObj;
 use client::datastruct::LinkList;
@@ -896,6 +896,10 @@ fn set_iface(c: &mut Client, id: usize, com: IfType) {
     c.set_iface(id, com);
 }
 
+fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
+    c.set_iface_mut(id, m);
+}
+
 /// Plant an npc type whose menu ops the snapshot's npc view carries.
 fn plant_npc_type(c: &mut Client, id: i32, name: &str, ops: &[&str]) {
     let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -930,9 +934,16 @@ fn plant_inventory(c: &mut Client) {
         IfType {
             id: 500,
             r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        500,
+        IfTypeMut {
             link_obj_type: Some(vec![4, 0]),
             link_obj_number: Some(vec![1, 0]),
-            obj_ops: true,
             ..Default::default()
         },
     );
@@ -961,8 +972,15 @@ fn plant_modal(c: &mut Client) {
             id: 101,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
-            button_type: ButtonType::BUTTON_TARGET,
             target_mask: 0x2,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        101,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_TARGET,
             ..Default::default()
         },
     );
@@ -973,6 +991,13 @@ fn plant_modal(c: &mut Client) {
             id: 102,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        102,
+        IfTypeMut {
             button_type: ButtonType::BUTTON_OK,
             ..Default::default()
         },
@@ -984,8 +1009,15 @@ fn plant_modal(c: &mut Client) {
             id: 103,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
-            button_type: ButtonType::BUTTON_OK,
             client_code: 205,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        103,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
             ..Default::default()
         },
     );
@@ -996,8 +1028,15 @@ fn plant_modal(c: &mut Client) {
             id: 104,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
-            button_type: ButtonType::BUTTON_TARGET,
             target_mask: 0x8,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        104,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_TARGET,
             ..Default::default()
         },
     );
@@ -1023,6 +1062,13 @@ fn plant_controls(c: &mut Client) {
         IfType {
             id: 1,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        1,
+        IfTypeMut {
             text: "Player controls".into(),
             ..Default::default()
         },
@@ -1033,6 +1079,13 @@ fn plant_controls(c: &mut Client) {
         IfType {
             id: 2,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        2,
+        IfTypeMut {
             text: "Auto retaliate".into(),
             ..Default::default()
         },
@@ -1044,6 +1097,13 @@ fn plant_controls(c: &mut Client) {
             IfType {
                 id: id as i32,
                 r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            c,
+            id,
+            IfTypeMut {
                 button_type: ButtonType::BUTTON_TOGGLE,
                 ..Default::default()
             },
@@ -1480,6 +1540,13 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
             id: 201,
             layer_id: 200,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut s.client,
+        201,
+        IfTypeMut {
             button_type: ButtonType::BUTTON_CONTINUE,
             ..Default::default()
         },

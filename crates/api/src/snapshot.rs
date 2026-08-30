@@ -4,7 +4,7 @@
 
 use crate::obj_names::ItemDefView;
 use client::client::{Client, ClientGens, ClientNpc, Skill};
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeView};
 use client::config::{Cache, ObjType};
 use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
@@ -1216,7 +1216,7 @@ impl GameSnapshot {
             let id = stored - 1;
             if let Some(view) = item_view(
                 &client.cache,
-                inv,
+                &inv,
                 slot,
                 ItemContainer::Inventory,
                 ItemActionFamily::Held,
@@ -1384,13 +1384,13 @@ impl GameSnapshot {
         let root = client.chat_modal_id;
         // The continue button is a direct child of the chat modal.
         if let Some(children) = client.if_(root as usize)
-            .and_then(|m| m.children.as_ref())
+            .and_then(|m| m.children.clone())
         {
             for child_id in children {
-                if client.if_(*child_id as usize)
+                if client.if_(child_id as usize)
                     .is_some_and(|c| c.button_type == ButtonType::BUTTON_CONTINUE)
                 {
-                    self.chat_continue_component_id = *child_id;
+                    self.chat_continue_component_id = child_id;
                     break;
                 }
             }
@@ -1408,7 +1408,7 @@ impl GameSnapshot {
             };
             if com.button_type == ButtonType::BUTTON_OK {
                 let label = if !com.text.is_empty() {
-                    Some(com.text.clone())
+                    Some(com.text.to_string())
                 } else {
                     non_empty(&com.button_text)
                 };
@@ -1419,7 +1419,7 @@ impl GameSnapshot {
                     });
                 }
             }
-            queue.extend(children_of(com));
+            queue.extend(children_of(&com));
         }
         true
     }
@@ -1461,7 +1461,7 @@ impl GameSnapshot {
                     });
                 }
             }
-            queue.extend(children_of(com));
+            queue.extend(children_of(&com));
         }
         // Make-X groups four quantity buttons per obj-model. A modal can
         // carry TYPE_MODEL objs with no Make/Smelt buttons (the
@@ -1517,11 +1517,11 @@ impl GameSnapshot {
             if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
                 self.quest_statuses.push(QuestStatusView {
                     component_id: id,
-                    name: com.text.clone(),
+                    name: com.text.to_string(),
                     colour: com.colour,
                 });
             }
-            queue.extend(children_of(com));
+            queue.extend(children_of(&com));
         }
         true
     }
@@ -2400,7 +2400,7 @@ fn walk_widget_tree(
             continue;
         };
         visited[id as usize] = true;
-        out.push(widget_view(client, com, id, parent_id, root_id, root, x, y));
+        out.push(widget_view(client, &com, id, parent_id, root_id, root, x, y));
         if let Some(children) = &com.children {
             for (i, child) in children.iter().enumerate() {
                 let cx = com
@@ -2427,7 +2427,7 @@ fn walk_widget_tree(
 #[allow(clippy::too_many_arguments)]
 fn widget_view(
     client: &Client,
-    com: &IfType,
+    com: &IfTypeView,
     component_id: i32,
     parent_id: i32,
     root_component_id: i32,
@@ -2509,7 +2509,7 @@ fn varp_bindings(com: &IfType) -> Vec<WidgetVarpBindingView> {
 /// 0 = empty), with the given ops.
 fn item_view(
     cache: &Cache,
-    com: &IfType,
+    com: &IfTypeView,
     slot: usize,
     container: ItemContainer,
     action_family: ItemActionFamily,
@@ -2538,7 +2538,7 @@ fn item_view(
 
 /// The `ItemView`s of a TYPE_INV component's slots (m8aq
 /// `readInvComponent`), with ops from the component's own `iop`.
-fn read_inv_component(cache: &Cache, com: &IfType, container: ItemContainer) -> Vec<ItemView> {
+fn read_inv_component(cache: &Cache, com: &IfTypeView, container: ItemContainer) -> Vec<ItemView> {
     let mut out = Vec::new();
     let Some(ids) = &com.link_obj_type else {
         return out;
@@ -2568,7 +2568,7 @@ fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<V
         return None;
     }
     let com = client.if_(com_id as usize)?;
-    Some(read_inv_component(&client.cache, com, container))
+    Some(read_inv_component(&client.cache, &com, container))
 }
 
 /// The held-item ops for obj `id`: the type's `iop` padded to five slots
@@ -2609,10 +2609,10 @@ where
         let Some(com) = client.if_(id as usize) else {
             continue;
         };
-        if com.r#type == ComponentType::TYPE_INV && accept(com) {
+        if com.r#type == ComponentType::TYPE_INV && accept(&com) {
             return Some(id);
         }
-        queue.extend(children_of(com));
+        queue.extend(children_of(&com));
     }
     None
 }
@@ -2633,7 +2633,7 @@ const TRADESIDE_INV: i32 = 3322;
 /// `normalizeTradePartner`); `None` for an empty label.
 fn trade_partner(client: &Client) -> Option<String> {
     let text = client.if_(TRADEMAIN_OTHER_PLAYER as usize)
-        .map(|c| c.text.clone())
+        .map(|c| c.text.to_string())
         .unwrap_or_default();
     let name = match text.find(':') {
         Some(colon) => text[colon + 1..].trim(),
@@ -2658,9 +2658,9 @@ fn modal_texts(client: &Client, root: i32) -> Vec<String> {
             continue;
         };
         if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
-            out.push(com.text.clone());
+            out.push(com.text.to_string());
         }
-        queue.extend(children_of(com));
+        queue.extend(children_of(&com));
     }
     out
 }

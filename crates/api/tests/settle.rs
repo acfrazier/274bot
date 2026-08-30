@@ -14,7 +14,7 @@ use api::snapshot::{
     ActorKind, ActorTargetView, GameSnapshot, ItemContainer, ReadContext, WorldTile,
 };
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
-use client::config::if_type::{ComponentType, IfType};
+use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::config::LocType;
 use client::io::{ClientStream, ServerProt};
 use std::sync::Arc;
@@ -78,37 +78,57 @@ fn set_iface(c: &mut Client, id: usize, com: IfType) {
     c.set_iface(id, com);
 }
 
+fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
+    c.set_iface_mut(id, m);
+}
+
 /// The inventory tab (side tab 3) with `(stored, count)` slots; stored ids
 /// are `obj id + 1` (0 = empty), so a stored 4 reads as obj id 3.
-fn plant_inv(c: &mut Client, stored: &[i32], counts: &[i32]) {
+fn plant_inv(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
     set_iface(
-        c,
+        &mut c,
         500,
         IfType {
-            id: 500,
-            r#type: ComponentType::TYPE_INV,
-            link_obj_type: Some(stored.to_vec()),
-            link_obj_number: Some(counts.to_vec()),
-            obj_ops: true,
-            ..Default::default()
-        },
+        id: 500,
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    },
     );
+    set_iface_mut(
+        &mut c,
+        500,
+        IfTypeMut {
+        link_obj_type: Some(stored.to_vec()),
+        link_obj_number: Some(counts.to_vec()),
+        ..Default::default()
+    },
+    );
+
     c.side_icon[3] = 500;
 }
 
 /// The worn-items tab (side tab 4) with its slots (stored 7 = obj id 6).
-fn plant_equipment(c: &mut Client, stored: &[i32], counts: &[i32]) {
+fn plant_equipment(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
     set_iface(
-        c,
+        &mut c,
         711,
         IfType {
-            id: 711,
-            r#type: ComponentType::TYPE_INV,
-            link_obj_type: Some(stored.to_vec()),
-            link_obj_number: Some(counts.to_vec()),
-            ..Default::default()
-        },
+        id: 711,
+        r#type: ComponentType::TYPE_INV,
+        ..Default::default()
+    },
     );
+    set_iface_mut(
+        &mut c,
+        711,
+        IfTypeMut {
+        link_obj_type: Some(stored.to_vec()),
+        link_obj_number: Some(counts.to_vec()),
+        ..Default::default()
+    },
+    );
+
     c.side_icon[4] = 711;
 }
 

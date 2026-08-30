@@ -3401,6 +3401,7 @@ mod tests {
             1,
             std::sync::Arc::new(client::config::Cache::default()),
             std::sync::Arc::new(vec![]),
+            Vec::new(),
         );
         c.ingame = true;
         c.scene_state = 2;

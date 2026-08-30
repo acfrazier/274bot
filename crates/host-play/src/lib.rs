@@ -17,7 +17,7 @@ use client::client::Client;
 use client::client::ClientConfig;
 use client::client::LoginError;
 use client::config::if_type::ComponentType;
-use client::config::{Cache, IfType};
+use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
 pub use host::debug_enabled;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
@@ -541,6 +541,7 @@ pub struct Play {
     /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
+    ifaces_mut_template: Vec<Option<Box<IfTypeMut>>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
@@ -580,7 +581,7 @@ impl Play {
     /// maps. `per_frame` starts as a no-op — slots stay draw-off (headless)
     /// until a caller's own per-frame hook turns a slot's renderer on.
     fn new(options: &PlayOptions) -> Play {
-        let (cache, ifaces) = load_template(&options.cache_dir);
+        let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         Play {
@@ -590,6 +591,7 @@ impl Play {
             cache,
             obj_names,
             ifaces: Arc::new(ifaces),
+            ifaces_mut_template,
             queue: Arc::new(Mutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str| {}),
             spawned: HashSet::new(),
@@ -891,6 +893,7 @@ impl Play {
             arm,
             Arc::clone(&self.cache),
             self.ifaces.clone(),
+            self.ifaces_mut_template.clone(),
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
@@ -1007,6 +1010,7 @@ fn spawn_slot_thread(
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
     ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
+    ifaces_mut_template: Vec<Option<Box<IfTypeMut>>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
@@ -1052,7 +1056,13 @@ fn spawn_slot_thread(
             // The park end survives re-login rounds (run_client is entered
             // once per ingame stretch), so wrap it once here.
             let park = park.map(Arc::new);
-            let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
+            let mut client = prepare_client(
+                config,
+                uid,
+                slot_cache,
+                ifaces_template.clone(),
+                ifaces_mut_template.clone(),
+            );
             #[cfg(test)]
             {
                 // Unit tests spawn slots with no web server on :80; shrink
@@ -1299,7 +1309,9 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// Unpack the config/interface jags once and share the tables across slots
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
-fn load_template(cache_dir: &str) -> (Cache, Vec<Option<Box<IfType>>>) {
+fn load_template(
+    cache_dir: &str,
+) -> (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>) {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
         Ok(bytes) => {
             std::panic::catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
@@ -1307,14 +1319,14 @@ fn load_template(cache_dir: &str) -> (Cache, Vec<Option<Box<IfType>>>) {
         }
         Err(_) => Cache::default(),
     };
-    let ifaces = match std::fs::read(format!("{cache_dir}/interface")) {
+    let (ifaces, ifaces_mut) = match std::fs::read(format!("{cache_dir}/interface")) {
         Ok(bytes) => {
             std::panic::catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(bytes))))
                 .unwrap_or_default()
         }
-        Err(_) => Vec::new(),
+        Err(_) => (Vec::new(), Vec::new()),
     };
-    (cache, ifaces)
+    (cache, ifaces, ifaces_mut)
 }
 
 /// Copy a login-queue snapshot onto every `SlotStatus` row named `name`;
@@ -1690,7 +1702,7 @@ mod tests {
             members: true,
             lowmem: true,
         };
-        let a = prepare_client(cfg, 1, Arc::clone(&cache), Arc::new(vec![]));
+        let a = prepare_client(cfg, 1, Arc::clone(&cache), Arc::new(vec![]), Vec::new());
         assert!(Arc::ptr_eq(&a.cache, &cache));
         assert!(!a.error_loading);
     }
@@ -1734,6 +1746,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         let mut s = SlotStatus {
             username: "t".into(),
@@ -1769,6 +1782,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         c.login("a", "pw", false).unwrap();
         let mut s = SlotStatus {
@@ -1862,7 +1876,7 @@ mod tests {
             ..Default::default()
         };
         ifaces[7] = Some(Box::new(com));
-        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), Arc::new(ifaces.clone()));
+        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), Arc::new(ifaces.clone()), Vec::new());
         client.ingame = true;
         let arm = SlotArm::new(0, false);
         arm.want_logout.store(true, Ordering::Relaxed);
@@ -2345,6 +2359,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
@@ -2389,6 +2404,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
@@ -2434,6 +2450,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         cheats
             .lock()
@@ -2509,6 +2526,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         script_observe(
             &mut c,
@@ -2539,6 +2557,10 @@ mod tests {
         let mut ifaces = vec![None; 3];
         ifaces[1] = Some(Box::new(IfType {
             r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        }));
+        let mut ifaces_mut = vec![None; 3];
+        ifaces_mut[1] = Some(Box::new(IfTypeMut {
             link_obj_type: Some(vec![2, 0, 1]),
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
@@ -2554,6 +2576,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(ifaces),
+            ifaces_mut,
         );
         let inv = inventory_from_ifaces(&client).expect("TYPE_INV iface present");
         assert_eq!(
@@ -2758,6 +2781,7 @@ mod tests {
             1,
             Arc::new(Cache::default()),
             Arc::new(vec![]),
+            Vec::new(),
         );
         c.stream = Some(stream);
         c.ingame = true;
