@@ -58,7 +58,9 @@ part of this release.
   scratch. Headed loc decode hits the process LRU as an `Arc` (`SceneModel::Shared`);
   two heads share the same geometry instead of cloning `Model` per tile.
   Live `rss_ladder` prints `ondemand=` / `tcp=` and fails if there is not
-  exactly one OnDemand worker (does not fail on RSS size).
+  exactly one OnDemand worker (does not fail on RSS size). OnDemand hub
+  Completeds for models/anims are not dropped when the process provider
+  requested them (`check_scene` loc wait).
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
