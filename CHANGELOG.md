@@ -49,7 +49,8 @@ part of this release.
   fat pointers (~346 KB/client, was 3.8 MB of inline lists). One
   OnDemand worker (and one byte-15 update socket) is shared per
   `(host, port)` — fifty game logins no longer open fifty extra TCP
-  connects (login code −1).
+  connects (login code −1). `fill_base_level` no longer allocates 10816
+  empty `Square`s (~5.4 MB/slot); occupied tiles are created on place.
   Sparse IfType slots are boxed (11k holes were 688 B each, cloned per
   client). Empty scene tiles / player / NPC slots are boxed
   pointers (was ~29 MB of unused `Square`s per client). After a snapshot
