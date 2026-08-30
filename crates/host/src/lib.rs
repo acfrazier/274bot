@@ -72,7 +72,7 @@ pub fn prepare_client(
     uid: i32,
     cache: Arc<Cache>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
-    ifaces_mut: impl Into<Arc<Vec<Option<Box<IfTypeMut>>>>>,
+    ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
 ) -> Client {
     let mut client = Client::from_shared(config, cache, ifaces, ifaces_mut);
     client.login_uid = uid;
@@ -89,7 +89,7 @@ impl Host {
         profile: Profile,
         cache: Arc<Cache>,
         ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
-        ifaces_mut_template: Arc<Vec<Option<Box<IfTypeMut>>>>,
+        ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let mut client = prepare_client(config, profile.uid, cache, ifaces_template, ifaces_mut_template);
@@ -800,7 +800,7 @@ mod tests {
             ..IfType::default()
         }));
         let mut ifaces_mut = vec![None; 1000];
-        ifaces_mut[500] = Some(Box::new(IfTypeMut {
+        ifaces_mut[500] = Some(Arc::new(IfTypeMut {
             link_obj_type: Some(vec![4, 5, 0]),
             link_obj_number: Some(vec![1, 100, 0]),
             ..IfTypeMut::default()
@@ -859,11 +859,11 @@ mod tests {
         ifaces[152] = Some(Box::new(IfType::default()));
         ifaces[153] = Some(Box::new(IfType::default()));
         let mut ifaces_mut = vec![None; 154];
-        ifaces_mut[152] = Some(Box::new(IfTypeMut {
+        ifaces_mut[152] = Some(Arc::new(IfTypeMut {
             hide: false,
             ..IfTypeMut::default()
         }));
-        ifaces_mut[153] = Some(Box::new(IfTypeMut {
+        ifaces_mut[153] = Some(Arc::new(IfTypeMut {
             hide: true,
             ..IfTypeMut::default()
         }));

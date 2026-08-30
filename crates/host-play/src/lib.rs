@@ -541,7 +541,7 @@ pub struct Play {
     /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
-    ifaces_mut_template: Arc<Vec<Option<Box<IfTypeMut>>>>,
+    ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
@@ -1029,7 +1029,7 @@ fn spawn_slot_thread(
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
     ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
-    ifaces_mut_template: Arc<Vec<Option<Box<IfTypeMut>>>>,
+    ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
@@ -1330,7 +1330,7 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// public `Cache::unpack` / `IfType::unpack` entry points).
 fn load_template(
     cache_dir: &str,
-) -> (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Box<IfTypeMut>>>) {
+) -> (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>) {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
         Ok(bytes) => {
             std::panic::catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
@@ -1339,10 +1339,17 @@ fn load_template(
         Err(_) => Cache::default(),
     };
     let (ifaces, ifaces_mut) = match std::fs::read(format!("{cache_dir}/interface")) {
-        Ok(bytes) => {
-            std::panic::catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(bytes))))
-                .unwrap_or_default()
-        }
+        Ok(bytes) => std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let (ifaces, ifaces_mut) = IfType::unpack(&JagFile::new(bytes));
+            (
+                ifaces,
+                ifaces_mut
+                    .into_iter()
+                    .map(|o| o.map(|b| Arc::new(*b)))
+                    .collect(),
+            )
+        }))
+        .unwrap_or_default(),
         Err(_) => (Vec::new(), Vec::new()),
     };
     (cache, ifaces, ifaces_mut)
@@ -2579,7 +2586,7 @@ mod tests {
             ..Default::default()
         }));
         let mut ifaces_mut = vec![None; 3];
-        ifaces_mut[1] = Some(Box::new(IfTypeMut {
+        ifaces_mut[1] = Some(Arc::new(IfTypeMut {
             link_obj_type: Some(vec![2, 0, 1]),
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
