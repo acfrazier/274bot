@@ -119,8 +119,8 @@ mod tests {
                 },
                 width: 3,
                 height: 2,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };

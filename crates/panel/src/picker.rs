@@ -99,7 +99,7 @@ pub fn available_levels(world: &NavWorld) -> Vec<i32> {
     for level in 1..4 {
         let base = level * plane;
         // The len guard keeps synthetic single-plane test worlds on [0].
-        if c.flags.len() >= base + plane && c.flags[base..base + plane].iter().any(|&f| f != 0) {
+        if c.walk.len() >= base + plane && c.walk[base..base + plane].iter().any(|&w| w != 0) {
             levels.push(level as i32);
         }
     }
@@ -835,8 +835,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                flags: vec![0u32; w * h],
-                walkable: vec![0u32; w * h],
+                walk: vec![0u16; w * h],
+                flags: None,
             },
             graph: TransportGraph::default(),
         }
@@ -871,8 +871,8 @@ mod tests {
                 },
                 width: 5,
                 height: 1,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };
@@ -910,8 +910,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };
@@ -1093,8 +1093,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                flags: flags.clone(),
-                walkable: nav::collision::derive_walkable(&flags),
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         }
@@ -1157,8 +1157,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };

@@ -8,7 +8,7 @@ use std::collections::{HashSet, VecDeque};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
-use crate::collision::WorldCollision;
+use crate::collision::{SQ_BLOCKED, WorldCollision};
 use crate::router::{step_ok, Leg, Route};
 use crate::transport::TransportKind;
 
@@ -144,15 +144,24 @@ pub struct FaceBits {
 }
 
 /// The collision state a consumer paints at `t`: the raw `W_*` face bits
-/// and the blanket blocked flag.
+/// and the blanket blocked flag. With the flags sidecar loaded the raw
+/// flags answer; without it (the walk-word-only world) the reconstructed
+/// walk word answers — blocked when any `SQ_BLOCKED` constituent is set,
+/// NSEW from the `W_*` face bits.
 pub fn collision_at(c: &WorldCollision, t: WorldTile) -> FaceBits {
-    let raw = c.flag(t.x, t.z, t.level);
+    let (raw, blocked) = match &c.flags {
+        Some(_) => (c.flag(t.x, t.z, t.level), !c.standable(t)),
+        None => {
+            let word = c.walkable_word(t.x, t.z, t.level);
+            (word, word & SQ_BLOCKED != 0)
+        }
+    };
     FaceBits {
         n: raw & CollisionFlag::W_N as u32 != 0,
         e: raw & CollisionFlag::W_E as u32 != 0,
         s: raw & CollisionFlag::W_S as u32 != 0,
         w: raw & CollisionFlag::W_W as u32 != 0,
-        blocked: !c.standable(t),
+        blocked,
     }
 }
 
@@ -384,8 +393,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width,
             height,
-            flags: flags.clone(),
-            walkable: crate::collision::derive_walkable(&flags),
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         }
     }
 

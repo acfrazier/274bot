@@ -31,7 +31,8 @@ const WALK_BLOCK: u32 = CollisionFlag::WALK_BLOCK_FLAGS as u32
 /// The client's `SQ_BLOCKED` base shared by every `PL_WALK_*` movement mask
 /// (`WALK_SCENERY | BLOCK_NPCS_AND_PLAYERS | WR_GRND` = `0x280100`): any of
 /// these on a tile makes the derived walkable word reject every direction.
-const SQ_BLOCKED: u32 = CollisionFlag::WALK_SCENERY as u32
+/// `pub(crate)` for the paint's walk-word blocked test.
+pub(crate) const SQ_BLOCKED: u32 = CollisionFlag::WALK_SCENERY as u32
     | CollisionFlag::BLOCK_NPCS_AND_PLAYERS as u32
     | CollisionFlag::WR_GRND as u32;
 
@@ -47,31 +48,31 @@ const WALK_BITS: [(u32, u32); 8] = [
     (CollisionFlag::W_SW as u32, CollisionFlag::PL_WALK_SW as u32),
 ];
 
-/// Whole-world per-level collision: one `CollisionFlag` bitmask per tile
+/// Whole-world per-level collision: the compact packed walk word per tile
 /// per level, four planes (levels 0..=3) like the client's `collision[4]`.
-/// Both buffers are level-major: `buf[level * width * height + z * width +
+/// The buffer is level-major: `buf[level * width * height + z * width +
 /// x]`, row-major `z` then `x` within each plane. A plane is only as dense
 /// as the maps stamped it; levels with no content are empty (walkable,
 /// never a level-0 reuse).
 pub struct WorldCollision {
-    /// The tile at `flags[0]`; the grid spans `width` tiles in +x then
+    /// The tile at `walk[0]`; the grid spans `width` tiles in +x then
     /// `height` rows in +z, replicated across all four level planes.
     pub origin: WorldTile,
     pub width: usize,
     pub height: usize,
-    /// The raw baked word per tile per level: the client's `W_*`/`V_*`
+    /// The packed walk word per tile per level: bits 0-7 carry the raw
+    /// `W_*` face flags and bit 8 records whether any `SQ_BLOCKED`
+    /// constituent is set ([`walk_word_from_u16`] reconstructs the full
+    /// derived word). Always resident — the compact v6 wire form — and the
+    /// router's `step_ok` reads it, never the raw `flags`.
+    pub walk: Vec<u16>,
+    /// The raw baked flags per tile per level (the client's `W_*`/`V_*`
     /// wall bits, `WALK_SCENERY` footprints, and `WR_GRND` ground blocks,
     /// exactly as `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp
-    /// them. Face flags alone do not reject every direction — see
-    /// [`derive_walkable`].
-    pub flags: Vec<u32>,
-    /// The derived walkable word per tile per level, mirroring the client's
-    /// movement masks: a raw wall bit `W_D` sets the full `PL_WALK_D` mask
-    /// (which carries the shared `SQ_BLOCKED` base), so any wall flag —
-    /// like blocked ground or scenery — makes the tile reject entry from
-    /// every direction. The router's `step_ok` reads this word, never the
-    /// raw `flags`.
-    pub walkable: Vec<u32>,
+    /// them), only while the flags sidecar is loaded for debug paints.
+    /// `None` when the sidecar is not mapped: [`Self::flag`] reads 0 and
+    /// the paint faces come from the reconstructed walk word.
+    pub flags: Option<Vec<u32>>,
 }
 
 impl WorldCollision {
@@ -88,8 +89,10 @@ impl WorldCollision {
     }
 
     /// The collision bitmask at `(x, z, level)`, `0` for tiles outside the
-    /// grid and for unknown levels (an empty plane is never a level-0
-    /// reuse).
+    /// grid, unknown levels (an empty plane is never a level-0 reuse), and
+    /// for every tile while the flags sidecar is not loaded (`flags` is
+    /// `None` — the paint then reads the walk word, see
+    /// [`crate::paint::collision_at`]).
     pub fn flag(&self, x: i32, z: i32, level: i32) -> u32 {
         let Some(plane) = self.plane(level) else {
             return 0;
@@ -103,12 +106,16 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return 0;
         }
-        self.flags[plane * self.plane_cells() + lz * self.width + lx]
+        match &self.flags {
+            Some(flags) => flags[plane * self.plane_cells() + lz * self.width + lx],
+            None => 0,
+        }
     }
 
     /// The derived directional walkable word at `(x, z, level)`, `0` for
     /// tiles outside the grid and for unknown levels (same indexing as
-    /// [`Self::flag`]).
+    /// [`Self::flag`]). Reconstructed from the packed walk word, so it is
+    /// identical whether or not the flags sidecar is loaded.
     pub fn walkable_word(&self, x: i32, z: i32, level: i32) -> u32 {
         let Some(plane) = self.plane(level) else {
             return 0;
@@ -122,14 +129,15 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return 0;
         }
-        self.walkable[plane * self.plane_cells() + lz * self.width + lx]
+        walk_word_from_u16(self.walk[plane * self.plane_cells() + lz * self.width + lx])
     }
 
     /// True when `t` sits on a baked level plane (0..=3), inside the grid
     /// bounds, and has no walk-blocking flag on that plane. Tiles outside
     /// the grid or on unknown levels are not walkable (the grid covers the
     /// whole world; beyond it is not a map). An empty plane has no blocks,
-    /// so its tiles are walkable.
+    /// so its tiles are walkable. Without the flags sidecar the walk word
+    /// answers: any face bit or the `SQ_BLOCKED` bit rejects the tile.
     pub fn walkable(&self, t: WorldTile) -> bool {
         let Some(plane) = self.plane(t.level) else {
             return false;
@@ -143,7 +151,11 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return false;
         }
-        self.flags[plane * self.plane_cells() + lz * self.width + lx] & WALK_BLOCK == 0
+        let idx = plane * self.plane_cells() + lz * self.width + lx;
+        match &self.flags {
+            Some(flags) => flags[idx] & WALK_BLOCK == 0,
+            None => walk_word_from_u16(self.walk[idx]) & WALK_BLOCK == 0,
+        }
     }
 
     /// True when `t` sits on a baked level plane, inside the grid bounds,
@@ -167,11 +179,11 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return false;
         }
-        self.flags[plane * self.plane_cells() + lz * self.width + lx]
-            & (CollisionFlag::WALK_SCENERY as u32
-                | CollisionFlag::WR_GRND as u32
-                | CollisionFlag::SQ_BLOCKED as u32)
-            == 0
+        let idx = plane * self.plane_cells() + lz * self.width + lx;
+        match &self.flags {
+            Some(flags) => flags[idx] & SQ_BLOCKED == 0,
+            None => walk_word_from_u16(self.walk[idx]) & SQ_BLOCKED == 0,
+        }
     }
 
     /// The nearest [`Self::walkable`] tile at least one step from `t` along
@@ -332,8 +344,8 @@ pub fn bake_from_maps(
         },
         width,
         height,
-        walkable: derive_walkable(&flags),
-        flags,
+        walk: pack_walk_u16(&flags),
+        flags: Some(flags),
     })
 }
 
@@ -342,12 +354,18 @@ pub fn bake_from_maps(
 /// masks share that base. Face flags (`W_N`/`W_S`/…) only reject the
 /// matching face — they must not OR the full `PL_WALK_*` word, which
 /// re-injects `SQ_BLOCKED` and seals open doorways (a Seers-bank stand
-/// became a 31-tile pocket).
+/// became a 31-tile pocket). The `SQ_BLOCKED` base is normalized to the
+/// full mask whenever any constituent is set, so the packed u16 walk word
+/// (which records only the presence of the base) round-trips exactly.
 pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
     flags
         .iter()
         .map(|&raw| {
-            let mut w = raw & SQ_BLOCKED;
+            let mut w = if raw & SQ_BLOCKED != 0 {
+                SQ_BLOCKED
+            } else {
+                0
+            };
             for &(bit, _mask) in &WALK_BITS {
                 if raw & bit != 0 {
                     w |= bit;
@@ -356,6 +374,35 @@ pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
             w
         })
         .collect()
+}
+
+/// Pack the raw collision flags into the compact walk words: bits 0-7 are
+/// the `WALK_BLOCK_FLAGS` face bits and bit 8 records whether any
+/// `SQ_BLOCKED` constituent is set ([`walk_word_from_u16`] reconstructs
+/// the full derived word). Same level-major four-plane indexing as the
+/// flags.
+pub fn pack_walk_u16(flags: &[u32]) -> Vec<u16> {
+    flags
+        .iter()
+        .map(|&raw| {
+            let mut cell = (raw & CollisionFlag::WALK_BLOCK_FLAGS as u32) as u16;
+            if raw & SQ_BLOCKED != 0 {
+                cell |= 0x100;
+            }
+            cell
+        })
+        .collect()
+}
+
+/// Reconstruct the derived walkable word from a packed walk word: the `W_*`
+/// face bits, plus the full `SQ_BLOCKED` base when bit 8 is set.
+pub fn walk_word_from_u16(cell: u16) -> u32 {
+    let faces = (cell & CollisionFlag::WALK_BLOCK_FLAGS as u16) as u32;
+    if cell & 0x100 != 0 {
+        faces | SQ_BLOCKED
+    } else {
+        faces
+    }
 }
 
 /// Stamp one mapsquare's MAP flags and LOC placements into the bbox grid.
@@ -1157,7 +1204,8 @@ mod tests {
     }
 
     /// A level-0 world at (3200,3200) with one flag word per tile. The
-    /// bake is one plane per level, so planes 1..=3 stay empty.
+    /// bake is one plane per level, so planes 1..=3 stay empty. The flags
+    /// sidecar stays loaded so `flag()` reads the raw words.
     fn flag_world(flags: Vec<u32>) -> WorldCollision {
         let plane = flags.len();
         let mut padded = vec![0u32; 4 * plane];
@@ -1170,8 +1218,8 @@ mod tests {
             },
             width: plane,
             height: 1,
-            walkable: derive_walkable(&padded),
-            flags: padded,
+            walk: pack_walk_u16(&padded),
+            flags: Some(padded),
         }
     }
 

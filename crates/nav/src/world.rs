@@ -72,8 +72,8 @@ impl NavWorld {
             },
             width: grid.width,
             height: grid.height,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         for d in &grid.doors {
@@ -113,7 +113,7 @@ mod tests {
     use client::dash3d::CollisionFlag;
 
     use super::{NavWorld, BLOCKED};
-    use crate::collision::WorldCollision;
+    use crate::collision::{walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
     use crate::pack::{encode, encode_v2};
     use crate::router::{find, find_allow_teleports, Leg};
@@ -198,8 +198,8 @@ mod tests {
         assert_eq!(w.collision.origin, tile(0, 0, 0));
         assert_eq!(w.collision.width, 3);
         assert_eq!(w.collision.height, 3);
-        for (i, f) in w.collision.flags.iter().enumerate() {
-            assert_eq!(*f, 0, "flag {i} stays open");
+        for (i, wd) in w.collision.walk.iter().enumerate() {
+            assert_eq!(*wd, 0, "word {i} stays open");
         }
         assert!(w.graph.edges.is_empty());
     }
@@ -208,11 +208,17 @@ mod tests {
     fn blocked_tiles_stamp_every_direction_mask() {
         let w = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
         let door_tile = tile(2, 0, 0);
-        assert_eq!(w.collision.flag(2, 0, 0), BLOCKED);
+        let idx = (door_tile.z - w.collision.origin.z) as usize * w.collision.width
+            + (door_tile.x - w.collision.origin.x) as usize;
+        assert_eq!(
+            walk_word_from_u16(w.collision.walk[idx]),
+            BLOCKED,
+            "the full directional stamp is in the packed walk word"
+        );
         // The full directional stamp is in the walk block masks, so the
         // router never steps onto it.
         assert_eq!(
-            w.collision.flag(2, 0, 0) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
+            walk_word_from_u16(w.collision.walk[idx]) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
             CollisionFlag::WALK_BLOCK_FLAGS as u32
         );
         assert!(w.collision.walkable(tile(0, 0, 0)));
@@ -322,8 +328,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width: 5,
             height: 1,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(TransportEdge {
@@ -356,7 +362,8 @@ mod tests {
         std::fs::write(&path, encode_v2(&collision, &graph)).unwrap();
         let w = NavWorld::load_pack(&path).expect("v2 pack loads");
         assert_eq!(w.collision.origin, tile(0, 0, 0));
-        assert_eq!(w.collision.flags, collision.flags);
+        assert_eq!(w.collision.walk, collision.walk);
+        assert!(w.collision.flags.is_none());
         assert_eq!(w.graph.edges, graph.edges);
         assert_eq!(w.graph.at, graph.at);
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
@@ -382,8 +389,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width: 5,
             height: 5,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         graph.teleports.push(TransportEdge {

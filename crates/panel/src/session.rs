@@ -2523,7 +2523,7 @@ mod tests {
     use client::render::nav_debug::{FACE_N, FACE_S};
     use host::{FrameBuf, InputEv, SlotInput};
     use host_play::{SlotArm, SlotStatus};
-    use nav::collision::{derive_walkable, WorldCollision};
+    use nav::collision::WorldCollision;
     use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
     use nav::tile::Tile;
@@ -2670,8 +2670,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                flags: vec![0u32; w * h],
-                walkable: vec![0u32; w * h],
+                walk: vec![0u16; w * h],
+                flags: None,
             },
             graph: TransportGraph::default(),
         }
@@ -2715,8 +2715,8 @@ mod tests {
                 },
                 width,
                 height,
-                flags: flags.clone(),
-                walkable: derive_walkable(&flags),
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         }
@@ -2958,8 +2958,8 @@ mod tests {
                 },
                 width,
                 height,
-                flags: flags.clone(),
-                walkable: derive_walkable(&flags),
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };
@@ -3512,8 +3512,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };
@@ -3598,8 +3598,8 @@ mod tests {
                 },
                 width: 5,
                 height: 5,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph,
         };
@@ -3688,8 +3688,8 @@ mod tests {
                 },
                 width: 5,
                 height: 12,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph,
         };

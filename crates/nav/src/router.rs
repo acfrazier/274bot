@@ -945,8 +945,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width,
             height,
-            flags: flags.clone(),
-            walkable: crate::collision::derive_walkable(&flags),
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         }
     }
 
@@ -1501,8 +1501,8 @@ mod tests {
             origin,
             width,
             height,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         }
     }
 
@@ -1586,8 +1586,8 @@ mod tests {
             },
             width: 5,
             height: 12,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let dest = tile(3102, 3525, 0);
         let g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
