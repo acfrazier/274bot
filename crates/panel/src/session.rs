@@ -1092,7 +1092,7 @@ impl Session {
                         let trail_world = remaining_trail(&trail_all, here);
                         publish_nav_debug(
                             c,
-                            world,
+                            &world,
                             route.as_ref(),
                             here,
                             &trail_world,
@@ -2510,10 +2510,11 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
     }
 }
 
-/// Detach the picker's nav world when the session (and its [`Play`]) goes
-/// away, so a dropped `Arc` cannot dangle a `pack()` reference.
+/// Detach the picker's nav world only after the play's slot threads are
+/// joined, so no live observe can read a cleared `pack()`.
 impl Drop for Session {
     fn drop(&mut self) {
+        self.play = None;
         crate::picker::set_pack(None);
     }
 }

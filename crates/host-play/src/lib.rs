@@ -662,8 +662,8 @@ impl Play {
 
     /// Blocks until every slot thread exits (slot threads run forever, so
     /// this only returns if a slot panicked).
-    pub fn join(self) {
-        for (_, handle) in self.handles {
+    pub fn join(mut self) {
+        for (_, handle) in std::mem::take(&mut self.handles) {
             let _ = handle.join();
         }
     }
@@ -911,6 +911,18 @@ impl Play {
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
+    }
+}
+
+/// Stop every slot thread and join it before the play goes away, so no
+/// observe hook (the panel's per-frame paint reads `picker::pack`) can run
+/// after the shared nav world is detached.
+impl Drop for Play {
+    fn drop(&mut self) {
+        let names: Vec<String> = self.handles.keys().cloned().collect();
+        for name in names {
+            self.stop_slot(&name);
+        }
     }
 }
 

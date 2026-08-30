@@ -55,15 +55,10 @@ pub fn set_pack(world: Option<Arc<NavWorld>>) {
 }
 
 /// The attached nav world; `None` when no play world is set. The returned
-/// reference is the injected `Arc`'s target, so the picker and the session
-/// paint the same bake.
-pub(crate) fn pack() -> Option<&'static NavWorld> {
-    let guard = PACK.lock().unwrap();
-    let arc = guard.as_ref()?;
-    // SAFETY: `PACK` keeps the Arc alive for the process, so the target
-    // outlives the guard (and any caller's frame). `set_pack` only runs at
-    // session start/teardown, never while a caller holds a returned ref.
-    Some(unsafe { &*Arc::as_ptr(arc) })
+/// `Arc` keeps the world alive for the caller, so the picker and the
+/// session paint the same bake without a second decode.
+pub(crate) fn pack() -> Option<Arc<NavWorld>> {
+    PACK.lock().unwrap().clone()
 }
 
 /// The walkable tiles of the world on `level`, row-major (z then x): a
@@ -475,7 +470,7 @@ pub fn draw_picker(ui: &Ui, session: &mut Session) {
         .position(pos, Condition::Always)
         .size(avail, Condition::Always)
         .build(|| match pack() {
-            Some(world) => picker_map_body(ui, session, world),
+            Some(world) => picker_map_body(ui, session, &world),
             None => {
                 ui.text_wrapped("no nav pack — run nav-pack");
             }
@@ -1304,8 +1299,11 @@ mod tests {
         set_pack(Some(Arc::clone(&world)));
         let p = pack().expect("injected");
         assert!(
-            std::ptr::eq(p as *const NavWorld, Arc::as_ptr(&world)),
-            "pack() must hand back the injected Arc's target, not a re-decode"
+            Arc::ptr_eq(&p, &world),
+            "pack() must hand back the injected Arc, not a re-decode"
         );
+        // Leave the global detached so parallel tests cannot observe it.
+        set_pack(None);
+        assert!(pack().is_none(), "set_pack(None) must detach the world");
     }
 }
