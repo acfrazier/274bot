@@ -1,9 +1,9 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`].
-//! The v2 pack file stores the collision flags and the transport edges, so
-//! the Dijkstra router ([`crate::router::find`]) consumes one artifact —
-//! live harnesses load this and route on the packed collision. The legacy
-//! v1 pack (boolean walk bytes + doors) still loads through
+//! The v6 pack file stores the compact packed walk words and the transport
+//! edges, so the Dijkstra router ([`crate::router::find`]) consumes one
+//! artifact — live harnesses load this and route on the packed collision.
+//! The legacy v1 pack (boolean walk bytes + doors) still loads through
 //! [`NavWorld::from_grid`] as a fallback for old `.navpack` files.
 
 use std::path::Path;
@@ -30,14 +30,14 @@ pub struct NavWorld {
 impl NavWorld {
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
     /// router's world. V2 packs (collision + transport graph) load
-    /// directly; legacy v1 packs fall back to [`Self::from_grid`].
+    /// directly; legacy v1 packs fall back to [`Self::from_grid`]. The
+    /// fallback triggers on bad magic only — a `274V` pack with a stale
+    /// version stays [`PackError::BadVersion`] so the operator rebakes.
     pub fn load_pack(path: &Path) -> Result<Self, PackError> {
         let bytes = std::fs::read(path).map_err(PackError::Io)?;
         match decode_v2(&bytes) {
             Ok((collision, graph)) => Ok(NavWorld { collision, graph }),
-            Err(PackError::BadMagic) | Err(PackError::BadVersion(_)) => {
-                Ok(Self::from_grid(&load_pack(path)?))
-            }
+            Err(PackError::BadMagic) => Ok(Self::from_grid(&load_pack(path)?)),
             Err(e) => Err(e),
         }
     }
@@ -115,7 +115,7 @@ mod tests {
     use super::{NavWorld, BLOCKED};
     use crate::collision::{walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
-    use crate::pack::{encode, encode_v2};
+    use crate::pack::{encode, encode_v2, PackError};
     use crate::router::{find, find_allow_teleports, Leg};
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -314,6 +314,39 @@ mod tests {
         };
         assert_eq!(tiles.first(), Some(&tile(3200, 3200, 0)));
         assert_eq!(tiles.last(), Some(&tile(3263, 3263, 0)));
+    }
+
+    #[test]
+    fn load_pack_keeps_stale_v5_wire_as_bad_version() {
+        // A leftover v5 (pre-v6) `274V` pack is not a v1 pack: load must
+        // surface BadVersion(5) so the operator rebakes, not fall into the
+        // v1 decoder and come out as a confusing BadMagic.
+        let mut plane = vec![0u32; 4];
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 2,
+            height: 2,
+            walk: crate::collision::pack_walk_u16(&plane),
+            flags: None,
+        };
+        let mut bytes = encode_v2(&collision, &TransportGraph::default());
+        bytes[4] = 5;
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-navworld-v5-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture-v5.navpack");
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(matches!(
+            NavWorld::load_pack(&path),
+            Err(PackError::BadVersion(5))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
