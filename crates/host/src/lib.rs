@@ -308,7 +308,17 @@ impl Host {
                 slot.raster_last = None;
                 slot.raster_was_on = false;
             }
+            // A draw-off detach must not leave headed data on the sim:
+            // drop the overlay meshes a headed build/attach wrote (keep
+            // the compact tile stamps) and re-arm the attach materialize,
+            // so the next head's first paint restores them without a
+            // rebuild (rule 6 of the head design). Fires on the falling
+            // edge only.
+            if !client.draw && slot.draw_was_on {
+                client.world.dematerialize_overlay();
+            }
         }
+        slot.draw_was_on = client.draw;
         let paint = raster_this_tick(
             client.draw,
             zap || full_rate,
@@ -533,6 +543,10 @@ struct SlotLoop {
     /// decision repaints when this is ≥1 s old.
     raster_last: Option<Instant>,
     raster_was_on: bool,
+    /// `client.draw` from the previous frame. The draw-off detach
+    /// dematerializes the headed overlay meshes on the falling edge, so a
+    /// parked draw-off slot does not re-walk the tile grid every frame.
+    draw_was_on: bool,
     loop_ns: u64,
     raster_ns: u64,
     paint_n: u64,
@@ -555,6 +569,7 @@ impl SlotLoop {
             renderer_lowmem: None,
             raster_last: None,
             raster_was_on: false,
+            draw_was_on: false,
             loop_ns: 0,
             raster_ns: 0,
             paint_n: 0,
@@ -662,6 +677,7 @@ fn run_echo(client: &Client) -> Option<bool> {
 mod tests {
     use super::*;
     use api::interact::RUN_ORB_IFACE;
+    use client::dash3d::TerrainOverlayShape;
     use client::io::ClientProt;
     use std::sync::OnceLock;
     use std::time::Instant;
@@ -947,6 +963,89 @@ mod tests {
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
         assert!(slot.renderer.is_some(), "attach at any time");
+    }
+
+    /// Final-review fix: a draw-off detach must dematerialize the headed
+    /// overlay meshes (`Square.ground`/`quick_ground`) from the sim — keep
+    /// the compact `overlay_stamp` typecodes and re-arm the attach
+    /// materialize — so an unheaded slot never holds headed data, and the
+    /// next attach restores the mesh without a rebuild.
+    #[test]
+    fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
+        force_cpu_backend();
+        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        // A headed overlay mesh, planted on the sim directly (no full
+        // map_build needed to exercise the hook).
+        c.world.fill_base_level(0);
+        c.world.set_ground(
+            0,
+            2,
+            2,
+            TerrainOverlayShape::TRAPEZIUM,
+            1,
+            7,
+            1000,
+            1004,
+            1010,
+            1006,
+            0x111111,
+            0x222222,
+            0x333333,
+            0x444444,
+            0x555555,
+            0x666666,
+            0x777777,
+            0x888888,
+            0x99,
+            0xaa,
+        );
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(
+            c.world
+                .square(0, 2, 2)
+                .and_then(|s| s.ground.as_ref())
+                .is_some(),
+            "headed draw must build the overlay mesh"
+        );
+
+        // Draw off drops the head and the headed mesh; the stamp survives
+        // and the next attach is re-armed.
+        c.set_draw(false);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(slot.renderer.is_none());
+        let sq = c.world.square(0, 2, 2).expect("stamped tile");
+        assert!(sq.ground.is_none(), "draw off must drop the overlay mesh");
+        assert!(sq.quick_ground.is_none());
+        assert!(
+            sq.overlay_stamp.is_some(),
+            "the stamp must survive a detach"
+        );
+        assert!(
+            c.world.overlay_pending,
+            "a detach must re-arm the attach materialize"
+        );
+
+        // Draw on: the reattached head's first paint consumes the pending
+        // flag and restores the mesh from the stamp — no map_build.
+        c.ingame = true;
+        c.scene_state = 2;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(slot.renderer.is_some());
+        assert!(
+            c.world
+                .square(0, 2, 2)
+                .and_then(|s| s.ground.as_ref())
+                .is_some(),
+            "attach must rematerialize the overlay mesh"
+        );
+        assert!(
+            !c.world.overlay_pending,
+            "the first paint must consume the attach materialize"
+        );
     }
 
     #[test]
