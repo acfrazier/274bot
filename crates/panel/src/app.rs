@@ -350,6 +350,26 @@ struct TileView {
     view: GameView,
 }
 
+/// Drop rail/grid `GameView`s that are not painting (left the wall, or
+/// only-render-selected hid the slot). Unbind-to-owned keeps the panel's
+/// 765×503 texture, which Metal pads to 8 MB — dispose frees it.
+fn dispose_idle_views(
+    views: &mut HashMap<String, TileView>,
+    gpu: &mut Gpu,
+    keep: impl Fn(&str) -> bool,
+) {
+    let drop_names: Vec<String> = views
+        .keys()
+        .filter(|name| !keep(name.as_str()))
+        .cloned()
+        .collect();
+    for name in drop_names {
+        if let Some(tv) = views.remove(&name) {
+            tv.view.dispose(gpu);
+        }
+    }
+}
+
 impl PanelState {
     /// 1 Hz process + stream-byte sample for the resource card. CPU needs
     /// a wall+CPU delta, so the first sample is [`Metric::Measuring`]; RAM
@@ -1016,10 +1036,6 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         return;
     }
     let cells = grid_cells(members.len(), avail);
-    // Drop textures for members that left the wall (grid ✗ / wall change).
-    state
-        .views
-        .retain(|name, _| members.iter().any(|m| m == name));
     let (focused, capture) = {
         let focus = state.session.focus.lock().unwrap();
         (focus.focused.clone(), should_capture(&focus))
@@ -1027,11 +1043,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
-        for (name, tv) in state.views.iter_mut() {
-            if !draw_for_slot(&focus, name) {
-                tv.view.unbind_client(gpu);
-            }
-        }
+        dispose_idle_views(&mut state.views, gpu, |name| {
+            members.iter().any(|m| m == name) && draw_for_slot(&focus, name)
+        });
     }
     let statuses = state.session.statuses();
     for (i, name) in members.iter().enumerate() {
@@ -2098,7 +2112,9 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     if ui.button_with_size(mem, [w, 0.0]) {
         ui.open_popup(MEM_POPUP);
     }
-    ui.set_item_tooltip("Game pane highmem / lowmem — switching mem reattaches the renderer on the live client");
+    ui.set_item_tooltip(
+        "Game pane highmem / lowmem — switching mem reattaches the renderer on the live client",
+    );
     mem_popup(ui, session);
 }
 
@@ -2352,18 +2368,12 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
     let statuses = state.session.statuses();
-    // Drop textures for members that left the rail (rail ✗ or wall change).
-    state
-        .views
-        .retain(|name, _| members.iter().any(|m| m == name));
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
-        for (name, tv) in state.views.iter_mut() {
-            if !draw_for_slot(&focus, name) {
-                tv.view.unbind_client(gpu);
-            }
-        }
+        dispose_idle_views(&mut state.views, gpu, |name| {
+            members.iter().any(|m| m == name) && draw_for_slot(&focus, name)
+        });
     }
     for name in &members {
         let status = statuses.iter().find(|s| &s.username == name);
@@ -2462,8 +2472,8 @@ fn cell_body(
     draw: bool,
 ) -> bool {
     if !draw {
-        if let Some(tv) = state.views.get_mut(name) {
-            tv.view.unbind_client(gpu);
+        if let Some(tv) = state.views.remove(name) {
+            tv.view.dispose(gpu);
         }
         return ui
             .selectable_config(format!("renderer off##{name}"))
