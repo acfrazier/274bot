@@ -31,8 +31,8 @@ use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::paint::{
-    collision_at_with, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
-    trail_tones, TrailTone,
+    collision_at_with, hull_targets, reached, remaining_path_tiles, remaining_trail,
+    select_draw_indices, trail_tones, TrailTone,
 };
 use nav::router::{find_with, FindOptions, Route};
 use nav::tile::Tile;
@@ -459,6 +459,9 @@ fn publish_nav_debug(
             world.collision.width,
             world.collision.height,
         );
+        // The paint-only reach bitset, baked once per world. A missing
+        // bitset defaults every cell to reached — no unreached tint.
+        let reach_bits = crate::picker::reach_bitset(world);
         for lz in 0..SCENE_TILES {
             for lx in 0..SCENE_TILES {
                 let x = base_x + lx;
@@ -466,8 +469,8 @@ fn publish_nav_debug(
                 if x < ox || z < oz || x - ox >= ow || z - oz >= oh {
                     continue;
                 }
-                let fb =
-                    collision_at_with(&world.collision, WorldTile { x, z, level }, side.as_deref());
+                let wt = WorldTile { x, z, level };
+                let fb = collision_at_with(&world.collision, wt, side.as_deref());
                 let mut bits = 0u8;
                 if fb.n {
                     bits |= FACE_N;
@@ -489,6 +492,12 @@ fn publish_nav_debug(
                         // The client fills only blocked ground; a face-only
                         // cell keeps its NSEW letters without a fill quad.
                         blocked: fb.blocked,
+                        // True when the transport network reaches the tile
+                        // (or the bitset is missing): the client's reach
+                        // fill draws only `show_collision && !reach`.
+                        reach: reach_bits
+                            .as_deref()
+                            .map_or(true, |bits| reached(bits, &world.collision, wt)),
                     });
                 }
             }
@@ -2849,6 +2858,94 @@ mod tests {
         // Click: the traveller's walk aim converts to scene coords.
         assert_eq!(paint.click, Some((52, 52)));
         assert!(paint.show_collision && paint.show_nsew && paint.show_path);
+    }
+
+    #[test]
+    fn publish_nav_debug_carries_reach_from_the_bitset() {
+        let mut c = paint_client();
+        // A 65×65 world (a distinct grid from `walled_world`, so the cached
+        // reach bake belongs to this graph): a sealed 1×1 courtyard floor
+        // at scene (1,1) and a blocked door-loc seed at scene (2,2).
+        let (width, height) = (65usize, 65usize);
+        let mut flags = vec![0u32; width * height];
+        flags[1 * width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                width,
+                height,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
+            },
+            graph: TransportGraph {
+                edges: vec![TransportEdge {
+                    kind: TransportKind::Door,
+                    at: WorldTile {
+                        x: 3202,
+                        z: 3202,
+                        level: 0,
+                    },
+                    to: WorldTile {
+                        x: 3200,
+                        z: 3200,
+                        level: 0,
+                    },
+                    loc_id: 1530,
+                    option: 1,
+                    ticks: 1,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                }],
+                ..Default::default()
+            },
+        };
+        let layers = NavSettings {
+            collision_fill: true,
+            nsew_labels: true,
+            ..NavSettings::default()
+        };
+        publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
+        let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
+        // The blocked door loc is a reach seed: reached despite the ground
+        // block, so the client keeps its collision fill.
+        let door = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 2 && cell.lz == 2)
+            .expect("the door loc cell");
+        assert!(
+            door.blocked && door.reach,
+            "a transport seed is reached even when blocked"
+        );
+        // The sealed courtyard floor is standable but the network never
+        // reaches it — the client draws the unreached fill there.
+        let yard = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 1 && cell.lz == 1)
+            .expect("the courtyard cell");
+        assert!(
+            !yard.blocked && !yard.reach,
+            "the walled floor is an unreached puddle"
+        );
+        // Open reached ground has no bits and is not blocked: no cell.
+        assert!(
+            !paint
+                .collision
+                .iter()
+                .any(|cell| cell.lx == 0 && cell.lz == 0),
+            "reached open ground publishes nothing"
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
-use nav::paint::{collision_at, flood_components, remaining_path_tiles};
+use nav::paint::{bake_reach, collision_at, flood_components, reached, remaining_path_tiles};
 use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
 use nav::world::NavWorld;
@@ -52,10 +52,12 @@ static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 /// `None` detaches when the play is dropped. The picker never decodes the
 /// pack itself — this is the only source of the world it maps. Any mapped
 /// flags sidecar is dropped: the next collision paint re-decodes for the
-/// new world's grid instead of indexing stale geometry.
+/// new world's grid instead of indexing stale geometry. The reach bake is
+/// dropped too — it answers the new world's transport network.
 pub fn set_pack(world: Option<Arc<NavWorld>>) {
     *PACK.lock().unwrap() = world;
     drop_flags_sidecar();
+    *REACH.lock().unwrap() = None;
 }
 
 /// The attached nav world; `None` when no play world is set. The returned
@@ -145,6 +147,40 @@ fn sidecar_for_grid(
     height: usize,
 ) -> Option<Arc<[u32]>> {
     (s.origin == origin && s.width == width && s.height == height).then(|| Arc::clone(&s.flags))
+}
+
+/// The cached paint-only reach bitset for a world grid: one `step_ok` BFS
+/// from every transport seed ([`bake_reach`]), baked once per grid. The
+/// whole-world bake spans millions of tiles, so a picker frame or a 3D
+/// publish must never re-flood; only a changed world (a new [`set_pack`])
+/// recomputes.
+struct ReachCache {
+    key: (i32, i32, usize, usize),
+    bits: Arc<[u64]>,
+}
+
+static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
+
+/// The reach bitset for `world`, baked once and cached; `None` only when
+/// no bake could be produced (the paint then treats every tile as
+/// reached). Reach answers connectivity through the transport network —
+/// `find` never reads it.
+pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
+    let c = &world.collision;
+    let key = (c.origin.x, c.origin.z, c.width, c.height);
+    let mut guard = REACH.lock().unwrap();
+    let bits = match guard.as_ref() {
+        Some(cache) if cache.key == key => cache.bits.clone(),
+        _ => {
+            let bits: Arc<[u64]> = bake_reach(c, &world.graph).into();
+            *guard = Some(ReachCache {
+                key,
+                bits: bits.clone(),
+            });
+            bits
+        }
+    };
+    Some(bits)
 }
 
 /// The walkable tiles of the world on `level`, row-major (z then x): a
@@ -335,14 +371,18 @@ fn button_w(ui: &Ui, label: &str) -> f32 {
 
 /// The pack-map paints of one visible tile. Only layers that are on mark
 /// tiles: `blocked` fills under `collision_fill`, `path`/`transport` draw
-/// the remaining route under `show_nav_path`, and `flood` (0 = player
-/// seed, 1 = dest seed) colours the component under `component_flood`.
+/// the remaining route under `show_nav_path`, `flood` (0 = player seed,
+/// 1 = dest seed) colours the component under `component_flood`, and
+/// `unreached` marks walkable ground the transport network never reaches
+/// (painted with the flood-unreachable tone whenever the reach bitset is
+/// baked).
 pub(crate) struct PackMapTile {
     pub tile: Tile,
     pub blocked: bool,
     pub path: bool,
     pub transport: bool,
     pub flood: Option<u32>,
+    pub unreached: bool,
 }
 
 /// The visible canvas as a tile rectangle on the selected plane:
@@ -490,6 +530,7 @@ pub(crate) fn pack_map_tiles(
     } else {
         flood_sets_for(world, &seeds)
     };
+    let reach = reach_bitset(world);
     let mut out = Vec::new();
     for z in view.z0..view.z0 + view.height {
         for x in view.x0..view.x0 + view.width {
@@ -505,13 +546,21 @@ pub(crate) fn pack_map_tiles(
                     .position(|f| f.contains(&wt))
                     .map(|i| i as u32)
             };
-            if blocked || is_path || flood.is_some() {
+            // Walkable ground the transport network never reaches: standable
+            // (no blocked-ground base — walls keep their collision fill) and
+            // not set in the reach bitset. Always shown once the bitset is
+            // baked, per the reach layer's spec row.
+            let unreached = reach.as_deref().is_some_and(|bits| {
+                !reached(bits, &world.collision, wt) && world.collision.standable(wt)
+            });
+            if blocked || is_path || flood.is_some() || unreached {
                 out.push(PackMapTile {
                     tile: t,
                     blocked,
                     path: is_path,
                     transport,
                     flood,
+                    unreached,
                 });
             }
         }
@@ -701,7 +750,9 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             // Layers paint only these tiles; the bake outside the view is
             // never iterated.
             let layers = effective(&session.ui.nav, session.nav_live_force_layers);
-            let any_layer = layers.collision_fill || layers.show_nav_path || layers.component_flood;
+            let reach_on = reach_bitset(world).is_some();
+            let any_layer =
+                layers.collision_fill || layers.show_nav_path || layers.component_flood || reach_on;
             let level = LEVEL.load(Ordering::Relaxed);
             let here = session
                 .focused_tile()
@@ -740,8 +791,9 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             let transport_col = color_rgb(parse_html_color(&layers.color_transport, [0, 255, 0]));
             let collision_col = color_rgb(parse_html_color(&layers.color_collision, [0, 128, 255]));
             // Layer fills: the route wins over the flood region, the flood
-            // over the blocked ground (a blocked tile is never on a route
-            // or in a flood).
+            // over the unreached puddle, the unreached over the blocked
+            // ground (a blocked tile is never on a route, in a flood, or
+            // standable).
             for pt in &paints {
                 let t = pt.tile;
                 let (tx, tz) = (t.x as f32, t.z as f32);
@@ -761,6 +813,8 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
                     } else {
                         FLOOD_B
                     }
+                } else if pt.unreached {
+                    FLOOD_B
                 } else {
                     debug_assert!(pt.blocked, "pack_map_tiles returns only painted tiles");
                     collision_col
@@ -891,7 +945,7 @@ mod tests {
     use client::dash3d::CollisionFlag;
     use nav::collision::WorldCollision;
     use nav::tile::Tile;
-    use nav::transport::TransportGraph;
+    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use nav::world::NavWorld;
 
     use std::sync::Arc;
@@ -1288,6 +1342,73 @@ mod tests {
         );
         let ids: std::collections::HashSet<_> = tiles.iter().filter_map(|t| t.flood).collect();
         assert_eq!(ids.len(), 2, "the player and dest components both flood");
+    }
+
+    #[test]
+    fn pack_map_marks_walkable_unreached_puddle() {
+        // 5×5 with a sealed 1×1 courtyard at (2,2) (all W_* faces) and one
+        // door edge outside it: the reach BFS floods the open ground but
+        // never the courtyard, so only the courtyard tile paints
+        // walkable-unreached.
+        let world = bake_world(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]);
+        let world = NavWorld {
+            graph: TransportGraph {
+                edges: vec![TransportEdge {
+                    kind: TransportKind::Door,
+                    at: WorldTile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    },
+                    to: WorldTile {
+                        x: 4,
+                        z: 4,
+                        level: 0,
+                    },
+                    loc_id: 1530,
+                    option: 1,
+                    ticks: 1,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                }],
+                ..Default::default()
+            },
+            ..world
+        };
+        let view = PackView {
+            x0: 0,
+            z0: 0,
+            width: 5,
+            height: 5,
+        };
+        let tiles = pack_map_tiles(&world, view, None, None, None, &NavSettings::default(), 0);
+        let courtyard = tiles
+            .iter()
+            .find(|t| t.tile.x == 2 && t.tile.z == 2)
+            .expect("the sealed courtyard paints unreached");
+        assert!(
+            courtyard.unreached,
+            "the puddle floor is walkable-unreached"
+        );
+        assert!(
+            !courtyard.blocked && !courtyard.path && courtyard.flood.is_none(),
+            "the puddle is a plain unreached tile"
+        );
+        assert!(
+            tiles
+                .iter()
+                .all(|t| (t.tile.x == 2 && t.tile.z == 2) || !t.unreached),
+            "only the sealed courtyard is unreached"
+        );
+        assert!(
+            !tiles.iter().any(|t| t.tile.x == 0 && t.tile.z == 0),
+            "reached ground stays off the reach layer"
+        );
     }
 
     #[test]
