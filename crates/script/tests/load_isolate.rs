@@ -5,7 +5,7 @@
 // `{name, path}` to the store. `LoadIsolate::spawn` is the ONLY place a V8
 // Runtime is created for a JS card — the panel calls it from Start, never
 // from Load. API takes a filesystem path / String source; nothing here
-// `include_str!`s or scans `scripts/rs2b0t/`.
+// `include_str!`s a script tree.
 
 use std::path::PathBuf;
 use std::sync::mpsc;

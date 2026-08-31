@@ -1,8 +1,6 @@
-// Task 8: compiled WalkTo. The port wraps `ctx.walk` (the slot's traveller
-// hook), so `script` keeps no `nav` dependency: the port defines its own
-// `Tile` and the factory hardcodes the rs2b0t default destination
-// (Lumbridge) until the params editor lands. If the host has no traveller
-// wired, `tick` errors instead of faking arrival.
+// Walk-hook fixture: wraps `ctx.walk` so `script` keeps no `nav`
+// dependency. If the host has no traveller wired, `tick` errors instead
+// of faking arrival.
 
 use api::interact::Driver;
 use api::prot::Out;

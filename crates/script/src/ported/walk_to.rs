@@ -1,10 +1,7 @@
-//! Port of rs2b0t `WalkToBot` (reference: `scripts/rs2b0t/WalkToBot/WalkToBot.ts`).
-//!
-//! The TS `Traversal.walkTo(target, { radius })` becomes a per-tick branch:
-//! when `here` is within `radius` the tick is a noop, otherwise it queues
-//! one walk toward the target through `ctx.walk`. The host wires that hook
-//! to the slot's traveller; until then the tick errors — a port must not
-//! fake arrival.
+//! Walk-hook fixture: when `here` is within `radius` the tick is a noop,
+//! otherwise it queues one walk toward the target through `ctx.walk`.
+//! The host wires that hook to the slot's traveller; until then the tick
+//! errors — never fake arrival. Not a script card (WalkTo is host nav).
 
 use crate::ctx::{Script, ScriptCtx};
 

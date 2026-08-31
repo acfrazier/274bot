@@ -5,7 +5,7 @@
 //! in a throwaway Runtime (dropped before `load()` returns), registers the
 //! card, and persists `{name, path}`. The isolate is spawned **only** on
 //! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
-//! the client clone and nothing scans `scripts/rs2b0t/` into the library.
+//! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
