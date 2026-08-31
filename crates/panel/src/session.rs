@@ -2285,6 +2285,17 @@ impl Session {
             level: dest.level,
         };
         let state = self.focused_walk_state();
+        // The focused slot's latched essence-mine session: a player
+        // standing inside the mine can WalkTo out through the exit portal
+        // (the router synthesizes the return hop from the latch). A slot
+        // with no latch stays fail-closed — the mine is sealed, exactly
+        // like the packed graph.
+        let essence = self.focused_name().as_deref().and_then(|name| {
+            let travellers = self.travellers.lock().unwrap();
+            travellers
+                .get(name)
+                .and_then(|arm| arm.lock().unwrap().traveller.essence())
+        });
         let routed = find_with(
             &world.collision,
             &world.graph,
@@ -2294,10 +2305,7 @@ impl Session {
                 allow_teleports: self.ui.nav.allow_teleports,
                 allow_wilderness: self.ui.nav.allow_wilderness,
                 allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-                // The focused slot's essence-mine session lives on its
-                // traveller; the panel walk-route does not feed it yet, so
-                // routing out of the mine stays NoPath here (0.1.x follow-up).
-                essence: None,
+                essence,
             },
             &state,
         );
@@ -2605,7 +2613,7 @@ mod tests {
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
         is_local_engine, maybe_send_click, parse_getvar_line, publish_nav_debug, script_active,
         script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        stream_capture, walkto_tele_cmd, Session, SlotIo,
+        stream_capture, walkto_tele_cmd, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -2620,11 +2628,12 @@ mod tests {
     use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
     use nav::tile::Tile;
+    use nav::traveller::Traveller;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use nav::world::NavWorld;
     use nav::WorldState;
     use std::sync::atomic::Ordering;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use vault::{Profile, ProfileSettings, Vault};
 
@@ -2765,6 +2774,27 @@ mod tests {
                 width: w,
                 height: h,
                 walk: vec![0u16; w * h],
+                flags: None,
+            },
+            graph: TransportGraph::default(),
+        }
+    }
+
+    /// The Rune Essence mine mapsquare (m45_75) as a sealed 64×64
+    /// all-walkable bake at (2880,4800): the pad and the four exit portal
+    /// placements inside, nothing packed — the session return hop is
+    /// synthesized by the router, so a walk out only arms with a latch.
+    fn mine_world() -> NavWorld {
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 2880,
+                    z: 4800,
+                    level: 0,
+                },
+                width: 64,
+                height: 64,
+                walk: vec![0u16; 64 * 64],
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -3674,6 +3704,79 @@ mod tests {
             .unwrap()
             .queued_tile();
         assert_eq!(queued, Some(dest));
+    }
+
+    #[test]
+    fn arm_walk_on_feeds_the_focused_slots_latched_essence_session() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        // Alice's walker already latched the mine session (entered via
+        // Aubury): a WalkTo out of the mine must route through the exit
+        // portal's return hop — the arm feeds the traveller's latch.
+        s.travellers.lock().unwrap().insert(
+            "alice".into(),
+            Arc::new(Mutex::new(WalkArm {
+                traveller: {
+                    let mut t = Traveller::new();
+                    t.set_essence(nav::essence::essence_session_for_wizard(553));
+                    t
+                },
+                route: None,
+            })),
+        );
+        let world = mine_world();
+        let anchor = Tile {
+            x: 3253,
+            z: 3401,
+            level: 0,
+        };
+        s.arm_walk_on(
+            &world,
+            Tile {
+                x: 2912,
+                z: 4833,
+                level: 0, // the mine pad
+            },
+            anchor,
+        );
+        assert!(s.error.is_none(), "the latched session routes out of the mine");
+        let queued = s
+            .travellers
+            .lock()
+            .unwrap()
+            .get("alice")
+            .expect("focused walk arm exists")
+            .lock()
+            .unwrap()
+            .queued_tile();
+        assert_eq!(queued, Some(anchor), "the exit route reaches Aubury's anchor");
+    }
+
+    #[test]
+    fn arm_walk_on_without_a_latch_keeps_the_mine_sealed() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        // No latch: the session return hop is never relaxed — the sealed
+        // mine stays NoPath (fail-closed without a session is correct).
+        let world = mine_world();
+        s.arm_walk_on(
+            &world,
+            Tile {
+                x: 2912,
+                z: 4833,
+                level: 0,
+            },
+            Tile {
+                x: 3253,
+                z: 3401,
+                level: 0,
+            },
+        );
+        assert!(
+            s.error.as_deref().is_some_and(|e| e.contains("no path")),
+            "no latch -> the mine is sealed, got {:?}",
+            s.error
+        );
     }
 
     #[test]

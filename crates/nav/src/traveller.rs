@@ -222,6 +222,16 @@ impl Traveller {
         self.essence
     }
 
+    /// Replace the per-slot essence-mine latch. The traveller latches it
+    /// itself on a completed essence entry hop; the host may seed it to
+    /// restore a slot's state, and the unit tests construct the latched
+    /// state directly. [`Traveller::clear`] keeps it — like the game's
+    /// `%exit_essence_mine_coord` varp, the exit wizard survives route
+    /// teardown.
+    pub fn set_essence(&mut self, essence: Option<EssenceSession>) {
+        self.essence = essence;
+    }
+
     /// The tile the traveller is currently walking toward: the active walk
     /// hop's aim, the transport hop's approach tile, or the transport
     /// arrival tile. `None` when no follow run is active (idle). The
@@ -1737,6 +1747,7 @@ mod tests {
     use client::io::{ClientStream, ServerProt};
     use std::sync::Arc;
 
+    use crate::essence::essence_session_for_wizard;
     use crate::grid::StepGrid;
     use crate::router::{find_on_grid, Leg, Route};
     use crate::tile::Tile;
@@ -3489,6 +3500,41 @@ mod tests {
             Some(TravelOutcome::Arrived { .. })
         ));
         assert_eq!(t.essence(), None, "a cart ride never latches a session");
+    }
+
+    #[test]
+    fn clear_preserves_the_latched_essence_session() {
+        // The mine latch survives route teardown: `clear()` drops the
+        // armed route and follow run but keeps the session, so a route
+        // out of the mine can be armed after the entry follow's run ends
+        // (the live twin relies on this between the entry and exit Follow
+        // steps — the exit route re-arms with the traveller's latch).
+        let mut t = Traveller::new();
+        t.set_essence(essence_session_for_wizard(553));
+        t.arm(
+            find_on_grid(
+                &StepGrid::fixture_open_3x3(),
+                Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                Tile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
+            )
+            .unwrap(),
+        );
+        assert!(t.queued().is_some(), "route armed before clear");
+        t.clear();
+        assert_eq!(t.queued(), None, "clear drops the route");
+        assert_eq!(
+            t.essence(),
+            essence_session_for_wizard(553),
+            "clear keeps the mine latch"
+        );
     }
 
     #[test]

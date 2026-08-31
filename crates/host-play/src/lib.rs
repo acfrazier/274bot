@@ -358,6 +358,21 @@ impl WalkArm {
             level: hl,
         };
         let to = WorldTile { x, z, level };
+        // The uid's latched essence-mine session lets a script walk out
+        // of the mine through the exit portal's return hop; a uid with no
+        // latch keeps the mine sealed (fail-closed, exactly like the
+        // packed graph). The bot's own latch wins over a caller-supplied
+        // `opts.essence` (the script `FindOptions` carries none).
+        let mut opts = opts;
+        if let Some(ess) = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .and_then(|b| b.traveller.essence())
+        {
+            opts.essence = Some(ess);
+        }
         let world = Arc::clone(world);
         let navs = Arc::clone(&self.navs);
         let name = self.name.clone();
@@ -3029,6 +3044,128 @@ mod tests {
                 nav::router::Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
             )),
             "the route must cross the toll"
+        );
+    }
+
+    /// The Rune Essence mine mapsquare (m45_75) as a sealed 64×64
+    /// all-walkable bake at (2880,4800): the pad and the four exit portal
+    /// placements inside, nothing packed — the session return hop is
+    /// synthesized by the router, so a script walk out only arms with a
+    /// latch.
+    fn mine_nav_world() -> NavWorld {
+        NavWorld {
+            collision: nav::collision::WorldCollision {
+                origin: WorldTile {
+                    x: 2880,
+                    z: 4800,
+                    level: 0,
+                },
+                width: 64,
+                height: 64,
+                walk: vec![0u16; 64 * 64],
+                flags: None,
+            },
+            graph: TransportGraph::default(),
+        }
+    }
+
+    /// `ctx.walk` feeds the uid's latched essence session: a bot whose
+    /// traveller already latched the mine (entered via Aubury) can walk
+    /// out through the exit portal's return hop to the wizard's anchor.
+    #[test]
+    fn script_observe_walk_uses_the_latched_essence_session() {
+        let NavRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            walk_ret,
+            walk_target,
+            ..
+        } = nav_rig_with(Some(Arc::new(mine_nav_world())));
+        // Seed the bot's traveller with the latched session (the entry-hop
+        // latch path itself is the traveller's own test).
+        navs.lock().unwrap().insert(
+            "alice".into(),
+            NavBot {
+                traveller: {
+                    let mut t = Traveller::new();
+                    t.set_essence(nav::essence::essence_session_for_wizard(553));
+                    t
+                },
+                route: None,
+            },
+        );
+        // The walk target is Aubury's anchor; the origin is the mine pad.
+        *walk_target.lock().unwrap() = (3253, 3401, 0);
+        let mut d = NavRec::default();
+        assert!(script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            Some((2912, 4833, 0)),
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+        ));
+        assert_eq!(*walk_ret.lock().unwrap(), Some(true));
+        assert!(
+            wait_until(100, || queued(&navs)
+                == Some(WorldTile {
+                    x: 3253,
+                    z: 3401,
+                    level: 0
+                })),
+            "the worker armed the exit route with the latched session"
+        );
+    }
+
+    /// No latch: the session return hop is never relaxed — the sealed
+    /// mine stays NoPath for `ctx.walk` (fail-closed remains correct).
+    #[test]
+    fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
+        let NavRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            walk_ret,
+            walk_target,
+            ..
+        } = nav_rig_with(Some(Arc::new(mine_nav_world())));
+        *walk_target.lock().unwrap() = (3253, 3401, 0);
+        let mut d = NavRec::default();
+        assert!(script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            Some((2912, 4833, 0)),
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+        ));
+        assert_eq!(
+            *walk_ret.lock().unwrap(),
+            Some(true),
+            "a no-path request is queued, not found synchronously"
+        );
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            queued(&navs),
+            None,
+            "no latch -> the mine is sealed (NoPath never arms a route)"
         );
     }
 
