@@ -103,6 +103,7 @@ fn nav_wildy() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
+            ..Default::default()
         },
         &nav::WorldState::empty(),
     )
@@ -173,6 +174,7 @@ fn nav_wildy() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
+            ..Default::default()
         },
         &nav::WorldState::empty(),
     )

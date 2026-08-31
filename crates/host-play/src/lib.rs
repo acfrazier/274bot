@@ -249,6 +249,7 @@ fn script_observe(
                                 allow_teleports: o.allow_teleports,
                                 allow_wilderness: o.allow_wilderness,
                                 allow_bank_fetch: false, // script FindOptions has no bank flag yet
+                                ..FindOptions::default()
                             },
                         )
                     }
@@ -2757,7 +2758,7 @@ mod tests {
 
     fn nav_rig() -> NavRig {
         // An all-walkable 40×1 world at (0,0): x in 0..40 at z=0, no
-        // transport edges — the v2-world shape `find` consumes, built
+        // transport edges — the collision+graph shape `find` consumes, built
         // directly (no pack file on disk in unit tests).
         nav_rig_with(Some(Arc::new(NavWorld {
             collision: nav::collision::WorldCollision {

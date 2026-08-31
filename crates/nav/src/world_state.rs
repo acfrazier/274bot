@@ -12,10 +12,13 @@ use api::snapshot::GameSnapshot;
 
 use crate::transport::TransportEdge;
 
-/// The quest journal's "completed" green (`0x00FF00`): a quest-tab entry
-/// painted this colour is done. The not-started red and started yellow
-/// are not.
-pub const QUEST_COMPLETE_COLOUR: i32 = 0x00FF00;
+/// The quest journal's "completed" green as the **client stores it**: the
+/// server sends `if_setcolour` as 15-bit 5-5-5 (`^green_rgb = 0xFF00` →
+/// `rgb24to15` = `0x3E0`), and the client decodes it back to
+/// `r<<19 | g<<11 | b<<3` — full green reads back `0xF800`, not the raw
+/// `0x00FF00`. A quest-tab entry painted this value is done. The
+/// not-started red (`0xF80000` as stored) and started yellow are not.
+pub const QUEST_COMPLETE_COLOUR: i32 = 0xF800;
 
 /// The facts a route may be gated against. [`WorldState::from_snapshot`]
 /// fills it from a live `GameSnapshot`; anything the snapshot does not
@@ -255,7 +258,9 @@ mod tests {
             cache.varps = (0..400).map(|_| VarpType::default()).collect();
         }
         // Quests: the quest tab (side 2) root with two TYPE_TEXT entries —
-        // "Rune Mysteries" still red (not started), "Lost City" green.
+        // "Rune Mysteries" still red (not started, stored `0xF80000`),
+        // "Lost City" green (stored `0xF800`, the client's if_setcolour
+        // decoding of the journal's 15-bit green).
         c.side_icon[2] = 700;
         c.set_iface(700, IfType { children: Some(vec![701, 702]), ..Default::default() });
         c.set_iface(701, IfType { r#type: ComponentType::TYPE_TEXT, ..Default::default() });
@@ -263,7 +268,7 @@ mod tests {
             701,
             IfTypeMut {
                 text: "Rune Mysteries".into(),
-                colour: 0xFF0000,
+                colour: 0xF80000,
                 ..Default::default()
             },
         );

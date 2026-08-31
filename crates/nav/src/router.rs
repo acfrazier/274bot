@@ -29,6 +29,7 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
+use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{TransportEdge, TransportGraph};
@@ -89,12 +90,17 @@ impl CostModel {
 /// `allow_bank_fetch` is the 0.1.1 BankBudget stub: this tag it must
 /// NOT insert a bank leg or relax an item req — an edge stays unusable
 /// unless the search's [`WorldState`] already proves it (the bank-trip
-/// execute is 0.1.5).
+/// execute is 0.1.5). `essence` is the per-slot Rune Essence mine latch
+/// ([`EssenceSession`]): when the player stands inside the enclosed mine
+/// the search relaxes the exit portal's return hop to the entry wizard's
+/// overworld anchor. `None` (the default) keeps the mine a sealed dead
+/// end — the pack carries no return edges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FindOptions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
+    pub essence: Option<EssenceSession>,
 }
 
 /// Why [`find`] failed.
@@ -191,6 +197,7 @@ pub fn find_with(
         opts.allow_teleports,
         opts.allow_wilderness,
         state,
+        opts.essence.as_ref(),
     )
 }
 
@@ -212,6 +219,7 @@ pub fn find_with_model(
         false,
         false,
         &WorldState::empty(),
+        None,
     )
 }
 
@@ -237,6 +245,7 @@ pub fn find_allow_teleports(
             allow_teleports: true,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            ..FindOptions::default()
         },
         state,
     )
@@ -251,7 +260,18 @@ pub fn find_allow_teleports_with_model(
     model: CostModel,
     state: &WorldState,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, true, false, state)
+    find_bounded_impl(
+        collision,
+        graph,
+        from,
+        to,
+        model,
+        NODE_BUDGET,
+        true,
+        false,
+        state,
+        None,
+    )
 }
 
 /// [`find`] with an explicit cost model and node-expansion budget (the
@@ -278,6 +298,7 @@ fn find_bounded(
         false,
         false,
         &WorldState::empty(),
+        None,
     )
 }
 
@@ -299,6 +320,7 @@ fn find_bounded_impl(
     use_teleports: bool,
     allow_wilderness: bool,
     state: &WorldState,
+    essence: Option<&EssenceSession>,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -335,7 +357,7 @@ fn find_bounded_impl(
             return Err(RouteError::BudgetExhausted);
         }
         if cur == to {
-            let (legs, ticks) = reconstruct(to, &came_from, graph, model);
+            let (legs, ticks) = reconstruct(to, &came_from, graph, model, essence);
             return Ok(Route {
                 legs,
                 dest: to,
@@ -396,6 +418,41 @@ fn find_bounded_impl(
                                 tile: edge.to,
                             });
                         }
+                    }
+                }
+            }
+            // The essence-mine return: never packed — the pack carries
+            // wizard → mine-pad entry edges only. When a session is
+            // latched, each mine exit portal placement is relaxed from any
+            // standable tile within the interact radius, landing on the
+            // entry wizard's overworld anchor. Without a session the mine
+            // is a sealed dead end, so `find` never treats it as a
+            // corridor between arbitrary overworld tiles.
+            if let Some(session) = essence {
+                for (portal, &at) in ESSENCE_MINE_PORTALS.iter().enumerate() {
+                    if cur.level != at.level
+                        || (cur.x - at.x).abs().max((cur.z - at.z).abs()) > INTERACT_RADIUS
+                    {
+                        continue;
+                    }
+                    if !wildy_step_ok(cur, session.return_tile, allow_wilderness) {
+                        continue;
+                    }
+                    let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
+                    if !done.contains(&session.return_tile)
+                        && dist
+                            .get(&session.return_tile)
+                            .is_none_or(|&g| g > nd)
+                    {
+                        dist.insert(session.return_tile, nd);
+                        came_from.insert(
+                            session.return_tile,
+                            Back::EssenceReturn { from: cur, portal },
+                        );
+                        heap.push(HeapNode {
+                            cost: nd,
+                            tile: session.return_tile,
+                        });
                     }
                 }
             }
@@ -500,15 +557,18 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
 /// How a tile was reached: by a walk step (each costing the search's run
 /// rate) from `Walk`'s tile, by transport edge `Transport` (an index
 /// into [`TransportGraph::edges`], taken from `from` — the standable tile
-/// within the edge's interact radius that it was relaxed from), or by
+/// within the edge's interact radius that it was relaxed from), by
 /// any-tile teleport edge `Teleport` (an index into
 /// [`TransportGraph::teleports`], taken from `from` — the node it was
-/// relaxed from).
+/// relaxed from), or by the session-gated essence-mine return hop
+/// `EssenceReturn` (the mine exit portal placement `portal` was taken
+/// from `from`).
 #[derive(Clone, Copy)]
 enum Back {
     Walk(WorldTile),
     Transport { from: WorldTile, ei: usize },
     Teleport { from: WorldTile, index: usize },
+    EssenceReturn { from: WorldTile, portal: usize },
 }
 
 /// Split the backtrack from `to` back to the entry-less origin into legs:
@@ -521,6 +581,7 @@ fn reconstruct(
     came_from: &HashMap<WorldTile, Back>,
     graph: &TransportGraph,
     model: CostModel,
+    essence: Option<&EssenceSession>,
 ) -> (Vec<Leg>, f64) {
     // Walk tiles in backtrack order (dest side first).
     let mut walk_rev = vec![to];
@@ -557,6 +618,19 @@ fn reconstruct(
                 legs_rev.push(Leg::Transport { edge });
                 // The walk leg before the teleport resumes from the tile the
                 // teleport was actually taken on (a teleport has no `at`).
+                t = from;
+                walk_rev = vec![t];
+            }
+            Back::EssenceReturn { from, portal } => {
+                ticks += walk_ticks(&walk_rev, model);
+                walk_rev.reverse();
+                legs_rev.push(Leg::Walk { tiles: walk_rev });
+                let session = essence.expect("essence return implies a latched session");
+                let edge = crate::essence::essence_return_edge(ESSENCE_MINE_PORTALS[portal], session);
+                ticks += edge.ticks as f64;
+                legs_rev.push(Leg::Transport { edge });
+                // The walk leg before the return resumes from the take-off
+                // tile the portal was relaxed from.
                 t = from;
                 walk_rev = vec![t];
             }
@@ -991,14 +1065,27 @@ mod tests {
     /// A `width × height` level-0 bake at (0,0) with the given per-tile
     /// flags OR'd in. Planes 1..=3 stay empty (the per-level bake shape).
     fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollision {
+        bake_at(0, 0, width, height, extras)
+    }
+
+    /// A `width × height` level-0 bake at (`ox`, `oz`): the origin-offset
+    /// variant of [`bake`] for fixtures pinned to real world tiles (the
+    /// essence-mine mapsquare).
+    fn bake_at(
+        ox: i32,
+        oz: i32,
+        width: usize,
+        height: usize,
+        extras: &[(i32, i32, u32)],
+    ) -> WorldCollision {
         let mut plane = vec![0u32; width * height];
         for &(x, z, f) in extras {
-            plane[z as usize * width + x as usize] |= f;
+            plane[(z - oz) as usize * width + (x - ox) as usize] |= f;
         }
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         WorldCollision {
-            origin: tile(0, 0, 0),
+            origin: tile(ox, oz, 0),
             width,
             height,
             walk: crate::collision::pack_walk_u16(&flags),
@@ -1502,6 +1589,114 @@ mod tests {
         );
     }
 
+    // --- EssenceSession (Task 3): the mine exit returns only to the entry wizard ---
+
+    /// A 64×64 level-0 bake at (2880, 4800) — the whole Rune Essence mine
+    /// mapsquare (m45_75): the pad (2912,4833), the four exit portal
+    /// placements (2885,4850), (2889,4813), (2932,4854), (2933,4815), and
+    /// the walkable mine floor. Everything outside the bake is
+    /// unwalkable, so without the session return edge the mine is a
+    /// sealed dead end.
+    fn mine_bake() -> WorldCollision {
+        bake_at(2880, 4800, 64, 64, &[])
+    }
+
+    #[test]
+    fn find_from_the_mine_requires_a_session_to_return() {
+        let wc = mine_bake();
+        let g = TransportGraph::default();
+        let pad = tile(2912, 4833, 0);
+        let aubury = tile(3253, 3401, 0); // ^essence_mine_to_aubury
+        // No session: the mine is sealed — the pack carries no return
+        // edges, so `find` (and `find_with` with no latch) is NoPath.
+        assert!(matches!(
+            find(&wc, &g, pad, aubury),
+            Err(RouteError::NoPath)
+        ));
+        assert!(matches!(
+            find_with(
+                &wc,
+                &g,
+                pad,
+                aubury,
+                FindOptions::default(),
+                &WorldState::empty(),
+            ),
+            Err(RouteError::NoPath)
+        ));
+        // With the session the exit portal returns to the entry wizard's
+        // overworld anchor.
+        let session = crate::essence::essence_session_for_wizard(553).unwrap();
+        let r = find_with(
+            &wc,
+            &g,
+            pad,
+            aubury,
+            FindOptions {
+                essence: Some(session),
+                ..FindOptions::default()
+            },
+            &WorldState::empty(),
+        )
+        .unwrap();
+        assert_eq!(r.dest, aubury);
+        let edge = r
+            .legs
+            .iter()
+            .find_map(|l| match l {
+                Leg::Transport { edge } => Some(edge),
+                _ => None,
+            })
+            .expect("the route's only transport leg is the return hop");
+        assert_eq!(edge.kind, TransportKind::EssenceExit);
+        assert_eq!(
+            edge.to, aubury,
+            "the return lands on the entry wizard's anchor"
+        );
+        assert_eq!(edge.loc_id, crate::essence::ESSENCE_MINE_PORTAL_LOC_ID);
+    }
+
+    #[test]
+    fn the_session_return_reaches_only_the_entry_wizards_tile() {
+        let wc = mine_bake();
+        let g = TransportGraph::default();
+        let pad = tile(2912, 4833, 0);
+        let sedridor = tile(3106, 9572, 0); // ^essence_mine_to_sedridor
+        // The exit returns only to Aubury; from his Varrock anchor the
+        // fixture world reaches nothing else, so Sedridor's cellar anchor
+        // is NoPath.
+        let aubury = crate::essence::essence_session_for_wizard(553).unwrap();
+        assert!(matches!(
+            find_with(
+                &wc,
+                &g,
+                pad,
+                sedridor,
+                FindOptions {
+                    essence: Some(aubury),
+                    ..FindOptions::default()
+                },
+                &WorldState::empty(),
+            ),
+            Err(RouteError::NoPath)
+        ));
+        // A session for the other wizard returns to the other anchor.
+        let sed_session = crate::essence::essence_session_for_wizard(300).unwrap();
+        let r = find_with(
+            &wc,
+            &g,
+            pad,
+            sedridor,
+            FindOptions {
+                essence: Some(sed_session),
+                ..FindOptions::default()
+            },
+            &WorldState::empty(),
+        )
+        .unwrap();
+        assert_eq!(r.dest, sedridor);
+    }
+
     #[test]
     fn walk_only_route_ticks_are_the_walk_tick_cost() {
         // Walking is no longer free: a walk-only route's `ticks` is the
@@ -1683,6 +1878,7 @@ mod tests {
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: false,
+                ..FindOptions::default()
             },
             &WorldState::empty(),
         );
@@ -1758,6 +1954,7 @@ mod tests {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_bank_fetch: false,
+                ..FindOptions::default()
             },
             &spell_state(),
         );

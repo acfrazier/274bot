@@ -425,6 +425,10 @@ fn kind_to_u8(k: TransportKind) -> u8 {
         TransportKind::Glider => 6,
         TransportKind::SpiritTree => 7,
         TransportKind::Npc => 8,
+        // The essence-mine return hop is synthesized per-slot from the
+        // live EssenceSession — never packed, so encode never sees it
+        // (decode rejects the byte too, keeping it off the wire).
+        TransportKind::EssenceExit => unreachable!("the essence return is never packed"),
     }
 }
 

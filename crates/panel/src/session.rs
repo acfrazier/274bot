@@ -2294,6 +2294,10 @@ impl Session {
                 allow_teleports: self.ui.nav.allow_teleports,
                 allow_wilderness: self.ui.nav.allow_wilderness,
                 allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+                // The focused slot's essence-mine session lives on its
+                // traveller; the panel walk-route does not feed it yet, so
+                // routing out of the mine stays NoPath here (0.1.x follow-up).
+                essence: None,
             },
             &state,
         );

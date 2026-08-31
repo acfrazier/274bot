@@ -8,7 +8,7 @@
 //! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
 //! hand-authored table.
 //!
-//! The ladder/stairs parsing is a port of m8aq `apiv2/nav/transports.ts`
+//! The ladder/stairs parsing is a port of m8aq `api/nav/transports.ts`
 //! (`resolvePlacements`: `p_telejump`/`p_teleport`/`~climb_ladder` +
 //! `movecoord`/coordinate literals under `switch_coord`/`switch_int` guards);
 //! agility shortcuts port `resolveShortcutPlacements`. Doors derive two
@@ -58,6 +58,11 @@ pub enum TransportKind {
     /// An NPC-triggered transport hop (carts, essence-mine wizards,
     /// Elkoy's maze escorts).
     Npc,
+    /// The Rune Essence mine exit portal (`blankrunestone_exit_portal`):
+    /// never packed — the pack carries wizard → mine-pad entry edges
+    /// only. The router synthesizes one per live [`crate::essence::EssenceSession`],
+    /// returning to the entry wizard's overworld anchor.
+    EssenceExit,
 }
 
 /// The crossing direction of a door edge (step 2 derives it from the door
@@ -2037,7 +2042,15 @@ const ESSENCE_MINE_PAD: WorldTile = WorldTile {
 };
 
 /// Essence-mine entry edges from the fixed wizard table: one direct
-/// teleport hop per wizard, landing on the mine pad.
+/// teleport hop per wizard, landing on the mine pad. The return is not
+/// packed — the mine exit portal's hop is synthesized per-slot from the
+/// traveller's [`crate::essence::EssenceSession`], so the mine is never
+/// a corridor between arbitrary overworld tiles. The gate is the quest
+/// journal's row name ("Rune Mysteries Quest", green at
+/// `%runemysteries >= ^runemysteries_complete`) — the same name
+/// `WorldState::from_snapshot` reads from the quest tab; the
+/// perm-scoped `%runemysteries` varp is never transmitted, so a
+/// `varp_req` gate could never pass live.
 fn essence_mine_edges(graph: &mut TransportGraph) {
     for w in ESSENCE_WIZARDS {
         graph.edges.push(TransportEdge {
@@ -2051,7 +2064,7 @@ fn essence_mine_edges(graph: &mut TransportGraph) {
             open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
-            quest_req: vec!["Rune Mysteries".to_string()],
+            quest_req: vec!["Rune Mysteries Quest".to_string()],
             varp_req: vec![],
             worn_req: vec![],
         });
@@ -4167,6 +4180,7 @@ mes(\"...And teleport into the wilderness.\");
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: false,
+                ..FindOptions::default()
             },
             &crate::world_state::WorldState::empty(),
         )

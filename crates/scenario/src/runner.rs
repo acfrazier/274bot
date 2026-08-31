@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use api::interact::{Interactions, SendResult};
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
@@ -45,7 +46,7 @@ pub struct ScenarioRunner {
     snapshot: GameSnapshot,
     obj_names: Option<Arc<ObjNames>>,
     /// The whole-world router surface (collision + transport graph),
-    /// loaded from the baked v2 pack; both `Walk` and `Follow` steps
+    /// loaded from the baked nav pack; both `Walk` and `Follow` steps
     /// route on it.
     nav_world: Option<Arc<NavWorld>>,
     traveller: Traveller,
@@ -299,8 +300,18 @@ impl ScenarioRunner {
                     ));
                     return;
                 }
-                self.step_sent = true;
-                self.ticks_waited = 0;
+                // A `DrainDialogs` janitor re-sends every tick: it answers
+                // whatever `p_choice` dialog is up (the quest-seed
+                // prompts) and closes the quest-scroll modals until its
+                // arm holds, so the send stays armed — and the step's
+                // tick budget keeps counting.
+                self.step_sent = !matches!(
+                    self.current_step().kind,
+                    StepKind::DrainDialogs { .. }
+                );
+                if self.step_sent {
+                    self.ticks_waited = 0;
+                }
             }
             if dirty {
                 self.ticks_waited += 1;
@@ -311,16 +322,29 @@ impl ScenarioRunner {
                 (wait.arm, wait.budget_ticks)
             };
             if arm.check(&self.snapshot, self.obj_names.as_deref()) {
-                let shot_label = match &self.current_step().kind {
-                    StepKind::Shot { label } => Some(*label),
-                    _ => None,
+                // A nav step only advances once its follow has
+                // terminated: the arm can hold on a snapshot the
+                // traveller has not polled yet — the essence-mine entry
+                // lands mid-scene-rebuild, the settle gate skips the
+                // follow's poll, and the arm alone would advance with the
+                // traveller still watching the hop, dropping the session
+                // latch (the exit route then fails closed).
+                let nav_done = match &self.current_step().kind {
+                    StepKind::Walk { .. } | StepKind::Follow { .. } => self.route.is_none(),
+                    _ => true,
                 };
-                if let Some(label) = shot_label {
-                    if let Some(sink) = self.shot_sink.as_mut() {
-                        sink(label, &self.snapshot);
+                if nav_done {
+                    let shot_label = match &self.current_step().kind {
+                        StepKind::Shot { label } => Some(*label),
+                        _ => None,
+                    };
+                    if let Some(label) = shot_label {
+                        if let Some(sink) = self.shot_sink.as_mut() {
+                            sink(label, &self.snapshot);
+                        }
                     }
+                    self.advance_step();
                 }
-                self.advance_step();
             } else if self.ticks_waited >= budget {
                 self.finish_fail(&format!(
                     "step {} ({}): {} not seen within {} ticks",
@@ -405,8 +429,10 @@ impl ScenarioRunner {
     /// Send the current step's action once. `Perform` runs its closure;
     /// `Walk` and `Follow` both arm the whole-world route (`find_with`
     /// over the collision + transport graph, default options) and drive
-    /// `Traveller::follow`; `Shot` sends nothing (the step only waits for
-    /// its arm to capture it).
+    /// `Traveller::follow`; `DrainDialogs` answers the chat modal's
+    /// choice when one is up, else closes the open modal (re-sent every
+    /// tick by the runner — a refusal with nothing up is fine); `Shot`
+    /// sends nothing (the step only waits for its arm to capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
@@ -415,6 +441,22 @@ impl ScenarioRunner {
                 }
                 return Err("driver rejected the send".into());
             }
+            StepKind::DrainDialogs { choice } => {
+                let mut ix = Interactions::new(&self.snapshot, client);
+                if !self.snapshot.chat_options().is_empty() {
+                    match ix.answer_choice(*choice) {
+                        SendResult::Sent { .. } | SendResult::Refused { .. } => Ok(()),
+                    }
+                } else {
+                    let m = self.snapshot.modals();
+                    if m.main == -1 && m.side == -1 && m.chat == -1 && m.tutorial == -1 {
+                        return Ok(());
+                    }
+                    match ix.close_modal() {
+                        SendResult::Sent { .. } | SendResult::Refused { .. } => Ok(()),
+                    }
+                }
+            }
             StepKind::Shot { .. } => return Ok(()),
             StepKind::Walk { dest } | StepKind::Follow { dest } => {
                 self.arm_route(*dest, FindOptions::default())
@@ -422,7 +464,7 @@ impl ScenarioRunner {
         }
     }
 
-    /// Arm a whole-world route: `nav::router::find` over the packed v2
+    /// Arm a whole-world route: `nav::router::find` over the packed
     /// collision + transport graph loaded into [`NavWorld`] (the same
     /// surface the route is then walked on — the pack is baked from the
     /// maps, so it matches the live world). The origin is the observed
@@ -441,14 +483,23 @@ impl ScenarioRunner {
             level: hl,
         };
         // The live snapshot's facts gate the route: an edge the player
-        // cannot pay / has not earned is not relaxed.
+        // cannot pay / has not earned is not relaxed. The traveller's
+        // latched essence-mine session lets a route from inside the mine
+        // use the exit portal's return hop to the entry wizard.
         let state = nav::WorldState::from_snapshot(&self.snapshot);
+        let opts = FindOptions {
+            essence: self.traveller.essence(),
+            ..opts
+        };
         match nav::router::find_with(&world.collision, &world.graph, from, dest, opts, &state) {
             Ok(route) => {
                 self.route = Some(route);
                 Ok(())
             }
-            Err(e) => Err(format!("no world path from {from:?} to {dest:?}: {e:?}")),
+            Err(e) => Err(format!(
+                "no world path from {from:?} to {dest:?}: {e:?} (essence {:?})",
+                opts.essence
+            )),
         }
     }
 
@@ -975,6 +1026,49 @@ mod tests {
                 )
             }
             other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    // --- Dialog-janitor steps (`DrainDialogs`) ---
+
+    /// A `DrainDialogs` step whose arm never holds: the fixture has no
+    /// chat modal, so every re-send is a harmless refusal. The step must
+    /// keep re-sending each tick (never count as "already sent") and fail
+    /// on the tick budget, not on the first send.
+    #[test]
+    fn drain_dialogs_resends_every_tick_and_fails_on_the_budget() {
+        let scenario = Scenario {
+            name: "drain",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "drain",
+                kind: StepKind::DrainDialogs { choice: 1 },
+                wait: wait(Proof::Stat { id: 16, min: 999 }, 3),
+            }],
+            proof: Proof::Stat { id: 16, min: 0 },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        };
+        let mut c = follow_client();
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        // Tick 1-4: the janitor re-sends each tick (no chat choice on the
+        // fixture -> refused, which is fine) and the budget lapses.
+        for _ in 0..4 {
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut c);
+        }
+        match runner.status() {
+            RunnerStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("not seen within 3 ticks"),
+                    "the drain step fails on its tick budget: {msg}"
+                );
+            }
+            other => panic!("expected Failed after the budget, got {other:?}"),
         }
     }
 

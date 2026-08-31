@@ -23,6 +23,10 @@ use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WorldTile};
 use client::dash3d::CollisionFlag;
 
 use crate::arrival::arrived as grid_arrived;
+use crate::essence::{
+    essence_session_for_wizard, in_essence_mine, is_essence_entry_edge, EssenceSession,
+    ESSENCE_MINE_EXIT_ARRIVE_RADIUS,
+};
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{DoorDir, TransportEdge, TransportKind};
@@ -143,6 +147,11 @@ pub struct Traveller {
     leg: usize,
     /// The active high-level follow run (Task 14); `None` when idle.
     follow: Option<FollowRun>,
+    /// The per-slot Rune Essence mine latch: set when an essence entry
+    /// hop completes, the mine exit loc may only return to the entry
+    /// wizard. Survives across routes (the game's `%exit_essence_mine_coord`
+    /// varp persists too); a new entry overwrites it.
+    essence: Option<EssenceSession>,
 }
 
 impl Traveller {
@@ -159,6 +168,7 @@ impl Traveller {
             last_op_ok: None,
             leg: 0,
             follow: None,
+            essence: None,
         }
     }
 
@@ -200,6 +210,16 @@ impl Traveller {
     /// Whether the most recent door `op_loc` was accepted (live diagnostics).
     pub fn last_op_ok(&self) -> Option<bool> {
         self.last_op_ok
+    }
+
+    /// The latched Rune Essence mine session: the wizard the player last
+    /// entered the mine through, and the overworld tile the mine exit
+    /// portal returns to. `None` before the first essence entry (and for
+    /// bots that never visit the mine). The caller passes this back into
+    /// [`crate::router::FindOptions::essence`] so a route from inside the
+    /// mine can use the return hop.
+    pub fn essence(&self) -> Option<EssenceSession> {
+        self.essence
     }
 
     /// The tile the traveller is currently walking toward: the active walk
@@ -427,7 +447,7 @@ impl Traveller {
         let outcome = self
             .follow
             .as_mut()
-            .and_then(|run| run.step(d, snapshot, options));
+            .and_then(|run| run.step(d, snapshot, options, &mut self.essence));
         if crate::debug_enabled() {
             let run = self.follow.as_ref();
             eprintln!(
@@ -495,11 +515,14 @@ impl FollowRun {
     /// its first hop). At most one driver send per call. A settle poll that
     /// is still watching ends the call (`None`); only a matched settle may
     /// advance the run — to the next leg or to a terminal outcome.
+    /// `essence` is the traveller's per-slot mine latch: a completed
+    /// essence entry hop records the wizard here.
     fn step<D: Driver>(
         &mut self,
         d: &mut D,
         snapshot: &GameSnapshot,
         options: &mut TravelOptions<'_>,
+        essence: &mut Option<EssenceSession>,
     ) -> Option<TravelOutcome> {
         loop {
             if self.walk.is_some() {
@@ -510,7 +533,7 @@ impl FollowRun {
                 }
             }
             if self.transport.is_some() {
-                match self.poll_transport(d, snapshot, options) {
+                match self.poll_transport(d, snapshot, options, essence) {
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::Watching => return None,
                     Poll::LegDone => continue,
@@ -854,6 +877,7 @@ impl FollowRun {
         d: &mut D,
         snapshot: &GameSnapshot,
         options: &mut TravelOptions,
+        essence: &mut Option<EssenceSession>,
     ) -> Poll {
         let mut hop = self.transport.take().expect("transport hop present");
         let here = here(snapshot);
@@ -958,6 +982,10 @@ impl FollowRun {
             Leg::Transport { edge } => edge.clone(),
             Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
         };
+        // The latch target, read before the arrive-arm builder below moves
+        // `edge` into the door closure: a completed essence entry hop
+        // records the wizard the player entered through.
+        let entry_wizard = is_essence_entry_edge(&edge).then_some(edge.loc_id);
         if crate::debug_enabled() {
             eprintln!(
                 "[nav-transport] here={here:?} to={:?} troll={} ticks_waited={} loc_id={} open={}",
@@ -1024,6 +1052,25 @@ impl FollowRun {
                 door_crossed(&edge, here)
                     && (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs()) <= close_enough
             })
+        } else if is_essence_entry_edge(&edge) {
+            // The entry teleport lands at a random `essence_mine_teleports`
+            // coord — never the pad exactly — so any tile inside the
+            // enclosed mine completes the hop (and latches the session).
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                now.world_tile().is_some_and(in_essence_mine)
+            })
+        } else if edge.kind == TransportKind::EssenceExit {
+            // The exit portal teleports to `map_findsquare(anchor, 0, 2,
+            // lineofwalk)`: a random standable tile within chebyshev 2 of
+            // the wizard's anchor, never the anchor exactly.
+            let to = edge.to;
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                now.world_tile().is_some_and(|t| {
+                    t.level == to.level
+                        && (t.x - to.x).abs().max((t.z - to.z).abs())
+                            <= ESSENCE_MINE_EXIT_ARRIVE_RADIUS
+                })
+            })
         } else {
             arrived(edge.to, close_enough)
         };
@@ -1058,6 +1105,19 @@ impl FollowRun {
                 })
             }
             Some(Outcome::Matched { .. }) => {
+                // A completed essence entry hop latches the mine session:
+                // the exit portal may only return to this wizard.
+                if let Some(wizard) = entry_wizard {
+                    if let Some(session) = essence_session_for_wizard(wizard) {
+                        *essence = Some(session);
+                        if crate::debug_enabled() {
+                            eprintln!(
+                                "[nav-transport] essence entry latched wizard {} -> {:?}",
+                                session.wizard_npc, session.return_tile
+                            );
+                        }
+                    }
+                }
                 fire_leg(options, &hop.leg, LegPhase::Done);
                 self.leg_index += 1;
                 Poll::LegDone
@@ -2520,6 +2580,26 @@ mod tests {
             .set_wall(0, scene_x, scene_z, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     }
 
+    /// A wall loc at scene (`scene_x`, `scene_z`) with `id`/`name`/`op1`:
+    /// the generic wall-planting shape (the essence exit portal, …).
+    fn plant_loc(c: &mut Client, id: i32, name: &str, op1: &str, scene_x: i32, scene_z: i32) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.locs.len() <= id as usize {
+                cache.locs.push(LocType::default());
+            }
+            cache.locs[id as usize] = LocType {
+                id,
+                name: name.into(),
+                op: vec![Some(op1.into()), None, None, None, None],
+                ..Default::default()
+            };
+        }
+        let typecode = 0x4000_0000 + (id << 14) + scene_x + (scene_z << 7);
+        c.world
+            .set_wall(0, scene_x, scene_z, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    }
+
     /// A level-0 walk leg over the given (x, z) world tiles.
     fn walk_leg(tiles: &[(i32, i32)]) -> Leg {
         Leg::Walk {
@@ -3160,6 +3240,255 @@ mod tests {
                     level: 0
                 }
         ));
+    }
+
+    #[test]
+    fn follow_essence_entry_latches_the_session_on_arrival() {
+        // A wizard entry hop (`opnpc4` on Aubury) that teleports the
+        // player into a random mine tile: the hop completes on any tile
+        // inside the enclosed mine (never the pad exactly), and the
+        // traveller records the wizard so the mine exit loc can only
+        // return to him.
+        let mut c = scene_client();
+        plant_npc_ops(
+            &mut c,
+            553,
+            1,
+            1,
+            "Aubury",
+            &["Talk-to", "Talk-to", "Talk-to", "Teleport"],
+        );
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = TransportEdge {
+            kind: TransportKind::Npc,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2912,
+                z: 4833,
+                level: 0, // the mine pad
+            },
+            loc_id: 553,
+            option: 4, // Aubury's `[opnpc4,aubury]`
+            ticks: 5,  // OP_BASE + the portal p_delay(4)
+            ..cart_edge()
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 2912,
+                z: 4833,
+                level: 0,
+            },
+            ticks: 5.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t.essence().is_none(), "no session before the entry");
+        // Poll 1: the hop sends the OP_NPC4 interact.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.npc_ops, 1, "one OP_NPC4 interact sent");
+        // The wizard teleports the player into the mine — a tile off the
+        // pad, still inside the enclosure: the hop completes.
+        plant_player(&mut c, -288, 1633); // world (2912, 4833)
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { at })
+                if at == WorldTile {
+                    x: 2912,
+                    z: 4833,
+                    level: 0
+                }
+        ));
+        let session = t.essence().expect("the entry latches the session");
+        assert_eq!(session.wizard_npc, 553);
+        assert_eq!(
+            session.return_tile,
+            WorldTile {
+                x: 3253,
+                z: 3401,
+                level: 0
+            },
+            "the exit portal may only return to Aubury's anchor"
+        );
+    }
+
+    #[test]
+    fn follow_essence_entry_accepts_any_mine_landing() {
+        // The entry settle must not demand the pad exactly: the live
+        // teleport lands at a random `essence_mine_teleports` coord, so a
+        // landing several tiles off the pad still completes the hop.
+        let mut c = scene_client();
+        plant_npc_ops(
+            &mut c,
+            553,
+            1,
+            1,
+            "Aubury",
+            &["Talk-to", "Talk-to", "Talk-to", "Teleport"],
+        );
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = TransportEdge {
+            kind: TransportKind::Npc,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2912,
+                z: 4833,
+                level: 0, // the mine pad
+            },
+            loc_id: 553,
+            option: 4,
+            ticks: 5,
+            ..cart_edge()
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 2912,
+                z: 4833,
+                level: 0,
+            },
+            ticks: 5.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        // A far landing (m45_75 local (55,46) → (2935, 4846)), 23 tiles
+        // from the pad: still inside the enclosed mine, still arrived.
+        plant_player(&mut c, -265, 1646); // world (2935, 4846)
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { at })
+                if at == WorldTile {
+                    x: 2935,
+                    z: 4846,
+                    level: 0
+                }
+        ));
+        assert!(t.essence().is_some(), "any mine landing latches the session");
+    }
+
+    #[test]
+    fn follow_essence_exit_arrives_within_the_landing_radius() {
+        // The exit portal (`oploc1`, loc 2492) teleports to a random tile
+        // within chebyshev 2 of the entry wizard's anchor: the hop accepts
+        // any landing in that radius, never an exact tile, and never
+        // re-latches the session (only the entry does).
+        let mut c = scene_client();
+        plant_loc(&mut c, 2492, "Portal", "Enter", 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = TransportEdge {
+            kind: TransportKind::EssenceExit,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3200,
+                z: 3205,
+                level: 0, // the wizard's anchor
+            },
+            loc_id: 2492,
+            option: 1,
+            ticks: 2,
+            ..cart_edge()
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop sends the OP_LOC1 on the portal.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1, "one OP_LOC1 on the exit portal");
+        assert_eq!(rec.npc_ops, 0, "the exit is a loc, never an npc op");
+        // The portal drops the player a tile off the anchor: still arrived.
+        plant_player(&mut c, 1, 5); // world (3201, 3205), cheb 1 from `to`
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3201,
+                        z: 3205,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+        assert_eq!(t.essence(), None, "an exit hop never latches the session");
+    }
+
+    #[test]
+    fn follow_essence_entry_does_not_latch_for_a_cart_driver() {
+        // A non-wizard Npc hop (the cart driver) arrives like always but
+        // records no session: only the essence-mine wizards latch.
+        let mut c = scene_client();
+        plant_driver_npc(&mut c, 7, 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: cart_edge(),
+            }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        plant_player(&mut c, 100, 0);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { .. })
+        ));
+        assert_eq!(t.essence(), None, "a cart ride never latches a session");
     }
 
     #[test]
@@ -4272,8 +4601,9 @@ mod tests {
         });
         // The player is on the destination level (1) but far from `to`:
         // the hop must still be watching.
+        let mut no_session = None;
         assert!(matches!(
-            run.poll_transport(&mut rec, &snap, &mut options),
+            run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
             Poll::Watching
         ));
         // Within close_enough of `to` on the destination level: the hop
@@ -4283,7 +4613,7 @@ mod tests {
         let mut snap = GameSnapshot::new();
         snap.rebuild(&mut c);
         assert!(matches!(
-            run.poll_transport(&mut rec, &snap, &mut options),
+            run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
             Poll::LegDone
         ));
     }

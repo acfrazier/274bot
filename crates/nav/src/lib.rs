@@ -4,6 +4,7 @@
 
 pub mod arrival;
 pub mod collision;
+pub mod essence;
 pub mod grid;
 pub mod pack;
 pub mod paint;

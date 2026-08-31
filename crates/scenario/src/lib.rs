@@ -117,6 +117,14 @@ pub enum StepKind {
     /// snapshot. The shot lands under `~/.274bot/smoke/<runId>/` as
     /// `<stamp>_<safeLabel>.png` + a `.json` sidecar.
     Shot { label: &'static str },
+    /// Dialog janitor: drain the seed's dialogs **every tick** until
+    /// `wait.arm` holds — answer the chat modal's `choice`-th button
+    /// (1-based) when a `p_choiceN` dialog is up (the `~completequests`
+    /// debugproc's Arrav-gang and Ikov-side prompts), else close the
+    /// modal when one is up (the quest-completion quest scrolls, whose
+    /// open main modal stalls the engine's script queue). A no-op send is
+    /// harmless, so the re-send drains each dialog as it appears.
+    DrainDialogs { choice: i32 },
 }
 
 /// Evidence wait for a step: a named predicate and a tick budget.
@@ -164,6 +172,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_full" => Some(nav_full_scenario()),
         "nav_door" => Some(nav_door_scenario()),
         "nav_cart" => Some(nav_cart_scenario()),
+        "nav_essence" => Some(nav_essence_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         _ => None,
@@ -178,6 +187,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_full",
         "nav_door",
         "nav_cart",
+        "nav_essence",
         "nav_routes",
         "nav_paint_path",
     ]
@@ -657,6 +667,125 @@ fn nav_cart_scenario() -> Scenario {
     }
 }
 
+/// Aubury's Varrock rune-shop anchor (3253,3401): `^essence_mine_to_aubury`
+/// = `0_50_53_53_9` — the tile the mine exit portal returns to after
+/// entering through Aubury.
+const AUBURY_ANCHOR: WorldTile = WorldTile {
+    x: 3253,
+    z: 3401,
+    level: 0,
+};
+/// The Rune Essence mine pad (m45_75 local (32,33)): the packed entry
+/// edge's landing anchor (the real landing is randomised in the mine).
+const MINE_PAD: WorldTile = WorldTile {
+    x: 2912,
+    z: 4833,
+    level: 0,
+};
+
+/// The `nav_essence` scenario: the EssenceSession execute twin. Log in
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, then seed
+/// Rune Mysteries by painting the quest journal green: the
+/// `~completequests` debugproc completes every quest and calls
+/// `~update_questlist` (a bare `setvar runemysteries 6` leaves the
+/// client's journal colours stale, so `WorldState::from_snapshot` would
+/// still gate the packed entry edges closed), but it first opens two
+/// `p_choice` dialogs — a `ChatAnswer` janitor answers them as they
+/// appear and the step waits on the journal going green. Then cheat-tele
+/// to Aubury's shop, `Follow` into the mine (the entry hop latches the
+/// session on any mine landing), and `Follow` back out through the exit
+/// portal — the session-gated return may only land near Aubury, never
+/// another wizard. PASSes when the player stands within the exit landing
+/// radius of Aubury's anchor.
+fn nav_essence_scenario() -> Scenario {
+    Scenario {
+        name: "nav_essence",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "complete Rune Mysteries",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~completequests");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ChatChoice,
+                    budget_ticks: 20,
+                },
+            },
+            Step {
+                name: "answer the quest-seed dialogs until the journal is green",
+                kind: StepKind::DrainDialogs { choice: 1 },
+                wait: Wait {
+                    arm: Proof::QuestDone {
+                        name: "Rune Mysteries Quest",
+                    },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "tele to Aubury's shop",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, &tele_args(AUBURY_ANCHOR.level, AUBURY_ANCHOR.x, AUBURY_ANCHOR.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: AUBURY_ANCHOR.x,
+                        z: AUBURY_ANCHOR.z,
+                        level: AUBURY_ANCHOR.level,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow into the essence mine",
+                kind: StepKind::Follow { dest: MINE_PAD },
+                wait: Wait {
+                    arm: Proof::EssenceMine,
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "follow out to Aubury through the exit portal",
+                kind: StepKind::Follow {
+                    dest: AUBURY_ANCHOR,
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: AUBURY_ANCHOR.x,
+                        z: AUBURY_ANCHOR.z,
+                        level: AUBURY_ANCHOR.level,
+                        radius: 2,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::ArrivedNear {
+            x: AUBURY_ANCHOR.x,
+            z: AUBURY_ANCHOR.z,
+            level: AUBURY_ANCHOR.level,
+            radius: 2,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav_debug: true,
+            deadline: Duration::from_secs(360),
+            terminal_shot: Some("nav_essence terminal"),
+            ..Default::default()
+        },
+    }
+}
+
 /// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
 /// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
 /// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
@@ -1007,6 +1136,7 @@ mod tests {
                 "nav_full",
                 "nav_door",
                 "nav_cart",
+                "nav_essence",
                 "nav_routes",
                 "nav_paint_path"
             ]
@@ -1139,6 +1269,85 @@ mod tests {
         assert_eq!(s.proof.name(), "arrived(2776,3214,0)");
         assert!(s.companions.is_empty());
         assert!(names().contains(&"nav_cart"));
+    }
+
+    #[test]
+    fn nav_essence_follows_in_and_back_out_to_aubury() {
+        let s = get("nav_essence").expect("nav_essence is registered");
+        assert_eq!(s.name, "nav_essence");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(s.seed.mainland);
+        assert_eq!(
+            s.steps.len(),
+            5,
+            "quest + dialog janitor + tele + entry follow + exit follow"
+        );
+        // Step 1 sends `~completequests`; the wait is the first
+        // `p_choice` dialog it opens (never a dummy stat wait).
+        assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
+        assert!(matches!(s.steps[0].wait.arm, Proof::ChatChoice));
+        // Step 2 is the choice-answering janitor, waiting for the quest
+        // journal to paint Rune Mysteries green.
+        match &s.steps[1].kind {
+            StepKind::DrainDialogs { choice } => assert_eq!(*choice, 1),
+            _ => panic!("nav_essence step 2 must be DrainDialogs"),
+        }
+        assert!(matches!(
+            s.steps[1].wait.arm,
+            Proof::QuestDone { name: "Rune Mysteries Quest" }
+        ));
+        // Step 4 arms the entry follow to the mine pad and waits for any
+        // mine landing (the landing is randomised, never the pad).
+        let (dest, arm) = match &s.steps[3].kind {
+            StepKind::Follow { dest } => (
+                *dest,
+                match &s.steps[3].wait.arm {
+                    Proof::EssenceMine => "in_essence_mine",
+                    other => panic!("entry arm must be EssenceMine, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_essence step 4 must be Follow"),
+        };
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 2912,
+                z: 4833,
+                level: 0
+            },
+            "the entry follow targets the mine pad"
+        );
+        assert_eq!(arm, "in_essence_mine");
+        // Step 5 follows out through the exit portal to Aubury's anchor
+        // (within the portal's randomised landing radius of 2).
+        let (dest, arm) = match &s.steps[4].kind {
+            StepKind::Follow { dest } => (
+                *dest,
+                match &s.steps[4].wait.arm {
+                    Proof::ArrivedNear {
+                        x,
+                        z,
+                        level,
+                        radius,
+                    } => (*x, *z, *level, *radius),
+                    other => panic!("exit arm must be ArrivedNear, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_essence step 5 must be Follow"),
+        };
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 3253,
+                z: 3401,
+                level: 0
+            },
+            "the exit follow targets Aubury's anchor"
+        );
+        assert_eq!(arm, (3253, 3401, 0, 2));
+        assert_eq!(s.proof.name(), "arrived_near(3253,3401,0,2)");
+        assert!(s.companions.is_empty());
+        assert!(names().contains(&"nav_essence"));
     }
 
     #[test]

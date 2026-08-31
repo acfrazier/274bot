@@ -8,20 +8,28 @@
 //! pad on the pack. Either failure exits 1 (rs2b0t style). Route detail
 //! prints only under `BOT_DEBUG=1`.
 //!
+//! `nav_essence_follow` is the execute twin — the same `nav_essence`
+//! scenario `panel-play --live script_nav_essence` drives. The scenario
+//! cheat-teles to Aubury, `Follow`s into the mine (the entry hop latches
+//! the EssenceSession on any mine landing), then `Follow`s back out
+//! through the exit portal to Aubury — not another wizard — and PASSes on
+//! `TravelOutcome::Arrived` near Aubury's anchor.
+//!
 //! Run with the engine up and the rebaked nav pack at the standard path:
 //! `LIVE=1 cargo test -p e2e --test nav_essence -- --ignored --test-threads=1 --nocapture`
 
 mod common;
 
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find;
+use nav::router::find_with;
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
-use scenario::default_pack_path;
+use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
 
 /// Aubury (npc 553) in the Varrock rune shop (m50_53 local (53,10)).
 const AUBURY: WorldTile = WorldTile {
@@ -36,6 +44,18 @@ const MINE_PAD: WorldTile = WorldTile {
     z: 4833,
     level: 0,
 };
+
+/// A state that can take a wizard's entry hop: the Rune Mysteries quest
+/// complete. The gate is the quest journal's row name — "Rune Mysteries
+/// Quest" — since Task 1 `find` gates every requirement fail-closed (the
+/// perm-scoped `%runemysteries` varp is never transmitted, so only the
+/// journal proves it live).
+fn ess_state() -> nav::WorldState {
+    nav::WorldState {
+        quests: ["Rune Mysteries Quest".to_string()].into(),
+        ..nav::WorldState::default()
+    }
+}
 
 #[test]
 #[ignore = "requires a local 274 engine, a rebaked v5 nav pack, and LIVE=1"]
@@ -101,28 +121,102 @@ fn nav_essence() {
             ));
         }
     }
-    // Aubury's shop tile reaches the enclosed mine through his entry hop.
-    find(&world.collision, &world.graph, AUBURY, MINE_PAD)
+    // Aubury's shop tile reaches the enclosed mine through his entry hop
+    // (the Rune-Mysteries-complete state satisfies the packed quest req).
+    find_with(
+        &world.collision,
+        &world.graph,
+        AUBURY,
+        MINE_PAD,
+        nav::router::FindOptions::default(),
+        &ess_state(),
+    )
+    .map(|route| {
+        if route.dest != MINE_PAD {
+            fail(&format!(
+                "nav_essence: route ends at {:?}, not the mine pad {MINE_PAD:?}",
+                route.dest
+            ));
+        }
+        if nav::debug_enabled() {
+            println!(
+                "nav_essence: aubury -> essence mine routed ({:.0} ticks, {} legs)",
+                route.ticks,
+                route.legs.len()
+            );
+        }
+    })
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_essence: aubury {AUBURY:?} -> mine pad {MINE_PAD:?} is NoPath ({e:?})"
+        ))
+    });
+    // The scenario teles onto the exit anchor (3253,3401), a tile from
+    // the wizard: the entry edge must still be relaxable from there.
+    find_with(
+        &world.collision,
+        &world.graph,
+        WorldTile {
+            x: 3253,
+            z: 3401,
+            level: 0,
+        },
+        MINE_PAD,
+        nav::router::FindOptions::default(),
+        &ess_state(),
+    )
+    .map(|route| {
+        if route.dest != MINE_PAD {
+            fail(&format!(
+                "nav_essence: anchor route ends at {:?}, not the mine pad {MINE_PAD:?}",
+                route.dest
+            ));
+        }
+    })
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_essence: aubury anchor (3253,3401) -> mine pad {MINE_PAD:?} is NoPath ({e:?})"
+        ))
+    });
+    // Every mine landing must be able to reach the exit: with a session
+    // latched, any interior tile (the teleport landings are random among
+    // 22 `essence_mine_teleports` coords) routes to a portal and out.
+    let session = nav::essence::essence_session_for_wizard(553).unwrap();
+    for &(x, z) in &[(2909, 4834), (2912, 4833), (2935, 4846), (2896, 4809)] {
+        find_with(
+            &world.collision,
+            &world.graph,
+            WorldTile { x, z, level: 0 },
+            WorldTile {
+                x: 3253,
+                z: 3401,
+                level: 0,
+            },
+            nav::router::FindOptions {
+                essence: Some(session),
+                ..nav::router::FindOptions::default()
+            },
+            &ess_state(),
+        )
         .map(|route| {
-            if route.dest != MINE_PAD {
+            let anchor = WorldTile {
+                x: 3253,
+                z: 3401,
+                level: 0,
+            };
+            if route.dest != anchor {
                 fail(&format!(
-                    "nav_essence: route ends at {:?}, not the mine pad {MINE_PAD:?}",
+                    "nav_essence: mine landing ({x},{z}) return ends at {:?}, not the anchor",
                     route.dest
                 ));
-            }
-            if nav::debug_enabled() {
-                println!(
-                    "nav_essence: aubury -> essence mine routed ({:.0} ticks, {} legs)",
-                    route.ticks,
-                    route.legs.len()
-                );
             }
         })
         .unwrap_or_else(|e| {
             fail(&format!(
-                "nav_essence: aubury {AUBURY:?} -> mine pad {MINE_PAD:?} is NoPath ({e:?})"
+                "nav_essence: mine landing ({x},{z}) -> aubury anchor is NoPath ({e:?})"
             ))
         });
+    }
     println!(
         "PASS: nav_essence pack carries {} essence entry edges ({} edges, {} npc hops)",
         ess.len(),
@@ -134,4 +228,65 @@ fn nav_essence() {
             .filter(|e| e.kind == TransportKind::Npc)
             .count()
     );
+}
+
+/// The execute twin: the `nav_essence` scenario run headlessly, exactly
+/// like `panel-play --live script_nav_essence`. One slot; PASS is the
+/// runner's proof (back near Aubury's anchor after entering the mine and
+/// returning through the exit portal).
+#[test]
+#[ignore = "requires a local 274 engine, nav pack, and LIVE=1"]
+fn nav_essence_follow() {
+    if !live() {
+        return;
+    }
+
+    let scenario = scenario::get("nav_essence").expect("nav_essence scenario in registry");
+    let mainland = scenario.seed.mainland;
+    let seed_profiles = scenario.seed.profiles.clone();
+    let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
+    runner.lock().unwrap().set_shot_sink(Box::new(|_, _| {}));
+    let mut opts = options();
+    opts.mainland = mainland;
+    let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
+        let runner = Arc::clone(&runner);
+        move |c, name| {
+            let mut r = runner.lock().unwrap();
+            if r.drives(name) {
+                r.tick(c);
+            } else if let Some(index) = r.companion_for(name) {
+                r.companion_tick(index, c);
+            }
+        }
+    });
+    runner.lock().unwrap().set_obj_names(play.obj_names());
+
+    wait_ingame(&play, 1, Duration::from_secs(150), "nav_essence_follow");
+
+    let deadline = Instant::now() + Duration::from_secs(360);
+    loop {
+        let (status, evidence) = {
+            let r = runner.lock().unwrap();
+            (r.status(), r.evidence().cloned())
+        };
+        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
+        match status {
+            RunnerStatus::Passed => {
+                println!("PASS: nav_essence_follow {record}");
+                return;
+            }
+            RunnerStatus::Failed(msg) => {
+                eprintln!("FAIL: nav_essence_follow {record}");
+                fail(&format!("nav_essence_follow: {msg}"));
+            }
+            other => {
+                if Instant::now() >= deadline {
+                    fail(&format!(
+                        "nav_essence_follow: no terminal status within 360s ({other:?})"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
 }
