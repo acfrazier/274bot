@@ -2632,8 +2632,8 @@ mod tests {
     use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
     use nav::tile::Tile;
-    use nav::traveller::Traveller;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+    use nav::traveller::Traveller;
     use nav::world::NavWorld;
     use nav::WorldState;
     use std::sync::atomic::Ordering;
@@ -3743,7 +3743,10 @@ mod tests {
             },
             anchor,
         );
-        assert!(s.error.is_none(), "the latched session routes out of the mine");
+        assert!(
+            s.error.is_none(),
+            "the latched session routes out of the mine"
+        );
         let queued = s
             .travellers
             .lock()
@@ -3753,7 +3756,11 @@ mod tests {
             .lock()
             .unwrap()
             .queued_tile();
-        assert_eq!(queued, Some(anchor), "the exit route reaches Aubury's anchor");
+        assert_eq!(
+            queued,
+            Some(anchor),
+            "the exit route reaches Aubury's anchor"
+        );
     }
 
     #[test]
@@ -3846,8 +3853,16 @@ mod tests {
         }
         let edge = TransportEdge {
             kind: TransportKind::Door,
-            at: WorldTile { x: 1, z: 2, level: 0 },
-            to: WorldTile { x: 2, z: 2, level: 0 },
+            at: WorldTile {
+                x: 1,
+                z: 2,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
             loc_id: 2882,
             option: 1,
             ticks: 2,
@@ -3864,7 +3879,11 @@ mod tests {
         graph.edges.push(edge);
         NavWorld {
             collision: WorldCollision {
-                origin: WorldTile { x: 0, z: 0, level: 0 },
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
                 width: 5,
                 height: 5,
                 walk: nav::collision::pack_walk_u16(&flags),
@@ -3929,8 +3948,16 @@ mod tests {
         );
         s.arm_walk_on(
             &world,
-            Tile { x: 0, z: 0, level: 0 },
-            Tile { x: 4, z: 4, level: 0 },
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 4,
+                z: 4,
+                level: 0,
+            },
         );
         assert!(
             s.error.is_none(),
@@ -3970,8 +3997,16 @@ mod tests {
         s.focus.lock().unwrap().focused = Some("alice".into());
         s.arm_walk_on(
             &world,
-            Tile { x: 0, z: 0, level: 0 },
-            Tile { x: 4, z: 4, level: 0 },
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 4,
+                z: 4,
+                level: 0,
+            },
         );
         assert!(
             s.error.as_ref().unwrap().contains("no path"),

@@ -1182,10 +1182,7 @@ impl FollowRun {
                 match ix.continue_dialog() {
                     SendResult::Sent { .. } => {
                         if crate::debug_enabled() {
-                            eprintln!(
-                                "[nav-transport] continued the npc {} dialog",
-                                edge.loc_id
-                            );
+                            eprintln!("[nav-transport] continued the npc {} dialog", edge.loc_id);
                         }
                     }
                     SendResult::Refused { .. } => {}
@@ -1943,9 +1940,7 @@ fn interact_transport<'t>(
 ) -> SendResult<'t> {
     match target {
         TransportTarget::Loc(loc) => ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(option)),
-        TransportTarget::Npc(npc) => {
-            ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(option))
-        }
+        TransportTarget::Npc(npc) => ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(option)),
     }
 }
 
@@ -2766,7 +2761,14 @@ mod tests {
     /// The essence-wizard shape: an NPC whose op 1 is Talk-to and op 3
     /// the direct teleport (no dialog) — a Npc hop with `option: 3`.
     fn plant_wizard_npc(c: &mut Client, type_id: usize, x: i32, z: i32) {
-        plant_npc_ops(c, type_id, x, z, "Essence wizard", &["Talk-to", "Talk-to", "Teleport"]);
+        plant_npc_ops(
+            c,
+            type_id,
+            x,
+            z,
+            "Essence wizard",
+            &["Talk-to", "Talk-to", "Teleport"],
+        );
     }
 
     /// An NPC of cache type `type_id` at scene (x, z) → world tile
@@ -2778,10 +2780,7 @@ mod tests {
             while cache.npcs.len() <= type_id {
                 cache.npcs.push(NpcType::default());
             }
-            let mut op: Vec<Option<String>> = ops
-                .iter()
-                .map(|s| Some((*s).to_string()))
-                .collect();
+            let mut op: Vec<Option<String>> = ops.iter().map(|s| Some((*s).to_string())).collect();
             op.resize(5, None);
             cache.npcs[type_id] = NpcType {
                 id: type_id as i32,
@@ -2839,9 +2838,7 @@ mod tests {
     /// the press's visibility check holds.
     fn plant_choice_dialog(c: &mut Client, options: &[&str]) {
         let root = 100;
-        let children: Vec<i32> = (0..options.len())
-            .map(|i| (101 + i) as i32)
-            .collect();
+        let children: Vec<i32> = (0..options.len()).map(|i| (101 + i) as i32).collect();
         for (i, text) in options.iter().enumerate() {
             let id = 101 + i;
             c.set_iface(
@@ -3260,9 +3257,7 @@ mod tests {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport {
-                edge: cart_edge(),
-            }],
+            legs: vec![Leg::Transport { edge: cart_edge() }],
             dest: WorldTile {
                 x: 3300,
                 z: 3200,
@@ -3305,9 +3300,7 @@ mod tests {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport {
-                edge: cart_edge(),
-            }],
+            legs: vec![Leg::Transport { edge: cart_edge() }],
             dest: WorldTile {
                 x: 3300,
                 z: 3200,
@@ -3362,9 +3355,7 @@ mod tests {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport {
-                edge: cart_edge(),
-            }],
+            legs: vec![Leg::Transport { edge: cart_edge() }],
             dest: WorldTile {
                 x: 3300,
                 z: 3200,
@@ -3412,9 +3403,7 @@ mod tests {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport {
-                edge: cart_edge(),
-            }],
+            legs: vec![Leg::Transport { edge: cart_edge() }],
             dest: WorldTile {
                 x: 3300,
                 z: 3200,
@@ -3443,10 +3432,7 @@ mod tests {
         // The fare page replaces it: the hop presses the edge's choice.
         plant_choice_dialog(
             &mut c,
-            &[
-                "Yes please, I'd like to go to Brimhaven.",
-                "No thanks.",
-            ],
+            &["Yes please, I'd like to go to Brimhaven.", "No thanks."],
         );
         bump_rebuild(&mut c, &mut snap);
         assert!(t
@@ -3607,7 +3593,10 @@ mod tests {
             other => panic!("expected Arrived, got {other:?}"),
         }
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact");
-        assert_eq!(rec.pause_buttons, 3, "the three handover pages were pressed");
+        assert_eq!(
+            rec.pause_buttons, 3,
+            "the three handover pages were pressed"
+        );
     }
 
     #[test]
@@ -3823,7 +3812,10 @@ mod tests {
                     level: 0
                 }
         ));
-        assert!(t.essence().is_some(), "any mine landing latches the session");
+        assert!(
+            t.essence().is_some(),
+            "any mine landing latches the session"
+        );
     }
 
     #[test]
@@ -4108,9 +4100,7 @@ mod tests {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport {
-                edge: ring_edge(),
-            }],
+            legs: vec![Leg::Transport { edge: ring_edge() }],
             dest: WorldTile {
                 x: 3315,
                 z: 3235,
@@ -4201,7 +4191,10 @@ mod tests {
                 }, // Edgeville (case 1)
                 ..glory_edge()
             },
-            TransportEdge { to: karamja, ..glory_edge() },
+            TransportEdge {
+                to: karamja,
+                ..glory_edge()
+            },
         ];
         let route = Route {
             legs: vec![Leg::Transport {
@@ -4223,7 +4216,13 @@ mod tests {
         // presses the SECOND option (Karamja), exactly once.
         plant_choice_dialog(
             &mut c,
-            &["Edgeville.", "Karamja.", "Draynor Village.", "Al Kharid.", "Nowhere."],
+            &[
+                "Edgeville.",
+                "Karamja.",
+                "Draynor Village.",
+                "Al Kharid.",
+                "Nowhere.",
+            ],
         );
         bump_rebuild(&mut c, &mut snap);
         assert!(t
@@ -4372,9 +4371,7 @@ mod tests {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport {
-                edge: cart_edge(),
-            }],
+            legs: vec![Leg::Transport { edge: cart_edge() }],
             dest: WorldTile {
                 x: 3300,
                 z: 3200,

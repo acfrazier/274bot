@@ -37,18 +37,13 @@ const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 /// How this slot paints the 274 scene. Off is `set_draw` only. Gpu↔Cpu
 /// (or lowmem) on a live slot drops + reattaches the `Renderer`; the
 /// `Client` and its socket stay up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RasterMode {
     Off,
+    #[default]
     Gpu,
     Cpu,
-}
-
-impl Default for RasterMode {
-    fn default() -> Self {
-        Self::Gpu
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

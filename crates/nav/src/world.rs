@@ -467,14 +467,8 @@ mod tests {
             inv: std::collections::HashMap::from([(554, 1), (556, 3), (563, 1)]),
             ..crate::world_state::WorldState::default()
         };
-        let r = find_allow_teleports(
-            &w.collision,
-            &w.graph,
-            tile(0, 0, 0),
-            tile(4, 4, 0),
-            &cast,
-        )
-        .unwrap();
+        let r = find_allow_teleports(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 4, 0), &cast)
+            .unwrap();
         assert_eq!(r.ticks, 3.0);
         assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
         let _ = std::fs::remove_dir_all(&dir);

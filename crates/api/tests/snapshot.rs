@@ -1232,20 +1232,20 @@ fn item_view_reads_inventory_and_bank_containers() {
         &mut c,
         500,
         IfType {
-        id: 500,
-        r#type: ComponentType::TYPE_INV,
-        iop: [None, None, None, None, None],
-        obj_ops: true,
-        ..Default::default()
-    },
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            iop: [None, None, None, None, None],
+            obj_ops: true,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         500,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 5, 0]),
-        link_obj_number: Some(vec![1, 100, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 5, 0]),
+            link_obj_number: Some(vec![1, 100, 0]),
+            ..Default::default()
         },
     );
 
@@ -1264,20 +1264,20 @@ fn item_view_reads_inventory_and_bank_containers() {
         &mut c,
         601,
         IfType {
-        id: 601,
-        layer_id: 600,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Withdraw 1".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         601,
         IfTypeMut {
-        link_obj_type: Some(vec![6, 0]),
-        link_obj_number: Some(vec![2, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
         },
     );
 
@@ -1361,20 +1361,20 @@ fn bank_side_and_equipment_read_their_components() {
         &mut c,
         701,
         IfType {
-        id: 701,
-        layer_id: 700,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Deposit All".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 701,
+            layer_id: 700,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Deposit All".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         701,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 0]),
-        link_obj_number: Some(vec![7, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![7, 0]),
+            ..Default::default()
         },
     );
 
@@ -1395,20 +1395,20 @@ fn bank_side_and_equipment_read_their_components() {
         &mut c,
         711,
         IfType {
-        id: 711,
-        layer_id: 710,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Remove".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 711,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Remove".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         711,
         IfTypeMut {
-        link_obj_type: Some(vec![7, 0]),
-        link_obj_number: Some(vec![1, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
         },
     );
 
@@ -1444,21 +1444,21 @@ fn widget_view_reads_iface_fields_and_varp_bindings() {
         &mut c,
         1000,
         IfType {
-        id: 1000,
-        layer_id: 1000,
-        r#type: ComponentType::TYPE_LAYER,
-        children: Some(vec![1001, 1002]),
-        child_x: Some(vec![5, -3]),
-        child_y: Some(vec![6, 4]),
-        ..Default::default()
-    },
+            id: 1000,
+            layer_id: 1000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![1001, 1002]),
+            child_x: Some(vec![5, -3]),
+            child_y: Some(vec![6, 4]),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1000,
         IfTypeMut {
-        scroll_height: 300,
-        ..Default::default()
+            scroll_height: 300,
+            ..Default::default()
         },
     );
 
@@ -1466,20 +1466,20 @@ fn widget_view_reads_iface_fields_and_varp_bindings() {
         &mut c,
         1001,
         IfType {
-        id: 1001,
-        layer_id: 1000,
-        r#type: ComponentType::TYPE_TEXT,
-        text2: "alt".into(),
-        ..Default::default()
-    },
+            id: 1001,
+            layer_id: 1000,
+            r#type: ComponentType::TYPE_TEXT,
+            text2: "alt".into(),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1001,
         IfTypeMut {
-        text: "Hello".into(),
-        colour: 0x00FF00,
-        ..Default::default()
+            text: "Hello".into(),
+            colour: 0x00FF00,
+            ..Default::default()
         },
     );
 
@@ -1487,38 +1487,38 @@ fn widget_view_reads_iface_fields_and_varp_bindings() {
         &mut c,
         1002,
         IfType {
-        id: 1002,
-        layer_id: 1000,
-        r#type: ComponentType::TYPE_GRAPHIC,
-        client_code: 7,
-        width: 36,
-        height: 36,
-        scripts: Some(vec![vec![5, 44], vec![7, 8, 9]]),
-        script_comparator: Some(vec![1, 0]),
-        script_operand: Some(vec![2, 0]),
-        button_text: "Select".into(),
-        target_verb: "Use".into(),
-        target_base: "Fountain".into(),
-        target_mask: 4,
-        model2_type: 4,
-        model2_id: 527,
-        iop: [Some("Toggle".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 1002,
+            layer_id: 1000,
+            r#type: ComponentType::TYPE_GRAPHIC,
+            client_code: 7,
+            width: 36,
+            height: 36,
+            scripts: Some(vec![vec![5, 44], vec![7, 8, 9]]),
+            script_comparator: Some(vec![1, 0]),
+            script_operand: Some(vec![2, 0]),
+            button_text: "Select".into(),
+            target_verb: "Use".into(),
+            target_base: "Fountain".into(),
+            target_mask: 4,
+            model2_type: 4,
+            model2_id: 527,
+            iop: [Some("Toggle".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1002,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_SELECT,
-        x: 9,
-        y: 10,
-        scroll_pos: 7,
-        hide: true,
-        model1_type: 4,
-        model1_id: 526,
-        colour: 0x123456,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_SELECT,
+            x: 9,
+            y: 10,
+            scroll_pos: 7,
+            hide: true,
+            model1_type: 4,
+            model1_id: 526,
+            colour: 0x123456,
+            ..Default::default()
         },
     );
 
@@ -1615,20 +1615,20 @@ fn widget_items_read_inv_component_slots() {
         &mut c,
         1003,
         IfType {
-        id: 1003,
-        layer_id: 1000,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Use".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 1003,
+            layer_id: 1000,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Use".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1003,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 0, 6]),
-        link_obj_number: Some(vec![1, 0, 2]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 0, 6]),
+            link_obj_number: Some(vec![1, 0, 2]),
+            ..Default::default()
         },
     );
 
@@ -1751,18 +1751,18 @@ fn side_tabs_report_available_active_visible_and_widgets() {
         &mut c,
         1101,
         IfType {
-        id: 1101,
-        layer_id: 1100,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 1101,
+            layer_id: 1100,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1101,
         IfTypeMut {
-        text: "abc".into(),
-        ..Default::default()
+            text: "abc".into(),
+            ..Default::default()
         },
     );
 
@@ -1817,20 +1817,20 @@ fn trade_view_reads_offer_confirm_and_containers() {
         &mut c,
         3415,
         IfType {
-        id: 3415,
-        layer_id: 3323,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Remove 1".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 3415,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Remove 1".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3415,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 0]),
-        link_obj_number: Some(vec![1, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
         },
     );
 
@@ -1838,20 +1838,20 @@ fn trade_view_reads_offer_confirm_and_containers() {
         &mut c,
         3416,
         IfType {
-        id: 3416,
-        layer_id: 3323,
-        r#type: ComponentType::TYPE_INV,
-        iop: [None, None, None, None, None],
-        ..Default::default()
-    },
+            id: 3416,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_INV,
+            iop: [None, None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3416,
         IfTypeMut {
-        link_obj_type: Some(vec![6, 0]),
-        link_obj_number: Some(vec![3, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![3, 0]),
+            ..Default::default()
         },
     );
 
@@ -1859,18 +1859,18 @@ fn trade_view_reads_offer_confirm_and_containers() {
         &mut c,
         3417,
         IfType {
-        id: 3417,
-        layer_id: 3323,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 3417,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3417,
         IfTypeMut {
-        text: "Trading With: Zezima".into(),
-        ..Default::default()
+            text: "Trading With: Zezima".into(),
+            ..Default::default()
         },
     );
 
@@ -1889,20 +1889,20 @@ fn trade_view_reads_offer_confirm_and_containers() {
         &mut c,
         3322,
         IfType {
-        id: 3322,
-        layer_id: 3321,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Offer".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 3322,
+            layer_id: 3321,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Offer".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3322,
         IfTypeMut {
-        link_obj_type: Some(vec![7, 0]),
-        link_obj_number: Some(vec![2, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
         },
     );
 
@@ -2074,19 +2074,19 @@ fn chat_options_and_continue_read_the_chat_modal() {
         &mut c,
         2001,
         IfType {
-        id: 2001,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2001,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2001,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_OK,
-        text: "Yes".into(),
-        ..Default::default()
+            button_type: ButtonType::BUTTON_OK,
+            text: "Yes".into(),
+            ..Default::default()
         },
     );
 
@@ -2094,19 +2094,19 @@ fn chat_options_and_continue_read_the_chat_modal() {
         &mut c,
         2002,
         IfType {
-        id: 2002,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_TEXT,
-        button_text: "No thanks".into(),
-        ..Default::default()
-    },
+            id: 2002,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            button_text: "No thanks".into(),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2002,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_OK,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
         },
     );
 
@@ -2114,18 +2114,18 @@ fn chat_options_and_continue_read_the_chat_modal() {
         &mut c,
         2003,
         IfType {
-        id: 2003,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2003,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2003,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_CONTINUE,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
         },
     );
 
@@ -2175,19 +2175,19 @@ fn make_products_read_the_make_modal() {
         &mut c,
         2110,
         IfType {
-        id: 2110,
-        layer_id: 2100,
-        r#type: ComponentType::TYPE_MODEL,
-        ..Default::default()
-    },
+            id: 2110,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_MODEL,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2110,
         IfTypeMut {
-        model1_type: 4,
-        model1_id: 800,
-        ..Default::default()
+            model1_type: 4,
+            model1_id: 800,
+            ..Default::default()
         },
     );
 
@@ -2195,19 +2195,19 @@ fn make_products_read_the_make_modal() {
         &mut c,
         2111,
         IfType {
-        id: 2111,
-        layer_id: 2100,
-        r#type: ComponentType::TYPE_MODEL,
-        ..Default::default()
-    },
+            id: 2111,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_MODEL,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2111,
         IfTypeMut {
-        model1_type: 4,
-        model1_id: 801,
-        ..Default::default()
+            model1_type: 4,
+            model1_id: 801,
+            ..Default::default()
         },
     );
 
@@ -2334,19 +2334,19 @@ fn quest_statuses_read_the_quest_tab() {
         &mut c,
         2201,
         IfType {
-        id: 2201,
-        layer_id: 2200,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2201,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2201,
         IfTypeMut {
-        text: "Cook's Assistant".into(),
-        colour: 0x123456,
-        ..Default::default()
+            text: "Cook's Assistant".into(),
+            colour: 0x123456,
+            ..Default::default()
         },
     );
 
@@ -2431,18 +2431,18 @@ fn controls_read_the_player_controls_overlay() {
         &mut c,
         7,
         IfType {
-        id: 7,
-        layer_id: 0,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 7,
+            layer_id: 0,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         7,
         IfTypeMut {
-        text: "Player controls".into(),
-        ..Default::default()
+            text: "Player controls".into(),
+            ..Default::default()
         },
     );
 
@@ -2450,21 +2450,20 @@ fn controls_read_the_player_controls_overlay() {
         &mut c,
         8,
         IfType {
-        id: 8,
-        layer_id: 0,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 8,
+            layer_id: 0,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         8,
         IfTypeMut {
-        text: "Auto retaliate".into(),
-        ..Default::default()
+            text: "Auto retaliate".into(),
+            ..Default::default()
         },
     );
-
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_SETTEXT);
@@ -2510,18 +2509,18 @@ fn modals_menu_and_modal_texts_read_client_state() {
         &mut c,
         601,
         IfType {
-        id: 601,
-        layer_id: 600,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         601,
         IfTypeMut {
-        text: "Line one".into(),
-        ..Default::default()
+            text: "Line one".into(),
+            ..Default::default()
         },
     );
 
@@ -2529,18 +2528,18 @@ fn modals_menu_and_modal_texts_read_client_state() {
         &mut c,
         602,
         IfType {
-        id: 602,
-        layer_id: 600,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 602,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         602,
         IfTypeMut {
-        text: "Line two".into(),
-        ..Default::default()
+            text: "Line two".into(),
+            ..Default::default()
         },
     );
 
@@ -2768,19 +2767,19 @@ fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
         &mut c,
         500,
         IfType {
-        id: 500,
-        r#type: ComponentType::TYPE_INV,
-        obj_ops: true,
-        ..Default::default()
-    },
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         500,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 5, 0, 7]),
-        link_obj_number: Some(vec![1, 100, 0, 2]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 5, 0, 7]),
+            link_obj_number: Some(vec![1, 100, 0, 2]),
+            ..Default::default()
         },
     );
 
@@ -2800,20 +2799,20 @@ fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
         &mut c,
         601,
         IfType {
-        id: 601,
-        layer_id: 600,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Withdraw 1".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         601,
         IfTypeMut {
-        link_obj_type: Some(vec![6, 0]),
-        link_obj_number: Some(vec![2, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
         },
     );
 
@@ -2908,19 +2907,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         500,
         IfType {
-        id: 500,
-        r#type: ComponentType::TYPE_INV,
-        obj_ops: true,
-        ..Default::default()
-    },
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         500,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 5, 0]),
-        link_obj_number: Some(vec![1, 100, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 5, 0]),
+            link_obj_number: Some(vec![1, 100, 0]),
+            ..Default::default()
         },
     );
 
@@ -2940,20 +2939,20 @@ fn read_context_round_trips_every_family() {
         &mut c,
         711,
         IfType {
-        id: 711,
-        layer_id: 710,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Remove".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 711,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Remove".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         711,
         IfTypeMut {
-        link_obj_type: Some(vec![5, 0]),
-        link_obj_number: Some(vec![1, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![5, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
         },
     );
 
@@ -2974,20 +2973,20 @@ fn read_context_round_trips_every_family() {
         &mut c,
         601,
         IfType {
-        id: 601,
-        layer_id: 600,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Withdraw 1".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         601,
         IfTypeMut {
-        link_obj_type: Some(vec![6, 0]),
-        link_obj_number: Some(vec![2, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
         },
     );
 
@@ -2995,18 +2994,18 @@ fn read_context_round_trips_every_family() {
         &mut c,
         602,
         IfType {
-        id: 602,
-        layer_id: 600,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 602,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         602,
         IfTypeMut {
-        text: "Bank line".into(),
-        ..Default::default()
+            text: "Bank line".into(),
+            ..Default::default()
         },
     );
 
@@ -3026,20 +3025,20 @@ fn read_context_round_trips_every_family() {
         &mut c,
         701,
         IfType {
-        id: 701,
-        layer_id: 700,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Deposit All".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 701,
+            layer_id: 700,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Deposit All".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         701,
         IfTypeMut {
-        link_obj_type: Some(vec![7, 0]),
-        link_obj_number: Some(vec![7, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![7, 0]),
+            ..Default::default()
         },
     );
 
@@ -3049,19 +3048,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         3415,
         IfType {
-        id: 3415,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Remove 1".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 3415,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Remove 1".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3415,
         IfTypeMut {
-        link_obj_type: Some(vec![4, 0]),
-        link_obj_number: Some(vec![1, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
         },
     );
 
@@ -3069,18 +3068,18 @@ fn read_context_round_trips_every_family() {
         &mut c,
         3416,
         IfType {
-        id: 3416,
-        r#type: ComponentType::TYPE_INV,
-        ..Default::default()
-    },
+            id: 3416,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3416,
         IfTypeMut {
-        link_obj_type: Some(vec![6, 0]),
-        link_obj_number: Some(vec![3, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![3, 0]),
+            ..Default::default()
         },
     );
 
@@ -3088,17 +3087,17 @@ fn read_context_round_trips_every_family() {
         &mut c,
         3417,
         IfType {
-        id: 3417,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 3417,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3417,
         IfTypeMut {
-        text: "Trading With: Zezima".into(),
-        ..Default::default()
+            text: "Trading With: Zezima".into(),
+            ..Default::default()
         },
     );
 
@@ -3106,19 +3105,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         3322,
         IfType {
-        id: 3322,
-        r#type: ComponentType::TYPE_INV,
-        iop: [Some("Offer".into()), None, None, None, None],
-        ..Default::default()
-    },
+            id: 3322,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Offer".into()), None, None, None, None],
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         3322,
         IfTypeMut {
-        link_obj_type: Some(vec![7, 0]),
-        link_obj_number: Some(vec![2, 0]),
-        ..Default::default()
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
         },
     );
 
@@ -3138,19 +3137,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         2001,
         IfType {
-        id: 2001,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2001,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2001,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_OK,
-        text: "Yes".into(),
-        ..Default::default()
+            button_type: ButtonType::BUTTON_OK,
+            text: "Yes".into(),
+            ..Default::default()
         },
     );
 
@@ -3158,18 +3157,18 @@ fn read_context_round_trips_every_family() {
         &mut c,
         2002,
         IfType {
-        id: 2002,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2002,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2002,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_CONTINUE,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
         },
     );
 
@@ -3177,19 +3176,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         2003,
         IfType {
-        id: 2003,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_MODEL,
-        ..Default::default()
-    },
+            id: 2003,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_MODEL,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2003,
         IfTypeMut {
-        model1_type: 4,
-        model1_id: bones_id,
-        ..Default::default()
+            model1_type: 4,
+            model1_id: bones_id,
+            ..Default::default()
         },
     );
 
@@ -3197,19 +3196,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         2004,
         IfType {
-        id: 2004,
-        layer_id: 2000,
-        r#type: ComponentType::TYPE_RECT,
-        button_text: "Make X".into(),
-        ..Default::default()
-    },
+            id: 2004,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_RECT,
+            button_text: "Make X".into(),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2004,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_OK,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
         },
     );
 
@@ -3232,19 +3231,19 @@ fn read_context_round_trips_every_family() {
         &mut c,
         2201,
         IfType {
-        id: 2201,
-        layer_id: 2200,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2201,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2201,
         IfTypeMut {
-        text: "Cook's Assistant".into(),
-        colour: 0x00ff00,
-        ..Default::default()
+            text: "Cook's Assistant".into(),
+            colour: 0x00ff00,
+            ..Default::default()
         },
     );
 
@@ -3282,17 +3281,17 @@ fn read_context_round_trips_every_family() {
         &mut c,
         1,
         IfType {
-        id: 1,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 1,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1,
         IfTypeMut {
-        text: "Player controls".into(),
-        ..Default::default()
+            text: "Player controls".into(),
+            ..Default::default()
         },
     );
 
@@ -3300,17 +3299,17 @@ fn read_context_round_trips_every_family() {
         &mut c,
         2,
         IfType {
-        id: 2,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 2,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         2,
         IfTypeMut {
-        text: "Auto retaliate".into(),
-        ..Default::default()
+            text: "Auto retaliate".into(),
+            ..Default::default()
         },
     );
 

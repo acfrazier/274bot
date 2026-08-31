@@ -440,9 +440,7 @@ fn find_bounded_impl(
                     }
                     let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
                     if !done.contains(&session.return_tile)
-                        && dist
-                            .get(&session.return_tile)
-                            .is_none_or(|&g| g > nd)
+                        && dist.get(&session.return_tile).is_none_or(|&g| g > nd)
                     {
                         dist.insert(session.return_tile, nd);
                         came_from.insert(
@@ -626,7 +624,8 @@ fn reconstruct(
                 walk_rev.reverse();
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
                 let session = essence.expect("essence return implies a latched session");
-                let edge = crate::essence::essence_return_edge(ESSENCE_MINE_PORTALS[portal], session);
+                let edge =
+                    crate::essence::essence_return_edge(ESSENCE_MINE_PORTALS[portal], session);
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
                 // The walk leg before the return resumes from the take-off
@@ -1542,7 +1541,14 @@ mod tests {
         let to = tile(4, 4, 0);
         assert!(
             matches!(
-                find_with(&wc, &g, from, to, FindOptions::default(), &WorldState::empty()),
+                find_with(
+                    &wc,
+                    &g,
+                    from,
+                    to,
+                    FindOptions::default(),
+                    &WorldState::empty()
+                ),
                 Err(RouteError::NoPath)
             ),
             "empty WorldState must not relax the unpaid toll"
@@ -1607,8 +1613,8 @@ mod tests {
         let g = TransportGraph::default();
         let pad = tile(2912, 4833, 0);
         let aubury = tile(3253, 3401, 0); // ^essence_mine_to_aubury
-        // No session: the mine is sealed — the pack carries no return
-        // edges, so `find` (and `find_with` with no latch) is NoPath.
+                                          // No session: the mine is sealed — the pack carries no return
+                                          // edges, so `find` (and `find_with` with no latch) is NoPath.
         assert!(matches!(
             find(&wc, &g, pad, aubury),
             Err(RouteError::NoPath)
@@ -1662,9 +1668,9 @@ mod tests {
         let g = TransportGraph::default();
         let pad = tile(2912, 4833, 0);
         let sedridor = tile(3106, 9572, 0); // ^essence_mine_to_sedridor
-        // The exit returns only to Aubury; from his Varrock anchor the
-        // fixture world reaches nothing else, so Sedridor's cellar anchor
-        // is NoPath.
+                                            // The exit returns only to Aubury; from his Varrock anchor the
+                                            // fixture world reaches nothing else, so Sedridor's cellar anchor
+                                            // is NoPath.
         let aubury = crate::essence::essence_session_for_wizard(553).unwrap();
         assert!(matches!(
             find_with(

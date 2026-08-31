@@ -292,20 +292,26 @@ mod tests {
             radius: 2
         }
         .check(&s, None));
-        assert!(!Proof::ArrivedNear {
-            x: 3220,
-            z: 3215,
-            level: 0,
-            radius: 2
-        }
-        .check(&s, None), "cheb 3 is outside radius 2");
-        assert!(!Proof::ArrivedNear {
-            x: 3220,
-            z: 3212,
-            level: 1,
-            radius: 2
-        }
-        .check(&s, None), "the radius is per-level");
+        assert!(
+            !Proof::ArrivedNear {
+                x: 3220,
+                z: 3215,
+                level: 0,
+                radius: 2
+            }
+            .check(&s, None),
+            "cheb 3 is outside radius 2"
+        );
+        assert!(
+            !Proof::ArrivedNear {
+                x: 3220,
+                z: 3212,
+                level: 1,
+                radius: 2
+            }
+            .check(&s, None),
+            "the radius is per-level"
+        );
         assert_eq!(
             Proof::ArrivedNear {
                 x: 3220,
@@ -339,7 +345,10 @@ mod tests {
     fn chat_choice_holds_only_when_a_choice_modal_is_open() {
         let mut c = seeded();
         let mut s = snap(&mut c);
-        assert!(!Proof::ChatChoice.check(&s, None), "no chat modal on the seed");
+        assert!(
+            !Proof::ChatChoice.check(&s, None),
+            "no chat modal on the seed"
+        );
         // A `p_choice2_header`-shape modal: root 100 with two BUTTON_OK
         // children (the quest-seed dialogs).
         for (i, text) in ["Black Arm Gang.", "Phoenix Gang."].iter().enumerate() {
@@ -436,12 +445,7 @@ mod tests {
         );
         c.bump_gens(ServerProt::IF_OPENMAIN);
         s.rebuild(&mut c);
-        assert!(
-            Proof::QuestDone {
-                name: "Lost City"
-            }
-            .check(&s, None)
-        );
+        assert!(Proof::QuestDone { name: "Lost City" }.check(&s, None));
         assert!(
             !Proof::QuestDone {
                 name: "Rune Mysteries Quest"

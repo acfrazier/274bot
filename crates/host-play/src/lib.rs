@@ -1948,7 +1948,13 @@ mod tests {
             ..Default::default()
         };
         ifaces[7] = Some(Box::new(com));
-        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), Arc::new(ifaces.clone()), Vec::new());
+        let mut client = prepare_client(
+            cfg,
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces.clone()),
+            Vec::new(),
+        );
         client.ingame = true;
         let arm = SlotArm::new(0, false);
         arm.want_logout.store(true, Ordering::Relaxed);
@@ -2435,23 +2441,27 @@ mod tests {
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
-            &mut c, "alice", false, true, 1, None, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", false, true, 1, None, None, None, None, &scripts, &cheats, &navs,
+            &world,
         );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
         script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs,
+            &world,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
         script_observe(
-            &mut c, "alice", true, false, 2, None, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", true, false, 2, None, None, None, None, &scripts, &cheats, &navs,
+            &world,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
         assert!(script_observe(
-            &mut c, "alice", true, true, 3, None, None, None, None, &scripts, &cheats, &navs, &world
+            &mut c, "alice", true, true, 3, None, None, None, None, &scripts, &cheats, &navs,
+            &world
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -2481,7 +2491,8 @@ mod tests {
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs, &world
+            &mut c, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs,
+            &world
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
@@ -2498,7 +2509,8 @@ mod tests {
             script::RunState::Idle
         );
         assert!(!script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs, &world
+            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs,
+            &world
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
@@ -2531,7 +2543,8 @@ mod tests {
             .unwrap()
             .push_back("setvar tutorial 1000".into());
         let wrote = script_observe(
-            &mut c, "alice", true, false, 0, None, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", true, false, 0, None, None, None, None, &scripts, &cheats, &navs,
+            &world,
         );
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
@@ -2959,8 +2972,16 @@ mod tests {
         }
         let edge = TransportEdge {
             kind: TransportKind::Door,
-            at: WorldTile { x: 1, z: 2, level: 0 },
-            to: WorldTile { x: 2, z: 2, level: 0 },
+            at: WorldTile {
+                x: 1,
+                z: 2,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
             loc_id: 2882,
             option: 1,
             ticks: 2,
@@ -2977,7 +2998,11 @@ mod tests {
         graph.edges.push(edge);
         NavWorld {
             collision: nav::collision::WorldCollision {
-                origin: WorldTile { x: 0, z: 0, level: 0 },
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
                 width: 5,
                 height: 5,
                 walk: nav::collision::pack_walk_u16(&flags),
@@ -3224,7 +3249,8 @@ mod tests {
 
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
-            &mut d, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut d, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs,
+            &world,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 

@@ -88,13 +88,11 @@ impl WorldState {
         e.skill_req
             .iter()
             .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
-            && e
-                .item_req
+            && e.item_req
                 .iter()
                 .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
             && e.quest_req.iter().all(|q| self.quests.contains(q))
-            && e
-                .varp_req
+            && e.varp_req
                 .iter()
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
             && e.worn_req.iter().all(|id| self.worn.contains(id))
@@ -107,7 +105,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::transport::{TransportKind, TransportEdge};
+    use crate::transport::{TransportEdge, TransportKind};
     use api::snapshot::{GameSnapshot, WorldTile};
     use client::client::{Client, ClientConfig};
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
@@ -143,14 +141,22 @@ mod tests {
     fn gated_edge() -> TransportEdge {
         TransportEdge {
             kind: TransportKind::Door,
-            at: WorldTile { x: 3268, z: 3227, level: 0 },
-            to: WorldTile { x: 3269, z: 3227, level: 0 },
+            at: WorldTile {
+                x: 3268,
+                z: 3227,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3269,
+                z: 3227,
+                level: 0,
+            },
             loc_id: 2882,
             option: 1,
             ticks: 1,
             dir: None,
             open_loc_id: None,
-            skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
+            skill_req: vec![(6, 25)],  // Magic 25 (spell teleports)
             item_req: vec![(995, 10)], // the 10-coin toll
             quest_req: vec!["Rune Mysteries".to_string()],
             varp_req: vec![(150, 160)], // Grand Tree complete
@@ -210,7 +216,10 @@ mod tests {
             worn_req: vec![],
             ..gated_edge()
         };
-        assert!(WorldState::empty().allows(&free), "req-free edges stay usable");
+        assert!(
+            WorldState::empty().allows(&free),
+            "req-free edges stay usable"
+        );
     }
 
     /// `from_snapshot` maps the snapshot's inv, equipment, stats, varps,
@@ -237,8 +246,20 @@ mod tests {
         // Worn: the equipment tab (side 4) root with a TYPE_INV child
         // carrying a charged glory (obj 1712 → stored 1713).
         c.side_icon[4] = 500;
-        c.set_iface(500, IfType { children: Some(vec![501]), ..Default::default() });
-        c.set_iface(501, IfType { r#type: ComponentType::TYPE_INV, ..Default::default() });
+        c.set_iface(
+            500,
+            IfType {
+                children: Some(vec![501]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            501,
+            IfType {
+                r#type: ComponentType::TYPE_INV,
+                ..Default::default()
+            },
+        );
         c.set_iface_mut(
             501,
             IfTypeMut {
@@ -262,8 +283,20 @@ mod tests {
         // "Lost City" green (stored `0xF800`, the client's if_setcolour
         // decoding of the journal's 15-bit green).
         c.side_icon[2] = 700;
-        c.set_iface(700, IfType { children: Some(vec![701, 702]), ..Default::default() });
-        c.set_iface(701, IfType { r#type: ComponentType::TYPE_TEXT, ..Default::default() });
+        c.set_iface(
+            700,
+            IfType {
+                children: Some(vec![701, 702]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            701,
+            IfType {
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
         c.set_iface_mut(
             701,
             IfTypeMut {
@@ -272,7 +305,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        c.set_iface(702, IfType { r#type: ComponentType::TYPE_TEXT, ..Default::default() });
+        c.set_iface(
+            702,
+            IfType {
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
         c.set_iface_mut(
             702,
             IfTypeMut {
@@ -296,10 +335,7 @@ mod tests {
         assert_eq!(s.stats.get(&6), Some(&25));
         assert_eq!(s.varps.get(&150), Some(&160));
         assert!(s.quests.contains("Lost City"), "green quest done");
-        assert!(
-            !s.quests.contains("Rune Mysteries"),
-            "red quest not done"
-        );
+        assert!(!s.quests.contains("Rune Mysteries"), "red quest not done");
 
         // Gating through the built state: an edge the state proves (the
         // completed "Lost City", not the in-progress "Rune Mysteries")
@@ -309,7 +345,10 @@ mod tests {
             ..gated_edge()
         };
         assert!(s.allows(&e));
-        let poor = WorldState { inv: HashMap::new(), ..s.clone() };
+        let poor = WorldState {
+            inv: HashMap::new(),
+            ..s.clone()
+        };
         assert!(!poor.allows(&e));
     }
 }

@@ -171,7 +171,11 @@ mod tests {
                 level: 0
             }
         );
-        assert_eq!(essence_session_for_wizard(7), None, "a cart driver latches nothing");
+        assert_eq!(
+            essence_session_for_wizard(7),
+            None,
+            "a cart driver latches nothing"
+        );
     }
 
     #[test]
@@ -211,7 +215,10 @@ mod tests {
             varp_req: vec![],
             worn_req: vec![],
         };
-        assert!(!is_essence_entry_edge(&cart), "a cart driver is not an entry hop");
+        assert!(
+            !is_essence_entry_edge(&cart),
+            "a cart driver is not an entry hop"
+        );
     }
 
     #[test]
@@ -222,12 +229,18 @@ mod tests {
             assert_eq!(edge.kind, TransportKind::EssenceExit);
             assert_eq!(edge.loc_id, ESSENCE_MINE_PORTAL_LOC_ID);
             assert_eq!(edge.option, 1, "the exit is `oploc1`");
-            assert_eq!(edge.to, aubury.return_tile, "returns to the entry wizard only");
+            assert_eq!(
+                edge.to, aubury.return_tile,
+                "returns to the entry wizard only"
+            );
         }
         let sedridor = essence_session_for_wizard(300).unwrap();
         let edge = essence_return_edge(ESSENCE_MINE_PORTALS[0], &sedridor);
         assert_eq!(edge.to, sedridor.return_tile);
-        assert_ne!(edge.to, aubury.return_tile, "a different wizard returns elsewhere");
+        assert_ne!(
+            edge.to, aubury.return_tile,
+            "a different wizard returns elsewhere"
+        );
     }
 
     #[test]

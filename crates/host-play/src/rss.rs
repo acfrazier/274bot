@@ -71,7 +71,9 @@ pub fn count_tcp_to(host: &str, port: u16) -> Option<usize> {
         .args(["-nP", "-a", "-p", &pid, &spec])
         .output()
         .ok()?;
-    Some(parse_lsof_established(&String::from_utf8_lossy(&output.stdout)))
+    Some(parse_lsof_established(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 #[cfg(test)]

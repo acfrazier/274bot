@@ -1140,17 +1140,17 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1001,
         IfType {
-        id: 1001,
-        layer_id: 1000,
-        ..Default::default()
-    },
+            id: 1001,
+            layer_id: 1000,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1001,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_CLOSE,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_CLOSE,
+            ..Default::default()
         },
     );
 
@@ -1159,18 +1159,18 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1002,
         IfType {
-        id: 1002,
-        layer_id: 1000,
-        button_text: "Attack".into(),
-        ..Default::default()
-    },
+            id: 1002,
+            layer_id: 1000,
+            button_text: "Attack".into(),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1002,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_OK,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
         },
     );
 
@@ -1179,18 +1179,18 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1003,
         IfType {
-        id: 1003,
-        layer_id: 1000,
-        target_base: "Chop down".into(),
-        ..Default::default()
-    },
+            id: 1003,
+            layer_id: 1000,
+            target_base: "Chop down".into(),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1003,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_TARGET,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_TARGET,
+            ..Default::default()
         },
     );
 
@@ -1199,20 +1199,20 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1004,
         IfType {
-        id: 1004,
-        layer_id: 1000,
-        scripts: Some(vec![vec![5, 43]]),
-        script_operand: Some(vec![2]),
-        script_comparator: Some(vec![0]),
-        ..Default::default()
-    },
+            id: 1004,
+            layer_id: 1000,
+            scripts: Some(vec![vec![5, 43]]),
+            script_operand: Some(vec![2]),
+            script_comparator: Some(vec![0]),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1004,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_SELECT,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_SELECT,
+            ..Default::default()
         },
     );
 
@@ -1221,19 +1221,19 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1005,
         IfType {
-        id: 1005,
-        layer_id: 1000,
-        scripts: Some(vec![vec![5, 43]]),
-        script_operand: Some(vec![0]),
-        ..Default::default()
-    },
+            id: 1005,
+            layer_id: 1000,
+            scripts: Some(vec![vec![5, 43]]),
+            script_operand: Some(vec![0]),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1005,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_SELECT,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_SELECT,
+            ..Default::default()
         },
     );
 
@@ -1241,19 +1241,19 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1006,
         IfType {
-        id: 1006,
-        layer_id: 1000,
-        scripts: Some(vec![vec![5, 43]]),
-        script_operand: Some(vec![1]),
-        ..Default::default()
-    },
+            id: 1006,
+            layer_id: 1000,
+            scripts: Some(vec![vec![5, 43]]),
+            script_operand: Some(vec![1]),
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1006,
         IfTypeMut {
-        button_type: ButtonType::BUTTON_SELECT,
-        ..Default::default()
+            button_type: ButtonType::BUTTON_SELECT,
+            ..Default::default()
         },
     );
 
@@ -1261,18 +1261,18 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1007,
         IfType {
-        id: 1007,
-        layer_id: 1000,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 1007,
+            layer_id: 1000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1007,
         IfTypeMut {
-        text: "Punch".into(),
-        ..Default::default()
+            text: "Punch".into(),
+            ..Default::default()
         },
     );
 
@@ -1280,18 +1280,18 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1008,
         IfType {
-        id: 1008,
-        layer_id: 1000,
-        r#type: ComponentType::TYPE_TEXT,
-        ..Default::default()
-    },
+            id: 1008,
+            layer_id: 1000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         1008,
         IfTypeMut {
-        text: "Kick".into(),
-        ..Default::default()
+            text: "Kick".into(),
+            ..Default::default()
         },
     );
 

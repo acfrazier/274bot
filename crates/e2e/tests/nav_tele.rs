@@ -102,9 +102,7 @@ fn nav_tele() {
         ));
     }
     if e.option != 4 {
-        fail(&format!(
-            "nav_tele: ring rub edge is not Rub (op 4): {e:?}"
-        ));
+        fail(&format!("nav_tele: ring rub edge is not Rub (op 4): {e:?}"));
     }
     if !e.item_req.iter().any(|&(id, n)| id == RING && n >= 1) {
         fail(&format!(
@@ -115,12 +113,18 @@ fn nav_tele() {
     // the rub leg itself: without the ring the gated rub edge must never
     // route (the search falls back to the plain walk), and with the ring
     // the 2-tick rub always beats the walk.
-    let empty = find_allow_teleports(&world.collision, &world.graph, COURTYARD, DUEL_ARENA, &nav::WorldState::default())
-        .unwrap_or_else(|e| {
-            fail(&format!(
-                "nav_tele: courtyard -> Duel Arena without the ring is NoPath ({e:?})"
-            ))
-        });
+    let empty = find_allow_teleports(
+        &world.collision,
+        &world.graph,
+        COURTYARD,
+        DUEL_ARENA,
+        &nav::WorldState::default(),
+    )
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_tele: courtyard -> Duel Arena without the ring is NoPath ({e:?})"
+        ))
+    });
     if empty.legs.iter().any(|l| {
         matches!(
             l,
@@ -132,12 +136,18 @@ fn nav_tele() {
             empty.legs
         ));
     }
-    let routed = find_allow_teleports(&world.collision, &world.graph, COURTYARD, DUEL_ARENA, &ring_state())
-        .unwrap_or_else(|e| {
-            fail(&format!(
-                "nav_tele: courtyard -> Duel Arena with the ring held is NoPath ({e:?})"
-            ))
-        });
+    let routed = find_allow_teleports(
+        &world.collision,
+        &world.graph,
+        COURTYARD,
+        DUEL_ARENA,
+        &ring_state(),
+    )
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_tele: courtyard -> Duel Arena with the ring held is NoPath ({e:?})"
+        ))
+    });
     if routed.dest != DUEL_ARENA {
         fail(&format!(
             "nav_tele: route ends at {:?}, not the Duel Arena {DUEL_ARENA:?}",

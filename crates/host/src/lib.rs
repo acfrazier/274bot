@@ -92,7 +92,13 @@ impl Host {
         ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            let mut client = prepare_client(config, profile.uid, cache, ifaces_template, ifaces_mut_template);
+            let mut client = prepare_client(
+                config,
+                profile.uid,
+                cache,
+                ifaces_template,
+                ifaces_mut_template,
+            );
 
             if debug_enabled() {
                 eprintln!("[host] slot {}: thread up", profile.username);
@@ -324,11 +330,7 @@ impl Host {
             // edge only. A GPU↔CPU / mem flip drops the head while `draw`
             // stays on: overlay meshes on the sim survive, loc models do
             // not — re-arm share-light and dirty the minimap pixmap latch.
-            rearm_after_head_drop(
-                client,
-                !client.draw && slot.draw_was_on,
-                backend_flip,
-            );
+            rearm_after_head_drop(client, !client.draw && slot.draw_was_on, backend_flip);
         }
         slot.draw_was_on = client.draw;
         let paint = raster_this_tick(
@@ -753,7 +755,13 @@ mod tests {
 
     #[test]
     fn slot_rebuilds_from_drain_dirty_not_post_drain_pump_dirty() {
-        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         client.gens.npc = 1;
         let result = slot.after_drain(&mut client);
@@ -767,7 +775,13 @@ mod tests {
     /// stay permanently 0 (the snapshot views rely on this path).
     #[test]
     fn drain_rebuilds_the_four_new_families() {
-        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
 
         client.gens.iface = 1;
@@ -828,7 +842,13 @@ mod tests {
             link_obj_number: Some(vec![1, 100, 0]),
             ..IfTypeMut::default()
         }));
-        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(ifaces), ifaces_mut);
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces),
+            ifaces_mut,
+        );
         client.side_icon[3] = 500;
         let mut slot = SlotLoop::new();
 
@@ -852,7 +872,13 @@ mod tests {
 
     #[test]
     fn auto_run_20_0_20_sends_twice() {
-        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         client.runenergy = 20;
         client.gens.stat = 1;
@@ -890,7 +916,13 @@ mod tests {
             hide: true,
             ..IfTypeMut::default()
         }));
-        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(ifaces), ifaces_mut);
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces),
+            ifaces_mut,
+        );
         client.runenergy = 20;
         client.gens.stat = 1;
         let mut slot = SlotLoop::new();
@@ -904,7 +936,13 @@ mod tests {
         let mut ifaces = vec![None; 154];
         ifaces[152] = Some(Box::new(IfType::default()));
         ifaces[153] = Some(Box::new(IfType::default()));
-        let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(ifaces), Vec::new());
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces),
+            Vec::new(),
+        );
         client.runenergy = 20;
         client.gens.stat = 1;
         let mut slot = SlotLoop::new();
@@ -914,7 +952,13 @@ mod tests {
 
     #[test]
     fn client_frame_applies_click_only_when_input_enabled() {
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let inp = SlotInput::new();
         let (tx, rx) = std::sync::mpsc::channel();
         inp.connect_rx(rx);
@@ -937,7 +981,13 @@ mod tests {
     #[test]
     fn client_frame_skips_frame_store_when_draw_off() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -959,7 +1009,13 @@ mod tests {
 
     #[test]
     fn headless_slot_constructs_no_renderer_and_never_draws() {
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         // `client.draw` defaults false: a headless slot never paints. The
@@ -980,7 +1036,13 @@ mod tests {
     #[test]
     fn draw_off_drops_renderer_draw_on_reattaches() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -1001,16 +1063,19 @@ mod tests {
     #[test]
     fn draw_off_drains_the_frame_mailbox_before_dropping_the_head() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
-        assert!(
-            buf.take().is_some(),
-            "a paint tick stores a frame"
-        );
+        assert!(buf.take().is_some(), "a paint tick stores a frame");
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
         assert!(slot.renderer.is_some());
@@ -1031,7 +1096,13 @@ mod tests {
     #[test]
     fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         // A headed overlay mesh, planted on the sim directly (no full
@@ -1141,7 +1212,13 @@ mod tests {
     #[test]
     fn prefer_cpu_rebuilds_renderer_not_client() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let inp = SlotInput::new();
         inp.set_prefer_cpu(false);
         let mut slot = SlotLoop::new();
@@ -1172,7 +1249,13 @@ mod tests {
     #[test]
     fn lowmem_flip_rebuilds_renderer_not_client() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -1193,7 +1276,13 @@ mod tests {
 
     #[test]
     fn client_frame_keeps_loop_counters_slot_local() {
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(false);
@@ -1206,7 +1295,13 @@ mod tests {
     #[test]
     fn client_frame_draw_on_paints_this_tick() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
@@ -1218,7 +1313,13 @@ mod tests {
     #[test]
     fn mainredraw_runs_check_minimap_on_a_paint_tick() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -1247,7 +1348,13 @@ mod tests {
     #[test]
     fn client_tick_observe_runs_before_the_frame_paint() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -1350,7 +1457,13 @@ mod tests {
     #[test]
     fn watch_only_paints_first_tick_then_once_per_second() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -1371,7 +1484,13 @@ mod tests {
     #[test]
     fn full_rate_paints_every_tick_after_scene_ready() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -1403,7 +1522,13 @@ mod tests {
     #[test]
     fn loading_scene_paints_every_tick_for_tv_static() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
@@ -1423,7 +1548,13 @@ mod tests {
     #[test]
     fn capture_draw_copies_every_tick() {
         force_cpu_backend();
-        let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
         let buf = FrameBuf::new();
         let inp = SlotInput::new();
         inp.set_full_rate(true);
@@ -1461,7 +1592,13 @@ mod tests {
         let stop2 = Arc::clone(&stop);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             let stream =
                 client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
             c.stream = Some(stream);
@@ -1529,7 +1666,13 @@ mod tests {
         let inp = SlotInput::new();
         inp.set_enabled(true);
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             c.set_draw(true);
             Host::run_client(
                 &mut c,
@@ -1579,7 +1722,13 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             Host::run_client(
                 &mut c,
                 "scripted",
@@ -1621,7 +1770,13 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             c.set_draw(true);
             c.ingame = true;
             c.scene_state = 2;
@@ -1696,7 +1851,13 @@ mod tests {
         let stop2 = Arc::clone(&stop);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             Host::run_client(
                 &mut c,
                 "parked",
@@ -1733,7 +1894,13 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = Arc::clone(&stop);
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             Host::run_client(
                 &mut c,
                 "kicked",
@@ -1795,7 +1962,13 @@ mod tests {
         let stop2 = Arc::clone(&stop);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let handle = thread::spawn(move || {
-            let mut c = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
+            let mut c = prepare_client(
+                cfg(),
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
             Host::run_client(
                 &mut c,
                 "kicked-idle",

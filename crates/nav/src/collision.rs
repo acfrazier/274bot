@@ -387,11 +387,7 @@ pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
     flags
         .iter()
         .map(|&raw| {
-            let mut w = if raw & SQ_BLOCKED != 0 {
-                SQ_BLOCKED
-            } else {
-                0
-            };
+            let mut w = if raw & SQ_BLOCKED != 0 { SQ_BLOCKED } else { 0 };
             for &(bit, _mask) in &WALK_BITS {
                 if raw & bit != 0 {
                     w |= bit;

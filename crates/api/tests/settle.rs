@@ -89,20 +89,20 @@ fn plant_inv(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
         &mut c,
         500,
         IfType {
-        id: 500,
-        r#type: ComponentType::TYPE_INV,
-        obj_ops: true,
-        ..Default::default()
-    },
+            id: 500,
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         500,
         IfTypeMut {
-        link_obj_type: Some(stored.to_vec()),
-        link_obj_number: Some(counts.to_vec()),
-        ..Default::default()
-    },
+            link_obj_type: Some(stored.to_vec()),
+            link_obj_number: Some(counts.to_vec()),
+            ..Default::default()
+        },
     );
 
     c.side_icon[3] = 500;
@@ -114,19 +114,19 @@ fn plant_equipment(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
         &mut c,
         711,
         IfType {
-        id: 711,
-        r#type: ComponentType::TYPE_INV,
-        ..Default::default()
-    },
+            id: 711,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
     );
     set_iface_mut(
         &mut c,
         711,
         IfTypeMut {
-        link_obj_type: Some(stored.to_vec()),
-        link_obj_number: Some(counts.to_vec()),
-        ..Default::default()
-    },
+            link_obj_type: Some(stored.to_vec()),
+            link_obj_number: Some(counts.to_vec()),
+            ..Default::default()
+        },
     );
 
     c.side_icon[4] = 711;

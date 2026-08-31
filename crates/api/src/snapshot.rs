@@ -1406,11 +1406,10 @@ impl GameSnapshot {
         }
         let root = client.chat_modal_id;
         // The continue button is a direct child of the chat modal.
-        if let Some(children) = client.if_(root as usize)
-            .and_then(|m| m.children.clone())
-        {
+        if let Some(children) = client.if_(root as usize).and_then(|m| m.children.clone()) {
             for child_id in children {
-                if client.if_(child_id as usize)
+                if client
+                    .if_(child_id as usize)
                     .is_some_and(|c| c.button_type == ButtonType::BUTTON_CONTINUE)
                 {
                     self.chat_continue_component_id = child_id;
@@ -2423,7 +2422,9 @@ fn walk_widget_tree(
             continue;
         };
         visited[id as usize] = true;
-        out.push(widget_view(client, &com, id, parent_id, root_id, root, x, y));
+        out.push(widget_view(
+            client, &com, id, parent_id, root_id, root, x, y,
+        ));
         if let Some(children) = &com.children {
             for (i, child) in children.iter().enumerate() {
                 let cx = com
@@ -2475,8 +2476,8 @@ fn widget_view(
         scroll_height: com.scroll_height,
         scroll_position: com.scroll_pos,
         hidden: com.hide,
-        text: non_empty(&com.text),
-        alternate_text: non_empty(&com.text2),
+        text: non_empty(com.text),
+        alternate_text: non_empty(com.text2),
         button_text: non_empty(&com.button_text),
         target_verb: non_empty(&com.target_verb),
         target_base: non_empty(&com.target_base),
@@ -2655,7 +2656,8 @@ const TRADESIDE_INV: i32 = 3322;
 /// with the prefix stripped and whitespace trimmed (m8aq
 /// `normalizeTradePartner`); `None` for an empty label.
 fn trade_partner(client: &Client) -> Option<String> {
-    let text = client.if_(TRADEMAIN_OTHER_PLAYER as usize)
+    let text = client
+        .if_(TRADEMAIN_OTHER_PLAYER as usize)
         .map(|c| c.text.to_string())
         .unwrap_or_default();
     let name = match text.find(':') {
@@ -2704,7 +2706,8 @@ fn controls_pair(
             continue;
         };
         let has_retaliate = children.iter().any(|id| {
-            client.if_(*id as usize)
+            client
+                .if_(*id as usize)
                 .is_some_and(|c| c.text == "Auto retaliate")
         });
         if !has_retaliate || children.len() <= min_children {

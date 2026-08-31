@@ -305,10 +305,7 @@ impl ScenarioRunner {
                 // prompts) and closes the quest-scroll modals until its
                 // arm holds, so the send stays armed — and the step's
                 // tick budget keeps counting.
-                self.step_sent = !matches!(
-                    self.current_step().kind,
-                    StepKind::DrainDialogs { .. }
-                );
+                self.step_sent = !matches!(self.current_step().kind, StepKind::DrainDialogs { .. });
                 if self.step_sent {
                     self.ticks_waited = 0;
                 }
@@ -330,9 +327,9 @@ impl ScenarioRunner {
                 // traveller still watching the hop, dropping the session
                 // latch (the exit route then fails closed).
                 let nav_done = match &self.current_step().kind {
-                    StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. } => {
-                        self.route.is_none()
-                    }
+                    StepKind::Walk { .. }
+                    | StepKind::Follow { .. }
+                    | StepKind::FollowTele { .. } => self.route.is_none(),
                     _ => true,
                 };
                 if nav_done {

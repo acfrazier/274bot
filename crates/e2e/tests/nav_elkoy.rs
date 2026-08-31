@@ -206,4 +206,3 @@ fn nav_elkoy_follow() {
         }
     }
 }
-

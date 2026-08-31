@@ -744,7 +744,10 @@ fn nav_essence_scenario() -> Scenario {
                 name: "tele to Aubury's shop",
                 kind: StepKind::Perform {
                     send: Box::new(move |c, _| {
-                        cheat(c, &tele_args(AUBURY_ANCHOR.level, AUBURY_ANCHOR.x, AUBURY_ANCHOR.z));
+                        cheat(
+                            c,
+                            &tele_args(AUBURY_ANCHOR.level, AUBURY_ANCHOR.x, AUBURY_ANCHOR.z),
+                        );
                         true
                     }),
                 },
@@ -1715,7 +1718,9 @@ mod tests {
         }
         assert!(matches!(
             s.steps[1].wait.arm,
-            Proof::QuestDone { name: "Rune Mysteries Quest" }
+            Proof::QuestDone {
+                name: "Rune Mysteries Quest"
+            }
         ));
         // Step 4 arms the entry follow to the mine pad and waits for any
         // mine landing (the landing is randomised, never the pad).
@@ -1794,7 +1799,9 @@ mod tests {
         }
         assert!(matches!(
             s.steps[1].wait.arm,
-            Proof::QuestDone { name: "Tree Gnome Village" }
+            Proof::QuestDone {
+                name: "Tree Gnome Village"
+            }
         ));
         // Step 3 cheat-teles onto the maze-side Elkoy's tile (the packed
         // escort edge's `at`, one tile south of the entrance coord).
