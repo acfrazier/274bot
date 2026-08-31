@@ -37,13 +37,21 @@ pub enum Proof {
     /// quest's row green — the same journal read the nav
     /// [`nav::WorldState`] gates quest edges on.
     QuestDone { name: &'static str },
-    /// `stat(id) >= min`: a decoded stat-family value. The body decodes
-    /// only run energy today (`id == 16`); other ids never hold.
+    /// `varp(id) >= min`: a transmitted varp's value. The snapshot's
+    /// varp table only lists varps the server transmitted (`cache.varps`
+    /// definitions), so an absent id fails closed — never a fake 0.
+    Varp { id: i32, min: i32 },
+    /// `stat(id) >= min`: a decoded stat-family value. `id == 16` is run
+    /// energy; every other id reads the snapshot stat table's effective
+    /// level.
     Stat { id: i32, min: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
     /// An NPC of `r#type` stands on the tile.
     NpcAt { r#type: usize, x: i32, z: i32 },
+    /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
+    /// the player on the player's level.
+    NpcNear { r#type: usize, radius: i32 },
 }
 
 impl Proof {
@@ -61,9 +69,11 @@ impl Proof {
             Proof::EssenceMine => "in_essence_mine".to_string(),
             Proof::ChatChoice => "chat_choice".to_string(),
             Proof::QuestDone { name } => format!("quest_done({name})"),
+            Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
+            Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
         }
     }
 
@@ -121,23 +131,50 @@ impl Proof {
             Proof::QuestDone { name } => {
                 nav::WorldState::from_snapshot(snap).quests.contains(*name)
             }
+            Proof::Varp { id, min } => snap
+                .varps()
+                .iter()
+                .find(|v| v.index == *id)
+                .is_some_and(|v| v.value >= *min),
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
             Proof::NpcAt { r#type, x, z } => snap
                 .npcs()
                 .iter()
                 .any(|n| n.r#type == Some(*r#type) && n.x == *x && n.z == *z),
+            Proof::NpcNear { r#type, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                snap.npcs().iter().any(|n| {
+                    n.r#type == Some(*r#type)
+                        && n.tile.level == tl
+                        && chebyshev(
+                            Tile {
+                                x: tx,
+                                z: tz,
+                                level: tl,
+                            },
+                            Tile {
+                                x: n.tile.x,
+                                z: n.tile.z,
+                                level: n.tile.level,
+                            },
+                        ) <= *radius
+                })
+            }),
         }
     }
 }
 
-/// A decoded stat-family value, `None` for ids the body does not decode.
-/// Today only run energy (stat 16) is decoded on the body; the rest of
-/// the 0–24 stat table is a later decode.
+/// A decoded stat-family value: run energy (id 16) from the run energy
+/// stat, every other id from the snapshot's 25-slot effective-level
+/// table (`None` for ids outside it, which fail closed).
 fn stat_value(snap: &GameSnapshot, id: i32) -> Option<i32> {
     match id {
         16 => Some(snap.runenergy()),
-        _ => None,
+        id => snap
+            .stats()
+            .iter()
+            .find(|s| s.index == id)
+            .map(|s| s.effective),
     }
 }
 
@@ -147,9 +184,10 @@ mod tests {
     use api::snapshot::GameSnapshot;
     use client::client::{Client, ClientConfig, ClientNpc};
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
-    use client::config::ObjType;
+    use client::config::{Cache, ObjType, VarpType};
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
+    use std::sync::Arc;
 
     fn cfg() -> ClientConfig {
         ClientConfig {
@@ -465,12 +503,90 @@ mod tests {
     }
 
     #[test]
-    fn stat_16_is_run_energy_others_never_hold() {
-        let s = snap(&mut seeded());
+    fn stat_16_is_run_energy_other_ids_read_effective_level() {
+        let mut c = seeded();
+        c.stat_effective_level[7] = 40;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let s = snap(&mut c);
+        // id 16 stays the run energy stat family.
         assert!(Proof::Stat { id: 16, min: 42 }.check(&s, None));
         assert!(!Proof::Stat { id: 16, min: 43 }.check(&s, None));
-        // stat(7) is not decoded on the body yet — honest false.
-        assert!(!Proof::Stat { id: 7, min: 1 }.check(&s, None));
+        // Every other id reads the snapshot stat table's effective level.
+        assert!(Proof::Stat { id: 7, min: 40 }.check(&s, None));
+        assert!(!Proof::Stat { id: 7, min: 41 }.check(&s, None));
+        // Ids outside the 25-slot table fail closed.
+        assert!(!Proof::Stat { id: 99, min: 0 }.check(&s, None));
+        assert_eq!(Proof::Stat { id: 7, min: 40 }.name(), "stat(7)>=40");
+    }
+
+    #[test]
+    fn varp_matches_transmitted_values_fails_closed_when_missing() {
+        let mut c = seeded();
+        // Plant a transmitted varp table (the snapshot only lists varps
+        // the server transmitted — `cache.varps` definitions), varp 101
+        // set to 5.
+        let mut cache = Cache::default();
+        cache.varps = (0..102).map(|_| VarpType::default()).collect();
+        c.cache = Arc::new(cache);
+        c.var = vec![0; 102];
+        c.var[101] = 5;
+        c.bump_gens(ServerProt::VARP_SYNC);
+        let s = snap(&mut c);
+        assert!(Proof::Varp { id: 101, min: 5 }.check(&s, None));
+        assert!(!Proof::Varp { id: 101, min: 6 }.check(&s, None));
+        // A raw `var` slot without a transmitted definition is absent
+        // from the snapshot — fail closed at min 0 (never a fake 0).
+        let mut c2 = seeded();
+        let mut cache2 = Cache::default();
+        cache2.varps = (0..5).map(|_| VarpType::default()).collect();
+        c2.cache = Arc::new(cache2);
+        c2.var = vec![0; 102];
+        c2.var[101] = 5;
+        c2.bump_gens(ServerProt::VARP_SYNC);
+        let s2 = snap(&mut c2);
+        assert!(!Proof::Varp { id: 101, min: 0 }.check(&s2, None));
+        // An id beyond the transmitted table fails closed too.
+        assert!(!Proof::Varp { id: 500, min: 0 }.check(&s, None));
+        assert_eq!(Proof::Varp { id: 101, min: 5 }.name(), "varp(101)>=5");
+    }
+
+    #[test]
+    fn npc_near_matches_type_within_radius_of_the_player() {
+        let mut c = seeded();
+        // Player at world (3220, 3212); plant a 708 at world (3222,
+        // 3212) = entity pixels (2880, 1600) on the 3200 base (the
+        // default entity size 1 offsets the tile by 64): cheb 2.
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let s = snap(&mut c);
+        assert!(Proof::NpcNear {
+            r#type: 708,
+            radius: 2
+        }
+        .check(&s, None));
+        assert!(
+            !Proof::NpcNear {
+                r#type: 708,
+                radius: 1
+            }
+            .check(&s, None),
+            "cheb 2 is outside radius 1"
+        );
+        assert!(!Proof::NpcNear {
+            r#type: 709,
+            radius: 2
+        }
+        .check(&s, None));
+        assert_eq!(
+            Proof::NpcNear {
+                r#type: 708,
+                radius: 2
+            }
+            .name(),
+            "npc_near(708,2)"
+        );
     }
 
     #[test]
