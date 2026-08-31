@@ -1263,14 +1263,18 @@ impl Session {
                     };
                     // The follow surface reads the canonical base + route-head
                     // tile from a snapshot rebuilt off the same client; the
-                    // run is polled one step per player-info tick.
+                    // run is polled one step per player-info tick. The packed
+                    // teleport list rides along so a jewellery rub hop can
+                    // answer the destination dialog's choice for its landing.
                     let mut snapshot = GameSnapshot::new();
                     snapshot.rebuild(c);
+                    let world = crate::picker::pack();
                     let mut options = TravelOptions {
                         // Exact arrival: the armed dest must be stood on
                         // before the route clears (the v1 traveller arrived
                         // the same way).
                         close_enough: 0,
+                        teleports: world.as_ref().map(|w| w.graph.teleports.as_slice()),
                         ..TravelOptions::default()
                     };
                     let outcome = arm.traveller.follow(c, &snapshot, route, &mut options);

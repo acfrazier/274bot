@@ -203,6 +203,14 @@ pub struct TravelOptions<'a> {
     pub budget_ticks_per_hop: u32,
     /// Walk hops before `GaveUp` (default 60).
     pub max_hops: u32,
+    /// The packed any-tile teleport list (`TransportGraph::teleports`):
+    /// a jewellery rub's destination dialog maps the answered option
+    /// through the script's `switch_int($choice)`, and the choice of the
+    /// edge being followed is the 1-based index of its `to` among the
+    /// same-`loc_id` rub edges. `None` (the default) falls back to the
+    /// modal's first choice — the dueling ring's single arena, and every
+    /// Npc ride dialog.
+    pub teleports: Option<&'a [TransportEdge]>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     pub on_leg: Option<Box<dyn FnMut(&Leg, LegPhase) + 'a>>,
@@ -214,6 +222,7 @@ impl Default for TravelOptions<'_> {
             close_enough: 2,
             budget_ticks_per_hop: 60,
             max_hops: 60,
+            teleports: None,
             on_leg: None,
         }
     }
@@ -1154,14 +1163,14 @@ impl FollowRun {
         // An Npc hop's first op can open a chat dialog instead of riding
         // immediately (the live cart drivers' `opnpc1` says "Hello!", then
         // asks "Is that Ok?" with a "Yes please…" choice), and a jewellery
-        // rub opens the destination choice (the dueling ring's "Where
-        // would you like to teleport to?" with the arena first and
-        // "Nowhere." last). Drive the dialog the same way: press the
-        // modal's continue button while it is up (each press advances a
-        // page — including the post-choice "Great!" pages and mesboxes
-        // before the ride), and press the ride choice exactly once when
-        // the choice page is up, then keep watching `arrived(to)` for the
-        // ride.
+        // rub opens the destination choice (the glory's "Where would you
+        // like to teleport to?" with each location named — the dueling
+        // ring's single arena first and "Nowhere." last). Drive the dialog
+        // the same way: press the modal's continue button while it is up
+        // (each press advances a page — including the post-choice "Great!"
+        // pages and mesboxes before the ride), and press the ride choice
+        // exactly once when the choice page is up, then keep watching
+        // `arrived(to)` for the ride.
         if edge.kind == TransportKind::Npc
             || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
         {
@@ -1179,19 +1188,23 @@ impl FollowRun {
                     SendResult::Refused { .. } => {}
                 }
             } else if !hop.dialog_answered && !snapshot.chat_options().is_empty() {
-                // The ride choice is the chat modal's first choice — a
-                // hop's dialog rule, independent of the NPC op index
-                // (`edge.option`: Talk-to is op 1, the essence wizard's
-                // teleport op 3/4, the jewellery rub op 4). Both content
-                // dialogs that ask before
-                // riding (cart fare, Elkoy escort) put the ride first.
-                match ix.answer_choice(NPC_RIDE_CHOICE) {
+                // A jewellery rub's destination choice is the edge's case
+                // index: the script maps the answered option through
+                // `switch_int($choice)`, so the choice of the edge being
+                // followed is the 1-based index of its `to` among the
+                // packed same-`loc_id` rub edges (the dueling ring — the
+                // only sibling — answers 1). Npc ride dialogs (cart fare,
+                // Elkoy escort) always answer the modal's FIRST choice,
+                // independent of the NPC op index (`edge.option`: Talk-to
+                // is op 1, the essence wizard's teleport op 3/4).
+                let choice = jewellery_choice(&hop.leg, options.teleports);
+                match ix.answer_choice(choice) {
                     SendResult::Sent { .. } => {
                         hop.dialog_answered = true;
                         if crate::debug_enabled() {
                             eprintln!(
-                                "[nav-transport] answered ride choice {} for npc {}",
-                                NPC_RIDE_CHOICE, edge.loc_id
+                                "[nav-transport] answered choice {} for jewellery {}",
+                                choice, edge.loc_id
                             );
                         }
                     }
@@ -1759,8 +1772,32 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
 /// Elkoy's escort both present it first). This is the hop's dialog rule,
 /// independent of the NPC op index — [`TransportEdge::option`] is the op
 /// (Talk-to is op 1, the essence wizard's teleport op 3/4) and stays the
-/// interact's operation.
+/// interact's operation. Also the fallback choice when a jewellery hop's
+/// teleport list is unavailable ([`TravelOptions::teleports`]).
 const NPC_RIDE_CHOICE: i32 = 1;
+
+/// The dialog choice a jewellery rub hop answers: the 1-based index of
+/// the edge's `to` among the packed same-`loc_id` rub edges — the
+/// `switch_int($choice)` case order the bake emitted (the dueling ring's
+/// only sibling answers 1). Npc hops (and jewellery hops without a
+/// teleport list) fall back to the modal's FIRST choice.
+fn jewellery_choice(leg: &Leg, teleports: Option<&[TransportEdge]>) -> i32 {
+    let Some(edges) = teleports else {
+        return NPC_RIDE_CHOICE;
+    };
+    let Leg::Transport { edge } = leg else {
+        return NPC_RIDE_CHOICE;
+    };
+    if edge.kind != TransportKind::Teleport || edge.loc_id <= 0 {
+        return NPC_RIDE_CHOICE;
+    }
+    edges
+        .iter()
+        .filter(|e| e.kind == TransportKind::Teleport && e.loc_id == edge.loc_id)
+        .position(|e| e.to == edge.to)
+        .map(|i| i as i32 + 1)
+        .unwrap_or(NPC_RIDE_CHOICE)
+}
 
 /// The outcome of sending a packed teleport hop's op.
 enum TeleportSend {
@@ -3751,6 +3788,37 @@ mod tests {
         }
     }
 
+    /// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
+    /// shape every dest of the four-location glory group shares. The
+    /// `to` names the landing (default Edgeville, `switch_int($choice)`
+    /// case 1); the group's sibling edges share `loc_id` + option and
+    /// differ only in `to`, exactly as the bake emits them.
+    fn glory_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3087,
+                z: 3496,
+                level: 0, // Edgeville (case 1)
+            },
+            loc_id: 1712,
+            option: 4, // Rub (opheld4)
+            ticks: 2,  // OP_BASE + the rub p_delay(1)
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(1712, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
     /// A packed spell Teleport edge: Varrock (Magic 25, fire/air/law
     /// runes). `loc_id` 0 = "a spell button, not a loc/obj use"; the
     /// traveller resolves the spellbook button from the landing tile.
@@ -3915,7 +3983,12 @@ mod tests {
             },
             ticks: 2.0,
         };
-        let mut options = TravelOptions::default();
+        // The packed single-dest rub group: the ring's only sibling edge,
+        // so the derived dialog choice is 1 (the arena).
+        let mut options = TravelOptions {
+            teleports: Some(&[ring_edge()]),
+            ..TravelOptions::default()
+        };
         // Poll 1: the hop interacts the packed item — the OP_HELD4 Rub.
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
@@ -3951,6 +4024,96 @@ mod tests {
                     WorldTile {
                         x: 3313,
                         z: 3235,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+        assert_eq!(rec.held_ops, 1, "one rub total");
+        assert_eq!(rec.loc_ops, 0);
+        assert!(rec.sink.strings.is_empty());
+    }
+
+    #[test]
+    fn follow_jewellery_teleport_answers_the_second_dest_choice() {
+        // A packed multi-destination jewellery rub (the glory's four
+        // locations share one opheld4 op, differing only in `to`, in the
+        // script's `switch_int($choice)` order): executing the SECOND
+        // landing must answer dialog choice 2 — never the constant first
+        // choice (which would teleport to Edgeville). The choice is the
+        // 1-based index of the edge's `to` among the packed same-`loc_id`
+        // rub edges.
+        let mut c = scene_client();
+        plant_inv_item(&mut c, 1712);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let karamja = WorldTile {
+            x: 2918,
+            z: 3176,
+            level: 0, // `0_45_49_38_40` (case 2)
+        };
+        let glory = [
+            TransportEdge {
+                to: WorldTile {
+                    x: 3087,
+                    z: 3496,
+                    level: 0,
+                }, // Edgeville (case 1)
+                ..glory_edge()
+            },
+            TransportEdge { to: karamja, ..glory_edge() },
+        ];
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: glory[1].clone(),
+            }],
+            dest: karamja,
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions {
+            teleports: Some(&glory),
+            ..TravelOptions::default()
+        };
+        // Poll 1: the hop interacts the packed item — the OP_HELD4 Rub.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.held_ops, 1, "one OP_HELD4 rub sent");
+        // The rub opens the four-location destination choice: the hop
+        // presses the SECOND option (Karamja), exactly once.
+        plant_choice_dialog(
+            &mut c,
+            &["Edgeville.", "Karamja.", "Draynor Village.", "Al Kharid.", "Nowhere."],
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![102],
+            "the second destination answers choice 2, not 1"
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.if_buttons, 1, "the choice is never re-pressed");
+        // The glory lands the player at the packed Karamja landing.
+        plant_player(&mut c, -282, -24); // world (2918, 3176)
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 2918,
+                        z: 3176,
                         level: 0
                     }
                 );

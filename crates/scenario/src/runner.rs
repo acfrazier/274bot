@@ -541,14 +541,23 @@ impl ScenarioRunner {
         }
         // Exact dest: default close_enough=2 reports Arrived a tile or two
         // short, the proof (exact tile) fails, and the next poll re-starts
-        // the original route — walker yo-yos back to the door.
-        let mut options = TravelOptions {
-            close_enough: 0,
-            ..TravelOptions::default()
+        // the original route — walker yo-yos back to the door. The packed
+        // teleport list rides along so a jewellery rub hop can answer the
+        // destination dialog's choice for its own landing. The options
+        // (and their `self.nav_world` borrow) drop inside the block, so
+        // the terminal-outcome path below can borrow `self` again.
+        let outcome = {
+            let mut options = TravelOptions {
+                close_enough: 0,
+                teleports: self
+                    .nav_world
+                    .as_ref()
+                    .map(|w| w.graph.teleports.as_slice()),
+                ..TravelOptions::default()
+            };
+            self.traveller
+                .follow(client, &self.snapshot, route, &mut options)
         };
-        let outcome = self
-            .traveller
-            .follow(client, &self.snapshot, route, &mut options);
         let Some(outcome) = outcome else {
             return;
         };
