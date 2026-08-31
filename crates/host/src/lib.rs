@@ -321,10 +321,14 @@ impl Host {
             // the compact tile stamps) and re-arm the attach materialize,
             // so the next head's first paint restores them without a
             // rebuild (rule 6 of the head design). Fires on the falling
-            // edge only.
-            if !client.draw && slot.draw_was_on {
-                client.world.dematerialize_overlay();
-            }
+            // edge only. A GPU↔CPU / mem flip drops the head while `draw`
+            // stays on: overlay meshes on the sim survive, loc models do
+            // not — re-arm share-light and dirty the minimap pixmap latch.
+            rearm_after_head_drop(
+                client,
+                !client.draw && slot.draw_was_on,
+                backend_flip,
+            );
         }
         slot.draw_was_on = client.draw;
         let paint = raster_this_tick(
@@ -343,6 +347,10 @@ impl Host {
             slot.renderer_prefer_cpu = Some(want_cpu);
             slot.renderer_lowmem = Some(client.config.lowmem);
             let renderer = slot.renderer.get_or_insert_with(|| {
+                // A new head owns a blank 512×512 minimap. Dirty the
+                // Client latch (GPU↔CPU / mem flip keeps `draw` on, so
+                // `set_draw` does not) or `check_minimap` will skip.
+                client.minimap_level = -1;
                 // GPU-first (the host default): the slot's renderer
                 // prefers the wgpu backend, with `CpuBackend` as the
                 // fallback on wgpu init failure (`Renderer::new`
@@ -416,6 +424,21 @@ fn watch_only(client: &Client, input: Option<&SlotInput>) -> bool {
 /// Payload bytes the client's stream has consumed; 0 when no stream.
 fn stream_bytes(client: &Client) -> u64 {
     client.stream.as_ref().map(|s| s.bytes_in()).unwrap_or(0)
+}
+
+/// Re-arm sim flags after dropping a `Renderer`.
+///
+/// Draw-off: dematerialize overlay meshes (stamps stay) and re-arm
+/// overlay + share-light. Backend flip (`draw` stays on): overlay meshes
+/// stay on the sim, but loc models died with the head — re-arm share-light
+/// and dirty `minimap_level` so the new pixmap is composed.
+fn rearm_after_head_drop(client: &mut Client, draw_off_edge: bool, backend_flip: bool) {
+    if draw_off_edge {
+        client.world.dematerialize_overlay();
+    } else if backend_flip {
+        client.world.share_light_pending = true;
+        client.minimap_level = -1;
+    }
 }
 
 /// Why a park returned.
@@ -1062,6 +1085,14 @@ mod tests {
             c.world.overlay_pending,
             "a detach must re-arm the attach materialize"
         );
+        assert!(
+            c.world.share_light_pending,
+            "a detach must re-arm share_light: loc models died with the head"
+        );
+        assert_eq!(
+            c.minimap_level, -1,
+            "a detach must dirty the minimap so the next head recomposes it"
+        );
 
         // Draw on: the reattached head's first paint consumes the pending
         // flag and restores the mesh from the stamp — no map_build.
@@ -1081,6 +1112,30 @@ mod tests {
             !c.world.overlay_pending,
             "the first paint must consume the attach materialize"
         );
+    }
+
+    #[test]
+    fn backend_flip_rearms_share_light_without_dropping_overlay() {
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.world.share_light_pending = false;
+        c.world.overlay_pending = false;
+        c.minimap_level = 0;
+        rearm_after_head_drop(&mut c, false, true);
+        assert!(
+            c.world.share_light_pending,
+            "GPU↔CPU / mem flip must re-arm share_light; loc models died with the head"
+        );
+        assert!(
+            !c.world.overlay_pending,
+            "a backend flip must not dematerialize overlay meshes still on the sim"
+        );
+        assert_eq!(c.minimap_level, -1);
     }
 
     #[test]
