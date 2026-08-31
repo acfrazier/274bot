@@ -1859,6 +1859,9 @@ fn nav_settings_window(ui: &Ui, session: &mut Session) {
             if ui.checkbox("allow wilderness", &mut nav.allow_wilderness) {
                 changed = true;
             }
+            if ui.checkbox("allow bank fetch", &mut nav.allow_bank_fetch) {
+                changed = true;
+            }
 
             ui.spacing();
             ui.text_colored(ACCENT, "Display");

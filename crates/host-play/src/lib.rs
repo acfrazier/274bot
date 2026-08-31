@@ -241,6 +241,7 @@ fn script_observe(
                             FindOptions {
                                 allow_teleports: o.allow_teleports,
                                 allow_wilderness: o.allow_wilderness,
+                                allow_bank_fetch: false, // script FindOptions has no bank flag yet
                             },
                         )
                     }
@@ -355,7 +356,13 @@ impl WalkArm {
         thread::Builder::new()
             .name(format!("nav-find-{name}"))
             .spawn(move || {
-                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts) {
+                // The slot's inventory is not carried onto the worker yet,
+                // so the search gates on the fail-closed empty state:
+                // gated edges (tolls, carts, quest hops) stay refused
+                // until a later task wires the live facts through.
+                let empty = nav::WorldState::empty();
+                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts, &empty)
+                {
                     navs.lock().unwrap().entry(name).or_default().route = Some(route);
                 }
             })

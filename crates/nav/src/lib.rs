@@ -13,6 +13,9 @@ pub mod transport;
 pub mod traveller;
 pub mod wilderness;
 pub mod world;
+pub mod world_state;
+
+pub use world_state::WorldState;
 
 /// Verbose nav/traveller dumps (`BOT_DEBUG=1`). Cached once per process.
 pub fn debug_enabled() -> bool {

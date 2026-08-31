@@ -17,7 +17,10 @@
 //! through [`find_allow_teleports`]/[`find_allow_teleports_with_model`].
 //! Wilderness tiles ([`crate::wilderness::in_wilderness`]) are refused
 //! unless the search's [`FindOptions::allow_wilderness`] is set; every
-//! option'd entry point is [`find_with`].
+//! option'd entry point is [`find_with`]. Every transport edge — walked
+//! or teleported — is additionally gated by the search's [`WorldState`]:
+//! an edge whose requirements the state cannot prove is never relaxed
+//! (missing facts fail closed).
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -30,6 +33,7 @@ use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{TransportEdge, TransportGraph};
 use crate::wilderness::in_wilderness;
+use crate::world_state::WorldState;
 
 /// One leg of a route: a walk run or one transport crossing. Consecutive
 /// walk tiles collapse into a single `Walk` leg; each transport edge is
@@ -78,14 +82,19 @@ impl CostModel {
     }
 }
 
-/// Per-search opt-ins, both default off so [`find`] keeps the safe
+/// Per-search opt-ins, all default off so [`find`] keeps the safe
 /// defaults. `allow_teleports` unions the any-tile teleport layer in;
 /// `allow_wilderness` lets the search step into (or land in) the
 /// wilderness zone ([`crate::wilderness::in_wilderness`]).
+/// `allow_bank_fetch` is the 0.1.1 BankBudget stub: this tag it must
+/// NOT insert a bank leg or relax an item req — an edge stays unusable
+/// unless the search's [`WorldState`] already proves it (the bank-trip
+/// execute is 0.1.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FindOptions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
+    pub allow_bank_fetch: bool,
 }
 
 /// Why [`find`] failed.
@@ -140,25 +149,37 @@ const MASK_SW: u32 = CollisionFlag::PL_WALK_SW as u32;
 /// The origin may sit on a blocked tile (a loc-blocked tele landing); only
 /// the tiles stepped *onto* are tested. Destinations are reached exactly:
 /// a blocked destination is `NoPath` unless a transport lands on it.
+/// Edges are gated by the fail-closed empty [`WorldState`] — an edge
+/// whose requirements nothing proves is never relaxed. Callers that know
+/// the player's facts use [`find_with`].
 pub fn find(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     to: WorldTile,
 ) -> Result<Route, RouteError> {
-    find_with(collision, graph, from, to, FindOptions::default())
+    find_with(
+        collision,
+        graph,
+        from,
+        to,
+        FindOptions::default(),
+        &WorldState::empty(),
+    )
 }
 
-/// [`find`] with explicit opt-ins: [`FindOptions::allow_teleports`] unions
-/// the any-tile teleport layer in and [`FindOptions::allow_wilderness`]
-/// allows entering the wilderness zone. Both default off, so plain
-/// [`find`] keeps the safe defaults.
+/// [`find`] with explicit opt-ins ([`FindOptions::allow_teleports`],
+/// [`FindOptions::allow_wilderness`], and the [`FindOptions::allow_bank_fetch`]
+/// stub) and the gating [`WorldState`]: an edge is relaxed only when
+/// every `skill_req` / `item_req` / `quest_req` / `varp_req` / `worn_req`
+/// is satisfied by the state. Missing facts fail closed.
 pub fn find_with(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     to: WorldTile,
     opts: FindOptions,
+    state: &WorldState,
 ) -> Result<Route, RouteError> {
     find_bounded_impl(
         collision,
@@ -169,6 +190,7 @@ pub fn find_with(
         NODE_BUDGET,
         opts.allow_teleports,
         opts.allow_wilderness,
+        state,
     )
 }
 
@@ -180,21 +202,31 @@ pub fn find_with_model(
     to: WorldTile,
     model: CostModel,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, false, false)
+    find_bounded_impl(
+        collision,
+        graph,
+        from,
+        to,
+        model,
+        NODE_BUDGET,
+        false,
+        false,
+        &WorldState::empty(),
+    )
 }
 
 /// [`find`] with the any-tile teleport layer unioned in: every edge in
 /// `graph.teleports` is usable from **any** node at cost `edge.ticks`, so
 /// a teleport can take the route across a wall, a level boundary, or half
-/// the map. Requirements stay on the edges (never gated here, like every
-/// other transport edge); the caller checks them. Default [`find`]/
-/// [`find_with_model`] never see teleports. Wilderness stays refused
-/// (`allow_wilderness` off).
+/// the map. Requirements stay on the edges and are gated by `state` like
+/// every other transport edge. Default [`find`]/[`find_with_model`] never
+/// see teleports. Wilderness stays refused (`allow_wilderness` off).
 pub fn find_allow_teleports(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     to: WorldTile,
+    state: &WorldState,
 ) -> Result<Route, RouteError> {
     find_with(
         collision,
@@ -204,7 +236,9 @@ pub fn find_allow_teleports(
         FindOptions {
             allow_teleports: true,
             allow_wilderness: false,
+            allow_bank_fetch: false,
         },
+        state,
     )
 }
 
@@ -215,14 +249,16 @@ pub fn find_allow_teleports_with_model(
     from: WorldTile,
     to: WorldTile,
     model: CostModel,
+    state: &WorldState,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, true, false)
+    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, true, false, state)
 }
 
 /// [`find`] with an explicit cost model and node-expansion budget (the
 /// search gives up with [`RouteError::BudgetExhausted`] once `budget`
-/// tiles are settled). Teleports and wilderness stay off. Test-only: the
-/// budget knob has no production caller yet.
+/// tiles are settled). Teleports, wilderness, and the gating state stay
+/// the [`find`] defaults (empty). Test-only: the budget knob has no
+/// production caller yet.
 #[cfg(test)]
 fn find_bounded(
     collision: &WorldCollision,
@@ -232,7 +268,17 @@ fn find_bounded(
     model: CostModel,
     budget: usize,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, model, budget, false, false)
+    find_bounded_impl(
+        collision,
+        graph,
+        from,
+        to,
+        model,
+        budget,
+        false,
+        false,
+        &WorldState::empty(),
+    )
 }
 
 /// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
@@ -240,7 +286,9 @@ fn find_bounded(
 /// from any standable tile within [`INTERACT_RADIUS`] of their `at` (never
 /// from `at` itself when it is blocked); walk steps are the strict
 /// directional [`step_ok`] test throughout. `allow_wilderness` gates
-/// stepping into (or landing in) the wilderness zone.
+/// stepping into (or landing in) the wilderness zone; `state` gates every
+/// transport edge (walked or teleported) on its requirements — an edge
+/// the state cannot prove is not relaxed.
 fn find_bounded_impl(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -250,6 +298,7 @@ fn find_bounded_impl(
     budget: usize,
     use_teleports: bool,
     allow_wilderness: bool,
+    state: &WorldState,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -332,6 +381,9 @@ fn find_bounded_impl(
                     };
                     for &ei in idxs {
                         let edge = &graph.edges[ei];
+                        if !state.allows(edge) {
+                            continue;
+                        }
                         if !wildy_step_ok(cur, edge.to, allow_wilderness) {
                             continue;
                         }
@@ -354,6 +406,9 @@ fn find_bounded_impl(
         // declares it).
         if use_teleports {
             for (ti, edge) in graph.teleports.iter().enumerate() {
+                if !state.allows(edge) {
+                    continue;
+                }
                 if !wildy_step_ok(cur, edge.to, allow_wilderness) {
                     continue;
                 }
@@ -755,7 +810,7 @@ mod tests {
     use api::snapshot::WorldTile;
     use client::config::LocType;
     use client::dash3d::CollisionFlag;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
 
@@ -767,6 +822,7 @@ mod tests {
     };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
+    use crate::world_state::WorldState;
 
     #[test]
     fn find_on_grid_across_open_3x3_is_a_walk_leg() {
@@ -1377,6 +1433,75 @@ mod tests {
         assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
     }
 
+    // --- WorldState gating (Task 1: find fails closed on unpaid edges) ---
+
+    /// An Al Kharid toll shape: the 5×5 wall is unbroken except for one
+    /// door crossing, and that door costs 10 coins (`item_req`, the same
+    /// requirement `toll_edges` derives for the border gates).
+    fn toll_graph() -> TransportGraph {
+        let mut g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
+        g.edges[0].item_req = vec![(995, 10)]; // the 10-coin toll
+        g
+    }
+
+    /// A toll edge with an empty WorldState is not in the route — the
+    /// search cannot prove the player can pay, so it fails closed
+    /// (`NoPath`). The same edge with 10 coins in the inventory routes.
+    #[test]
+    fn find_gates_toll_edge_on_inventory_coins() {
+        let wc = walled_5x5();
+        let g = toll_graph();
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        assert!(
+            matches!(
+                find_with(&wc, &g, from, to, FindOptions::default(), &WorldState::empty()),
+                Err(RouteError::NoPath)
+            ),
+            "empty WorldState must not relax the unpaid toll"
+        );
+        // The same search with 10 coins in the inventory crosses.
+        let rich = WorldState {
+            inv: HashMap::from([(995, 10)]),
+            ..WorldState::default()
+        };
+        let r = find_with(&wc, &g, from, to, FindOptions::default(), &rich).unwrap();
+        assert_eq!(r.dest, to);
+        assert!(
+            r.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
+            )),
+            "the toll crossing is the transport leg"
+        );
+    }
+
+    /// The `allow_bank_fetch` stub must not insert a bank leg or relax an
+    /// item req this tag: with the flag on and no coins, the toll edge
+    /// stays unusable and the search is still `NoPath`.
+    #[test]
+    fn allow_bank_fetch_does_not_relax_item_reqs() {
+        let wc = walled_5x5();
+        let g = toll_graph();
+        assert!(
+            matches!(
+                find_with(
+                    &wc,
+                    &g,
+                    tile(0, 0, 0),
+                    tile(4, 4, 0),
+                    FindOptions {
+                        allow_bank_fetch: true,
+                        ..FindOptions::default()
+                    },
+                    &WorldState::empty(),
+                ),
+                Err(RouteError::NoPath)
+            ),
+            "allow_bank_fetch is a stub: no coins still means no route"
+        );
+    }
+
     #[test]
     fn walk_only_route_ticks_are_the_walk_tick_cost() {
         // Walking is no longer free: a walk-only route's `ticks` is the
@@ -1408,10 +1533,21 @@ mod tests {
 
     // --- allow_teleports: the any-tile teleport layer ---
 
+    /// A WorldState that proves the Varrock spell (Magic 25 + fire/air/law
+    /// runes) and a charged glory, so the teleport-layer tests can route.
+    fn spell_state() -> WorldState {
+        WorldState {
+            stats: HashMap::from([(6, 25)]),
+            inv: HashMap::from([(554, 1), (556, 3), (563, 1), (1712, 1)]),
+            ..WorldState::default()
+        }
+    }
+
     #[test]
     fn find_never_uses_a_spell_teleport_but_find_allow_teleports_does() {
         // The wall splits the 5×5 bake; only the any-tile spell teleport can
-        // cross it, and only when allow_teleports is on.
+        // cross it, and only when allow_teleports is on (and the state
+        // proves the cast).
         let wc = walled_5x5();
         let dest = tile(4, 4, 0);
         let g = teleport(
@@ -1424,7 +1560,15 @@ mod tests {
             find(&wc, &g, tile(0, 0, 0), dest),
             Err(RouteError::NoPath)
         ));
-        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
+        // The empty state cannot prove the cast: the edge stays refused.
+        assert!(
+            matches!(
+                find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &WorldState::empty()),
+                Err(RouteError::NoPath)
+            ),
+            "allow_teleports still gates the spell on the WorldState"
+        );
+        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &spell_state()).unwrap();
         assert_eq!(r.dest, dest);
         // Teleported from the origin — no walk, just the cast.
         assert_eq!(r.ticks, 3.0);
@@ -1452,7 +1596,8 @@ mod tests {
             find(&wc, &g, tile(0, 0, 0), dest),
             Err(RouteError::NoPath)
         ));
-        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
+        // The charged item is on the player: the rub routes.
+        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &spell_state()).unwrap();
         assert_eq!(r.ticks, 2.0); // OP_BASE 1 + the rub p_delay(1)
         let Leg::Transport { edge } = r
             .legs
@@ -1472,7 +1617,7 @@ mod tests {
         let dest = tile(4, 4, 0);
         let g = teleport(dest, 2, vec![], vec![(1712, 1)]);
         for origin in [tile(0, 0, 0), tile(1, 3, 0)] {
-            let r = find_allow_teleports(&wc, &g, origin, dest).unwrap();
+            let r = find_allow_teleports(&wc, &g, origin, dest, &spell_state()).unwrap();
             assert_eq!(r.dest, dest);
             assert_eq!(r.ticks, 2.0, "teleport from {origin:?} costs the rub only");
             assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
@@ -1486,7 +1631,7 @@ mod tests {
         let wc = bake(5, 5, &[]);
         let dest = tile(4, 4, 0);
         let g = teleport(dest, 3, vec![(6, 25)], vec![]);
-        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
+        let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &spell_state()).unwrap();
         assert_eq!(r.ticks, 2.0);
         assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
     }
@@ -1537,7 +1682,9 @@ mod tests {
             FindOptions {
                 allow_teleports: false,
                 allow_wilderness: true,
+                allow_bank_fetch: false,
             },
+            &WorldState::empty(),
         );
         assert!(ok.is_ok());
     }
@@ -1593,9 +1740,11 @@ mod tests {
         let g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
         let from = tile(3100, 3519, 0);
         assert!(matches!(find(&wc, &g, from, dest), Err(RouteError::NoPath)));
+        // The state proves the cast (Magic 25 + runes), so only the wildy
+        // landing refuses it.
         assert!(
             matches!(
-                find_allow_teleports(&wc, &g, from, dest),
+                find_allow_teleports(&wc, &g, from, dest, &spell_state()),
                 Err(RouteError::NoPath)
             ),
             "a teleport landing inside the wilderness must stay refused"
@@ -1608,7 +1757,9 @@ mod tests {
             FindOptions {
                 allow_teleports: true,
                 allow_wilderness: true,
+                allow_bank_fetch: false,
             },
+            &spell_state(),
         );
         assert!(ok.is_ok());
     }

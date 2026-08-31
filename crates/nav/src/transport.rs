@@ -4166,7 +4166,9 @@ mes(\"...And teleport into the wilderness.\");
             FindOptions {
                 allow_teleports: false,
                 allow_wilderness: true,
+                allow_bank_fetch: false,
             },
+            &crate::world_state::WorldState::empty(),
         )
         .expect("allow_wilderness routes the Ardougne→wildy lever");
         assert_eq!(route.dest, to);

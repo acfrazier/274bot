@@ -38,6 +38,7 @@ use nav::router::{find_with, FindOptions, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
+use nav::WorldState;
 use vault::{Profile, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
@@ -2224,6 +2225,10 @@ impl Session {
     /// `error` carries a short message. The Nav settings' [`FindOptions`]
     /// apply: `ui.nav.allow_teleports` unions the any-tile teleport layer
     /// in and `ui.nav.allow_wilderness` allows entering the wilderness.
+    /// The gating [`WorldState`] is the fail-closed empty state — the
+    /// picker has no live snapshot at arm time, so gated edges (tolls,
+    /// carts, quest hops) stay refused until a later task wires the
+    /// focused slot's facts through.
     /// Callers that do not know the player's tile fall back to
     /// [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
@@ -2247,7 +2252,9 @@ impl Session {
             FindOptions {
                 allow_teleports: self.ui.nav.allow_teleports,
                 allow_wilderness: self.ui.nav.allow_wilderness,
+                allow_bank_fetch: self.ui.nav.allow_bank_fetch,
             },
+            &WorldState::empty(),
         );
         match routed {
             Ok(route) => {

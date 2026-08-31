@@ -120,10 +120,15 @@ mod tests {
         let mut s = PanelUiState::default();
         s.nav.show_nav_path = true;
         s.nav.color_path = "#AABBCC".into();
+        s.nav.allow_bank_fetch = true;
         let bytes = serde_json::to_vec(&s).unwrap();
         let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
         assert!(back.nav.show_nav_path);
         assert_eq!(back.nav.color_path, "#AABBCC");
+        assert!(
+            back.nav.allow_bank_fetch,
+            "the BankBudget stub flag round-trips like the other nav toggles"
+        );
     }
 
     #[test]
@@ -180,6 +185,10 @@ mod tests {
         assert!(
             !back.nav.allow_wilderness,
             "missing allow_wilderness defaults false"
+        );
+        assert!(
+            !back.nav.allow_bank_fetch,
+            "missing allow_bank_fetch defaults false"
         );
         assert!(back.nav.show_nav_path, "present fields keep their values");
         assert_eq!(back.nav.color_path, "#AABBCC");

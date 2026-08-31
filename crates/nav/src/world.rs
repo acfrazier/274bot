@@ -459,8 +459,21 @@ mod tests {
         assert!(w.graph.at.is_empty());
         // Default find ignores the teleport layer entirely…
         assert!(find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 4, 0)).is_err());
-        // …and find_allow_teleports unions it in from anywhere.
-        let r = find_allow_teleports(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
+        // …and find_allow_teleports unions it in from anywhere (the state
+        // proves the Varrock cast: Magic 25 + fire/air/law runes).
+        let cast = crate::world_state::WorldState {
+            stats: std::collections::HashMap::from([(6, 25)]),
+            inv: std::collections::HashMap::from([(554, 1), (556, 3), (563, 1)]),
+            ..crate::world_state::WorldState::default()
+        };
+        let r = find_allow_teleports(
+            &w.collision,
+            &w.graph,
+            tile(0, 0, 0),
+            tile(4, 4, 0),
+            &cast,
+        )
+        .unwrap();
         assert_eq!(r.ticks, 3.0);
         assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
         let _ = std::fs::remove_dir_all(&dir);

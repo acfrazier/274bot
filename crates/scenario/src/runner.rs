@@ -440,7 +440,10 @@ impl ScenarioRunner {
             z: hz,
             level: hl,
         };
-        match nav::router::find_with(&world.collision, &world.graph, from, dest, opts) {
+        // The live snapshot's facts gate the route: an edge the player
+        // cannot pay / has not earned is not relaxed.
+        let state = nav::WorldState::from_snapshot(&self.snapshot);
+        match nav::router::find_with(&world.collision, &world.graph, from, dest, opts, &state) {
             Ok(route) => {
                 self.route = Some(route);
                 Ok(())

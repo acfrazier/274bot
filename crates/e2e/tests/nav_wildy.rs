@@ -102,7 +102,9 @@ fn nav_wildy() {
         FindOptions {
             allow_teleports: false,
             allow_wilderness: true,
+            allow_bank_fetch: false,
         },
+        &nav::WorldState::empty(),
     )
     .unwrap_or_else(|e| {
         fail(&format!(
@@ -170,7 +172,9 @@ fn nav_wildy() {
         FindOptions {
             allow_teleports: false,
             allow_wilderness: true,
+            allow_bank_fetch: false,
         },
+        &nav::WorldState::empty(),
     )
     .map(|route| {
         if route.dest != WILDY_LEVER_LANDING {
