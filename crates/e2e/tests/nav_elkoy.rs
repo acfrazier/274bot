@@ -10,12 +10,22 @@
 //! the pack. Either failure exits 1 (rs2b0t style). Route detail prints
 //! only under `BOT_DEBUG=1`.
 //!
+//! `nav_elkoy_follow` is the execute twin — the same `nav_elkoy` scenario
+//! `panel-play --live script_nav_elkoy` drives. The scenario seeds Tree
+//! Gnome Village green (`~completequests` + dialog drain), cheat-teles to
+//! the maze-side Elkoy, `Follow`s into the village (across the hedge
+//! maze, whose 1-tick escort hop beats the maze walk in the router, so
+//! the route executes the packed escort edge), the traveller answers
+//! Elkoy's escort dialog, and PASSes on `TravelOutcome::Arrived` at the
+//! packed `edge.to`.
+//!
 //! Run with the engine up and the rebaked v5 pack at the standard path:
 //! `LIVE=1 cargo test -p e2e --test nav_elkoy -- --ignored --test-threads=1 --nocapture`
 
 mod common;
 
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
@@ -23,7 +33,7 @@ use host_play::run_with_io;
 use nav::router::find;
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
-use scenario::default_pack_path;
+use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
 
 /// The maze entrance coord (`^elkoy_entrance_coord = 0_39_49_8_56`).
 const ENTRANCE: WorldTile = WorldTile {
@@ -135,3 +145,65 @@ fn nav_elkoy() {
             .count()
     );
 }
+
+/// The execute twin: the `nav_elkoy` scenario run headlessly, exactly
+/// like `panel-play --live script_nav_elkoy`. One slot; PASS is the
+/// runner's proof — `arrived` at the packed maze coord (2515,3159), the
+/// maze-side escort edge's `to`.
+#[test]
+#[ignore = "requires a local 274 engine, nav pack, and LIVE=1"]
+fn nav_elkoy_follow() {
+    if !live() {
+        return;
+    }
+
+    let scenario = scenario::get("nav_elkoy").expect("nav_elkoy scenario in registry");
+    let mainland = scenario.seed.mainland;
+    let seed_profiles = scenario.seed.profiles.clone();
+    let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
+    runner.lock().unwrap().set_shot_sink(Box::new(|_, _| {}));
+    let mut opts = options();
+    opts.mainland = mainland;
+    let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
+        let runner = Arc::clone(&runner);
+        move |c, name| {
+            let mut r = runner.lock().unwrap();
+            if r.drives(name) {
+                r.tick(c);
+            } else if let Some(index) = r.companion_for(name) {
+                r.companion_tick(index, c);
+            }
+        }
+    });
+    runner.lock().unwrap().set_obj_names(play.obj_names());
+
+    wait_ingame(&play, 1, Duration::from_secs(150), "nav_elkoy_follow");
+
+    let deadline = Instant::now() + Duration::from_secs(360);
+    loop {
+        let (status, evidence) = {
+            let r = runner.lock().unwrap();
+            (r.status(), r.evidence().cloned())
+        };
+        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
+        match status {
+            RunnerStatus::Passed => {
+                println!("PASS: nav_elkoy_follow {record}");
+                return;
+            }
+            RunnerStatus::Failed(msg) => {
+                eprintln!("FAIL: nav_elkoy_follow {record}");
+                fail(&format!("nav_elkoy_follow: {msg}"));
+            }
+            other => {
+                if Instant::now() >= deadline {
+                    fail(&format!(
+                        "nav_elkoy_follow: no terminal status within 360s ({other:?})"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+}
+

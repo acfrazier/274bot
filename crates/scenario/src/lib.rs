@@ -173,6 +173,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_door" => Some(nav_door_scenario()),
         "nav_cart" => Some(nav_cart_scenario()),
         "nav_essence" => Some(nav_essence_scenario()),
+        "nav_elkoy" => Some(nav_elkoy_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         _ => None,
@@ -188,6 +189,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_door",
         "nav_cart",
         "nav_essence",
+        "nav_elkoy",
         "nav_routes",
         "nav_paint_path",
     ]
@@ -786,6 +788,118 @@ fn nav_essence_scenario() -> Scenario {
     }
 }
 
+/// The maze-side Elkoy (npc 473, m39_49 local (8,55)): the `at` of the
+/// packed maze→village escort edge, one tile south of the entrance coord
+/// (2504,3192).
+const ELKOY_MAZE_SIDE: WorldTile = WorldTile {
+    x: 2504,
+    z: 3191,
+    level: 0,
+};
+/// The village maze coord (`^elkoy_maze_coord = 0_39_49_19_23`): the
+/// packed escort edge's `to` — the exact tile the maze-side Elkoy's
+/// `p_telejump(` lands on (the script's own landing, never a snap).
+const ELKOY_MAZE_COORD: WorldTile = WorldTile {
+    x: 2515,
+    z: 3159,
+    level: 0,
+};
+
+/// The `nav_elkoy` scenario: the Elkoy OP_NPC execute twin. Log in
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, then seed
+/// Tree Gnome Village by painting the quest journal green: the
+/// `~completequests` debugproc completes every quest and calls
+/// `~update_questlist` (a bare `setvar treequest …` leaves the client's
+/// journal colours stale, so `WorldState::from_snapshot` would still gate
+/// the packed escort edges closed), but it first opens two `p_choice`
+/// dialogs — a `ChatAnswer` janitor answers them as they appear and the
+/// step waits on the journal going green. Then cheat-tele to the maze-side
+/// Elkoy, and `Follow` a whole-world route into the village — across the
+/// hedge maze, whose 1-tick escort hop beats the maze walk in the router,
+/// so the route executes the packed `TransportKind::Npc` edge. The
+/// traveller talks to Elkoy
+/// (`OpTarget::Npc` + option 1), answers the escort dialog's "Yes please."
+/// choice (the chat modal's first), and PASSes on `TravelOutcome::Arrived`
+/// at the packed `edge.to` (2515,3159).
+fn nav_elkoy_scenario() -> Scenario {
+    let driver = ELKOY_MAZE_SIDE;
+    let dest = ELKOY_MAZE_COORD;
+    Scenario {
+        name: "nav_elkoy",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "complete Tree Gnome Village",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~completequests");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ChatChoice,
+                    budget_ticks: 20,
+                },
+            },
+            Step {
+                name: "answer the quest-seed dialogs until the journal is green",
+                kind: StepKind::DrainDialogs { choice: 1 },
+                wait: Wait {
+                    arm: Proof::QuestDone {
+                        name: "Tree Gnome Village",
+                    },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "tele to the maze-side Elkoy",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, &tele_args(driver.level, driver.x, driver.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: driver.x,
+                        z: driver.z,
+                        level: driver.level,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow Elkoy into the village",
+                kind: StepKind::Follow { dest },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav_debug: true,
+            deadline: Duration::from_secs(360),
+            terminal_shot: Some("nav_elkoy terminal"),
+            ..Default::default()
+        },
+    }
+}
+
 /// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
 /// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
 /// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
@@ -1137,6 +1251,7 @@ mod tests {
                 "nav_door",
                 "nav_cart",
                 "nav_essence",
+                "nav_elkoy",
                 "nav_routes",
                 "nav_paint_path"
             ]
@@ -1348,6 +1463,64 @@ mod tests {
         assert_eq!(s.proof.name(), "arrived_near(3253,3401,0,2)");
         assert!(s.companions.is_empty());
         assert!(names().contains(&"nav_essence"));
+    }
+
+    #[test]
+    fn nav_elkoy_follows_into_the_village_through_the_maze_escort() {
+        let s = get("nav_elkoy").expect("nav_elkoy is registered");
+        assert_eq!(s.name, "nav_elkoy");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(s.seed.mainland);
+        assert_eq!(
+            s.steps.len(),
+            4,
+            "quest-seed + dialog janitor + tele + escort follow"
+        );
+        // Step 1 sends `~completequests`; the wait is the first `p_choice`
+        // dialog it opens (never a dummy stat wait).
+        assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
+        assert!(matches!(s.steps[0].wait.arm, Proof::ChatChoice));
+        // Step 2 is the choice-answering janitor, waiting for the journal
+        // to paint Tree Gnome Village green.
+        match &s.steps[1].kind {
+            StepKind::DrainDialogs { choice } => assert_eq!(*choice, 1),
+            _ => panic!("nav_elkoy step 2 must be DrainDialogs"),
+        }
+        assert!(matches!(
+            s.steps[1].wait.arm,
+            Proof::QuestDone { name: "Tree Gnome Village" }
+        ));
+        // Step 3 cheat-teles onto the maze-side Elkoy's tile (the packed
+        // escort edge's `at`, one tile south of the entrance coord).
+        match &s.steps[2].wait.arm {
+            Proof::Arrived { x, z, level } => assert_eq!((*x, *z, *level), (2504, 3191, 0)),
+            other => panic!("tele arm must be arrived, got {other:?}"),
+        }
+        // Step 4 follows into the village: the packed escort edge's `to`,
+        // the hop the hedge maze forces.
+        let (dest, arm) = match &s.steps[3].kind {
+            StepKind::Follow { dest } => (
+                *dest,
+                match &s.steps[3].wait.arm {
+                    Proof::Arrived { x, z, level } => (*x, *z, *level),
+                    other => panic!("follow arm must be arrived, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_elkoy step 4 must be Follow"),
+        };
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 2515,
+                z: 3159,
+                level: 0
+            },
+            "the destination is the packed maze coord"
+        );
+        assert_eq!(arm, (2515, 3159, 0));
+        assert_eq!(s.proof.name(), "arrived(2515,3159,0)");
+        assert!(s.companions.is_empty());
+        assert!(names().contains(&"nav_elkoy"));
     }
 
     #[test]
