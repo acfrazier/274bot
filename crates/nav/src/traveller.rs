@@ -29,7 +29,7 @@ use crate::essence::{
 };
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
-use crate::transport::{DoorDir, TransportEdge, TransportKind};
+use crate::transport::{DoorDir, TransportEdge, TransportKind, SHANTAY_HENGE_LOC_ID};
 
 /// The magic side-tab index (the 2004 icon order: combat 0, stats 1,
 /// quests 2, inventory 3, equipment 4, prayer 5, magic 6).
@@ -1162,18 +1162,21 @@ impl FollowRun {
         }
         // An Npc hop's first op can open a chat dialog instead of riding
         // immediately (the live cart drivers' `opnpc1` says "Hello!", then
-        // asks "Is that Ok?" with a "Yes please…" choice), and a jewellery
+        // asks "Is that Ok?" with a "Yes please…" choice), a jewellery
         // rub opens the destination choice (the glory's "Where would you
         // like to teleport to?" with each location named — the dueling
-        // ring's single arena first and "Nowhere." last). Drive the dialog
-        // the same way: press the modal's continue button while it is up
-        // (each press advances a page — including the post-choice "Great!"
-        // pages and mesboxes before the ride), and press the ride choice
-        // exactly once when the choice page is up, then keep watching
-        // `arrived(to)` for the ride.
-        if edge.kind == TransportKind::Npc
-            || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
-        {
+        // ring's single arena first and "Nowhere." last), and the Shantay
+        // henge's gated branch (loc 4031 `oploc1`) shows the pass
+        // handover (`~chatnpc`/`~objbox`/`~chatplayer`, each a
+        // `p_pausebutton` chat modal) before consuming the pass and
+        // teleporting. Drive the dialog the same way: press the modal's
+        // continue button while it is up (each press advances a page —
+        // including the post-choice "Great!" pages and mesboxes before
+        // the ride), and press the ride choice exactly once when the
+        // choice page is up, then keep watching `arrived(to)` for the
+        // ride. A plain door hop (and the toll gates, whose branch
+        // choices differ) never drives chat here.
+        if drives_hop_dialogs(&edge) {
             let mut ix = Interactions::new(snapshot, d);
             if snapshot.chat_continue_component_id() != -1 {
                 match ix.continue_dialog() {
@@ -1972,6 +1975,20 @@ fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option
         .map(|(loc, _)| loc)
 }
 
+/// Whether a transport hop drives the script's chat dialogs itself: an
+/// Npc hop's `opnpc1` opens the ride's chat (the cart fare, Elkoy's
+/// escort), a jewellery rub opens its destination choice, and the Shantay
+/// henge's gated branch (loc 4031 `oploc1` in `shantay_pass.rs2`) shows
+/// the pass handover (`~chatnpc`/`~objbox`/`~chatplayer`, each a
+/// `p_pausebutton` chat modal) before consuming the pass and teleporting.
+/// A plain door hop never opens chat, and the toll gates' branch choices
+/// differ (their follow is not driven here).
+fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
+    edge.kind == TransportKind::Npc
+        || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
+        || (edge.kind == TransportKind::Door && edge.loc_id == SHANTAY_HENGE_LOC_ID)
+}
+
 /// Whether the live loc family already reads **open**. Searches closed
 /// and open ids within 3 of `at` — an exact-tile check misses the
 /// Catherby open leaf at (2816,3439) while `at` is (2816,3438).
@@ -2042,7 +2059,7 @@ mod tests {
     use crate::grid::StepGrid;
     use crate::router::{find_on_grid, Leg, Route};
     use crate::tile::Tile;
-    use crate::transport::{DoorDir, TransportEdge, TransportKind};
+    use crate::transport::{DoorDir, TransportEdge, TransportKind, SHANTAY_HENGE_LOC_ID};
     use crate::traveller::{
         door_tile, FollowRun, HopFailure, LegPhase, NavStatus, Poll, TransportHop, TravelOptions,
         TravelOutcome, Traveller,
@@ -3473,6 +3490,124 @@ mod tests {
         }
         assert_eq!(rec.npc_ops, 1, "one OP_NPC interact");
         assert_eq!(rec.loc_ops, 0, "an Npc edge never sends OP_LOC1");
+    }
+
+    /// The Shantay henge gated hop on the fixture scene: loc 4031 at the
+    /// edge's `at` (3201, 3201) — the live target the `op_loc` resolves
+    /// through — `to` the `[queue,shantay_pass_enter]` landing.
+    fn shantay_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3200,
+                z: 3210,
+                level: 0,
+            },
+            loc_id: SHANTAY_HENGE_LOC_ID,
+            option: 1,
+            ticks: 3,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(1854, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
+    #[test]
+    fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
+        // The Shantay henge's gated `oploc1` (loc 4031) shows the pass
+        // handover before consuming the pass and teleporting:
+        // `~chatnpc("Can I see your Shantay Desert Pass please.")`,
+        // `~objbox(...)`, and `~chatplayer(...)` — each a
+        // `p_pausebutton` chat modal. A Door hop must press those
+        // continue pages (one per poll) and then settle `arrived(to)`,
+        // like the Npc ride dialogs.
+        let mut c = scene_client();
+        plant_loc(
+            &mut c,
+            SHANTAY_HENGE_LOC_ID,
+            "Shantay pass henge doorway",
+            "Go-through",
+            1,
+            1,
+        );
+        let mut snap = snap_at(&mut c, 0, 1);
+        let mut rec = FollowRec {
+            route: Some((0, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: shantay_edge(),
+            }],
+            dest: WorldTile {
+                x: 3200,
+                z: 3210,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop sends the loc interact; no dialog is up yet.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1, "the OP_LOC1 interact went out");
+        assert_eq!(rec.pause_buttons, 0, "no continue before the dialog opens");
+
+        // The chatnpc page: the hop presses Continue once per page.
+        plant_continue_dialog(&mut c);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.pause_buttons, 1, "the chatnpc page is continued");
+
+        // The objbox page.
+        plant_continue_dialog(&mut c);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.pause_buttons, 2, "the objbox page is continued");
+
+        // The chatplayer page.
+        plant_continue_dialog(&mut c);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.pause_buttons, 3, "the chatplayer page is continued");
+
+        // The branch consumes the pass and teleports the player to `to`;
+        // the chatplayer page closed on the press.
+        c.chat_modal_id = -1;
+        plant_player(&mut c, 0, 10);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3200,
+                        z: 3210,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+        assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact");
+        assert_eq!(rec.pause_buttons, 3, "the three handover pages were pressed");
     }
 
     #[test]

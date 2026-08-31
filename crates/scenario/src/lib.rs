@@ -181,6 +181,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_essence" => Some(nav_essence_scenario()),
         "nav_elkoy" => Some(nav_elkoy_scenario()),
         "nav_tele" => Some(nav_tele_scenario()),
+        "nav_shantay" => Some(nav_shantay_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         _ => None,
@@ -198,6 +199,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_essence",
         "nav_elkoy",
         "nav_tele",
+        "nav_shantay",
         "nav_routes",
         "nav_paint_path",
     ]
@@ -994,6 +996,156 @@ fn nav_tele_scenario() -> Scenario {
     }
 }
 
+/// The Shantay henge desert stand (m51_48 local (38,38) = (3302,3110),
+/// south of the gate on the desert side `coordz <= loc z`).
+const SHANTAY_DESERT_START: WorldTile = WorldTile {
+    x: 3302,
+    z: 3110,
+    level: 0,
+};
+/// The Al Kharid-side stand (m51_48 local (40,47) = (3304,3119), north
+/// of the gate).
+const SHANTAY_PASS_START: WorldTile = WorldTile {
+    x: 3304,
+    z: 3119,
+    level: 0,
+};
+/// The Al Kharid-side follow dest (m51_48 local (36,48) = (3300,3120)).
+const SHANTAY_PASS_DEST: WorldTile = WorldTile {
+    x: 3300,
+    z: 3120,
+    level: 0,
+};
+/// The desert follow dest (m51_48 local (39,36) = (3303,3108)).
+const SHANTAY_DESERT_DEST: WorldTile = WorldTile {
+    x: 3303,
+    z: 3108,
+    level: 0,
+};
+
+/// The `nav_shantay` scenario: both directions through the Shantay henge
+/// (loc 4031, `shantay_pass.rs2` `oploc1`), driven by `Traveller::follow`
+/// like every nav twin. The desert → pass leg follows with an empty
+/// inventory — the free desert exit edge (`coordz(coord) <=
+/// coordz(loc_coord)` telejump, no `item_req`) is the only Shantay edge
+/// the fail-closed WorldState relaxes. The pass → desert leg clears the
+/// backpack (`[debugproc,clearinv]` — the shared `test` slot may carry
+/// junk from prior live twins), `give`s one Shantay pass, and follows
+/// through the gated hop (consume pass + `[queue,shantay_pass_enter]`),
+/// the only edge into the desert. PASS is standing on the desert dest.
+fn nav_shantay_scenario() -> Scenario {
+    Scenario {
+        name: "nav_shantay",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "clear the backpack and tele to the desert stand",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~clearinv");
+                        cheat(c, "tele 0,51,48,38,38");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: SHANTAY_DESERT_START.x,
+                        z: SHANTAY_DESERT_START.z,
+                        level: 0,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow the free desert exit to Al Kharid",
+                kind: StepKind::Follow {
+                    dest: SHANTAY_PASS_DEST,
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: SHANTAY_PASS_DEST.x,
+                        z: SHANTAY_PASS_DEST.z,
+                        level: 0,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "clear the backpack and give the Shantay pass",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~clearinv");
+                        // The gated branch shows its first-crossing
+                        // disclaimer dialog (three mesboxes + a "Go into
+                        // Desert?" choice) when the player lacks the
+                        // disclaimer item — give the disclaimer the script
+                        // hands out after any prior crossing so the branch
+                        // goes straight to the pass-handover chat the
+                        // traveller drives for the loc-4031 hop.
+                        cheat(c, "give thshantaydisc 1");
+                        cheat(c, "give shantay_pass 1");
+                        true
+                    }),
+                },
+                // The arm waits for the pass to actually land: the
+                // WorldState of the follow step then proves the packed
+                // gated edge's `item_req`, or the router fails closed.
+                wait: Wait {
+                    arm: Proof::Item {
+                        name: "Shantay pass",
+                        count: 1,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            Step {
+                name: "tele to the Al Kharid stand",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| cheat(c, "tele 0,51,48,40,47")),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: SHANTAY_PASS_START.x,
+                        z: SHANTAY_PASS_START.z,
+                        level: 0,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow the pass-gated hop into the desert",
+                kind: StepKind::Follow {
+                    dest: SHANTAY_DESERT_DEST,
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: SHANTAY_DESERT_DEST.x,
+                        z: SHANTAY_DESERT_DEST.z,
+                        level: 0,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::Arrived {
+            x: SHANTAY_DESERT_DEST.x,
+            z: SHANTAY_DESERT_DEST.z,
+            level: 0,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav_debug: true,
+            deadline: Duration::from_secs(420),
+            terminal_shot: Some("nav_shantay terminal"),
+            ..Default::default()
+        },
+    }
+}
+
 /// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
 /// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
 /// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
@@ -1347,6 +1499,7 @@ mod tests {
                 "nav_essence",
                 "nav_elkoy",
                 "nav_tele",
+                "nav_shantay",
                 "nav_routes",
                 "nav_paint_path"
             ]

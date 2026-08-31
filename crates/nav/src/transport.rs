@@ -2541,9 +2541,31 @@ const SHANTAY_NORTH_TO: WorldTile = WorldTile {
     z: 3115,
     level: 0,
 };
+/// The Shantay henge doorway loc id (`shantay_pass_henge_doorway` in
+/// `pack/loc.pack`): the two loc-4031 Door edges both interact it, and
+/// the traveller drives the gated branch's pass-handover chat dialogs
+/// for this loc (see [`crate::traveller`]).
+pub(crate) const SHANTAY_HENGE_LOC_ID: i32 = 4031;
+
 /// The Shantay henge edge ticks: OP_BASE 1 + the `p_teleport` tick + the
 /// `p_telejump` tick (both `p_delay(0)` in the queue block).
 const SHANTAY_NORTH_TICKS: i32 = 3;
+
+/// The Shantay henge free desert exit's `to`: the desert branch
+/// (`coordz(coord) <= coordz(loc_coord)`) telejumps the player
+/// `movecoord(coord,0,0,3)` — north of the loc — from wherever they
+/// stand. From the desert-side stand directly south-east of the henge
+/// ((3303,3115)) that landing is (3303,3118), an open tile north of the
+/// gate; the hop's close-enough-2 arrive arm also covers the adjacent
+/// desert-side approaches' landings ((3303,3117), (3302,3118)).
+const SHANTAY_SOUTH_TO: WorldTile = WorldTile {
+    x: 3303,
+    z: 3118,
+    level: 0,
+};
+/// The free desert exit ticks: OP_BASE 1 + the `p_telejump` tick (the
+/// branch's own `p_delay(0)`).
+const SHANTAY_SOUTH_TICKS: i32 = 2;
 
 /// Al Kharid border-toll and Shantay-pass edges: `TransportKind::Door`
 /// edges that cost an item, derived from `scripts/areas/area_alkharid/
@@ -2556,12 +2578,19 @@ const SHANTAY_NORTH_TICKS: i32 = 3;
 /// (4,28) = (3268,3227)/(3268,3228)), `to` the far-side walk-out,
 /// `open_loc_id` the config's `next_loc_stage` leaf (loc 1562/1563),
 /// `item_req` the 10-coin toll. The Shantay henge doorway (loc 4031,
-/// `op1=Go-through`) derives exactly the gated northbound hop — `at` the
-/// m51_48 (38,44) placement = (3302,3116), `to` [`SHANTAY_NORTH_TO`],
-/// `item_req` one Shantay pass (`inv_del(inv, shantay_pass, 1)` in the
-/// same block). The free desert exit — the same block's `coordz(coord)
-/// <= coordz(loc_coord)` teleport-jump — emits no edge; it stays a plain
-/// walk.
+/// `op1=Go-through`) derives two `TransportKind::Door` edges, one per
+/// script branch — the gated hop (`at` the m51_48 (38,44) placement =
+/// (3302,3116), `to` [`SHANTAY_NORTH_TO`], `item_req` one Shantay pass,
+/// from the pass/Al Kharid side `coordz(coord) > coordz(loc_coord)`, the
+/// `inv_del(inv, shantay_pass, 1)` + `[queue,shantay_pass_enter]`
+/// teleport) and the free desert exit (`at` one tile south of the
+/// placement, on the desert side `coordz(coord) <= coordz(loc_coord)`,
+/// `to` [`SHANTAY_SOUTH_TO`], **no** `item_req` — the same block's
+/// `p_telejump(movecoord(coord,0,0,3))`). The pack edge is **not** a
+/// plain walk: both hops are op interactions with the loc, and the gated
+/// hop is the only edge into the desert (a pass-side player routes
+/// through it; the free edge's `at` sits on the desert side, so the
+/// interaction never fires the pass branch).
 fn toll_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -2628,8 +2657,12 @@ fn toll_edges(
         }
     }
 
-    // The Shantay henge: exactly the gated northbound hop, `at` the loc's
-    // placement tile (shape 10, unlike the wall doors).
+    // The Shantay henge: two edges, one per `[oploc1,shantay_pass_
+    // henge_doorway]` branch — the gated hop `at` the loc's placement
+    // tile (shape 10, unlike the wall doors), and the free desert exit
+    // `at` one tile south of it (the desert side `coordz(coord) <=
+    // coordz(loc_coord)`; the interaction from any tile on that side of
+    // the gate always fires the free branch).
     let Some(&henge_id) = ids.get("shantay_pass_henge_doorway") else {
         return;
     };
@@ -2656,6 +2689,25 @@ fn toll_edges(
             open_loc_id: None,
             skill_req: vec![],
             item_req: vec![(pass_id, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        });
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: p.x,
+                z: p.z - 1,
+                level: p.level,
+            },
+            to: SHANTAY_SOUTH_TO,
+            loc_id: henge_id,
+            option: 1, // Go-through (oploc1)
+            ticks: SHANTAY_SOUTH_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
@@ -3978,20 +4030,23 @@ mod tests {
     }
 
     /// The real content must derive the Al Kharid border toll and the
-    /// Shantay northbound hop as item-gated `TransportKind::Door` edges.
+    /// Shantay-pass edges as item-gated `TransportKind::Door` edges.
     /// The toll gates (`border_gate_toll_left`/`_right`, loc 2882/2883 —
     /// the m51_50 (4,27)/(4,28) placements = (3268,3227)/(3268,3228))
     /// carry the 10-coin toll (`inv_del(inv, coins, 10)` in
     /// border_gate.rs2's `pass_toll_gate`); the Shantay henge doorway
-    /// (loc 4031, m51_48 (38,44) = (3302,3116)) derives exactly one gated
-    /// hop into the desert — `to` (3304,3115), the landing of the
-    /// `[queue,shantay_pass_enter]` `p_teleport(0_51_48_40_46)` +
-    /// `p_telejump(movecoord(coord,0,0,-3))`, `item_req` one Shantay pass
-    /// (obj 1854). The free desert exit (the `coordz(coord) <=
-    /// coordz(loc_coord)` teleport-jump in the same `[oploc1,...]` block)
-    /// must NOT become an edge. Skips with a message when the Server
-    /// content tree or the client cache is absent; never fakes
-    /// coordinates.
+    /// (loc 4031, m51_48 (38,44) = (3302,3116)) derives **two** edges,
+    /// one per `shantay_pass.rs2` `[oploc1,...]` branch — the gated hop
+    /// into the desert (`at` the placement, `to` (3304,3115), the
+    /// landing of the `[queue,shantay_pass_enter]` `p_teleport
+    /// (0_51_48_40_46)` + `p_telejump(movecoord(coord,0,0,-3))`,
+    /// `item_req` one Shantay pass (obj 1854)) and the free desert exit
+    /// (`at` (3302,3115) one tile south of the placement, `to`
+    /// (3303,3118), the `coordz(coord) <= coordz(loc_coord)`
+    /// `p_telejump(movecoord(coord,0,0,3))` landing, **no** `item_req`).
+    /// Only the northbound hop carries the pass. Skips with a message
+    /// when the Server content tree or the client cache is absent; never
+    /// fakes coordinates.
     #[test]
     fn derive_transports_emits_alkharid_toll_and_shantay_north() {
         let Some((graph, _)) = derive_from_real_content() else {
@@ -4046,7 +4101,9 @@ mod tests {
                 Some(if e.loc_id == 2882 { 1562 } else { 1563 })
             );
         }
-        // The Shantay henge carries exactly the one gated northbound hop.
+        // The Shantay henge carries exactly two edges, one per
+        // `[oploc1,shantay_pass_henge_doorway]` branch: the gated hop
+        // into the desert and the free desert exit.
         let henge: Vec<_> = graph
             .edges
             .iter()
@@ -4055,12 +4112,21 @@ mod tests {
             .collect();
         assert_eq!(
             henge.len(),
-            1,
-            "only the gated northbound hop derives, got {}",
+            2,
+            "exactly two Shantay henge edges derive (the gated desert hop \
+             and the free desert exit), got {}",
             henge.len()
         );
+        let gated = henge
+            .iter()
+            .find(|e| !e.item_req.is_empty())
+            .expect("one Shantay henge edge carries the pass");
+        let free = henge
+            .iter()
+            .find(|e| e.item_req.is_empty())
+            .expect("one Shantay henge edge is free");
         assert_eq!(
-            henge[0].at,
+            gated.at,
             WorldTile {
                 x: 3302,
                 z: 3116,
@@ -4068,7 +4134,7 @@ mod tests {
             }
         );
         assert_eq!(
-            henge[0].to,
+            gated.to,
             WorldTile {
                 x: 3304,
                 z: 3115,
@@ -4076,14 +4142,30 @@ mod tests {
             }
         );
         assert!(
-            henge[0]
-                .item_req
-                .iter()
-                .any(|(id, n)| *id == 1854 && *n >= 1),
-            "Shantay pass on the northbound hop"
+            gated.item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1),
+            "Shantay pass on the gated desert hop"
         );
-        assert_eq!(henge[0].option, 1, "Go-through op");
-        assert_eq!(henge[0].dir, None);
+        assert_eq!(gated.option, 1, "Go-through op");
+        assert_eq!(gated.dir, None);
+        assert_eq!(
+            free.at,
+            WorldTile {
+                x: 3302,
+                z: 3115,
+                level: 0,
+            }
+        );
+        assert_eq!(
+            free.to,
+            WorldTile {
+                x: 3303,
+                z: 3118,
+                level: 0,
+            }
+        );
+        assert!(free.item_req.is_empty(), "the desert exit is free");
+        assert_eq!(free.option, 1, "Go-through op");
+        assert_eq!(free.dir, None);
     }
 
     /// The Ardougne→wilderness lever is an enter-wildy hop: default
