@@ -421,10 +421,13 @@ impl WalkArm {
 /// [`Traveller::follow`] one step against `snapshot` (the slot's per-tick
 /// view, rebuilt from the same client that supplied `here`). `here` is the
 /// player's world tile when the body decoded one (else the bot stands
-/// still). Mirrors the armed route's dest into the status row's `walk_*`
-/// fields (`-1` when idle); any terminal outcome clears the route —
-/// arrival and stall alike — so the status flips back to idle and a script
-/// may arm a fresh walk.
+/// still). `world` is the shared nav world, `None` when no pack loaded —
+/// its packed any-tile teleport list rides into the follow so a jewellery
+/// rub hop answers the destination dialog's choice for its landing (the
+/// same pass-through the panel and scenario follow make). Mirrors the
+/// armed route's dest into the status row's `walk_*` fields (`-1` when
+/// idle); any terminal outcome clears the route — arrival and stall alike
+/// — so the status flips back to idle and a script may arm a fresh walk.
 fn step_nav_bot<D: Driver>(
     driver: &mut D,
     name: &str,
@@ -432,6 +435,7 @@ fn step_nav_bot<D: Driver>(
     snapshot: &GameSnapshot,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    world: Option<&NavWorld>,
 ) {
     if here.is_none() {
         return;
@@ -440,6 +444,7 @@ fn step_nav_bot<D: Driver>(
         // Exact arrival: the armed dest must be stood on before the route
         // clears (the v1 traveller arrived the same way).
         close_enough: 0,
+        teleports: world.map(|w| w.graph.teleports.as_slice()),
         ..TravelOptions::default()
     };
     let queued = {
@@ -1330,6 +1335,7 @@ fn spawn_slot_thread(
                                         &nav_snapshot,
                                         &slot_navs,
                                         &slot_statuses,
+                                        slot_world.as_deref(),
                                     );
                                 }
                             }
@@ -1493,7 +1499,11 @@ mod tests {
     use std::thread;
 
     use client::client::ClientConfig;
+    use client::client::MiniMenuAction;
+    use client::config::if_type::ButtonType;
     use client::config::Cache;
+    use client::io::ServerProt;
+    use nav::router::Leg;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use vault::ProfileSettings;
 
@@ -2739,6 +2749,8 @@ mod tests {
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let mut rec = NavRec {
             walked: None,
+            held_ops: 0,
+            if_button_components: Vec::new(),
             sink: Sink,
         };
         let ctx = ScriptCtx {
@@ -2778,11 +2790,26 @@ mod tests {
     #[derive(Default)]
     struct NavRec {
         walked: Option<(i32, i32)>,
+        /// Held-item ops (OP_HELD1..=5): the jewellery rub arm's press.
+        held_ops: usize,
+        /// The component ids pressed via IF_BUTTON, in order (the follow's
+        /// dialog-ride arm asserts *which* choice was answered).
+        if_button_components: Vec<i32>,
         sink: Sink,
     }
 
     impl Driver for NavRec {
-        fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
+        fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, c: i32) {
+            match action {
+                MiniMenuAction::OP_HELD1
+                | MiniMenuAction::OP_HELD2
+                | MiniMenuAction::OP_HELD3
+                | MiniMenuAction::OP_HELD4
+                | MiniMenuAction::OP_HELD5 => self.held_ops += 1,
+                MiniMenuAction::IF_BUTTON => self.if_button_components.push(c),
+                _ => {}
+            }
+        }
         fn do_action(&mut self, _slot: i32) -> bool {
             true
         }
@@ -3001,7 +3028,15 @@ mod tests {
         // toward the dest and mirroring the armed dest into the status row.
         let mut snap = GameSnapshot::new();
         nav_snapshot_at(&mut c, &mut snap, 0, 0);
-        step_nav_bot(&mut d, "alice", Some((0, 0, 0)), &snap, &navs, &statuses);
+        step_nav_bot(
+            &mut d,
+            "alice",
+            Some((0, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            world.as_deref(),
+        );
         assert_eq!(d.walked, Some((4, 0)), "the hop targets the dest tile");
         {
             let rows = statuses.lock().unwrap();
@@ -3013,7 +3048,15 @@ mod tests {
         // Standing on the dest, the next pump poll reports Arrived and
         // clears the route; the status flips back to idle.
         nav_snapshot_at(&mut c, &mut snap, 4, 0);
-        step_nav_bot(&mut d, "alice", Some((4, 0, 0)), &snap, &navs, &statuses);
+        step_nav_bot(
+            &mut d,
+            "alice",
+            Some((4, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            world.as_deref(),
+        );
         assert_eq!(queued(&navs), None, "arrival clears the armed route");
         {
             let rows = statuses.lock().unwrap();
@@ -3021,6 +3064,234 @@ mod tests {
             assert_eq!(rows[0].walk_z, -1);
             assert_eq!(rows[0].walk_level, -1);
         }
+    }
+
+    /// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
+    /// shape every dest of the multi-location glory group shares. The
+    /// `to` names the landing (default Edgeville, `switch_int($choice)`
+    /// case 1); the group's sibling edges share `loc_id` + option and
+    /// differ only in `to`, exactly as the bake emits them.
+    fn glory_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3087,
+                z: 3496,
+                level: 0, // Edgeville (case 1)
+            },
+            loc_id: 1712,
+            option: 4, // Rub (opheld4)
+            ticks: 2,  // OP_BASE + the rub p_delay(1)
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(1712, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
+    /// The charged glory in the inv tab (side 3) TYPE_INV container: the
+    /// shape `teleport_send` reads the rub's held item from.
+    fn plant_inv_item(c: &mut Client, obj_id: i32) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= obj_id as usize {
+                cache.objs.push(client::config::ObjType::default());
+            }
+            cache.objs[obj_id as usize] = client::config::ObjType {
+                id: obj_id,
+                iop: [None, None, None, Some("Rub".into()), None],
+                ..Default::default()
+            };
+        }
+        c.side_icon[3] = 300;
+        c.set_iface(
+            300,
+            IfType {
+                id: 300,
+                layer_id: 300,
+                children: Some(vec![301]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            301,
+            IfType {
+                id: 301,
+                layer_id: 300,
+                r#type: ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![obj_id + 1]),
+                link_obj_number: Some(vec![1]),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// A chat destination dialog (root 100 with one BUTTON_OK choice
+    /// button per option, at components 101..): the shape a jewellery
+    /// rub's "Where would you like to teleport to?" opens.
+    fn plant_choice_dialog(c: &mut Client, options: &[&str]) {
+        let root = 100;
+        let children: Vec<i32> = (0..options.len()).map(|i| (101 + i) as i32).collect();
+        for (i, text) in options.iter().enumerate() {
+            let id = 101 + i;
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: root,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    text: (*text).to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+        c.set_iface(
+            root as usize,
+            IfType {
+                id: root,
+                layer_id: root,
+                children: Some(children),
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = root;
+        c.bump_gens(ServerProt::IF_OPENCHAT);
+    }
+
+    /// Bump every gen and rebuild into the existing snapshot (tick + 1).
+    fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        snap.rebuild(c);
+    }
+
+    /// The pump's per-uid nav step must hand the follow the packed any-tile
+    /// teleport list: a multi-destination jewellery rub (two glory
+    /// siblings, same `loc_id`, differing `to`) executes the SECOND
+    /// landing only when the traveller answers dialog choice 2 — the
+    /// 1-based index of the followed edge's `to` among the packed
+    /// same-`loc_id` rub edges. Without `world.graph.teleports` the
+    /// follow falls back to the modal's FIRST choice and rubs to the
+    /// wrong place (the same pass-through the panel and scenario follow
+    /// make).
+    #[test]
+    fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
+        let karamja = WorldTile {
+            x: 2918,
+            z: 3176,
+            level: 0, // the packed glory case-2 landing
+        };
+        let edgeville = WorldTile {
+            x: 3087,
+            z: 3496,
+            level: 0, // case 1
+        };
+        let glory = [
+            TransportEdge {
+                to: edgeville,
+                ..glory_edge()
+            },
+            TransportEdge {
+                to: karamja,
+                ..glory_edge()
+            },
+        ];
+        let world = Some(Arc::new(NavWorld {
+            collision: nav::collision::WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 1,
+                height: 1,
+                walk: vec![0u16; 1],
+                flags: None,
+            },
+            graph: TransportGraph {
+                teleports: glory.to_vec(),
+                ..TransportGraph::default()
+            },
+        }));
+        let NavRig {
+            navs,
+            world,
+            statuses,
+            ..
+        } = nav_rig_with(world);
+
+        let mut c = nav_client();
+        plant_inv_item(&mut c, 1712);
+        let mut snap = GameSnapshot::new();
+        nav_snapshot_at(&mut c, &mut snap, 0, 0);
+        let mut d = NavRec::default();
+
+        // Arm the route for the SECOND landing directly in the uid's bot
+        // (the arm is the router's job; this test pins the follow's
+        // dialog answer).
+        navs.lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .route = Some(Route {
+            legs: vec![Leg::Transport {
+                edge: glory[1].clone(),
+            }],
+            dest: karamja,
+            ticks: 2.0,
+        });
+
+        // Poll 1: the hop rubs the charged item.
+        step_nav_bot(
+            &mut d,
+            "alice",
+            Some((0, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            world.as_deref(),
+        );
+        assert_eq!(d.held_ops, 1, "one OP_HELD4 rub sent");
+        assert!(queued(&navs).is_some(), "the route stays armed");
+
+        // The rub opens the destination choice: the next pump poll answers
+        // the SECOND option (Karamja), never the constant first.
+        plant_choice_dialog(&mut c, &["Edgeville.", "Karamja."]);
+        bump_rebuild(&mut c, &mut snap);
+        step_nav_bot(
+            &mut d,
+            "alice",
+            Some((0, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            world.as_deref(),
+        );
+        assert_eq!(
+            d.if_button_components,
+            vec![102],
+            "the second destination answers choice 2, not the modal's first"
+        );
     }
 
     /// A 5×5 world walled between x=1 and x=2, crossed only by a 10-coin

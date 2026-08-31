@@ -6,9 +6,10 @@
 //! the village (`to` the maze coord (2515,3159)) and the village Elkoy
 //! (npc 474) at (2514,3159) escorts out (`to` the entrance coord
 //! (2504,3192)), each carrying the Tree Gnome Village quest req, and that
-//! `find` still routes from the maze-side Elkoy's tile to the village on
-//! the pack. Either failure exits 1 (rs2b0t style). Route detail prints
-//! only under `BOT_DEBUG=1`.
+//! `find_with` with a WorldState proving that quest still routes from the
+//! maze-side Elkoy's tile to the village on the pack, with the escort as
+//! a `Transport` Npc leg. Either failure exits 1 (rs2b0t style). Route
+//! detail prints only under `BOT_DEBUG=1`.
 //!
 //! `nav_elkoy_follow` is the execute twin — the same `nav_elkoy` scenario
 //! `panel-play --live script_nav_elkoy` drives. The scenario seeds Tree
@@ -30,7 +31,7 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find;
+use nav::router::{find_with, FindOptions, Leg};
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
@@ -110,29 +111,51 @@ fn nav_elkoy() {
         }
     }
     // The maze-side Elkoy's tile reaches the village through his escort
-    // hop (the traveller walks no maze tiles).
-    find(&world.collision, &world.graph, ELKOY_MAZE_SIDE, MAZE)
-        .map(|route| {
-            if route.dest != MAZE {
-                fail(&format!(
-                    "nav_elkoy: route ends at {:?}, not the village {MAZE:?}",
-                    route.dest
-                ));
-            }
-            if nav::debug_enabled() {
-                println!(
-                    "nav_elkoy: maze-side elkoy -> village routed ({:.0} ticks, {} legs)",
-                    route.ticks,
-                    route.legs.len()
-                );
-            }
-        })
-        .unwrap_or_else(|e| {
+    // hop (the traveller walks no maze tiles) — the escort edge carries
+    // the Tree Gnome Village quest req, so the proof must state the quest
+    // done: the fail-closed empty state refuses the gated hop.
+    let mut state = nav::WorldState::empty();
+    state.quests.insert("Tree Gnome Village".to_string());
+    find_with(
+        &world.collision,
+        &world.graph,
+        ELKOY_MAZE_SIDE,
+        MAZE,
+        FindOptions::default(),
+        &state,
+    )
+    .map(|route| {
+        if route.dest != MAZE {
             fail(&format!(
-                "nav_elkoy: maze-side elkoy {ELKOY_MAZE_SIDE:?} -> village {MAZE:?} \
-                 is NoPath ({e:?})"
-            ))
-        });
+                "nav_elkoy: route ends at {:?}, not the village {MAZE:?}",
+                route.dest
+            ));
+        }
+        if !route
+            .legs
+            .iter()
+            .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Npc))
+        {
+            fail(&format!(
+                "nav_elkoy: the maze-side -> village route carries no Transport Npc \
+                 leg ({:?})",
+                route.legs
+            ));
+        }
+        if nav::debug_enabled() {
+            println!(
+                "nav_elkoy: maze-side elkoy -> village routed ({:.0} ticks, {} legs)",
+                route.ticks,
+                route.legs.len()
+            );
+        }
+    })
+    .unwrap_or_else(|e| {
+        fail(&format!(
+            "nav_elkoy: maze-side elkoy {ELKOY_MAZE_SIDE:?} -> village {MAZE:?} \
+             is NoPath ({e:?})"
+        ))
+    });
     println!(
         "PASS: nav_elkoy pack carries {} Elkoy escort edges ({} edges, {} npc hops)",
         elk.len(),
