@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::snapshot::WorldTile;
+use nav::paint::{bake_reach, can_step_off, reached};
 use nav::world::NavWorld;
 
 /// Lumbridge courtyard fallback when no nav pack is on disk.
@@ -24,11 +25,14 @@ fn pack_path() -> PathBuf {
     }
 }
 
-/// The world's level-0 walkable tiles, row-major (z then x): a tile is a
-/// seed candidate when the collision bake's blanket `walkable` check passes
-/// (the standable test, not a directional mask).
+/// Level-0 tiles a stress50 bot may `::tele` onto: standable, in the
+/// transport-connected `step_ok` flood (reach overlay, paint-only for
+/// `find`), and able to walk off. Open bbox zeros that are not in the
+/// graph (mapsquare holes, ocean) are not seeds — those look walkable
+/// in the pack and render as empty 104s.
 fn walkable_seeds(world: &NavWorld) -> Vec<WorldTile> {
     let c = &world.collision;
+    let bits = bake_reach(c, &world.graph);
     let o = c.origin;
     (0..c.height)
         .flat_map(|z| {
@@ -38,13 +42,7 @@ fn walkable_seeds(world: &NavWorld) -> Vec<WorldTile> {
                 level: o.level,
             })
         })
-        .filter(|t| {
-            c.walkable(WorldTile {
-                x: t.x,
-                z: t.z,
-                level: t.level,
-            })
-        })
+        .filter(|t| c.standable(*t) && reached(&bits, c, *t) && can_step_off(c, *t))
         .collect()
 }
 
@@ -104,12 +102,42 @@ mod tests {
         assert_eq!(tele_args(t), api::interact::tele_args(0, 3220, 3218));
     }
 
+    fn door(at: WorldTile, to: WorldTile) -> nav::transport::TransportEdge {
+        nav::transport::TransportEdge {
+            kind: nav::transport::TransportKind::Door,
+            at,
+            to,
+            loc_id: 1,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
     #[test]
     fn walkable_seeds_lists_only_level0_walkable_tiles() {
-        // A 3x2 world with the (3200,3201) cell blocked: seeds come only
-        // from the collision bake's blanket `walkable` check.
+        // A 3x2 world with the (3200,3201) cell blocked. A door seeds the
+        // reach flood so open tiles are in-graph; the blocked cell is not.
         let mut flags = vec![0u32; 6];
         flags[3] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        let at = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        };
+        let mut graph = TransportGraph::default();
+        graph.edges.push(door(at, to));
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -122,7 +150,7 @@ mod tests {
                 walk: nav::collision::pack_walk_u16(&flags),
                 flags: None,
             },
-            graph: TransportGraph::default(),
+            graph,
         };
         let seeds = walkable_seeds(&world);
         assert_eq!(seeds.len(), 5);
@@ -136,5 +164,56 @@ mod tests {
             z: 3200,
             level: 0
         }));
+    }
+
+    #[test]
+    fn walkable_seeds_skip_unreached_holes_and_no_exit_cages() {
+        // 5×5 open; a door at (0,0)→(1,0) seeds the reach flood. Centre
+        // (2,2) is a face-walled cage (all W_*). An isolated (4,4) is
+        // standable but unreached if we block a moat... open grid means
+        // (4,4) is reached. Cage has no step_ok exit.
+        let mut flags = vec![0u32; 4 * 5 * 5];
+        let w = CollisionFlag::W_N as u32
+            | CollisionFlag::W_S as u32
+            | CollisionFlag::W_E as u32
+            | CollisionFlag::W_W as u32;
+        flags[2 * 5 + 2] = w;
+        let at = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 1,
+            z: 0,
+            level: 0,
+        };
+        let mut graph = TransportGraph::default();
+        graph.edges.push(door(at, to));
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 5,
+                height: 5,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
+            },
+            graph,
+        };
+        let seeds = walkable_seeds(&world);
+        assert!(
+            !seeds.contains(&WorldTile {
+                x: 2,
+                z: 2,
+                level: 0
+            }),
+            "face-walled cage is not a scatter seed"
+        );
+        assert!(seeds.contains(&at), "door at is a seed");
+        assert!(seeds.contains(&to), "open reached tile is a seed");
     }
 }

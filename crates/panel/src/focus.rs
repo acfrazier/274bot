@@ -31,7 +31,14 @@ pub struct Focus {
 
 /// Whether this slot has the renderer enabled: per-slot override if present,
 /// else the focused bot's `renderer` checkbox.
+///
+/// The focused slot ignores a per-slot Off: that bit is the **rail**
+/// (stress50 members must not grow heads while unfocused). The Game pane's
+/// one seat follows focus so a −1 on s00 can still show a working member.
 pub fn renderer_for(f: &Focus, name: &str) -> bool {
+    if f.focused.as_deref() == Some(name) {
+        return f.renderer;
+    }
     f.renderer_by.get(name).copied().unwrap_or(f.renderer)
 }
 
@@ -214,6 +221,44 @@ mod tests {
         f.wall_open = true;
         f.renderer_by.insert("b".into(), false);
         assert!(!draw_for_slot(&f, "b"));
+    }
+
+    /// Per-slot Off is the rail. The Game pane's one head follows focus
+    /// so stress50 can click a working member after s00's handshake −1.
+    #[test]
+    fn focused_slot_draws_even_when_renderer_by_is_off() {
+        let mut f = Focus {
+            focused: Some("b".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: true,
+            sidecar_50: false,
+            live_full_rate: false,
+            focused_50: false,
+            wall_open: true,
+            wall: vec!["a".into(), "b".into(), "c".into()],
+            renderer_by: HashMap::from([
+                ("a".into(), true),
+                ("b".into(), false),
+                ("c".into(), false),
+            ]),
+        };
+        assert!(
+            draw_for_slot(&f, "b"),
+            "Game pane follows focus onto a rail-Off profile"
+        );
+        assert!(
+            !draw_for_slot(&f, "a"),
+            "only-render-selected: unfocused GPU profile drops the head"
+        );
+        f.only_render_selected = false;
+        assert!(draw_for_slot(&f, "b"));
+        assert!(draw_for_slot(&f, "a"));
+        assert!(
+            !draw_for_slot(&f, "c"),
+            "unfocused raster Off still cannot grow a head on render-all"
+        );
     }
 
     #[test]
