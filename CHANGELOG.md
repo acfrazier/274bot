@@ -3,7 +3,7 @@
 All notable public changes to 274bot. Crate versions are `0.1.0` and
 `publish = false` (not on crates.io).
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-08-31
 
 Alpha of the **bot host + API + nav**. Honest bot scripts are not part of
 this release. The script *kernel* (Browse / Start / Pause / Stop, JS Load)
