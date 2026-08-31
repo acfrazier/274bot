@@ -380,6 +380,7 @@ pub enum SendReason {
     InvalidCount,
     NoModalOpen,
     NoContinue,
+    NoChoice,
     Unreachable,
     InvalidTab,
     AlreadyIngame,
@@ -802,6 +803,41 @@ impl<'a> Interactions<'a> {
         }
         self.dispatch(
             WireCommand::Continue { component_id },
+            snapshot.tick() as u64,
+        )
+    }
+
+    /// Answer the chat modal's `option`-th choice button (1-based, the
+    /// `p_choiceN` option an edge's `option` names — e.g. the cart
+    /// driver's "Yes please…" fare choice). Refuses with `NoChoice` when
+    /// no such choice is up, `StaleTarget` when the live component is
+    /// gone, and the same visibility/pressability checks as [`press`].
+    pub fn answer_choice<'t>(&mut self, option: i32) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let Some(choice) = snapshot.chat_options().get((option - 1) as usize) else {
+            return refuse(snapshot, SendReason::NoChoice);
+        };
+        let ctx = ReadContext::new(snapshot);
+        let Some(live) = ctx.component(choice.component_id) else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        if live.button_type == 0 || live.button_type == BUTTON_TARGET {
+            return refuse(snapshot, SendReason::InvalidAction);
+        }
+        if live.client_code > 0 {
+            return refuse(snapshot, SendReason::ClientSideOnly);
+        }
+        if !component_visible(live, snapshot) {
+            return refuse(snapshot, SendReason::ComponentNotVisible);
+        }
+        self.dispatch(
+            WireCommand::Button {
+                component_id: live.component_id,
+                button_type: live.button_type,
+            },
             snapshot.tick() as u64,
         )
     }

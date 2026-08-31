@@ -1135,10 +1135,34 @@ impl GameSnapshot {
             return false;
         }
         self.inv.clear();
-        if let Some(inv) = client
-            .ifaces_merged()
-            .find(|f| f.r#type == ComponentType::TYPE_INV)
-        {
+        // The live inv is the side-tab-3 TYPE_INV container (the same the
+        // `inventory()` family reads); a naive first-TYPE_INV scan can
+        // pick an unrelated empty container (a shop/trade modal) and fail
+        // the nav `WorldState` gate closed. Tests/stub clients without a
+        // side tab fall back to the first TYPE_INV that actually holds
+        // decoded slots, else the first TYPE_INV in the table.
+        let inv = tab_inv_component(client, 3)
+            .and_then(|id| client.if_(id as usize))
+            .or_else(|| {
+                let mut first = None;
+                for com in client
+                    .ifaces_merged()
+                    .filter(|f| f.r#type == ComponentType::TYPE_INV)
+                {
+                    if com
+                        .link_obj_type
+                        .as_ref()
+                        .is_some_and(|ids| ids.iter().any(|id| *id > 0))
+                    {
+                        return Some(com);
+                    }
+                    if first.is_none() {
+                        first = Some(com);
+                    }
+                }
+                first
+            });
+        if let Some(inv) = inv {
             if let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) {
                 self.inv = ids
                     .iter()

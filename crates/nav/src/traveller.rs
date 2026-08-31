@@ -19,7 +19,7 @@ use api::interact::{
 };
 use api::query::{ChatQueryExt, Query, SceneQuery};
 use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
-use api::snapshot::{GameSnapshot, LocView, ReadContext, WorldTile};
+use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WorldTile};
 use client::dash3d::CollisionFlag;
 
 use crate::arrival::arrived as grid_arrived;
@@ -572,11 +572,14 @@ impl FollowRun {
                     };
                     fire_leg(options, &leg, LegPhase::Start);
                     let here = here(snapshot);
-                    // Multiloc open-state: when the live loc at `at` already
-                    // reads open, interacting is wrong (an OP on the open
-                    // leaf would Close it) — walk straight through to `to`
-                    // and settle `arrived(to)` with the normal budget.
-                    if edge_loc_open(snapshot, edge) {
+                    // Multiloc open-state: when the live door loc at `at`
+                    // already reads open, interacting is wrong (an OP on
+                    // the open leaf would Close it) — walk straight
+                    // through to `to` and settle `arrived(to)` with the
+                    // normal budget. Doors only: an Npc edge's `at` is the
+                    // driver's tile, and a nearby loc with a Close op
+                    // would misread as an open leaf.
+                    if edge.kind == TransportKind::Door && edge_loc_open(snapshot, edge) {
                         let to = edge.to;
                         let mut ix = Interactions::new(snapshot, d);
                         match ix.walk(to) {
@@ -590,6 +593,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     chat_seq: chat_seq(snapshot),
+                                    dialog_answered: false,
                                     approach: None,
                                 });
                                 return None;
@@ -600,17 +604,18 @@ impl FollowRun {
                             }
                         }
                     }
-                    // The game only accepts an `op_loc` from adjacent: when
-                    // the player is not yet within chebyshev 1 of `at`, walk
-                    // to the nearest standable tile there first and wait to
-                    // arrive (the approach, settled by the transport hop),
-                    // before the loc is found and interacted with.
+                    // The game only accepts an `op_loc`/`op_npc` from
+                    // adjacent: when the player is not yet within chebyshev
+                    // 1 of `at`, walk to the nearest standable tile there
+                    // first and wait to arrive (the approach, settled by
+                    // the transport hop), before the target is found and
+                    // interacted with.
                     if cheb(here, edge.at) > 1 {
                         let Some(approach) = approach_tile(snapshot, edge, here) else {
-                            // No standable tile adjacent to the loc in the
-                            // loaded scene: keep waiting, bounded by the hop
-                            // budget. The leg stays on the front while
-                            // waiting.
+                            // No standable tile adjacent to the target in
+                            // the loaded scene: keep waiting, bounded by
+                            // the hop budget. The leg stays on the front
+                            // while waiting.
                             self.loc_wait += 1;
                             if self.loc_wait > self.budget {
                                 fire_leg(options, &leg, LegPhase::Failed);
@@ -618,8 +623,12 @@ impl FollowRun {
                                     at: here,
                                     leg: self.leg_index,
                                     detail: format!(
-                                        "no standable tile within 1 of transport loc {} at ({}, {}, {}) in the loaded scene",
-                                        edge.loc_id, edge.at.x, edge.at.z, edge.at.level
+                                        "no standable tile within 1 of transport {} {} at ({}, {}, {}) in the loaded scene",
+                                        target_word(edge),
+                                        edge.loc_id,
+                                        edge.at.x,
+                                        edge.at.z,
+                                        edge.at.level
                                     ),
                                 });
                             }
@@ -640,6 +649,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     chat_seq: chat_seq(snapshot),
+                                    dialog_answered: false,
                                     approach: Some(ApproachHop {
                                         tile: approach,
                                         at,
@@ -654,13 +664,11 @@ impl FollowRun {
                             }
                         }
                     }
-                    match find_transport_loc(snapshot, edge) {
-                        Some(loc) => {
+                    match find_transport_target(snapshot, edge) {
+                        Some(target) => {
                             let to = edge.to;
                             let mut ix = Interactions::new(snapshot, d);
-                            match ix
-                                .interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option))
-                            {
+                            match interact_transport(&mut ix, target, edge.option) {
                                 SendResult::Sent { .. } => {
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
@@ -671,6 +679,7 @@ impl FollowRun {
                                         tries: 0,
                                         troll: false,
                                         chat_seq: chat_seq(snapshot),
+                                        dialog_answered: false,
                                         approach: None,
                                     });
                                     return None;
@@ -682,9 +691,10 @@ impl FollowRun {
                             }
                         }
                         None => {
-                            // The loc has not appeared in the loaded scene
-                            // yet: keep waiting, bounded by the hop budget.
-                            // The leg stays on the front while waiting.
+                            // The target has not appeared in the loaded
+                            // scene yet: keep waiting, bounded by the hop
+                            // budget. The leg stays on the front while
+                            // waiting.
                             self.loc_wait += 1;
                             if self.loc_wait > self.budget {
                                 fire_leg(options, &leg, LegPhase::Failed);
@@ -692,8 +702,12 @@ impl FollowRun {
                                     at: here,
                                     leg: self.leg_index,
                                     detail: format!(
-                                        "transport loc {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
-                                        edge.loc_id, edge.at.x, edge.at.z, edge.at.level
+                                        "transport {} {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
+                                        target_word(edge),
+                                        edge.loc_id,
+                                        edge.at.x,
+                                        edge.at.z,
+                                        edge.at.level
                                     ),
                                 });
                             }
@@ -874,10 +888,10 @@ impl FollowRun {
             }
         }
         // The pre-interact approach: the player must stand within chebyshev
-        // 1 of the loc before the game accepts an `op_loc`. While the
-        // approach is armed, watch it instead of the arrive arm; only once
-        // adjacent does the hop find the loc, interact, and settle
-        // `arrived(to)`.
+        // 1 of the loc (or the driver NPC) before the game accepts an
+        // interact. While the approach is armed, watch it instead of the
+        // arrive arm; only once adjacent does the hop find the target,
+        // interact, and settle `arrived(to)`.
         if hop.approach.is_some() {
             match self.poll_approach(snapshot, &mut hop, options) {
                 Poll::Watching => {
@@ -893,10 +907,10 @@ impl FollowRun {
                 Leg::Transport { edge } => edge.clone(),
                 Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
             };
-            return match find_transport_loc(snapshot, &edge) {
-                Some(loc) => {
+            return match find_transport_target(snapshot, &edge) {
+                Some(target) => {
                     let mut ix = Interactions::new(snapshot, d);
-                    match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
+                    match interact_transport(&mut ix, target, edge.option) {
                         SendResult::Sent { .. } => {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
@@ -911,7 +925,7 @@ impl FollowRun {
                     }
                 }
                 None => {
-                    // The loc has not appeared in the loaded scene yet:
+                    // The target has not appeared in the loaded scene yet:
                     // keep waiting, bounded by the hop budget.
                     self.loc_wait += 1;
                     if self.loc_wait > self.budget {
@@ -920,8 +934,12 @@ impl FollowRun {
                             at: here,
                             leg: self.leg_index,
                             detail: format!(
-                                "transport loc {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
-                                edge.loc_id, edge.at.x, edge.at.z, edge.at.level
+                                "transport {} {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
+                                target_word(&edge),
+                                edge.loc_id,
+                                edge.at.x,
+                                edge.at.z,
+                                edge.at.level
                             ),
                         })
                     } else {
@@ -949,6 +967,43 @@ impl FollowRun {
                 edge.loc_id,
                 edge_loc_open(snapshot, &edge),
             );
+        }
+        // An Npc hop's first op can open a chat dialog instead of riding
+        // immediately (the live cart drivers' `opnpc1` says "Hello!", then
+        // asks "Is that Ok?" with a "Yes please…" choice). Drive the
+        // dialog: press the modal's continue button while it is up (each
+        // press advances a page — including the post-choice "Great!"
+        // pages and mesboxes before the ride), and press the edge's
+        // `option`-th choice exactly once when the choice page is up,
+        // then keep watching `arrived(to)` for the ride.
+        if edge.kind == TransportKind::Npc {
+            let mut ix = Interactions::new(snapshot, d);
+            if snapshot.chat_continue_component_id() != -1 {
+                match ix.continue_dialog() {
+                    SendResult::Sent { .. } => {
+                        if crate::debug_enabled() {
+                            eprintln!(
+                                "[nav-transport] continued the npc {} dialog",
+                                edge.loc_id
+                            );
+                        }
+                    }
+                    SendResult::Refused { .. } => {}
+                }
+            } else if !hop.dialog_answered && !snapshot.chat_options().is_empty() {
+                match ix.answer_choice(edge.option) {
+                    SendResult::Sent { .. } => {
+                        hop.dialog_answered = true;
+                        if crate::debug_enabled() {
+                            eprintln!(
+                                "[nav-transport] answered fare choice {} for npc {}",
+                                edge.option, edge.loc_id
+                            );
+                        }
+                    }
+                    SendResult::Refused { .. } => {}
+                }
+            }
         }
         let close_enough = self.close_enough;
         let arrived_arm: Evidence<'static> = if edge.kind == TransportKind::Door
@@ -1341,6 +1396,10 @@ struct TransportHop {
     tries: u32,
     troll: bool,
     chat_seq: i32,
+    /// Whether an Npc hop's fare/choice dialog was answered (the cart
+    /// driver's `opnpc1` asks "Is that Ok?" before riding; the edge's
+    /// `option` names the choice). Answered once, never re-pressed.
+    dialog_answered: bool,
     /// The pre-interact approach walk: the standable take-off tile within
     /// chebyshev 1 of the edge's `at` the player must reach before the loc
     /// interact can be sent. `None` once the player stands adjacent (or on
@@ -1462,6 +1521,67 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
         .map(|(loc, _)| loc)
 }
 
+/// The live target of a transport hop: the edge's loc view (doors,
+/// ladders, stairs, boats, agility, gliders, spirit trees) or — for an
+/// NPC-triggered hop (`TransportKind::Npc`: cart, essence-mine wizard,
+/// Elkoy) — the edge's NPC view.
+enum TransportTarget<'s> {
+    Loc(&'s LocView),
+    Npc(&'s NpcView),
+}
+
+/// The snapshot target for a transport edge: the edge's `loc_id` within
+/// 3 tiles of `edge.at` for loc edges ([`find_transport_loc`]), or the
+/// edge's npc type id within 3 tiles of `edge.at` for
+/// [`TransportKind::Npc`] edges (the m8aq `gap <= 3`), nearest first.
+/// An Npc edge's `loc_id` is the npc.pack type id, matched against the
+/// live NPC's `r#type`.
+fn find_transport_target<'s>(
+    snapshot: &'s GameSnapshot,
+    edge: &TransportEdge,
+) -> Option<TransportTarget<'s>> {
+    if edge.kind == TransportKind::Npc {
+        snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| {
+                npc.r#type == Some(edge.loc_id as usize) && npc.tile.level == edge.at.level
+            })
+            .map(|npc| (npc, cheb(npc.tile, edge.at)))
+            .filter(|(_, gap)| *gap <= 3)
+            .min_by_key(|(_, gap)| *gap)
+            .map(|(npc, _)| TransportTarget::Npc(npc))
+    } else {
+        find_transport_loc(snapshot, edge).map(TransportTarget::Loc)
+    }
+}
+
+/// Send the transport hop's interact for the edge's target kind: an
+/// `op_loc` for loc edges, an `op_npc` for `TransportKind::Npc` edges,
+/// both with the edge's `option`.
+fn interact_transport<'t>(
+    ix: &mut Interactions<'t>,
+    target: TransportTarget<'t>,
+    option: i32,
+) -> SendResult<'t> {
+    match target {
+        TransportTarget::Loc(loc) => ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(option)),
+        TransportTarget::Npc(npc) => {
+            ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(option))
+        }
+    }
+}
+
+/// The block message's target word for an edge: "npc" for
+/// [`TransportKind::Npc`] edges, "loc" for every loc-targeted kind.
+fn target_word(edge: &TransportEdge) -> &'static str {
+    if edge.kind == TransportKind::Npc {
+        "npc"
+    } else {
+        "loc"
+    }
+}
+
 /// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
 /// open 1531 sits a tile off the derived `at`).
 fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
@@ -1538,7 +1658,9 @@ mod tests {
     use api::prot::Out;
     use api::snapshot::{GameSnapshot, WorldTile};
     use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
-    use client::config::LocType;
+    use client::config::if_type::ButtonType;
+    use client::config::{IfType, IfTypeMut, LocType, NpcType};
+    use client::dash3d::ClientNpc;
     use client::io::{ClientStream, ServerProt};
     use std::sync::Arc;
 
@@ -2241,6 +2363,107 @@ mod tests {
         plant_door_at(c, open, scene_x, 0);
     }
 
+    /// An NPC of cache type `type_id` at scene (x, z) → world tile
+    /// (3200 + x, 3200 + z) in slot 0, with a usable op 1 ("Pay-fare",
+    /// the cart-driver shape): the live target a `TransportKind::Npc`
+    /// edge's `loc_id` resolves through.
+    fn plant_driver_npc(c: &mut Client, type_id: usize, x: i32, z: i32) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.npcs.len() <= type_id {
+                cache.npcs.push(NpcType::default());
+            }
+            cache.npcs[type_id] = NpcType {
+                id: type_id as i32,
+                name: "Cart driver".into(),
+                op: vec![Some("Pay-fare".into()), None, None, None, None],
+                ..Default::default()
+            };
+        }
+        let mut npc = ClientNpc::at(x, z);
+        npc.r#type = Some(type_id);
+        npc.entity.x = x * 128 + 64;
+        npc.entity.z = z * 128 + 64;
+        c.npc_count = 1;
+        c.npc_ids = vec![0];
+        c.npc = vec![Some(Box::new(npc))];
+    }
+
+    /// A chat page with a BUTTON_CONTINUE child — the "Hello Bwana!" page
+    /// the cart driver's `opnpc1` opens before the fare choice.
+    fn plant_continue_dialog(c: &mut Client) {
+        let root = 100;
+        let id = 101;
+        c.set_iface(
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: root,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            id,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                text: "Click here to continue".into(),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            root as usize,
+            IfType {
+                id: root,
+                layer_id: root,
+                children: Some(vec![id as i32]),
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = root;
+        c.bump_gens(ServerProt::IF_OPENCHAT);
+    }
+
+    /// A chat fare dialog (root 100 with one BUTTON_OK choice button per
+    /// option): the shape the cart driver's `opnpc1` opens after the
+    /// interact. `layer_id` on every component is the chat modal id so
+    /// the press's visibility check holds.
+    fn plant_choice_dialog(c: &mut Client, options: &[&str]) {
+        let root = 100;
+        let children: Vec<i32> = (0..options.len())
+            .map(|i| (101 + i) as i32)
+            .collect();
+        for (i, text) in options.iter().enumerate() {
+            let id = 101 + i;
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: root,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    text: (*text).to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+        c.set_iface(
+            root as usize,
+            IfType {
+                id: root,
+                layer_id: root,
+                children: Some(children),
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = root;
+        c.bump_gens(ServerProt::IF_OPENCHAT);
+    }
+
     fn plant_door_at(c: &mut Client, open: bool, scene_x: i32, scene_z: i32) {
         let id = if open { 1531 } else { 1530 };
         {
@@ -2327,6 +2550,34 @@ mod tests {
             loc_id: 1,
             option: 1,
             ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
+    /// A cart-style Npc edge: the driver NPC (type `loc_id`) at (3201,
+    /// 3201) carries the player to (3300, 3200).
+    fn cart_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Npc,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 7,
+            option: 1,
+            ticks: 1,
             dir: None,
             open_loc_id: None,
             skill_req: vec![],
@@ -2561,6 +2812,254 @@ mod tests {
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
         ));
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
+    }
+
+    #[test]
+    fn follow_npc_edge_sends_op_npc_and_arrives() {
+        // Task 2: a `TransportKind::Npc` edge (cart, essence wizard,
+        // Elkoy) must interact with the driver NPC — an `OP_NPC1` on the
+        // type-id match within 3 of `at` — never a loc op, and arrive at
+        // `edge.to`. The player stands on the driver's tile, so the hop
+        // interacts immediately and the cart carries the player over.
+        let mut c = scene_client();
+        plant_driver_npc(&mut c, 7, 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: cart_edge(),
+            }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0, // the cart edge's ticks
+        };
+        let mut options = TravelOptions::default();
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 100, 0);
+            },
+        );
+        assert!(matches!(
+            outcome,
+            TravelOutcome::Arrived { at } if at == WorldTile { x: 3300, z: 3200, level: 0 }
+        ));
+        assert_eq!(rec.npc_ops, 1, "one OP_NPC1 interact sent for the Npc edge");
+        assert_eq!(rec.loc_ops, 0, "an Npc edge never sends OP_LOC1");
+    }
+
+    #[test]
+    fn follow_approaches_an_npc_before_interacting() {
+        // The game only accepts an interact from adjacent: starting 3
+        // tiles away from the driver NPC, `follow` must first walk to the
+        // nearest standable tile within chebyshev 1 of `at` and only then
+        // send the NPC interact, exactly like the ladder approach.
+        let mut c = scene_client();
+        plant_driver_npc(&mut c, 7, 1, 1);
+        let mut snap = snap_at(&mut c, 1, 4); // cheb 3 south of the driver
+        let mut rec = FollowRec {
+            route: Some((1, 4)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: cart_edge(),
+            }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop walks to the adjacent standable tile, never the
+        // interact (the click would be dropped from 3 tiles away).
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked, vec![(1, 2)], "the approach walk goes out first");
+        assert_eq!(rec.npc_ops, 0, "no OP_NPC1 before the player is adjacent");
+        // The player steps onto the approach tile: the hop sends `op_npc`.
+        plant_player(&mut c, 1, 2);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.npc_ops, 1, "one OP_NPC1 once adjacent");
+        // The cart carries the player to `edge.to`: the run arrives.
+        plant_player(&mut c, 100, 0);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3300,
+                        z: 3200,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn follow_npc_edge_blocks_when_the_driver_is_out_of_scene() {
+        // No NPC of the edge's type within 3 of `at`: the hop waits out
+        // its loc budget and reports `Blocked`, never a loc-shaped lookup
+        // against a phantom loc id.
+        let mut c = scene_client();
+        // No driver planted: the only scene npcs are none.
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: cart_edge(),
+            }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 2,
+            ..TravelOptions::default()
+        };
+        let mut outcome = None;
+        for _ in 0..4 {
+            if let Some(o) = t.follow(&mut rec, &snap, route.clone(), &mut options) {
+                outcome = Some(o);
+                break;
+            }
+            bump_rebuild(&mut c, &mut snap);
+        }
+        match outcome {
+            Some(TravelOutcome::Blocked { detail, .. }) => {
+                assert!(
+                    detail.contains("npc"),
+                    "the block names the missing NPC, got: {detail}"
+                );
+            }
+            other => panic!("expected Blocked for a missing driver, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn follow_npc_edge_answers_the_fare_dialog_before_arriving() {
+        // The live cart drivers' `opnpc1` opens a chat dialog instead of
+        // riding immediately: a "Hello!" page with a Continue button, then
+        // the fare page ("Is that Ok?" + a "Yes please…" choice). After
+        // the NPC interact, the hop must press Continue (each page), then
+        // press the edge's choice (option 1 = the "Yes please" button)
+        // exactly once, and settle `arrived(edge.to)`.
+        let mut c = scene_client();
+        plant_driver_npc(&mut c, 7, 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: cart_edge(),
+            }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop sends the NPC interact; no dialog is up yet.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.npc_ops, 1, "the NPC interact went out");
+        assert_eq!(rec.if_buttons, 0, "no answer before the dialog opens");
+        assert_eq!(rec.pause_buttons, 0);
+
+        // The driver opens the "Hello!" page with a Continue button.
+        plant_continue_dialog(&mut c);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.pause_buttons, 1, "the hop presses Continue once");
+        assert_eq!(rec.if_buttons, 0, "no choice press on the Continue page");
+
+        // The fare page replaces it: the hop presses the edge's choice.
+        plant_choice_dialog(
+            &mut c,
+            &[
+                "Yes please, I'd like to go to Brimhaven.",
+                "No thanks.",
+            ],
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.if_buttons, 1, "one IF_BUTTON press for the fare choice");
+        // Still waiting — the choice is never re-pressed.
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.if_buttons, 1, "the dialog is answered exactly once");
+
+        // The post-choice "Great!" page still needs a Continue before the
+        // ride leaves.
+        plant_continue_dialog(&mut c);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.pause_buttons, 2,
+            "the post-choice page is continued before the ride"
+        );
+
+        // The cart carries the player to `edge.to`: the run arrives.
+        plant_player(&mut c, 100, 0);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3300,
+                        z: 3200,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+        assert_eq!(rec.npc_ops, 1, "one OP_NPC interact");
+        assert_eq!(rec.loc_ops, 0, "an Npc edge never sends OP_LOC1");
     }
 
     #[test]
@@ -3427,6 +3926,9 @@ mod tests {
     struct FollowRec {
         walked: Vec<(i32, i32)>,
         loc_ops: usize,
+        npc_ops: usize,
+        if_buttons: usize,
+        pause_buttons: usize,
         reject_far: bool,
         route: Option<(i32, i32)>,
         sink: Sink,
@@ -3434,8 +3936,12 @@ mod tests {
 
     impl Driver for FollowRec {
         fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, _c: i32) {
-            if action == MiniMenuAction::OP_LOC1 {
-                self.loc_ops += 1;
+            match action {
+                MiniMenuAction::OP_LOC1 => self.loc_ops += 1,
+                MiniMenuAction::OP_NPC1 => self.npc_ops += 1,
+                MiniMenuAction::IF_BUTTON => self.if_buttons += 1,
+                MiniMenuAction::PAUSE_BUTTON => self.pause_buttons += 1,
+                _ => {}
             }
         }
 
@@ -3651,6 +4157,7 @@ mod tests {
             tries: 0,
             troll: false,
             chat_seq: 0,
+            dialog_answered: false,
             approach: None,
         });
         // The player is on the destination level (1) but far from `to`:

@@ -163,6 +163,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "render_smoke" => Some(render_smoke_scenario()),
         "nav_full" => Some(nav_full_scenario()),
         "nav_door" => Some(nav_door_scenario()),
+        "nav_cart" => Some(nav_cart_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         _ => None,
@@ -176,6 +177,7 @@ pub fn names() -> Vec<&'static str> {
         "render_smoke",
         "nav_full",
         "nav_door",
+        "nav_cart",
         "nav_routes",
         "nav_paint_path",
     ]
@@ -573,6 +575,88 @@ fn at_catherby(here: WorldTile) -> bool {
     here.x >= 2800 && here.x < 2860 && here.z >= 3420 && here.z < 3460
 }
 
+/// Vigroy's Shilo Village cart driver tile (npc 511, m44_46 local
+/// (18,10)): the `at` of the packed Shilo→Brimhaven Npc edge.
+const SHILO_DRIVER: WorldTile = WorldTile {
+    x: 2834,
+    z: 2954,
+    level: 0,
+};
+/// The Shilo→Brimhaven cart's landing tile (m43_50 local (24,14)): the
+/// packed edge's `to`.
+const BRIM_CART: WorldTile = WorldTile {
+    x: 2776,
+    z: 3214,
+    level: 0,
+};
+
+/// The `nav_cart` scenario: the first OP_NPC execute follow. Log in
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, cheat-give
+/// the fare (the packed Shilo→Brimhaven Npc edge carries a 200-coin
+/// `item_req`), cheat-tele to the Shilo Village cart driver, then
+/// `Follow` a whole-world route to the Brimhaven cart landing — a
+/// destination that **requires** the cart hop (the only way across the
+/// sea to the Brimhaven side). The traveller interacts the driver
+/// (`OpTarget::Npc` + option 1), answers the driver's fare dialog (the
+/// "Yes please…" choice), and PASSes on `TravelOutcome::Arrived` at the
+/// landing.
+fn nav_cart_scenario() -> Scenario {
+    let driver = SHILO_DRIVER;
+    let dest = BRIM_CART;
+    Scenario {
+        name: "nav_cart",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "give the fare and tele to the Shilo cart driver",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, "give coins 500");
+                        cheat(c, &tele_args(driver.level, driver.x, driver.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: driver.x,
+                        z: driver.z,
+                        level: driver.level,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow the cart to Brimhaven",
+                kind: StepKind::Follow { dest },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav_debug: true,
+            deadline: Duration::from_secs(360),
+            terminal_shot: Some("nav_cart terminal"),
+            ..Default::default()
+        },
+    }
+}
+
 /// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
 /// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
 /// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
@@ -922,6 +1006,7 @@ mod tests {
                 "render_smoke",
                 "nav_full",
                 "nav_door",
+                "nav_cart",
                 "nav_routes",
                 "nav_paint_path"
             ]
@@ -1007,6 +1092,53 @@ mod tests {
             "profile 1 (test2) is the closer"
         );
         assert!(names().contains(&"nav_door"));
+    }
+
+    #[test]
+    fn nav_cart_is_a_mainland_follow_that_needs_the_cart_hop() {
+        let s = get("nav_cart").expect("nav_cart is registered");
+        assert_eq!(s.name, "nav_cart");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(
+            s.seed.mainland,
+            "the hop lands the walker before the Shilo tele"
+        );
+        assert_eq!(s.steps.len(), 2, "give the fare + tele, then follow");
+        let (tele, arm) = match &s.steps[0].kind {
+            StepKind::Perform { .. } => (
+                "perform",
+                match &s.steps[0].wait.arm {
+                    Proof::Arrived { x, z, level } => (*x, *z, *level),
+                    other => panic!("tele arm must be arrived, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_cart step 1 must be Perform"),
+        };
+        assert_eq!(tele, "perform");
+        assert_eq!(arm, (2834, 2954, 0), "the tele targets the Shilo driver");
+        let (dest, arm) = match &s.steps[1].kind {
+            StepKind::Follow { dest } => (
+                *dest,
+                match &s.steps[1].wait.arm {
+                    Proof::Arrived { x, z, level } => (*x, *z, *level),
+                    other => panic!("follow arm must be arrived, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_cart step 2 must be Follow"),
+        };
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 2776,
+                z: 3214,
+                level: 0
+            },
+            "the destination is the Brimhaven cart landing"
+        );
+        assert_eq!(arm, (2776, 3214, 0));
+        assert_eq!(s.proof.name(), "arrived(2776,3214,0)");
+        assert!(s.companions.is_empty());
+        assert!(names().contains(&"nav_cart"));
     }
 
     #[test]

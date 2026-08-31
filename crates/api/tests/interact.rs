@@ -777,6 +777,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         SendReason::InvalidCount,
         SendReason::NoModalOpen,
         SendReason::NoContinue,
+        SendReason::NoChoice,
         SendReason::Unreachable,
         SendReason::InvalidTab,
         SendReason::AlreadyIngame,
@@ -800,6 +801,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
             SendReason::InvalidCount => "InvalidCount",
             SendReason::NoModalOpen => "NoModalOpen",
             SendReason::NoContinue => "NoContinue",
+            SendReason::NoChoice => "NoChoice",
             SendReason::Unreachable => "Unreachable",
             SendReason::InvalidTab => "InvalidTab",
             SendReason::AlreadyIngame => "AlreadyIngame",
@@ -1345,7 +1347,7 @@ fn interact_dispatches_ground_item_op_through_scene_coords() {
     };
     let mut list = LinkList::new();
     list.push(ClientObj::new(bones_id, 2));
-    s.client.ground_obj[0][10][12] = Some(list);
+    s.client.ground_obj[0][10][12] = Some(Box::new(list));
     let snap = rebuild(&mut s.client);
     let gi = &snap.ground_items()[0];
     assert_eq!(
@@ -1582,6 +1584,94 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
             ix.continue_dialog(),
             SendResult::Refused {
                 reason: SendReason::NoContinue,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty());
+}
+
+/// `answer_choice` presses the chat modal's `option`-th BUTTON_OK choice
+/// (the `p_choiceN` option an edge's `option` names) and refuses with
+/// `NoChoice` when no such choice is up.
+#[test]
+fn answer_choice_presses_the_chat_option_button_and_refuses_without_one() {
+    let mut s = scene();
+    set_iface(
+        &mut s.client,
+        200,
+        IfType {
+            id: 200,
+            layer_id: 200,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![201, 202]),
+            ..Default::default()
+        },
+    );
+    for (id, text) in [
+        (201usize, "Yes please, I'd like to go to Brimhaven."),
+        (202, "No thanks."),
+    ] {
+        set_iface(
+            &mut s.client,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 200,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut s.client,
+            id,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_OK,
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    s.client.chat_modal_id = 200;
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.chat_options().len(), 2);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.answer_choice(1) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Button {
+                        component_id: 201,
+                        button_type: ButtonType::BUTTON_OK
+                    }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        // Out-of-range option: no such choice.
+        assert!(matches!(
+            ix.answer_choice(3),
+            SendResult::Refused {
+                reason: SendReason::NoChoice,
+                ..
+            }
+        ));
+    }
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 201)]);
+
+    // No chat modal: the second choice is refused, never a fake send.
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.answer_choice(1),
+            SendResult::Refused {
+                reason: SendReason::NoChoice,
                 ..
             }
         ));
@@ -1993,7 +2083,7 @@ fn still_present_matches_identity_per_kind() {
     };
     let mut list = LinkList::new();
     list.push(ClientObj::new(bones_id, 2));
-    s.client.ground_obj[0][10][12] = Some(list);
+    s.client.ground_obj[0][10][12] = Some(Box::new(list));
     plant_inventory(&mut s.client);
     let snap = rebuild(&mut s.client);
 

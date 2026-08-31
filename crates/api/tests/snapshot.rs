@@ -292,6 +292,53 @@ fn inv_ids_match_inventory_def_ids() {
     );
 }
 
+/// The inv family reads the side-tab-3 container, not the first TYPE_INV
+/// in the table (regression: a live client's earlier unrelated TYPE_INV
+/// — a shop/trade modal — decodes empty, so `WorldState` gating failed
+/// the cart fare closed while the coins sat in the real inv container).
+#[test]
+fn inv_rebuild_prefers_the_side_tab_container_over_an_earlier_type_inv() {
+    let mut c = client_with_npc();
+    // An earlier, unrelated TYPE_INV that never received an update.
+    let decoy = c.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        decoy,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 0, 0]),
+            link_obj_number: Some(vec![0, 0, 0]),
+            ..Default::default()
+        },
+    );
+    // The real inv container, under the side-tab-3 root with obj_ops.
+    let inv_id = c.push_iface(IfType {
+        id: 0,
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        inv_id,
+        IfTypeMut {
+            link_obj_type: Some(vec![526, 995]),
+            link_obj_number: Some(vec![1, 100]),
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = inv_id as i32;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&mut c, Family::Inv));
+    assert_eq!(
+        snap.inv(),
+        &[(525, 1), (994, 100)],
+        "the side-tab container's slots, never the decoy's empty ones"
+    );
+}
+
 /// Chat-family rebuild: the ring head (`chat_text[0]`) is the latest line.
 #[test]
 fn chat_rebuild_reads_the_ring_head() {
@@ -988,7 +1035,7 @@ fn ground_item_view_rebuild_reads_ground_obj() {
     let mut list = LinkList::new();
     list.push(ClientObj::new(fish_id, 1));
     list.push(ClientObj::new(bones_id, 2));
-    c.ground_obj[0][10][12] = Some(list);
+    c.ground_obj[0][10][12] = Some(Box::new(list));
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
@@ -2855,7 +2902,7 @@ fn read_context_round_trips_every_family() {
     };
     let mut list = LinkList::new();
     list.push(ClientObj::new(bones_id, 2));
-    c.ground_obj[1][10][12] = Some(list);
+    c.ground_obj[1][10][12] = Some(Box::new(list));
     // inventory (side tab 3) + equipment (side tab 4)
     set_iface(
         &mut c,
