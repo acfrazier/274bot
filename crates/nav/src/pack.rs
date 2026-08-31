@@ -1,16 +1,18 @@
-//! Nav pack: encode/decode of [`StepGrid`] (v1) and of the whole-world
-//! [`WorldCollision`] + [`TransportGraph`] (v2) to the `.navpack` binary
-//! format, plus the jm2 mapsquare bake used by the `nav-pack` binary.
+//! Nav pack: encode/decode of the whole-world [`WorldCollision`] +
+//! [`TransportGraph`] to the `.navpack` binary format, the legacy
+//! [`StepGrid`] grid format, plus the jm2 mapsquare bake used by the
+//! `nav-pack` binary.
 //!
-//! V1 format: magic `b"274N"`, version `u8` 1, origin `(x, z, level)` i32le,
-//! width/height u32le, one walk byte per tile (row-major z then x, 1 =
-//! walkable, same indexing as [`StepGrid`]), door count u32le, then per door
-//! `(loc_x, loc_z, loc_level, loc_id, from_x, from_z, from_level, to_x, to_z,
-//! to_level)` all i32le. Door loc ids come from the Server
-//! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
-//! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
+//! Grid format (274N): magic `b"274N"`, version `u8` 1, origin
+//! `(x, z, level)` i32le, width/height u32le, one walk byte per tile
+//! (row-major z then x, 1 = walkable, same indexing as [`StepGrid`]),
+//! door count u32le, then per door `(loc_x, loc_z, loc_level, loc_id,
+//! from_x, from_z, from_level, to_x, to_z, to_level)` all i32le. Door loc
+//! ids come from the Server `content/scripts/doors/configs/*.loc` blocks
+//! (see [`parse_door_config`]). Blocking loc footprints come from
+//! `[loc_N]` `blockwalk` (default yes).
 //!
-//! V2 format: magic `b"274V"`, version `u8` 6, collision origin
+//! Pack format (274V): magic `b"274V"`, version `u8` 6, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
 //! packed `walk` u16le per tile per level — four planes, level-major,
 //! each `width × height` (row-major z then x) — then the transport edge
@@ -21,14 +23,14 @@
 //! `dir` encodes [`DoorDir`] as `0=None,
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
-//! the same edges array as kind-4 edges; [`decode_v2`] splits them back out
+//! the same edges array as kind-4 edges; [`decode`] splits them back out
 //! and never indexes them into `at`. The raw flags are not on the v6 wire
 //! — the flags sidecar is separate: magic `b"274F"`, version 1, the same
-//! origin/width/height header as v2, then the level-major u32le flags
-//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). [`decode_v2`]
-//! accepts version 6 only — any earlier stream is [`PackError::BadVersion`],
-//! there is no flags→walk compat load. The v1 decode stays for old
-//! `.navpack` files; `nav-pack` now writes v6.
+//! origin/width/height header as the pack, then the level-major u32le flags
+//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). [`decode`]
+//! accepts version 6 only — any earlier stream is [`PackError::BadVersion`];
+//! there is no flags→walk compat load. The 274N grid decoder stays for
+//! old `.navpack` files; `nav-pack` now writes v6.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -42,22 +44,22 @@ use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
-/// Current pack format version (v1: boolean walk bytes + doors).
-const VERSION: u8 = 1;
-/// File magic.
-const MAGIC: &[u8; 4] = b"274N";
-/// V2 pack format version (collision + transport graph). v3 adds the
+/// Grid (274N) format version: boolean walk bytes + doors.
+const VERSION_GRID: u8 = 1;
+/// Grid (274N) file magic.
+const MAGIC_GRID: &[u8; 4] = b"274N";
+/// Current pack format version (collision + transport graph). v3 adds the
 /// per-edge `dir`/`open_loc_id` fields, v4 stores the four collision
 /// planes, v5 adds the per-edge worn-item id list `worn_req`, and v6 —
 /// the current wire — replaces the four u32 flag planes with the compact
 /// packed u16 walk words (no resident u32 flags; the flags sidecar is
 /// separate). The v4 wire also carries the spirit-tree (7) and reserved
 /// NPC (8) transport kinds on the same kind byte — no version bump.
-/// [`decode_v2`] accepts version 6 only; 4, 5, and older streams are
+/// [`decode`] accepts version 6 only; 4, 5, and older streams are
 /// rejected rather than compat-loaded.
-const VERSION_V2: u8 = 6;
-/// V2 file magic.
-const MAGIC_V2: &[u8; 4] = b"274V";
+const VERSION: u8 = 6;
+/// Current pack file magic.
+const MAGIC: &[u8; 4] = b"274V";
 /// Flags sidecar format version.
 const VERSION_FLAGS: u8 = 1;
 /// Flags sidecar magic.
@@ -75,7 +77,7 @@ const MAX_GRID: usize = 16384;
 pub enum PackError {
     /// Filesystem read/write failure.
     Io(io::Error),
-    /// File does not start with the `b"274N"` magic.
+    /// File does not start with the `b"274N"` or `b"274V"` magic.
     BadMagic,
     /// Pack version is not the expected one for its magic.
     BadVersion(u8),
@@ -99,12 +101,12 @@ impl fmt::Display for PackError {
 
 impl std::error::Error for PackError {}
 
-/// Serialize `g` to the nav pack byte format.
-pub fn encode(g: &StepGrid) -> Vec<u8> {
+/// Serialize `g` to the 274N grid byte format.
+pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
     let mut out =
         Vec::with_capacity(4 + 1 + 12 + 8 + g.walk.len() + 4 + g.doors.len() * DOOR_BYTES);
-    out.extend_from_slice(MAGIC);
-    out.push(VERSION);
+    out.extend_from_slice(MAGIC_GRID);
+    out.push(VERSION_GRID);
     for v in [g.origin.x, g.origin.z, g.origin.level] {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -131,18 +133,18 @@ pub fn encode(g: &StepGrid) -> Vec<u8> {
     out
 }
 
-/// Deserialize a nav pack, validating magic, version, and lengths.
-pub fn decode(bytes: &[u8]) -> Result<StepGrid, PackError> {
+/// Deserialize a 274N grid, validating magic, version, and lengths.
+pub fn decode_grid(bytes: &[u8]) -> Result<StepGrid, PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
-    if &magic != MAGIC {
+    if &magic != MAGIC_GRID {
         return Err(PackError::BadMagic);
     }
     let mut version = [0u8; 1];
     r.read_exact(&mut version)
         .map_err(|_| PackError::Truncated)?;
-    if version[0] != VERSION {
+    if version[0] != VERSION_GRID {
         return Err(PackError::BadVersion(version[0]));
     }
     let origin = Tile {
@@ -190,25 +192,25 @@ pub fn decode(bytes: &[u8]) -> Result<StepGrid, PackError> {
     Ok(StepGrid::from_parts(origin, width, height, walk, doors))
 }
 
-/// Read and decode the pack at `path`.
-pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
+/// Read and decode the 274N grid at `path`.
+pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
     let bytes = std::fs::read(path).map_err(PackError::Io)?;
-    decode(&bytes)
+    decode_grid(&bytes)
 }
 
-/// Serialize the whole-world collision + transport graph to the v2 pack
-/// byte format. The graph's `at` index is not stored; [`decode_v2`]
+/// Serialize the whole-world collision + transport graph to the v6 pack
+/// byte format. The graph's `at` index is not stored; [`decode`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
 /// the ordinary edges in the same array. The v6 wire (version byte 6)
 /// carries the [`WorldCollision`] as four level-major planes of packed
 /// u16 walk words plus the per-edge `worn_req` id list; the raw flags are
 /// not resident and not on the wire (see the flags sidecar).
-pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
+pub fn encode(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out =
         Vec::with_capacity(4 + 1 + 12 + 8 + collision.walk.len() * 2 + 4 + edge_count * 96);
-    out.extend_from_slice(MAGIC_V2);
-    out.push(VERSION_V2);
+    out.extend_from_slice(MAGIC);
+    out.push(VERSION);
     for v in [
         collision.origin.x,
         collision.origin.z,
@@ -240,24 +242,24 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
     out
 }
 
-/// Deserialize a v2 pack, validating magic, version, and lengths. The
-/// `at` index is rebuilt from the decoded edges; kind-4 (teleport) edges
-/// split back into [`TransportGraph::teleports`] and are excluded from it.
-/// Version 6 is the only accepted wire: the collision decodes as packed
-/// u16 walk words with no resident flags (`flags` is `None` until the
-/// sidecar is loaded); any other version — 4, 5, or older — is rejected
-/// rather than mis-read or compat-loaded.
-pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
+/// Deserialize the whole-world pack, validating magic, version, and
+/// lengths. The `at` index is rebuilt from the decoded edges; kind-4
+/// (teleport) edges split back into [`TransportGraph::teleports`] and are
+/// excluded from it. Version 6 is the only accepted wire: the collision
+/// decodes as packed u16 walk words with no resident flags (`flags` is
+/// `None` until the sidecar is loaded); any other version — 4, 5, or
+/// older — is rejected rather than mis-read or compat-loaded.
+pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
-    if &magic != MAGIC_V2 {
+    if &magic != MAGIC {
         return Err(PackError::BadMagic);
     }
     let mut version = [0u8; 1];
     r.read_exact(&mut version)
         .map_err(|_| PackError::Truncated)?;
-    if version[0] != VERSION_V2 {
+    if version[0] != VERSION {
         return Err(PackError::BadVersion(version[0]));
     }
     let origin = WorldTile {
@@ -345,7 +347,8 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
 }
 
 /// Serialize the raw baked flags to the sidecar byte format: magic
-/// `b"274F"`, version 1, the same origin/width/height header as v2, then
+/// `b"274F"`, version 1, the same origin/width/height header as the pack,
+/// then
 /// the level-major u32le flags. The flag count is implicit — the trailing
 /// bytes are the flags, so a `width × height` test grid round-trips
 /// without plane arithmetic ([`decode_flags_sidecar`] reads to the end).
@@ -760,7 +763,7 @@ fn parse_mapsquare_text(
         }
         if in_map {
             if let Some((level, x, z, flags)) = parse_map_line(line) {
-                // The v1 walk grid is one level-0 plane; upper-level rows
+                // The 274N grid walk is one level-0 plane; upper-level rows
                 // belong to the whole-world collision bake instead.
                 if level == 0 {
                     walk[z * SQUARE + x] = if flags & 1 != 0 { 0 } else { 1 };
@@ -1037,9 +1040,9 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{
-        decode, decode_flags_sidecar, decode_v2, encode, encode_flags_sidecar, encode_v2,
+        decode, decode_flags_sidecar, decode_grid, encode, encode_flags_sidecar, encode_grid,
         merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
-        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE, VERSION_V2,
+        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE, VERSION,
     };
     use crate::collision::{derive_walkable, pack_walk_u16, walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
@@ -1052,8 +1055,8 @@ mod tests {
     #[test]
     fn pack_roundtrip_fixture_door() {
         let g = StepGrid::fixture_door_corridor();
-        let bytes = encode(&g);
-        let h = decode(&bytes).unwrap();
+        let bytes = encode_grid(&g);
+        let h = decode_grid(&bytes).unwrap();
         assert!(h.walkable(Tile {
             x: 0,
             z: 0,
@@ -1089,9 +1092,9 @@ mod tests {
             walk: pack_walk_u16(&flags),
             flags: None,
         };
-        let bytes = encode_v2(&collision, &TransportGraph::default());
+        let bytes = encode(&collision, &TransportGraph::default());
         assert_eq!(bytes[4], 6);
-        let (c, _) = decode_v2(&bytes).unwrap();
+        let (c, _) = decode(&bytes).unwrap();
         assert!(c.flags.is_none());
         assert_eq!(c.walk.len(), 16);
     }
@@ -1110,11 +1113,11 @@ mod tests {
             walk: pack_walk_u16(&flags),
             flags: None,
         };
-        let mut bytes = encode_v2(&collision, &TransportGraph::default());
+        let mut bytes = encode(&collision, &TransportGraph::default());
         bytes[4] = 5;
-        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(5))));
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(5))));
         bytes[4] = 4;
-        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(4))));
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(4))));
     }
 
     #[test]
@@ -1134,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_roundtrip_collision_and_transport_graph() {
+    fn roundtrip_collision_and_transport_graph() {
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
@@ -1310,8 +1313,8 @@ mod tests {
         graph.at.entry(graph.edges[si].at).or_default().push(si);
         graph.at.entry(graph.edges[ni].at).or_default().push(ni);
 
-        let bytes = encode_v2(&collision, &graph);
-        let (c, g) = decode_v2(&bytes).unwrap();
+        let bytes = encode(&collision, &graph);
+        let (c, g) = decode(&bytes).unwrap();
         assert_eq!(c.origin, collision.origin);
         assert_eq!(c.width, collision.width);
         assert_eq!(c.height, collision.height);
@@ -1335,17 +1338,17 @@ mod tests {
             z: 0,
             level: 0
         }));
-        // The two formats do not cross-decode: v1 rejects v2 magic and
-        // vice versa.
-        assert!(matches!(decode(&bytes), Err(PackError::BadMagic)));
+        // The two formats do not cross-decode: the grid rejects pack magic
+        // and vice versa.
+        assert!(matches!(decode_grid(&bytes), Err(PackError::BadMagic)));
         assert!(matches!(
-            decode_v2(&encode(&StepGrid::fixture_open_3x3())),
+            decode(&encode_grid(&StepGrid::fixture_open_3x3())),
             Err(PackError::BadMagic)
         ));
     }
 
     #[test]
-    fn v2_decode_rejects_old_version_streams() {
+    fn decode_rejects_old_version_streams() {
         // A version-2 or version-3 stream (pre-four-plane wire) is
         // rejected, not mis-read: the re-bake immediately rewrites it at
         // the current version. Versions 4 and 5 are rejected too (see
@@ -1365,12 +1368,12 @@ mod tests {
             flags: None,
         };
         let graph = TransportGraph::default();
-        let mut bytes = encode_v2(&collision, &graph);
+        let mut bytes = encode(&collision, &graph);
         // The version byte sits right after the 4-byte magic.
         bytes[4] = 3;
-        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(3))));
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(3))));
         bytes[4] = 2;
-        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(2))));
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(2))));
     }
 
     #[test]
@@ -1417,10 +1420,10 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.edges.push(door.clone());
         graph.at.entry(door.at).or_default().push(0);
-        let bytes = encode_v2(&collision, &graph);
+        let bytes = encode(&collision, &graph);
         // The version byte sits right after the 4-byte magic: v6 now.
-        assert_eq!(bytes[4], VERSION_V2);
-        let (c, g) = decode_v2(&bytes).unwrap();
+        assert_eq!(bytes[4], VERSION);
+        let (c, g) = decode(&bytes).unwrap();
         assert_eq!(g.edges, graph.edges);
         assert_eq!(g.edges[0].worn_req, vec![772]);
         assert_eq!(g.at, graph.at);
@@ -1429,34 +1432,34 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_bad_magic() {
-        assert!(matches!(decode(b"XXXX"), Err(PackError::BadMagic)));
+    fn decode_grid_rejects_bad_magic() {
+        assert!(matches!(decode_grid(b"XXXX"), Err(PackError::BadMagic)));
     }
 
     #[test]
-    fn decode_rejects_truncated_pack() {
-        let bytes = encode(&StepGrid::fixture_door_corridor());
+    fn decode_grid_rejects_truncated_pack() {
+        let bytes = encode_grid(&StepGrid::fixture_door_corridor());
         assert!(matches!(
-            decode(&bytes[..bytes.len() - 1]),
+            decode_grid(&bytes[..bytes.len() - 1]),
             Err(PackError::Truncated)
         ));
     }
 
     #[test]
-    fn decode_rejects_oversized_grid() {
+    fn decode_grid_rejects_oversized_grid() {
         // Huge width would try to allocate GiB of walk bytes.
         let bytes = header(0, u32::MAX, 1);
-        assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
+        assert!(matches!(decode_grid(&bytes), Err(PackError::BadLength(_))));
     }
 
     #[test]
-    fn decode_rejects_zero_grid() {
+    fn decode_grid_rejects_zero_grid() {
         assert!(matches!(
-            decode(&header(0, 0, 1)),
+            decode_grid(&header(0, 0, 1)),
             Err(PackError::BadLength(_))
         ));
         assert!(matches!(
-            decode(&header(0, 1, 0)),
+            decode_grid(&header(0, 1, 0)),
             Err(PackError::BadLength(_))
         ));
     }

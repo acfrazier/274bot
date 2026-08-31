@@ -2,7 +2,7 @@
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
 //! the Server content, and write the v6 nav pack (magic `274V`, version
-//! byte 6; `encode_v2`) to `$NAV_PACK` or
+//! byte 6; `encode`) to `$NAV_PACK` or
 //! `~/.274bot/274bot.navpack` (default), plus the raw flags sidecar
 //! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
 //! path with its extension swapped to `.navflags` (default
@@ -31,7 +31,7 @@ use api::snapshot::WorldTile;
 use client::config::Cache;
 use client::io::JagFile;
 use nav::collision::{bake_from_maps, WorldCollision};
-use nav::pack::{encode_flags_sidecar, encode_v2};
+use nav::pack::{encode, encode_flags_sidecar};
 use nav::transport::derive_transports;
 
 const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -169,8 +169,8 @@ fn main() -> ExitCode {
         encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
     let flags_path = flags_out(&out);
 
-    // The v2 pack write: packed walk words + transport edges.
-    let bytes = encode_v2(&collision, &graph);
+    // The pack write: packed walk words + transport edges.
+    let bytes = encode(&collision, &graph);
     if let Err(e) = std::fs::write(&out, &bytes) {
         eprintln!("nav-pack: write {}: {e}", out.display());
         return ExitCode::FAILURE;

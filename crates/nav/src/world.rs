@@ -3,8 +3,8 @@
 //! The v6 pack file stores the compact packed walk words and the transport
 //! edges, so the Dijkstra router ([`crate::router::find`]) consumes one
 //! artifact — live harnesses load this and route on the packed collision.
-//! The legacy v1 pack (boolean walk bytes + doors) still loads through
-//! [`NavWorld::from_grid`] as a fallback for old `.navpack` files.
+//! The legacy 274N grid pack (boolean walk bytes + doors) still loads
+//! through [`NavWorld::from_grid`] as a fallback for old `.navpack` files.
 
 use std::path::Path;
 
@@ -13,12 +13,12 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode_v2, load_pack, PackError};
+use crate::pack::{decode, load_grid, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
 /// router's directional step test rejects the tile from any direction
-/// (a v1 pack walk byte is boolean; there are no half-open faces to keep).
+/// (a 274N grid walk byte is boolean; there are no half-open faces to keep).
 const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
 
 /// The whole-world collision + transport graph the router consumes.
@@ -29,27 +29,28 @@ pub struct NavWorld {
 
 impl NavWorld {
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
-    /// router's world. V2 packs (collision + transport graph) load
-    /// directly; legacy v1 packs fall back to [`Self::from_grid`]. The
-    /// fallback triggers on bad magic only — a `274V` pack with a stale
-    /// version stays [`PackError::BadVersion`] so the operator rebakes.
+    /// router's world. Whole-world packs (collision + transport graph)
+    /// load directly; legacy 274N grid packs fall back to
+    /// [`Self::from_grid`]. The fallback triggers on bad magic only — a
+    /// `274V` pack with a stale version stays [`PackError::BadVersion`]
+    /// so the operator rebakes.
     pub fn load_pack(path: &Path) -> Result<Self, PackError> {
         let bytes = std::fs::read(path).map_err(PackError::Io)?;
-        match decode_v2(&bytes) {
+        match decode(&bytes) {
             Ok((collision, graph)) => Ok(NavWorld { collision, graph }),
-            Err(PackError::BadMagic) => Ok(Self::from_grid(&load_pack(path)?)),
+            Err(PackError::BadMagic) => Ok(Self::from_grid(&load_grid(path)?)),
             Err(e) => Err(e),
         }
     }
 
-    /// Derive the router's world from a v1 pack grid. Walkable tiles carry
-    /// no flags; every blocked tile carries [`BLOCKED`] (the v1 pack has no
-    /// per-direction data, so a blocked tile is a wall on all faces). Each
-    /// pack door edge becomes a 1-tick `Door` transport edge; the pack
-    /// stores both directions, so the graph indexes `at` exactly as the
-    /// grid authored them.
+    /// Derive the router's world from a 274N grid pack. Walkable tiles
+    /// carry no flags; every blocked tile carries [`BLOCKED`] (the 274N
+    /// grid has no per-direction data, so a blocked tile is a wall on all
+    /// faces). Each pack door edge becomes a 1-tick `Door` transport
+    /// edge; the pack stores both directions, so the graph indexes `at`
+    /// exactly as the grid authored them.
     pub fn from_grid(grid: &StepGrid) -> Self {
-        // The v1 grid is one level-0 plane; the 4-plane buffer keeps
+        // The 274N grid is one level-0 plane; the 4-plane buffer keeps
         // upper-level lookups on their own (empty) planes instead of
         // panicking or reusing level 0.
         let plane = grid.width * grid.height;
@@ -115,7 +116,7 @@ mod tests {
     use super::{NavWorld, BLOCKED};
     use crate::collision::{walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
-    use crate::pack::{encode, encode_v2, PackError};
+    use crate::pack::{encode, encode_grid, PackError};
     use crate::router::{find, find_allow_teleports, Leg};
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -275,7 +276,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fixture.navpack");
-        std::fs::write(&path, encode(&StepGrid::fixture_door_corridor())).unwrap();
+        std::fs::write(&path, encode_grid(&StepGrid::fixture_door_corridor())).unwrap();
         let w = NavWorld::load_pack(&path).expect("pack loads");
         assert_eq!(w.collision.width, 5);
         assert_eq!(w.graph.edges.len(), 1);
@@ -318,9 +319,9 @@ mod tests {
 
     #[test]
     fn load_pack_keeps_stale_v5_wire_as_bad_version() {
-        // A leftover v5 (pre-v6) `274V` pack is not a v1 pack: load must
-        // surface BadVersion(5) so the operator rebakes, not fall into the
-        // v1 decoder and come out as a confusing BadMagic.
+        // A leftover v5 (pre-v6) `274V` pack is not a 274N grid pack:
+        // load must surface BadVersion(5) so the operator rebakes, not
+        // fall into the grid decoder and come out as a confusing BadMagic.
         let mut plane = vec![0u32; 4];
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
@@ -329,7 +330,7 @@ mod tests {
             walk: crate::collision::pack_walk_u16(&plane),
             flags: None,
         };
-        let mut bytes = encode_v2(&collision, &TransportGraph::default());
+        let mut bytes = encode(&collision, &TransportGraph::default());
         bytes[4] = 5;
         let dir = std::env::temp_dir().join(format!(
             "274bot-navworld-v5-{}-{}",
@@ -350,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn load_pack_path_round_trips_a_v2_world() {
+    fn load_pack_path_round_trips_a_world() {
         // A 5-tile corridor split by a door: the packed collision and
         // transport graph route exactly like the authored world.
         let mut plane = vec![0u32; 5];
@@ -383,7 +384,7 @@ mod tests {
         graph.at.entry(tile(1, 0, 0)).or_default().push(0);
 
         let dir = std::env::temp_dir().join(format!(
-            "274bot-navworld-v2-{}-{}",
+            "274bot-navworld-roundtrip-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -391,9 +392,9 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("fixture-v2.navpack");
-        std::fs::write(&path, encode_v2(&collision, &graph)).unwrap();
-        let w = NavWorld::load_pack(&path).expect("v2 pack loads");
+        let path = dir.join("fixture.navpack");
+        std::fs::write(&path, encode(&collision, &graph)).unwrap();
+        let w = NavWorld::load_pack(&path).expect("pack loads");
         assert_eq!(w.collision.origin, tile(0, 0, 0));
         assert_eq!(w.collision.walk, collision.walk);
         assert!(w.collision.flags.is_none());
@@ -408,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_world_round_trips_the_teleport_layer_off_the_default_find() {
+    fn world_round_trips_the_teleport_layer_off_the_default_find() {
         // A 5×5 bake walled down the middle: only the packed any-tile
         // teleport can cross it, and only under find_allow_teleports.
         let mut plane = vec![0u32; 25];
@@ -452,8 +453,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fixture-teles.navpack");
-        std::fs::write(&path, encode_v2(&collision, &graph)).unwrap();
-        let w = NavWorld::load_pack(&path).expect("v2 pack loads");
+        std::fs::write(&path, encode(&collision, &graph)).unwrap();
+        let w = NavWorld::load_pack(&path).expect("pack loads");
         assert_eq!(w.graph.teleports, graph.teleports);
         assert!(w.graph.edges.is_empty());
         assert!(w.graph.at.is_empty());

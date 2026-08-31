@@ -8,7 +8,7 @@ follower. It acts only through the kernel API (`api::interact`,
 ## Pack bake
 
 `nav-pack` reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
-and writes the current whole-world pack (`encode_v2` in
+and writes the current whole-world pack (`encode` in
 `crates/nav/src/pack.rs`):
 
 ```bash
@@ -24,8 +24,9 @@ The pack serializes the whole-world `WorldCollision` (four planes, packed
 `u16` walk words per tile, row-major z-then-x) plus the derived
 `TransportGraph`. Magic `b"274V"`, version byte **6**. Raw `u32` flags are
 not on the v6 wire; the optional `274F` sidecar holds them for collision
-paint. `decode_v2` accepts version 6 only — v5 and older are
-`BadVersion`. The v1 `274N` decoder stays for old boolean-walk files.
+paint. `decode` accepts version 6 only — v5 and older are
+`BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
+boolean-walk files.
 
 ## Collision (`nav::collision`)
 

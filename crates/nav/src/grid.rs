@@ -13,7 +13,7 @@ pub struct DoorEdge {
     pub to: Tile,
 }
 
-/// A rectangular grid of per-tile walkability flags (v1: one byte per tile,
+/// A rectangular grid of per-tile walkability flags (one byte per tile,
 /// `1` = walkable). `origin` is the tile at `walk[0]`; the grid spans `width`
 /// tiles in +x then `height` rows in +z, all on `origin.level`.
 pub struct StepGrid {
