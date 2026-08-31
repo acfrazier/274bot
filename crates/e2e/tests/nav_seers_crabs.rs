@@ -8,7 +8,7 @@
 //! invariants as the unit twin hold (every walked tile stays on plane 0,
 //! the walk spans the north gap, transports are road doors only).
 //!
-//! Run with the engine up and a v4 pack baked:
+//! Run with the engine up and a v5 pack baked:
 //! `LIVE=1 cargo test -p e2e --test nav_seers_crabs -- --ignored --test-threads=1 --nocapture`
 
 mod common;
@@ -45,19 +45,19 @@ fn pack_path() -> PathBuf {
 }
 
 #[test]
-#[ignore = "requires a local 274 engine, a rebaked v4 nav pack, and LIVE=1"]
+#[ignore = "requires a local 274 engine, a rebaked v5 nav pack, and LIVE=1"]
 fn nav_seers_crabs() {
     if !live() {
         return;
     }
 
-    // The pack must be v4 (the Task-3 rebake): a stale file fails to load.
+    // The pack must be v5 (the Task-9 rebake): a stale file fails to load.
     let path = pack_path();
     let world = match NavWorld::load_pack(&path) {
         Ok(w) => w,
         Err(e) => fail(&format!(
             "nav_seers_crabs: cannot load nav pack {} ({e}); \
-             rebake with `cargo run -p nav --bin nav-pack` (v4)",
+             rebake with `cargo run -p nav --bin nav-pack` (v5)",
             path.display()
         )),
     };
@@ -67,7 +67,12 @@ fn nav_seers_crabs() {
     // is the live-gate the brief requires).
     let mut opts = options();
     opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&[("test", "test")]), |_| (None, None), |_, _| {});
+    let play = run_with_io(
+        &opts,
+        profiles(&[("test", "test")]),
+        |_| (None, None),
+        |_, _| {},
+    );
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_seers_crabs");
 
     // Find the same OD on the pack the process loaded.

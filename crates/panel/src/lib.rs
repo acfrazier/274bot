@@ -1,4 +1,5 @@
 pub mod app;
+pub mod build_info;
 pub mod chrome;
 pub mod focus;
 pub mod game_view;

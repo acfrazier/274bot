@@ -31,10 +31,10 @@ use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::paint::{
-    collision_at, hull_targets, remaining_path_tiles, remaining_trail, select_draw_indices,
-    trail_tones, TrailTone,
+    collision_at_with, hull_targets, reached, remaining_path_tiles, remaining_trail,
+    select_draw_indices, trail_tones, TrailTone,
 };
-use nav::router::{find, find_allow_teleports, Route};
+use nav::router::{find_with, FindOptions, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
@@ -48,6 +48,198 @@ use crate::wall::Wall;
 /// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
+}
+
+/// World host for a new session: `BOT_TARGET=live` points at rs2b2t.
+fn default_play_host() -> String {
+    host_play::default_world_host()
+}
+
+/// Loopback hosts get the debug heading / WalkTo Teleport. Public
+/// `w1.rs2b2t.com` and LAN IPs do not.
+pub fn is_local_engine(host: &str) -> bool {
+    matches!(
+        host.trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
+}
+
+/// One Teles-popup dest: button label, `CLIENT_CHEAT` body, hover text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugDest {
+    pub label: &'static str,
+    pub cheat: &'static str,
+    pub tooltip: &'static str,
+}
+
+/// Engine `::getvar tutorial` replies `get tutorial: 1000`.
+pub fn parse_getvar_line(text: &str) -> Option<(&str, i32)> {
+    let rest = text.strip_prefix("get ")?;
+    let (name, value) = rest.rsplit_once(':')?;
+    Some((name.trim(), value.trim().parse().ok()?))
+}
+
+/// Debug heading buttons. TutSkip is omitted once the profile is known
+/// skipped or still unknown (a `getvar` is in flight).
+pub fn debug_main_buttons(show_tutskip: bool) -> Vec<&'static str> {
+    let mut labels = vec!["DebugPanel"];
+    if show_tutskip {
+        labels.push("TutSkip");
+    }
+    labels.extend(["Lumbridge", "maxme", "Teles"]);
+    labels
+}
+
+/// Named dest cheats for the Teles popup (`[debugproc]` names).
+pub fn debug_dest_cheats() -> &'static [DebugDest] {
+    // Engine debugprocs are `::<debugProcChar><name>` with debugProcChar
+    // default `~` (`::~home`). Engine commands (`tele`, `setvar`,
+    // `setstat`) have no tilde.
+    &[
+        DebugDest {
+            label: "Lumbridge",
+            cheat: "~home",
+            tooltip: "Lumbridge courtyard",
+        },
+        DebugDest {
+            label: "Varrock",
+            cheat: "~varrock",
+            tooltip: "Varrock square",
+        },
+        DebugDest {
+            label: "Falador",
+            cheat: "~falador",
+            tooltip: "Falador square",
+        },
+        DebugDest {
+            label: "Draynor",
+            cheat: "~draynor",
+            tooltip: "Draynor Village",
+        },
+        DebugDest {
+            label: "PortSarim",
+            cheat: "~portsarim",
+            tooltip: "Port Sarim docks",
+        },
+        DebugDest {
+            label: "Rimmington",
+            cheat: "~rimmington",
+            tooltip: "Rimmington",
+        },
+        DebugDest {
+            label: "AlKharid",
+            cheat: "~alkharid",
+            tooltip: "Al Kharid",
+        },
+        DebugDest {
+            label: "Seers",
+            cheat: "~seers",
+            tooltip: "Seers' Village",
+        },
+        DebugDest {
+            label: "Giants",
+            cheat: "~giants",
+            tooltip: "Hill Giants (Edgeville dungeon)",
+        },
+        DebugDest {
+            label: "Entrana",
+            cheat: "~entrana",
+            tooltip: "Entrana (no weapons/armour)",
+        },
+        DebugDest {
+            label: "Brimhaven",
+            cheat: "~brimhaven",
+            tooltip: "Brimhaven",
+        },
+        DebugDest {
+            label: "Ardy",
+            cheat: "~ardy",
+            tooltip: "East Ardougne",
+        },
+        DebugDest {
+            label: "Kbd",
+            cheat: "~kbd",
+            tooltip: "King Black Dragon lair",
+        },
+        DebugDest {
+            label: "Elvarg",
+            cheat: "~elvarg",
+            tooltip: "Elvarg on Crandor",
+        },
+        DebugDest {
+            label: "Greenland",
+            cheat: "~greenland",
+            tooltip: "Fields north of Tree Gnome Stronghold (not green dragons)",
+        },
+        DebugDest {
+            label: "Gb",
+            cheat: "~gb",
+            tooltip: "Gnome Ball pitch",
+        },
+        DebugDest {
+            label: "Ma",
+            cheat: "~ma",
+            tooltip: "Mage Arena (Wilderness)",
+        },
+        DebugDest {
+            label: "Pvp",
+            cheat: "~pvp",
+            tooltip: "PvP / bounty area",
+        },
+        DebugDest {
+            label: "Duel",
+            cheat: "~duel",
+            tooltip: "Duel Arena",
+        },
+        DebugDest {
+            label: "Trawler",
+            cheat: "~trawler",
+            tooltip: "Fishing Trawler",
+        },
+        DebugDest {
+            label: "Gamesroom",
+            cheat: "~gamesroom",
+            tooltip: "Burthorpe Games Room",
+        },
+        DebugDest {
+            label: "Mortton",
+            cheat: "~mortton",
+            tooltip: "Mort'ton",
+        },
+    ]
+}
+
+/// `setstat <skill> 99` for the skills `[debugproc,maxme]` advances.
+pub fn debug_maxme_cheats() -> &'static [&'static str] {
+    &[
+        "setstat attack 99",
+        "setstat defence 99",
+        "setstat strength 99",
+        "setstat hitpoints 99",
+        "setstat ranged 99",
+        "setstat prayer 99",
+        "setstat magic 99",
+        "setstat cooking 99",
+        "setstat woodcutting 99",
+        "setstat fletching 99",
+        "setstat fishing 99",
+        "setstat firemaking 99",
+        "setstat crafting 99",
+        "setstat smithing 99",
+        "setstat mining 99",
+        "setstat herblore 99",
+        "setstat agility 99",
+        "setstat thieving 99",
+        "setstat runecraft 99",
+    ]
+}
+
+/// Engine `::tele` body for a WalkTo tile.
+pub fn walkto_tele_cmd(tile: Tile) -> String {
+    api::interact::tele_args(tile.level, tile.x, tile.z)
 }
 
 /// Cooldown between cpal open retries after a device failure: a machine
@@ -66,10 +258,7 @@ pub fn default_vault_path() -> PathBuf {
 }
 
 fn default_cache_dir() -> String {
-    match env::var("HOME") {
-        Ok(home) => format!("{home}/experiments/Server/engine/data/pack/client"),
-        Err(_) => "experiments/Server/engine/data/pack/client".into(),
-    }
+    client::cache_dir().display().to_string()
 }
 
 /// Panel-side per-slot IO: the frame mailbox the slot stores each rendered
@@ -217,6 +406,16 @@ fn publish_nav_debug(
     settings: &NavSettings,
     drawing: bool,
 ) {
+    // Flags sidecar lifecycle: decoded once while a collision paint
+    // toggle is on (the paint prefers the raw flags — visibility bits
+    // the packed walk u16 drops — when the sidecar is mapped), dropped
+    // when both toggles go off. Never opened for a pack the session only
+    // walks.
+    if settings.collision_fill || settings.nsew_labels {
+        crate::picker::ensure_flags_sidecar();
+    } else {
+        crate::picker::drop_flags_sidecar();
+    }
     if !drawing {
         client.set_nav_debug_paint(None);
         return;
@@ -252,6 +451,17 @@ fn publish_nav_debug(
         let ox = world.collision.origin.x;
         let oz = world.collision.origin.z;
         let (ow, oh) = (world.collision.width as i32, world.collision.height as i32);
+        // Prefer the decoded flags sidecar when it matches this world's
+        // grid; otherwise the walk word answers (the shared world's
+        // `flags` field stays `None` — no walk-grid clone).
+        let side = crate::picker::flags_sidecar_for(
+            world.collision.origin,
+            world.collision.width,
+            world.collision.height,
+        );
+        // The paint-only reach bitset, baked once per world. A missing
+        // bitset defaults every cell to reached — no unreached tint.
+        let reach_bits = crate::picker::reach_bitset(world);
         for lz in 0..SCENE_TILES {
             for lx in 0..SCENE_TILES {
                 let x = base_x + lx;
@@ -259,7 +469,8 @@ fn publish_nav_debug(
                 if x < ox || z < oz || x - ox >= ow || z - oz >= oh {
                     continue;
                 }
-                let fb = collision_at(&world.collision, WorldTile { x, z, level });
+                let wt = WorldTile { x, z, level };
+                let fb = collision_at_with(&world.collision, wt, side.as_deref());
                 let mut bits = 0u8;
                 if fb.n {
                     bits |= FACE_N;
@@ -281,6 +492,12 @@ fn publish_nav_debug(
                         // The client fills only blocked ground; a face-only
                         // cell keeps its NSEW letters without a fill quad.
                         blocked: fb.blocked,
+                        // True when the transport network reaches the tile
+                        // (or the bitset is missing): the client's reach
+                        // fill draws only `show_collision && !reach`.
+                        reach: reach_bits
+                            .as_deref()
+                            .map_or(true, |bits| reached(bits, &world.collision, wt)),
                     });
                 }
             }
@@ -362,9 +579,12 @@ pub struct Session {
     pub pass_scratch: String,
     /// Last status poll (delta source for the log).
     pub statuses: Vec<SlotStatus>,
-    /// Credentials-section scratch buffers (username/password fields).
+    /// Picker edit scratch (username/password). Empty on the strip.
     pub cred_user: String,
     pub cred_pass: String,
+    /// Profile picker edit: `None` not editing, `Some("")` new profile,
+    /// `Some(name)` editing that vault row.
+    pub chooser_edit: Option<String>,
     /// Per-username walk arms; the focused slot's arm carries the armed
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`Traveller::follow`]).
@@ -383,8 +603,18 @@ pub struct Session {
     pub walkto_open: bool,
     /// Tile highlighted in the WalkTo picker; armed only on confirm.
     pub picker_sel: Option<Tile>,
-    /// Nav settings modal open flag (the modal window in `app.rs`).
+    /// Nav config window open flag (non-modal, same as General config).
     pub nav_settings_open: bool,
+    /// Non-modal settings window (renderer / capture / mem).
+    pub global_settings_open: bool,
+    /// Usernames we already sent `getvar tutorial` for this session.
+    tutorial_getvar_sent: HashSet<String>,
+    /// Forgotten-password confirm: delete the vault file (locked only).
+    pub vault_reset_open: bool,
+    pub vault_reset_understood: bool,
+    /// Chooser ✕ waiting on the same confirm popup; `None` not pending.
+    pub pending_profile_delete: Option<String>,
+    pub delete_understood: bool,
     /// Live-harness overlay: force the paint-layer toggles on for this
     /// session without writing prefs (`NavSettings::effective`).
     pub nav_live_force_layers: bool,
@@ -469,6 +699,9 @@ pub const PROCESS: &str = "*";
 
 /// Append `line` under `name`, dropping from the front past [`LOG_CAP`].
 fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
+    if host::debug_enabled() {
+        eprintln!("[panel] {name}: {line}");
+    }
     let vec = map.entry(name.to_string()).or_default();
     vec.push(line);
     while vec.len() > LOG_CAP {
@@ -495,6 +728,7 @@ impl Session {
                 only_render_selected: true,
                 sidecar_50: false,
                 live_full_rate: false,
+                focused_50: true,
                 wall_open: false,
                 wall: Vec::new(),
                 renderer_by: HashMap::new(),
@@ -512,6 +746,7 @@ impl Session {
             statuses: Vec::new(),
             cred_user: String::new(),
             cred_pass: String::new(),
+            chooser_edit: None,
             travellers: Arc::new(Mutex::new(HashMap::new())),
             walk_dest: None,
             walk_clear: Arc::new(AtomicBool::new(false)),
@@ -519,6 +754,12 @@ impl Session {
             walkto_open: false,
             picker_sel: None,
             nav_settings_open: false,
+            global_settings_open: false,
+            tutorial_getvar_sent: HashSet::new(),
+            vault_reset_open: false,
+            vault_reset_understood: false,
+            pending_profile_delete: None,
+            delete_understood: false,
             nav_live_force_layers: false,
             nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
             route_gen: 0,
@@ -540,7 +781,7 @@ impl Session {
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
             options: PlayOptions {
-                host: "127.0.0.1".into(),
+                host: default_play_host(),
                 port: DEFAULT_PORT,
                 cache_dir: default_cache_dir(),
                 lowmem: true,
@@ -549,6 +790,10 @@ impl Session {
                 mainland: false,
             },
         }
+    }
+
+    pub fn play_options(&self) -> &PlayOptions {
+        &self.options
     }
 
     /// Unlock (or first-run create) the default vault and start the play.
@@ -566,6 +811,36 @@ impl Session {
         } else {
             false
         }
+    }
+
+    /// Whether the default vault file exists (locked prompt: Unlock vs Create).
+    pub fn default_vault_exists() -> bool {
+        default_vault_path().is_file()
+    }
+
+    /// Delete `path` while locked. Refuses if a vault is open so a running
+    /// session cannot clobber the file. Forgotten-password recovery.
+    pub fn reset_vault_at(&mut self, path: &Path) -> bool {
+        if self.vault.is_some() {
+            self.error = Some("reset vault: unlock / close the session first".into());
+            return false;
+        }
+        match Vault::reset_file(path) {
+            Ok(()) => {
+                self.error = None;
+                self.vault_reset_open = false;
+                self.vault_reset_understood = false;
+                true
+            }
+            Err(e) => {
+                self.error = Some(format!("reset vault: {e}"));
+                false
+            }
+        }
+    }
+
+    pub fn reset_vault(&mut self) -> bool {
+        self.reset_vault_at(&default_vault_path())
     }
 
     /// Open the vault and attach an empty [`Play`]. Does **not** spawn a
@@ -617,16 +892,30 @@ impl Session {
         Ok(())
     }
 
-    /// Live `stress50` setup: temp vault `s00`…`s49` (password = username,
-    /// uids `274_000_100 + i`), every member spawns one full `Client`
-    /// (no lean extras), `s00` is the focused slot, chooser closed,
-    /// only-render-selected, then `login_all`.
+    /// Live `stress50` RAM watch: temp vault `s00`…`s49` (password =
+    /// username, uids `274_000_100 + i`). Every member is a full `Client`
+    /// (flat model — no lean extras / channel-head). `s00` is FIFO head +
+    /// focus, MultiBox rail with only-render-selected (cap-only: Game
+    /// paints at focused 50 fps, rail skip-paint so 50 blits do not melt
+    /// RAM/GPU), scatter-seed after scene 2, chooser closed, `login_all`.
+    /// Run headed with `cargo run --release` — debug 50-heads spike RAM.
     pub fn live_prepare_stress50(&mut self) -> Result<(), String> {
-        self.live_prepare_stress(50)
+        warn_stress50_debug();
+        self.live_prepare_stress(50, false)
     }
 
-    /// Headed flat wall of `n` profiles (`s00`…`s{n-1}`).
-    fn live_prepare_stress(&mut self, n: usize) -> Result<(), String> {
+    /// Live `stress50_full`: same 50-head wall as [`live_prepare_stress50`],
+    /// but every wall member draws (only-render-selected off) at the live
+    /// full-rate overlay (Game + sidecar 50 fps). RAM/GPU explosion check
+    /// after `stress50` holds. Still `--release`.
+    pub fn live_prepare_stress50_full(&mut self) -> Result<(), String> {
+        warn_stress50_debug();
+        self.live_prepare_stress(50, true)
+    }
+
+    /// Headed flat wall of `n` profiles (`s00`…`s{n-1}`). `full_rate`
+    /// paints every member at 50 fps; otherwise cap-only RAM watch.
+    fn live_prepare_stress(&mut self, n: usize, full_rate: bool) -> Result<(), String> {
         self.persist_ui = false;
         let n = n.max(1);
         let names: Vec<(String, String)> = (0..n)
@@ -647,16 +936,46 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "start_vault failed".into()));
         }
+        // RAM watch: only s00 (Game pane) may grow a GPU head. Rail members
+        // stay raster Off so a flipped only-render-selected cannot attach
+        // 49 extra RenderWorlds (~1 GB of loc Model clones each). Full-rate
+        // keeps Gpu on every member on purpose.
+        if let Some(vault) = self.vault.as_mut() {
+            for (i, (name, _)) in names.iter().enumerate() {
+                if let Some(mut p) = vault.get(name).cloned() {
+                    p.settings.lowmem = true;
+                    p.settings.raster = if full_rate || i == 0 {
+                        vault::RasterMode::Gpu
+                    } else {
+                        vault::RasterMode::Off
+                    };
+                    let _ = vault.upsert(p);
+                }
+            }
+        }
         self.set_multibox(true);
         self.scatter.store(true, Ordering::Relaxed);
         self.wall.chooser_open = false;
-        self.focus.lock().unwrap().only_render_selected = true;
-        // s00 loads first so it is the focused slot and FIFO head.
-        self.load(&names[0].0);
-        for (name, _) in names.iter().skip(1) {
-            self.load(name);
+        {
+            let mut f = self.focus.lock().unwrap();
+            f.only_render_selected = !full_rate;
         }
+        // Spawn every member onto the wall without applying focus on each
+        // load (that would demote/promote raster/mem and join `maininit`
+        // on the UI thread — the window never presents). Raster/mem flips
+        // are drop+reattach now, but focus apply still joins handshakes.
+        // s00 is focused last so it is FIFO head.
+        for (name, _) in &names {
+            let _ = self.wall.load(name);
+            self.ensure_slot(name, self.arm_for_profile(name));
+        }
+        self.sync_wall_focus();
+        self.wall.chooser_open = false;
         self.select(&names[0].0);
+        // NEVER assign sidecar_50 — it stays the operator knob. The live
+        // overlay raises every *drawing* slot, Game included.
+        self.set_live_full_rate(full_rate);
+        self.sync_sidecar_cadence();
         self.login_all();
         Ok(())
     }
@@ -801,7 +1120,7 @@ impl Session {
                         let trail_world = remaining_trail(&trail_all, here);
                         publish_nav_debug(
                             c,
-                            world,
+                            &world,
                             route.as_ref(),
                             here,
                             &trail_world,
@@ -942,6 +1261,7 @@ impl Session {
             },
         );
         self.play = Some(play);
+        crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         self.vault = Some(vault);
     }
@@ -970,10 +1290,11 @@ impl Session {
                 self.audio.release(&owner);
             }
         }
-        let Some(play) = self.play.as_mut() else {
+        let Some(current) = self.play.as_ref().map(|p| p.statuses()) else {
             return;
         };
-        let current = play.statuses();
+        self.ingest_tutorial_chat(&current);
+        self.maybe_getvar_tutorial(&current);
         {
             let mut log_by = self.log_by.lock().unwrap();
             for s in &current {
@@ -1064,6 +1385,85 @@ impl Session {
         self.focus.lock().unwrap().focused.clone()
     }
 
+    /// Queue a `CLIENT_CHEAT` on the focused slot. No-op without play/focus.
+    pub fn cheat_focused(&self, cmd: &str) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        play.cheat(&name, cmd);
+    }
+
+    /// True when this session's world host is a local engine.
+    pub fn debug_ui(&self) -> bool {
+        is_local_engine(&self.options.host)
+    }
+
+    /// Cached TutSkip for the focused profile: `None` unknown, `Some(true)`
+    /// skipped, `Some(false)` still in tutorial.
+    pub fn focused_tutorial_skipped(&self) -> Option<bool> {
+        let name = self.focused_name()?;
+        self.vault
+            .as_ref()
+            .and_then(|v| v.get(&name))
+            .and_then(|p| p.settings.tutorial_skipped)
+    }
+
+    /// Persist TutSkip on the focused vault profile (debugprefs).
+    pub fn mark_tutorial_skipped(&mut self) {
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        self.cache_tutorial(&name, true);
+    }
+
+    fn cache_tutorial(&mut self, name: &str, skipped: bool) {
+        let Some(vault) = self.vault.as_mut() else {
+            return;
+        };
+        let Some(mut profile) = vault.get(name).cloned() else {
+            return;
+        };
+        if profile.settings.tutorial_skipped == Some(skipped) {
+            return;
+        }
+        profile.settings.tutorial_skipped = Some(skipped);
+        let _ = vault.upsert(profile);
+    }
+
+    fn ingest_tutorial_chat(&mut self, statuses: &[SlotStatus]) {
+        for s in statuses {
+            if let Some((var, value)) = parse_getvar_line(&s.chat_head) {
+                if var == "tutorial" {
+                    self.cache_tutorial(&s.username, value >= 1000);
+                }
+            }
+        }
+    }
+
+    fn maybe_getvar_tutorial(&mut self, statuses: &[SlotStatus]) {
+        if !self.debug_ui() {
+            return;
+        }
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        if self.focused_tutorial_skipped().is_some() {
+            return;
+        }
+        let ready = statuses
+            .iter()
+            .any(|s| s.username == name && s.ingame && s.scene_state == 2);
+        if !ready || !self.tutorial_getvar_sent.insert(name.clone()) {
+            return;
+        }
+        if let Some(play) = self.play.as_ref() {
+            play.cheat(&name, "getvar tutorial");
+        }
+    }
+
     /// Frames for the Game pane (the focused slot's mailbox). Every
     /// wall member owns its own `FrameBuf` in the flat model; fall back to
     /// the first spawned slot when nothing is focused.
@@ -1088,9 +1488,9 @@ impl Session {
     }
 
     /// Switch the focused profile. A parked vault name is spawned on first
-    /// select (login FIFO); already-running slots stay up so the combo can
+    /// select (login FIFO); already-running slots stay up so the picker can
     /// change focus. Capture follows the new focus when the single capture
-    /// toggle is on (never two keyboards). The credentials fields follow.
+    /// toggle is on (never two keyboards). The picker edit fields follow.
     /// New slots inherit the vault profile's auto-login (and logout latch).
     ///
     /// Flat model: clicking a member is pure focus — the Game pane samples
@@ -1134,7 +1534,7 @@ impl Session {
         // show a different (or no) route, so force a rebuild.
         self.route_gen += 1;
         if capture {
-            if let Some(old) = old {
+            if let Some(old) = old.clone() {
                 if let Some(slot) = self.slots.get(&old) {
                     slot.input.set_enabled(false);
                 }
@@ -1143,11 +1543,15 @@ impl Session {
         } else {
             self.capture_tx = None;
         }
-        // Credentials fields follow the newly focused profile.
+        // Credentials fields follow the newly focused profile; the General
+        // config mirrors the profile's raster/mem so the pane shows what the
+        // slot actually runs (display only — no write-back, no re-role).
         if let Some(vault) = &self.vault {
             if let Some(p) = vault.get(name) {
                 self.cred_user = p.username.clone();
                 self.cred_pass = p.password.clone();
+                self.ui.raster = p.settings.raster;
+                self.ui.lowmem = p.settings.lowmem;
             }
         }
     }
@@ -1179,6 +1583,13 @@ impl Session {
     /// 1 s watch bound.
     pub fn set_sidecar_50(&mut self, on: bool) {
         self.focus.lock().unwrap().sidecar_50 = on;
+        self.wake_all_slots();
+    }
+
+    /// Game-pane 50 fps for whoever is focused. Does not follow that
+    /// client onto the rail.
+    pub fn set_focused_50(&mut self, on: bool) {
+        self.focus.lock().unwrap().focused_50 = on;
         self.wake_all_slots();
     }
 
@@ -1349,10 +1760,18 @@ impl Session {
             return;
         };
         let input = SlotInput::new();
+        // Raster/mem come from the vault profile (the same source as
+        // `bot_client_config`); a focus change never re-roles a live slot.
+        let raster = profile.settings.raster;
+        let lowmem = profile.settings.lowmem;
+        input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
+        {
+            let mut f = self.focus.lock().unwrap();
+            f.renderer_by
+                .insert(username.to_string(), raster != vault::RasterMode::Off);
+        }
         let pixels = FrameBuf::new();
-        // The speaker gate mirrors the profile's lowmem at spawn: a
-        // default lowmem slot starts with Music/SFX off (no cpal).
-        self.audio.set_music(username, !profile.settings.lowmem);
+        self.audio.set_music(username, !lowmem);
         if let Some(play) = &mut self.play {
             play.spawn_slot(
                 profile,
@@ -1379,6 +1798,29 @@ impl Session {
     pub fn clear_credentials(&mut self) {
         self.cred_user.clear();
         self.cred_pass.clear();
+    }
+
+    /// Open the profile picker on `name` (or a blank new row).
+    pub fn begin_edit_profile(&mut self, name: Option<&str>) {
+        match name {
+            Some(n) => {
+                if let Some(p) = self.vault.as_ref().and_then(|v| v.get(n)) {
+                    self.cred_user = p.username.clone();
+                    self.cred_pass = p.password.clone();
+                }
+                self.chooser_edit = Some(n.to_string());
+            }
+            None => {
+                self.cred_user.clear();
+                self.cred_pass.clear();
+                self.chooser_edit = Some(String::new());
+            }
+        }
+        self.wall.chooser_open = true;
+    }
+
+    pub fn cancel_edit_profile(&mut self) {
+        self.chooser_edit = None;
     }
 
     /// Log out one member (the credentials Logout button): latch it so
@@ -1424,51 +1866,108 @@ impl Session {
         true
     }
 
-    /// Lowmem for the Music/SFX checkbox: the focused vault profile, or
-    /// `true` when nothing is focused.
+    /// Game-pane lowmem (General config). Rail members stay lowmem.
     pub fn focused_lowmem(&self) -> bool {
-        self.focused_name()
-            .and_then(|n| self.vault.as_ref().and_then(|v| v.get(&n)))
-            .map(|p| p.settings.lowmem)
-            .unwrap_or(true)
+        self.ui.lowmem
     }
 
-    /// Persist the focused profile's lowmem setting to the vault
-    /// (`ProfileSettings.lowmem`) and retarget the focused slot's speaker
-    /// gate live: Music/SFX on (highmem) opens cpal on the focused slot,
-    /// off (lowmem) tears it down. Returns whether the write landed;
-    /// failures set [`Session::error`].
-    pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
+    /// Game-pane none/GPU/CPU (General config). Rail members stay GPU
+    /// (CPU/none only as fallback via `set_draw` / `prefer_cpu`).
+    pub fn focused_raster(&self) -> vault::RasterMode {
+        self.ui.raster
+    }
+
+    fn persist_game_render_prefs(&mut self) {
+        if self.persist_ui {
+            crate::ui_state::save(&self.ui);
+        }
         let Some(name) = self.focused_name() else {
-            self.error = Some("music/sfx: no focused profile".into());
-            return false;
+            return;
         };
         let Some(vault) = self.vault.as_mut() else {
-            self.error = Some("music/sfx: vault locked".into());
-            return false;
+            return;
         };
-        let Some(mut profile) = vault.get(&name).cloned() else {
-            self.error = Some(format!("music/sfx: no profile {name}"));
-            return false;
-        };
-        profile.settings.lowmem = lowmem;
-        match vault.upsert(profile) {
-            Ok(()) => {
-                self.error = None;
-                self.audio.set_music(&name, !lowmem);
-                // The gate reconciles on the slot's frame loop; kick a
-                // parked focused slot so the open/teardown lands within a
-                // frame, not at the 1 s watch bound.
-                if let Some(play) = self.play.as_ref() {
-                    play.wake(&name);
-                }
-                true
-            }
-            Err(e) => {
-                self.error = Some(format!("music/sfx: {e}"));
-                false
-            }
+        if let Some(mut p) = vault.get(&name).cloned() {
+            p.settings.raster = self.ui.raster;
+            p.settings.lowmem = self.ui.lowmem;
+            let _ = vault.upsert(p);
         }
+    }
+
+    /// Apply Game-pane raster. Off is `set_draw` on the focused client
+    /// only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
+    /// the `Renderer` and reattaches the right backend on the **same**
+    /// client — never a restart. Rail members are not touched.
+    pub fn set_focused_raster(&mut self, raster: vault::RasterMode) -> bool {
+        self.ui.raster = raster;
+        self.persist_game_render_prefs();
+        self.set_renderer(raster != vault::RasterMode::Off);
+        let Some(name) = self.focused_name() else {
+            return true;
+        };
+        if raster == vault::RasterMode::Off {
+            return true;
+        }
+        let want_cpu = raster == vault::RasterMode::Cpu;
+        if let Some(slot) = self.slots.get(&name) {
+            slot.input.set_prefer_cpu(want_cpu);
+        }
+        true
+    }
+
+    pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
+        self.ui.lowmem = lowmem;
+        self.persist_game_render_prefs();
+        self.error = None;
+        let Some(name) = self.focused_name() else {
+            return true;
+        };
+        // The audio gate is the slot threads' lowmem channel: each frame
+        // the slot applies `c.set_lowmem(!audio.music_on(name))`, and the
+        // host drops the `Renderer` when `config.lowmem` changes so the
+        // next paint attaches with the new mode. No restart.
+        self.audio.set_music(&name, !lowmem);
+        true
+    }
+
+    /// Status-row copy for the focused profile's mem mode.
+    pub fn mem_status_text(lowmem: bool) -> &'static str {
+        if lowmem {
+            "lowmem"
+        } else {
+            "highmem"
+        }
+    }
+
+    /// GPU↔CPU (not Off) on a spawned slot is a drop+reattach — the
+    /// `Client` and its socket stay up, so no logout/restart confirm is
+    /// ever required (Off is `set_draw`; mem flips are live too).
+    pub fn raster_switch_needs_confirm(
+        _next: vault::RasterMode,
+        _prefer_cpu: bool,
+        _slot_spawned: bool,
+    ) -> bool {
+        false
+    }
+
+    /// Pick a raster. Off is `set_draw`. GPU↔CPU on the Game-pane client
+    /// drops + reattaches the renderer (never a logout). Rail members stay
+    /// GPU/lowmem.
+    pub fn request_focused_raster(&mut self, raster: vault::RasterMode) {
+        if self.focused_raster() == raster {
+            return;
+        }
+        let _ = self.set_focused_raster(raster);
+    }
+
+    /// Pick highmem/lowmem for the Game pane. The live `Client` flips mem
+    /// (the host drops + reattaches the renderer); never a restart. Rail
+    /// members stay lowmem.
+    pub fn request_focused_lowmem(&mut self, lowmem: bool) {
+        if self.focused_lowmem() == lowmem {
+            return;
+        }
+        let _ = self.set_focused_lowmem(lowmem);
     }
 
     /// Load a wall member: ensure its slot and select it. Auto-login
@@ -1646,6 +2145,7 @@ impl Session {
             }
         } else {
             self.wall.on_multibox_off();
+            self.cancel_edit_profile();
         }
         self.focus.lock().unwrap().wall_open = on;
         self.sync_wall_focus();
@@ -1721,9 +2221,11 @@ impl Session {
     /// player's observed tile). On `Ok(route)` the focused username's walk
     /// arm stores the route so the observe tick can step it via
     /// [`Traveller::follow`]; on `NoPath` only the dest is stored and
-    /// `error` carries a short message. When `ui.nav.allow_teleports` is
-    /// set, the search also considers the any-tile teleport layer. Callers
-    /// that do not know the player's tile fall back to [`Session::arm_walk`].
+    /// `error` carries a short message. The Nav settings' [`FindOptions`]
+    /// apply: `ui.nav.allow_teleports` unions the any-tile teleport layer
+    /// in and `ui.nav.allow_wilderness` allows entering the wilderness.
+    /// Callers that do not know the player's tile fall back to
+    /// [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
@@ -1737,11 +2239,16 @@ impl Session {
             z: dest.z,
             level: dest.level,
         };
-        let routed = if self.ui.nav.allow_teleports {
-            find_allow_teleports(&world.collision, &world.graph, from_w, dest_w)
-        } else {
-            find(&world.collision, &world.graph, from_w, dest_w)
-        };
+        let routed = find_with(
+            &world.collision,
+            &world.graph,
+            from_w,
+            dest_w,
+            FindOptions {
+                allow_teleports: self.ui.nav.allow_teleports,
+                allow_wilderness: self.ui.nav.allow_wilderness,
+            },
+        );
         match routed {
             Ok(route) => {
                 self.error = None;
@@ -1987,6 +2494,17 @@ fn temp_live_vault_from(entries: &[(&str, &str)], uid_base: i32) -> PathBuf {
     path
 }
 
+/// 50-head watches are a release RAM/GPU check. Debug cargo run looks
+/// frozen and spikes RSS; do not FAIL unit tests that call the shared
+/// helper at N=2/3.
+fn warn_stress50_debug() {
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "panel-play: stress50 is a release RAM watch — run with cargo run --release -p panel --bin panel-play -- --live stress50"
+        );
+    }
+}
+
 /// Fresh uid for a profile with no existing vault entry: one past the max
 /// (host-play assigns uids from the same 274M base range).
 fn fresh_uid(vault: &Vault) -> i32 {
@@ -2020,19 +2538,30 @@ fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
     }
 }
 
+/// Detach the picker's nav world only after the play's slot threads are
+/// joined, so no live observe can read a cleared `pack()`.
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.play = None;
+        crate::picker::set_pack(None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        arm_login_all, combo_index, maybe_send_click, publish_nav_debug, script_active,
+        arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
+        is_local_engine, maybe_send_click, parse_getvar_line, publish_nav_debug, script_active,
         script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        stream_capture, Session, SlotIo,
+        stream_capture, walkto_tele_cmd, Session, SlotIo,
     };
+    use crate::focus::draw_for_slot;
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
     use client::render::nav_debug::{FACE_N, FACE_S};
     use host::{FrameBuf, InputEv, SlotInput};
     use host_play::{SlotArm, SlotStatus};
-    use nav::collision::{derive_walkable, WorldCollision};
+    use nav::collision::WorldCollision;
     use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
     use nav::tile::Tile;
@@ -2044,6 +2573,105 @@ mod tests {
     use vault::{Profile, ProfileSettings, Vault};
 
     use crate::nav_settings::{effective, NavSettings};
+
+    #[test]
+    fn is_local_engine_is_loopback_only() {
+        assert!(is_local_engine("127.0.0.1"));
+        assert!(is_local_engine("localhost"));
+        assert!(is_local_engine("::1"));
+        assert!(!is_local_engine("w1.rs2b2t.com"));
+        assert!(!is_local_engine("192.168.1.5"));
+    }
+
+    #[test]
+    fn debug_dest_lumbridge_sends_home() {
+        let d = debug_dest_cheats();
+        assert!(d
+            .iter()
+            .any(|x| x.label == "Lumbridge" && x.cheat == "~home"));
+        assert!(d.iter().any(|x| x.label == "Seers" && x.cheat == "~seers"));
+        assert!(!d.iter().any(|x| x.label == "North"));
+    }
+
+    #[test]
+    fn debug_dest_greenland_tooltip_is_the_script_comment() {
+        let g = debug_dest_cheats()
+            .iter()
+            .find(|x| x.label == "Greenland")
+            .expect("greenland dest");
+        assert_eq!(g.cheat, "~greenland");
+        assert!(
+            g.tooltip.contains("Gnome Stronghold"),
+            "hover must say where this is, got {:?}",
+            g.tooltip
+        );
+    }
+
+    #[test]
+    fn walkto_tele_cmd_is_engine_tele_args() {
+        let t = Tile {
+            x: 3253,
+            z: 3266,
+            level: 0,
+        };
+        assert_eq!(walkto_tele_cmd(t), "tele 0,50,51,53,2");
+    }
+
+    #[test]
+    fn mark_tutorial_skipped_persists_on_focused_profile() {
+        let path = tmp_vault("tutskip-pref.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        assert_eq!(s.focused_tutorial_skipped(), None);
+        s.mark_tutorial_skipped();
+        assert_eq!(s.focused_tutorial_skipped(), Some(true));
+        assert_eq!(
+            s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .tutorial_skipped,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn parse_getvar_line_reads_engine_reply() {
+        assert_eq!(
+            parse_getvar_line("get tutorial: 1000"),
+            Some(("tutorial", 1000))
+        );
+        assert_eq!(parse_getvar_line("get tutorial: 0"), Some(("tutorial", 0)));
+        assert_eq!(parse_getvar_line("hello"), None);
+    }
+
+    #[test]
+    fn tutskip_button_omitted_until_known_open() {
+        assert_eq!(
+            debug_main_buttons(false),
+            ["DebugPanel", "Lumbridge", "maxme", "Teles"]
+        );
+        assert_eq!(
+            debug_main_buttons(true),
+            ["DebugPanel", "TutSkip", "Lumbridge", "maxme", "Teles"]
+        );
+    }
+
+    #[test]
+    fn debug_maxme_is_setstat_99_not_maxme_proc() {
+        let cmds = debug_maxme_cheats();
+        assert!(!cmds.iter().any(|c| *c == "maxme"));
+        assert!(cmds.contains(&"setstat attack 99"));
+        assert_eq!(cmds.len(), 19);
+    }
 
     fn empty_play() -> host_play::Play {
         host_play::run_with_io(
@@ -2080,8 +2708,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                flags: vec![0u32; w * h],
-                walkable: vec![0u32; w * h],
+                walk: vec![0u16; w * h],
+                flags: None,
             },
             graph: TransportGraph::default(),
         }
@@ -2100,7 +2728,8 @@ mod tests {
             },
             1,
             Arc::new(client::config::Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         c.map_build_base_x = 3200;
         c.map_build_base_z = 3200;
@@ -2124,8 +2753,8 @@ mod tests {
                 },
                 width,
                 height,
-                flags: flags.clone(),
-                walkable: derive_walkable(&flags),
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         }
@@ -2229,6 +2858,94 @@ mod tests {
         // Click: the traveller's walk aim converts to scene coords.
         assert_eq!(paint.click, Some((52, 52)));
         assert!(paint.show_collision && paint.show_nsew && paint.show_path);
+    }
+
+    #[test]
+    fn publish_nav_debug_carries_reach_from_the_bitset() {
+        let mut c = paint_client();
+        // A 65×65 world (a distinct grid from `walled_world`, so the cached
+        // reach bake belongs to this graph): a sealed 1×1 courtyard floor
+        // at scene (1,1) and a blocked door-loc seed at scene (2,2).
+        let (width, height) = (65usize, 65usize);
+        let mut flags = vec![0u32; width * height];
+        flags[1 * width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                width,
+                height,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
+            },
+            graph: TransportGraph {
+                edges: vec![TransportEdge {
+                    kind: TransportKind::Door,
+                    at: WorldTile {
+                        x: 3202,
+                        z: 3202,
+                        level: 0,
+                    },
+                    to: WorldTile {
+                        x: 3200,
+                        z: 3200,
+                        level: 0,
+                    },
+                    loc_id: 1530,
+                    option: 1,
+                    ticks: 1,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                }],
+                ..Default::default()
+            },
+        };
+        let layers = NavSettings {
+            collision_fill: true,
+            nsew_labels: true,
+            ..NavSettings::default()
+        };
+        publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
+        let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
+        // The blocked door loc is a reach seed: reached despite the ground
+        // block, so the client keeps its collision fill.
+        let door = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 2 && cell.lz == 2)
+            .expect("the door loc cell");
+        assert!(
+            door.blocked && door.reach,
+            "a transport seed is reached even when blocked"
+        );
+        // The sealed courtyard floor is standable but the network never
+        // reaches it — the client draws the unreached fill there.
+        let yard = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 1 && cell.lz == 1)
+            .expect("the courtyard cell");
+        assert!(
+            !yard.blocked && !yard.reach,
+            "the walled floor is an unreached puddle"
+        );
+        // Open reached ground has no bits and is not blocked: no cell.
+        assert!(
+            !paint
+                .collision
+                .iter()
+                .any(|cell| cell.lx == 0 && cell.lz == 0),
+            "reached open ground publishes nothing"
+        );
     }
 
     #[test]
@@ -2336,6 +3053,7 @@ mod tests {
                         item_req: vec![],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     },
                 },
             ],
@@ -2366,8 +3084,8 @@ mod tests {
                 },
                 width,
                 height,
-                flags: flags.clone(),
-                walkable: derive_walkable(&flags),
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };
@@ -2537,6 +3255,7 @@ mod tests {
                         item_req: vec![],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     },
                 },
             ],
@@ -2735,8 +3454,9 @@ mod tests {
                 std::collections::HashMap::from([("a".into(), true), ("b".into(), true)]);
             f.sidecar_50 = true;
         }
+        s.focus.lock().unwrap().focused_50 = false;
         s.sync_sidecar_cadence();
-        assert!(!a_in.full_rate(), "the focused slot keeps its capture path");
+        assert!(!a_in.full_rate(), "sidecar must not raise the Game pane");
         assert!(b_in.full_rate(), "the sidecar pref raises a drawing member");
         // Pref off returns the 1 fps watch cadence.
         s.set_sidecar_50(false);
@@ -2773,11 +3493,53 @@ mod tests {
     }
 
     #[test]
+    fn wrong_pass_does_not_delete_or_replace_the_vault() {
+        let path = tmp_vault("wrong-pass.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        drop(s);
+
+        let mut s = Session::new();
+        assert!(!s.unlock_at(&path, "nope"));
+        assert!(s.vault.is_none());
+        assert!(path.is_file());
+        let v = Vault::unlock(&path, "bot").unwrap();
+        assert!(v.get("alice").is_some());
+    }
+
+    #[test]
+    fn reset_vault_at_refuses_while_unlocked() {
+        let path = tmp_vault("reset-locked.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        assert!(!s.reset_vault_at(&path));
+        assert!(path.is_file());
+        assert!(s.vault.is_some());
+    }
+
+    #[test]
+    fn reset_vault_at_deletes_while_locked() {
+        let path = tmp_vault("reset-ok.vault");
+        let mut s = Session::new();
+        assert!(s.unlock_at(&path, "bot"));
+        s.vault = None;
+        assert!(s.reset_vault_at(&path));
+        assert!(!path.exists());
+        assert!(s.unlock_at(&path, "newpass"));
+    }
+
+    #[test]
     fn session_starts_with_renderer_on_capture_off() {
         let s = Session::new();
         let f = s.focus.lock().unwrap();
-        assert!(f.renderer, "rail is on; host paints 1 fps until capture");
+        assert!(f.renderer, "rail is on; Game pane 50 fps is focused_50");
         assert!(!f.capture);
+        assert!(f.focused_50);
     }
 
     #[test]
@@ -2876,8 +3638,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph: TransportGraph::default(),
         };
@@ -2951,6 +3713,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         let world = NavWorld {
             collision: WorldCollision {
@@ -2961,8 +3724,8 @@ mod tests {
                 },
                 width: 5,
                 height: 5,
-                walkable: nav::collision::derive_walkable(&flags),
-                flags,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
             },
             graph,
         };
@@ -2982,6 +3745,103 @@ mod tests {
         assert!(
             session.error.is_none(),
             "allow_teleports routes the teleport"
+        );
+        let arm = session.travellers.lock().unwrap();
+        let route = arm
+            .get(&session.focused_name().unwrap())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .route
+            .clone();
+        assert!(route.unwrap().legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if edge.kind == TransportKind::Teleport
+        )));
+    }
+
+    #[test]
+    fn arm_walk_on_uses_find_with_options() {
+        // The tele fixture moved to wildy-north coords, with the teleport
+        // landing on a wilderness tile: the teleport edge is the only way
+        // across the wall, and its landing is inside the zone. Neither
+        // flag alone may route — `arm_walk_on` must pass both
+        // `ui.nav.allow_teleports` and `ui.nav.allow_wilderness` through
+        // to `find_with`.
+        let mut session = Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let mut flags = vec![0u32; 5 * 12];
+        for z in 0..12 {
+            flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
+        }
+        let dest_tile = Tile {
+            x: 3102,
+            z: 3525,
+            level: 0,
+        };
+        let dest = WorldTile {
+            x: 3102,
+            z: 3525,
+            level: 0,
+        };
+        let mut graph = TransportGraph::default();
+        graph.teleports.push(TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: dest,
+            loc_id: 0,
+            option: 0,
+            ticks: 3,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        });
+        let world = NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 3099,
+                    z: 3518,
+                    level: 0,
+                },
+                width: 5,
+                height: 12,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
+            },
+            graph,
+        };
+        let origin = Tile {
+            x: 3100,
+            z: 3519,
+            level: 0,
+        };
+        session.ui.nav.allow_teleports = false;
+        session.ui.nav.allow_wilderness = false;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.as_ref().unwrap().contains("no path"),
+            "default find must not route into the wilderness"
+        );
+        session.ui.nav.allow_teleports = true;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.as_ref().unwrap().contains("no path"),
+            "a teleport landing inside the wilderness stays blocked without allow_wilderness"
+        );
+        session.ui.nav.allow_wilderness = true;
+        session.arm_walk_on(&world, origin, dest_tile);
+        assert!(
+            session.error.is_none(),
+            "both UI flags must route the teleport into the wilderness"
         );
         let arm = session.travellers.lock().unwrap();
         let route = arm
@@ -3294,6 +4154,68 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_select_does_not_restart_when_game_is_highmem() {
+        let path = tmp_vault("select-no-restart.vault");
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.ui.lowmem = false;
+        s.select("alice");
+        s.load("bob");
+        let alice_px = std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels);
+        let bob_px = std::sync::Arc::as_ptr(&s.slots.get("bob").unwrap().pixels);
+        s.select("bob");
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert_eq!(
+            std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels),
+            alice_px
+        );
+        assert_eq!(
+            std::sync::Arc::as_ptr(&s.slots.get("bob").unwrap().pixels),
+            bob_px
+        );
+        let log = s.log_by.lock().unwrap();
+        assert!(!log.values().flatten().any(|l| l.contains("slot restarted")));
+    }
+
+    #[test]
+    fn sidecar_select_does_not_restart_when_game_is_cpu() {
+        let path = tmp_vault("select-no-restart-cpu.vault");
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("bob", "pw", 43))
+            .unwrap();
+        s.ui.raster = vault::RasterMode::Cpu;
+        s.select("alice");
+        s.load("bob");
+        let alice_px = std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels);
+        s.select("bob");
+        assert_eq!(
+            std::sync::Arc::as_ptr(&s.slots.get("alice").unwrap().pixels),
+            alice_px
+        );
+    }
+
+    #[test]
     fn logout_all_arms_every_wall_member() {
         let path = tmp_vault("logout-all-flat.vault");
         let mut s = Session::new();
@@ -3348,7 +4270,7 @@ mod tests {
             ..Default::default()
         });
         let mut s = Session::new();
-        s.live_prepare_stress(3).expect("prepare");
+        s.live_prepare_stress(3, false).expect("prepare");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
             if s.play.as_ref().unwrap().statuses().len() == 3 {
@@ -3379,6 +4301,18 @@ mod tests {
                 .load(Ordering::Relaxed),
             "the focused slot arms immediately"
         );
+        assert!(
+            s.focus.lock().unwrap().only_render_selected,
+            "RAM watch is cap-only (Game paints, rail skip-paint)"
+        );
+        assert!(
+            !s.focus.lock().unwrap().live_full_rate,
+            "RAM watch does not raise sidecar/game to 50 fps overlay"
+        );
+        assert!(
+            s.scatter.load(Ordering::Relaxed),
+            "stress wall scatter-seeds after scene 2"
+        );
         // No `stop_slot` joins: the slot threads stay in `maininit`'s
         // bounded HTTP retry (see `flat_model_spawns_every_member_as_a_client`).
     }
@@ -3390,7 +4324,7 @@ mod tests {
             ..Default::default()
         });
         let mut s = Session::new();
-        s.live_prepare_stress(2).expect("prepare");
+        s.live_prepare_stress(2, false).expect("prepare");
         assert!(
             s.play
                 .as_ref()
@@ -3402,6 +4336,66 @@ mod tests {
             "login all arms every member immediately (the FIFO serializes)"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn headed_stress_full_paints_every_member_at_50fps() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_stress(2, true).expect("prepare");
+        let f = s.focus.lock().unwrap();
+        assert!(
+            !f.only_render_selected,
+            "full-rate 50 paints sidecar tiles, not cap-only"
+        );
+        assert!(f.live_full_rate, "full-rate overlay on Game + sidecar");
+        drop(f);
+        for name in ["s00", "s01"] {
+            let slot = s.slots.get(name).expect("slot");
+            assert!(slot.input.full_rate(), "{name} must run the 50 fps cadence");
+        }
+    }
+
+    /// RAM watch members must be raster Off so a flipped only-render-
+    /// selected cannot attach 49 GPU heads. The Game pane's one seat
+    /// follows focus (click a working member after s00's −1).
+    #[test]
+    fn stress50_rail_members_are_raster_off() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.live_prepare_stress(3, false).expect("prepare");
+        let f = s.focus.lock().unwrap();
+        assert_eq!(f.renderer_by.get("s00").copied(), Some(true));
+        assert_eq!(
+            f.renderer_by.get("s01").copied(),
+            Some(false),
+            "s01 must not be able to grow a GPU head"
+        );
+        assert_eq!(f.renderer_by.get("s02").copied(), Some(false));
+        assert!(draw_for_slot(&f, "s00"));
+        assert!(!draw_for_slot(&f, "s01"));
+        drop(f);
+        s.select("s01");
+        let f = s.focus.lock().unwrap();
+        assert!(
+            draw_for_slot(&f, "s01"),
+            "focus moves the one GPU seat onto a rail-Off member"
+        );
+        assert!(!draw_for_slot(&f, "s00"));
+        drop(f);
+        s.focus.lock().unwrap().only_render_selected = false;
+        let f = s.focus.lock().unwrap();
+        assert!(
+            !draw_for_slot(&f, "s02"),
+            "raster Off must keep unfocused rail members unheaded even with render-all"
+        );
+        assert!(draw_for_slot(&f, "s01"));
     }
 
     #[test]
@@ -3956,6 +4950,50 @@ mod tests {
     }
 
     #[test]
+    fn begin_edit_profile_loads_fields_and_opens_chooser() {
+        let path = tmp_vault("edit-profile.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "secret", 42))
+            .unwrap();
+
+        s.begin_edit_profile(Some("alice"));
+        assert!(s.wall.chooser_open);
+        assert_eq!(s.chooser_edit.as_deref(), Some("alice"));
+        assert_eq!(s.cred_user, "alice");
+        assert_eq!(s.cred_pass, "secret");
+
+        s.begin_edit_profile(None);
+        assert_eq!(s.chooser_edit.as_deref(), Some(""));
+        assert!(s.cred_user.is_empty());
+        assert!(s.cred_pass.is_empty());
+
+        s.cancel_edit_profile();
+        assert!(s.chooser_edit.is_none());
+        assert!(s.wall.chooser_open, "cancel leaves the picker open");
+    }
+
+    #[test]
+    fn set_multibox_off_cancels_picker_edit() {
+        let path = tmp_vault("edit-off.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.begin_edit_profile(Some("alice"));
+        s.set_multibox(true);
+        s.set_multibox(false);
+        assert!(s.chooser_edit.is_none());
+        assert!(!s.wall.chooser_open);
+    }
+
+    #[test]
     fn set_multibox_wires_wall_open_and_off_clears_grid() {
         let mut s = Session::new();
         assert!(!s.multibox);
@@ -4108,6 +5146,155 @@ mod tests {
         let f = s.focus.lock().unwrap();
         assert!(f.renderer);
         assert_eq!(f.renderer_by.get("alice").copied(), Some(true));
+    }
+
+    #[test]
+    fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
+        let path = tmp_vault("raster-mode.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        assert_eq!(s.focused_raster(), vault::RasterMode::Gpu);
+        assert!(!s.slots.get("alice").unwrap().input.prefer_cpu());
+        assert!(s.set_focused_raster(vault::RasterMode::Off));
+        assert_eq!(s.focused_raster(), vault::RasterMode::Off);
+        assert_eq!(
+            s.focus.lock().unwrap().renderer_by.get("alice").copied(),
+            Some(false)
+        );
+        assert!(
+            !s.slots.get("alice").unwrap().input.prefer_cpu(),
+            "Off must not flip the GPU/CPU latch"
+        );
+        assert!(s.set_focused_raster(vault::RasterMode::Cpu));
+        assert_eq!(s.focused_raster(), vault::RasterMode::Cpu);
+        assert!(s.slots.get("alice").unwrap().input.prefer_cpu());
+        assert_eq!(
+            s.vault
+                .as_ref()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .raster,
+            vault::RasterMode::Cpu
+        );
+    }
+
+    #[test]
+    fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
+        use vault::RasterMode::*;
+        // GPU↔CPU on a spawned slot is a drop+reattach (the Client and its
+        // socket stay), so no logout/restart confirm is ever required —
+        // not even Off↔Gpu/Cpu or a spawned slot.
+        assert!(!Session::raster_switch_needs_confirm(Off, false, true));
+        assert!(!Session::raster_switch_needs_confirm(Gpu, false, true));
+        assert!(!Session::raster_switch_needs_confirm(Cpu, false, true));
+        assert!(!Session::raster_switch_needs_confirm(Gpu, true, true));
+        assert!(!Session::raster_switch_needs_confirm(Cpu, true, true));
+        assert!(!Session::raster_switch_needs_confirm(Cpu, false, false));
+        assert_eq!(Session::mem_status_text(true), "lowmem");
+        assert_eq!(Session::mem_status_text(false), "highmem");
+    }
+
+    #[test]
+    fn request_raster_cpu_on_spawned_slot_applies_immediately() {
+        let path = tmp_vault("raster-no-confirm.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        s.request_focused_raster(vault::RasterMode::Cpu);
+        assert_eq!(
+            s.focused_raster(),
+            vault::RasterMode::Cpu,
+            "GPU→CPU applies at once: drop+reattach, never a logout"
+        );
+        s.request_focused_raster(vault::RasterMode::Off);
+        assert_eq!(s.focused_raster(), vault::RasterMode::Off);
+        assert!(s.slots.contains_key("alice"), "Off must keep the slot");
+    }
+
+    #[test]
+    fn request_focused_lowmem_applies_without_confirm_and_keeps_slot() {
+        let path = tmp_vault("mem-no-confirm.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        s.request_focused_lowmem(false);
+        assert!(!s.focused_lowmem(), "mem flip applies at once");
+        assert!(s.slots.contains_key("alice"), "mem flip must keep the slot");
+    }
+
+    #[test]
+    fn raster_switch_keeps_slot_frame_buf_and_input() {
+        let path = tmp_vault("raster-no-restart.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        let slot = s.slots.get("alice").expect("select spawns the slot");
+        let buf = Arc::clone(&slot.pixels);
+        let inp = Arc::clone(&slot.input);
+        assert!(s.set_focused_raster(vault::RasterMode::Cpu));
+        assert!(inp.prefer_cpu(), "GPU→CPU sets the slot's prefer_cpu latch");
+        assert!(s.set_focused_raster(vault::RasterMode::Gpu));
+        assert!(!inp.prefer_cpu(), "CPU→GPU clears the prefer_cpu latch");
+        let slot = s.slots.get("alice").expect("GPU↔CPU must keep the slot");
+        assert!(
+            Arc::ptr_eq(&slot.pixels, &buf),
+            "a GPU↔CPU flip must keep the same FrameBuf (no restart)"
+        );
+        assert!(
+            Arc::ptr_eq(&slot.input, &inp),
+            "a GPU↔CPU flip must keep the same SlotInput (no restart)"
+        );
+    }
+
+    #[test]
+    fn lowmem_flip_keeps_slot_frame_buf_and_input() {
+        let path = tmp_vault("mem-no-restart.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        let slot = s.slots.get("alice").expect("select spawns the slot");
+        let buf = Arc::clone(&slot.pixels);
+        let inp = Arc::clone(&slot.input);
+        assert!(s.set_focused_lowmem(false));
+        assert!(s.set_focused_lowmem(true));
+        let slot = s.slots.get("alice").expect("a mem flip must keep the slot");
+        assert!(
+            Arc::ptr_eq(&slot.pixels, &buf),
+            "a mem flip must keep the same FrameBuf (no restart)"
+        );
+        assert!(
+            Arc::ptr_eq(&slot.input, &inp),
+            "a mem flip must keep the same SlotInput (no restart)"
+        );
+        assert!(s.focused_lowmem());
     }
 
     #[test]

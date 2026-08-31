@@ -18,6 +18,9 @@ pub struct Focus {
     /// Ephemeral live overlay: every drawing slot at 50 fps, focused
     /// included. Not sidecar-50. Not persisted.
     pub live_full_rate: bool,
+    /// Game-pane (focused) slot at 50 fps. Does not follow that client
+    /// onto the rail — rail cadence is [`Focus::sidecar_50`] only.
+    pub focused_50: bool,
     /// Whether the wall draw policy is active.
     pub wall_open: bool,
     /// Wall members eligible to draw when `only_render_selected` is off.
@@ -28,7 +31,14 @@ pub struct Focus {
 
 /// Whether this slot has the renderer enabled: per-slot override if present,
 /// else the focused bot's `renderer` checkbox.
+///
+/// The focused slot ignores a per-slot Off: that bit is the **rail**
+/// (stress50 members must not grow heads while unfocused). The Game pane's
+/// one seat follows focus so a −1 on s00 can still show a working member.
 pub fn renderer_for(f: &Focus, name: &str) -> bool {
+    if f.focused.as_deref() == Some(name) {
+        return f.renderer;
+    }
     f.renderer_by.get(name).copied().unwrap_or(f.renderer)
 }
 
@@ -55,15 +65,19 @@ pub fn draw_for_slot(f: &Focus, name: &str) -> bool {
 }
 
 /// Whether this slot runs at the 50 fps frame cadence instead of the
-/// 1 fps watch cadence: the sidecar-50 pref is on and the slot is a
-/// drawing wall/grid member, or the ephemeral live overlay is up (every
-/// drawing slot, focused included). The focused slot's own 50 fps is the
-/// capture path (capture raises it), not either of these.
+/// 1 fps watch cadence. Capture does **not** raise fps. Focused 50 fps
+/// is the Game pane only; sidecar-50 is every drawing rail/grid member.
 pub fn full_rate_for(f: &Focus, name: &str) -> bool {
     if !draw_for_slot(f, name) {
         return false;
     }
-    f.live_full_rate || (f.sidecar_50 && f.focused.as_deref() != Some(name))
+    if f.live_full_rate {
+        return true;
+    }
+    if f.focused.as_deref() == Some(name) {
+        return f.focused_50;
+    }
+    f.sidecar_50
 }
 
 /// Capture (the focused bot's capture checkbox) additionally requires draw.
@@ -87,6 +101,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -110,6 +125,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -123,6 +139,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -140,6 +157,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -156,6 +174,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -170,6 +189,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: false,
             wall: vec![],
             renderer_by: HashMap::new(),
@@ -187,6 +207,7 @@ mod tests {
             only_render_selected: true,
             sidecar_50: false,
             live_full_rate: false,
+            focused_50: false,
             wall_open: true,
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
@@ -202,6 +223,44 @@ mod tests {
         assert!(!draw_for_slot(&f, "b"));
     }
 
+    /// Per-slot Off is the rail. The Game pane's one head follows focus
+    /// so stress50 can click a working member after s00's handshake −1.
+    #[test]
+    fn focused_slot_draws_even_when_renderer_by_is_off() {
+        let mut f = Focus {
+            focused: Some("b".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: false,
+            only_render_selected: true,
+            sidecar_50: false,
+            live_full_rate: false,
+            focused_50: false,
+            wall_open: true,
+            wall: vec!["a".into(), "b".into(), "c".into()],
+            renderer_by: HashMap::from([
+                ("a".into(), true),
+                ("b".into(), false),
+                ("c".into(), false),
+            ]),
+        };
+        assert!(
+            draw_for_slot(&f, "b"),
+            "Game pane follows focus onto a rail-Off profile"
+        );
+        assert!(
+            !draw_for_slot(&f, "a"),
+            "only-render-selected: unfocused GPU profile drops the head"
+        );
+        f.only_render_selected = false;
+        assert!(draw_for_slot(&f, "b"));
+        assert!(draw_for_slot(&f, "a"));
+        assert!(
+            !draw_for_slot(&f, "c"),
+            "unfocused raster Off still cannot grow a head on render-all"
+        );
+    }
+
     #[test]
     fn full_rate_for_pref_raises_drawing_members_only() {
         let mut f = Focus {
@@ -212,12 +271,12 @@ mod tests {
             only_render_selected: false,
             sidecar_50: true,
             live_full_rate: false,
+            focused_50: false,
             wall_open: true,
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
         };
-        // The pref targets wall/grid members, never the focused slot (the
-        // focused slot's 50 fps is the capture path).
+        // Sidecar is rail/grid members only; focused 50 fps is its own knob.
         assert!(full_rate_for(&f, "b"), "drawing member runs at 50 fps");
         assert!(!full_rate_for(&f, "a"), "focused slot keeps its own path");
         // Pref off keeps the 1 fps watch cadence.
@@ -247,17 +306,60 @@ mod tests {
             only_render_selected: false,
             sidecar_50: false,
             live_full_rate: true,
+            focused_50: false,
             wall_open: true,
             wall: vec!["a".into(), "b".into()],
             renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
         };
-        assert!(full_rate_for(&f, "a"), "focused slot is 50 fps without capture");
-        assert!(full_rate_for(&f, "b"), "drawing member is 50 fps without sidecar_50");
+        assert!(
+            full_rate_for(&f, "a"),
+            "focused slot is 50 fps without capture"
+        );
+        assert!(
+            full_rate_for(&f, "b"),
+            "drawing member is 50 fps without sidecar_50"
+        );
         f.live_full_rate = false;
         assert!(!full_rate_for(&f, "a"));
         assert!(!full_rate_for(&f, "b"));
         f.sidecar_50 = true;
-        assert!(!full_rate_for(&f, "a"), "sidecar still does not raise focused");
+        assert!(
+            !full_rate_for(&f, "a"),
+            "sidecar still does not raise focused"
+        );
         assert!(full_rate_for(&f, "b"));
+    }
+
+    #[test]
+    fn focused_50_raises_only_the_game_pane_slot() {
+        let mut f = Focus {
+            focused: Some("a".into()),
+            renderer: true,
+            game_pane_open: true,
+            capture: true,
+            only_render_selected: false,
+            sidecar_50: false,
+            live_full_rate: false,
+            focused_50: true,
+            wall_open: true,
+            wall: vec!["a".into(), "b".into()],
+            renderer_by: HashMap::from([("a".into(), true), ("b".into(), true)]),
+        };
+        assert!(full_rate_for(&f, "a"), "Game pane is 50 fps");
+        assert!(
+            !full_rate_for(&f, "b"),
+            "capture/focused 50 fps must not raise the rail"
+        );
+        f.focused = Some("b".into());
+        assert!(
+            !full_rate_for(&f, "a"),
+            "a on the rail is watch unless sidecar"
+        );
+        assert!(
+            full_rate_for(&f, "b"),
+            "b in the Game pane takes focused 50"
+        );
+        f.focused_50 = false;
+        assert!(!full_rate_for(&f, "b"), "capture alone does not raise fps");
     }
 }

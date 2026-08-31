@@ -8,9 +8,9 @@ use std::collections::{HashSet, VecDeque};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
-use crate::collision::WorldCollision;
+use crate::collision::{WorldCollision, SQ_BLOCKED};
 use crate::router::{step_ok, Leg, Route};
-use crate::transport::TransportKind;
+use crate::transport::{TransportGraph, TransportKind};
 
 /// One tile of the remaining path: a walk tile or a transport hop tile
 /// (`transport` true on the hop's `at` and `to`).
@@ -144,16 +144,38 @@ pub struct FaceBits {
 }
 
 /// The collision state a consumer paints at `t`: the raw `W_*` face bits
-/// and the blanket blocked flag.
-pub fn collision_at(c: &WorldCollision, t: WorldTile) -> FaceBits {
-    let raw = c.flag(t.x, t.z, t.level);
+/// and the blanket blocked flag. `flags` answers when the caller holds a
+/// loaded flags sidecar (a panel side table — the shared world's `flags`
+/// field is `None` while the sidecar is mapped); without one the
+/// reconstructed walk word answers — blocked when any `SQ_BLOCKED`
+/// constituent is set, NSEW from the `W_*` face bits. The passed buffer
+/// must match the world's grid header.
+pub fn collision_at_with(c: &WorldCollision, t: WorldTile, flags: Option<&[u32]>) -> FaceBits {
+    let (raw, blocked) = match flags {
+        Some(flags) => {
+            let raw = c.flag_index(flags, t.x, t.z, t.level);
+            (raw, raw & SQ_BLOCKED != 0)
+        }
+        None => {
+            let word = c.walkable_word(t.x, t.z, t.level);
+            (word, word & SQ_BLOCKED != 0)
+        }
+    };
     FaceBits {
         n: raw & CollisionFlag::W_N as u32 != 0,
         e: raw & CollisionFlag::W_E as u32 != 0,
         s: raw & CollisionFlag::W_S as u32 != 0,
         w: raw & CollisionFlag::W_W as u32 != 0,
-        blocked: !c.standable(t),
+        blocked,
     }
+}
+
+/// The collision state a consumer paints at `t`: the world's own raw
+/// flags answer when the sidecar is attached
+/// ([`WorldCollision::attach_flags`]), else the reconstructed walk word
+/// (see [`collision_at_with`]).
+pub fn collision_at(c: &WorldCollision, t: WorldTile) -> FaceBits {
+    collision_at_with(c, t, c.flags.as_deref())
 }
 
 /// The tone of one client-trail tile: solid, or the run alternate.
@@ -295,6 +317,13 @@ const STEPS: [(i32, i32); 8] = [
     (1, 1),
 ];
 
+/// True when a standable tile has at least one `step_ok` neighbour — a
+/// scatter seed must be able to walk off, not a 1-tile cage or a face-locked
+/// wall cell.
+pub fn can_step_off(c: &WorldCollision, t: WorldTile) -> bool {
+    STEPS.iter().any(|&d| step_ok(c, t, d))
+}
+
 /// Every tile reachable from `seed` through the router's directional
 /// `step_ok` test (the same movement the router relaxes with). The seed
 /// itself is always in the component, like the router's origin handling.
@@ -357,6 +386,95 @@ pub fn flood_sizes(
     (comp_a.len(), b_size)
 }
 
+/// The reach-flood seeds: every transport edge's `at` and `to`, plus
+/// every teleport's `to` (teleports have no fixed origin — the landing
+/// anchors the any-tile layer's component). The bake's `seen` set
+/// dedupes them.
+pub fn reach_seeds(graph: &TransportGraph) -> Vec<WorldTile> {
+    let mut seeds: Vec<WorldTile> = Vec::new();
+    for e in &graph.edges {
+        seeds.push(e.at);
+        seeds.push(e.to);
+    }
+    for e in &graph.teleports {
+        seeds.push(e.to);
+    }
+    seeds
+}
+
+/// The paint-only reach bitset: one bit per walk cell per level (the same
+/// level-major indexing as the walk grid), length
+/// `ceil(walk.len() / 64)`. A bit is set when the tile is in the `step_ok`
+/// flood from any [`reach_seeds`] seed — connected via walk ∪ transports
+/// ∪ teles. `find` never reads this; it is the debug overlay's in-graph
+/// answer.
+pub fn bake_reach(c: &WorldCollision, graph: &TransportGraph) -> Vec<u64> {
+    let mut bits = vec![0u64; c.walk.len().div_ceil(64)];
+    let mut seen: HashSet<WorldTile> = HashSet::new();
+    let mut queue: VecDeque<WorldTile> = VecDeque::new();
+    for seed in reach_seeds(graph) {
+        if seen.insert(seed) {
+            queue.push_back(seed);
+        }
+    }
+    while let Some(cur) = queue.pop_front() {
+        set_reach_bit(&mut bits, c, cur);
+        for d in STEPS {
+            if !step_ok(c, cur, d) {
+                continue;
+            }
+            let nb = WorldTile {
+                x: cur.x + d.0,
+                z: cur.z + d.1,
+                level: cur.level,
+            };
+            if seen.insert(nb) {
+                queue.push_back(nb);
+            }
+        }
+    }
+    bits
+}
+
+/// Whether the walk cell of `t` is set in a [`bake_reach`] bitset;
+/// `false` for tiles outside the grid or on unknown levels, and when the
+/// bitset is shorter than the tile's word.
+pub fn reached(bits: &[u64], c: &WorldCollision, t: WorldTile) -> bool {
+    let Some(idx) = reach_cell_index(c, t) else {
+        return false;
+    };
+    bits.get(idx / 64)
+        .is_some_and(|w| w & (1 << (idx % 64)) != 0)
+}
+
+/// The walk-buffer index of `t` (the same level-major indexing as the
+/// walk grid), `None` outside the grid or on unknown levels.
+fn reach_cell_index(c: &WorldCollision, t: WorldTile) -> Option<usize> {
+    if !(0..4).contains(&t.level) {
+        return None;
+    }
+    let lx = t.x - c.origin.x;
+    let lz = t.z - c.origin.z;
+    if lx < 0 || lz < 0 {
+        return None;
+    }
+    let (lx, lz) = (lx as usize, lz as usize);
+    if lx >= c.width || lz >= c.height {
+        return None;
+    }
+    Some(t.level as usize * c.width * c.height + lz * c.width + lx)
+}
+
+/// Set the walk-cell bit of `t` (a seed may sit outside the bake or on a
+/// blocked tile — the router floods from such origins too).
+fn set_reach_bit(bits: &mut [u64], c: &WorldCollision, t: WorldTile) {
+    if let Some(idx) = reach_cell_index(c, t) {
+        if let Some(word) = bits.get_mut(idx / 64) {
+            *word |= 1 << (idx % 64);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use api::snapshot::WorldTile;
@@ -365,7 +483,7 @@ mod tests {
     use super::*;
     use crate::collision::WorldCollision;
     use crate::router::{Leg, Route};
-    use crate::transport::{TransportEdge, TransportKind};
+    use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
     fn tile(x: i32, z: i32, level: i32) -> WorldTile {
         WorldTile { x, z, level }
@@ -384,8 +502,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width,
             height,
-            flags: flags.clone(),
-            walkable: crate::collision::derive_walkable(&flags),
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         }
     }
 
@@ -403,6 +521,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         }
     }
 
@@ -757,6 +876,110 @@ mod tests {
         assert_eq!(
             flood_sizes(&c, tile(0, 0, 0), Some(tile(2, 2, 0))),
             (9, None)
+        );
+    }
+
+    /// A graph with the given `edges` and `teleports` (the `at` index is
+    /// irrelevant to the reach bake, which reads the edge lists directly).
+    fn graph(edges: Vec<TransportEdge>, teleports: Vec<TransportEdge>) -> TransportGraph {
+        TransportGraph {
+            edges,
+            teleports,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn walled_courtyard_is_walkable_but_unreached() {
+        // 5×5 open, inner 1×1 at (2,2) with all W_* faces on its four walls
+        // and no transport. (2,2) walkable_word has faces; find from (0,0)
+        // is NoPath; bake_reach does not set (2,2).
+        let c = bake(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]);
+        let g = TransportGraph::default();
+        let at = tile(2, 2, 0);
+        assert_ne!(
+            c.walkable_word(2, 2, 0) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
+            0,
+            "the sealed courtyard word carries the face bits"
+        );
+        assert!(
+            !collision_at(&c, at).blocked,
+            "a walled floor is standable ground, not blocked"
+        );
+        assert!(
+            crate::router::find(&c, &g, tile(0, 0, 0), at).is_err(),
+            "find from outside the sealed courtyard is NoPath"
+        );
+        let bits = bake_reach(&c, &g);
+        assert_eq!(bits.len(), c.walk.len().div_ceil(64));
+        assert!(
+            !reached(&bits, &c, at),
+            "no transport seeds flood the sealed courtyard"
+        );
+        assert!(
+            !reached(&bits, &c, tile(0, 0, 0)),
+            "no seeds, nothing reached"
+        );
+        assert!(
+            !reached(&bits, &c, tile(99, 99, 0)),
+            "tiles outside the grid are never reached"
+        );
+    }
+
+    #[test]
+    fn reach_seeds_cover_edges_and_teleport_landings() {
+        // Teleports have no fixed origin — only the landing seeds the
+        // any-tile layer's component; a regular edge seeds both ends.
+        let g = graph(
+            vec![edge(
+                TransportKind::Door,
+                tile(0, 0, 0),
+                tile(1, 0, 0),
+                1530,
+            )],
+            vec![edge(
+                TransportKind::Teleport,
+                tile(0, 0, 0),
+                tile(4, 4, 0),
+                0,
+            )],
+        );
+        let seeds = reach_seeds(&g);
+        assert!(seeds.contains(&tile(0, 0, 0)), "edge at seeds");
+        assert!(seeds.contains(&tile(1, 0, 0)), "edge to seeds");
+        assert!(seeds.contains(&tile(4, 4, 0)), "teleport to seeds");
+    }
+
+    #[test]
+    fn bake_reach_floods_the_walk_region_but_not_moated_tiles() {
+        // The 7×7 disconnected world: a 3×3 open corner and an isolated
+        // open tile moated by WR_GRND. A door edge inside the corner seeds
+        // it; the flood covers the corner, never the island or the moat.
+        let c = disconnected_world();
+        let g = graph(
+            vec![edge(
+                TransportKind::Door,
+                tile(0, 0, 0),
+                tile(1, 1, 0),
+                1530,
+            )],
+            vec![],
+        );
+        let bits = bake_reach(&c, &g);
+        assert!(reached(&bits, &c, tile(0, 0, 0)), "the edge at is a seed");
+        assert!(reached(&bits, &c, tile(1, 1, 0)), "the edge to is a seed");
+        assert!(reached(&bits, &c, tile(2, 2, 0)), "the corner floods");
+        assert!(
+            !reached(&bits, &c, tile(5, 5, 0)),
+            "the moated island stays unreached"
+        );
+        assert!(
+            !reached(&bits, &c, tile(3, 3, 0)),
+            "moat ground is never reached"
+        );
+        assert!(
+            !reached(&bits, &c, tile(0, 0, 1)),
+            "unknown levels read false"
         );
     }
 }

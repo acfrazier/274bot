@@ -41,7 +41,7 @@ fn wall_login_fifo_logout_all() {
 
     // Login all: both arms want a login. The FIFO gate is racy — the
     // first requester is granted immediately and its handshake starts,
-    // while the other waits at `queue_position == 1` behind the spacing
+    // while the other may flash `queue_position == 1` for a 20 ms poll
     // (a 2-of-2 only appears if both enqueue before the first grant), so
     // poll until one slot shows either, then both must reach scene 2.
     arm_a.want_login.store(true, Ordering::Relaxed);

@@ -7,14 +7,14 @@
 // existing snapshot's tick.
 
 use api::settle::{
-    arrived, engaged, inventory_changed, item_delta, modal_closed, modal_opened, option_gone,
-    said, scene_ready, server_refused, xp_gained, Evidence, Outcome, Settle, SettleOptions,
+    arrived, engaged, inventory_changed, item_delta, modal_closed, modal_opened, option_gone, said,
+    scene_ready, server_refused, xp_gained, Evidence, Outcome, Settle, SettleOptions,
 };
 use api::snapshot::{
     ActorKind, ActorTargetView, GameSnapshot, ItemContainer, ReadContext, WorldTile,
 };
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer};
-use client::config::if_type::{ComponentType, IfType};
+use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::config::LocType;
 use client::io::{ClientStream, ServerProt};
 use std::sync::Arc;
@@ -75,43 +75,60 @@ fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
 }
 
 fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    if c.ifaces.len() <= id {
-        c.ifaces.resize(id + 1, None);
-    }
-    c.ifaces[id] = Some(com);
+    c.set_iface(id, com);
+}
+
+fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
+    c.set_iface_mut(id, m);
 }
 
 /// The inventory tab (side tab 3) with `(stored, count)` slots; stored ids
 /// are `obj id + 1` (0 = empty), so a stored 4 reads as obj id 3.
-fn plant_inv(c: &mut Client, stored: &[i32], counts: &[i32]) {
+fn plant_inv(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
     set_iface(
-        c,
+        &mut c,
         500,
         IfType {
-            id: 500,
-            r#type: ComponentType::TYPE_INV,
-            link_obj_type: Some(stored.to_vec()),
-            link_obj_number: Some(counts.to_vec()),
-            obj_ops: true,
-            ..Default::default()
-        },
+        id: 500,
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    },
     );
+    set_iface_mut(
+        &mut c,
+        500,
+        IfTypeMut {
+        link_obj_type: Some(stored.to_vec()),
+        link_obj_number: Some(counts.to_vec()),
+        ..Default::default()
+    },
+    );
+
     c.side_icon[3] = 500;
 }
 
 /// The worn-items tab (side tab 4) with its slots (stored 7 = obj id 6).
-fn plant_equipment(c: &mut Client, stored: &[i32], counts: &[i32]) {
+fn plant_equipment(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
     set_iface(
-        c,
+        &mut c,
         711,
         IfType {
-            id: 711,
-            r#type: ComponentType::TYPE_INV,
-            link_obj_type: Some(stored.to_vec()),
-            link_obj_number: Some(counts.to_vec()),
-            ..Default::default()
-        },
+        id: 711,
+        r#type: ComponentType::TYPE_INV,
+        ..Default::default()
+    },
     );
+    set_iface_mut(
+        &mut c,
+        711,
+        IfTypeMut {
+        link_obj_type: Some(stored.to_vec()),
+        link_obj_number: Some(counts.to_vec()),
+        ..Default::default()
+    },
+    );
+
     c.side_icon[4] = 711;
 }
 
@@ -142,7 +159,7 @@ fn plant_npc(c: &mut Client, health: i32) {
     npc.entity.health = health;
     npc.entity.total_health = health;
     npc.r#type = Some(9);
-    c.npc[7] = Some(npc);
+    c.npc[7] = Some(Box::new(npc));
     c.npc_ids[0] = 7;
     c.npc_count = 1;
 }
@@ -160,7 +177,11 @@ fn settle_poll_matches_arrived_then_expires() {
     let before = snap_at(&mut c, 10, 10);
     let mut now = snap_at(&mut c, 20, 12);
     bump_rebuild(&mut c, &mut now);
-    let dest = WorldTile { x: 3220, z: 3212, level: 0 };
+    let dest = WorldTile {
+        x: 3220,
+        z: 3212,
+        level: 0,
+    };
 
     let arms: [(&str, Evidence<'_>); 1] = [("arrived", arrived(dest, 0))];
     let options = SettleOptions {
@@ -210,7 +231,14 @@ fn settle_poll_expires_on_disconnect_or_not_ingame() {
     let now = snap_at(&mut c, 10, 10);
     let arms: [(&str, Evidence<'_>); 1] = [(
         "arrived",
-        arrived(WorldTile { x: 3220, z: 3212, level: 0 }, 0),
+        arrived(
+            WorldTile {
+                x: 3220,
+                z: 3212,
+                level: 0,
+            },
+            0,
+        ),
     )];
     let options = SettleOptions {
         arms: &arms,
@@ -232,7 +260,14 @@ fn settle_poll_expires_on_the_ms_budget() {
     let now = snap_at(&mut c, 10, 10);
     let arms: [(&str, Evidence<'_>); 1] = [(
         "arrived",
-        arrived(WorldTile { x: 3220, z: 3212, level: 0 }, 0),
+        arrived(
+            WorldTile {
+                x: 3220,
+                z: 3212,
+                level: 0,
+            },
+            0,
+        ),
     )];
     let options = SettleOptions {
         arms: &arms,
@@ -255,13 +290,18 @@ fn settle_poll_keeps_two_arrived_arms_isolated() {
     let before = snap_at(&mut c, 10, 10);
     let at_a = snap_at(&mut c, 20, 12);
     let at_b = snap_at(&mut c, 18, 40);
-    let dest_a = WorldTile { x: 3220, z: 3212, level: 0 };
-    let dest_b = WorldTile { x: 3218, z: 3240, level: 0 };
+    let dest_a = WorldTile {
+        x: 3220,
+        z: 3212,
+        level: 0,
+    };
+    let dest_b = WorldTile {
+        x: 3218,
+        z: 3240,
+        level: 0,
+    };
 
-    let arms: [(&str, Evidence<'_>); 2] = [
-        ("a", arrived(dest_a, 0)),
-        ("b", arrived(dest_b, 0)),
-    ];
+    let arms: [(&str, Evidence<'_>); 2] = [("a", arrived(dest_a, 0)), ("b", arrived(dest_b, 0))];
     let options = SettleOptions {
         arms: &arms,
         budget_ticks: 5,
@@ -273,10 +313,7 @@ fn settle_poll_keeps_two_arrived_arms_isolated() {
         _ => panic!("expected Matched arm a"),
     }
 
-    let arms: [(&str, Evidence<'_>); 2] = [
-        ("a", arrived(dest_a, 0)),
-        ("b", arrived(dest_b, 0)),
-    ];
+    let arms: [(&str, Evidence<'_>); 2] = [("a", arrived(dest_a, 0)), ("b", arrived(dest_b, 0))];
     let options = SettleOptions {
         arms: &arms,
         budget_ticks: 5,
@@ -295,13 +332,23 @@ fn arrived_gates_on_level_and_radius() {
     let mut c = scene_client();
     let far = snap_at(&mut c, 10, 10);
     let near = snap_at(&mut c, 11, 12);
-    let dest = WorldTile { x: 3220, z: 3212, level: 0 };
-    assert!(!evidence_holds(arrived(dest, 0), &far, &far), "not at the tile");
+    let dest = WorldTile {
+        x: 3220,
+        z: 3212,
+        level: 0,
+    };
+    assert!(
+        !evidence_holds(arrived(dest, 0), &far, &far),
+        "not at the tile"
+    );
     assert!(
         !evidence_holds(arrived(dest, 8), &near, &far),
         "outside the radius"
     );
-    assert!(evidence_holds(arrived(dest, 9), &near, &far), "within the radius");
+    assert!(
+        evidence_holds(arrived(dest, 9), &near, &far),
+        "within the radius"
+    );
 
     c.minusedlevel = 1;
     let upper = snap_at(&mut c, 20, 12);
@@ -392,7 +439,10 @@ fn xp_gained_reads_skill_xp() {
     c.stat_xp[0] = 130;
     c.stat_xp[2] = 50;
     let now = fresh_snap(&mut c);
-    assert!(evidence_holds(xp_gained(0, 30), &now, &before), "exactly at least");
+    assert!(
+        evidence_holds(xp_gained(0, 30), &now, &before),
+        "exactly at least"
+    );
     assert!(evidence_holds(xp_gained(0, 25), &now, &before));
     assert!(!evidence_holds(xp_gained(0, 31), &now, &before));
     assert!(
@@ -422,7 +472,10 @@ fn engaged_detects_target_and_health_drop() {
     plant_player(&mut c, 20, 20);
     c.local_player.as_mut().unwrap().entity.face_entity = 7;
     let aimed = fresh_snap(&mut c);
-    assert!(evidence_holds(engaged(target), &aimed, &before), "live target");
+    assert!(
+        evidence_holds(engaged(target), &aimed, &before),
+        "live target"
+    );
 
     // The npc loses health (player not facing it).
     plant_player(&mut c, 20, 20);
@@ -445,7 +498,10 @@ fn modal_opened_and_closed_match_roots() {
     let closed = snap_at(&mut c, 10, 10);
     c.main_modal_id = 100;
     let opened = snap_at(&mut c, 10, 10);
-    assert!(evidence_holds(modal_opened(None), &opened, &closed), "any root");
+    assert!(
+        evidence_holds(modal_opened(None), &opened, &closed),
+        "any root"
+    );
     assert!(!evidence_holds(modal_opened(None), &closed, &closed));
     assert!(evidence_holds(modal_opened(Some(100)), &opened, &closed));
     assert!(!evidence_holds(modal_opened(Some(50)), &opened, &closed));
@@ -454,7 +510,11 @@ fn modal_opened_and_closed_match_roots() {
 
     c.main_modal_id = -1;
     let closed_again = snap_at(&mut c, 10, 10);
-    assert!(evidence_holds(modal_closed(Some(100)), &closed_again, &opened));
+    assert!(evidence_holds(
+        modal_closed(Some(100)),
+        &closed_again,
+        &opened
+    ));
     assert!(
         !evidence_holds(modal_closed(Some(100)), &opened, &opened),
         "root 100 is still open"
@@ -473,7 +533,14 @@ fn option_gone_detects_loc_and_action_gone() {
     plant_loc(&mut c, Some("Open"));
     let before = fresh_snap(&mut c);
     let target = &before.locs()[0];
-    assert_eq!(target.tile, WorldTile { x: 3203, z: 3204, level: 0 });
+    assert_eq!(
+        target.tile,
+        WorldTile {
+            x: 3203,
+            z: 3204,
+            level: 0
+        }
+    );
 
     let mut c2 = scene_client();
     plant_loc(&mut c2, Some("Open"));

@@ -2,30 +2,40 @@
 
 `crates/panel` is the native **dear-app / ImGui** UI over the same kernel
 slots `host-play` runs ([login.md](login.md), [vault.md](vault.md)).
-Campaign 2 built the single-bot chrome; campaign 4 adds the **MultiBox
-wall** (sidecar rail, grid mode, profile chooser) below.
+Single-bot chrome plus the **MultiBox wall** (sidecar rail, grid mode,
+profile chooser).
 It does **not** reimplement the client UI — there is **no Present**, no client
-window feature. The client stays headless (`set_draw` only rasters into a
-pixel buffer); the panel displays those pixels and feeds input back.
+window feature. The client rasters into a frame (wgpu GPU 3D by default,
+CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.
 
 ## Run
 
 ```bash
 export BOT_VAULT_PASS=bot
 cargo run --release -p panel --bin panel-play
+# 50-head RAM:  cargo run --release -p panel --bin panel-play -- --live stress50
+# 50-head 50fps Game+sidecar: --live stress50_full
 ```
 
-A passphrase is required and an empty one is rejected. First run creates
-`~/.274bot/vault` **empty** — panel-play does **not** auto-create `test`/`test`
-(that is host-play CLI: `--user test` defaults, `password = username`).
-Type a username/password in credentials and **Save** to upsert, spawn that
-slot on the login FIFO, and select it. Unlike the CLI there is **no
+A passphrase is required and an empty one is rejected. First run **Create
+vault** writes `~/.274bot/vault` **empty** — panel-play does **not**
+auto-create `test`/`test` (that is host-play CLI: `--user test` defaults,
+`password = username`). A wrong passphrase never replaces the file;
+**Reset vault** (confirm + I understand) is the forgotten-password wipe.
+Open **Profiles**, **New profile** or **Edit**, type a username/password,
+and **Save** to upsert, spawn that slot on the login FIFO, and select it.
+Unlike the CLI there is **no
 `--vault-pass` flag** — the passphrase comes from `BOT_VAULT_PASS`, or from
 the in-panel prompt (which also covers interactive use). When
 `BOT_VAULT_PASS` is set, the panel unlocks **before** the window opens so the
 headless path works unchanged. There is **no mainland checkbox** in the
-panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues the
-mainland hop after scene 2.
+panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues
+`mainland_hop` after scene 2. On a **loopback** engine the **Debug**
+section is shown: **TutSkip** (`setvar tutorial 1000`, hidden once the
+profile is known skipped; unknown profiles `getvar tutorial` first),
+**Lumbridge** (`~home`), **maxme** (19× `setstat`
+99), **Teles** popup, and a disabled **DebugPanel** stub (v2 later).
+Public `w1.rs2b2t.com` hides that heading.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`). Collapsible section open/closed state persists there per
@@ -37,30 +47,34 @@ profile; **script** and **parameters** default closed.
 via `host_play::run_with_io`, then selects the restored `last_focus` (or
 the first vault name), which spawns **that one slot**. Parked profiles do
 not get a `Client` until you select them; once spawned they stay up so the
-combo can channel-change.
+picker can change focus.
 Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single
-main viewport). Default dock: **game left**, **330px-class panel right**.
-Single-bot hides the dock tab strip on each pane (`AUTO_HIDE_TAB_BAR`).
-MultiBox rail mode splits a third **264px rail** on the far right (game
-and panel shrink by `RAIL_W`; dear-app's `AddOns` cannot resize the OS
-window, so the rail is split inside the current window), which brings the
-strip's tab bar back.
+main viewport). Default dock: **game left**, **330px panel right**.
+Panel and rail widths are **fixed** (330 / 264); they grow **vertically**
+with the OS window. Splitters, undock, the tab-bar corner menu, and
+imgui.ini restore are off.
+**Only grid mode** scales the 274 blit with the window; single-bot and
+rail keep a native **765×503** (logical) applet centred in the leftover
+pane. DPI is **winit + imgui `HiDpiMode::Default`** — we do not
+`ScaleAllSizes` on top of that (it would double Retina).
+Single-bot and the MultiBox **rail** hide the dock tab strip
+(`AUTO_HIDE_TAB_BAR`, `NO_TITLE_BAR` on the rail). Opening the sidecar
+**grows** the OS window if the 765×503 blit would sit under the panel or
+rail; a larger window is not shrunk. The Game blit is flush to the panel
+(right-aligned in the leftover pane).
 The Game pane title is the focused profile name when the tab bar is visible. Closing the Game pane sets
 `game_pane_open = false` (`set_draw` off) and turns capture off. The UI
 thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not
 Poll-spin against the 20 ms slot; pixel uploads skip while `PixelBuf`
 generation is unchanged.
 
-The Game Image is an ImGui **wgpu texture** (GPU *composite* of the blit).
-The 274 scene behind it is still **CPU Pix3D** into `draw_area` — same
-painter as the headless client, not a GPU 3D backend, and not the client's
-`Present` (that applet is `client-play --window` on bothost). Unfocused /
-renderer-off slots skip `game_draw`. Watch-only is a **1 fps rail**;
-capture is 50 fps. CpuPix3D holds for the wall. A GPU 3D rasterizer is
-not in 274bot and not on Fairy-Ring; optional bothost **last**, if ever:
-tech demo of 50 clients at full rate on one GPU.
+The Game Image is an ImGui **wgpu texture**. The 274 scene behind it is
+the client submodule's **wgpu GPU 3D** renderer by default (CpuPix3D
+when `BOT_CPU=1`). That is not the client's `Present` applet
+(`client-play --window` on bothost). Unfocused / renderer-off slots skip
+`game_draw`. Watch-only is a **1 fps rail**; capture is 50 fps.
 
 Run **`--release`**. A default debug Pix3D pins a core. One live client
 still holds on the order of a gigabyte (process-wide model/anim stores +
@@ -76,18 +90,21 @@ checkboxes on a focused profile:
   focused slot to 50 fps; sidecar 50 fps raises unfocused wall members;
   full rate (this run) raises every drawing slot (below). Unfocused slots
   do not raster. The Game Image is an RGBA8 texture that is **never below
-  765×503** (`fit_applet` scale floor 1.0). Grid tiles may still
-  downscale. Rendering never pauses the bot. Renderer-off /
-  `set_draw(false)` still runs `mainloop` and collision, but does not
-  decode loc meshes; flipping the renderer on rebuilds 3D from the same
-  map bytes.
+  765×503** (native, non-grid). Grid tiles `fit_applet` into their cell.
+  Rendering never pauses the bot. Renderer-off /
+  `set_draw(false)` detaches the head — GPU textures, chrome, and the
+  decoded 3D scene are freed — while `mainloop` and collision keep
+  running; flipping the renderer on reattaches 3D from the same map
+  bytes on the **same** client (never a logout or restart).
 - **sidecar 50 fps** — unfocused wall members at 50 fps. Interactive /
   non-test. Scenarios never flip it.
-- **full rate (this run)** — `--live script_*` / smoke only. Every
-  drawing slot at 50 fps, focused included. Ephemeral.
-- **Music / SFX** — unchecked by default (lowmem). Checking it sets
-  `Profile.settings.lowmem = false` for that username, opting that one
-  profile into **highmem**; it applies the next time the profile starts.
+- **full rate (this run)** — `--live script_*` / smoke / `stress50_full`.
+  Every drawing slot at 50 fps, focused included. Ephemeral.
+- **lowmem / highmem** — default **lowmem**. Click the current mem
+  button (under none/GPU/CPU) for a sticky picker like Teles. Highmem
+  is `Profile.settings.lowmem = false`; switching mem (like GPU↔CPU)
+  drops + reattaches the head on the live `Client` — never a logout
+  or restart.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
@@ -98,7 +115,7 @@ Capture follows focus (never two keyboards) and implies renderer.
 Capture still keeps the focused slot on the 20 ms loop for click-through;
 it is not how tests get fps.
 
-## MultiBox wall (campaign 4)
+## MultiBox wall
 
 The title-row **MultiBox** toggle raises the wall. On the first toggle the
 wall seeds with every already-running slot and opens the **chooser** once;
@@ -117,7 +134,9 @@ body focuses the member. The dot is error **red**, then ingame **amber**,
 then FIFO-queue **warn**, else grey. **only render selected** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
-member paints.
+member paints. The Game pane always follows **focus** — a rail-Off
+member still grows a head while it is the selected slot (stress50: one
+GPU seat, not glued to `s00`).
 
 ### Grid
 
@@ -129,13 +148,17 @@ reaches **only** the focused cell; the queue card overlays it while queued.
 
 ### Chooser
 
-A modal listing every vault profile. Clicking a row loads it onto the wall
-(stays open for more); **Load all** loads every profile; **Close**/Esc
-closes without loading. The row **✕** deletes the **vault profile only** —
-a live wall member keeps running and stays on the rail (credentials Save
-re-creates the row). The rail tile **✕** is the opposite: it removes the
-member from the wall, arms a clean IF logout when ingame, stops the slot,
-and never touches the vault.
+A fitted **Profiles** window (same one as the strip **Profiles** button
+and rail **+ add bot**), not a blocking modal. Clicking a row focuses it
+(and loads it onto the wall while MultiBox is on; stays open for more).
+Single-bot pick closes the picker. **Load all** is MultiBox-only.
+**Close**/Esc closes without loading. **Edit** (next to **✕**) shows
+username/password; **New profile** is a blank edit. **Save** upserts and
+selects. The row **✕** deletes the **vault profile only** — a live wall
+member keeps running and stays on the rail (Save re-creates the row).
+The rail tile **✕** is the opposite: it removes the member from the wall,
+arms a clean IF logout when ingame, stops the slot, and never touches
+the vault.
 
 ### Resource honesty
 
@@ -147,11 +170,13 @@ traffic samples read "measuring…". Traffic is the sum of each live slot’s
 measuring…). If a slot drops (or the byte sum shrinks), traffic
 **re-baselines** instead of inventing a wrap spike. A failed process sampler
 shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is
-the whole host (Null skip-paint does not free the ~1 GB scene); on macOS the
+the whole host; on macOS the
 RAM row is **peak** (`ru_maxrss`). Draw is the focused slot’s `game_draw`
 enters plus paint/skip counts. `BOT_DEBUG=1` also prints 1 Hz loop vs raster
-timings per slot and the RSS sample (4.5b baseline; 4 bots at ~10 GB is a
-suspected leak, not a closed RAM budget).
+timings per slot and the RSS sample. Draw-off **detaches** the head, so
+unheaded slots hold only their mutable sim + the shared decode pile;
+the RSS ladder is the measurement surface and it prints `rss=…` — it
+never fails on size.
 
 ## Headed live
 
@@ -173,38 +198,52 @@ cargo run --release -p panel --bin panel-play -- --live null_raster
 Headless twin:
 
 ```bash
-LIVE=1 cargo test -p e2e --test null_raster -- --ignored --test-threads=1
+LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 ```
 
 ### Headless `rss_ladder`
 
 Measure-then-cut: N=1, then 2, then 4 headless Clients, **every** slot
 `set_draw(false)`. One N per process. Names `r0`…`r{N-1}`. Wait scene 2
-(180s), hold 10s, print Darwin/Linux peak RSS. Does **not** fail on RSS
-size. FAIL if Null breaks (`paint_n>0` or `game_draw` grows in the hold)
-or `rss=0`.
+(180s), hold 10s, print Darwin/Linux peak RSS plus `ondemand=` worker
+count and unique ESTABLISHED TCP to the engine port. Does **not** fail
+on RSS size. FAIL if `rss=0`, if OnDemand workers ≠ 1, or if TCP exceeds
+n+1 (game + one update socket).
 
 ```bash
-LIVE=1 RSS_N=1 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
-LIVE=1 RSS_N=2 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
-LIVE=1 RSS_N=4 cargo test -p e2e --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=2 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
+LIVE=1 RSS_N=4 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
 ```
 
 ### `--live stress50`
 
-Fifty-slot channel-head wall watch (temp vault `s00`…`s49`, password =
-username). TV latched at init: `s00` is the one fat Client (highmem tube),
-extras are lean. Chooser closed, only-render-selected, focus `s00`, then
-`login_all` (TV first). Lean extras wait until the tube is scene 2, then
-handshake one-by-one (queue card *k of n*). Timeout **600s** (10 minutes).
-Announces at 1/50 and 10/50
-up (fat `ingame && scene_state==2`, lean `ingame`); at 50 prints
-`PASS: live stress50 rss=… up50 heads=… leanes=…` and **keeps the
-window up**. Does **not** fail on RSS size. FIFO login will take minutes.
+Fifty-slot **flat** wall (temp vault `s00`…`s49`, password = username).
+Every member is a full `Client` — no lean extras, no channel-head.
+Chooser closed, only-render-selected (rail caps, no 50 blits), Game pane
+at focused 50 fps, rail skip-paint. Focus `s00` (FIFO head), scatter-seed
+after scene 2, then `login_all`. **Release RAM check** — debug 50-heads
+spike RSS and look frozen. Timeout **600s**. Announces at 1/50 and 10/50
+up (`ingame && scene_state==2`); at 50 prints
+`PASS: live stress50 rss=… up=50/50 ondemand=… tcp=…` and **keeps the window up**. Does
+**not** fail on RSS size. FIFO login bursts up to 30 per 60 s (production
+address cap); a 50-head run still waits out the rolling window.
 
 ```bash
 cargo run --release -p panel --bin panel-play -- --live stress50
 # or: BOT_LIVE=stress50 cargo run --release -p panel --bin panel-play
+```
+
+### `--live stress50_full`
+
+Same 50-head wall as `stress50`, but **every** member paints: only-render-
+selected off, live full-rate overlay so Game **and** sidecar run at 50 fps
+(GPU / lowmem defaults). Run after `stress50` holds. Still `--release`.
+PASS line is `PASS: live stress50_full rss=… up=50/50`.
+
+```bash
+cargo run --release -p panel --bin panel-play -- --live stress50_full
+# or: BOT_LIVE=stress50_full cargo run --release -p panel --bin panel-play
 ```
 
 ## Amber
@@ -216,12 +255,22 @@ green `#04A800`. Panel background `#111`.
 ## Chrome
 
 Right strip is **330px**-class. Section headings are collapsible (persisted
-per profile in `panel-ui.json`; **script** / **parameters** default closed).
+per profile in `panel-ui.json`; **script** / **parameters** default closed)
+and **drag-reorderable** (order in `panel-ui.json`). Default order:
+**status**, **profile**, **script**, **parameters**, **debug**, **log**.
+Login / WalkTo / config stay at the top.
 
-**Credentials** are a **2×2** button grid: **Save** / **Clear** on the first
-row, **Log in** / **Logout** on the second. Logout stays disabled unless
-the focused slot is ingame. Auto-login on title follows the focused
-profile's vault setting.
+**Log in** / **Logout** sit above WalkTo (always shown; disabled while
+the vault is locked or no profile is focused. Logout also needs the
+focused slot ingame). WalkTo is full-width under that row, then
+**General config** / **Nav config** / **Loadouts** (wraps so labels are
+not clipped). **Profile** is below those buttons and above **debug**
+when the local-engine heading is shown: a black combo with orange current
+name and a black-on-orange dropdown arrow, then a full-width **Profiles**
+button (same window as MultiBox **+ add bot**).
+Username/password only appear when **Edit** or **New profile** is used
+in the picker. **Auto-login on title** is per-profile, under General
+config → slot.
 
 **Log** is **per client thread** (per username status-transition lines),
 not one concatenated process log. When nothing is focused the view shows
@@ -230,11 +279,24 @@ the `PROCESS` key.
 **Script** Browse / Start / Pause / Stop are wired ([script.md](script.md)).
 Load is enabled except while a script is active. Parameters **Edit** stays
 disabled (`not in v1`); uncollapse shows schema defaults (empty until a
-port fills them). Remaining mocks: Global / Nav / Loadouts. Text and
-buttons wrap or equal-width-squish — **no horizontal scroll**. `chrome.rs`
-keeps the section inventory (`wired: bool`). Title (MultiBox is a live
-toggle), dim build line, banner, profile, status key/value rows,
-rendering, and input fill out the strip.
+port fills them). **Nav config** is live (debug paints / labels / FindOptions
+toggles) as its own non-blocking window. **General config** (under WalkTo, above profile)
+is **slot** (capture, auto-login on title), **render** (none/GPU/CPU;
+click the lowmem/highmem button for a sticky picker like Teles), and
+**global** (sidecar 50 / only-render-selected).
+**Loadouts** stays mocked until the TS
+shim. Text and buttons wrap or equal-width-squish — **no horizontal
+scroll**.
+`chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
+is a live toggle), dim **build line** (`alpha 1 ·` git short SHA,
+`-dirty` when the tree was dirty; hover is crate version then full
+commit + built time), banner, profile, **debug** (loopback), and status
+key/value rows (including **mem**: highmem/lowmem) fill out the strip.
+
+**WalkTo** (title row) fills the Game pane: north-up collision dots,
+click-to-pick uses the canvas rect (`is_mouse_hovering_rect`), footer
+**Recentre** / **Walk**, and **Teleport** (local-engine cheat to the
+highlighted tile). Status `walk` mirrors the armed dest.
 
 ## Headless proof
 

@@ -1,9 +1,9 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`].
-//! The v2 pack file stores the collision flags and the transport edges, so
-//! the Dijkstra router ([`crate::router::find`]) consumes one artifact —
-//! live harnesses load this and route on the packed collision. The legacy
-//! v1 pack (boolean walk bytes + doors) still loads through
+//! The v6 pack file stores the compact packed walk words and the transport
+//! edges, so the Dijkstra router ([`crate::router::find`]) consumes one
+//! artifact — live harnesses load this and route on the packed collision.
+//! The legacy v1 pack (boolean walk bytes + doors) still loads through
 //! [`NavWorld::from_grid`] as a fallback for old `.navpack` files.
 
 use std::path::Path;
@@ -30,14 +30,14 @@ pub struct NavWorld {
 impl NavWorld {
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
     /// router's world. V2 packs (collision + transport graph) load
-    /// directly; legacy v1 packs fall back to [`Self::from_grid`].
+    /// directly; legacy v1 packs fall back to [`Self::from_grid`]. The
+    /// fallback triggers on bad magic only — a `274V` pack with a stale
+    /// version stays [`PackError::BadVersion`] so the operator rebakes.
     pub fn load_pack(path: &Path) -> Result<Self, PackError> {
         let bytes = std::fs::read(path).map_err(PackError::Io)?;
         match decode_v2(&bytes) {
             Ok((collision, graph)) => Ok(NavWorld { collision, graph }),
-            Err(PackError::BadMagic) | Err(PackError::BadVersion(_)) => {
-                Ok(Self::from_grid(&load_pack(path)?))
-            }
+            Err(PackError::BadMagic) => Ok(Self::from_grid(&load_pack(path)?)),
             Err(e) => Err(e),
         }
     }
@@ -72,8 +72,8 @@ impl NavWorld {
             },
             width: grid.width,
             height: grid.height,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         for d in &grid.doors {
@@ -99,6 +99,7 @@ impl NavWorld {
                 item_req: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
+                worn_req: vec![],
             });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
@@ -112,9 +113,9 @@ mod tests {
     use client::dash3d::CollisionFlag;
 
     use super::{NavWorld, BLOCKED};
-    use crate::collision::WorldCollision;
+    use crate::collision::{walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
-    use crate::pack::{encode, encode_v2};
+    use crate::pack::{encode, encode_v2, PackError};
     use crate::router::{find, find_allow_teleports, Leg};
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -197,8 +198,8 @@ mod tests {
         assert_eq!(w.collision.origin, tile(0, 0, 0));
         assert_eq!(w.collision.width, 3);
         assert_eq!(w.collision.height, 3);
-        for (i, f) in w.collision.flags.iter().enumerate() {
-            assert_eq!(*f, 0, "flag {i} stays open");
+        for (i, wd) in w.collision.walk.iter().enumerate() {
+            assert_eq!(*wd, 0, "word {i} stays open");
         }
         assert!(w.graph.edges.is_empty());
     }
@@ -207,11 +208,17 @@ mod tests {
     fn blocked_tiles_stamp_every_direction_mask() {
         let w = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
         let door_tile = tile(2, 0, 0);
-        assert_eq!(w.collision.flag(2, 0, 0), BLOCKED);
+        let idx = (door_tile.z - w.collision.origin.z) as usize * w.collision.width
+            + (door_tile.x - w.collision.origin.x) as usize;
+        assert_eq!(
+            walk_word_from_u16(w.collision.walk[idx]),
+            BLOCKED,
+            "the full directional stamp is in the packed walk word"
+        );
         // The full directional stamp is in the walk block masks, so the
         // router never steps onto it.
         assert_eq!(
-            w.collision.flag(2, 0, 0) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
+            walk_word_from_u16(w.collision.walk[idx]) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
             CollisionFlag::WALK_BLOCK_FLAGS as u32
         );
         assert!(w.collision.walkable(tile(0, 0, 0)));
@@ -246,11 +253,8 @@ mod tests {
         // The 1-tick door taken from the origin + 1 walk tile (0.5).
         assert_eq!(r.ticks, 1.5);
         assert_eq!(r.legs.len(), 3);
-        let (
-            Leg::Walk { .. },
-            Leg::Transport { edge },
-            Leg::Walk { .. },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { .. }, Leg::Transport { edge }, Leg::Walk { .. }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
@@ -297,13 +301,52 @@ mod tests {
             64,
             64,
         ));
-        let r = find(&w.collision, &w.graph, tile(3200, 3200, 0), tile(3263, 3263, 0)).unwrap();
+        let r = find(
+            &w.collision,
+            &w.graph,
+            tile(3200, 3200, 0),
+            tile(3263, 3263, 0),
+        )
+        .unwrap();
         assert_eq!(r.ticks, 31.5); // 63 run steps at 0.5 ticks each
         let Leg::Walk { tiles } = &r.legs[0] else {
             panic!("walk-only route");
         };
         assert_eq!(tiles.first(), Some(&tile(3200, 3200, 0)));
         assert_eq!(tiles.last(), Some(&tile(3263, 3263, 0)));
+    }
+
+    #[test]
+    fn load_pack_keeps_stale_v5_wire_as_bad_version() {
+        // A leftover v5 (pre-v6) `274V` pack is not a v1 pack: load must
+        // surface BadVersion(5) so the operator rebakes, not fall into the
+        // v1 decoder and come out as a confusing BadMagic.
+        let mut plane = vec![0u32; 4];
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 2,
+            height: 2,
+            walk: crate::collision::pack_walk_u16(&plane),
+            flags: None,
+        };
+        let mut bytes = encode_v2(&collision, &TransportGraph::default());
+        bytes[4] = 5;
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-navworld-v5-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture-v5.navpack");
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(matches!(
+            NavWorld::load_pack(&path),
+            Err(PackError::BadVersion(5))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -318,8 +361,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width: 5,
             height: 1,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(TransportEdge {
@@ -335,6 +378,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         graph.at.entry(tile(1, 0, 0)).or_default().push(0);
 
@@ -351,7 +395,8 @@ mod tests {
         std::fs::write(&path, encode_v2(&collision, &graph)).unwrap();
         let w = NavWorld::load_pack(&path).expect("v2 pack loads");
         assert_eq!(w.collision.origin, tile(0, 0, 0));
-        assert_eq!(w.collision.flags, collision.flags);
+        assert_eq!(w.collision.walk, collision.walk);
+        assert!(w.collision.flags.is_none());
         assert_eq!(w.graph.edges, graph.edges);
         assert_eq!(w.graph.at, graph.at);
         let r = find(&w.collision, &w.graph, tile(0, 0, 0), tile(4, 0, 0)).unwrap();
@@ -377,8 +422,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width: 5,
             height: 5,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         graph.teleports.push(TransportEdge {
@@ -394,6 +439,7 @@ mod tests {
             item_req: vec![(554, 1), (556, 3), (563, 1)],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
 
         let dir = std::env::temp_dir().join(format!(

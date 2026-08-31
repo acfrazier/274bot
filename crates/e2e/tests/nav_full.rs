@@ -71,10 +71,7 @@ fn nav_full() {
             let r = runner.lock().unwrap();
             (r.status(), r.evidence().cloned())
         };
-        let record = evidence
-            .as_ref()
-            .map(|ev| ev.to_json())
-            .unwrap_or_default();
+        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
         match status {
             RunnerStatus::Passed => {
                 println!("PASS: nav_full {record}");

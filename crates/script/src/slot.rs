@@ -249,6 +249,7 @@ mod tests {
             tick: 1,
             here: None,
             walk: None,
+            walk_with: None,
             inv: None,
             obj_names: None,
         });
@@ -257,6 +258,7 @@ mod tests {
             tick: 2,
             here: None,
             walk: None,
+            walk_with: None,
             inv: None,
             obj_names: None,
         });
@@ -269,6 +271,7 @@ mod tests {
             tick: 3,
             here: None,
             walk: None,
+            walk_with: None,
             inv: None,
             obj_names: None,
         });
@@ -282,6 +285,7 @@ mod tests {
             tick: 4,
             here: None,
             walk: None,
+            walk_with: None,
             inv: None,
             obj_names: None,
         });

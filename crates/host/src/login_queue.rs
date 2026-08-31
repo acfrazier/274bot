@@ -1,5 +1,16 @@
-//! Login FIFO: serializes login handshakes under the 274 server's default
-//! throttle (rs2b0t coordinator math).
+//! Login FIFO: stay under Lost City's **production** login rate limits.
+//!
+//! Source of truth (local engine checkout, usually `$ENGINE_DIR`):
+//! - `src/util/WorldConfig.ts` — `rateLimitAddressLogin: 30`,
+//!   `rateLimitDeviceLogin: 5` (`NODE_RATELIMIT_*` can override)
+//! - `src/engine/World.ts` — `loginAddressAttempts` TTL **60 s**,
+//!   `loginDeviceAttempts` TTL **15 s**; both counters run **only** when
+//!   `node.production` is true. Local default is `production: false`, so
+//!   a loopback engine does not apply these at all.
+//!
+//! The host still stays under the production numbers (so flipping
+//! `NODE_PRODUCTION` does not 16 us). There is **no** inter-grant spacing
+//! in the engine; 2.5 s was host-invented and is not a default.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -13,10 +24,15 @@ pub enum Permit {
     Wait(Duration),
 }
 
-/// Server per-device login limit is 5 per 15 s; stay under it with 4 grants
-/// then a 16 s pause measured from the latest grant.
+/// Production `rateLimitDeviceLogin` is 5 in a 15 s TTL (`>= 5` rejects,
+/// so 4 grants then wait the remaining TTL). Each grant refreshes the
+/// server TTL; cooldown is measured from the latest grant.
 const UID_GRANT_CAP: usize = 4;
-const UID_COOLDOWN: Duration = Duration::from_secs(16);
+const UID_COOLDOWN: Duration = Duration::from_secs(15);
+
+/// Not-head poll. `wait_for_permit` sleeps this; do not multiply by queue
+/// depth (that invented a 2.5 s × position stall the engine does not have).
+const QUEUE_POLL: Duration = Duration::from_millis(20);
 
 /// Snapshot of a queued uid's place: `position` is 1-based among `total`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,8 +81,7 @@ impl LoginQueue {
             self.queue.push_back(uid);
         }
         if self.queue.front() != Some(&uid) {
-            let ahead = self.queue.iter().take_while(|&&u| u != uid).count() as u32 + 1;
-            return Permit::Wait(self.spacing.saturating_mul(ahead));
+            return Permit::Wait(QUEUE_POLL.max(self.spacing));
         }
         match self.blocked_for(uid, now) {
             Some(wait) => Permit::Wait(wait),
@@ -134,8 +149,10 @@ impl LoginQueue {
         });
         if state.count >= UID_GRANT_CAP {
             if let Some(last) = state.last {
-                if now.saturating_duration_since(last) < UID_COOLDOWN {
-                    wait = Some(wait.map_or(UID_COOLDOWN, |w| w.max(UID_COOLDOWN)));
+                let since = now.saturating_duration_since(last);
+                if since < UID_COOLDOWN {
+                    let until = UID_COOLDOWN - since;
+                    wait = Some(wait.map_or(until, |w| w.max(until)));
                 }
             }
         }
@@ -160,7 +177,7 @@ impl LoginQueue {
         state.last = Some(now);
     }
 
-    /// Drop uid cooldown entries whose 16 s window elapsed and who are not
+    /// Drop uid cooldown entries whose 15 s window elapsed and who are not
     /// queued, so a long-lived host does not keep one map slot per uid ever
     /// seen.
     fn prune_uid(&mut self, now: Instant) {
@@ -188,7 +205,9 @@ impl LoginQueue {
 
 impl Default for LoginQueue {
     fn default() -> Self {
-        Self::new(Duration::from_millis(2500), 30, Duration::from_secs(60))
+        // spacing 0: engine has no inter-grant delay. ip_cap 30 / 60 s is
+        // `rateLimitAddressLogin` + address TTL.
+        Self::new(Duration::ZERO, 30, Duration::from_secs(60))
     }
 }
 
@@ -219,8 +238,6 @@ impl LoginBackoff {
 mod tests {
     use super::*;
 
-    const SPACING: Duration = Duration::from_millis(2500);
-
     fn max_grants_in_60s(grant_times: &[Instant]) -> usize {
         grant_times
             .iter()
@@ -238,11 +255,10 @@ mod tests {
 
     #[test]
     fn prefer_moves_uid_to_the_front() {
-        let mut q = LoginQueue::default();
+        // Long spacing so only the first grant lands; the rest stay queued.
+        let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
         let now = Instant::now();
         assert!(matches!(q.request_permit(2, now), Permit::Grant));
-        // spacing blocks a second grant; 2 re-queues, then 3 and 1 line up.
-        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
         assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
         q.prefer(1);
@@ -260,15 +276,14 @@ mod tests {
                 grants.push(base);
             }
         }
-        // Only the FIFO head may grant; the rest stay queued.
-        assert_eq!(grants.len(), 1);
-        assert!(matches!(q.request_permit(25, base), Permit::Wait(_)));
+        // Address cap 30 / 60 s; no invented 2.5 s spacing, so 30 burst.
+        assert_eq!(grants.len(), 30);
+        assert!(matches!(q.request_permit(30, base), Permit::Wait(_)));
 
-        let mut now = base + SPACING;
-        for i in 1..50 {
+        let now = base + Duration::from_secs(60);
+        for i in 30..50 {
             assert!(matches!(q.request_permit(i, now), Permit::Grant));
             grants.push(now);
-            now += SPACING;
         }
         assert_eq!(grants.len(), 50);
         assert!(max_grants_in_60s(&grants) <= 30);
@@ -300,49 +315,60 @@ mod tests {
     }
 
     #[test]
-    fn same_uid_fifth_request_waits_at_least_16s() {
+    fn same_uid_fifth_request_waits_remaining_15s_ttl() {
         let base = Instant::now();
         let mut q = LoginQueue::default();
-        let mut now = base;
         for _ in 0..4 {
-            assert!(matches!(q.request_permit(7, now), Permit::Grant));
-            now += SPACING;
+            assert!(matches!(q.request_permit(7, base), Permit::Grant));
         }
-        match q.request_permit(7, now) {
-            Permit::Wait(d) => assert!(d >= Duration::from_secs(16), "fifth wait {d:?} < 16s"),
+        match q.request_permit(7, base) {
+            Permit::Wait(d) => assert_eq!(d, Duration::from_secs(15), "fifth wait {d:?}"),
             Permit::Grant => panic!("fifth same-uid request must wait"),
         }
-        // After the cooldown the uid may login again.
-        now += Duration::from_secs(16);
-        assert!(matches!(q.request_permit(7, now), Permit::Grant));
+        let later = base + Duration::from_secs(10);
+        match q.request_permit(7, later) {
+            Permit::Wait(d) => assert_eq!(d, Duration::from_secs(5), "remaining {d:?}"),
+            Permit::Grant => panic!("still inside the 15 s device TTL"),
+        }
+        assert!(matches!(
+            q.request_permit(7, base + Duration::from_secs(15)),
+            Permit::Grant
+        ));
     }
 
     #[test]
-    fn grants_are_spaced_at_least_2_5s_apart() {
-        let base = Instant::now();
+    fn not_head_polls_20ms_not_depth_times_spacing() {
         let mut q = LoginQueue::default();
-        let mut now = base;
-        let mut prev = None;
-        for i in 0..10 {
+        let now = Instant::now();
+        for i in 0..30 {
             assert!(matches!(q.request_permit(i, now), Permit::Grant));
-            if let Some(last) = prev {
-                assert!(now.saturating_duration_since(last) >= SPACING);
-            }
-            prev = Some(now);
-            now += SPACING;
+        }
+        match q.request_permit(30, now) {
+            Permit::Wait(d) => assert!(
+                d >= Duration::from_secs(59),
+                "head waits out the address TTL, got {d:?}"
+            ),
+            other => panic!("head should wait the 60 s window, got {other:?}"),
+        }
+        match q.request_permit(31, now) {
+            Permit::Wait(d) => assert_eq!(
+                d,
+                Duration::from_millis(20),
+                "not-head must poll, not sleep 2.5s × position"
+            ),
+            other => panic!("{other:?}"),
         }
     }
 
     #[test]
     fn by_uid_prunes_elapsed_unqueued() {
         let mut q = LoginQueue::default();
-        let mut now = Instant::now();
+        let now = Instant::now();
         for _ in 0..4 {
             assert!(matches!(q.request_permit(7, now), Permit::Grant));
-            now += SPACING;
         }
         assert!(q.tracks(7));
-        now += UID_COOLDOWN;
+        let now = now + UID_COOLDOWN;
         assert!(matches!(q.request_permit(8, now), Permit::Grant));
         assert!(
             !q.tracks(7),

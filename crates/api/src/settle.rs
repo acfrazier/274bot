@@ -99,8 +99,8 @@ impl<'a> Settle<'a> {
                 tick,
             });
         }
-        let over_ticks = (now.tick() as u64).saturating_sub(self.start_tick)
-            >= self.options.budget_ticks as u64;
+        let over_ticks =
+            (now.tick() as u64).saturating_sub(self.start_tick) >= self.options.budget_ticks as u64;
         let over_ms = self
             .deadline_ms
             .is_some_and(|deadline| now_ms().is_some_and(|now| now >= deadline));
@@ -227,10 +227,7 @@ pub fn modal_opened(root: Option<i32>) -> Evidence<'static> {
                 modals.main != -1 || modals.side != -1 || modals.chat != -1 || modals.tutorial != -1
             }
             Some(id) => {
-                modals.main == id
-                    || modals.side == id
-                    || modals.chat == id
-                    || modals.tutorial == id
+                modals.main == id || modals.side == id || modals.chat == id || modals.tutorial == id
             }
         }
     })
@@ -242,16 +239,10 @@ pub fn modal_closed(root: Option<i32>) -> Evidence<'static> {
         let modals = now.modals();
         match root {
             None => {
-                modals.main == -1
-                    && modals.side == -1
-                    && modals.chat == -1
-                    && modals.tutorial == -1
+                modals.main == -1 && modals.side == -1 && modals.chat == -1 && modals.tutorial == -1
             }
             Some(id) => {
-                modals.main != id
-                    && modals.side != id
-                    && modals.chat != id
-                    && modals.tutorial != id
+                modals.main != id && modals.side != id && modals.chat != id && modals.tutorial != id
             }
         }
     })

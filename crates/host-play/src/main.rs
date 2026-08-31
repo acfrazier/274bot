@@ -1,7 +1,8 @@
 //! `host-play` CLI: unlock a vault (passphrase from `BOT_VAULT_PASS` or
 //! `--vault-pass`), load the named profiles, and run them through the host
 //! kernel until the process is stopped. Missing vault/profiles are created
-//! with `user`/`user` credentials (the local engine auto-registers them).
+//! with `password = username` (default `--user test` → `test`/`test`; the
+//! local engine auto-registers them).
 
 use std::env;
 use std::path::PathBuf;
@@ -13,10 +14,7 @@ use vault::{Profile, ProfileSettings, VaultError};
 const DEFAULT_PORT: u16 = 43594;
 
 fn default_cache_dir() -> String {
-    match env::var("HOME") {
-        Ok(home) => format!("{home}/experiments/Server/engine/data/pack/client"),
-        Err(_) => "experiments/Server/engine/data/pack/client".into(),
-    }
+    client::cache_dir().display().to_string()
 }
 
 fn default_vault() -> PathBuf {
@@ -54,18 +52,13 @@ fn parse_args() -> Args {
     let mut args = Args {
         vault: default_vault(),
         pass: env::var("BOT_VAULT_PASS").ok(),
-        host: "127.0.0.1".into(),
+        host: host_play::default_world_host(),
         port: DEFAULT_PORT,
         cache: default_cache_dir(),
         users: Vec::new(),
         lowmem: true,
         mainland: env::var("BOT_MAINLAND").as_deref() == Ok("1"),
     };
-    // `TARGET=live` bake: default to the rs2b2t live world (port stays the
-    // 43594 TCP the local engine uses); `--host` still overrides.
-    if env::var("TARGET").as_deref() == Ok("live") {
-        args.host = "w1.rs2b2t.com".into();
-    }
     let mut it = env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -79,6 +72,10 @@ fn parse_args() -> Args {
             "--user" => args.users.push(value(&mut it)),
             "--mainland" => args.mainland = true,
             "--debug" => set_debug(true),
+            "--prod" => {
+                client::set_bot_target(client::BotTarget::Prod);
+                args.host = host_play::default_world_host();
+            }
             "--help" | "-h" => usage(),
             _ => usage(),
         }

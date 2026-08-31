@@ -1,9 +1,11 @@
 # Scripts (`crates/script`)
 
-Campaign 5 **kernel**. Compiled cards are **rust-first rewrites** on
-274bot `api`, not rs2b0t ports. The Load/`@rs2b0t` shim is for
-out-of-tree / non-technical authors. WalkTo is **host nav** (panel picker),
-not a script card.
+Alpha **kernel**. Compiled cards are meant to be **rust-first rewrites**
+on 274bot `api`, not rs2b0t file-ports. This tag does **not** ship honest
+skilling/farming bots. The Load/`@rs2b0t` shim is for out-of-tree /
+non-technical authors. WalkTo is **host nav** (panel picker), not a
+script card. Reference TS under `scripts/rs2b0t/` is a copy for later
+hand-ports, not a runtime.
 
 ## Two runners
 

@@ -16,10 +16,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use client::render::backend::FrameOutput;
 use common::{fail, live, options, profiles, wait_ingame};
 use host::{FrameBuf, InputEv, SlotInput};
 use host_play::run_with_io;
-use client::render::backend::FrameOutput;
 
 /// 3D view is 4,4–516,338 in applet coords; (256,167) is its center.
 const VIEWPORT_CLICK_X: i32 = 256;
@@ -77,9 +77,7 @@ fn live_draw_area_and_capture_walk() {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let non_zero = match pixels.take() {
-            Some(FrameOutput::PixMap(pix)) => {
-                pix.pixels.iter().filter(|&&p| p != 0).count()
-            }
+            Some(FrameOutput::PixMap(pix)) => pix.pixels.iter().filter(|&&p| p != 0).count(),
             Some(FrameOutput::Texture(handle)) => {
                 let width = handle.width as usize;
                 let height = handle.height as usize;

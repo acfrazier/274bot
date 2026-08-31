@@ -21,12 +21,7 @@ fn short_status(statuses: &[SlotStatus]) -> String {
         .map(|s| {
             format!(
                 "{} in={} sc={} q={}/{} err={:?}",
-                s.username,
-                s.ingame,
-                s.scene_state,
-                s.queue_position,
-                s.queue_total,
-                s.error
+                s.username, s.ingame, s.scene_state, s.queue_position, s.queue_total, s.error
             )
         })
         .collect::<Vec<_>>()

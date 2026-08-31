@@ -6,13 +6,43 @@ use std::path::{Path, PathBuf};
 
 use crate::nav_settings::NavSettings;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelUiState {
     pub last_focus: Option<String>,
     #[serde(default)]
     pub collapsed: HashMap<String, HashMap<String, bool>>,
     #[serde(default)]
     pub nav: NavSettings,
+    /// Per-member rail blit override. Absent = focused folded, others open.
+    #[serde(default)]
+    pub rail_preview: HashMap<String, bool>,
+    /// Global none/GPU/CPU for every slot (General config).
+    #[serde(default)]
+    pub raster: vault::RasterMode,
+    /// Global lowmem for every slot. Default true (headless default).
+    #[serde(default = "default_true")]
+    pub lowmem: bool,
+    /// Strip collapsing-header order. Empty = [`crate::chrome::HEADING_ORDER`].
+    #[serde(default)]
+    pub section_order: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for PanelUiState {
+    fn default() -> Self {
+        Self {
+            last_focus: None,
+            collapsed: HashMap::new(),
+            nav: NavSettings::default(),
+            rail_preview: HashMap::new(),
+            raster: vault::RasterMode::Gpu,
+            lowmem: true,
+            section_order: Vec::new(),
+        }
+    }
 }
 
 /// Default closed (collapsed) when no persisted entry: script + parameters only.
@@ -77,11 +107,7 @@ pub fn save_at(p: &Path, state: &PanelUiState) {
 #[cfg(test)]
 thread_local! {
     static TEST_STATE: std::cell::RefCell<PanelUiState> =
-        std::cell::RefCell::new(PanelUiState {
-            last_focus: None,
-            collapsed: HashMap::new(),
-            nav: NavSettings::default(),
-        });
+        std::cell::RefCell::new(PanelUiState::default());
 }
 
 #[cfg(test)]
@@ -105,6 +131,58 @@ mod tests {
         let back: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
         assert_eq!(back.nav, NavSettings::default());
+    }
+
+    #[test]
+    fn old_nav_object_without_allow_wilderness_keeps_focus_and_colors() {
+        // A pre-Task-1 prefs file carries a `nav` object with no
+        // `allow_wilderness` key. It must load with the new field defaulted
+        // (false) instead of failing deserialize and resetting the whole
+        // `PanelUiState` (`load_at` falls back to `PanelUiState::default()`,
+        // wiping focus / collapsed / colors).
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-ui-old-nav-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("panel-ui.json");
+        std::fs::write(
+            &p,
+            r##"{
+  "last_focus": "alice",
+  "collapsed": {"bob": {"nav": true}},
+  "nav": {
+    "allow_teleports": false,
+    "show_nav_path": true,
+    "hop_labels": true,
+    "hop_label_px": 11,
+    "color_path": "#AABBCC",
+    "color_transport": "#00FF00",
+    "color_click": "#FFFFFF",
+    "color_text": "#FFFFFF",
+    "collision_fill": false,
+    "nsew_labels": false,
+    "client_trail": false,
+    "color_collision": "#0080FF",
+    "color_client": "#00D4FF",
+    "color_client_run_alt": "#FFFF00",
+    "component_flood": false
+  }
+}"##,
+        )
+        .unwrap();
+        let back = load_at(&p);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            back.last_focus.as_deref(),
+            Some("alice"),
+            "focus must survive an old nav object"
+        );
+        assert!(back.collapsed["bob"]["nav"]);
+        assert!(
+            !back.nav.allow_wilderness,
+            "missing allow_wilderness defaults false"
+        );
+        assert!(back.nav.show_nav_path, "present fields keep their values");
+        assert_eq!(back.nav.color_path, "#AABBCC");
     }
 
     #[test]
@@ -193,5 +271,6 @@ mod tests {
         assert!(!default_section_closed("log"));
         assert!(!default_section_closed("rendering"));
         assert!(!default_section_closed("input"));
+        assert!(!default_section_closed("debug"));
     }
 }

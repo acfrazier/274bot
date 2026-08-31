@@ -6,13 +6,15 @@ pub const RAIL_W: f32 = 264.0;
 /// Cap-body tile draw size inside the rail (rs2b0t ~236×155).
 pub const TILE_W: f32 = 236.0;
 pub const TILE_H: f32 = 155.0;
-/// Default OS window without the rail (game + 330 chrome).
+/// Default OS window without the rail (game + 330 chrome). First open
+/// only — we do not snap the window back to this on MultiBox toggles.
 pub const BASE_WINDOW_W: f32 = 1120.0;
 /// Default OS window height.
 pub const BASE_WINDOW_H: f32 = 580.0;
 
-/// OS inner size: rail-open grows width by [`RAIL_W`] so the Game pane
-/// stays the same; grid / MultiBox-off restore the base.
+/// Minimum inner size so the native 765×503 blit is not covered by the
+/// 330px panel (and the 264px rail when open). Growing to this is OK;
+/// shrinking a larger window is not.
 pub fn os_window_size(rail_open: bool) -> (f32, f32) {
     (
         BASE_WINDOW_W + if rail_open { RAIL_W } else { 0.0 },
@@ -20,10 +22,19 @@ pub fn os_window_size(rail_open: bool) -> (f32, f32) {
     )
 }
 
+/// Rail split so the sidecar stays [`RAIL_W`] px at `window_w`.
+pub fn rail_split_ratio(window_w: f32) -> f32 {
+    (RAIL_W / window_w.max(1.0)).clamp(0.05, 0.85)
+}
+
 /// Status dot glyph (U+2059), colored by [`Light::rgb`].
 pub const STATUS_GLYPH: &str = "\u{2059}";
 /// Remove glyph (U+2717), drawn in `theme::ERROR` red.
 pub const REMOVE_GLYPH: &str = "\u{2717}";
+/// Fold the rail blit (squash the head). Operator may swap; see spec.
+pub const FOLD_GLYPH: &str = "\u{2582}";
+/// Unfold the rail blit (raise the head).
+pub const UNFOLD_GLYPH: &str = "\u{2585}";
 
 /// Cap dot state: error red wins, then not-ingame grey (logged out),
 /// then running green, else idle yellow. A FIFO-queued login slot is not
@@ -68,6 +79,25 @@ pub fn cap_title(name: &str, light: Light) -> String {
     format!("{name}: {}", light.brief())
 }
 
+/// Whether this rail/grid tile shows its blit. `only_selected` stays
+/// cap-only. Default: grid keeps every blit (the grid *is* the Game pane);
+/// the sidecar folds the focused member (the Game pane already shows it).
+pub fn rail_preview_open(
+    name: &str,
+    focused: Option<&str>,
+    only_selected: bool,
+    grid: bool,
+    preview: &std::collections::HashMap<String, bool>,
+) -> bool {
+    if only_selected {
+        return false;
+    }
+    preview
+        .get(name)
+        .copied()
+        .unwrap_or(grid || focused != Some(name))
+}
+
 /// Map a slot's status to its tile's traffic light: error red wins, then
 /// not-ingame → grey, then running → green, else idle yellow.
 pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
@@ -85,8 +115,9 @@ pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
 #[cfg(test)]
 mod tests {
     use super::{
-        cap_title, os_window_size, traffic_light, Light, REMOVE_GLYPH, STATUS_GLYPH, BASE_WINDOW_H,
-        BASE_WINDOW_W, RAIL_W, TILE_H, TILE_W,
+        cap_title, os_window_size, rail_preview_open, rail_split_ratio, traffic_light, Light,
+        BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H,
+        TILE_W, UNFOLD_GLYPH,
     };
 
     #[test]
@@ -98,12 +129,35 @@ mod tests {
     }
 
     #[test]
+    fn rail_preview_defaults_fold_focused() {
+        let empty = std::collections::HashMap::new();
+        assert!(
+            !rail_preview_open("a", Some("a"), false, false, &empty),
+            "sidecar folds the focused blit by default"
+        );
+        assert!(
+            rail_preview_open("b", Some("a"), false, false, &empty),
+            "other members show a blit by default"
+        );
+        assert!(!rail_preview_open("b", Some("a"), true, false, &empty));
+        assert!(
+            rail_preview_open("a", Some("a"), false, true, &empty),
+            "grid keeps the focused blit — there is no separate Game pane"
+        );
+        let mut on = std::collections::HashMap::new();
+        on.insert("a".into(), true);
+        assert!(rail_preview_open("a", Some("a"), false, false, &on));
+    }
+
+    #[test]
     fn os_window_grows_by_rail_width_and_keeps_height() {
         assert_eq!(os_window_size(false), (BASE_WINDOW_W, BASE_WINDOW_H));
         assert_eq!(
             os_window_size(true),
             (BASE_WINDOW_W + RAIL_W, BASE_WINDOW_H)
         );
+        let r = rail_split_ratio(2000.0);
+        assert!((r * 2000.0 - RAIL_W).abs() < 0.01);
     }
 
     #[test]
@@ -153,5 +207,7 @@ mod tests {
     fn cap_glyphs_are_the_spec_code_points() {
         assert_eq!(STATUS_GLYPH, "\u{2059}");
         assert_eq!(REMOVE_GLYPH, "\u{2717}");
+        assert_eq!(FOLD_GLYPH, "\u{2582}");
+        assert_eq!(UNFOLD_GLYPH, "\u{2585}");
     }
 }

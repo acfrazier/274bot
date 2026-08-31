@@ -7,12 +7,12 @@
 use api::query::*;
 use api::snapshot::{
     ActorKind, ActorTargetView, ActorView, ChatLineView, Family, GameSnapshot, GroundItemView,
-    ItemActionFamily, ItemContainer, ItemView, LocalTile, LocLayer, LocView, NpcView, PlayerView,
+    ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, LocalTile, NpcView, PlayerView,
     SceneView, SideTabView, StatView, VarpView, WidgetKind, WidgetRoot, WidgetView, WorldTile,
 };
 use api::ItemDefView;
 use client::client::{Client, ClientConfig};
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::ServerProt;
 
@@ -52,11 +52,7 @@ fn fixture_npc(
         r#type: Some(id as usize),
         name: Some(name.to_string()),
         actions: vec![Some("Attack".into())],
-        tile: WorldTile {
-            x,
-            z,
-            level: 0,
-        },
+        tile: WorldTile { x, z, level: 0 },
         distance,
         animation: 0,
         pose_animation: 0,
@@ -132,11 +128,7 @@ fn fixture_ground_item(
         },
         count,
         actions: vec![Some("Take".into())],
-        tile: WorldTile {
-            x,
-            z,
-            level: 0,
-        },
+        tile: WorldTile { x, z, level: 0 },
         distance: 0,
     }
 }
@@ -172,7 +164,14 @@ fn fixture_loc(shape: i32, angle: i32, x: i32, z: i32, w: i32, l: i32) -> LocVie
     }
 }
 
-fn fixture_stat(index: i32, name: &str, effective: i32, base: i32, xp: i32, used: bool) -> StatView {
+fn fixture_stat(
+    index: i32,
+    name: &str,
+    effective: i32,
+    base: i32,
+    xp: i32,
+    used: bool,
+) -> StatView {
     StatView {
         index,
         name: name.into(),
@@ -338,13 +337,24 @@ fn world_filters_use_distance_and_tiles() {
     q.within_distance(3);
     assert_eq!(q.count(), 2, "npc0 at d0 and npc2 at d2");
     let mut q = Query::new(&npcs);
-    q.within_distance_to(WorldTile { x: 21, z: 20, level: 0 }, 2);
+    q.within_distance_to(
+        WorldTile {
+            x: 21,
+            z: 20,
+            level: 0,
+        },
+        2,
+    );
     assert_eq!(q.first().map(|n| n.index), Some(1));
     let mut q = Query::new(&npcs);
     q.on_level(1);
     assert_eq!(q.count(), 0);
     let mut q = Query::new(&npcs);
-    q.on_tile(WorldTile { x: 12, z: 10, level: 0 });
+    q.on_tile(WorldTile {
+        x: 12,
+        z: 10,
+        level: 0,
+    });
     assert_eq!(q.first().map(|n| n.index), Some(2));
     let mut q = Query::new(&npcs);
     q.inside(WorldArea {
@@ -359,15 +369,23 @@ fn world_filters_use_distance_and_tiles() {
     assert_eq!(q.nearest().map(|n| n.index), Some(0));
     let q = Query::new(&npcs);
     assert_eq!(
-        q.nearest_to(WorldTile { x: 21, z: 20, level: 0 })
-            .map(|n| n.index),
+        q.nearest_to(WorldTile {
+            x: 21,
+            z: 20,
+            level: 0
+        })
+        .map(|n| n.index),
         Some(1)
     );
     // Level-mismatched tiles are infinitely far.
     let q = Query::new(&npcs);
     assert_eq!(
-        q.nearest_to(WorldTile { x: 21, z: 20, level: 1 })
-            .map(|n| n.index),
+        q.nearest_to(WorldTile {
+            x: 21,
+            z: 20,
+            level: 1
+        })
+        .map(|n| n.index),
         Some(0)
     );
 }
@@ -516,8 +534,12 @@ fn ground_item_filters_read_item_def() {
     assert_eq!(q.first().map(|i| i.def.id), Some(3));
     let q = Query::new(&items);
     assert_eq!(
-        q.nearest_to(WorldTile { x: 12, z: 11, level: 0 })
-            .map(|i| i.def.id),
+        q.nearest_to(WorldTile {
+            x: 12,
+            z: 11,
+            level: 0
+        })
+        .map(|i| i.def.id),
         Some(2)
     );
 }
@@ -678,7 +700,14 @@ fn widget_items_subquery_filters_component_slots() {
 #[test]
 fn side_tab_filters_read_tab_state() {
     let tabs = [
-        fixture_side_tab(3, 500, true, false, false, vec![fixture_widget(501, 1, None, 0)]),
+        fixture_side_tab(
+            3,
+            500,
+            true,
+            false,
+            false,
+            vec![fixture_widget(501, 1, None, 0)],
+        ),
         fixture_side_tab(4, 600, true, true, true, vec![]),
     ];
     let mut q = Query::new(&tabs);
@@ -707,7 +736,7 @@ fn chat_filters_read_lines_and_sequences() {
     q.with_type_(&[1]);
     assert_eq!(q.count(), 2);
     let mut q = Query::new(&lines);
-    q.from_sender(&["ALICE"]);
+    q.sent_by(&["ALICE"]);
     assert_eq!(q.first().map(|l| l.sequence), Some(1));
     let mut q = Query::new(&lines);
     q.with_sender();
@@ -735,9 +764,24 @@ fn scene_query_collision_and_reach() {
     scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
     scene.collision_flags[10 * 104 + 10] = CollisionFlag::W_W;
 
-    let sq = SceneQuery::new(&scene, Some(WorldTile { x: 3205, z: 3205, level: 0 }));
-    assert!(sq.contains(WorldTile { x: 3205, z: 3205, level: 0 }));
-    assert!(!sq.contains(WorldTile { x: 3304, z: 3200, level: 0 }));
+    let sq = SceneQuery::new(
+        &scene,
+        Some(WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        }),
+    );
+    assert!(sq.contains(WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0
+    }));
+    assert!(!sq.contains(WorldTile {
+        x: 3304,
+        z: 3200,
+        level: 0
+    }));
     assert_eq!(
         sq.base(),
         WorldTile {
@@ -747,10 +791,21 @@ fn scene_query_collision_and_reach() {
         }
     );
     assert_eq!(
-        sq.to_local(WorldTile { x: 3205, z: 3206, level: 0 }),
+        sq.to_local(WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0
+        }),
         Some(LocalTile { lx: 5, lz: 6 })
     );
-    assert_eq!(sq.to_local(WorldTile { x: 3304, z: 3200, level: 0 }), None);
+    assert_eq!(
+        sq.to_local(WorldTile {
+            x: 3304,
+            z: 3200,
+            level: 0
+        }),
+        None
+    );
     assert_eq!(
         sq.to_world(LocalTile { lx: 5, lz: 6 }),
         Some(WorldTile {
@@ -762,58 +817,149 @@ fn scene_query_collision_and_reach() {
     assert_eq!(sq.to_world(LocalTile { lx: 104, lz: 0 }), None);
 
     assert_eq!(
-        sq.collision_at(WorldTile { x: 3205, z: 3206, level: 0 }),
+        sq.collision_at(WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0
+        }),
         Some(CollisionFlag::SQ_BLOCKED)
     );
     assert_eq!(
-        sq.collision_at(WorldTile { x: 3210, z: 3210, level: 0 }),
+        sq.collision_at(WorldTile {
+            x: 3210,
+            z: 3210,
+            level: 0
+        }),
         Some(CollisionFlag::W_W)
     );
-    assert_eq!(sq.collision_at(WorldTile { x: 3304, z: 3200, level: 0 }), None);
-    assert!(sq.probeable(WorldTile { x: 3210, z: 3210, level: 0 }));
-    assert!(!sq.probeable(WorldTile { x: 3304, z: 3200, level: 0 }));
-    assert!(!sq.walkable(WorldTile { x: 3205, z: 3206, level: 0 }));
-    assert!(sq.walkable(WorldTile { x: 3206, z: 3206, level: 0 }));
+    assert_eq!(
+        sq.collision_at(WorldTile {
+            x: 3304,
+            z: 3200,
+            level: 0
+        }),
+        None
+    );
+    assert!(sq.probeable(WorldTile {
+        x: 3210,
+        z: 3210,
+        level: 0
+    }));
+    assert!(!sq.probeable(WorldTile {
+        x: 3304,
+        z: 3200,
+        level: 0
+    }));
+    assert!(!sq.walkable(WorldTile {
+        x: 3205,
+        z: 3206,
+        level: 0
+    }));
+    assert!(sq.walkable(WorldTile {
+        x: 3206,
+        z: 3206,
+        level: 0
+    }));
 
     // Orthogonal steps across open edges; the blocked tile and the wall
     // tile refuse the step.
     assert!(sq.can_step(
-        WorldTile { x: 3205, z: 3207, level: 0 },
-        WorldTile { x: 3206, z: 3207, level: 0 }
+        WorldTile {
+            x: 3205,
+            z: 3207,
+            level: 0
+        },
+        WorldTile {
+            x: 3206,
+            z: 3207,
+            level: 0
+        }
     ));
     assert!(!sq.can_step(
-        WorldTile { x: 3205, z: 3205, level: 0 },
-        WorldTile { x: 3205, z: 3206, level: 0 }
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0
+        },
+        WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0
+        }
     ));
     assert!(!sq.can_step(
-        WorldTile { x: 3209, z: 3210, level: 0 },
-        WorldTile { x: 3210, z: 3210, level: 0 }
+        WorldTile {
+            x: 3209,
+            z: 3210,
+            level: 0
+        },
+        WorldTile {
+            x: 3210,
+            z: 3210,
+            level: 0
+        }
     ));
     assert!(!sq.can_step(
-        WorldTile { x: 3205, z: 3205, level: 0 },
-        WorldTile { x: 3205, z: 3205, level: 0 }
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0
+        },
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0
+        }
     ));
     assert!(!sq.can_step(
-        WorldTile { x: 3205, z: 3205, level: 0 },
-        WorldTile { x: 3207, z: 3205, level: 0 }
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0
+        },
+        WorldTile {
+            x: 3207,
+            z: 3205,
+            level: 0
+        }
     ));
     assert!(!sq.can_step(
-        WorldTile { x: 3205, z: 3205, level: 0 },
-        WorldTile { x: 3206, z: 3206, level: 1 }
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0
+        },
+        WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 1
+        }
     ));
 
     // BFS reach: the blocked tile is not reachable, but a walk around
     // it is; `adjacent_ok` allows interacting across a blocked tile.
     assert!(!sq.can_reach(
-        WorldTile { x: 3205, z: 3206, level: 0 },
+        WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0
+        },
         &SceneReachOptions::default()
     ));
     assert!(sq.can_reach(
-        WorldTile { x: 3206, z: 3206, level: 0 },
+        WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0
+        },
         &SceneReachOptions::default()
     ));
     assert!(sq.can_reach(
-        WorldTile { x: 3205, z: 3206, level: 0 },
+        WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0
+        },
         &SceneReachOptions {
             max_steps: None,
             adjacent_ok: true,
@@ -821,7 +967,11 @@ fn scene_query_collision_and_reach() {
     ));
     let no_player = SceneQuery::new(&scene, None);
     assert!(!no_player.can_reach(
-        WorldTile { x: 3206, z: 3206, level: 0 },
+        WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0
+        },
         &SceneReachOptions::default()
     ));
 }
@@ -835,7 +985,11 @@ fn loc_approach_operability() {
         loc_approach::can_operate_from(
             &tree,
             &scene,
-            WorldTile { x: 3204, z: 3205, level: 0 }
+            WorldTile {
+                x: 3204,
+                z: 3205,
+                level: 0
+            }
         ),
         Some(true)
     );
@@ -844,7 +998,11 @@ fn loc_approach_operability() {
         loc_approach::can_operate_from(
             &tree,
             &scene,
-            WorldTile { x: 3205, z: 3205, level: 0 }
+            WorldTile {
+                x: 3205,
+                z: 3205,
+                level: 0
+            }
         ),
         Some(true)
     );
@@ -854,7 +1012,11 @@ fn loc_approach_operability() {
         loc_approach::can_operate_from(
             &rock,
             &scene,
-            WorldTile { x: 3204, z: 3205, level: 0 }
+            WorldTile {
+                x: 3204,
+                z: 3205,
+                level: 0
+            }
         ),
         None
     );
@@ -862,7 +1024,11 @@ fn loc_approach_operability() {
         loc_approach::can_operate_from(
             &tree,
             &scene,
-            WorldTile { x: 3204, z: 3205, level: 1 }
+            WorldTile {
+                x: 3204,
+                z: 3205,
+                level: 1
+            }
         ),
         None
     );
@@ -873,7 +1039,11 @@ fn loc_approach_operability() {
         loc_approach::can_operate_from(
             &forced,
             &scene,
-            WorldTile { x: 3204, z: 3205, level: 0 }
+            WorldTile {
+                x: 3204,
+                z: 3205,
+                level: 0
+            }
         ),
         Some(false)
     );
@@ -881,22 +1051,52 @@ fn loc_approach_operability() {
         loc_approach::can_operate_from(
             &forced,
             &scene,
-            WorldTile { x: 3206, z: 3205, level: 0 }
+            WorldTile {
+                x: 3206,
+                z: 3205,
+                level: 0
+            }
         ),
         Some(true)
     );
     // A blocked adjacent tile drops out of the operable set.
     let tiles = loc_approach::operable_tiles(&tree, &scene).unwrap();
-    assert!(tiles.contains(&WorldTile { x: 3204, z: 3205, level: 0 }));
-    assert!(tiles.contains(&WorldTile { x: 3206, z: 3205, level: 0 }));
+    assert!(tiles.contains(&WorldTile {
+        x: 3204,
+        z: 3205,
+        level: 0
+    }));
+    assert!(tiles.contains(&WorldTile {
+        x: 3206,
+        z: 3205,
+        level: 0
+    }));
     let mut scene = open_scene();
     scene.collision_flags[4 * 104 + 5] = CollisionFlag::SQ_BLOCKED;
     let tiles = loc_approach::operable_tiles(&tree, &scene).unwrap();
-    assert!(!tiles.contains(&WorldTile { x: 3204, z: 3205, level: 0 }));
+    assert!(!tiles.contains(&WorldTile {
+        x: 3204,
+        z: 3205,
+        level: 0
+    }));
     // The SceneQuery delegates both reads.
-    let sq = SceneQuery::new(&scene, Some(WorldTile { x: 3205, z: 3205, level: 0 }));
+    let sq = SceneQuery::new(
+        &scene,
+        Some(WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        }),
+    );
     assert_eq!(
-        sq.can_operate_from(&tree, WorldTile { x: 3206, z: 3205, level: 0 }),
+        sq.can_operate_from(
+            &tree,
+            WorldTile {
+                x: 3206,
+                z: 3205,
+                level: 0
+            }
+        ),
         Some(true)
     );
     assert!(sq.operable_tiles(&tree).unwrap().len() >= 4);
@@ -913,10 +1113,11 @@ fn cfg() -> ClientConfig {
 }
 
 fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    if c.ifaces.len() <= id {
-        c.ifaces.resize(id + 1, None);
-    }
-    c.ifaces[id] = Some(com);
+    c.set_iface(id, com);
+}
+
+fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
+    c.set_iface_mut(id, m);
 }
 
 #[test]
@@ -939,97 +1140,161 @@ fn widget_search_finds_buttons_and_styles() {
         &mut c,
         1001,
         IfType {
-            id: 1001,
-            layer_id: 1000,
-            button_type: ButtonType::BUTTON_CLOSE,
-            ..Default::default()
+        id: 1001,
+        layer_id: 1000,
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1001,
+        IfTypeMut {
+        button_type: ButtonType::BUTTON_CLOSE,
+        ..Default::default()
         },
     );
+
     // Plain OK button labeled "Attack".
     set_iface(
         &mut c,
         1002,
         IfType {
-            id: 1002,
-            layer_id: 1000,
-            button_type: ButtonType::BUTTON_OK,
-            button_text: "Attack".into(),
-            ..Default::default()
+        id: 1002,
+        layer_id: 1000,
+        button_text: "Attack".into(),
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1002,
+        IfTypeMut {
+        button_type: ButtonType::BUTTON_OK,
+        ..Default::default()
         },
     );
+
     // Target button with base "Chop down".
     set_iface(
         &mut c,
         1003,
         IfType {
-            id: 1003,
-            layer_id: 1000,
-            button_type: ButtonType::BUTTON_TARGET,
-            target_base: "Chop down".into(),
-            ..Default::default()
+        id: 1003,
+        layer_id: 1000,
+        target_base: "Chop down".into(),
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1003,
+        IfTypeMut {
+        button_type: ButtonType::BUTTON_TARGET,
+        ..Default::default()
         },
     );
+
     // Select button bound to varp 43, value 2.
     set_iface(
         &mut c,
         1004,
         IfType {
-            id: 1004,
-            layer_id: 1000,
-            button_type: ButtonType::BUTTON_SELECT,
-            scripts: Some(vec![vec![5, 43]]),
-            script_operand: Some(vec![2]),
-            script_comparator: Some(vec![0]),
-            ..Default::default()
+        id: 1004,
+        layer_id: 1000,
+        scripts: Some(vec![vec![5, 43]]),
+        script_operand: Some(vec![2]),
+        script_comparator: Some(vec![0]),
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1004,
+        IfTypeMut {
+        button_type: ButtonType::BUTTON_SELECT,
+        ..Default::default()
         },
     );
+
     // Combat style buttons (varp 43, values 0 and 1) with text labels.
     set_iface(
         &mut c,
         1005,
         IfType {
-            id: 1005,
-            layer_id: 1000,
-            button_type: ButtonType::BUTTON_SELECT,
-            scripts: Some(vec![vec![5, 43]]),
-            script_operand: Some(vec![0]),
-            ..Default::default()
+        id: 1005,
+        layer_id: 1000,
+        scripts: Some(vec![vec![5, 43]]),
+        script_operand: Some(vec![0]),
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1005,
+        IfTypeMut {
+        button_type: ButtonType::BUTTON_SELECT,
+        ..Default::default()
         },
     );
+
     set_iface(
         &mut c,
         1006,
         IfType {
-            id: 1006,
-            layer_id: 1000,
-            button_type: ButtonType::BUTTON_SELECT,
-            scripts: Some(vec![vec![5, 43]]),
-            script_operand: Some(vec![1]),
-            ..Default::default()
+        id: 1006,
+        layer_id: 1000,
+        scripts: Some(vec![vec![5, 43]]),
+        script_operand: Some(vec![1]),
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1006,
+        IfTypeMut {
+        button_type: ButtonType::BUTTON_SELECT,
+        ..Default::default()
         },
     );
+
     set_iface(
         &mut c,
         1007,
         IfType {
-            id: 1007,
-            layer_id: 1000,
-            r#type: ComponentType::TYPE_TEXT,
-            text: "Punch".into(),
-            ..Default::default()
+        id: 1007,
+        layer_id: 1000,
+        r#type: ComponentType::TYPE_TEXT,
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1007,
+        IfTypeMut {
+        text: "Punch".into(),
+        ..Default::default()
         },
     );
+
     set_iface(
         &mut c,
         1008,
         IfType {
-            id: 1008,
-            layer_id: 1000,
-            r#type: ComponentType::TYPE_TEXT,
-            text: "Kick".into(),
-            ..Default::default()
+        id: 1008,
+        layer_id: 1000,
+        r#type: ComponentType::TYPE_TEXT,
+        ..Default::default()
+    },
+    );
+    set_iface_mut(
+        &mut c,
+        1008,
+        IfTypeMut {
+        text: "Kick".into(),
+        ..Default::default()
         },
     );
+
     c.main_modal_id = 1000;
 
     let mut snap = GameSnapshot::new();
@@ -1039,12 +1304,27 @@ fn widget_search_finds_buttons_and_styles() {
 
     assert_eq!(widget_search::close_button_com_id(&snap, 1000), 1001);
     assert_eq!(widget_search::button_by_text(&snap, 1000, "attack"), 1002);
-    assert_eq!(widget_search::button_by_text(&snap, 1000, "  Attack "), 1002);
+    assert_eq!(
+        widget_search::button_by_text(&snap, 1000, "  Attack "),
+        1002
+    );
     assert_eq!(widget_search::button_by_text(&snap, 1000, "defence"), -1);
-    assert_eq!(widget_search::target_button_by_base(&snap, 1000, "chop down"), 1003);
-    assert_eq!(widget_search::target_button_by_base(&snap, 1000, "nothing"), -1);
-    assert_eq!(widget_search::select_button_by_varp(&snap, 1000, 43, 2), 1004);
-    assert_eq!(widget_search::select_button_by_varp(&snap, 1000, 43, 0), 1005);
+    assert_eq!(
+        widget_search::target_button_by_base(&snap, 1000, "chop down"),
+        1003
+    );
+    assert_eq!(
+        widget_search::target_button_by_base(&snap, 1000, "nothing"),
+        -1
+    );
+    assert_eq!(
+        widget_search::select_button_by_varp(&snap, 1000, 43, 2),
+        1004
+    );
+    assert_eq!(
+        widget_search::select_button_by_varp(&snap, 1000, 43, 0),
+        1005
+    );
     assert_eq!(widget_search::select_button_by_varp(&snap, 1000, 7, 2), -1);
 
     // The three varp-43 buttons (1004/1005/1006) pair with the nearest

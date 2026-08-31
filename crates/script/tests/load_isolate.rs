@@ -273,7 +273,8 @@ fn isolate_logs_tick_errors() {
 #[test]
 fn slow_tick_is_interrupted_and_isolate_survives() {
     // The first tick spins forever; later ticks count.
-    let src = "export function tick(api) { api._n = (api._n||0)+1; if (api._n === 1) { while(true){} } }";
+    let src =
+        "export function tick(api) { api._n = (api._n||0)+1; if (api._n === 1) { while(true){} } }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
     iso.on_game_tick(1);
     // Let the thread enter the spin; pause then arms a terminate for the
@@ -332,6 +333,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         tick: 7,
         here: None,
         walk: None,
+        walk_with: None,
         inv: None,
         obj_names: None,
     });
@@ -340,6 +342,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         tick: 8,
         here: None,
         walk: None,
+        walk_with: None,
         inv: None,
         obj_names: None,
     });

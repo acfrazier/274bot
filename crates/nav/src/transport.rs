@@ -1,7 +1,10 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
-//! shortcuts, boats, gnome gliders, and magic teleports as directed
-//! transport edges built from the Server's own content — `scripts/{doors,
-//! ladders+stairs, interface_boat, skill_magic, skill_agility}`,
+//! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, the
+//! Al Kharid toll / Shantay pass item gates, the Rune Mysteries
+//! essence-mine wizard and Elkoy's Tree Gnome Village maze escort NPC
+//! hops, and magic teleports as directed transport edges built from the
+//! Server's own content — `scripts/{doors, ladders+stairs, interface_boat,
+//! skill_magic, skill_agility}` and the Ardougne wilderness_lever pair,
 //! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
 //! hand-authored table.
 //!
@@ -30,7 +33,7 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
-use crate::pack::{parse_door_config, parse_door_open_ids};
+use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
 
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +52,12 @@ pub enum TransportKind {
     AgilityShortcut,
     /// A gnome-glider flight between two fixed platforms.
     Glider,
+    /// A spirit-tree journey between a tree loc tile and a sibling tree's
+    /// tile (the `^…_tree` destination constant).
+    SpiritTree,
+    /// An NPC-triggered transport hop (carts, essence-mine wizards,
+    /// Elkoy's maze escorts).
+    Npc,
 }
 
 /// The crossing direction of a door edge (step 2 derives it from the door
@@ -71,7 +80,9 @@ pub enum DoorDir {
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare (empty when the source
-/// declares nothing).
+/// declares nothing). `worn_req` is the list of obj ids that must be
+/// equipped (worn) to take the hop, read from the source's own `worn`
+/// inventory checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
@@ -86,6 +97,7 @@ pub struct TransportEdge {
     pub item_req: Vec<(i32, i32)>,
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
+    pub worn_req: Vec<i32>,
 }
 
 /// All transport edges, indexed by interact target (`graph.at[tile]` lists
@@ -113,11 +125,13 @@ pub struct TransportGraph {
 /// destinations that resolve emit an edge — doors emit two per placement
 /// (`dir` and its opposite, each with its own far-side walk-out); `at` the
 /// loc tile, `to` the resolved landing (no walkability filter — the router
-/// applies the collision map). Boats and gnome gliders are the explicit
-/// 2004 route
-/// tables below. Teleports (spells + jewellery rubs) are any-tile edges and
-/// land in [`TransportGraph::teleports`], never in the `at` index. Rows
-/// that do not resolve are counted per reason on stderr, never faked.
+/// applies the collision map). Boats, gnome gliders, the Rune Mysteries
+/// essence-mine wizards and Elkoy's maze escorts are the explicit 2004
+/// route/placement tables below, and spirit trees the `area_gnome` network
+/// (see `spirit_tree_edges`). Teleports (spells + jewellery rubs) are any-tile
+/// edges and land in [`TransportGraph::teleports`], never in the `at`
+/// index. Rows that do not resolve are counted per reason on stderr, never
+/// faked.
 pub fn derive_transports(
     content_root: &Path,
     loc_defs: &LocDefs,
@@ -130,10 +144,31 @@ pub fn derive_transports(
     let positions = loc_positions(content_root);
 
     door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
-    ladder_stair_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
-    shortcut_edges(content_root, &ids, &positions, loc_defs, &mut graph, &mut skipped);
+    ladder_stair_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
+    shortcut_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
     boat_edges(&mut graph);
+    cart_edges(&mut graph);
+    essence_mine_edges(&mut graph);
+    elkoy_edges(&mut graph);
     glider_edges(&mut graph);
+    spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    lever_edges(content_root, &ids, &positions, &mut graph);
+    toll_edges(content_root, &ids, &positions, &mut graph, collision);
+    zanaris_door_edges(content_root, &ids, &positions, &mut graph);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
@@ -160,6 +195,7 @@ const SKIP_NO_DOOR_CONFIGS: &str = "no door configs parsed under scripts/doors/c
 const SKIP_TELEPORT_BAD_DEST: &str = "teleport destination does not parse";
 const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.pack";
 const SKIP_TELEPORT_UNRESOLVED_ITEM: &str = "jewellery item name not in pack/obj.pack";
+const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destination";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -177,12 +213,26 @@ const SKILL_MAGIC: i32 = 6;
 /// Teleport edges have no origin tile (cast/rubbed from anywhere); `at` is
 /// a wire-only placeholder that is never indexed into
 /// [`TransportGraph::at`].
-const TELEPORT_PLACEHOLDER_AT: WorldTile = WorldTile { x: 0, z: 0, level: 0 };
+const TELEPORT_PLACEHOLDER_AT: WorldTile = WorldTile {
+    x: 0,
+    z: 0,
+    level: 0,
+};
 /// Spell teleport ticks: OP_BASE 1 + the `player_teleport_normal` cast
 /// `p_delay(2)` (the spell's whole channel).
 const SPELL_TELEPORT_TICKS: i32 = 3;
 /// Jewellery rub teleport ticks: OP_BASE 1 + the rub script's `p_delay(1)`.
 const JEWELLERY_TELEPORT_TICKS: i32 = 2;
+/// Spirit-tree teleport ticks: OP_BASE 1 + the `spirit_tree_tele` label's
+/// `p_delay(0)` (the tree's whole channel).
+const SPIRIT_TREE_TICKS: i32 = 1;
+/// Lever teleport ticks: OP_BASE 1 + the `p_delay(1)` + `p_delay(0)` in
+/// `wilderness_lever.rs2` (the pull channel's whole channel; the once-only
+/// warning dialog is execute, not search).
+const LEVER_TICKS: i32 = 2;
+/// Essence-mine wizard teleport ticks: OP_BASE 1 + the `p_delay(4)` in
+/// `teleport_to_essence_mine` (the portal channel's whole channel).
+const ESSENCE_MINE_TICKS: i32 = 5;
 
 fn in_world_box(t: &WorldTile) -> bool {
     (0..LEVELS).contains(&t.level) && (X0..X1).contains(&t.x) && (Z0..Z1).contains(&t.z)
@@ -262,11 +312,7 @@ fn bump(skipped: &mut HashMap<&'static str, usize>, reason: &'static str, n: usi
     }
 }
 
-fn report(
-    content_root: &Path,
-    graph: &TransportGraph,
-    skipped: &HashMap<&'static str, usize>,
-) {
+fn report(content_root: &Path, graph: &TransportGraph, skipped: &HashMap<&'static str, usize>) {
     let mut by_kind: HashMap<TransportKind, usize> = HashMap::new();
     for e in &graph.edges {
         *by_kind.entry(e.kind).or_default() += 1;
@@ -279,7 +325,7 @@ fn report(
         .count();
     let jewel_teles = graph.teleports.len() - spell_teles;
     eprintln!(
-        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders); {} teleports ({} spells, {} jewellery); {} skipped rows",
+        "derive_transports({}): {} edges ({} doors, {} ladders, {} stairs, {} agility shortcuts, {} boats, {} gliders, {} spirit trees, {} npc hops); {} teleports ({} spells, {} jewellery); {} skipped rows",
         content_root.display(),
         graph.edges.len(),
         by_kind.get(&TransportKind::Door).copied().unwrap_or(0),
@@ -288,6 +334,8 @@ fn report(
         by_kind.get(&TransportKind::AgilityShortcut).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Boat).copied().unwrap_or(0),
         by_kind.get(&TransportKind::Glider).copied().unwrap_or(0),
+        by_kind.get(&TransportKind::SpiritTree).copied().unwrap_or(0),
+        by_kind.get(&TransportKind::Npc).copied().unwrap_or(0),
         graph.teleports.len(),
         spell_teles,
         jewel_teles,
@@ -431,8 +479,10 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 // Doors.
 // ---------------------------------------------------------------------------
 
-/// Door edges from `scripts/doors/configs/*.loc` openable ids + the jm2 LOC
-/// placements, two edges per placement: `at` = the door loc tile, `dir` =
+/// Door edges from `scripts/doors/configs/*.loc` plus
+/// `scripts/general_use/configs/gates.loc` (fence gates) openable ids +
+/// the jm2 LOC placements, two edges per placement: `at` = the door loc
+/// tile, `dir` =
 /// the placement angle's wall orientation and its opposite (a door is
 /// bidirectional), `to` = each direction's far-side tile (walking outward
 /// from `at` in the wall's far direction until
@@ -464,6 +514,18 @@ fn door_edges(
                 open_ids.extend(parse_door_open_ids(&text, ids));
             }
         }
+    }
+    // Fence gates live outside the door configs dir: `gates.loc` under
+    // `scripts/general_use/configs`. The closed gate categories count as
+    // openable like `door_closed`, so the same parse collects them.
+    let gates = content_root
+        .join("scripts")
+        .join("general_use")
+        .join("configs")
+        .join("gates.loc");
+    if let Ok(text) = fs::read_to_string(&gates) {
+        door_ids.extend(parse_door_config(&text));
+        open_ids.extend(parse_door_open_ids(&text, ids));
     }
     let door_reqs = {
         let constants = script_constants(content_root);
@@ -515,6 +577,7 @@ fn door_edges(
                     item_req: vec![],
                     quest_req: vec![],
                     varp_req: door_reqs.get(id).cloned().unwrap_or_default(),
+                    worn_req: vec![],
                 });
             }
         }
@@ -870,7 +933,10 @@ fn switch_case(line: &str) -> Option<(Vec<String>, Option<&str>)> {
 /// `if (%<varp> (>=|=) ^<const> [& …]) { <arm> }` in a block: every
 /// `(varp, const value)` condition and the arm body. The first matching
 /// guard is read.
-fn if_varp_gate(block: &str, constants: &HashMap<String, i32>) -> Option<(Vec<(String, i32)>, String)> {
+fn if_varp_gate(
+    block: &str,
+    constants: &HashMap<String, i32>,
+) -> Option<(Vec<(String, i32)>, String)> {
     let bytes = block.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
@@ -1104,7 +1170,9 @@ fn parse_script(
         if let Some((kind, target)) = sw {
             switch_on = Some(match (kind, target.as_str()) {
                 (SwitchKind::Int, "loc_angle") => SwitchOn::Angle,
-                (SwitchKind::Coord, t) if t == "loc_coord" || aliases.contains(t) => SwitchOn::Coord,
+                (SwitchKind::Coord, t) if t == "loc_coord" || aliases.contains(t) => {
+                    SwitchOn::Coord
+                }
                 _ => SwitchOn::Unknown,
             });
             switch_brace = before;
@@ -1353,6 +1421,7 @@ fn ladder_stair_edges(
                         item_req: vec![],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     });
                 }
             }
@@ -1412,7 +1481,11 @@ fn shortcut_edges(
             continue;
         };
         let Some(extra) = extra_ticks(loc_name) else {
-            bump(skipped, SKIP_UNPRICED, positions.get(&id).map_or(0, Vec::len));
+            bump(
+                skipped,
+                SKIP_UNPRICED,
+                positions.get(&id).map_or(0, Vec::len),
+            );
             continue;
         };
         let ticks = 1 + extra;
@@ -1447,6 +1520,7 @@ fn shortcut_edges(
                     item_req: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
+                    worn_req: vec![],
                 });
             }
         }
@@ -1765,6 +1839,310 @@ fn boat_edges(graph: &mut TransportGraph) {
             item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
             quest_req: vec![],
             varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
+            worn_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
+/// One Shilo↔Brimhaven cart journey: `at` the cart driver NPC's spawn tile
+/// (jm2 `==== NPC ====` placement, id resolved through `pack/npc.pack`),
+/// `to` the destination cart tile the script's `p_teleport(` literal lands
+/// on. The whole hop is one `Talk-to` (`opnpc1`), and the scripts carry no
+/// `p_delay`, so `ticks` is the 1 op base like the spirit trees.
+#[derive(Debug, Clone, Copy)]
+struct CartRoute {
+    /// npc.pack id of the cart driver who starts the journey.
+    npc: i32,
+    at: WorldTile,
+    to: WorldTile,
+    /// `(obj id, count)` fare: coins (`obj.pack` 995), count = the
+    /// `calc_shilocart_cost` clamp cap.
+    fare: Option<(i32, i32)>,
+    /// The quest journal name gating the journey, if any.
+    quest: Option<&'static str>,
+}
+
+/// The 2004 cart journeys: destinations from the `p_teleport(` calls in
+/// `content/scripts/areas/area_brimhaven/scripts/hajedy.rs2` /
+/// `content/scripts/areas/area_shilo/scripts/vigroy.rs2`, origin tiles from
+/// the `==== NPC ====` placements in `content/maps/*.jm2`, and ids from
+/// `pack/npc.pack`. The fare is `calc_shilocart_cost` in both scripts:
+/// `(coins carried * 5) / 100`, clamped to 10–200 coins — the table keeps
+/// the 200 cap. Hajedy refuses the ride until Shilo Village is complete
+/// (`%zombiequeen >= ^zombiequeen_complete`); Vigroy's block carries no
+/// gate.
+const CART_ROUTES: &[CartRoute] = &[
+    // Hajedy (brimhavencartdriver, npc 510) by the Brimhaven cart
+    // (m43_50 local (27,11) = 2779,3211): `p_teleport(0_44_46_18_7)`
+    // lands at the Shilo Village cart (2834,2951).
+    CartRoute {
+        npc: 510,
+        at: WorldTile {
+            x: 2779,
+            z: 3211,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2834,
+            z: 2951,
+            level: 0,
+        },
+        fare: Some((995, 200)),
+        quest: Some("Shilo Village"),
+    },
+    // Vigroy (shilocartdriver, npc 511) at the Shilo Village cart
+    // (m44_46 local (18,10) = 2834,2954): `p_teleport(0_43_50_24_14)`
+    // lands at the Brimhaven cart (2776,3214).
+    CartRoute {
+        npc: 511,
+        at: WorldTile {
+            x: 2834,
+            z: 2954,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2776,
+            z: 3214,
+            level: 0,
+        },
+        fare: Some((995, 200)),
+        quest: None,
+    },
+];
+
+/// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
+/// keyed from the cart driver NPC's tile.
+fn cart_edges(graph: &mut TransportGraph) {
+    for r in CART_ROUTES {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Npc,
+            at: r.at,
+            to: r.to,
+            loc_id: r.npc,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
+            quest_req: r.quest.map(|q| vec![q.to_string()]).unwrap_or_default(),
+            varp_req: vec![],
+            worn_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rune Mysteries essence mine: wizard entry teleports
+// (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
+/// One essence-mine wizard journey: `at` the wizard NPC's placement tile
+/// (jm2 `==== NPC ====` placement, id resolved through `pack/npc.pack`),
+/// `to` the Rune Essence mine pad. The whole hop is the wizard's direct
+/// teleport op — `[opnpc3,<name>]` calls `@teleport_to_essence_mine`, and
+/// the `teleport_to_essence_mine` proc refuses below
+/// `%runemysteries >= ^runemysteries_complete`, so the edge carries the
+/// Rune Mysteries quest name.
+#[derive(Debug, Clone, Copy)]
+struct EssenceWizard {
+    /// npc.pack id of the wizard who opens the portal.
+    npc: i32,
+    at: WorldTile,
+    /// The wizard's direct teleport op (the `[opnpcN,…]` block that calls
+    /// `@teleport_to_essence_mine`).
+    option: i32,
+}
+
+/// The 2004 essence-mine wizards: placement tiles from the `==== NPC ====`
+/// entries in `content/maps/*.jm2`, ids from `pack/npc.pack`, and the
+/// direct-teleport op from each wizard script (`[opnpc4,aubury]` vs the
+/// others' `[opnpc3,…]`). The proc lands the player at a random
+/// `essence_mine_teleports` coord inside the enclosed mine (m45_75) and
+/// stores the wizard's `^essence_mine_to_<wizard>` return anchor for the
+/// exit portal, so the entry `to` is the mine's walkable centre pad and
+/// the executor accepts any landing in the mine.
+const ESSENCE_WIZARDS: &[EssenceWizard] = &[
+    // Aubury (aubury, npc 553) in the Varrock rune shop (m50_53 local
+    // (53,10)); `[opnpc4,aubury]`.
+    EssenceWizard {
+        npc: 553,
+        at: WorldTile {
+            x: 3253,
+            z: 3402,
+            level: 0,
+        },
+        option: 4,
+    },
+    // Sedridor (head_wizard, npc 300) in the Wizards' Tower cellar
+    // (m48_149 local (31,35) — the 6400-cellar band of (3103,3171));
+    // `[opnpc3,head_wizard]`.
+    EssenceWizard {
+        npc: 300,
+        at: WorldTile {
+            x: 3103,
+            z: 9571,
+            level: 0,
+        },
+        option: 3,
+    },
+    // Distentor (guild_wizard, npc 462) at the Magicians' Guild, Yanille
+    // (m40_48 local (34,17)); `[opnpc3,guild_wizard]`.
+    EssenceWizard {
+        npc: 462,
+        at: WorldTile {
+            x: 2594,
+            z: 3089,
+            level: 0,
+        },
+        option: 3,
+    },
+    // Cromperty (ardounge_wizard, npc 844) in East Ardougne (m41_51
+    // local (59,62)); `[opnpc3,ardounge_wizard]`.
+    EssenceWizard {
+        npc: 844,
+        at: WorldTile {
+            x: 2683,
+            z: 3326,
+            level: 0,
+        },
+        option: 3,
+    },
+    // Brimstail (gnome_brimstail, npc 171) in his cave (m37_153 local
+    // (22,18) — the 6400-cellar band of (2390,3410));
+    // `[opnpc3,gnome_brimstail]`.
+    EssenceWizard {
+        npc: 171,
+        at: WorldTile {
+            x: 2390,
+            z: 9810,
+            level: 0,
+        },
+        option: 3,
+    },
+];
+
+/// The Rune Essence mine pad (m45_75 local (32,33)): the walkable centre
+/// anchor the entry edges land on. The real landing is randomised among
+/// the `essence_mine_teleports` enum coords, so the executor accepts any
+/// landing inside the enclosed mine instead of this exact tile.
+const ESSENCE_MINE_PAD: WorldTile = WorldTile {
+    x: 2912,
+    z: 4833,
+    level: 0,
+};
+
+/// Essence-mine entry edges from the fixed wizard table: one direct
+/// teleport hop per wizard, landing on the mine pad.
+fn essence_mine_edges(graph: &mut TransportGraph) {
+    for w in ESSENCE_WIZARDS {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Npc,
+            at: w.at,
+            to: ESSENCE_MINE_PAD,
+            loc_id: w.npc,
+            option: w.option,
+            ticks: ESSENCE_MINE_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Rune Mysteries".to_string()],
+            varp_req: vec![],
+            worn_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Elkoy's Tree Gnome Village maze escorts (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
+/// One Elkoy escort journey: `at` the Elkoy NPC's placement tile (jm2
+/// `==== NPC ====` placement, id resolved through `pack/npc.pack`), `to`
+/// the coord the script's `p_telejump(` literal lands on. The whole hop
+/// is one `Talk-to` (`opnpc1`) — the "Yes please."/"Can you show me
+/// out…" choice is execute, never a search arm — and the scripts carry no
+/// `p_delay`, so `ticks` is the 1 op base like the carts and spirit trees.
+#[derive(Debug, Clone, Copy)]
+struct ElkoyEscort {
+    /// npc.pack id of the Elkoy who escorts the player.
+    npc: i32,
+    at: WorldTile,
+    to: WorldTile,
+}
+
+/// The 2004 Elkoy escorts: the two `p_telejump(` destinations from
+/// `content/scripts/areas/area_gnome/scripts/elkoy.rs2` —
+/// `^elkoy_maze_coord` (the maze-side `[opnpc1,elkoy]` escort into the
+/// village) and `^elkoy_entrance_coord` (the village `[opnpc1,elkoy_village]`
+/// escort out) — resolved through `content/scripts/quests/quest_tree/
+/// configs/quest_tree.constant` (`0_39_49_8_56` → (2504,3192),
+/// `0_39_49_19_23` → (2515,3159)); origin tiles from the `==== NPC ====`
+/// placements in `content/maps/m39_49.jm2` (npc 473 elkoy at local
+/// (8,55) = (2504,3191), one tile south of the entrance coord; npc 474
+/// elkoy_village at local (18,23) = (2514,3159), one tile west of the maze
+/// coord); ids from `pack/npc.pack`. The edges carry the Tree Gnome
+/// Village journal name — `elkoy.rs2`'s `[opnpc1,…]` blocks gate on
+/// `%treequest` at every stage. The traveller walks no maze tiles: the
+/// hop lands straight on the village/entrance coord (the script's own
+/// landing, never a snap).
+const ELKOY_ESCORTS: &[ElkoyEscort] = &[
+    // elkoy (npc 473) by the maze entrance (m39_49 local (8,55)):
+    // `p_telejump(^elkoy_maze_coord)` lands in the village (2515,3159).
+    ElkoyEscort {
+        npc: 473,
+        at: WorldTile {
+            x: 2504,
+            z: 3191,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2515,
+            z: 3159,
+            level: 0,
+        },
+    },
+    // elkoy_village (npc 474) in the village (m39_49 local (18,23)):
+    // `p_telejump(^elkoy_entrance_coord)` lands at the maze entrance
+    // (2504,3192).
+    ElkoyEscort {
+        npc: 474,
+        at: WorldTile {
+            x: 2514,
+            z: 3159,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2504,
+            z: 3192,
+            level: 0,
+        },
+    },
+];
+
+/// Elkoy escort edges from the fixed 2004 route table: one `Talk-to` edge
+/// per escort, keyed from the Elkoy NPC's tile.
+fn elkoy_edges(graph: &mut TransportGraph) {
+    for e in ELKOY_ESCORTS {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Npc,
+            at: e.at,
+            to: e.to,
+            loc_id: e.npc,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Tree Gnome Village".to_string()],
+            varp_req: vec![],
+            worn_req: vec![],
         });
     }
 }
@@ -1859,6 +2237,515 @@ fn glider_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
         item_req: vec![],
         quest_req: vec![],
         varp_req: vec![GLIDER_QUEST_REQ],
+        worn_req: vec![],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Spirit trees: the `area_gnome` network (three script blocks, content-read).
+// ---------------------------------------------------------------------------
+
+/// Spirit-tree edges from `scripts/areas/area_gnome/scripts/spirit_tree.rs2`
+/// plus the same folder's `spirit_tree.constant`: each `[oploc1,<loc>]`
+/// block lists its destinations as `^…_tree` constants (a `$end_pos = ^…`
+/// assignment on every `case` line, or a direct `@spirit_tree_tele(^…)`
+/// call for the young tree's single destination). One directed edge per
+/// tree loc placement per destination: `at` the tree loc tile (jm2
+/// placement, like every loc-backed edge), `to` the destination constant's
+/// tile, `Talk-to` op 1, one tick. `varp_req` carries the quest gate the
+/// block checks (`%grandtree` / `%treequest` complete values, the same
+/// varps the gliders gate on); the members check in `spirit_tree_tele` is
+/// not a varp and is left off until WorldState.
+fn spirit_tree_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let Ok(script) = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("areas")
+            .join("area_gnome")
+            .join("scripts")
+            .join("spirit_tree.rs2"),
+    ) else {
+        return;
+    };
+    let Ok(constants) = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("areas")
+            .join("area_gnome")
+            .join("configs")
+            .join("spirit_tree.constant"),
+    ) else {
+        return;
+    };
+    // `^name` → the tree's tile (`0_mx_mz_lx_lz`, decoded like every other
+    // coord literal).
+    let mut tree_dests: HashMap<String, WorldTile> = HashMap::new();
+    for raw in constants.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix('^') else {
+            continue;
+        };
+        let Some((name, coord)) = rest.split_once('=') else {
+            continue;
+        };
+        if let Some((level, x, z)) = coord_literal(coord) {
+            let name = name.trim();
+            if !name.is_empty() {
+                tree_dests.insert(name.to_string(), WorldTile { x, z, level });
+            }
+        }
+    }
+    let all_consts = script_constants(content_root);
+    let varps = varp_ids_by_name(content_root);
+
+    for (op, name, body) in script_blocks(&script) {
+        if op != "oploc1" {
+            continue;
+        }
+        let Some(&loc_id) = ids.get(&name) else {
+            continue;
+        };
+        let Some(placements) = positions.get(&loc_id) else {
+            continue;
+        };
+        let mut dests = Vec::new();
+        for const_name in spirit_tree_dest_names(&body) {
+            if let Some(to) = tree_dests.get(&const_name) {
+                dests.push(*to);
+            }
+        }
+        if dests.is_empty() {
+            bump(skipped, SKIP_SPIRIT_NO_DEST, 1);
+            continue;
+        }
+        let varp_req = spirit_tree_gate(&body)
+            .and_then(|(varp, complete)| {
+                let varp_id = varps.get(&varp)?;
+                let value = all_consts.get(&complete)?;
+                Some(vec![(*varp_id, *value)])
+            })
+            .unwrap_or_default();
+        for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
+            for to in &dests {
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::SpiritTree,
+                    at,
+                    to: *to,
+                    loc_id,
+                    option: 1,
+                    ticks: SPIRIT_TREE_TICKS,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: varp_req.clone(),
+                    worn_req: vec![],
+                });
+            }
+        }
+    }
+}
+
+/// The `^<const>` destination names a spirit-tree `[oploc1,…]` block lists:
+/// the `$end_pos = ^…` assignments on `case` lines and direct
+/// `@spirit_tree_tele(^…)` calls. The block's initial `def_coord $end_pos =
+/// ^…` default is the tree's own tile (overridden by every case), never a
+/// destination.
+fn spirit_tree_dest_names(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.starts_with("case") {
+            if let Some(i) = line.find("$end_pos = ^") {
+                if let Some(name) = const_token(&line[i + "$end_pos = ^".len()..]) {
+                    out.push(name.to_string());
+                }
+            }
+        }
+        if let Some(i) = line.find("spirit_tree_tele(^") {
+            if let Some(name) = const_token(&line[i + "spirit_tree_tele(^".len()..]) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The leading identifier token (alphanumerics + `_`).
+fn const_token(rest: &str) -> Option<&str> {
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    if end > 0 {
+        Some(&rest[..end])
+    } else {
+        None
+    }
+}
+
+/// The `(varp name, complete constant)` gate a spirit-tree block declares
+/// (`if(%<varp> ! ^<complete>)` — the tree refuses to talk until the quest
+/// is done), or `None` for an un-gated block.
+fn spirit_tree_gate(body: &str) -> Option<(String, String)> {
+    for raw in body.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix("if(%") else {
+            continue;
+        };
+        let varp = const_token(rest)?;
+        let rest = rest[varp.len()..].trim_start().strip_prefix('!')?;
+        let complete = const_token(rest.trim_start().strip_prefix('^')?)?;
+        if !varp.is_empty() {
+            return Some((varp.to_string(), complete.to_string()));
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Wilderness levers: the Ardougne↔wilderness teleport pair.
+// ---------------------------------------------------------------------------
+
+/// Wilderness lever edges from `scripts/areas/area_ardougne_east/scripts/
+/// wilderness_lever.rs2` plus the folder's `wilderness_lever.constant`:
+/// each `[oploc1,<loc>]` block's `~player_teleport_normal(^…_coord)` call
+/// resolves through the constant's 5-part coord literal. One directed edge
+/// per lever loc placement: `at` the lever loc tile (jm2 placement, like
+/// every loc-backed edge), `to` the constant's tile, `Pull` op 1, two
+/// ticks. Kind stays [`TransportKind::Door`] (the pack wire already
+/// carries it; no version bump). The Ardougne→wilderness landing is inside
+/// the wilderness zone, so the router only relaxes that edge under
+/// `FindOptions::allow_wilderness`; the wilderness→Ardougne landing is not
+/// and is always legal. The `%warning_wilderness_teleport_lever` confirm
+/// dialog is execute, not search, and carries no edge.
+fn lever_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+) {
+    let dir = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_ardougne_east");
+    let Ok(script) = fs::read_to_string(dir.join("scripts").join("wilderness_lever.rs2")) else {
+        return;
+    };
+    let Ok(constants) = fs::read_to_string(dir.join("configs").join("wilderness_lever.constant"))
+    else {
+        return;
+    };
+    // `^name` → the teleport tile (`0_mx_mz_lx_lz`, decoded like every
+    // other coord literal).
+    let mut lever_dests: HashMap<String, WorldTile> = HashMap::new();
+    for raw in constants.lines() {
+        let line = raw.trim();
+        let Some(rest) = line.strip_prefix('^') else {
+            continue;
+        };
+        let Some((name, coord)) = rest.split_once('=') else {
+            continue;
+        };
+        if let Some((level, x, z)) = coord_literal(coord) {
+            let name = name.trim();
+            if !name.is_empty() {
+                lever_dests.insert(name.to_string(), WorldTile { x, z, level });
+            }
+        }
+    }
+
+    for (op, name, body) in script_blocks(&script) {
+        if op != "oploc1" {
+            continue;
+        }
+        let Some(&loc_id) = ids.get(&name) else {
+            continue;
+        };
+        let Some(placements) = positions.get(&loc_id) else {
+            continue;
+        };
+        let mut tos = Vec::new();
+        for args in call_args_all(&body, "~player_teleport_normal") {
+            let Some(dest) = args.first().and_then(|a| a.trim().strip_prefix('^')) else {
+                continue;
+            };
+            if let Some(to) = lever_dests.get(dest) {
+                tos.push(*to);
+            }
+        }
+        for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
+            for to in &tos {
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to: *to,
+                    loc_id,
+                    option: 1, // Pull (oploc1)
+                    ticks: LEVER_TICKS,
+                    dir: None,
+                    open_loc_id: None,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                });
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Al Kharid border toll and the Shantay northbound hop (item-gated gates).
+// ---------------------------------------------------------------------------
+
+/// The Al Kharid border toll: 10 coins (`inv_del(inv, coins, 10)` in
+/// `border_gate.rs2`'s `pass_toll_gate`, guarded by
+/// `inv_total(inv, coins) < 10`).
+const AL_KHARID_TOLL_COINS: i32 = 10;
+/// The Shantay henge doorway's `to`: `p_teleport(0_51_48_40_46)`
+/// (3304,3118) then `p_telejump(movecoord(coord,0,0,-3))` → (3304,3115)
+/// in `shantay_pass.rs2`'s `[queue,shantay_pass_enter]`.
+const SHANTAY_NORTH_TO: WorldTile = WorldTile {
+    x: 3304,
+    z: 3115,
+    level: 0,
+};
+/// The Shantay henge edge ticks: OP_BASE 1 + the `p_teleport` tick + the
+/// `p_telejump` tick (both `p_delay(0)` in the queue block).
+const SHANTAY_NORTH_TICKS: i32 = 3;
+
+/// Al Kharid border-toll and Shantay-pass edges: `TransportKind::Door`
+/// edges that cost an item, derived from `scripts/areas/area_alkharid/
+/// configs/border_gate.loc` and `shantay_pass.rs2` plus the jm2
+/// placements. The toll gates (`border_gate_toll_left`/`_right`, loc
+/// 2882/2883) parse as doors under the same [`parse_door_config`] rule
+/// (`op1=Open`) once their config's name-keyed blocks resolve through the
+/// loc id map ([`parse_door_config_ids`]), and derive their two
+/// crossings like every door: `at` the placement tile (m51_50 (4,27)/
+/// (4,28) = (3268,3227)/(3268,3228)), `to` the far-side walk-out,
+/// `open_loc_id` the config's `next_loc_stage` leaf (loc 1562/1563),
+/// `item_req` the 10-coin toll. The Shantay henge doorway (loc 4031,
+/// `op1=Go-through`) derives exactly the gated northbound hop — `at` the
+/// m51_48 (38,44) placement = (3302,3116), `to` [`SHANTAY_NORTH_TO`],
+/// `item_req` one Shantay pass (`inv_del(inv, shantay_pass, 1)` in the
+/// same block). The free desert exit — the same block's `coordz(coord)
+/// <= coordz(loc_coord)` teleport-jump — emits no edge; it stays a plain
+/// walk.
+fn toll_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    collision: &WorldCollision,
+) {
+    // The toll charge and the Shantay pass resolve by name through
+    // `pack/obj.pack`; a missing pack skips the family instead of faking
+    // an item id.
+    let objs = obj_ids_by_name(content_root);
+    let Some(&coins_id) = objs.get("coins") else {
+        return;
+    };
+    let Some(&pass_id) = objs.get("shantay_pass") else {
+        return;
+    };
+
+    let alkharid = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_alkharid");
+    let Ok(config) = fs::read_to_string(alkharid.join("configs").join("border_gate.loc")) else {
+        return;
+    };
+    let toll_ids = parse_door_config_ids(&config, ids);
+    let open_ids = parse_door_open_ids(&config, ids);
+    for id in toll_ids {
+        let Some(placements) = positions.get(&id) else {
+            continue;
+        };
+        for p in placements {
+            if p.level != 0 || p.shape != 0 {
+                continue;
+            }
+            let Some(dir) = door_dir(p.angle) else {
+                continue;
+            };
+            let at = WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            };
+            for dir in [dir, opposite(dir)] {
+                let Some(to) = door_far_side(at, dir, collision) else {
+                    continue;
+                };
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1, // Open (oploc1, `@find_and_talk_to_border_guard`)
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: open_ids.get(&id).copied(),
+                    skill_req: vec![],
+                    item_req: vec![(coins_id, AL_KHARID_TOLL_COINS)],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                });
+            }
+        }
+    }
+
+    // The Shantay henge: exactly the gated northbound hop, `at` the loc's
+    // placement tile (shape 10, unlike the wall doors).
+    let Some(&henge_id) = ids.get("shantay_pass_henge_doorway") else {
+        return;
+    };
+    let Some(placements) = positions.get(&henge_id) else {
+        return;
+    };
+    for p in placements {
+        if p.level != 0 {
+            continue;
+        }
+        let at = WorldTile {
+            x: p.x,
+            z: p.z,
+            level: p.level,
+        };
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at,
+            to: SHANTAY_NORTH_TO,
+            loc_id: henge_id,
+            option: 1, // Go-through (oploc1)
+            ticks: SHANTAY_NORTH_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(pass_id, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
+// ---------------------------------------------------------------------------
+
+/// The Zanaris shed door ticks: OP_BASE 1 + the door block's `p_delay(1)`
+/// + the `player_teleport_normal` cast `p_delay(2)` (the whole Open
+/// channel; the shimmer `mes` and the open anim add no delay).
+const ZANARIS_DOOR_TICKS: i32 = 4;
+
+/// The Zanaris shed door edge from `scripts/quests/quest_zanaris/scripts/
+/// quest_zanaris.rs2`'s `[oploc1,zanarisdoor]` block: the door opens
+/// (`~open_and_close_door2(loc_1532, $entering, door_open)` —
+/// `open_loc_id` the `loc_1532` open leaf) and, approached from the
+/// outside, teleports through to Zanaris
+/// (`~player_teleport_normal(0_50_149_20_56)` = (3220,9592)) when the
+/// player wears the Dramen staff (`inv_total(worn, dramen_staff) > 0` →
+/// `worn_req`) and is a member (`map_members = ^true` — the members flag
+/// the bot host already tracks in WorldState, so nothing extra is stored).
+/// The Lost City quest varp (`%zanaris`) gates the content, carried as the
+/// quest name. One edge per placement (a single m50_49 placement at the
+/// Lumbridge swamp shed): `at` the door loc tile, `to` the Zanaris
+/// landing. No other Zanaris locs derive — no fairy rings, no Entrana
+/// dungeon magic door, no `zanarismagicdoor`/`zanarismarketdoor`/
+/// `zanarisladderout` hops.
+fn zanaris_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+) {
+    let Ok(script) = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("quests")
+            .join("quest_zanaris")
+            .join("scripts")
+            .join("quest_zanaris.rs2"),
+    ) else {
+        return;
+    };
+    let Some((_, name, body)) = script_blocks(&script)
+        .into_iter()
+        .find(|(op, name, _)| op.as_str() == "oploc1" && name.as_str() == "zanarisdoor")
+    else {
+        return;
+    };
+    let Some(&loc_id) = ids.get(&name) else {
+        return;
+    };
+    // The open leaf: `~open_and_close_door2(loc_1532, $entering, …)`.
+    let open_loc_id = call_args(&body, "open_and_close_door2")
+        .and_then(|args| args.first().cloned())
+        .and_then(|leaf| {
+            leaf.trim()
+                .strip_prefix("loc_")
+                .and_then(|n| n.parse::<i32>().ok())
+        });
+    // The teleport landing: `~player_teleport_normal(0_50_149_20_56)`.
+    let Some(to) = call_args(&body, "player_teleport_normal")
+        .and_then(|args| args.first().cloned())
+        .and_then(|dest| coord_literal(&dest))
+        .map(|(level, x, z)| WorldTile { x, z, level })
+    else {
+        return;
+    };
+    // The Dramen staff id (`pack/obj.pack`); a missing pack skips the
+    // door instead of faking an id.
+    let Some(&staff_id) = obj_ids_by_name(content_root).get("dramen_staff") else {
+        return;
+    };
+    let Some(placements) = positions.get(&loc_id) else {
+        return;
+    };
+    for loc in placements {
+        if loc.level != 0 || loc.shape != 0 {
+            continue;
+        }
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            },
+            to,
+            loc_id,
+            option: 1, // Open (oploc1)
+            ticks: ZANARIS_DOOR_TICKS,
+            dir: None,
+            open_loc_id,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Lost City".to_string()],
+            varp_req: vec![],
+            worn_req: vec![staff_id],
+        });
     }
 }
 
@@ -1991,6 +2878,7 @@ fn push_spell_teleport(
         item_req,
         quest_req: vec![],
         varp_req: vec![],
+        worn_req: vec![],
     });
 }
 
@@ -2057,6 +2945,7 @@ fn jewellery_teleports(
                         item_req: vec![(obj_id, 1)],
                         quest_req: vec![],
                         varp_req: vec![],
+                        worn_req: vec![],
                     });
                 }
             }
@@ -2089,7 +2978,9 @@ fn jewellery_categories(content_root: &Path) -> HashMap<String, Vec<String>> {
         }
         if let Some(cat) = line.strip_prefix("category=") {
             if let Some(name) = cur {
-                out.entry(cat.trim().to_string()).or_default().push(name.to_string());
+                out.entry(cat.trim().to_string())
+                    .or_default()
+                    .push(name.to_string());
             }
         }
     }
@@ -2266,7 +3157,10 @@ fn def_coord_alias(line: &str) -> Option<String> {
     if !name.starts_with('$') || name.len() == 1 {
         return None;
     }
-    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'$' || b == b'_') {
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'$' || b == b'_')
+    {
         return None;
     }
     if !rhs.trim_start().starts_with("loc_coord") {
@@ -2489,8 +3383,249 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use client::config::LocType;
     use crate::collision::{bake_from_maps, WorldCollision};
+    use client::config::{Cache, LocType};
+    use client::io::JagFile;
+
+    /// The real Server content root this machine bakes against (the same
+    /// path `nav-pack` defaults to); `None` when the checkout is absent,
+    /// so the content-backed tests skip with a message instead of faking
+    /// coordinates.
+    fn real_content_root() -> Option<PathBuf> {
+        let root = PathBuf::from("/Users/acfrazier/experiments/Server/content");
+        if root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file() {
+            Some(root)
+        } else {
+            eprintln!(
+                "SKIP: Server content not found at {} (content-backed tests skipped)",
+                root.display()
+            );
+            None
+        }
+    }
+
+    /// The real client-cache loc defs (`nav-pack`'s collision table), or
+    /// `None` when the cache jag is absent.
+    fn real_loc_defs() -> Option<LocDefs> {
+        let jag = PathBuf::from("/Users/acfrazier/experiments/Server/engine/data/pack/config");
+        let bytes = std::fs::read(&jag).ok()?;
+        let cache = Cache::unpack(&JagFile::new(bytes));
+        Some(LocDefs::from_locs(&cache.locs))
+    }
+
+    /// Derive the transport graph from the real Server content (the
+    /// collision bake the graph's doors walk against); `None` when the
+    /// content root or client cache is absent, so the content-backed
+    /// tests skip with a message instead of faking coordinates.
+    fn derive_from_real_content() -> Option<(TransportGraph, WorldCollision)> {
+        let root = real_content_root()?;
+        let defs = real_loc_defs()?;
+        let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+            .expect("real Server content bakes");
+        let graph = derive_transports(&root, &defs, &wc);
+        Some((graph, wc))
+    }
+
+    /// The real content must derive the Rune Mysteries essence-mine
+    /// entries — one `TransportKind::Npc` edge per wizard who knows the
+    /// teleport (Aubury, Sedridor, Distentor, Cromperty, Brimstail), each
+    /// carrying the Rune Mysteries quest name and landing on the mine pad
+    /// (m45_75, the walkable centre anchor of the enclosed mine; the real
+    /// landing is randomised among the `essence_mine_teleports` enum
+    /// coords, so the executor accepts any landing in the mine). The gate
+    /// is the script's `%runemysteries >= ^runemysteries_complete` — the
+    /// `teleport_to_essence_mine` proc refuses below it. Skips with a
+    /// message when the Server content tree or the client cache is absent;
+    /// never fakes coordinates.
+    #[test]
+    fn derive_transports_emits_essence_mine_entries() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let ess: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| {
+                e.kind == TransportKind::Npc
+                    && e.quest_req.iter().any(|q| {
+                        q.to_ascii_lowercase().contains("rune mysteries") || q == "runemysteries"
+                    })
+            })
+            .cloned()
+            .collect();
+        assert!(ess.len() >= 4, "Aubury+Sedridor+…, got {}", ess.len());
+        // Each edge is the wizard NPC placement -> the enclosed mine pad.
+        for e in &ess {
+            assert_eq!(
+                e.to,
+                WorldTile {
+                    x: 2912,
+                    z: 4833,
+                    level: 0
+                },
+                "every wizard lands on the mine pad: {e:?}"
+            );
+            assert!(
+                e.quest_req
+                    .iter()
+                    .any(|q| q.to_ascii_lowercase().contains("rune mysteries")),
+                "Rune Mysteries on the entry: {e:?}"
+            );
+        }
+        // The five known wizards pin their mined placement tiles.
+        let wizards = [
+            (
+                553,
+                WorldTile {
+                    x: 3253,
+                    z: 3402,
+                    level: 0,
+                },
+            ), // aubury (Varrock)
+            (
+                300,
+                WorldTile {
+                    x: 3103,
+                    z: 9571,
+                    level: 0,
+                },
+            ), // head_wizard (tower cellar)
+            (
+                462,
+                WorldTile {
+                    x: 2594,
+                    z: 3089,
+                    level: 0,
+                },
+            ), // guild_wizard (Yanille)
+            (
+                844,
+                WorldTile {
+                    x: 2683,
+                    z: 3326,
+                    level: 0,
+                },
+            ), // ardounge_wizard (Cromperty)
+            (
+                171,
+                WorldTile {
+                    x: 2390,
+                    z: 9810,
+                    level: 0,
+                },
+            ), // gnome_brimstail
+        ];
+        for (npc, at) in wizards {
+            assert!(
+                ess.iter().any(|e| e.loc_id == npc && e.at == at),
+                "no entry edge from {at:?} (npc {npc})"
+            );
+        }
+    }
+
+    /// The real content must derive Elkoy's two Tree Gnome Village maze
+    /// escorts (`elkoy_edges`): the maze-side Elkoy (npc 473) escorts into
+    /// the village (`p_telejump(^elkoy_maze_coord)` → (2515,3159)) and the
+    /// village Elkoy (npc 474) escorts out (`p_telejump(^elkoy_entrance_coord)`
+    /// → (2504,3192)), each `Talk-to` op 1 carrying the Tree Gnome Village
+    /// quest name. Skips with a message when the Server content tree or the
+    /// client cache is absent; never fakes coordinates.
+    #[test]
+    fn derive_transports_emits_elkoy_escort_both_ways() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let elk: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| {
+                e.kind == TransportKind::Npc
+                    && ((e.to.x == 2504 && e.to.z == 3192) || (e.to.x == 2515 && e.to.z == 3159))
+            })
+            .cloned()
+            .collect();
+        assert_eq!(
+            elk.len(),
+            2,
+            "maze-side + village escort, got {}",
+            elk.len()
+        );
+        // The maze-side Elkoy (npc 473) sits at the maze entrance
+        // (m39_49 local (8,55) = (2504,3191)) and escorts into the village;
+        // the village Elkoy (npc 474, local (18,23) = (2514,3159)) escorts
+        // back out to the entrance. Both hops land on the script's own
+        // `p_telejump` coords (the quest_tree.constant values), never a
+        // snap.
+        for e in &elk {
+            assert_eq!(e.option, 1, "Talk-to: {e:?}");
+            assert!(
+                e.quest_req.iter().any(|q| q == "Tree Gnome Village"),
+                "Tree Gnome Village on the escort: {e:?}"
+            );
+        }
+        let into_maze = elk
+            .iter()
+            .find(|e| {
+                e.at == WorldTile {
+                    x: 2504,
+                    z: 3191,
+                    level: 0,
+                }
+            })
+            .expect("maze-side Elkoy placement");
+        assert_eq!(into_maze.loc_id, 473);
+        assert_eq!(
+            into_maze.to,
+            WorldTile {
+                x: 2515,
+                z: 3159,
+                level: 0
+            }
+        );
+        let out_maze = elk
+            .iter()
+            .find(|e| {
+                e.at == WorldTile {
+                    x: 2514,
+                    z: 3159,
+                    level: 0,
+                }
+            })
+            .expect("village Elkoy placement");
+        assert_eq!(out_maze.loc_id, 474);
+        assert_eq!(
+            out_maze.to,
+            WorldTile {
+                x: 2504,
+                z: 3192,
+                level: 0
+            }
+        );
+    }
+
+    /// The real content must derive the Zanaris shed door: the
+    /// `[oploc1,zanarisdoor]` block's Open channel teleports through to
+    /// Zanaris (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is
+    /// worn, so the door edge carries the staff's obj id as `worn_req`
+    /// and the Lost City quest name. Skips with a message when the Server
+    /// content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_zanaris_shed_door_with_worn_dramen() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let e = graph
+            .edges
+            .iter()
+            .find(|e| e.kind == TransportKind::Door && !e.worn_req.is_empty())
+            .expect("shed door");
+        assert!(!e.worn_req.is_empty());
+        assert!(
+            e.to.x > 3000 && e.to.z > 9000,
+            "Zanaris landing, not Lumbridge swamp"
+        );
+    }
 
     /// A throwaway content root written on demand, removed on drop.
     struct Fixture {
@@ -2501,10 +3636,8 @@ mod tests {
         fn new() -> Self {
             static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
             let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "nav-transport-fixture-{}-{n}",
-                std::process::id()
-            ));
+            let root = std::env::temp_dir()
+                .join(format!("nav-transport-fixture-{}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(&root).unwrap();
             Fixture { root }
@@ -2602,18 +3735,498 @@ mod tests {
             .find(|e| e.dir == Some(DoorDir::S))
             .expect("south-bound door edge");
         for d in [n, s] {
-            assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+            assert_eq!(
+                d.at,
+                WorldTile {
+                    x: 2816,
+                    z: 3438,
+                    level: 0
+                }
+            );
             assert_eq!(d.open_loc_id, Some(1531));
             assert_eq!(d.option, 1);
             assert_eq!(d.ticks, 1);
             assert!(d.varp_req.is_empty());
         }
-        assert_eq!(n.to, WorldTile { x: 2816, z: 3439, level: 0 });
+        assert_eq!(
+            n.to,
+            WorldTile {
+                x: 2816,
+                z: 3439,
+                level: 0
+            }
+        );
         // The south-bound walk-out stops on wall 980's own tile: its W_S
         // face flag stands (the wall's face flag never disqualifies).
-        assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
+        assert_eq!(
+            s.to,
+            WorldTile {
+                x: 2816,
+                z: 3437,
+                level: 0
+            }
+        );
         // The at-index keys the door loc tile with both directed edges.
         assert_eq!(graph.at[&n.at].len(), 2);
+    }
+
+    /// The real content must derive at least one `TransportKind::Door`
+    /// edge for the Sinclair wooden fence gates (loc 1551 / 1553):
+    /// `door_edges` reads `scripts/general_use/configs/gates.loc` into the
+    /// door set, not only `scripts/doors/configs/*.loc`. Skips with a
+    /// message when the Server content tree or the client cache is absent;
+    /// never fakes coordinates.
+    #[test]
+    fn derive_transports_content_emits_sinclair_gate_edges() {
+        let Some(root) = real_content_root() else {
+            return;
+        };
+        let Some(defs) = real_loc_defs() else {
+            eprintln!("SKIP: client cache config jag missing");
+            return;
+        };
+        let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+            .expect("real Server content bakes");
+        let graph = derive_transports(&root, &defs, &wc);
+        let gates: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 1551 || e.loc_id == 1553))
+            .collect();
+        assert!(
+            !gates.is_empty(),
+            "no Door edges for the Sinclair wooden gates (loc 1551/1553) from the real content"
+        );
+    }
+
+    /// The real content must derive the spirit-tree network: the stronghold
+    /// tree (ent) flies to village/varrock/khazard, the village tree
+    /// (stronghold_ent) back to khazard/varrock/stronghold, and each young
+    /// tree (loc_1317, placed twice) to the village — 8 directed hops, the
+    /// same count the rs2b0t catalog carries. Skips with a message when the
+    /// Server content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_spirit_tree_edges() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let trees: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::SpiritTree)
+            .collect();
+        let n = trees.len();
+        assert!(n >= 8, "rs2b0t catalog is 8 directed hops, got {n}");
+        // The stronghold tree carries the Grand Tree gate
+        // (`%grandtree >= ^grandtree_complete`), the village and young
+        // trees the Tree Gnome Village gate (`%treequest >= ^tree_complete`)
+        // — the same varps the gliders gate on.
+        for e in &trees {
+            assert_eq!(e.option, 1, "Talk-to");
+            assert_eq!(e.ticks, SPIRIT_TREE_TICKS);
+            assert_eq!(e.dir, None);
+            match e.loc_id {
+                1293 => assert_eq!(e.varp_req, vec![(150, 160)]),
+                1294 | 1317 => assert_eq!(e.varp_req, vec![(111, 9)]),
+                other => panic!("unexpected spirit-tree loc id {other}"),
+            }
+        }
+        // The stronghold tree (ent, loc 1293) reaches the village, varrock,
+        // and khazard trees; the village tree (stronghold_ent, loc 1294)
+        // reaches back to khazard, varrock, and the stronghold.
+        let dests = |loc_id: i32| -> Vec<WorldTile> {
+            let mut v: Vec<WorldTile> = trees
+                .iter()
+                .filter(|e| e.loc_id == loc_id)
+                .map(|e| e.to)
+                .collect();
+            v.sort_by_key(|t| (t.x, t.z));
+            v.dedup();
+            v
+        };
+        assert_eq!(
+            dests(1293),
+            vec![
+                WorldTile {
+                    x: 2542,
+                    z: 3169,
+                    level: 0
+                }, // ^village_tree
+                WorldTile {
+                    x: 2555,
+                    z: 3259,
+                    level: 0
+                }, // ^khazard_tree
+                WorldTile {
+                    x: 3179,
+                    z: 3507,
+                    level: 0
+                }, // ^varrock_tree
+            ]
+        );
+        assert_eq!(
+            dests(1294),
+            vec![
+                WorldTile {
+                    x: 2461,
+                    z: 3444,
+                    level: 0
+                }, // ^stronghold_tree
+                WorldTile {
+                    x: 2555,
+                    z: 3259,
+                    level: 0
+                }, // ^khazard_tree
+                WorldTile {
+                    x: 3179,
+                    z: 3507,
+                    level: 0
+                }, // ^varrock_tree
+            ]
+        );
+        // The young tree (loc_1317) is placed twice and only reaches the
+        // village.
+        let young: Vec<_> = trees.iter().filter(|e| e.loc_id == 1317).collect();
+        assert_eq!(young.len(), 2);
+        assert!(young.iter().all(|e| e.to
+            == WorldTile {
+                x: 2542,
+                z: 3169,
+                level: 0
+            }));
+    }
+
+    /// The real content must derive at least one `TransportKind::Npc` edge
+    /// for the Shilo↔Brimhaven cart (`cart_edges`, the `hajedy.rs2` /
+    /// `vigroy.rs2` route pair): coins on the fare and the Shilo Village
+    /// journal name on the Brim→Shilo hop. Skips with a message when the
+    /// Server content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_shilo_brimhaven_cart() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let carts: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Npc)
+            .cloned()
+            .collect();
+        assert!(
+            carts.len() >= 2,
+            "both cart directions derive, got {}",
+            carts.len()
+        );
+        assert!(
+            carts.iter().any(|e| !e.item_req.is_empty()),
+            "coins on the fare"
+        );
+        assert!(
+            carts.iter().any(|e| !e.quest_req.is_empty()),
+            "Shilo complete on Brim→Shilo"
+        );
+    }
+
+    /// The real content must derive the two wilderness lever hops
+    /// (`wilderness_lever.rs2` locs 1814/1815): the Ardougne lever's `to`
+    /// is inside the wilderness zone and the wilderness lever's `to` is
+    /// not. Skips with a message when the Server content tree or the
+    /// client cache is absent; never fakes coordinates.
+    #[test]
+    fn derive_transports_emits_wildy_ardougne_levers() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let levers: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 1814 || e.loc_id == 1815)
+            .cloned()
+            .collect();
+        assert!(
+            levers.len() >= 2,
+            "both lever directions derive, got {}",
+            levers.len()
+        );
+        assert!(
+            levers
+                .iter()
+                .any(|e| crate::wilderness::in_wilderness(e.to)),
+            "the Ardougne→wildy lever must land inside the wilderness"
+        );
+        assert!(
+            levers
+                .iter()
+                .any(|e| !crate::wilderness::in_wilderness(e.to)),
+            "the wildy→Ardougne lever must land outside the wilderness"
+        );
+    }
+
+    /// The real content must derive the Al Kharid border toll and the
+    /// Shantay northbound hop as item-gated `TransportKind::Door` edges.
+    /// The toll gates (`border_gate_toll_left`/`_right`, loc 2882/2883 —
+    /// the m51_50 (4,27)/(4,28) placements = (3268,3227)/(3268,3228))
+    /// carry the 10-coin toll (`inv_del(inv, coins, 10)` in
+    /// border_gate.rs2's `pass_toll_gate`); the Shantay henge doorway
+    /// (loc 4031, m51_48 (38,44) = (3302,3116)) derives exactly one gated
+    /// hop into the desert — `to` (3304,3115), the landing of the
+    /// `[queue,shantay_pass_enter]` `p_teleport(0_51_48_40_46)` +
+    /// `p_telejump(movecoord(coord,0,0,-3))`, `item_req` one Shantay pass
+    /// (obj 1854). The free desert exit (the `coordz(coord) <=
+    /// coordz(loc_coord)` teleport-jump in the same `[oploc1,...]` block)
+    /// must NOT become an edge. Skips with a message when the Server
+    /// content tree or the client cache is absent; never fakes
+    /// coordinates.
+    #[test]
+    fn derive_transports_emits_alkharid_toll_and_shantay_north() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        // Both toll gates derive their two crossings (dir + opposite),
+        // pinned to the mined placements.
+        let tolls: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && (e.loc_id == 2882 || e.loc_id == 2883))
+            .cloned()
+            .collect();
+        assert!(
+            !tolls.is_empty(),
+            "no Door edges for the Al Kharid toll gates (loc 2882/2883)"
+        );
+        assert_eq!(
+            tolls.iter().filter(|e| e.loc_id == 2882).count(),
+            2,
+            "left toll gate derives both crossings"
+        );
+        assert_eq!(
+            tolls.iter().filter(|e| e.loc_id == 2883).count(),
+            2,
+            "right toll gate derives both crossings"
+        );
+        for e in &tolls {
+            assert_eq!(
+                e.at,
+                if e.loc_id == 2882 {
+                    WorldTile {
+                        x: 3268,
+                        z: 3227,
+                        level: 0,
+                    }
+                } else {
+                    WorldTile {
+                        x: 3268,
+                        z: 3228,
+                        level: 0,
+                    }
+                }
+            );
+            assert!(
+                e.item_req.iter().any(|(id, n)| *id == 995 && *n >= 10),
+                "10-coin toll on {e:?}"
+            );
+            assert_eq!(e.option, 1, "Open op");
+            assert_eq!(
+                e.open_loc_id,
+                Some(if e.loc_id == 2882 { 1562 } else { 1563 })
+            );
+        }
+        // The Shantay henge carries exactly the one gated northbound hop.
+        let henge: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 4031)
+            .cloned()
+            .collect();
+        assert_eq!(
+            henge.len(),
+            1,
+            "only the gated northbound hop derives, got {}",
+            henge.len()
+        );
+        assert_eq!(
+            henge[0].at,
+            WorldTile {
+                x: 3302,
+                z: 3116,
+                level: 0,
+            }
+        );
+        assert_eq!(
+            henge[0].to,
+            WorldTile {
+                x: 3304,
+                z: 3115,
+                level: 0,
+            }
+        );
+        assert!(
+            henge[0]
+                .item_req
+                .iter()
+                .any(|(id, n)| *id == 1854 && *n >= 1),
+            "Shantay pass on the northbound hop"
+        );
+        assert_eq!(henge[0].option, 1, "Go-through op");
+        assert_eq!(henge[0].dir, None);
+    }
+
+    /// The Ardougne→wilderness lever is an enter-wildy hop: default
+    /// [`crate::router::find`] must never relax it (its `to` is inside the
+    /// wilderness zone), and [`crate::router::find_with`] with
+    /// `allow_wilderness` must route through it. Fixture: an isolated
+    /// content root whose only lever is that one (same placement and
+    /// `p_teleport` destination constant the real content declares).
+    #[test]
+    fn default_find_skips_the_ardougne_to_wildy_lever() {
+        use crate::router::{find, find_with, FindOptions, RouteError};
+        use crate::wilderness::in_wilderness;
+
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1814=wildinlever\n");
+        fx.write(
+            "scripts/areas/area_ardougne_east/configs/wilderness_lever.constant",
+            "^ardougne_to_wilderness_coord = 0_49_61_18_20\n",
+        );
+        fx.write(
+            "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
+            "\
+[oploc1,wildinlever]
+p_arrivedelay;
+if (%warning_wilderness_teleport_lever = ^false) {
+    ~mesbox(\"Warning! Pulling the lever will teleport you deep into the wilderness.\");
+    def_int $choice = ~p_choice3_header(\"Yes I'm brave.\", 1, \"Eep! The wilderness... No thank you.\", 2, \"Yes please, don't show this message again.\", 3, \"Are you sure you wish to pull it?\");
+    if ($choice = 2) {
+        return;
+    }
+    if ($choice = 3) {
+        %warning_wilderness_teleport_lever = ^true;
+    }
+}
+anim(human_leverdown, 0);
+sound_synth(lever, 1, 0);
+loc_change(hauntedleverdown, 7);
+if_close;
+p_delay(1);
+mes(\"You pull the lever...\");
+p_delay(0);
+~player_teleport_normal(^ardougne_to_wilderness_coord);
+mes(\"...And teleport into the wilderness.\");
+",
+        );
+        // m40_51 local (1,47) = absolute (2561,3311,0); the constant
+        // `0_49_61_18_20` = (3154,3924,0), inside the surface zone.
+        fx.write(
+            "maps/m40_51.jm2",
+            "\
+==== MAP ====
+0 1 47: h1 o6 u50
+==== LOC ====
+0 1 47: 1814 4
+",
+        );
+        let defs = loc_defs(&[(1814, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        let at = WorldTile {
+            x: 2561,
+            z: 3311,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3154,
+            z: 3924,
+            level: 0,
+        };
+        let levers: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1814)
+            .cloned()
+            .collect();
+        assert_eq!(levers.len(), 1, "one placement, one Pull edge");
+        assert_eq!(levers[0].at, at);
+        assert_eq!(levers[0].to, to);
+        assert_eq!(levers[0].option, 1); // Pull (oploc1)
+        assert_eq!(levers[0].dir, None);
+        assert!(in_wilderness(to));
+
+        // Default find: the enter-wildy hop is never relaxed, and no walk
+        // path can reach the landing — NoPath.
+        assert!(matches!(find(&wc, &graph, at, to), Err(RouteError::NoPath)));
+        // find_with(allow_wilderness): the same hop routes through.
+        let route = find_with(
+            &wc,
+            &graph,
+            at,
+            to,
+            FindOptions {
+                allow_teleports: false,
+                allow_wilderness: true,
+            },
+        )
+        .expect("allow_wilderness routes the Ardougne→wildy lever");
+        assert_eq!(route.dest, to);
+    }
+
+    /// The process nav pack path (`$NAV_PACK` or `~/.274bot/274bot.navpack`,
+    /// the same default `nav-pack` writes and the panel reads).
+    fn default_pack_path() -> PathBuf {
+        match std::env::var("NAV_PACK") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => match std::env::var("HOME") {
+                Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
+                Err(_) => PathBuf::from(".274bot/274bot.navpack"),
+            },
+        }
+    }
+
+    /// The gates seam: a route must now exist from Seers street
+    /// (2725,3485,0) to the rock-crab shore (2710,3720,0) once the fence
+    /// gates join the door set. Loads the baked process pack (the rebaked
+    /// one carries the gate edges) if present, else bakes + derives from
+    /// the Server content. A `NoPath` here is the honest two-component
+    /// signal — the test must fail, never be papered over with a fake
+    /// corridor or a bank door.
+    #[test]
+    fn seers_street_reaches_rock_crabs_after_gates() {
+        use crate::router::find;
+        use crate::world::NavWorld;
+
+        let from = WorldTile {
+            x: 2725,
+            z: 3485,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 2710,
+            z: 3720,
+            level: 0,
+        };
+        let pack = default_pack_path();
+        let (collision, graph) = match NavWorld::load_pack(&pack) {
+            Ok(world) => (world.collision, world.graph),
+            Err(e) => {
+                let Some(root) = real_content_root() else {
+                    panic!(
+                        "no nav pack at {} ({e:?}) and no Server content to bake the fallback",
+                        pack.display()
+                    );
+                };
+                let defs = real_loc_defs().expect("client cache config jag");
+                let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+                    .expect("real Server content bakes");
+                let graph = derive_transports(&root, &defs, &wc);
+                (wc, graph)
+            }
+        };
+        let route = find(&collision, &graph, from, to).unwrap_or_else(|e| {
+            panic!("Seers street -> rock crabs must route once gates join: {e:?}")
+        });
+        assert_eq!(route.dest, to);
     }
 
     #[test]
@@ -2672,15 +4285,36 @@ switch_coord (loc_coord) {
             .find(|e| e.dir == Some(DoorDir::S))
             .expect("south-bound door edge");
         for d in [n, s] {
-            assert_eq!(d.at, WorldTile { x: 2816, z: 3438, level: 0 });
+            assert_eq!(
+                d.at,
+                WorldTile {
+                    x: 2816,
+                    z: 3438,
+                    level: 0
+                }
+            );
             assert_eq!(d.option, 1);
             assert_eq!(d.ticks, 1);
         }
         // (2816,3439) carries the closed door's own south-face stamp, which
         // stands (face flags never disqualify); the south far side is the
         // open tile straight below the door.
-        assert_eq!(n.to, WorldTile { x: 2816, z: 3439, level: 0 });
-        assert_eq!(s.to, WorldTile { x: 2816, z: 3437, level: 0 });
+        assert_eq!(
+            n.to,
+            WorldTile {
+                x: 2816,
+                z: 3439,
+                level: 0
+            }
+        );
+        assert_eq!(
+            s.to,
+            WorldTile {
+                x: 2816,
+                z: 3437,
+                level: 0
+            }
+        );
 
         // One ladder placement (id 1747 @ 2826,3402,0) climbing to
         // (1,2826,3468): one edge per placement — `at` the loc tile
@@ -2697,7 +4331,14 @@ switch_coord (loc_coord) {
             level: 1,
         };
         let ladder = &ladders[0];
-        assert_eq!(ladder.at, WorldTile { x: 2826, z: 3402, level: 0 });
+        assert_eq!(
+            ladder.at,
+            WorldTile {
+                x: 2826,
+                z: 3402,
+                level: 0
+            }
+        );
         assert_eq!(ladder.to, landing);
         assert_eq!(ladder.dir, None);
         assert_eq!(ladder.open_loc_id, None);
@@ -2777,7 +4418,14 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
         };
         let e = &edges[0];
         // One edge per placement: `at` the loc tile, `to` the shortcut dest.
-        assert_eq!(e.at, WorldTile { x: 2821, z: 3397, level: 0 });
+        assert_eq!(
+            e.at,
+            WorldTile {
+                x: 2821,
+                z: 3397,
+                level: 0
+            }
+        );
         assert_eq!(e.to, landing);
         assert_eq!(e.dir, None);
         assert_eq!(e.open_loc_id, None);
@@ -2830,7 +4478,9 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
     #[test]
     fn parse_statement_classifies_handoffs_and_dialogs() {
         assert!(matches!(
-            parse_statement("@ladder_options(movecoord(coord(), 0, 1, 0), movecoord(coord(), 0, -1, 0));"),
+            parse_statement(
+                "@ladder_options(movecoord(coord(), 0, 1, 0), movecoord(coord(), 0, -1, 0));"
+            ),
             Some(Outcome::Skipped(SKIP_DIALOG))
         ));
         assert!(matches!(
@@ -2916,10 +4566,7 @@ p_arrivedelay;
             &mut rules,
         );
         let (_, rule) = rules.get(&("laddermiddle".to_string(), 1)).unwrap();
-        assert!(matches!(
-            rule.fallback,
-            Some(Outcome::Skipped(SKIP_DIALOG))
-        ));
+        assert!(matches!(rule.fallback, Some(Outcome::Skipped(SKIP_DIALOG))));
     }
 
     #[test]
@@ -2947,11 +4594,16 @@ p_arrivedelay;
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let graph = derive_transports(fx.path(), &defs, &wc);
         // The unknown ladder name resolves nothing; the only edges are the
-        // explicit 2004 boat route and gnome-glider tables.
+        // explicit 2004 boat route, cart, essence-wizard, and gnome-glider
+        // tables.
         let explicit = graph
             .edges
             .iter()
-            .filter(|e| e.kind == TransportKind::Boat || e.kind == TransportKind::Glider)
+            .filter(|e| {
+                e.kind == TransportKind::Boat
+                    || e.kind == TransportKind::Glider
+                    || e.kind == TransportKind::Npc
+            })
             .count();
         assert_eq!(explicit, graph.edges.len());
         assert_eq!(
@@ -2961,6 +4613,16 @@ p_arrivedelay;
                 .filter(|e| e.kind == TransportKind::Boat)
                 .count(),
             8
+        );
+        // 2 carts + the 5 essence-mine wizard entries + the 2 Elkoy maze
+        // escorts.
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .filter(|e| e.kind == TransportKind::Npc)
+                .count(),
+            9
         );
         assert_eq!(
             graph
@@ -2988,10 +4650,7 @@ p_arrivedelay;
         let defs = loc_defs(&[(1530, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let graph = derive_transports(fx.path(), &defs, &wc);
-        assert!(graph
-            .edges
-            .iter()
-            .all(|e| e.kind != TransportKind::Door));
+        assert!(graph.edges.iter().all(|e| e.kind != TransportKind::Door));
     }
 
     #[test]
@@ -3028,7 +4687,14 @@ p_arrivedelay;
                 level: 0,
             },
         );
-        assert_eq!(ps_musa.to, WorldTile { x: 2956, z: 3146, level: 0 });
+        assert_eq!(
+            ps_musa.to,
+            WorldTile {
+                x: 2956,
+                z: 3146,
+                level: 0
+            }
+        );
         assert_eq!(ps_musa.option, 1); // Talk-to
         assert_eq!(ps_musa.ticks, 9); // set_sail delay 7 + gangplank crossing 2
         assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
@@ -3046,7 +4712,14 @@ p_arrivedelay;
                 level: 0,
             },
         );
-        assert_eq!(musa_ps.to, WorldTile { x: 3029, z: 3217, level: 0 });
+        assert_eq!(
+            musa_ps.to,
+            WorldTile {
+                x: 3029,
+                z: 3217,
+                level: 0
+            }
+        );
         assert_eq!(musa_ps.ticks, 9);
 
         // No boat edge lands on a boat-interior/water tile: every `to` is a
@@ -3084,11 +4757,24 @@ p_arrivedelay;
                 level: 1,
             },
         );
-        assert_eq!(khazard.to, WorldTile { x: 2680, z: 3150, level: 0 });
+        assert_eq!(
+            khazard.to,
+            WorldTile {
+                x: 2680,
+                z: 3150,
+                level: 0
+            }
+        );
         assert_eq!(khazard.ticks, 9); // set_sail_cairn delay 9, direct landing
         let shanks_sarim = shanks
             .iter()
-            .find(|s| s.to == WorldTile { x: 3047, z: 3235, level: 0 })
+            .find(|s| {
+                s.to == WorldTile {
+                    x: 3047,
+                    z: 3235,
+                    level: 0,
+                }
+            })
             .expect("Shilo → Port Sarim boat");
         assert_eq!(shanks_sarim.ticks, 15);
     }
@@ -3233,18 +4919,12 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             z: 3430,
             level: 0,
         };
-        let hub_edges: Vec<_> = gliders
-            .iter()
-            .filter(|e| e.at == hub)
-            .collect();
+        let hub_edges: Vec<_> = gliders.iter().filter(|e| e.at == hub).collect();
         assert_eq!(hub_edges.len(), 4);
         assert!(hub_edges.iter().any(|e| e.to == sindarpos));
         assert!(hub_edges.iter().any(|e| e.to == gandius));
         assert!(hub_edges.iter().any(|e| e.to == lemanto_andra));
-        let sindarpos_edges: Vec<_> = gliders
-            .iter()
-            .filter(|e| e.at == sindarpos)
-            .collect();
+        let sindarpos_edges: Vec<_> = gliders.iter().filter(|e| e.at == sindarpos).collect();
         assert_eq!(sindarpos_edges.len(), 1);
         assert_eq!(sindarpos_edges[0].to, hub);
         // Lemanto Andra is one-way: no pad → hub flight exists in
@@ -3298,7 +4978,13 @@ data=tele_coord,0_45_57_10_31
         let varrock = graph
             .teleports
             .iter()
-            .find(|e| e.to == WorldTile { x: 3213, z: 3424, level: 0 })
+            .find(|e| {
+                e.to == WorldTile {
+                    x: 3213,
+                    z: 3424,
+                    level: 0,
+                }
+            })
             .expect("Varrock teleport");
         assert_eq!(varrock.kind, TransportKind::Teleport);
         assert_eq!(varrock.skill_req, vec![(SKILL_MAGIC, 25)]);
@@ -3308,7 +4994,13 @@ data=tele_coord,0_45_57_10_31
         let trollheim = graph
             .teleports
             .iter()
-            .find(|e| e.to == WorldTile { x: 2890, z: 3679, level: 0 })
+            .find(|e| {
+                e.to == WorldTile {
+                    x: 2890,
+                    z: 3679,
+                    level: 0,
+                }
+            })
             .expect("Trollheim teleport");
         // The trailing `null,null` rune-slot padding is dropped.
         assert_eq!(trollheim.item_req, vec![(554, 2), (563, 2)]);
@@ -3377,12 +5069,18 @@ p_delay(1);
             assert_eq!(e.option, 4); // Rub (opheld4)
             assert!(e.skill_req.is_empty());
         }
-        assert!(glory
-            .iter()
-            .any(|e| e.to == WorldTile { x: 3087, z: 3496, level: 0 })); // Edgeville
-        assert!(glory
-            .iter()
-            .any(|e| e.to == WorldTile { x: 3293, z: 3163, level: 0 })); // Al Kharid
+        assert!(glory.iter().any(|e| e.to
+            == WorldTile {
+                x: 3087,
+                z: 3496,
+                level: 0
+            })); // Edgeville
+        assert!(glory.iter().any(|e| e.to
+            == WorldTile {
+                x: 3293,
+                z: 3163,
+                level: 0
+            })); // Al Kharid
 
         // Dueling: the `_category_136` script applies to every
         // `category=category_136` obj in enchanted_jewelry.obj.
@@ -3391,7 +5089,14 @@ p_delay(1);
             .iter()
             .find(|e| e.loc_id == 2552)
             .expect("ring of dueling teleport");
-        assert_eq!(duel.to, WorldTile { x: 3315, z: 3235, level: 0 });
+        assert_eq!(
+            duel.to,
+            WorldTile {
+                x: 3315,
+                z: 3235,
+                level: 0
+            }
+        );
         assert_eq!(duel.item_req, vec![(2552, 1)]);
         assert_eq!(duel.ticks, JEWELLERY_TELEPORT_TICKS);
 

@@ -22,11 +22,7 @@ pub enum Proof {
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
     /// An NPC of `r#type` stands on the tile.
-    NpcAt {
-        r#type: usize,
-        x: i32,
-        z: i32,
-    },
+    NpcAt { r#type: usize, x: i32, z: i32 },
 }
 
 impl Proof {
@@ -89,7 +85,7 @@ mod tests {
     use super::*;
     use api::snapshot::GameSnapshot;
     use client::client::{Client, ClientConfig, ClientNpc};
-    use client::config::if_type::{ComponentType, IfType};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::config::ObjType;
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
@@ -117,24 +113,33 @@ mod tests {
         // The client's iface template already has the TYPE_INV widget;
         // fill it the way the server's `UPDATE_INV_FULL` does (stored
         // values are `obj_id + 1`: a real Bones id 526 stores as 527).
-        match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
-            Some(inv) => {
+        match c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            Some(id) => {
+                let inv = c.iface_mut(id).unwrap();
                 inv.link_obj_type = Some(vec![527, 996]);
                 inv.link_obj_number = Some(vec![1, 100]);
             }
-            None => c.ifaces.push(Some(IfType {
-                r#type: ComponentType::TYPE_INV,
-                link_obj_type: Some(vec![527, 996]),
-                link_obj_number: Some(vec![1, 100]),
-                ..Default::default()
-            })),
+            None => {
+                let id = c.push_iface(IfType {
+                    r#type: ComponentType::TYPE_INV,
+                    ..Default::default()
+                });
+                c.set_iface_mut(
+                    id,
+                    IfTypeMut {
+                        link_obj_type: Some(vec![527, 996]),
+                        link_obj_number: Some(vec![1, 100]),
+                        ..Default::default()
+                    },
+                );
+            }
         }
         c.chat_text[0] = "Welcome to RuneScape".into();
         let mut npc = ClientNpc::default();
         npc.r#type = Some(708);
         npc.entity.x = 100;
         npc.entity.z = 200;
-        c.npc[3] = Some(npc);
+        c.npc[3] = Some(Box::new(npc));
         c.npc_ids[0] = 3;
         c.npc_count = 1;
         for prot in [
@@ -228,14 +233,8 @@ mod tests {
     #[test]
     fn chat_matches_the_ring_head_line() {
         let s = snap(&mut seeded());
-        assert!(Proof::Chat {
-            needle: "Welcome"
-        }
-        .check(&s, None));
-        assert!(!Proof::Chat {
-            needle: "arrived"
-        }
-        .check(&s, None));
+        assert!(Proof::Chat { needle: "Welcome" }.check(&s, None));
+        assert!(!Proof::Chat { needle: "arrived" }.check(&s, None));
     }
 
     #[test]

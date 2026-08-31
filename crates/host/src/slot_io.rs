@@ -98,6 +98,10 @@ pub struct SlotInput {
     /// every tick (host-side; the old `SlotLoop::full_rate` stub moved
     /// here so the panel can reach it).
     full_rate: AtomicBool,
+    /// Per-slot CpuPix3D (else GPU). Applied when the slot lazily builds
+    /// its `Renderer` — flipping it on a live slot drops + reattaches the
+    /// head (the `Client` and its socket stay up).
+    prefer_cpu: AtomicBool,
     rx: Mutex<Option<Receiver<InputEv>>>,
 }
 
@@ -106,6 +110,7 @@ impl SlotInput {
         std::sync::Arc::new(Self {
             enabled: AtomicBool::new(false),
             full_rate: AtomicBool::new(false),
+            prefer_cpu: AtomicBool::new(false),
             rx: Mutex::new(None),
         })
     }
@@ -120,6 +125,12 @@ impl SlotInput {
     }
     pub fn full_rate(&self) -> bool {
         self.full_rate.load(Ordering::Relaxed)
+    }
+    pub fn set_prefer_cpu(&self, on: bool) {
+        self.prefer_cpu.store(on, Ordering::Relaxed);
+    }
+    pub fn prefer_cpu(&self) -> bool {
+        self.prefer_cpu.load(Ordering::Relaxed)
     }
     pub fn connect_rx(&self, rx: Receiver<InputEv>) {
         *self.rx.lock().unwrap() = Some(rx);

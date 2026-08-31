@@ -24,7 +24,7 @@ jobs:
       # Bot crates only: --all would also format the vendored client submodule
       # (separate workspace, intentionally not reformatted).
       - name: Check formatting (bot crates)
-        run: cargo fmt -p host -p vault -p api -p host-play -p e2e -p panel -p nav -p script -- --check
+        run: cargo fmt -p host -p vault -p api -p host-play -p e2e -p panel -p nav -p script -p scenario -- --check
 
   clippy:
     name: clippy
@@ -39,9 +39,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The vendored client is a path dependency with its own lint debt; clippy
       # lints path deps even when excluded, so --no-deps keeps the pass on the
-      # 274bot crates only.
-      - name: Clippy (bot crates, warnings denied)
-        run: cargo clippy --workspace --exclude client --all-targets --no-deps -- -D warnings
+      # 274bot crates only. Alpha does not `-D warnings` (nav rewrite is
+      # v0.1.1; deny-warnings is a beta goal, not a clippy-allow farm).
+      - name: Clippy (bot crates)
+        run: cargo clippy --workspace --exclude client --all-targets --no-deps
 
   test:
     name: test

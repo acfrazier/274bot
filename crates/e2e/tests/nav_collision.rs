@@ -18,7 +18,8 @@
 //! parity), so those tiles compare normally and any residual mismatch is
 //! dumped with a LINK_BELOW marker.
 //!
-//! Requires a **v4** pack (four collision planes): the stale v3 file
+//! Requires a **v5** pack (four collision planes, the v4 wire plus the
+//! `worn_req` list): the stale v3 file
 //! fails the load with a "rebake" hint. Run with the engine up:
 //! `LIVE=1 cargo test -p e2e --test nav_collision -- --ignored --test-threads=1 --nocapture`
 
@@ -79,19 +80,19 @@ fn pack_path() -> PathBuf {
 }
 
 #[test]
-#[ignore = "requires a local 274 engine, a v4 nav pack, and LIVE=1"]
+#[ignore = "requires a local 274 engine, a v5 nav pack, and LIVE=1"]
 fn nav_collision() {
     if !live() {
         return;
     }
 
-    // The pack must be v4 (four planes): a stale v3 file fails to load.
+    // The pack must be v5 (four planes, like v4): a stale v3 file fails to load.
     let path = pack_path();
     let world = match NavWorld::load_pack(&path) {
         Ok(w) => w,
         Err(e) => fail(&format!(
             "nav_collision: cannot load nav pack {} ({e}); \
-             rebake with `cargo run -p nav --bin nav-pack` (v4)",
+             rebake with `cargo run -p nav --bin nav-pack` (v5)",
             path.display()
         )),
     };
@@ -171,8 +172,8 @@ fn nav_collision() {
     }
 
     for (wx, wz, pack, live) in &mismatches {
-        let lb = cap_data.link_below[(wx - cap_data.base_x) as usize]
-            [(wz - cap_data.base_z) as usize];
+        let lb =
+            cap_data.link_below[(wx - cap_data.base_x) as usize][(wz - cap_data.base_z) as usize];
         println!("FAIL: pack vs live ({wx},{wz}) pack={pack:#x} live={live:#x}");
         if lb {
             println!("  (LINK_BELOW on mapl[1]: the client shifts this loc's plane)");

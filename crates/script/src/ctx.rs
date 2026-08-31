@@ -4,6 +4,16 @@
 
 use api::interact::Driver;
 
+/// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. Both
+/// default off, mirroring `nav::router::FindOptions` — the `script` crate
+/// deliberately takes no `nav` dependency, so the host converts between
+/// the two at the hook boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FindOptions {
+    pub allow_teleports: bool,
+    pub allow_wilderness: bool,
+}
+
 /// House compiled script. `tick` must return; no delayUntil.
 pub trait Script: Send {
     fn name(&self) -> &str;
@@ -15,10 +25,10 @@ pub trait Script: Send {
 
 /// What one observed game-tick gives a script: the send-side driver, the
 /// tick number from the pump's PLAYER_INFO edge, the local player's tile,
-/// the walk hook, and the thin inventory view. `here`, `walk`, `inv` and
-/// `obj_names` are filled by the host's observe; `walk` is `None` until
-/// the slot wires a traveller and `inv`/`obj_names` are `None` until a
-/// body decodes an inventory.
+/// the walk hooks, and the thin inventory view. `here`, `walk`,
+/// `walk_with`, `inv` and `obj_names` are filled by the host's observe;
+/// the walk hooks are `None` until the slot wires a traveller and
+/// `inv`/`obj_names` are `None` until a body decodes an inventory.
 pub struct ScriptCtx<'a> {
     pub driver: &'a mut dyn Driver,
     pub tick: u64,
@@ -26,12 +36,17 @@ pub struct ScriptCtx<'a> {
     /// observed tick, when the body has decoded one.
     pub here: Option<(i32, i32, i32)>,
     /// Queue one walk toward an absolute world tile `(x, z, level)` through
-    /// the slot's traveller. Returns true iff the walk was queued: the
+    /// the slot's traveller with default options (no teleports, no
+    /// wilderness). Returns true iff the walk was queued: the
     /// route is found and armed off-pump on a short-lived worker, so
     /// "true" does not mean a path exists yet. False when no player tile
     /// is known, the host grid is missing, or the uid already has a route
     /// queued.
     pub walk: Option<&'a mut dyn FnMut(i32, i32, i32) -> bool>,
+    /// Queue one walk with explicit [`FindOptions`] (teleports/wilderness
+    /// opt-in). Same contract and return value as `walk`; the host shares
+    /// one arm between the two hooks and converts the options.
+    pub walk_with: Option<&'a mut dyn FnMut(i32, i32, i32, FindOptions) -> bool>,
     /// The observed inventory `(obj_id, count)` slots, when the body has
     /// decoded one. `None` until an inventory lands (see `has_item`).
     pub inv: Option<&'a [(i32, i32)]>,
@@ -137,6 +152,7 @@ mod tests {
             tick: 0,
             here: None,
             walk: None,
+            walk_with: None,
             inv: Some(&inv),
             obj_names: Some(&names),
         };

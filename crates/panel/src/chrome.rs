@@ -15,12 +15,12 @@ pub fn sections() -> &'static [Section] {
             campaign_hint: None,
         },
         Section {
-            id: "credentials",
+            id: "script",
             wired: true,
             campaign_hint: None,
         },
         Section {
-            id: "script",
+            id: "debug",
             wired: true,
             campaign_hint: None,
         },
@@ -69,13 +69,53 @@ pub fn equal_button_width(avail: f32, count: usize) -> f32 {
 /// `(button_width, stack)`: stack full-width when equal cells would be too
 /// narrow for the label to exist without forcing a horizontal scroll.
 pub fn button_row_layout(avail: f32, count: usize) -> (f32, bool) {
+    button_row_layout_min(avail, count, MIN_BUTTON)
+}
+
+/// Like [`button_row_layout`], with an explicit minimum cell width.
+pub fn button_row_layout_min(avail: f32, count: usize, min: f32) -> (f32, bool) {
     let w = equal_button_width(avail, count);
-    if w < MIN_BUTTON {
+    if w < min {
         (avail.max(1.0), true)
     } else {
         (w, false)
     }
 }
+
+/// Wrapping equal-width cells: `(width, same_line)`. A leftover last row
+/// (one button) takes the full `avail`, matching WalkTo under Log in/Logout.
+pub fn button_cells(avail: f32, count: usize) -> Vec<(f32, bool)> {
+    button_cells_min(avail, count, MIN_BUTTON)
+}
+
+/// Like [`button_cells`], wrapping when a cell would be narrower than `min`.
+pub fn button_cells_min(avail: f32, count: usize, min: f32) -> Vec<(f32, bool)> {
+    let count = count.max(1);
+    let avail = avail.max(1.0);
+    let min = min.max(1.0);
+    let mut per_row = 1usize;
+    for n in 1..=count {
+        if equal_button_width(avail, n) + 0.01 >= min {
+            per_row = n;
+        }
+    }
+    (0..count)
+        .map(|i| {
+            let row = i / per_row;
+            let last_row = (count - 1) / per_row;
+            let n_this = if row == last_row {
+                count - row * per_row
+            } else {
+                per_row
+            };
+            (equal_button_width(avail, n_this), i % per_row != 0)
+        })
+        .collect()
+}
+
+/// Longest General-config label needs more than [`MIN_BUTTON`] or the
+/// 330px 3-up row clips "General config".
+pub const CONFIG_MIN: f32 = 124.0;
 
 /// Title-row tooltips for the wired MultiBox toggle: `on` = the sidecar
 /// rail/grid is up, `off` = closing it does not log anyone out.
@@ -87,35 +127,91 @@ pub fn multibox_tooltip(on: bool) -> &'static str {
     }
 }
 
-/// Global/Loadouts are controls inside parameters, still listed. Nav
-/// settings opened its own modal. MultiBox was a title-row mock before
-/// campaign 4; it is now wired. Script chrome (Browse…/Start/Pause/Stop)
-/// is wired as of campaign 5.
-pub const MOCK_BUTTONS: &[&str] = &["Global settings", "Loadouts"];
+/// Default strip heading order. Drag a collapsing header to reorder;
+/// unknown/missing ids are filled from this list.
+pub const HEADING_ORDER: &[&str] = &["status", "profile", "script", "parameters", "debug", "log"];
+
+/// Merge a saved order with [`HEADING_ORDER`]: drop unknown ids, append
+/// any missing defaults (so old prefs still show new headings).
+pub fn resolve_heading_order(saved: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in saved {
+        if HEADING_ORDER.contains(&id.as_str()) && !out.iter().any(|x| x == id) {
+            out.push(id.clone());
+        }
+    }
+    for id in HEADING_ORDER {
+        if !out.iter().any(|x| x == *id) {
+            out.push((*id).to_string());
+        }
+    }
+    out
+}
+
+/// Move `from` in front of `onto`. No-op if either id is missing.
+pub fn move_heading(order: &mut Vec<String>, from: &str, onto: &str) {
+    if from == onto {
+        return;
+    }
+    let Some(i) = order.iter().position(|x| x == from) else {
+        return;
+    };
+    order.remove(i);
+    let at = order.iter().position(|x| x == onto).unwrap_or(order.len());
+    order.insert(at, from.to_string());
+}
+
+/// Under WalkTo, above the reorderable headings: General config and Nav
+/// config are live windows. Loadouts stays mocked until the TS shim.
+pub const MOCK_BUTTONS: &[&str] = &["Loadouts"];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
-pub const PARAM_ROW: &[&str] = &["Global settings", "Nav settings", "Loadouts"];
+/// Under WalkTo, not credentials and not parameters.
+pub const CONFIG_ROW: &[&str] = &["General config", "Nav config", "Loadouts"];
 
 #[cfg(test)]
 mod tests {
     use crate::chrome::{
-        button_row_layout, equal_button_width, multibox_tooltip, sections, BUTTON_GAP,
-        MIN_BUTTON, MOCK_BUTTONS, PARAM_ROW, SCRIPT_ROW,
+        button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
+        multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_MIN, CONFIG_ROW,
+        HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
     };
     use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
+
+    #[test]
+    fn heading_order_defaults_and_merges() {
+        assert_eq!(
+            resolve_heading_order(&[]),
+            HEADING_ORDER
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect::<Vec<_>>()
+        );
+        let saved = vec!["log".into(), "nope".into(), "status".into()];
+        assert_eq!(
+            resolve_heading_order(&saved),
+            ["log", "status", "profile", "script", "parameters", "debug"]
+        );
+        let mut order = resolve_heading_order(&[]);
+        move_heading(&mut order, "profile", "status");
+        assert_eq!(order[0], "profile");
+        assert_eq!(order[1], "status");
+        move_heading(&mut order, "profile", "profile");
+        assert_eq!(order[0], "profile");
+    }
 
     #[test]
     fn sections_contains_all_section_ids() {
         let ids: Vec<&str> = sections().iter().map(|s| s.id).collect();
         for id in [
             "profile",
-            "credentials",
             "script",
             "parameters",
             "status",
             "log",
             "rendering",
             "input",
+            "debug",
         ] {
             assert!(ids.contains(&id), "missing section id {id:?}");
         }
@@ -144,12 +240,11 @@ mod tests {
             !MOCK_BUTTONS.contains(&"MultiBox"),
             "MultiBox is a live toggle; only parameter chrome stays mocked"
         );
-        for b in ["Global settings", "Loadouts"] {
-            assert!(
-                MOCK_BUTTONS.contains(&b),
-                "param mock {b:?} must still be listed"
-            );
-        }
+        assert!(MOCK_BUTTONS.contains(&"Loadouts"), "Loadouts stays mocked");
+        assert!(
+            !MOCK_BUTTONS.contains(&"General config"),
+            "General config opens slot render + global cadence"
+        );
         for b in ["Browse…", "Start", "Pause", "Stop"] {
             assert!(
                 !MOCK_BUTTONS.contains(&b),
@@ -159,14 +254,17 @@ mod tests {
     }
 
     #[test]
-    fn nav_settings_is_wired_on_param_row() {
-        assert!(PARAM_ROW.contains(&"Nav settings"));
+    fn walkto_row_wires_slot_and_nav_mocks_loadouts() {
+        assert_eq!(CONFIG_ROW, ["General config", "Nav config", "Loadouts"]);
         assert!(
-            !MOCK_BUTTONS.contains(&"Nav settings"),
-            "Nav settings opens a modal; Global settings and Loadouts stay mocked"
+            !MOCK_BUTTONS.contains(&"Nav config"),
+            "Nav config is its own window"
         );
-        assert!(MOCK_BUTTONS.contains(&"Global settings"));
-        assert!(MOCK_BUTTONS.contains(&"Loadouts"));
+        assert!(!MOCK_BUTTONS.contains(&"General config"));
+        assert!(
+            MOCK_BUTTONS.contains(&"Loadouts"),
+            "Loadouts stays mocked until the TS shim"
+        );
     }
 
     #[test]
@@ -210,18 +308,39 @@ mod tests {
         assert_eq!(w, 40.0);
         let (_, stack) = button_row_layout(avail, 3);
         assert!(!stack, "Start/Pause/Stop fit the 330px strip");
+        // Debug 4-up at a scrollbar-trimmed strip would stack under
+        // MIN_BUTTON; packed rows use equal_button_width anyway.
+        let packed = equal_button_width(280.0, 4);
+        assert!(packed < MIN_BUTTON);
+        assert!(packed > 40.0);
         const {
             assert!(MIN_BUTTON > 0.0);
         }
         assert_eq!(SCRIPT_ROW.len(), 3);
-        assert_eq!(PARAM_ROW.len(), 3);
+        assert_eq!(CONFIG_ROW.len(), 3);
+        let script = button_cells(avail, 3);
+        assert_eq!(script.len(), 3);
+        assert!(script[1].1 && script[2].1, "Start/Pause/Stop stay one row");
+        let cfg = button_cells_min(avail, 3, CONFIG_MIN);
+        assert!(
+            !cfg[1].1 || !cfg[2].1,
+            "General config wraps instead of clipping"
+        );
+        assert!(
+            cfg[2].0 > cfg[0].0,
+            "leftover config button is full width like WalkTo"
+        );
     }
 
     #[test]
-    fn credentials_grid_is_two_by_two() {
+    fn login_logout_row_is_two_buttons() {
         let (w, stack) = button_row_layout(330.0, 2);
         assert!(!stack);
         assert!(w > 100.0);
+        let cells = button_cells(330.0, 2);
+        assert_eq!(cells.len(), 2);
+        assert!(cells[1].1);
+        assert!((cells[0].0 - cells[1].0).abs() < 0.01);
     }
 
     #[test]
@@ -240,6 +359,11 @@ mod tests {
         assert!(
             hover[1] < 0.5,
             "hover fill must stay dark so #ddd text is readable on amber"
+        );
+        assert_eq!(
+            ctx.style().window_menu_button_position(),
+            dear_imgui_rs::Direction::None,
+            "tab-bar corner menu is off"
         );
         let check_bg = ctx
             .style()

@@ -10,19 +10,25 @@
 //! `content/scripts/doors/configs/*.loc` blocks (see [`parse_door_config`]).
 //! Blocking loc footprints come from `[loc_N]` `blockwalk` (default yes).
 //!
-//! V2 format: magic `b"274V"`, version `u8` 4, collision origin
-//! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`] `flags`
-//! u32le per tile per level — four planes, level-major, each `width ×
-//! height` (row-major z then x) — then the transport edge count u32le
-//! and per edge `(kind u8, at x/z/level, to x/z/level, loc_id, option,
-//! ticks, dir u8, open_loc_id)` i32le plus the four requirement vectors
-//! (count u32le, then `(id, value)` i32le pairs; quest names as
-//! length-prefixed UTF-8). `dir` encodes [`DoorDir`] as `0=None,
+//! V2 format: magic `b"274V"`, version `u8` 6, collision origin
+//! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
+//! packed `walk` u16le per tile per level — four planes, level-major,
+//! each `width × height` (row-major z then x) — then the transport edge
+//! count u32le and per edge `(kind u8, at x/z/level, to x/z/level,
+//! loc_id, option, ticks, dir u8, open_loc_id)` i32le plus the five
+//! requirement vectors (count u32le, then `(id, value)` i32le pairs;
+//! quest names as length-prefixed UTF-8; `worn_req` as plain i32le ids).
+//! `dir` encodes [`DoorDir`] as `0=None,
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode_v2`] splits them back out
-//! and never indexes them into `at`. The
-//! v1 decode stays for old `.navpack` files; `nav-pack` now writes v2.
+//! and never indexes them into `at`. The raw flags are not on the v6 wire
+//! — the flags sidecar is separate: magic `b"274F"`, version 1, the same
+//! origin/width/height header as v2, then the level-major u32le flags
+//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). [`decode_v2`]
+//! accepts version 6 only — any earlier stream is [`PackError::BadVersion`],
+//! there is no flags→walk compat load. The v1 decode stays for old
+//! `.navpack` files; `nav-pack` now writes v6.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -40,12 +46,22 @@ use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 const VERSION: u8 = 1;
 /// File magic.
 const MAGIC: &[u8; 4] = b"274N";
-/// V2 pack format version (collision flags + transport graph; v3 adds the
+/// V2 pack format version (collision + transport graph). v3 adds the
 /// per-edge `dir`/`open_loc_id` fields, v4 stores the four collision
-/// planes).
-const VERSION_V2: u8 = 4;
+/// planes, v5 adds the per-edge worn-item id list `worn_req`, and v6 —
+/// the current wire — replaces the four u32 flag planes with the compact
+/// packed u16 walk words (no resident u32 flags; the flags sidecar is
+/// separate). The v4 wire also carries the spirit-tree (7) and reserved
+/// NPC (8) transport kinds on the same kind byte — no version bump.
+/// [`decode_v2`] accepts version 6 only; 4, 5, and older streams are
+/// rejected rather than compat-loaded.
+const VERSION_V2: u8 = 6;
 /// V2 file magic.
 const MAGIC_V2: &[u8; 4] = b"274V";
+/// Flags sidecar format version.
+const VERSION_FLAGS: u8 = 1;
+/// Flags sidecar magic.
+const MAGIC_FLAGS: &[u8; 4] = b"274F";
 /// Mapsquare edge length in tiles.
 const SQUARE: usize = 64;
 /// Bytes per door entry.
@@ -183,38 +199,33 @@ pub fn load_pack(path: &Path) -> Result<StepGrid, PackError> {
 /// Serialize the whole-world collision + transport graph to the v2 pack
 /// byte format. The graph's `at` index is not stored; [`decode_v2`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array. The v4 wire (version byte 4)
-/// carries the [`WorldCollision`] as four level-major planes; earlier v2/v3
-/// streams are rejected by [`decode_v2`]'s version check rather than
-/// mis-read.
+/// the ordinary edges in the same array. The v6 wire (version byte 6)
+/// carries the [`WorldCollision`] as four level-major planes of packed
+/// u16 walk words plus the per-edge `worn_req` id list; the raw flags are
+/// not resident and not on the wire (see the flags sidecar).
 pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
-    let mut out = Vec::with_capacity(
-        4 + 1 + 12 + 8 + collision.flags.len() * 4 + 4 + edge_count * 96,
-    );
+    let mut out =
+        Vec::with_capacity(4 + 1 + 12 + 8 + collision.walk.len() * 2 + 4 + edge_count * 96);
     out.extend_from_slice(MAGIC_V2);
     out.push(VERSION_V2);
-    for v in [collision.origin.x, collision.origin.z, collision.origin.level] {
+    for v in [
+        collision.origin.x,
+        collision.origin.z,
+        collision.origin.level,
+    ] {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&(collision.width as u32).to_le_bytes());
     out.extend_from_slice(&(collision.height as u32).to_le_bytes());
-    for f in &collision.flags {
-        out.extend_from_slice(&f.to_le_bytes());
+    for w in &collision.walk {
+        out.extend_from_slice(&w.to_le_bytes());
     }
     out.extend_from_slice(&(edge_count as u32).to_le_bytes());
     for e in graph.edges.iter().chain(&graph.teleports) {
         out.push(kind_to_u8(e.kind));
         for v in [
-            e.at.x,
-            e.at.z,
-            e.at.level,
-            e.to.x,
-            e.to.z,
-            e.to.level,
-            e.loc_id,
-            e.option,
-            e.ticks,
+            e.at.x, e.at.z, e.at.level, e.to.x, e.to.z, e.to.level, e.loc_id, e.option, e.ticks,
         ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -224,6 +235,7 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
         write_req_pairs(&mut out, &e.item_req);
         write_req_strings(&mut out, &e.quest_req);
         write_req_pairs(&mut out, &e.varp_req);
+        write_req_ids(&mut out, &e.worn_req);
     }
     out
 }
@@ -231,6 +243,10 @@ pub fn encode_v2(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> 
 /// Deserialize a v2 pack, validating magic, version, and lengths. The
 /// `at` index is rebuilt from the decoded edges; kind-4 (teleport) edges
 /// split back into [`TransportGraph::teleports`] and are excluded from it.
+/// Version 6 is the only accepted wire: the collision decodes as packed
+/// u16 walk words with no resident flags (`flags` is `None` until the
+/// sidecar is loaded); any other version — 4, 5, or older — is rejected
+/// rather than mis-read or compat-loaded.
 pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
@@ -262,9 +278,9 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
     let cells = plane
         .checked_mul(4)
         .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
-    let mut flags = vec![0u32; cells];
-    for f in &mut flags {
-        *f = read_u32(&mut r)?;
+    let mut walk = vec![0u16; cells];
+    for w in &mut walk {
+        *w = read_u16(&mut r)?;
     }
     let n_edges = read_u32(&mut r)? as usize;
     // Cap the preallocation at what the remaining bytes can hold; the reads
@@ -303,6 +319,7 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             item_req: read_req_pairs(&mut r)?,
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
+            worn_req: read_req_ids(&mut r)?,
         };
         if edge.kind == TransportKind::Teleport {
             graph.teleports.push(edge);
@@ -318,13 +335,79 @@ pub fn decode_v2(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackE
             origin,
             width,
             height,
-            // The derived walkable word is a pure function of the raw
-            // flags, so it is recomputed rather than stored on the wire.
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            // The packed walk word is the resident surface; the raw flags
+            // live only in the sidecar (loaded on demand for debug paints).
+            walk,
+            flags: None,
         },
         graph,
     ))
+}
+
+/// Serialize the raw baked flags to the sidecar byte format: magic
+/// `b"274F"`, version 1, the same origin/width/height header as v2, then
+/// the level-major u32le flags. The flag count is implicit — the trailing
+/// bytes are the flags, so a `width × height` test grid round-trips
+/// without plane arithmetic ([`decode_flags_sidecar`] reads to the end).
+pub fn encode_flags_sidecar(
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    flags: &[u32],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + flags.len() * 4);
+    out.extend_from_slice(MAGIC_FLAGS);
+    out.push(VERSION_FLAGS);
+    for v in [origin.x, origin.z, origin.level] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&(width as u32).to_le_bytes());
+    out.extend_from_slice(&(height as u32).to_le_bytes());
+    for f in flags {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+/// Deserialize a flags sidecar, validating magic, version, and the grid
+/// header, then reading the trailing u32le flags to the end of the
+/// buffer (a partial trailing u32 is [`PackError::Truncated`]).
+pub fn decode_flags_sidecar(
+    bytes: &[u8],
+) -> Result<(WorldTile, usize, usize, Vec<u32>), PackError> {
+    let mut r = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
+    if &magic != MAGIC_FLAGS {
+        return Err(PackError::BadMagic);
+    }
+    let mut version = [0u8; 1];
+    r.read_exact(&mut version)
+        .map_err(|_| PackError::Truncated)?;
+    if version[0] != VERSION_FLAGS {
+        return Err(PackError::BadVersion(version[0]));
+    }
+    let origin = WorldTile {
+        x: read_i32(&mut r)?,
+        z: read_i32(&mut r)?,
+        level: read_i32(&mut r)?,
+    };
+    let width = read_u32(&mut r)? as usize;
+    let height = read_u32(&mut r)? as usize;
+    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
+        return Err(PackError::BadLength(format!(
+            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
+        )));
+    }
+    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    if !remaining.is_multiple_of(4) {
+        return Err(PackError::Truncated);
+    }
+    let mut flags = Vec::with_capacity(remaining / 4);
+    for _ in 0..remaining / 4 {
+        flags.push(read_u32(&mut r)?);
+    }
+    Ok((origin, width, height, flags))
 }
 
 /// `TransportKind` as a wire byte.
@@ -337,6 +420,8 @@ fn kind_to_u8(k: TransportKind) -> u8 {
         TransportKind::Teleport => 4,
         TransportKind::AgilityShortcut => 5,
         TransportKind::Glider => 6,
+        TransportKind::SpiritTree => 7,
+        TransportKind::Npc => 8,
     }
 }
 
@@ -350,9 +435,9 @@ fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
         4 => Ok(TransportKind::Teleport),
         5 => Ok(TransportKind::AgilityShortcut),
         6 => Ok(TransportKind::Glider),
-        _ => Err(PackError::BadLength(format!(
-            "unknown transport kind {b}"
-        ))),
+        7 => Ok(TransportKind::SpiritTree),
+        8 => Ok(TransportKind::Npc),
+        _ => Err(PackError::BadLength(format!("unknown transport kind {b}"))),
     }
 }
 
@@ -424,6 +509,25 @@ fn read_req_strings(r: &mut Cursor<&[u8]>) -> Result<Vec<String>, PackError> {
     Ok(out)
 }
 
+/// A worn-item requirement vector as i32le ids, count-prefixed.
+fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
+    out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
+    for id in reqs {
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+}
+
+/// Read a count-prefixed i32le id vector (the `worn_req` list).
+fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
+    let n = read_u32(r)? as usize;
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let mut out = Vec::with_capacity(n.min(remaining / 4));
+    for _ in 0..n {
+        out.push(read_i32(r)?);
+    }
+    Ok(out)
+}
+
 /// All walkable tiles of `grid` on `level`, in row-major (z then x) order.
 /// Tiles off `grid`'s own level yield an empty iterator.
 pub fn walkable_dots(grid: &StepGrid, level: i32) -> impl Iterator<Item = Tile> + '_ {
@@ -450,36 +554,56 @@ pub struct Mapsquare {
 
 /// Door loc ids from `content/scripts/doors/configs/*.loc` text: every
 /// `[loc_N]` block that can open, i.e. has `op1=Open` or
-/// `category=door_closed`. Non-numeric blocks (e.g. `[membergatel]`) are
-/// ignored, as are the `op1=Close`/`*_opened` counterpart states.
+/// `category=door_closed`/`category=gate_main_closed`/
+/// `category=gate_outer_closed` (the fence-gate closed categories, same
+/// openability as `door_closed`). Non-numeric blocks (e.g. `[membergatel]`)
+/// are ignored, as are the `op1=Close`/`*_open` counterpart states.
 pub fn parse_door_config(text: &str) -> HashSet<i32> {
-    let mut ids = HashSet::new();
+    parse_door_config_ids(text, &HashMap::new())
+}
+
+/// The [`parse_door_config`] rule with the `scripts/areas/*/configs`
+/// header style: `[loc_N]` blocks parse directly and `[name]` blocks
+/// resolve through `ids` (the `pack/loc.pack` map), so e.g. the Al Kharid
+/// toll gates (`border_gate.loc`'s `[border_gate_toll_left/_right]`,
+/// `op1=Open`) join the door set under their own names. Numeric blocks
+/// behave exactly as in [`parse_door_config`].
+pub fn parse_door_config_ids(text: &str, ids: &HashMap<String, i32>) -> HashSet<i32> {
+    let mut door_ids = HashSet::new();
     let mut cur: Option<i32> = None;
     let mut openable = false;
     for raw in text.lines() {
         let line = raw.trim();
-        if let Some(n) = loc_header(line) {
+        let header =
+            loc_header(line).or_else(|| named_loc_header(line).and_then(|n| ids.get(n).copied()));
+        if let Some(n) = header {
             if let Some(id) = cur {
                 if openable {
-                    ids.insert(id);
+                    door_ids.insert(id);
                 }
             }
             cur = Some(n);
             openable = false;
-        } else if cur.is_some() && (line == "op1=Open" || line == "category=door_closed") {
+        } else if cur.is_some()
+            && (line == "op1=Open"
+                || line == "category=door_closed"
+                || line == "category=gate_main_closed"
+                || line == "category=gate_outer_closed")
+        {
             openable = true;
         }
     }
     if let Some(id) = cur {
         if openable {
-            ids.insert(id);
+            door_ids.insert(id);
         }
     }
-    ids
+    door_ids
 }
 
-/// Closed door loc id → its open leaf id: every `[loc_N]` block's
-/// `param=next_loc_stage,loc_M` (the id the door changes into when opened).
+/// Closed door loc id → its open leaf id: every `[loc_N]` (or `[name]`,
+/// resolved through `ids`) block's `param=next_loc_stage,loc_M` (the id
+/// the door changes into when opened).
 /// Name-valued params (`param=next_loc_stage,<name>`) resolve through the
 /// loc id map; unparseable values carry nothing.
 pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
@@ -487,7 +611,9 @@ pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i3
     let mut cur: Option<(i32, Option<i32>)> = None;
     for raw in text.lines() {
         let line = raw.trim();
-        if let Some(n) = loc_header(line) {
+        let header =
+            loc_header(line).or_else(|| named_loc_header(line).and_then(|n| ids.get(n).copied()));
+        if let Some(n) = header {
             if let Some((id, open)) = cur {
                 if let Some(open) = open {
                     out.insert(id, open);
@@ -560,6 +686,16 @@ fn loc_header(line: &str) -> Option<i32> {
     line.strip_prefix("[loc_")?.strip_suffix(']')?.parse().ok()
 }
 
+/// `[<name>]` block header -> the name (the `scripts/areas/*/configs`
+/// style, e.g. `[border_gate_toll_left]`).
+fn named_loc_header(line: &str) -> Option<&str> {
+    let name = line.strip_prefix('[')?.strip_suffix(']')?;
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return None;
+    }
+    Some(name)
+}
+
 /// Parse one mapsquare jm2 file (level 0 only). A MAP flag with bit 0 set
 /// (`fN`, BLOCK_MAP_SQUARE) is blocked; tiles without a MAP line are not
 /// walkable. A LOC whose loc id is in `door_ids` (openable wall doors from
@@ -583,8 +719,15 @@ pub fn parse_mapsquare_jm2(
     collision: &WorldCollision,
 ) -> Result<Mapsquare, PackError> {
     let text = std::fs::read_to_string(path).map_err(PackError::Io)?;
-    parse_mapsquare_text(&text, mapsquare_x, mapsquare_z, door_ids, passable, collision)
-        .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
+    parse_mapsquare_text(
+        &text,
+        mapsquare_x,
+        mapsquare_z,
+        door_ids,
+        passable,
+        collision,
+    )
+    .ok_or_else(|| PackError::BadLength(format!("{}: no MAP section", path.display())))
 }
 
 /// Parse jm2 text into a [`Mapsquare`], or None without a MAP section.
@@ -883,16 +1026,22 @@ fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
     Ok(u32::from_le_bytes(b))
 }
 
+fn read_u16(r: &mut Cursor<&[u8]>) -> Result<u16, PackError> {
+    let mut b = [0u8; 2];
+    r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
+    Ok(u16::from_le_bytes(b))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use super::{
-        decode, decode_v2, encode, encode_v2, merge_squares, parse_door_config,
-        parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare,
-        SQUARE,
+        decode, decode_flags_sidecar, decode_v2, encode, encode_flags_sidecar, encode_v2,
+        merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
+        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE, VERSION_V2,
     };
-    use crate::collision::WorldCollision;
+    use crate::collision::{derive_walkable, pack_walk_u16, walk_word_from_u16, WorldCollision};
     use crate::grid::StepGrid;
     use crate::pack::PackError;
     use crate::tile::Tile;
@@ -914,6 +1063,77 @@ mod tests {
     }
 
     #[test]
+    fn pack_walk_u16_roundtrips_step_ok_vs_u32_flags() {
+        let mut flags = vec![0u32; 4 * 3 * 3];
+        flags[1] = CollisionFlag::W_S as u32; // face only
+        flags[3] = CollisionFlag::WALK_SCENERY as u32 | CollisionFlag::WR_GRND as u32;
+        let walk = pack_walk_u16(&flags);
+        assert_eq!(walk.len(), flags.len());
+        for (f, w) in flags.iter().zip(&walk) {
+            let derived = derive_walkable(&[*f])[0];
+            assert_eq!(walk_word_from_u16(*w), derived);
+        }
+    }
+
+    #[test]
+    fn v6_pack_has_no_resident_flags() {
+        let flags = vec![0u32; 4 * 2 * 2];
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 2,
+            height: 2,
+            walk: pack_walk_u16(&flags),
+            flags: None,
+        };
+        let bytes = encode_v2(&collision, &TransportGraph::default());
+        assert_eq!(bytes[4], 6);
+        let (c, _) = decode_v2(&bytes).unwrap();
+        assert!(c.flags.is_none());
+        assert_eq!(c.walk.len(), 16);
+    }
+
+    #[test]
+    fn v6_decode_rejects_v5_and_older() {
+        let flags = vec![0u32; 4 * 2 * 2];
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 2,
+            height: 2,
+            walk: pack_walk_u16(&flags),
+            flags: None,
+        };
+        let mut bytes = encode_v2(&collision, &TransportGraph::default());
+        bytes[4] = 5;
+        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(5))));
+        bytes[4] = 4;
+        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(4))));
+    }
+
+    #[test]
+    fn flags_sidecar_roundtrips_origin_and_cells() {
+        let flags = vec![1u32, 2, 3, 4];
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let bytes = encode_flags_sidecar(origin, 2, 2, &flags);
+        assert_eq!(&bytes[..4], b"274F");
+        let (o, w, h, out) = decode_flags_sidecar(&bytes).unwrap();
+        assert_eq!(o, origin);
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(out, flags);
+    }
+
+    #[test]
     fn v2_roundtrip_collision_and_transport_graph() {
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
@@ -928,8 +1148,8 @@ mod tests {
             },
             width: 3,
             height: 2,
-            flags: flags.clone(),
-            walkable: crate::collision::derive_walkable(&flags),
+            walk: pack_walk_u16(&flags),
+            flags: None,
         };
         let mut graph = TransportGraph::default();
         let door = TransportEdge {
@@ -953,6 +1173,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![772], // dramen_staff on the Zanaris shed door
         };
         let ladder = TransportEdge {
             kind: TransportKind::Ladder,
@@ -975,6 +1196,7 @@ mod tests {
             item_req: vec![(995, 10)],
             quest_req: vec!["Restless Ghost".into()],
             varp_req: vec![(4, 1)],
+            worn_req: vec![],
         };
         let di = graph.edges.len();
         graph.edges.push(door);
@@ -1001,15 +1223,76 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![(150, 160)],
+            worn_req: vec![],
         };
         let gi = graph.edges.len();
         graph.edges.push(glider);
+        // A spirit-tree edge (kind 7) and the reserved NPC kind (8) ride
+        // the same wire byte without a version bump.
+        let spirit = TransportEdge {
+            kind: TransportKind::SpiritTree,
+            at: WorldTile {
+                x: 2460,
+                z: 3445,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2542,
+                z: 3169,
+                level: 0,
+            },
+            loc_id: 1293,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![(150, 160)],
+            worn_req: vec![],
+        };
+        let si = graph.edges.len();
+        graph.edges.push(spirit);
+        let npc = TransportEdge {
+            kind: TransportKind::Npc,
+            at: WorldTile {
+                x: 2500,
+                z: 3500,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2600,
+                z: 3400,
+                level: 0,
+            },
+            loc_id: 1,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        };
+        let ni = graph.edges.len();
+        graph.edges.push(npc);
         // The any-tile teleport layer (Varrock spell): stored as a kind-4
         // edge in the same array, split back out on decode.
         graph.teleports.push(TransportEdge {
             kind: TransportKind::Teleport,
-            at: WorldTile { x: 0, z: 0, level: 0 },
-            to: WorldTile { x: 3213, z: 3424, level: 0 },
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3213,
+                z: 3424,
+                level: 0,
+            },
             loc_id: 0,
             option: 0,
             ticks: 3,
@@ -1019,37 +1302,54 @@ mod tests {
             item_req: vec![(554, 1), (556, 3), (563, 1)],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         graph.at.entry(graph.edges[di].at).or_default().push(di);
         graph.at.entry(graph.edges[li].at).or_default().push(li);
         graph.at.entry(graph.edges[gi].at).or_default().push(gi);
+        graph.at.entry(graph.edges[si].at).or_default().push(si);
+        graph.at.entry(graph.edges[ni].at).or_default().push(ni);
 
         let bytes = encode_v2(&collision, &graph);
         let (c, g) = decode_v2(&bytes).unwrap();
         assert_eq!(c.origin, collision.origin);
         assert_eq!(c.width, collision.width);
         assert_eq!(c.height, collision.height);
-        assert_eq!(c.flags, collision.flags);
+        assert_eq!(c.walk, collision.walk);
+        assert!(c.flags.is_none());
         assert_eq!(g.edges, graph.edges);
         // The door edge's new fields round-trip on the wire.
         assert_eq!(g.edges[di].dir, Some(DoorDir::N));
         assert_eq!(g.edges[di].open_loc_id, Some(1531));
+        assert_eq!(g.edges[di].worn_req, vec![772]);
+        // The new kinds round-trip on the v4 wire (7 spirit tree, 8 NPC).
+        assert_eq!(g.edges[si].kind, TransportKind::SpiritTree);
+        assert_eq!(g.edges[si].varp_req, vec![(150, 160)]);
+        assert_eq!(g.edges[ni].kind, TransportKind::Npc);
         // Teleports round-trip in their own layer, and the at-index is
         // rebuilt from the ordinary edges only.
         assert_eq!(g.teleports, graph.teleports);
         assert_eq!(g.at, graph.at);
-        assert!(!g.at.contains_key(&WorldTile { x: 0, z: 0, level: 0 }));
+        assert!(!g.at.contains_key(&WorldTile {
+            x: 0,
+            z: 0,
+            level: 0
+        }));
         // The two formats do not cross-decode: v1 rejects v2 magic and
         // vice versa.
         assert!(matches!(decode(&bytes), Err(PackError::BadMagic)));
-        assert!(matches!(decode_v2(&encode(&StepGrid::fixture_open_3x3())), Err(PackError::BadMagic)));
+        assert!(matches!(
+            decode_v2(&encode(&StepGrid::fixture_open_3x3())),
+            Err(PackError::BadMagic)
+        ));
     }
 
     #[test]
     fn v2_decode_rejects_old_version_streams() {
         // A version-2 or version-3 stream (pre-four-plane wire) is
         // rejected, not mis-read: the re-bake immediately rewrites it at
-        // the current version.
+        // the current version. Versions 4 and 5 are rejected too (see
+        // `v6_decode_rejects_v5_and_older`).
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
@@ -1061,17 +1361,71 @@ mod tests {
             },
             width: 3,
             height: 2,
-            flags: flags.clone(),
-            walkable: crate::collision::derive_walkable(&flags),
+            walk: pack_walk_u16(&flags),
+            flags: None,
         };
         let graph = TransportGraph::default();
         let mut bytes = encode_v2(&collision, &graph);
         // The version byte sits right after the 4-byte magic.
         bytes[4] = 3;
-        assert!(matches!(
-            decode_v2(&bytes),
-            Err(PackError::BadVersion(3))
-        ));
+        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(3))));
+        bytes[4] = 2;
+        assert!(matches!(decode_v2(&bytes), Err(PackError::BadVersion(2))));
+    }
+
+    #[test]
+    fn v6_roundtrips_worn_req() {
+        // v6 carries the fifth per-edge req list (the worn-item ids) on
+        // the packed-walk wire; no pre-v6 stream decodes.
+        let plane = vec![0, 0, 1, 0, 0, 0];
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 3,
+            height: 2,
+            walk: pack_walk_u16(&flags),
+            flags: None,
+        };
+        let door = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 2406,
+            option: 1,
+            ticks: 1,
+            dir: Some(DoorDir::N),
+            open_loc_id: Some(1532),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec!["Lost City".into()],
+            varp_req: vec![],
+            worn_req: vec![772],
+        };
+        let mut graph = TransportGraph::default();
+        graph.edges.push(door.clone());
+        graph.at.entry(door.at).or_default().push(0);
+        let bytes = encode_v2(&collision, &graph);
+        // The version byte sits right after the 4-byte magic: v6 now.
+        assert_eq!(bytes[4], VERSION_V2);
+        let (c, g) = decode_v2(&bytes).unwrap();
+        assert_eq!(g.edges, graph.edges);
+        assert_eq!(g.edges[0].worn_req, vec![772]);
+        assert_eq!(g.at, graph.at);
+        assert_eq!(c.walk, collision.walk);
+        assert!(c.flags.is_none());
     }
 
     #[test]
@@ -1166,6 +1520,65 @@ op1=Open
     }
 
     #[test]
+    fn parse_door_config_ids_resolves_named_blocks() {
+        // Mirrors `scripts/areas/area_alkharid/configs/border_gate.loc`:
+        // name-keyed blocks that `parse_door_config` (numeric-only) skips.
+        let text = "\
+[border_gate_toll_left]
+name=Gate
+op1=Open
+category=border_gate_toll_left
+param=next_loc_stage,loc_1562
+
+[border_gate_toll_right]
+name=Gate
+op1=Open
+category=border_gate_toll_right
+param=next_loc_stage,loc_1563
+";
+        let mut ids = HashMap::new();
+        ids.insert("border_gate_toll_left".to_string(), 2882);
+        ids.insert("border_gate_toll_right".to_string(), 2883);
+        ids.insert("loc_1562".to_string(), 1562);
+        ids.insert("loc_1563".to_string(), 1563);
+        let doors = parse_door_config_ids(text, &ids);
+        assert!(doors.contains(&2882));
+        assert!(doors.contains(&2883));
+        // The numeric-only view still ignores the name-keyed blocks.
+        assert!(!parse_door_config(text).contains(&2882));
+        // The open-leaf params resolve under the named blocks too.
+        let open = parse_door_open_ids(text, &ids);
+        assert_eq!(open.get(&2882), Some(&1562));
+        assert_eq!(open.get(&2883), Some(&1563));
+    }
+
+    #[test]
+    fn parse_door_config_collects_gate_closed_categories() {
+        // Mirrors gates.loc: closed/open counterpart blocks carrying the
+        // fence-gate categories. `gate_main_closed` / `gate_outer_closed`
+        // are openable like `door_closed`; the `*_open` counterpart states
+        // (`op1=Close`) are not.
+        let text = "\
+[loc_1551]
+name=Gate
+op1=Open
+category=gate_main_closed
+
+[loc_1552]
+op1=Close
+category=gate_main_open
+
+[loc_1553]
+op1=Open
+category=gate_outer_closed
+";
+        let ids = parse_door_config(text);
+        assert!(ids.contains(&1551));
+        assert!(!ids.contains(&1552));
+        assert!(ids.contains(&1553));
+    }
+
+    #[test]
     fn parse_door_open_ids_reads_next_loc_stage() {
         let text = "\
 [loc_1530]
@@ -1219,8 +1632,8 @@ op1=Open
             },
             width: SQUARE,
             height: SQUARE,
-            walkable: crate::collision::derive_walkable(&flags),
-            flags,
+            walk: pack_walk_u16(&flags),
+            flags: None,
         }
     }
 
@@ -1250,15 +1663,19 @@ op1=Open
             53,
             &[
                 (1, 0, CollisionFlag::WR_GRND as u32),
-                (0, 46, CollisionFlag::WR_GRND as u32
-                    | CollisionFlag::W_N as u32
-                    | CollisionFlag::W_E as u32),
+                (
+                    0,
+                    46,
+                    CollisionFlag::WR_GRND as u32
+                        | CollisionFlag::W_N as u32
+                        | CollisionFlag::W_E as u32,
+                ),
                 (1, 46, CollisionFlag::W_W as u32),
                 (0, 47, CollisionFlag::W_S as u32),
             ],
         );
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision)
-            .unwrap();
+        let sq =
+            parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision).unwrap();
         // (0,0): no f flag -> walkable; (1,0): f1 bit 0 -> blocked;
         // (0,1): f16 bit 0 clear -> walkable; (2,0): no MAP line -> blocked.
         assert_eq!(sq.walk[0], 1);
@@ -1334,9 +1751,8 @@ blockwalk=yes
 0 0 45: 980 0 0
 ";
         let collision = square_collision(44, 53, &[]);
-        let sq =
-            parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new(), &collision)
-                .unwrap();
+        let sq = parse_mapsquare_text(text, 44, 53, &HashSet::new(), &HashSet::new(), &collision)
+            .unwrap();
         let grid = merge_squares(&[sq]);
         assert!(!grid.walkable(Tile {
             x: 2816,
@@ -1369,8 +1785,8 @@ blockwalk=yes
                 (0, 47, CollisionFlag::W_S as u32),
             ],
         );
-        let sq = parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision)
-            .unwrap();
+        let sq =
+            parse_mapsquare_text(text, 44, 53, &door_ids, &HashSet::new(), &collision).unwrap();
         assert_eq!(sq.doors.len(), 2);
         let south = Tile {
             x: 2816,
@@ -1382,14 +1798,8 @@ blockwalk=yes
             z: 3440,
             level: 0,
         };
-        assert!(sq
-            .doors
-            .iter()
-            .any(|d| d.from == south && d.to == north));
-        assert!(sq
-            .doors
-            .iter()
-            .any(|d| d.from == north && d.to == south));
+        assert!(sq.doors.iter().any(|d| d.from == south && d.to == north));
+        assert!(sq.doors.iter().any(|d| d.from == north && d.to == south));
         let grid = merge_squares(&[sq]);
         assert!(!grid.walkable(Tile {
             x: 2816,

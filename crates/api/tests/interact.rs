@@ -7,8 +7,8 @@
 use api::interact::{
     answer_count, cheat, close_modal, create_interactions, interact, login, mainland_hop,
     offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present, tele_args,
-    walk, ActionSpec, Driver, Interactions, MAX_OPERATIONS, OpTarget, SCENE_READY, SendReason,
-    SendResult, WireCommand, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
+    walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult, WireCommand,
+    MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
 };
 use api::obj_names::ItemDefView;
 use api::prot::{LegalSend, LEGAL_SEND};
@@ -16,7 +16,7 @@ use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
 };
 use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
-use client::config::if_type::{ButtonType, ComponentType, IfType};
+use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::ClientObj;
 use client::datastruct::LinkList;
@@ -577,18 +577,18 @@ fn legal_row(prot: ClientProt) -> LegalSend {
 fn logout_presses_cc_logout_iface_and_missing_is_false() {
     use api::interact::{logout, CC_LOGOUT};
     use client::config::IfType;
-    let empty: Vec<Option<IfType>> = Vec::new();
+    let empty: Vec<Option<Box<IfType>>> = Vec::new();
     let mut rec = Recorder::default();
     assert!(!logout(&mut rec, &empty));
     assert!(rec.actions.is_empty());
     assert!(rec.menus.is_empty());
 
-    let mut ifaces: Vec<Option<IfType>> = vec![None; 10];
+    let mut ifaces: Vec<Option<Box<IfType>>> = vec![None; 10];
     let com = IfType {
         client_code: CC_LOGOUT,
         ..Default::default()
     };
-    ifaces[7] = Some(com);
+    ifaces[7] = Some(Box::new(com));
     let mut rec = Recorder::default();
     assert!(logout(&mut rec, &ifaces));
     assert_eq!(rec.actions, vec![0]);
@@ -609,7 +609,11 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
     use std::collections::HashSet;
     use std::mem::discriminant;
 
-    let tile = WorldTile { x: 1, z: 2, level: 0 };
+    let tile = WorldTile {
+        x: 1,
+        z: 2,
+        level: 0,
+    };
     let npc = NpcView {
         index: 0,
         r#type: None,
@@ -708,8 +712,15 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         OpTarget::GroundItem(&gi),
         OpTarget::Item(&item),
     ];
-    let distinct = targets.iter().map(|t| discriminant(t)).collect::<HashSet<_>>();
-    assert_eq!(distinct.len(), targets.len(), "OpTarget discriminants collide");
+    let distinct = targets
+        .iter()
+        .map(|t| discriminant(t))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        distinct.len(),
+        targets.len(),
+        "OpTarget discriminants collide"
+    );
 
     let commands = [
         WireCommand::Op {
@@ -739,8 +750,15 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         },
         WireCommand::ClearLocalModal { component_id: 18 },
     ];
-    let distinct = commands.iter().map(|c| discriminant(c)).collect::<HashSet<_>>();
-    assert_eq!(distinct.len(), commands.len(), "WireCommand discriminants collide");
+    let distinct = commands
+        .iter()
+        .map(|c| discriminant(c))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        distinct.len(),
+        commands.len(),
+        "WireCommand discriminants collide"
+    );
 
     let reasons = [
         SendReason::NotAttached,
@@ -789,8 +807,15 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         };
         assert!(!label.is_empty());
     }
-    let distinct = reasons.iter().map(|r| discriminant(r)).collect::<HashSet<_>>();
-    assert_eq!(distinct.len(), reasons.len(), "SendReason discriminants collide");
+    let distinct = reasons
+        .iter()
+        .map(|r| discriminant(r))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        distinct.len(),
+        reasons.len(),
+        "SendReason discriminants collide"
+    );
 
     match (SendResult::Sent {
         tick: 7,
@@ -868,10 +893,11 @@ fn rebuild(c: &mut Client) -> GameSnapshot {
 }
 
 fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    if c.ifaces.len() <= id {
-        c.ifaces.resize(id + 1, None);
-    }
-    c.ifaces[id] = Some(com);
+    c.set_iface(id, com);
+}
+
+fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
+    c.set_iface_mut(id, m);
 }
 
 /// Plant an npc type whose menu ops the snapshot's npc view carries.
@@ -895,7 +921,7 @@ fn plant_npc(c: &mut Client, slot: usize, id: i32) {
     npc.entity.x = 50 * 128;
     npc.entity.z = 50 * 128;
     npc.r#type = Some(id as usize);
-    c.npc[slot] = Some(npc);
+    c.npc[slot] = Some(Box::new(npc));
     c.npc_ids = vec![slot as i32];
     c.npc_count = 1;
 }
@@ -908,9 +934,16 @@ fn plant_inventory(c: &mut Client) {
         IfType {
             id: 500,
             r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        500,
+        IfTypeMut {
             link_obj_type: Some(vec![4, 0]),
             link_obj_number: Some(vec![1, 0]),
-            obj_ops: true,
             ..Default::default()
         },
     );
@@ -939,8 +972,15 @@ fn plant_modal(c: &mut Client) {
             id: 101,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
-            button_type: ButtonType::BUTTON_TARGET,
             target_mask: 0x2,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        101,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_TARGET,
             ..Default::default()
         },
     );
@@ -951,6 +991,13 @@ fn plant_modal(c: &mut Client) {
             id: 102,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        102,
+        IfTypeMut {
             button_type: ButtonType::BUTTON_OK,
             ..Default::default()
         },
@@ -962,8 +1009,15 @@ fn plant_modal(c: &mut Client) {
             id: 103,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
-            button_type: ButtonType::BUTTON_OK,
             client_code: 205,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        103,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
             ..Default::default()
         },
     );
@@ -974,8 +1028,15 @@ fn plant_modal(c: &mut Client) {
             id: 104,
             layer_id: 100,
             r#type: ComponentType::TYPE_TEXT,
-            button_type: ButtonType::BUTTON_TARGET,
             target_mask: 0x8,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        104,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_TARGET,
             ..Default::default()
         },
     );
@@ -1001,6 +1062,13 @@ fn plant_controls(c: &mut Client) {
         IfType {
             id: 1,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        1,
+        IfTypeMut {
             text: "Player controls".into(),
             ..Default::default()
         },
@@ -1011,6 +1079,13 @@ fn plant_controls(c: &mut Client) {
         IfType {
             id: 2,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        2,
+        IfTypeMut {
             text: "Auto retaliate".into(),
             ..Default::default()
         },
@@ -1022,6 +1097,13 @@ fn plant_controls(c: &mut Client) {
             IfType {
                 id: id as i32,
                 r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            c,
+            id,
+            IfTypeMut {
                 button_type: ButtonType::BUTTON_TOGGLE,
                 ..Default::default()
             },
@@ -1083,7 +1165,11 @@ fn operation_of_matches_label_case_insensitively_skipping_hidden() {
         "hidden/empty slots are skipped"
     );
     assert_eq!(operation_of(&target, "Examine"), Some(5));
-    assert_eq!(operation_of(&target, "Sixth"), None, "beyond MAX_OPERATIONS");
+    assert_eq!(
+        operation_of(&target, "Sixth"),
+        None,
+        "beyond MAX_OPERATIONS"
+    );
     assert_eq!(operation_of(&target, "Nope"), None);
     assert_eq!(MAX_OPERATIONS, 5);
 }
@@ -1151,7 +1237,12 @@ fn interactions_walk_refuses_off_scene_and_sends_when_ok() {
 #[test]
 fn interact_dispatches_npc_op_through_menu() {
     let mut s = scene();
-    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack", "Pickpocket", "Examine"]);
+    plant_npc_type(
+        &mut s.client,
+        9,
+        "Goblin",
+        &["Attack", "Pickpocket", "Examine"],
+    );
     plant_npc(&mut s.client, 7, 9);
     let snap = rebuild(&mut s.client);
     let mut rec = Recorder::default();
@@ -1208,7 +1299,14 @@ fn interact_dispatches_loc_op_through_scene_coords() {
     }
     let snap = rebuild(&mut s.client);
     let loc = &snap.locs()[0];
-    assert_eq!(loc.tile, WorldTile { x: 3203, z: 3204, level: 0 });
+    assert_eq!(
+        loc.tile,
+        WorldTile {
+            x: 3203,
+            z: 3204,
+            level: 0
+        }
+    );
     let mut rec = Recorder {
         base: (3200, 3200),
         ..Recorder::default()
@@ -1223,7 +1321,10 @@ fn interact_dispatches_loc_op_through_scene_coords() {
         }
     }
     assert_eq!(rec.actions, vec![0]);
-    assert_eq!(rec.menus, vec![(0, MiniMenuAction::OP_LOC1, typecode, 3, 4)]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::OP_LOC1, typecode, 3, 4)]
+    );
 }
 
 /// A ground-item target dispatches through the scene coords with the obj
@@ -1247,7 +1348,14 @@ fn interact_dispatches_ground_item_op_through_scene_coords() {
     s.client.ground_obj[0][10][12] = Some(list);
     let snap = rebuild(&mut s.client);
     let gi = &snap.ground_items()[0];
-    assert_eq!(gi.tile, WorldTile { x: 3210, z: 3212, level: 0 });
+    assert_eq!(
+        gi.tile,
+        WorldTile {
+            x: 3210,
+            z: 3212,
+            level: 0
+        }
+    );
     let mut rec = Recorder {
         base: (3200, 3200),
         ..Recorder::default()
@@ -1432,6 +1540,13 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
             id: 201,
             layer_id: 200,
             r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut s.client,
+        201,
+        IfTypeMut {
             button_type: ButtonType::BUTTON_CONTINUE,
             ..Default::default()
         },
@@ -1453,7 +1568,10 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
             SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
         }
     }
-    assert_eq!(rec.menus, vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 201)]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 201)]
+    );
 
     let mut s = scene();
     let snap = rebuild(&mut s.client);
@@ -1855,7 +1973,7 @@ fn still_present_matches_identity_per_kind() {
     other.name = Some("Other".into());
     other.combat_level = 3;
     other.skill_level = 5;
-    s.client.players[3] = Some(other);
+    s.client.players[3] = Some(Box::new(other));
     s.client.player_ids = vec![3];
     s.client.player_count = 1;
     // a loc (wall) and a ground-item stack
@@ -1935,7 +2053,7 @@ fn still_present_matches_identity_per_kind() {
     s2.client.self_slot = 3;
     let mut other = ClientPlayer::at(15, 16);
     other.name = Some("Other".into());
-    s2.client.players[3] = Some(other);
+    s2.client.players[3] = Some(Box::new(other));
     s2.client.player_ids = vec![3];
     s2.client.player_count = 1;
     let snap2 = rebuild(&mut s2.client);

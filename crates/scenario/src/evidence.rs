@@ -53,7 +53,10 @@ impl Evidence {
     /// The compact JSON record both runners print on PASS/FAIL.
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|e| {
-            format!("{{\"scenario\":{},\"outcome\":{},\"serialize_error\":{}}}", self.scenario, self.outcome, e)
+            format!(
+                "{{\"scenario\":{},\"outcome\":{},\"serialize_error\":{}}}",
+                self.scenario, self.outcome, e
+            )
         })
     }
 
@@ -100,7 +103,7 @@ mod tests {
     use super::*;
     use api::obj_names::ObjNames;
     use client::client::{Client, ClientConfig};
-    use client::config::if_type::{ComponentType, IfType};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::config::ObjType;
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
@@ -124,18 +127,27 @@ mod tests {
         c.map_build_base_z = 3200;
         c.local_player = Some(ClientPlayer::at(20, 12));
         c.runenergy = 42;
-        match c.ifaces.iter_mut().flatten().find(|f| f.r#type == ComponentType::TYPE_INV) {
-            Some(inv) => {
+        match c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            Some(id) => {
+                let inv = c.iface_mut(id).unwrap();
                 // stored = obj_id + 1: a real Bones id 526 stores as 527.
                 inv.link_obj_type = Some(vec![527]);
                 inv.link_obj_number = Some(vec![1]);
             }
-            None => c.ifaces.push(Some(IfType {
-                r#type: ComponentType::TYPE_INV,
-                link_obj_type: Some(vec![527]),
-                link_obj_number: Some(vec![1]),
-                ..Default::default()
-            })),
+            None => {
+                let id = c.push_iface(IfType {
+                    r#type: ComponentType::TYPE_INV,
+                    ..Default::default()
+                });
+                c.set_iface_mut(
+                    id,
+                    IfTypeMut {
+                        link_obj_type: Some(vec![527]),
+                        link_obj_number: Some(vec![1]),
+                        ..Default::default()
+                    },
+                );
+            }
         }
         c.bump_gens(ServerProt::PLAYER_INFO);
         c.bump_gens(ServerProt::UPDATE_INV_FULL);
@@ -206,6 +218,9 @@ mod tests {
             v["message"],
             "step 1: arrived(3220,3216,0) not seen within 90 ticks"
         );
-        assert!(v["inv"][0].get("name").is_none(), "no obj table -> no names");
+        assert!(
+            v["inv"][0].get("name").is_none(),
+            "no obj table -> no names"
+        );
     }
 }

@@ -21,9 +21,9 @@ recording stub. The kernel never injects a raw opcode that skips ISAAC.
 | `close_modal(driver)` | `CLOSE_MODAL` via `Out` |
 | `answer_count(driver, n)` | `RESUME_P_COUNTDIALOG` via `Out` |
 | `login(driver, u, p, reconnect)` | `Client::login` handshake |
-| `cheat(driver, cmd)` | `CLIENT_CHEAT` via `Out` |
-| `mainland_hop(driver)` | two `cheat`s: tele courtyard + `setvar tutorial 1000` |
-| `seed_at(driver, level, x, z)` | skip tutorial + `::tele` to an absolute tile |
+| `cheat(driver, cmd)` | `CLIENT_CHEAT` via `Out` (body as given — `tele`/`setvar` have no `~`; debugprocs are `~name`) |
+| `mainland_hop(driver)` | two `cheat`s: `tele` courtyard + `setvar tutorial 1000` |
+| `seed_at(driver, level, x, z)` | `setvar tutorial 1000` then `tele level,mx,mz,lx,lz` |
 
 `Driver::click_side_tab(tab)` flips the client's local active side icon
 (no packet). `Driver::loc_typecode(sx, sz)` reads the packed wall/decor/

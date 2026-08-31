@@ -1,4 +1,4 @@
-use dear_imgui_rs::{Style, StyleColor};
+use dear_imgui_rs::{Direction, Style, StyleColor};
 
 /// Amber accent color (#FFB000) for the 274 panel.
 pub const ACCENT: [f32; 4] = [1.0, 176.0 / 255.0, 0.0, 1.0]; // #FFB000
@@ -28,10 +28,17 @@ pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
 pub const GREEN: [f32; 4] = [76.0 / 255.0, 217.0 / 255.0, 100.0 / 255.0, 1.0];
 /// Panel window title.
 pub const TITLE: &str = "274bot";
-/// Dim build line under the title (no fake git hash).
-pub const BUILD_LINE: &str = "4.5c · headed instrument";
-/// Right-hand chrome width, matching rs2b0t's 330px panel.
+/// Dim build line under the title is [`crate::build_info::build_line`]
+/// (`alpha 1 ·` git stamp; hover is crate version + full commit).
+/// Right-hand chrome width, matching rs2b0t's 330px panel. Locked: the
+/// strip does not grow with the OS window, only taller.
 pub const PANEL_WIDTH: f32 = 330.0;
+/// Native 274 applet in logical pixels. Same numbers as
+/// [`crate::game_view::APPLET_W`] / `APPLET_H` (those are `u32` for
+/// textures). HiDpi (`winit` + imgui Default) maps these to the
+/// framebuffer; we do not ScaleAllSizes on top.
+const STAGE_W: f32 = 765.0;
+const STAGE_H: f32 = 503.0;
 /// Stable ImGui window name for the right-hand chrome.
 pub const PANEL_WINDOW: &str = "274bot";
 /// Stable ImGui window name for the MultiBox sidecar rail.
@@ -43,19 +50,32 @@ pub fn integer_ui_scale(dpi: f32) -> f32 {
     dpi.max(1.0).round().max(1.0)
 }
 
-/// 765:503 game stage sized to `avail`, never below native 765×503.
-pub fn fit_applet(avail: [f32; 2]) -> [f32; 2] {
-    const AW: f32 = 765.0;
-    const AH: f32 = 503.0;
-    let w = avail[0].max(1.0);
-    let h = avail[1].max(1.0);
-    let scale = (w / AW).min(h / AH).max(1.0);
-    [AW * scale, AH * scale]
+/// Native applet size. Non-grid Game blit is always this; host-window
+/// zoom/resize does not scale the client.
+pub fn native_applet() -> [f32; 2] {
+    [STAGE_W, STAGE_H]
 }
 
-/// Right-split ratio for a 330px-class panel in a window of `width`.
+/// Offset of the native applet inside the Game pane: flush to the panel
+/// (right) and vertically centred. Extra width sits on the left.
+pub fn applet_offset(avail: [f32; 2], size: [f32; 2]) -> [f32; 2] {
+    [
+        (avail[0] - size[0]).max(0.0),
+        ((avail[1] - size[1]) * 0.5).max(0.0),
+    ]
+}
+
+/// Grid-mode only: 765:503 stage fitted into `avail`.
+pub fn fit_applet(avail: [f32; 2]) -> [f32; 2] {
+    let w = avail[0].max(1.0);
+    let h = avail[1].max(1.0);
+    let scale = (w / STAGE_W).min(h / STAGE_H).max(0.01);
+    [STAGE_W * scale, STAGE_H * scale]
+}
+
+/// Right-split ratio so the panel stays [`PANEL_WIDTH`] px at `width`.
 pub fn panel_split_ratio(width: f32) -> f32 {
-    (PANEL_WIDTH / width.max(1.0)).clamp(0.18, 0.40)
+    (PANEL_WIDTH / width.max(1.0)).clamp(0.05, 0.85)
 }
 
 /// Title bar of the Game pane: focused vault username, else `"Game"`.
@@ -100,8 +120,11 @@ pub fn apply_amber(style: &mut Style) {
     style.set_color(StyleColor::SeparatorHovered, ACCENT);
     style.set_color(StyleColor::SeparatorActive, ACCENT);
     style.set_color(StyleColor::ResizeGrip, FRAME);
-    style.set_color(StyleColor::ResizeGripHovered, ACCENT);
-    style.set_color(StyleColor::ResizeGripActive, ACCENT_HOVER);
+    style.set_color(StyleColor::ResizeGripHovered, HOVER_FILL);
+    style.set_color(StyleColor::ResizeGripActive, ACTIVE_FILL);
+    // Top-left orange "flag" is the dock tab-bar window-menu button, not
+    // a resize grip. Off: we own the split and AUTO_HIDE the tab strip.
+    style.set_window_menu_button_position(Direction::None);
     style.set_color(StyleColor::Tab, [0.14, 0.10, 0.02, 1.0]);
     style.set_color(StyleColor::TabHovered, HOVER_FILL);
     style.set_color(StyleColor::TabSelected, ACTIVE_FILL);

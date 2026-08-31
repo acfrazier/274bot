@@ -17,7 +17,7 @@ use client::client::Client;
 use client::client::ClientConfig;
 use client::client::LoginError;
 use client::config::if_type::ComponentType;
-use client::config::{Cache, IfType};
+use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
 pub use host::debug_enabled;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
@@ -26,13 +26,23 @@ pub use host::set_debug;
 pub use host::Host;
 mod rss;
 mod scatter;
-use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{find, Route};
+use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
+use nav::router::{find_with, FindOptions, Route};
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
-pub use rss::sample_process;
+pub use rss::{count_tcp_to, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
+
+/// [`client::bot_target::world_host_for`] from a `BOT_TARGET` string.
+pub fn world_host_for_bot_target(target: Option<&str>) -> String {
+    client::bot_target::world_host_for(client::bot_target::bot_target_from_env(target)).into()
+}
+
+/// Active world host (`BOT_TARGET` / `--prod`).
+pub fn default_world_host() -> String {
+    client::world_host()
+}
 
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
 type SlotFrame = Arc<dyn Fn(&mut Client, &str) + Send + Sync>;
@@ -87,6 +97,9 @@ pub struct SlotStatus {
     /// Payload bytes from `Client.stream` (0 when no stream).
     pub bytes_in: u64,
     pub bytes_out: u64,
+    /// Newest `MESSAGE_GAME` / chat-ring head (`chat_text[0]`). Used to
+    /// parse `getvar` replies (`get tutorial: 1000`).
+    pub chat_head: String,
 }
 
 impl SlotStatus {
@@ -144,6 +157,7 @@ impl Default for SlotStatus {
             queue_total: -1,
             bytes_in: 0,
             bytes_out: 0,
+            chat_head: String::new(),
         }
     }
 }
@@ -172,15 +186,16 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// any cheats the panel queued. `driver` is the slot body's own `Client`
 /// (the only `Driver`); `here` is the local player's world tile
 /// `(x, z, level)` when the body decoded one, else `None` (then the walk
-/// hook refuses to arm). `navs`/`world` back the `ctx.walk` closure:
-/// the closure refuses synchronously only when there is no tile, no nav
-/// world, or a route already queued; `find` runs off-pump on a short-lived
-/// worker per request, storing the route in the uid's nav bot when one
-/// exists (a walk that would panic on the first follow step must not
-/// succeed when no route can arm). Returns whether the driver's out buffer
-/// was written (the slot's own `Client` sends on its next mainloop pass). A
-/// slot whose script is Idle/Paused publishes nothing — no dispatch, no
-/// flush.
+/// hooks refuse to arm). `navs`/`world` back the `ctx.walk` and
+/// `ctx.walk_with` closures — one shared arm ([`WalkArm`]) takes the
+/// [`FindOptions`] (`walk` passes the defaults): the arm refuses
+/// synchronously only when there is no tile, no nav world, or a route
+/// already queued; `find_with` runs off-pump on a short-lived worker per
+/// request, storing the route in the uid's nav bot when one exists (a walk
+/// that would panic on the first follow step must not succeed when no
+/// route can arm). Returns whether the driver's out buffer was written
+/// (the slot's own `Client` sends on its next mainloop pass). A slot whose
+/// script is Idle/Paused publishes nothing — no dispatch, no flush.
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
 #[allow(clippy::too_many_arguments)]
@@ -205,52 +220,35 @@ fn script_observe(
             slot.on_is_up(up);
             // skip script snapshot unless SlotScript is Running.
             if tick_edge && slot.state() == script::RunState::Running {
+                // One shared arm for both hooks: `walk_with` carries the
+                // script's options through to `find_with`; `walk` is the
+                // default-options adapter (rs2b0t `walk` semantics stay
+                // default-off for teleports and wilderness). Each closure
+                // owns its own clone of the arm.
+                let arm = WalkArm {
+                    here,
+                    world: world.clone(),
+                    navs: Arc::clone(navs),
+                    name: name.to_string(),
+                };
+                let mut walk_with = {
+                    let arm = arm.clone();
+                    move |x: i32, z: i32, level: i32, o: script::FindOptions| -> bool {
+                        arm.route(
+                            x,
+                            z,
+                            level,
+                            FindOptions {
+                                allow_teleports: o.allow_teleports,
+                                allow_wilderness: o.allow_wilderness,
+                            },
+                        )
+                    }
+                };
                 let mut walk = {
-                    let world = world.clone();
-                    let navs = Arc::clone(navs);
-                    let name = name.to_string();
+                    let arm = arm.clone();
                     move |x: i32, z: i32, level: i32| -> bool {
-                        let Some((hx, hz, hl)) = here else {
-                            return false;
-                        };
-                        let Some(world) = world.as_ref() else {
-                            return false;
-                        };
-                        // One route in flight per uid: a script spamming
-                        // walk every tick must not spawn a worker each tick.
-                        if navs
-                            .lock()
-                            .unwrap()
-                            .get(&name)
-                            .is_some_and(|b| b.route.is_some())
-                        {
-                            return false;
-                        }
-                        let from = WorldTile { x: hx, z: hz, level: hl };
-                        let to = WorldTile { x, z, level };
-                        let world = Arc::clone(world);
-                        let navs = Arc::clone(&navs);
-                        let name = name.clone();
-                        // Routing is the expensive part: run `find` off-pump
-                        // on a short-lived worker. The worker is detached
-                        // and exits right after storing the route; it never
-                        // touches the scripts map (lock order stays
-                        // scripts → navs).
-                        thread::Builder::new()
-                            .name(format!("nav-find-{name}"))
-                            .spawn(move || {
-                                if let Ok(route) =
-                                    find(&world.collision, &world.graph, from, to)
-                                {
-                                    navs
-                                        .lock()
-                                        .unwrap()
-                                        .entry(name)
-                                        .or_default()
-                                        .route = Some(route);
-                                }
-                            })
-                            .is_ok()
+                        arm.route(x, z, level, FindOptions::default())
                     }
                 };
                 slot.on_game_tick(&mut ScriptCtx {
@@ -258,6 +256,7 @@ fn script_observe(
                     tick,
                     here,
                     walk: Some(&mut walk),
+                    walk_with: Some(&mut walk_with),
                     inv,
                     obj_names,
                 });
@@ -301,6 +300,67 @@ fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str)
 struct NavBot {
     traveller: Traveller,
     route: Option<Route>,
+}
+
+/// The shared script walk arm: both `ctx.walk` (default options) and
+/// `ctx.walk_with` (explicit options) route through [`WalkArm::route`].
+/// Each observe clones the arm once per hook (all fields are `Clone`), so
+/// the two `&mut` hooks never share a mutable borrow.
+#[derive(Clone)]
+struct WalkArm {
+    here: Option<(i32, i32, i32)>,
+    world: Option<Arc<NavWorld>>,
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    name: String,
+}
+
+impl WalkArm {
+    /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
+    /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
+    /// Refuses synchronously only when there is no player tile, no nav
+    /// world, or a route already queued for the uid; the worker stores the
+    /// route in the uid's nav bot when one exists. Returns whether the
+    /// worker was spawned — not whether a path exists.
+    fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
+        let Some((hx, hz, hl)) = self.here else {
+            return false;
+        };
+        let Some(world) = self.world.as_ref() else {
+            return false;
+        };
+        // One route in flight per uid: a script spamming walk every tick
+        // must not spawn a worker each tick.
+        if self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .is_some_and(|b| b.route.is_some())
+        {
+            return false;
+        }
+        let from = WorldTile {
+            x: hx,
+            z: hz,
+            level: hl,
+        };
+        let to = WorldTile { x, z, level };
+        let world = Arc::clone(world);
+        let navs = Arc::clone(&self.navs);
+        let name = self.name.clone();
+        // Routing is the expensive part: run `find_with` off-pump on a
+        // short-lived worker. The worker is detached and exits right after
+        // storing the route; it never touches the scripts map (lock order
+        // stays scripts → navs).
+        thread::Builder::new()
+            .name(format!("nav-find-{name}"))
+            .spawn(move || {
+                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts) {
+                    navs.lock().unwrap().entry(name).or_default().route = Some(route);
+                }
+            })
+            .is_ok()
+    }
 }
 
 /// One pump step of a uid's nav bot: poll the armed route through
@@ -368,11 +428,12 @@ fn step_nav_bot<D: Driver>(
 /// the view carries the real 0-based ids scripts resolve `has_item`
 /// against — the same convention as `api::snapshot`'s inv view.
 /// Short-lived: rebuilt per observe while the slot script is Running;
-/// `None` when no TYPE_INV iface is loaded yet.
-fn inventory_from_ifaces(ifaces: &[Option<IfType>]) -> Option<Vec<(i32, i32)>> {
-    let inv = ifaces
-        .iter()
-        .flatten()
+/// `None` when no TYPE_INV iface is loaded yet. Reads the client's
+/// combined iface view (per-client overlay first) so server-written slots
+/// show, not the shared decode.
+fn inventory_from_ifaces(client: &Client) -> Option<Vec<(i32, i32)>> {
+    let inv = client
+        .ifaces_merged()
         .find(|f| f.r#type == ComponentType::TYPE_INV)?;
     let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
         return None;
@@ -446,7 +507,7 @@ fn on_login_success(arm: &SlotArm) {
 /// (keep running until `!ingame`); only then may `stop` end the body. The
 /// press is the only place a clean logout can go out while the slot is
 /// inside [`Host::run_client`].
-fn tick_flags(client: &mut Client, ifaces: &[Option<IfType>], arm: &SlotArm) -> bool {
+fn tick_flags(client: &mut Client, ifaces: &[Option<Box<IfType>>], arm: &SlotArm) -> bool {
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
         api::interact::logout(client, ifaces);
         arm.want_logout.store(false, Ordering::Relaxed);
@@ -479,7 +540,8 @@ pub struct Play {
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
-    ifaces: Vec<Option<IfType>>,
+    ifaces: Arc<Vec<Option<Box<IfType>>>>,
+    ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: Arc<Mutex<LoginQueue>>,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
@@ -519,7 +581,7 @@ impl Play {
     /// maps. `per_frame` starts as a no-op — slots stay draw-off (headless)
     /// until a caller's own per-frame hook turns a slot's renderer on.
     fn new(options: &PlayOptions) -> Play {
-        let (cache, ifaces) = load_template(&options.cache_dir);
+        let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         Play {
@@ -528,7 +590,8 @@ impl Play {
             options: options.clone(),
             cache,
             obj_names,
-            ifaces,
+            ifaces: Arc::new(ifaces),
+            ifaces_mut_template: Arc::new(ifaces_mut_template),
             queue: Arc::new(Mutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str| {}),
             spawned: HashSet::new(),
@@ -558,6 +621,13 @@ impl Play {
     /// The focused slot's name, `None` when nothing is focused yet.
     pub fn focused(&self) -> Option<String> {
         self.focused.clone()
+    }
+
+    /// The shared nav world (collision + transport graph) the slots route
+    /// with, cloned from the same `Arc` the picker maps. `None` when no
+    /// pack loaded.
+    pub fn world(&self) -> Option<Arc<NavWorld>> {
+        self.world.clone()
     }
 
     /// Kick one slot's parked thread (a no-op when the name is not a
@@ -592,8 +662,8 @@ impl Play {
 
     /// Blocks until every slot thread exits (slot threads run forever, so
     /// this only returns if a slot panicked).
-    pub fn join(self) {
-        for (_, handle) in self.handles {
+    pub fn join(mut self) {
+        for (_, handle) in std::mem::take(&mut self.handles) {
             let _ = handle.join();
         }
     }
@@ -830,6 +900,7 @@ impl Play {
             arm,
             Arc::clone(&self.cache),
             self.ifaces.clone(),
+            self.ifaces_mut_template.clone(),
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
@@ -841,7 +912,18 @@ impl Play {
             &mut self.handles,
         );
     }
+}
 
+/// Stop every slot thread and join it before the play goes away, so no
+/// observe hook (the panel's per-frame paint reads `picker::pack`) can run
+/// after the shared nav world is detached.
+impl Drop for Play {
+    fn drop(&mut self) {
+        let names: Vec<String> = self.handles.keys().cloned().collect();
+        for name in names {
+            self.stop_slot(&name);
+        }
+    }
 }
 
 /// Spawn one slot thread per profile. Each slot waits for a login-queue
@@ -946,7 +1028,8 @@ fn spawn_slot_thread(
     park: Option<SlotPark>,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
-    ifaces_template: Vec<Option<IfType>>,
+    ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
+    ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
@@ -992,7 +1075,13 @@ fn spawn_slot_thread(
             // The park end survives re-login rounds (run_client is entered
             // once per ingame stretch), so wrap it once here.
             let park = park.map(Arc::new);
-            let mut client = prepare_client(config, uid, slot_cache, ifaces_template.clone());
+            let mut client = prepare_client(
+                config,
+                uid,
+                slot_cache,
+                ifaces_template.clone(),
+                ifaces_mut_template.clone(),
+            );
             #[cfg(test)]
             {
                 // Unit tests spawn slots with no web server on :80; shrink
@@ -1110,6 +1199,7 @@ fn spawn_slot_thread(
                                         s.run_sends = run_sends;
                                         s.main_modal_id = c.main_modal_id;
                                         copy_stream_bytes(c, s);
+                                        s.chat_head = c.chat_text[0].clone();
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,
@@ -1133,7 +1223,7 @@ fn spawn_slot_thread(
                             // ids/counts, rebuilt each observe while the
                             // script is Running (the idle-skip gate).
                             let inv = if script_running(&slot_scripts, name) {
-                                inventory_from_ifaces(&c.ifaces)
+                                inventory_from_ifaces(c)
                             } else {
                                 None
                             };
@@ -1208,6 +1298,7 @@ fn spawn_slot_thread(
                 if let Some(s) = all.iter_mut().find(|s| s.username == username) {
                     s.ingame = client.ingame;
                     s.scene_state = client.scene_state;
+                    s.chat_head = client.chat_text[0].clone();
                 }
             }
             })
@@ -1237,7 +1328,9 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// Unpack the config/interface jags once and share the tables across slots
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
-fn load_template(cache_dir: &str) -> (Cache, Vec<Option<IfType>>) {
+fn load_template(
+    cache_dir: &str,
+) -> (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>) {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
         Ok(bytes) => {
             std::panic::catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
@@ -1245,14 +1338,21 @@ fn load_template(cache_dir: &str) -> (Cache, Vec<Option<IfType>>) {
         }
         Err(_) => Cache::default(),
     };
-    let ifaces = match std::fs::read(format!("{cache_dir}/interface")) {
-        Ok(bytes) => {
-            std::panic::catch_unwind(AssertUnwindSafe(|| IfType::unpack(&JagFile::new(bytes))))
-                .unwrap_or_default()
-        }
-        Err(_) => Vec::new(),
+    let (ifaces, ifaces_mut) = match std::fs::read(format!("{cache_dir}/interface")) {
+        Ok(bytes) => std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let (ifaces, ifaces_mut) = IfType::unpack(&JagFile::new(bytes));
+            (
+                ifaces,
+                ifaces_mut
+                    .into_iter()
+                    .map(|o| o.map(|b| Arc::new(*b)))
+                    .collect(),
+            )
+        }))
+        .unwrap_or_default(),
+        Err(_) => (Vec::new(), Vec::new()),
     };
-    (cache, ifaces)
+    (cache, ifaces, ifaces_mut)
 }
 
 /// Copy a login-queue snapshot onto every `SlotStatus` row named `name`;
@@ -1332,6 +1432,14 @@ mod tests {
     use client::config::Cache;
     use vault::ProfileSettings;
 
+    #[test]
+    fn world_host_live_is_rs2b2t_everything_else_is_loopback() {
+        assert_eq!(world_host_for_bot_target(Some("live")), "w1.rs2b2t.com");
+        assert_eq!(world_host_for_bot_target(Some("prod")), "w1.rs2b2t.com");
+        assert_eq!(world_host_for_bot_target(Some("local")), "127.0.0.1");
+        assert_eq!(world_host_for_bot_target(None), "127.0.0.1");
+    }
+
     fn tmp_vault(name: &str) -> std::path::PathBuf {
         let dir =
             std::env::temp_dir().join(format!("274bot-host-play-{}-{}", std::process::id(), name));
@@ -1355,6 +1463,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
+                tutorial_skipped: None,
+                raster: vault::RasterMode::Gpu,
             },
         };
         let loud = Profile {
@@ -1364,6 +1474,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: false,
                 auto_login: false,
+                tutorial_skipped: None,
+                raster: vault::RasterMode::Gpu,
             },
         };
         assert!(bot_client_config(&opt, &quiet).lowmem);
@@ -1474,15 +1586,15 @@ mod tests {
         };
         play.handles.insert("alice".into(), watchdog);
         play.spawned.insert("alice".into());
-        // uid 7 sits queued behind a granted head; stop_slot must drop it
-        // from the FIFO even though the thread is still running.
+        // uid 7 sits on the FIFO behind a full 30/60s address window;
+        // stop_slot must drop it even though the thread is still running.
         {
             let mut q = play.queue.lock().unwrap();
-            assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
-            assert!(matches!(
-                q.request_permit(7, Instant::now()),
-                Permit::Wait(_)
-            ));
+            let now = Instant::now();
+            for i in 0..30 {
+                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            }
+            assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
         }
 
         play.statuses.lock().unwrap().push(SlotStatus {
@@ -1575,15 +1687,15 @@ mod tests {
             |_| (None, None),
             |_, _| {},
         );
-        // The profile uid 42 sits queued behind a granted head; stopping
-        // must drop 42 from the FIFO, not the arm's stale uid 0.
+        // The profile uid 42 sits queued behind a full address window;
+        // stopping must drop 42 from the FIFO, not the arm's stale uid 0.
         {
             let mut q = play.queue.lock().unwrap();
-            assert!(matches!(q.request_permit(1, Instant::now()), Permit::Grant));
-            assert!(matches!(
-                q.request_permit(42, Instant::now()),
-                Permit::Wait(_)
-            ));
+            let now = Instant::now();
+            for i in 0..30 {
+                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            }
+            assert!(matches!(q.request_permit(42, now), Permit::Wait(_)));
         }
         play.spawn_slot(
             Profile {
@@ -1616,7 +1728,7 @@ mod tests {
             members: true,
             lowmem: true,
         };
-        let a = prepare_client(cfg, 1, Arc::clone(&cache), vec![]);
+        let a = prepare_client(cfg, 1, Arc::clone(&cache), Arc::new(vec![]), Vec::new());
         assert!(Arc::ptr_eq(&a.cache, &cache));
         assert!(!a.error_loading);
     }
@@ -1659,7 +1771,8 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         let mut s = SlotStatus {
             username: "t".into(),
@@ -1694,7 +1807,8 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         c.login("a", "pw", false).unwrap();
         let mut s = SlotStatus {
@@ -1787,8 +1901,8 @@ mod tests {
             client_code: api::interact::CC_LOGOUT,
             ..Default::default()
         };
-        ifaces[7] = Some(com);
-        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), ifaces.clone());
+        ifaces[7] = Some(Box::new(com));
+        let mut client = prepare_client(cfg, 1, Arc::new(Cache::default()), Arc::new(ifaces.clone()), Vec::new());
         client.ingame = true;
         let arm = SlotArm::new(0, false);
         arm.want_logout.store(true, Ordering::Relaxed);
@@ -1826,15 +1940,15 @@ mod tests {
             ..SlotStatus::default()
         }]));
         let stop = AtomicBool::new(false);
-        // Occupy the FIFO head so alice waits.
-        assert!(matches!(
-            queue.lock().unwrap().request_permit(1, Instant::now()),
-            Permit::Grant
-        ));
-        assert!(matches!(
-            queue.lock().unwrap().request_permit(7, Instant::now()),
-            Permit::Wait(_)
-        ));
+        // Fill the 30/60s address window so alice waits on the FIFO.
+        {
+            let mut q = queue.lock().unwrap();
+            let now = Instant::now();
+            for i in 0..30 {
+                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            }
+            assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
+        }
         // Simulate stop_slot: leave then set stop; the waiter must not
         // request_permit again (which would Grant or re-queue uid 7).
         queue.lock().unwrap().leave(7);
@@ -1997,6 +2111,8 @@ mod tests {
             settings: ProfileSettings {
                 lowmem: true,
                 auto_login: false,
+                tutorial_skipped: None,
+                raster: vault::RasterMode::Gpu,
             },
         }
     }
@@ -2268,16 +2384,23 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
-        script_observe(&mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats, &navs, &world);
+        script_observe(
+            &mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats, &navs, &world,
+        );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
-        script_observe(&mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &navs, &world);
+        script_observe(
+            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &navs, &world,
+        );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
-        script_observe(&mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &navs, &world);
+        script_observe(
+            &mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &navs, &world,
+        );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
@@ -2306,7 +2429,8 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
@@ -2351,7 +2475,8 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         cheats
             .lock()
@@ -2404,8 +2529,7 @@ mod tests {
         objs[1].name = "Bones".into();
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let seen = Arc::new(Mutex::new(None));
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (navs, world) = empty_nav();
@@ -2427,7 +2551,8 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         script_observe(
             &mut c,
@@ -2456,13 +2581,30 @@ mod tests {
         // resolve `has_item` against the 0-based ObjNames table, so the
         // view must carry `id - 1` and drop the empties.
         let mut ifaces = vec![None; 3];
-        ifaces[1] = Some(IfType {
+        ifaces[1] = Some(Box::new(IfType {
             r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        }));
+        let mut ifaces_mut = vec![None; 3];
+        ifaces_mut[1] = Some(Arc::new(IfTypeMut {
             link_obj_type: Some(vec![2, 0, 1]),
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
-        });
-        let inv = inventory_from_ifaces(&ifaces).expect("TYPE_INV iface present");
+        }));
+        let mut client = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces),
+            ifaces_mut,
+        );
+        let inv = inventory_from_ifaces(&client).expect("TYPE_INV iface present");
         assert_eq!(
             inv,
             vec![(1, 3), (0, 1)],
@@ -2483,6 +2625,7 @@ mod tests {
             tick: 0,
             here: None,
             walk: None,
+            walk_with: None,
             inv: Some(&inv),
             obj_names: Some(&names),
         };
@@ -2591,11 +2734,15 @@ mod tests {
         // directly (no pack file on disk in unit tests).
         let world = Some(Arc::new(NavWorld {
             collision: nav::collision::WorldCollision {
-                origin: WorldTile { x: 0, z: 0, level: 0 },
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
                 width: 40,
                 height: 1,
-                flags: vec![0; 40],
-                walkable: vec![0u32; 40],
+                walk: vec![0u16; 40],
+                flags: None,
             },
             graph: nav::transport::TransportGraph::default(),
         }));
@@ -2659,7 +2806,8 @@ mod tests {
             },
             1,
             Arc::new(Cache::default()),
-            vec![],
+            Arc::new(vec![]),
+            Vec::new(),
         );
         c.stream = Some(stream);
         c.ingame = true;
@@ -2713,10 +2861,12 @@ mod tests {
             "ctx.walk queued the route request"
         );
         assert!(
-            wait_until(
-                100,
-                || queued(&navs) == Some(WorldTile { x: 4, z: 0, level: 0 })
-            ),
+            wait_until(100, || queued(&navs)
+                == Some(WorldTile {
+                    x: 4,
+                    z: 0,
+                    level: 0
+                })),
             "the worker armed the route"
         );
 
@@ -2762,18 +2912,7 @@ mod tests {
 
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
-            &mut d,
-            "alice",
-            true,
-            true,
-            1,
-            None,
-            None,
-            None,
-            &scripts,
-            &cheats,
-            &navs,
-            &world,
+            &mut d, "alice", true, true, 1, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 
@@ -2838,10 +2977,12 @@ mod tests {
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
-            wait_until(
-                100,
-                || queued(&navs) == Some(WorldTile { x: 2, z: 0, level: 0 })
-            ),
+            wait_until(100, || queued(&navs)
+                == Some(WorldTile {
+                    x: 2,
+                    z: 0,
+                    level: 0
+                })),
             "the worker armed the queued route"
         );
 
@@ -2869,7 +3010,11 @@ mod tests {
         );
         assert_eq!(
             queued(&navs),
-            Some(WorldTile { x: 2, z: 0, level: 0 }),
+            Some(WorldTile {
+                x: 2,
+                z: 0,
+                level: 0
+            }),
             "the armed route is untouched"
         );
     }

@@ -129,6 +129,27 @@ impl GameView {
         self.bound = Bound::Client(texture.clone());
     }
 
+    /// Stop drawing a client's `frame_texture` (GPU→CPU while the slot
+    /// still paints). Re-registers the panel-owned texture so ImGui cannot
+    /// sample a GPU head that the slot thread is about to drop.
+    pub fn unbind_client(&mut self, gpu: &mut impl FrameGpu) {
+        if self.bound == Bound::Owned {
+            return;
+        }
+        gpu.unregister_texture(self.tex_id);
+        self.tex_id = gpu.register_texture(&self.texture, &self.view);
+        self.bound = Bound::Owned;
+    }
+
+    /// Drop this view entirely (draw-off / only-render-selected / leave
+    /// the wall). Unregisters the current tex_id and does **not**
+    /// re-register the panel-owned 765×503 texture — Metal pads that to
+    /// 8 MB, and keeping 49 of them after detach is the leftover GPU
+    /// histogram. Consume `self` so the owned texture drops with it.
+    pub fn dispose(self, gpu: &mut impl FrameGpu) {
+        gpu.unregister_texture(self.tex_id);
+    }
+
     /// Upload packed `0x00RRGGBB` pixels (a `FrameBuf` snapshot) into the
     /// texture. `Gpu` exposes no per-texture sampler choice, so
     /// the Image samples with the renderer's default rather than a pixelated
@@ -495,7 +516,11 @@ mod tests {
             4,
             "the PixMap frame must re-register the panel texture"
         );
-        assert_eq!(view.tex_id.id(), 4, "the Image must draw the panel's texture again");
+        assert_eq!(
+            view.tex_id.id(),
+            4,
+            "the Image must draw the panel's texture again"
+        );
         assert_eq!(
             gpu.last_registered(),
             Some(&view.texture),
@@ -505,6 +530,50 @@ mod tests {
             gpu.unregistered,
             vec![1, 2, 3],
             "every replaced texture must be unregistered (bounded renderer cache)"
+        );
+
+        let handle = frame_handle(&device, &queue);
+        view.present(&mut gpu, FrameOutput::Texture(handle));
+        view.unbind_client(&mut gpu);
+        assert_eq!(
+            gpu.unregistered,
+            vec![1, 2, 3, 4, 5],
+            "unbind_client must drop the client frame before the GPU head is destroyed"
+        );
+        view.unbind_client(&mut gpu);
+        assert_eq!(
+            gpu.unregistered,
+            vec![1, 2, 3, 4, 5],
+            "unbind_client on an owned bind is a no-op"
+        );
+    }
+
+    /// Draw-off / only-render-selected must *drop* the panel GameView, not
+    /// `unbind_client` back to the owned 765×503 texture. Metal pads that
+    /// texture to 2048×1024 (8 MB); 49 leftover views after detach are
+    /// ~400 MB still resident. Dispose unregisters the current tex_id and
+    /// does not re-register the panel texture.
+    #[test]
+    fn dispose_unregisters_without_re_registering_the_panel_texture() {
+        let Some((device, queue)) = headless_gpu() else {
+            return; // no adapter: headless CI has nothing to bind
+        };
+        let mut gpu = RecordingGpu::new(device.clone(), queue.clone());
+        let mut view = GameView::init(&mut gpu);
+        let handle = frame_handle(&device, &queue);
+        view.present(&mut gpu, FrameOutput::Texture(handle));
+        assert_eq!(gpu.registered.len(), 2);
+        let client_id = view.tex_id.id();
+        view.dispose(&mut gpu);
+        assert_eq!(
+            gpu.unregistered.last().copied(),
+            Some(client_id),
+            "dispose must unregister the bound client frame"
+        );
+        assert_eq!(
+            gpu.registered.len(),
+            2,
+            "dispose must not re-register the panel-owned 765×503 texture"
         );
     }
 }

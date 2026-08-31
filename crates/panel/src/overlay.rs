@@ -132,8 +132,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                flags: vec![0u32; w * h],
-                walkable: vec![0u32; w * h],
+                walk: vec![0u16; w * h],
+                flags: None,
             },
             graph: TransportGraph::default(),
         }

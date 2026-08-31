@@ -15,6 +15,9 @@
 //! [`find`] and [`find_with_model`] never see teleports; the any-tile
 //! teleport layer ([`TransportGraph::teleports`]) only joins the search
 //! through [`find_allow_teleports`]/[`find_allow_teleports_with_model`].
+//! Wilderness tiles ([`crate::wilderness::in_wilderness`]) are refused
+//! unless the search's [`FindOptions::allow_wilderness`] is set; every
+//! option'd entry point is [`find_with`].
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -26,6 +29,7 @@ use crate::collision::WorldCollision;
 use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{TransportEdge, TransportGraph};
+use crate::wilderness::in_wilderness;
 
 /// One leg of a route: a walk run or one transport crossing. Consecutive
 /// walk tiles collapse into a single `Walk` leg; each transport edge is
@@ -74,6 +78,16 @@ impl CostModel {
     }
 }
 
+/// Per-search opt-ins, both default off so [`find`] keeps the safe
+/// defaults. `allow_teleports` unions the any-tile teleport layer in;
+/// `allow_wilderness` lets the search step into (or land in) the
+/// wilderness zone ([`crate::wilderness::in_wilderness`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FindOptions {
+    pub allow_teleports: bool,
+    pub allow_wilderness: bool,
+}
+
 /// Why [`find`] failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteError {
@@ -90,8 +104,11 @@ const NODE_BUDGET: usize = 4_000_000;
 
 /// The interact radius (chebyshev) a transport edge is usable from: any
 /// standable tile within this distance of the edge's `at` is a valid
-/// take-off. The approach is derived at expansion time, never baked.
-const INTERACT_RADIUS: i32 = 3;
+/// take-off. The game only accepts `op_loc` from adjacent (1). A radius
+/// of 3 let Dijkstra "use" a door through a fence (Lumbridge cow pen:
+/// inside tile to the north-west road gate) and the walker then walked
+/// into the wall. The approach is derived at expansion time, never baked.
+const INTERACT_RADIUS: i32 = 1;
 
 /// The eight step deltas (client coordinates: +x east, +z north).
 const STEPS: [(i32, i32); 8] = [
@@ -129,7 +146,30 @@ pub fn find(
     from: WorldTile,
     to: WorldTile,
 ) -> Result<Route, RouteError> {
-    find_bounded(collision, graph, from, to, CostModel::running(), NODE_BUDGET)
+    find_with(collision, graph, from, to, FindOptions::default())
+}
+
+/// [`find`] with explicit opt-ins: [`FindOptions::allow_teleports`] unions
+/// the any-tile teleport layer in and [`FindOptions::allow_wilderness`]
+/// allows entering the wilderness zone. Both default off, so plain
+/// [`find`] keeps the safe defaults.
+pub fn find_with(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+) -> Result<Route, RouteError> {
+    find_bounded_impl(
+        collision,
+        graph,
+        from,
+        to,
+        CostModel::running(),
+        NODE_BUDGET,
+        opts.allow_teleports,
+        opts.allow_wilderness,
+    )
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -140,7 +180,7 @@ pub fn find_with_model(
     to: WorldTile,
     model: CostModel,
 ) -> Result<Route, RouteError> {
-    find_bounded(collision, graph, from, to, model, NODE_BUDGET)
+    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, false, false)
 }
 
 /// [`find`] with the any-tile teleport layer unioned in: every edge in
@@ -148,14 +188,24 @@ pub fn find_with_model(
 /// a teleport can take the route across a wall, a level boundary, or half
 /// the map. Requirements stay on the edges (never gated here, like every
 /// other transport edge); the caller checks them. Default [`find`]/
-/// [`find_with_model`] never see teleports.
+/// [`find_with_model`] never see teleports. Wilderness stays refused
+/// (`allow_wilderness` off).
 pub fn find_allow_teleports(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     to: WorldTile,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, CostModel::running(), NODE_BUDGET, true)
+    find_with(
+        collision,
+        graph,
+        from,
+        to,
+        FindOptions {
+            allow_teleports: true,
+            allow_wilderness: false,
+        },
+    )
 }
 
 /// [`find_allow_teleports`] with an explicit per-search cost model.
@@ -166,12 +216,14 @@ pub fn find_allow_teleports_with_model(
     to: WorldTile,
     model: CostModel,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, true)
+    find_bounded_impl(collision, graph, from, to, model, NODE_BUDGET, true, false)
 }
 
 /// [`find`] with an explicit cost model and node-expansion budget (the
 /// search gives up with [`RouteError::BudgetExhausted`] once `budget`
-/// tiles are settled). Teleports stay off.
+/// tiles are settled). Teleports and wilderness stay off. Test-only: the
+/// budget knob has no production caller yet.
+#[cfg(test)]
 fn find_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -180,14 +232,15 @@ fn find_bounded(
     model: CostModel,
     budget: usize,
 ) -> Result<Route, RouteError> {
-    find_bounded_impl(collision, graph, from, to, model, budget, false)
+    find_bounded_impl(collision, graph, from, to, model, budget, false, false)
 }
 
 /// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
 /// into the relaxation from every settled node. Transport edges are relaxed
 /// from any standable tile within [`INTERACT_RADIUS`] of their `at` (never
 /// from `at` itself when it is blocked); walk steps are the strict
-/// directional [`step_ok`] test throughout.
+/// directional [`step_ok`] test throughout. `allow_wilderness` gates
+/// stepping into (or landing in) the wilderness zone.
 fn find_bounded_impl(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -196,6 +249,7 @@ fn find_bounded_impl(
     model: CostModel,
     budget: usize,
     use_teleports: bool,
+    allow_wilderness: bool,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -247,6 +301,9 @@ fn find_bounded_impl(
                     z: cur.z + d.1,
                     level: cur.level,
                 };
+                if !wildy_step_ok(cur, nb, allow_wilderness) {
+                    continue;
+                }
                 let nd = n.cost + model.run_per_step;
                 if !done.contains(&nb) && dist.get(&nb).is_none_or(|&g| g > nd) {
                     dist.insert(nb, nd);
@@ -260,7 +317,7 @@ fn find_bounded_impl(
         // never baked. `at` itself is the interact target and may be
         // blocked (a wall loc or NPC); only the take-off tile needs to be
         // standable. Each edge is indexed under its unique `at`, so the
-        // fixed offset sweep finds it exactly once per node (a radius-3
+        // fixed offset sweep finds it exactly once per node (a radius-1
         // square may cover several `at` tiles — each is a distinct edge).
         if collision.standable(cur) {
             for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
@@ -275,6 +332,9 @@ fn find_bounded_impl(
                     };
                     for &ei in idxs {
                         let edge = &graph.edges[ei];
+                        if !wildy_step_ok(cur, edge.to, allow_wilderness) {
+                            continue;
+                        }
                         let nd = n.cost + edge.ticks as f64;
                         if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
                             dist.insert(edge.to, nd);
@@ -294,13 +354,19 @@ fn find_bounded_impl(
         // declares it).
         if use_teleports {
             for (ti, edge) in graph.teleports.iter().enumerate() {
+                if !wildy_step_ok(cur, edge.to, allow_wilderness) {
+                    continue;
+                }
                 let nd = n.cost + edge.ticks as f64;
                 if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
                     dist.insert(edge.to, nd);
-                    came_from.insert(edge.to, Back::Teleport {
-                        from: cur,
-                        index: ti,
-                    });
+                    came_from.insert(
+                        edge.to,
+                        Back::Teleport {
+                            from: cur,
+                            index: ti,
+                        },
+                    );
                     heap.push(HeapNode {
                         cost: nd,
                         tile: edge.to,
@@ -310,6 +376,14 @@ fn find_bounded_impl(
         }
     }
     Err(RouteError::NoPath)
+}
+
+/// Whether the search may move from `cur` onto `next`: without
+/// `allow_wilderness` a non-wilderness node may not relax into a
+/// wilderness tile (a walk step or a transport landing). Once inside the
+/// wilderness the search walks freely — only the entry is gated.
+fn wildy_step_ok(cur: WorldTile, next: WorldTile, allow_wilderness: bool) -> bool {
+    allow_wilderness || in_wilderness(cur) || !in_wilderness(next)
 }
 
 /// Whether a one-tile step from `cur` by `d` is allowed — the client's
@@ -688,8 +762,8 @@ mod tests {
     use crate::collision::{bake_from_maps, WorldCollision};
     use crate::grid::StepGrid;
     use crate::router::{
-        find, find_allow_teleports, find_bounded, find_on_grid, find_with_model, step_ok,
-        CostModel, GridLeg, Leg, RouteError, PER_STEP_WALK,
+        find, find_allow_teleports, find_bounded, find_on_grid, find_with, find_with_model,
+        step_ok, CostModel, FindOptions, GridLeg, Leg, RouteError, PER_STEP_WALK,
     };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -871,8 +945,8 @@ mod tests {
             origin: tile(0, 0, 0),
             width,
             height,
-            flags: flags.clone(),
-            walkable: crate::collision::derive_walkable(&flags),
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
         }
     }
 
@@ -881,10 +955,8 @@ mod tests {
 
     impl FixDir {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "274bot-nav-router-{name}-{}",
-                std::process::id()
-            ));
+            let dir = std::env::temp_dir()
+                .join(format!("274bot-nav-router-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             FixDir(dir)
@@ -962,6 +1034,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(at).or_default().push(0);
@@ -990,6 +1063,7 @@ mod tests {
             item_req,
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         });
         graph
     }
@@ -1015,7 +1089,12 @@ mod tests {
         let g = TransportGraph::default();
         let r = find(&wc, &g, tile(1, 1, 0), tile(1, 1, 0)).unwrap();
         assert_eq!(r.ticks, 0.0); // no steps walked
-        assert_eq!(r.legs, vec![Leg::Walk { tiles: vec![tile(1, 1, 0)] }]);
+        assert_eq!(
+            r.legs,
+            vec![Leg::Walk {
+                tiles: vec![tile(1, 1, 0)]
+            }]
+        );
     }
 
     #[test]
@@ -1036,20 +1115,22 @@ mod tests {
         let g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
         let r = find(&wc, &g, tile(0, 0, 0), tile(4, 4, 0)).unwrap();
         assert_eq!(r.dest, tile(4, 4, 0));
-        // The origin sits within the door's interact radius of at=(1,2),
-        // so the door is taken straight from it (2.0) plus 3 walk steps
-        // from its far side (1.0, two run steps).
-        assert_eq!(r.ticks, 3.0);
+        // Origin (0,0) is chebyshev 2 from at=(1,2), so the search walks
+        // one step to an adjacent take-off (0.5) then the 2-tick door plus
+        // two run steps from the far side (1.0).
+        assert_eq!(r.ticks, 3.5);
         assert_eq!(r.legs.len(), 3);
-        let (
-            Leg::Walk { tiles: w0 },
-            Leg::Transport { edge },
-            Leg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
-        assert_eq!(w0, &vec![tile(0, 0, 0)]);
+        assert_eq!(w0.first(), Some(&tile(0, 0, 0)));
+        assert_eq!(
+            w0.len(),
+            2,
+            "walk up to an adjacent take-off, not from (0,0)"
+        );
         assert_eq!(edge.loc_id, 1530);
         assert_eq!(edge.ticks, 2);
         assert_eq!(edge.at, tile(1, 2, 0));
@@ -1082,11 +1163,8 @@ mod tests {
         assert_eq!(r.dest, tile(4, 2, 0));
         // The 2-tick door taken from (1,0) + 2 run steps from (2,2) (1.0).
         assert_eq!(r.ticks, 3.0);
-        let (
-            Leg::Walk { tiles: w0 },
-            Leg::Transport { edge },
-            Leg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
@@ -1217,6 +1295,7 @@ mod tests {
             item_req: vec![],
             quest_req: vec![],
             varp_req: vec![],
+            worn_req: vec![],
         };
         let mut g = TransportGraph::default();
         g.at.entry(ladder.at).or_default().push(0);
@@ -1225,11 +1304,8 @@ mod tests {
         assert_eq!(r.dest, tile(3, 1, 1));
         // The 3-tick ladder plus 2 run steps on level 1 (1.0).
         assert_eq!(r.ticks, 4.0);
-        let (
-            Leg::Walk { tiles: w0 },
-            Leg::Transport { edge },
-            Leg::Walk { tiles: w1 },
-        ) = (&r.legs[0], &r.legs[1], &r.legs[2])
+        let (Leg::Walk { tiles: w0 }, Leg::Transport { edge }, Leg::Walk { tiles: w1 }) =
+            (&r.legs[0], &r.legs[1], &r.legs[2])
         else {
             panic!("expected Walk, Transport, Walk legs");
         };
@@ -1319,8 +1395,8 @@ mod tests {
         // pace (1/tile).
         let wc = bake(5, 5, &[]);
         let g = TransportGraph::default();
-        let run = find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), CostModel::running())
-            .unwrap();
+        let run =
+            find_with_model(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), CostModel::running()).unwrap();
         assert_eq!(run.ticks, 2.0);
         let walk = CostModel {
             run_per_step: PER_STEP_WALK,
@@ -1340,8 +1416,8 @@ mod tests {
         let dest = tile(4, 4, 0);
         let g = teleport(
             dest,
-            3, // OP_BASE 1 + the cast p_delay(2)
-            vec![(6, 25)], // Magic level 25 (Varrock)
+            3,                                  // OP_BASE 1 + the cast p_delay(2)
+            vec![(6, 25)],                      // Magic level 25 (Varrock)
             vec![(554, 1), (556, 3), (563, 1)], // fire + air + law runes
         );
         assert!(matches!(
@@ -1399,10 +1475,7 @@ mod tests {
             let r = find_allow_teleports(&wc, &g, origin, dest).unwrap();
             assert_eq!(r.dest, dest);
             assert_eq!(r.ticks, 2.0, "teleport from {origin:?} costs the rub only");
-            assert!(r
-                .legs
-                .iter()
-                .any(|l| matches!(l, Leg::Transport { .. })));
+            assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
         }
     }
 
@@ -1416,5 +1489,177 @@ mod tests {
         let r = find_allow_teleports(&wc, &g, tile(0, 0, 0), dest).unwrap();
         assert_eq!(r.ticks, 2.0);
         assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
+    }
+
+    // --- wilderness opt-in (FindOptions.allow_wilderness) ---
+
+    /// A `width × height` all-open level-0 bake at `origin` (flags all 0,
+    /// walkable derived).
+    fn open_world(origin: WorldTile, width: usize, height: usize) -> WorldCollision {
+        let flags = vec![0u32; width * height];
+        WorldCollision {
+            origin,
+            width,
+            height,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
+        }
+    }
+
+    #[test]
+    fn find_does_not_enter_wilderness_without_the_flag() {
+        let wc = open_world(
+            WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            5,
+            12,
+        );
+        let g = TransportGraph::default();
+        let from = WorldTile {
+            x: 3100,
+            z: 3519,
+            level: 0,
+        }; // z 3519 < 3520
+        let to = WorldTile {
+            x: 3100,
+            z: 3525,
+            level: 0,
+        }; // in zone
+        assert!(matches!(find(&wc, &g, from, to), Err(RouteError::NoPath)));
+        let ok = find_with(
+            &wc,
+            &g,
+            from,
+            to,
+            FindOptions {
+                allow_teleports: false,
+                allow_wilderness: true,
+            },
+        );
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn already_in_wilderness_can_walk_out_without_the_flag() {
+        let wc = open_world(
+            WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            5,
+            12,
+        );
+        let g = TransportGraph::default();
+        let from = WorldTile {
+            x: 3100,
+            z: 3525,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3100,
+            z: 3519,
+            level: 0,
+        };
+        assert!(find(&wc, &g, from, to).is_ok());
+    }
+
+    #[test]
+    fn find_allow_teleports_still_refuses_a_wilderness_landing() {
+        // A walled 5×12 bake at (3099,3518): only the any-tile teleport
+        // crosses the wall, but its landing (3102,3525) is inside the
+        // zone. Default find refuses (wall), allow_teleports alone still
+        // refuses (the wildy landing), and both flags together route.
+        let mut flags = vec![0u32; 5 * 12];
+        for z in 0..12 {
+            flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
+        }
+        let wc = WorldCollision {
+            origin: WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            width: 5,
+            height: 12,
+            walk: crate::collision::pack_walk_u16(&flags),
+            flags: None,
+        };
+        let dest = tile(3102, 3525, 0);
+        let g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
+        let from = tile(3100, 3519, 0);
+        assert!(matches!(find(&wc, &g, from, dest), Err(RouteError::NoPath)));
+        assert!(
+            matches!(
+                find_allow_teleports(&wc, &g, from, dest),
+                Err(RouteError::NoPath)
+            ),
+            "a teleport landing inside the wilderness must stay refused"
+        );
+        let ok = find_with(
+            &wc,
+            &g,
+            from,
+            dest,
+            FindOptions {
+                allow_teleports: true,
+                allow_wilderness: true,
+            },
+        );
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn lumbridge_cow_pen_to_varrock_uses_the_south_gate() {
+        // (3253,3282) is inside the cow pen. The south gate (loc 1551/1553
+        // at 3253,3266/3267) is adjacent from inside. The north-west road
+        // gate at (3241,3301) is three tiles through the north fence —
+        // INTERACT_RADIUS 3 lets find "use" it from inside and the walker
+        // then aims at the fence.
+        let pack = match std::env::var("NAV_PACK") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => PathBuf::from(format!(
+                "{}/.274bot/274bot.navpack",
+                std::env::var("HOME").unwrap()
+            )),
+        };
+        let world = crate::world::NavWorld::load_pack(&pack)
+            .unwrap_or_else(|e| panic!("nav pack {}: {e:?}", pack.display()));
+        let from = WorldTile {
+            x: 3253,
+            z: 3282,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0,
+        };
+        let route = find(&world.collision, &world.graph, from, to)
+            .unwrap_or_else(|e| panic!("cow pen -> Varrock must route: {e:?}"));
+        let first_door = route.legs.iter().find_map(|l| match l {
+            Leg::Transport { edge } if edge.kind == TransportKind::Door => Some(edge),
+            _ => None,
+        });
+        let door = first_door.expect("must exit the pen through a door");
+        assert!(
+            (door.at.x == 3253 && (door.at.z == 3266 || door.at.z == 3267))
+                || (door.at.x == 3253 && (door.to.z == 3266 || door.to.z == 3267)),
+            "first door must be the south cow-pen gate (3253,3266/3267), got at=({}, {}) to=({}, {}) loc={}",
+            door.at.x,
+            door.at.z,
+            door.to.x,
+            door.to.z,
+            door.loc_id
+        );
+        assert_ne!(
+            (door.at.x, door.at.z),
+            (3241, 3301),
+            "must not clip through the north fence to the road gate"
+        );
     }
 }

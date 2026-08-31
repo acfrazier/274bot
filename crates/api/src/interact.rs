@@ -65,7 +65,7 @@ pub trait Driver {
     /// `handle_tab_clicks` behavior (flip `active_icon` + redraw flags).
     /// Returns false when `tab` is not a bound side icon. Defaults to
     /// false for stubs that do not model the side icons.
-    fn click_side_tab(&mut self, tab: i32) -> bool {
+    fn click_side_tab(&mut self, _tab: i32) -> bool {
         false
     }
 }
@@ -236,14 +236,15 @@ pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
 
 /// Tutorial-skip hop used by rs2b0t `mainlandAccount`: tele off the island
 /// then `setvar tutorial 1000`. Call after `ingame && scene_state == 2`.
-/// Does **not** relog (side icons stay tutorial-locked until campaign 2).
+/// Does **not** relog (side icons stay tutorial-locked).
 pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
     let tele = format!("tele {OFF_ISLAND_TELE}");
     cheat(driver, &tele);
     cheat(driver, "setvar tutorial 1000");
 }
 
-/// `::tele` argument for an absolute world tile (`level,mx,mz,lx,lz`).
+/// Cheat body for an absolute world tile (`tele level,mx,mz,lx,lz`).
+/// Not a `~` debugproc.
 pub fn tele_args(level: i32, x: i32, z: i32) -> String {
     format!(
         "tele {},{},{},{},{}",
@@ -255,8 +256,8 @@ pub fn tele_args(level: i32, x: i32, z: i32) -> String {
     )
 }
 
-/// Skip tutorial and `::tele` to an absolute tile, sent through [`cheat`];
-/// the host flushes after.
+/// Skip tutorial (`setvar tutorial 1000`) and `tele` to an absolute tile,
+/// sent through [`cheat`]; the host flushes after.
 pub fn seed_at<D: Driver + ?Sized>(driver: &mut D, level: i32, x: i32, z: i32) {
     cheat(driver, "setvar tutorial 1000");
     cheat(driver, &tele_args(level, x, z));
@@ -277,7 +278,7 @@ pub fn login<D: Driver + ?Sized>(
 pub const CC_LOGOUT: i32 = 205;
 
 /// The slot index of the first iface whose client code is [`CC_LOGOUT`].
-pub fn logout_iface_id(ifaces: &[Option<client::config::IfType>]) -> Option<i32> {
+pub fn logout_iface_id(ifaces: &[Option<Box<client::config::IfType>>]) -> Option<i32> {
     ifaces.iter().enumerate().find_map(|(i, c)| {
         c.as_ref()
             .filter(|c| c.client_code == CC_LOGOUT)
@@ -289,7 +290,7 @@ pub fn logout_iface_id(ifaces: &[Option<client::config::IfType>]) -> Option<i32>
 /// doAction path. Missing iface → `false`, no panic.
 pub fn logout<D: Driver + ?Sized>(
     driver: &mut D,
-    ifaces: &[Option<client::config::IfType>],
+    ifaces: &[Option<Box<client::config::IfType>>],
 ) -> bool {
     let Some(id) = logout_iface_id(ifaces) else {
         return false;
@@ -389,14 +390,8 @@ pub enum SendReason {
 /// `tick`, or refused at `tick` with a [`SendReason`].
 #[derive(Debug, Clone)]
 pub enum SendResult<'a> {
-    Sent {
-        tick: u64,
-        command: WireCommand<'a>,
-    },
-    Refused {
-        tick: u64,
-        reason: SendReason,
-    },
+    Sent { tick: u64, command: WireCommand<'a> },
+    Refused { tick: u64, reason: SendReason },
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +701,10 @@ impl<'a> Interactions<'a> {
         let Some(operation) = operation else {
             return refuse(snapshot, SendReason::InvalidAction);
         };
-        self.dispatch(WireCommand::Op { target, operation }, snapshot.tick() as u64)
+        self.dispatch(
+            WireCommand::Op { target, operation },
+            snapshot.tick() as u64,
+        )
     }
 
     pub fn use_item_on<'t>(&mut self, item: &'t ItemView, target: OpTarget<'t>) -> SendResult<'t> {
@@ -724,12 +722,19 @@ impl<'a> Interactions<'a> {
             return refuse(snapshot, reason);
         }
         self.dispatch(
-            WireCommand::UseItem { select: item, target },
+            WireCommand::UseItem {
+                select: item,
+                target,
+            },
             snapshot.tick() as u64,
         )
     }
 
-    pub fn use_widget_on<'t>(&mut self, widget: &WidgetView, target: OpTarget<'t>) -> SendResult<'t> {
+    pub fn use_widget_on<'t>(
+        &mut self,
+        widget: &WidgetView,
+        target: OpTarget<'t>,
+    ) -> SendResult<'t> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
@@ -795,7 +800,10 @@ impl<'a> Interactions<'a> {
         if component_id == -1 {
             return refuse(snapshot, SendReason::NoContinue);
         }
-        self.dispatch(WireCommand::Continue { component_id }, snapshot.tick() as u64)
+        self.dispatch(
+            WireCommand::Continue { component_id },
+            snapshot.tick() as u64,
+        )
     }
 
     pub fn close_modal<'t>(&mut self) -> SendResult<'t> {
@@ -936,7 +944,11 @@ impl<'a> Interactions<'a> {
 
     /// The m8aq `precondition`: attached, ingame, no open count dialog
     /// (unless `allow_count_dialog`), scene available + ready.
-    fn precondition(&self, snapshot: &GameSnapshot, allow_count_dialog: bool) -> Option<SendReason> {
+    fn precondition(
+        &self,
+        snapshot: &GameSnapshot,
+        allow_count_dialog: bool,
+    ) -> Option<SendReason> {
         if !snapshot.attached() {
             return Some(SendReason::NotAttached);
         }

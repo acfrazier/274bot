@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::router::Route;
+use nav::router::{FindOptions, Route};
 use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 
@@ -403,9 +403,10 @@ impl ScenarioRunner {
     }
 
     /// Send the current step's action once. `Perform` runs its closure;
-    /// `Walk` and `Follow` both arm the whole-world route (`find` over the
-    /// collision + transport graph) and drive `Traveller::follow`; `Shot`
-    /// sends nothing (the step only waits for its arm to capture it).
+    /// `Walk` and `Follow` both arm the whole-world route (`find_with`
+    /// over the collision + transport graph, default options) and drive
+    /// `Traveller::follow`; `Shot` sends nothing (the step only waits for
+    /// its arm to capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
@@ -415,7 +416,9 @@ impl ScenarioRunner {
                 return Err("driver rejected the send".into());
             }
             StepKind::Shot { .. } => return Ok(()),
-            StepKind::Walk { dest } | StepKind::Follow { dest } => self.arm_route(*dest),
+            StepKind::Walk { dest } | StepKind::Follow { dest } => {
+                self.arm_route(*dest, FindOptions::default())
+            }
         }
     }
 
@@ -425,7 +428,7 @@ impl ScenarioRunner {
     /// maps, so it matches the live world). The origin is the observed
     /// player tile — a loc-blocked tele landing is fine, the router only
     /// tests tiles stepped *onto*.
-    fn arm_route(&mut self, dest: WorldTile) -> Result<(), String> {
+    fn arm_route(&mut self, dest: WorldTile, opts: FindOptions) -> Result<(), String> {
         let Some((hx, hz, hl)) = self.snapshot.tile() else {
             return Err("no player tile to route from".into());
         };
@@ -437,7 +440,7 @@ impl ScenarioRunner {
             z: hz,
             level: hl,
         };
-        match nav::router::find(&world.collision, &world.graph, from, dest) {
+        match nav::router::find_with(&world.collision, &world.graph, from, dest, opts) {
             Ok(route) => {
                 self.route = Some(route);
                 Ok(())
@@ -558,10 +561,7 @@ impl ScenarioRunner {
 /// order.
 #[allow(dead_code)]
 fn wait(arm: Proof, budget_ticks: u32) -> Wait {
-    Wait {
-        arm,
-        budget_ticks,
-    }
+    Wait { arm, budget_ticks }
 }
 
 #[cfg(test)]
@@ -663,10 +663,7 @@ mod tests {
         // Tick 1: seed completes, send runs (runenergy 99 lands on the
         // client), the stale snapshot still shows 0.
         runner.tick(&mut c);
-        assert_eq!(
-            runner.status(),
-            RunnerStatus::Running { step: 0, total: 1 }
-        );
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
         // Tick 2: the stat bump refreshes the snapshot; the arm fires and
         // the proof passes on the same tick.
         c.bump_gens(ServerProt::UPDATE_RUNENERGY);
@@ -734,10 +731,7 @@ mod tests {
         c.local_player = Some(ClientPlayer::at(20, 20));
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
-        assert_eq!(
-            runner.status(),
-            RunnerStatus::Running { step: 0, total: 1 }
-        );
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
     }
 
     // --- Whole-world `Walk` steps (find + Traveller::follow) ---
@@ -792,7 +786,8 @@ mod tests {
             40,
         );
         let world = NavWorld::from_grid(&grid);
-        let mut runner = ScenarioRunner::with_world(walk_scenario(dest, 120), Some(Arc::new(world)));
+        let mut runner =
+            ScenarioRunner::with_world(walk_scenario(dest, 120), Some(Arc::new(world)));
         runner.set_scene_settle(Duration::ZERO);
 
         runner.tick(&mut c);
@@ -927,7 +922,8 @@ mod tests {
             40,
         );
         let world = NavWorld::from_grid(&grid);
-        let mut runner = ScenarioRunner::with_world(follow_scenario(dest, 120), Some(Arc::new(world)));
+        let mut runner =
+            ScenarioRunner::with_world(follow_scenario(dest, 120), Some(Arc::new(world)));
         runner.set_scene_settle(Duration::ZERO);
 
         runner.tick(&mut c);
@@ -1021,11 +1017,11 @@ mod tests {
         runner.set_scene_settle(Duration::ZERO);
         // Tick 1: seed completes; the send drops the scene to 1.
         runner.tick(&mut c);
-        assert_eq!(c.scene_state, 1, "the send dropped the scene (tele rebuild)");
         assert_eq!(
-            runner.status(),
-            RunnerStatus::Running { step: 0, total: 1 }
+            c.scene_state, 1,
+            "the send dropped the scene (tele rebuild)"
         );
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
         // Scene still 1: the snapshot now decodes run energy 99 (the arm
         // would hold), but the runner must hold — no step advance.
         c.bump_gens(ServerProt::UPDATE_RUNENERGY);
@@ -1059,10 +1055,7 @@ mod tests {
         // Tick 1: the scene just became 2 (the seed completed); the
         // settle has not elapsed, so the step's send is held back.
         runner.tick(&mut c);
-        assert_eq!(
-            runner.status(),
-            RunnerStatus::Running { step: 0, total: 1 }
-        );
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
         assert_eq!(c.runenergy, 0, "the send is held until the settle elapses");
         // After the settle: the send fires and drops the scene to 1.
         std::thread::sleep(Duration::from_millis(40));
@@ -1139,10 +1132,7 @@ mod tests {
         // Driven slot: the walker's steps run to PASS.
         let mut c = seeded_client();
         runner.tick(&mut c);
-        assert_eq!(
-            runner.status(),
-            RunnerStatus::Running { step: 0, total: 1 }
-        );
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
         c.bump_gens(ServerProt::UPDATE_RUNENERGY);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed);
@@ -1306,8 +1296,7 @@ mod tests {
         let sink_dir = dir.clone();
         let now = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_616_000);
         runner.set_shot_sink(Box::new(move |label, snap| {
-            let json =
-                serde_json::to_string_pretty(snap).expect("terminal snapshot serializes");
+            let json = serde_json::to_string_pretty(snap).expect("terminal snapshot serializes");
             // A known 4x4 RGBA buffer: no wgpu surface needed here.
             let rgba: Vec<u8> = (0..64).map(|i| (i * 4) as u8).collect();
             crate::shot::write_shot_at(&sink_dir, label, &rgba, 4, 4, &json, now)
