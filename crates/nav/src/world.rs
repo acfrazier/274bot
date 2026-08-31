@@ -1,10 +1,11 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`].
-//! The v6 pack file stores the compact packed walk words and the transport
-//! edges, so the Dijkstra router ([`crate::router::find`]) consumes one
-//! artifact — live harnesses load this and route on the packed collision.
-//! The legacy 274N grid pack (boolean walk bytes + doors) still loads
-//! through [`NavWorld::from_grid`] as a fallback for old `.navpack` files.
+//! The v7 pack file stores the compact packed walk surface and the
+//! transport edges, so the Dijkstra router ([`crate::router::find`])
+//! consumes one artifact — live harnesses load this and route on the
+//! packed collision. The legacy 274N grid pack (boolean walk bytes +
+//! doors) still loads through [`NavWorld::from_grid`] as a fallback for
+//! old `.navpack` files.
 
 use std::path::Path;
 
@@ -65,6 +66,7 @@ impl NavWorld {
                 flags[z * grid.width + x] = if grid.walkable(t) { 0 } else { BLOCKED };
             }
         }
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: grid.origin.x,
@@ -73,7 +75,8 @@ impl NavWorld {
             },
             width: grid.width,
             height: grid.height,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let mut graph = TransportGraph::default();
@@ -114,7 +117,7 @@ mod tests {
     use client::dash3d::CollisionFlag;
 
     use super::{NavWorld, BLOCKED};
-    use crate::collision::{walk_word_from_u16, WorldCollision};
+    use crate::collision::{walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
     use crate::pack::{encode, encode_grid, PackError};
     use crate::router::{find, find_allow_teleports, Leg};
@@ -211,15 +214,17 @@ mod tests {
         let door_tile = tile(2, 0, 0);
         let idx = (door_tile.z - w.collision.origin.z) as usize * w.collision.width
             + (door_tile.x - w.collision.origin.x) as usize;
+        let blocked = (w.collision.blocked[idx >> 6] >> (idx & 63)) & 1 != 0;
         assert_eq!(
-            walk_word_from_u16(w.collision.walk[idx]),
+            walk_word_from_parts(w.collision.walk[idx], blocked),
             BLOCKED,
-            "the full directional stamp is in the packed walk word"
+            "the full directional stamp is in the packed walk surface"
         );
         // The full directional stamp is in the walk block masks, so the
         // router never steps onto it.
         assert_eq!(
-            walk_word_from_u16(w.collision.walk[idx]) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
+            walk_word_from_parts(w.collision.walk[idx], blocked)
+                & CollisionFlag::WALK_BLOCK_FLAGS as u32,
             CollisionFlag::WALK_BLOCK_FLAGS as u32
         );
         assert!(w.collision.walkable(tile(0, 0, 0)));
@@ -323,11 +328,13 @@ mod tests {
         // load must surface BadVersion(5) so the operator rebakes, not
         // fall into the grid decoder and come out as a confusing BadMagic.
         let plane = vec![0u32; 4];
+        let (walk, blocked) = crate::collision::pack_walk(&plane);
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
             width: 2,
             height: 2,
-            walk: crate::collision::pack_walk_u16(&plane),
+            walk,
+            blocked,
             flags: None,
         };
         let mut bytes = encode(&collision, &TransportGraph::default());
@@ -358,11 +365,13 @@ mod tests {
         plane[2] = BLOCKED;
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
             width: 5,
             height: 1,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let mut graph = TransportGraph::default();
@@ -419,11 +428,13 @@ mod tests {
         }
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
             width: 5,
             height: 5,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let mut graph = TransportGraph::default();

@@ -50,10 +50,11 @@ and WalkTo are in-tree.
 
 ### Nav
 
-- Whole-world collision + transport pack (`274V`, version byte **6**):
-  compact `u16` walk words per tile. Optional `274F` flags sidecar for
-  collision paint. Rebake; v5 streams are `BadVersion`, not silently
-  loaded as v1.
+- Whole-world collision + transport pack (`274V`, version byte **7**):
+  `u8` walk face bytes per tile plus a packed `SQ_BLOCKED` bit-plane
+  (9 bits per cell, was 16). Optional `274F` flags sidecar for
+  collision paint. Rebake; v6 and older streams are `BadVersion`, not
+  silently loaded.
 - Dijkstra `find` / `find_with` (`FindOptions`: wilderness and teleport
   opt-in, both default off) and pollable `Traveller::follow`.
 - Transport coverage includes doors, ladders/stairs, agility, gates,

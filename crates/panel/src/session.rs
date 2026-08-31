@@ -2785,7 +2785,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                walk: vec![0u16; w * h],
+                walk: vec![0u8; w * h],
+                blocked: vec![0u64; (w * h).div_ceil(64)],
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -2806,7 +2807,8 @@ mod tests {
                 },
                 width: 64,
                 height: 64,
-                walk: vec![0u16; 64 * 64],
+                walk: vec![0u8; 64 * 64],
+                blocked: vec![0u64; (64usize * 64).div_ceil(64)],
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -2842,6 +2844,7 @@ mod tests {
         let mut flags = vec![0u32; width * height];
         flags[width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -2851,7 +2854,8 @@ mod tests {
                 },
                 width,
                 height,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -2968,6 +2972,7 @@ mod tests {
         let mut flags = vec![0u32; width * height];
         flags[width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -2977,7 +2982,8 @@ mod tests {
                 },
                 width,
                 height,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph {
@@ -3173,6 +3179,7 @@ mod tests {
         let height = 64;
         let mut flags = vec![0u32; width * height];
         flags[width + 1] = CollisionFlag::W_S as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -3182,7 +3189,8 @@ mod tests {
                 },
                 width,
                 height,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -3807,6 +3815,7 @@ mod tests {
         for z in 0..3 {
             flags[z * 3 + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         }
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -3816,7 +3825,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -3885,6 +3895,7 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
         graph.edges.push(edge);
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -3894,7 +3905,8 @@ mod tests {
                 },
                 width: 5,
                 height: 5,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph,
@@ -4072,6 +4084,7 @@ mod tests {
             varp_req: vec![],
             worn_req: vec![],
         });
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -4081,7 +4094,8 @@ mod tests {
                 },
                 width: 5,
                 height: 5,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph,
@@ -4162,6 +4176,7 @@ mod tests {
             varp_req: vec![],
             worn_req: vec![],
         });
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -4171,7 +4186,8 @@ mod tests {
                 },
                 width: 5,
                 height: 12,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph,

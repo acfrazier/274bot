@@ -138,6 +138,7 @@ mod tests {
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(door(at, to));
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -147,7 +148,8 @@ mod tests {
                 },
                 width: 3,
                 height: 2,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph,
@@ -190,6 +192,7 @@ mod tests {
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(door(at, to));
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -199,7 +202,8 @@ mod tests {
                 },
                 width: 5,
                 height: 5,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph,

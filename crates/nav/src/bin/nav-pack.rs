@@ -1,8 +1,8 @@
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
-//! the Server content, and write the v6 nav pack (magic `274V`, version
-//! byte 6; `encode`) to `$NAV_PACK` or
+//! the Server content, and write the v7 nav pack (magic `274V`, version
+//! byte 7; `encode`) to `$NAV_PACK` or
 //! `~/.274bot/274bot.navpack` (default), plus the raw flags sidecar
 //! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
 //! path with its extension swapped to `.navflags` (default
@@ -159,8 +159,8 @@ fn main() -> ExitCode {
     let content_root = maps_dir.parent().unwrap_or_else(|| Path::new("."));
     let graph = derive_transports(content_root, &loc_defs, &collision);
 
-    // The raw baked flags ride in the sidecar; the v6 pack carries only
-    // the packed walk words (the router's resident surface).
+    // The raw baked flags ride in the sidecar; the v7 pack carries only
+    // the packed walk surface (the router's resident form).
     let flags = collision
         .flags
         .take()
@@ -169,7 +169,7 @@ fn main() -> ExitCode {
         encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
     let flags_path = flags_out(&out);
 
-    // The pack write: packed walk words + transport edges.
+    // The pack write: packed walk surface + transport edges.
     let bytes = encode(&collision, &graph);
     if let Err(e) = std::fs::write(&out, &bytes) {
         eprintln!("nav-pack: write {}: {e}", out.display());

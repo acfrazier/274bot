@@ -12,10 +12,12 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 6, collision origin
+//! Pack format (274V): magic `b"274V"`, version `u8` 7, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
-//! packed `walk` u16le per tile per level — four planes, level-major,
-//! each `width × height` (row-major z then x) — then the transport edge
+//! packed walk surface — first the `u8` face byte per tile per level,
+//! four planes, level-major, each `width × height` (row-major z then x),
+//! then the `SQ_BLOCKED` bit-plane as `u64le` words, 64 cells per word,
+//! same indexing — then the transport edge
 //! count u32le and per edge `(kind u8, at x/z/level, to x/z/level,
 //! loc_id, option, ticks, dir u8, open_loc_id)` i32le plus the five
 //! requirement vectors (count u32le, then `(id, value)` i32le pairs;
@@ -24,13 +26,14 @@
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode`] splits them back out
-//! and never indexes them into `at`. The raw flags are not on the v6 wire
+//! and never indexes them into `at`. The raw flags are not on the v7 wire
 //! — the flags sidecar is separate: magic `b"274F"`, version 1, the same
 //! origin/width/height header as the pack, then the level-major u32le flags
 //! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). [`decode`]
-//! accepts version 6 only — any earlier stream is [`PackError::BadVersion`];
+//! accepts version 7 only — any earlier stream (v6 packed u16 words
+//! included) is [`PackError::BadVersion`];
 //! there is no flags→walk compat load. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v6.
+//! old `.navpack` files; `nav-pack` now writes v7.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -51,13 +54,15 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// Current pack format version (collision + transport graph). v3 adds the
 /// per-edge `dir`/`open_loc_id` fields, v4 stores the four collision
 /// planes, v5 adds the per-edge worn-item id list `worn_req`, and v6 —
-/// the current wire — replaces the four u32 flag planes with the compact
-/// packed u16 walk words (no resident u32 flags; the flags sidecar is
-/// separate). The v4 wire also carries the spirit-tree (7) and reserved
-/// NPC (8) transport kinds on the same kind byte — no version bump.
-/// [`decode`] accepts version 6 only; 4, 5, and older streams are
-/// rejected rather than compat-loaded.
-const VERSION: u8 = 6;
+/// the packed-walk wire — replaces the four u32 flag planes with the
+/// compact packed u16 walk words (no resident u32 flags; the flags
+/// sidecar is separate). v7 — the current wire — splits that u16 walk
+/// word into the `u8` face byte per cell plus the packed `SQ_BLOCKED`
+/// bit-plane (9 bits per cell instead of 16). The v4 wire also carries
+/// the spirit-tree (7) and reserved NPC (8) transport kinds on the same
+/// kind byte — no version bump. [`decode`] accepts version 7 only; 6,
+/// 5, and older streams are rejected rather than compat-loaded.
+const VERSION: u8 = 7;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Flags sidecar format version.
@@ -198,17 +203,19 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
     decode_grid(&bytes)
 }
 
-/// Serialize the whole-world collision + transport graph to the v6 pack
+/// Serialize the whole-world collision + transport graph to the v7 pack
 /// byte format. The graph's `at` index is not stored; [`decode`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array. The v6 wire (version byte 6)
-/// carries the [`WorldCollision`] as four level-major planes of packed
-/// u16 walk words plus the per-edge `worn_req` id list; the raw flags are
+/// the ordinary edges in the same array. The v7 wire (version byte 7)
+/// carries the [`WorldCollision`] as the `u8` face bytes per tile per
+/// level (four level-major planes) plus the packed `SQ_BLOCKED`
+/// bit-plane, and the per-edge `worn_req` id list; the raw flags are
 /// not resident and not on the wire (see the flags sidecar).
 pub fn encode(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
-    let mut out =
-        Vec::with_capacity(4 + 1 + 12 + 8 + collision.walk.len() * 2 + 4 + edge_count * 96);
+    let mut out = Vec::with_capacity(
+        4 + 1 + 12 + 8 + collision.walk.len() + collision.blocked.len() * 8 + 4 + edge_count * 96,
+    );
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
     for v in [
@@ -220,7 +227,8 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
     }
     out.extend_from_slice(&(collision.width as u32).to_le_bytes());
     out.extend_from_slice(&(collision.height as u32).to_le_bytes());
-    for w in &collision.walk {
+    out.extend_from_slice(&collision.walk);
+    for w in &collision.blocked {
         out.extend_from_slice(&w.to_le_bytes());
     }
     out.extend_from_slice(&(edge_count as u32).to_le_bytes());
@@ -245,9 +253,10 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
 /// Deserialize the whole-world pack, validating magic, version, and
 /// lengths. The `at` index is rebuilt from the decoded edges; kind-4
 /// (teleport) edges split back into [`TransportGraph::teleports`] and are
-/// excluded from it. Version 6 is the only accepted wire: the collision
-/// decodes as packed u16 walk words with no resident flags (`flags` is
-/// `None` until the sidecar is loaded); any other version — 4, 5, or
+/// excluded from it. Version 7 is the only accepted wire: the collision
+/// decodes as the `u8` face bytes plus the packed `SQ_BLOCKED`
+/// bit-plane with no resident flags (`flags` is
+/// `None` until the sidecar is loaded); any other version — 6, 5, or
 /// older — is rejected rather than mis-read or compat-loaded.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
     let mut r = Cursor::new(bytes);
@@ -280,9 +289,13 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackErro
     let cells = plane
         .checked_mul(4)
         .ok_or_else(|| PackError::BadLength("grid size overflows".into()))?;
-    let mut walk = vec![0u16; cells];
-    for w in &mut walk {
-        *w = read_u16(&mut r)?;
+    let mut walk = vec![0u8; cells];
+    r.read_exact(&mut walk).map_err(|_| PackError::Truncated)?;
+    let words = cells.div_ceil(64);
+    let remaining = bytes.len().saturating_sub(r.position() as usize);
+    let mut blocked = Vec::with_capacity(words.min(remaining / 8));
+    for _ in 0..words {
+        blocked.push(read_u64(&mut r)?);
     }
     let n_edges = read_u32(&mut r)? as usize;
     // Cap the preallocation at what the remaining bytes can hold; the reads
@@ -339,9 +352,10 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackErro
             origin,
             width,
             height,
-            // The packed walk word is the resident surface; the raw flags
+            // The packed walk surface is the resident form; the raw flags
             // live only in the sidecar (loaded on demand for debug paints).
             walk,
+            blocked,
             flags: None,
         },
         graph,
@@ -1031,10 +1045,10 @@ fn read_u32(r: &mut Cursor<&[u8]>) -> Result<u32, PackError> {
     Ok(u32::from_le_bytes(b))
 }
 
-fn read_u16(r: &mut Cursor<&[u8]>) -> Result<u16, PackError> {
-    let mut b = [0u8; 2];
+fn read_u64(r: &mut Cursor<&[u8]>) -> Result<u64, PackError> {
+    let mut b = [0u8; 8];
     r.read_exact(&mut b).map_err(|_| PackError::Truncated)?;
-    Ok(u16::from_le_bytes(b))
+    Ok(u64::from_le_bytes(b))
 }
 
 #[cfg(test)]
@@ -1046,7 +1060,7 @@ mod tests {
         merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
         parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE, VERSION,
     };
-    use crate::collision::{derive_walkable, pack_walk_u16, walk_word_from_u16, WorldCollision};
+    use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
     use crate::pack::PackError;
     use crate::tile::Tile;
@@ -1068,21 +1082,23 @@ mod tests {
     }
 
     #[test]
-    fn pack_walk_u16_roundtrips_step_ok_vs_u32_flags() {
+    fn pack_walk_roundtrips_step_ok_vs_u32_flags() {
         let mut flags = vec![0u32; 4 * 3 * 3];
         flags[1] = CollisionFlag::W_S as u32; // face only
         flags[3] = CollisionFlag::WALK_SCENERY as u32 | CollisionFlag::WR_GRND as u32;
-        let walk = pack_walk_u16(&flags);
-        assert_eq!(walk.len(), flags.len());
-        for (f, w) in flags.iter().zip(&walk) {
+        let (face, blocked) = pack_walk(&flags);
+        assert_eq!(face.len(), flags.len());
+        for (i, f) in flags.iter().enumerate() {
             let derived = derive_walkable(&[*f])[0];
-            assert_eq!(walk_word_from_u16(*w), derived);
+            let blocked = (blocked[i >> 6] >> (i & 63)) & 1 != 0;
+            assert_eq!(walk_word_from_parts(face[i], blocked), derived);
         }
     }
 
     #[test]
-    fn v6_pack_has_no_resident_flags() {
+    fn v7_pack_has_no_resident_flags() {
         let flags = vec![0u32; 4 * 2 * 2];
+        let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 0,
@@ -1091,19 +1107,21 @@ mod tests {
             },
             width: 2,
             height: 2,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let bytes = encode(&collision, &TransportGraph::default());
-        assert_eq!(bytes[4], 6);
+        assert_eq!(bytes[4], VERSION);
         let (c, _) = decode(&bytes).unwrap();
         assert!(c.flags.is_none());
         assert_eq!(c.walk.len(), 16);
     }
 
     #[test]
-    fn v6_decode_rejects_v5_and_older() {
+    fn v7_decode_rejects_v6_and_older() {
         let flags = vec![0u32; 4 * 2 * 2];
+        let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 0,
@@ -1112,10 +1130,13 @@ mod tests {
             },
             width: 2,
             height: 2,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let mut bytes = encode(&collision, &TransportGraph::default());
+        bytes[4] = 6;
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(6))));
         bytes[4] = 5;
         assert!(matches!(decode(&bytes), Err(PackError::BadVersion(5))));
         bytes[4] = 4;
@@ -1145,6 +1166,7 @@ mod tests {
         flags[..plane.len()].copy_from_slice(&plane);
         // Distinct upper-plane content pins the four-plane wire layout.
         flags[plane.len()..2 * plane.len()].copy_from_slice(&[7; 6]);
+        let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1153,7 +1175,8 @@ mod tests {
             },
             width: 3,
             height: 2,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let mut graph = TransportGraph::default();
@@ -1353,11 +1376,12 @@ mod tests {
     fn decode_rejects_old_version_streams() {
         // A version-2 or version-3 stream (pre-four-plane wire) is
         // rejected, not mis-read: the re-bake immediately rewrites it at
-        // the current version. Versions 4 and 5 are rejected too (see
-        // `v6_decode_rejects_v5_and_older`).
+        // the current version. Versions 4, 5, and 6 are rejected too (see
+        // `v7_decode_rejects_v6_and_older`).
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1366,7 +1390,8 @@ mod tests {
             },
             width: 3,
             height: 2,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let graph = TransportGraph::default();
@@ -1379,12 +1404,13 @@ mod tests {
     }
 
     #[test]
-    fn v6_roundtrips_worn_req() {
-        // v6 carries the fifth per-edge req list (the worn-item ids) on
-        // the packed-walk wire; no pre-v6 stream decodes.
+    fn v7_roundtrips_worn_req() {
+        // v7 carries the fifth per-edge req list (the worn-item ids) on
+        // the packed-walk wire; no pre-v7 stream decodes.
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1393,7 +1419,8 @@ mod tests {
             },
             width: 3,
             height: 2,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let door = TransportEdge {
@@ -1423,7 +1450,7 @@ mod tests {
         graph.edges.push(door.clone());
         graph.at.entry(door.at).or_default().push(0);
         let bytes = encode(&collision, &graph);
-        // The version byte sits right after the 4-byte magic: v6 now.
+        // The version byte sits right after the 4-byte magic: v7 now.
         assert_eq!(bytes[4], VERSION);
         let (c, g) = decode(&bytes).unwrap();
         assert_eq!(g.edges, graph.edges);
@@ -1629,6 +1656,7 @@ op1=Open
         for &(x, z, f) in extras {
             flags[z * SQUARE + x] |= f;
         }
+        let (walk, blocked) = pack_walk(&flags);
         WorldCollision {
             origin: WorldTile {
                 x: mx * SQUARE as i32,
@@ -1637,7 +1665,8 @@ op1=Open
             },
             width: SQUARE,
             height: SQUARE,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         }
     }

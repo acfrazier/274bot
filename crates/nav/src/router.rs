@@ -1084,11 +1084,13 @@ mod tests {
         }
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         WorldCollision {
             origin: tile(ox, oz, 0),
             width,
             height,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         }
     }
@@ -1844,11 +1846,13 @@ mod tests {
     /// walkable derived).
     fn open_world(origin: WorldTile, width: usize, height: usize) -> WorldCollision {
         let flags = vec![0u32; width * height];
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         WorldCollision {
             origin,
             width,
             height,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         }
     }
@@ -1928,6 +1932,7 @@ mod tests {
             flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
             flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
         }
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         let wc = WorldCollision {
             origin: WorldTile {
                 x: 3099,
@@ -1936,7 +1941,8 @@ mod tests {
             },
             width: 5,
             height: 12,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let dest = tile(3102, 3525, 0);

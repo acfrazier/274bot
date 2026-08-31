@@ -48,24 +48,29 @@ const WALK_BITS: [(u32, u32); 8] = [
     (CollisionFlag::W_SW as u32, CollisionFlag::PL_WALK_SW as u32),
 ];
 
-/// Whole-world per-level collision: the compact packed walk word per tile
-/// per level, four planes (levels 0..=3) like the client's `collision[4]`.
-/// The buffer is level-major: `buf[level * width * height + z * width +
-/// x]`, row-major `z` then `x` within each plane. A plane is only as dense
-/// as the maps stamped it; levels with no content are empty (walkable,
-/// never a level-0 reuse).
+/// Whole-world per-level collision: the compact packed walk surface per
+/// tile per level, four planes (levels 0..=3) like the client's
+/// `collision[4]`. Both buffers are level-major: index
+/// `level * width * height + z * width + x`, row-major `z` then `x`
+/// within each plane. A plane is only as dense as the maps stamped it;
+/// levels with no content are empty (walkable, never a level-0 reuse).
 pub struct WorldCollision {
     /// The tile at `walk[0]`; the grid spans `width` tiles in +x then
     /// `height` rows in +z, replicated across all four level planes.
     pub origin: WorldTile,
     pub width: usize,
     pub height: usize,
-    /// The packed walk word per tile per level: bits 0-7 carry the raw
-    /// `W_*` face flags and bit 8 records whether any `SQ_BLOCKED`
-    /// constituent is set ([`walk_word_from_u16`] reconstructs the full
-    /// derived word). Always resident — the compact v6 wire form — and the
-    /// router's `step_ok` reads it, never the raw `flags`.
-    pub walk: Vec<u16>,
+    /// The packed walk surface: the raw `W_*` face flags per tile per
+    /// level (the old u16 walk word's bits 0-7), one byte per tile.
+    /// Always resident — the compact v7 wire form — and the router's
+    /// `step_ok` reads it, never the raw `flags`.
+    pub walk: Vec<u8>,
+    /// One `SQ_BLOCKED` bit per tile per level (the old u16 walk word's
+    /// bit 8: any `WALK_SCENERY`/`BLOCK_NPCS_AND_PLAYERS`/`WR_GRND`
+    /// constituent set), packed 64 cells per u64 word with the same
+    /// level-major indexing as `walk`. [`walk_word_from_parts`]
+    /// reconstructs the full derived word.
+    pub blocked: Vec<u64>,
     /// The raw baked flags per tile per level (the client's `W_*`/`V_*`
     /// wall bits, `WALK_SCENERY` footprints, and `WR_GRND` ground blocks,
     /// exactly as `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp
@@ -86,6 +91,11 @@ impl WorldCollision {
     /// Tiles in one level plane (`width × height`).
     fn plane_cells(&self) -> usize {
         self.width * self.height
+    }
+
+    /// Whether the packed `SQ_BLOCKED` bit of the cell at `idx` is set.
+    fn cell_blocked(&self, idx: usize) -> bool {
+        (self.blocked[idx >> 6] >> (idx & 63)) & 1 != 0
     }
 
     /// The collision bitmask at `(x, z, level)`, `0` for tiles outside the
@@ -155,7 +165,8 @@ impl WorldCollision {
         if lx >= self.width || lz >= self.height {
             return 0;
         }
-        walk_word_from_u16(self.walk[plane * self.plane_cells() + lz * self.width + lx])
+        let idx = plane * self.plane_cells() + lz * self.width + lx;
+        walk_word_from_parts(self.walk[idx], self.cell_blocked(idx))
     }
 
     /// True when `t` sits on a baked level plane (0..=3), inside the grid
@@ -180,7 +191,7 @@ impl WorldCollision {
         let idx = plane * self.plane_cells() + lz * self.width + lx;
         match &self.flags {
             Some(flags) => flags[idx] & WALK_BLOCK == 0,
-            None => walk_word_from_u16(self.walk[idx]) & WALK_BLOCK == 0,
+            None => walk_word_from_parts(self.walk[idx], self.cell_blocked(idx)) & WALK_BLOCK == 0,
         }
     }
 
@@ -208,7 +219,8 @@ impl WorldCollision {
         let idx = plane * self.plane_cells() + lz * self.width + lx;
         match &self.flags {
             Some(flags) => flags[idx] & SQ_BLOCKED == 0,
-            None => walk_word_from_u16(self.walk[idx]) & SQ_BLOCKED == 0,
+            // The packed blocked bit is exactly the SQ_BLOCKED presence.
+            None => !self.cell_blocked(idx),
         }
     }
 
@@ -362,6 +374,7 @@ pub fn bake_from_maps(
         }
     }
 
+    let (walk, blocked) = pack_walk(&flags);
     Ok(WorldCollision {
         origin: WorldTile {
             x: min_x,
@@ -370,7 +383,8 @@ pub fn bake_from_maps(
         },
         width,
         height,
-        walk: pack_walk_u16(&flags),
+        walk,
+        blocked,
         flags: Some(flags),
     })
 }
@@ -381,7 +395,7 @@ pub fn bake_from_maps(
 /// matching face — they must not OR the full `PL_WALK_*` word, which
 /// re-injects `SQ_BLOCKED` and seals open doorways (a Seers-bank stand
 /// became a 31-tile pocket). The `SQ_BLOCKED` base is normalized to the
-/// full mask whenever any constituent is set, so the packed u16 walk word
+/// full mask whenever any constituent is set, so the packed walk surface
 /// (which records only the presence of the base) round-trips exactly.
 pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
     flags
@@ -398,29 +412,32 @@ pub fn derive_walkable(flags: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-/// Pack the raw collision flags into the compact walk words: bits 0-7 are
-/// the `WALK_BLOCK_FLAGS` face bits and bit 8 records whether any
-/// `SQ_BLOCKED` constituent is set ([`walk_word_from_u16`] reconstructs
-/// the full derived word). Same level-major four-plane indexing as the
-/// flags.
-pub fn pack_walk_u16(flags: &[u32]) -> Vec<u16> {
-    flags
+/// Pack the raw collision flags into the compact walk surface: a `u8` of
+/// the `WALK_BLOCK_FLAGS` face bits per cell plus a bit-plane recording
+/// whether any `SQ_BLOCKED` constituent is set
+/// ([`walk_word_from_parts`] reconstructs the full derived word). Same
+/// level-major four-plane indexing as the flags; the bit-plane packs 64
+/// cells per `u64` word.
+pub fn pack_walk(flags: &[u32]) -> (Vec<u8>, Vec<u64>) {
+    let face = flags
         .iter()
-        .map(|&raw| {
-            let mut cell = (raw & CollisionFlag::WALK_BLOCK_FLAGS as u32) as u16;
-            if raw & SQ_BLOCKED != 0 {
-                cell |= 0x100;
-            }
-            cell
-        })
-        .collect()
+        .map(|&raw| (raw & CollisionFlag::WALK_BLOCK_FLAGS as u32) as u8)
+        .collect();
+    let mut blocked = vec![0u64; flags.len().div_ceil(64)];
+    for (i, &raw) in flags.iter().enumerate() {
+        if raw & SQ_BLOCKED != 0 {
+            blocked[i >> 6] |= 1 << (i & 63);
+        }
+    }
+    (face, blocked)
 }
 
-/// Reconstruct the derived walkable word from a packed walk word: the `W_*`
-/// face bits, plus the full `SQ_BLOCKED` base when bit 8 is set.
-pub fn walk_word_from_u16(cell: u16) -> u32 {
-    let faces = (cell & CollisionFlag::WALK_BLOCK_FLAGS as u16) as u32;
-    if cell & 0x100 != 0 {
+/// Reconstruct the derived walkable word from the packed walk surface: the
+/// `W_*` face bits, plus the full `SQ_BLOCKED` base when the cell's
+/// blocked bit is set.
+pub fn walk_word_from_parts(face: u8, blocked: bool) -> u32 {
+    let faces = face as u32;
+    if blocked {
         faces | SQ_BLOCKED
     } else {
         faces
@@ -763,6 +780,7 @@ mod tests {
     #[test]
     fn attach_flags_then_drop_leaves_walk_intact() {
         let flags = vec![CollisionFlag::W_N as u32; 4];
+        let (walk, blocked) = pack_walk(&flags);
         let mut c = WorldCollision {
             origin: WorldTile {
                 x: 0,
@@ -771,7 +789,8 @@ mod tests {
             },
             width: 1,
             height: 1,
-            walk: pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         };
         let w = c.walkable_word(0, 0, 0);
@@ -1257,6 +1276,7 @@ mod tests {
         let plane = flags.len();
         let mut padded = vec![0u32; 4 * plane];
         padded[..plane].copy_from_slice(&flags);
+        let (walk, blocked) = pack_walk(&padded);
         WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1265,7 +1285,8 @@ mod tests {
             },
             width: plane,
             height: 1,
-            walk: pack_walk_u16(&padded),
+            walk,
+            blocked,
             flags: Some(padded),
         }
     }

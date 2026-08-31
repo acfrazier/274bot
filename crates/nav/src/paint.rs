@@ -496,11 +496,13 @@ mod tests {
         }
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
         WorldCollision {
             origin: tile(0, 0, 0),
             width,
             height,
-            walk: crate::collision::pack_walk_u16(&flags),
+            walk,
+            blocked,
             flags: None,
         }
     }

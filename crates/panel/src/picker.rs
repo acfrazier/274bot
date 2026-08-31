@@ -217,7 +217,15 @@ pub fn available_levels(world: &NavWorld) -> Vec<i32> {
     for level in 1..4 {
         let base = level * plane;
         // The len guard keeps synthetic single-plane test worlds on [0].
-        if c.walk.len() >= base + plane && c.walk[base..base + plane].iter().any(|&w| w != 0) {
+        if c.walk.len() < base + plane {
+            continue;
+        }
+        // A plane has content when any face byte or any packed blocked
+        // bit is set (planes can share a bit-plane word at small sizes,
+        // so the word range alone cannot answer this).
+        let content = (base..base + plane)
+            .any(|i| c.walk[i] != 0 || (c.blocked[i >> 6] >> (i & 63)) & 1 != 0);
+        if content {
             levels.push(level as i32);
         }
     }
@@ -972,7 +980,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                walk: vec![0u16; w * h],
+                walk: vec![0u8; w * h],
+                blocked: vec![0u64; (w * h).div_ceil(64)],
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -999,6 +1008,7 @@ mod tests {
         // tie over (3,0) by iteration order.
         let mut flags = vec![0u32; 5];
         flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let w = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -1008,7 +1018,8 @@ mod tests {
                 },
                 width: 5,
                 height: 1,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -1038,6 +1049,7 @@ mod tests {
         // A 4-plane world with a stamped level-1 plane lists it too.
         let mut flags = vec![0u32; 4 * 9];
         flags[9 + 4] = CollisionFlag::WALK_SCENERY as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let w2 = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -1047,7 +1059,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -1212,6 +1225,7 @@ mod tests {
         for &(x, z, f) in extras {
             flags[z as usize * w + x as usize] |= f;
         }
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -1221,7 +1235,8 @@ mod tests {
                 },
                 width: w,
                 height: h,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),
@@ -1276,6 +1291,7 @@ mod tests {
         // origin plane.
         let mut flags = vec![0u32; 2 * 9];
         flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -1285,7 +1301,8 @@ mod tests {
                 },
                 width: 3,
                 height: 3,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph: TransportGraph::default(),

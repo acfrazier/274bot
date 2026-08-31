@@ -2968,7 +2968,8 @@ mod tests {
                 },
                 width: 40,
                 height: 1,
-                walk: vec![0u16; 40],
+                walk: vec![0u8; 40],
+                blocked: vec![0u64; 40usize.div_ceil(64)],
                 flags: None,
             },
             graph: nav::transport::TransportGraph::default(),
@@ -3309,7 +3310,8 @@ mod tests {
                 },
                 width: 1,
                 height: 1,
-                walk: vec![0u16; 1],
+                walk: vec![0u8; 1],
+                blocked: vec![0u64; 1],
                 flags: None,
             },
             graph: TransportGraph {
@@ -3412,6 +3414,7 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
         graph.edges.push(edge);
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld {
             collision: nav::collision::WorldCollision {
                 origin: WorldTile {
@@ -3421,7 +3424,8 @@ mod tests {
                 },
                 width: 5,
                 height: 5,
-                walk: nav::collision::pack_walk_u16(&flags),
+                walk,
+                blocked,
                 flags: None,
             },
             graph,
@@ -3504,7 +3508,8 @@ mod tests {
                 },
                 width: 64,
                 height: 64,
-                walk: vec![0u16; 64 * 64],
+                walk: vec![0u8; 64 * 64],
+                blocked: vec![0u64; (64usize * 64).div_ceil(64)],
                 flags: None,
             },
             graph: TransportGraph::default(),
