@@ -251,6 +251,7 @@ mod tests {
             walk: None,
             walk_with: None,
             inv: None,
+            snapshot: None,
             obj_names: None,
         });
         s.on_game_tick(&mut ScriptCtx {
@@ -260,6 +261,7 @@ mod tests {
             walk: None,
             walk_with: None,
             inv: None,
+            snapshot: None,
             obj_names: None,
         });
         assert_eq!(s.ticks, 2);
@@ -273,6 +275,7 @@ mod tests {
             walk: None,
             walk_with: None,
             inv: None,
+            snapshot: None,
             obj_names: None,
         });
         assert_eq!(s.ticks, 2);
@@ -287,6 +290,7 @@ mod tests {
             walk: None,
             walk_with: None,
             inv: None,
+            snapshot: None,
             obj_names: None,
         });
         assert_eq!(s.ticks, 1);

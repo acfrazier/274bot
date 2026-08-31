@@ -211,6 +211,9 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// time (built from its live snapshot); `None` when no player is decoded
 /// — the walk arm then routes with the fail-closed empty [`WorldState`],
 /// so an edge whose requirements the state cannot prove is never relaxed.
+/// `snapshot` is the same per-tick [`GameSnapshot`] the ctx getters read
+/// (`varp`, `stat_level`, `chat`, `bank`, …); it stays `None` only when
+/// no snapshot was built, and the getters fail closed on it.
 /// `navs`/`world` back the `ctx.walk` and `ctx.walk_with` closures — one
 /// shared arm ([`WalkArm`]) takes the [`FindOptions`] (`walk` passes the
 /// defaults): the arm refuses synchronously only when there is no tile,
@@ -233,6 +236,7 @@ fn script_observe(
     here: Option<(i32, i32, i32)>,
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
+    snapshot: Option<&GameSnapshot>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -268,7 +272,7 @@ fn script_observe(
                             FindOptions {
                                 allow_teleports: o.allow_teleports,
                                 allow_wilderness: o.allow_wilderness,
-                                allow_bank_fetch: false, // script FindOptions has no bank flag yet
+                                allow_bank_fetch: o.allow_bank_fetch,
                                 ..FindOptions::default()
                             },
                         )
@@ -287,6 +291,7 @@ fn script_observe(
                     walk: Some(&mut walk),
                     walk_with: Some(&mut walk_with),
                     inv,
+                    snapshot,
                     obj_names,
                 });
                 wrote = true;
@@ -1307,6 +1312,7 @@ fn spawn_slot_thread(
                                 here,
                                 inv.as_deref(),
                                 nav_state,
+                                Some(&nav_snapshot),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
                                 &slot_cheats,
@@ -2512,26 +2518,26 @@ mod tests {
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
-            &mut c, "alice", false, true, 1, None, None, None, None, &scripts, &cheats, &navs,
-            &world,
+            &mut c, "alice", false, true, 1, None, None, None, None, None, &scripts, &cheats,
+            &navs, &world,
         );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
         script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs,
+            &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
             &world,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
         script_observe(
-            &mut c, "alice", true, false, 2, None, None, None, None, &scripts, &cheats, &navs,
-            &world,
+            &mut c, "alice", true, false, 2, None, None, None, None, None, &scripts, &cheats,
+            &navs, &world,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
         assert!(script_observe(
-            &mut c, "alice", true, true, 3, None, None, None, None, &scripts, &cheats, &navs,
+            &mut c, "alice", true, true, 3, None, None, None, None, None, &scripts, &cheats, &navs,
             &world
         ));
         assert_eq!(*count.lock().unwrap(), 2);
@@ -2562,7 +2568,7 @@ mod tests {
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs,
+            &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
             &world
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
@@ -2580,7 +2586,7 @@ mod tests {
             script::RunState::Idle
         );
         assert!(!script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs,
+            &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
             &world
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
@@ -2614,8 +2620,8 @@ mod tests {
             .unwrap()
             .push_back("setvar tutorial 1000".into());
         let wrote = script_observe(
-            &mut c, "alice", true, false, 0, None, None, None, None, &scripts, &cheats, &navs,
-            &world,
+            &mut c, "alice", true, false, 0, None, None, None, None, None, &scripts, &cheats,
+            &navs, &world,
         );
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
@@ -2693,6 +2699,7 @@ mod tests {
             None,
             Some(&inv),
             None,
+            None,
             Some(&names),
             &scripts,
             &cheats,
@@ -2703,6 +2710,81 @@ mod tests {
             *seen.lock().unwrap(),
             Some((true, true, true)),
             "a Running script sees the inventory view and resolves names"
+        );
+    }
+
+    /// Records whether the per-tick snapshot reached the script ctx and
+    /// what the `varp` getter read through it.
+    #[derive(Default)]
+    struct SnapProbe(Arc<Mutex<Option<(bool, Option<i32>)>>>);
+
+    impl script::Script for SnapProbe {
+        fn name(&self) -> &str {
+            "SnapProbe"
+        }
+        fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
+            *self.0.lock().unwrap() = Some((ctx.snapshot.is_some(), ctx.varp(101)));
+        }
+    }
+
+    #[test]
+    fn script_observe_passes_the_tick_snapshot_to_the_ctx() {
+        let seen = Arc::new(Mutex::new(None));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_compiled(Box::new(SnapProbe(Arc::clone(&seen))))
+            .unwrap();
+        // A transmitted varp table so the probe's `varp(101)` has a value
+        // to read (the snapshot only lists transmitted definitions).
+        let mut cache = Cache::default();
+        cache.varps = (0..102)
+            .map(|_| client::config::VarpType::default())
+            .collect();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(cache),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.var = vec![0; 102];
+        c.var[101] = 5;
+        c.bump_gens(ServerProt::VARP_SYNC);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            None,
+            None,
+            None,
+            Some(&snap),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((true, Some(5))),
+            "the observe snapshot reaches the ctx and the varp getter reads it"
         );
     }
 
@@ -2760,6 +2842,7 @@ mod tests {
             walk: None,
             walk_with: None,
             inv: Some(&inv),
+            snapshot: None,
             obj_names: Some(&names),
         };
         assert!(ctx.has_item("Bones"));
@@ -3001,6 +3084,7 @@ mod tests {
             true,
             1,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             None,
@@ -3374,6 +3458,7 @@ mod tests {
             None,
             state,
             None,
+            None,
             &scripts,
             &cheats,
             &navs,
@@ -3466,6 +3551,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &scripts,
             &cheats,
             &navs,
@@ -3505,6 +3591,7 @@ mod tests {
             true,
             1,
             Some((2912, 4833, 0)),
+            None,
             None,
             None,
             None,
@@ -3551,6 +3638,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &scripts,
             &cheats,
             &navs,
@@ -3581,7 +3669,7 @@ mod tests {
 
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
-            &mut d, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs,
+            &mut d, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
             &world,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
@@ -3594,6 +3682,7 @@ mod tests {
             true,
             2,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             None,
@@ -3615,6 +3704,7 @@ mod tests {
             true,
             3,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             None,
@@ -3640,6 +3730,7 @@ mod tests {
             true,
             4,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             None,
@@ -3669,6 +3760,7 @@ mod tests {
             true,
             5,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             None,

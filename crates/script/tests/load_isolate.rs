@@ -335,6 +335,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         walk: None,
         walk_with: None,
         inv: None,
+        snapshot: None,
         obj_names: None,
     });
     slot.on_game_tick(&mut ScriptCtx {
@@ -344,6 +345,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         walk: None,
         walk_with: None,
         inv: None,
+        snapshot: None,
         obj_names: None,
     });
 

@@ -119,6 +119,7 @@ mod tests {
             walk: None,
             walk_with: None,
             inv: None,
+            snapshot: None,
             obj_names: None,
         });
         assert_eq!(script.name(), "Counter");
