@@ -973,9 +973,9 @@ impl FollowRun {
         // asks "Is that Ok?" with a "Yes please…" choice). Drive the
         // dialog: press the modal's continue button while it is up (each
         // press advances a page — including the post-choice "Great!"
-        // pages and mesboxes before the ride), and press the edge's
-        // `option`-th choice exactly once when the choice page is up,
-        // then keep watching `arrived(to)` for the ride.
+        // pages and mesboxes before the ride), and press the ride choice
+        // exactly once when the choice page is up, then keep watching
+        // `arrived(to)` for the ride.
         if edge.kind == TransportKind::Npc {
             let mut ix = Interactions::new(snapshot, d);
             if snapshot.chat_continue_component_id() != -1 {
@@ -991,13 +991,18 @@ impl FollowRun {
                     SendResult::Refused { .. } => {}
                 }
             } else if !hop.dialog_answered && !snapshot.chat_options().is_empty() {
-                match ix.answer_choice(edge.option) {
+                // The ride choice is the chat modal's first choice — a
+                // hop's dialog rule, independent of the NPC op index
+                // (`edge.option`: Talk-to is op 1, the essence wizard's
+                // teleport op 3/4). Both content dialogs that ask before
+                // riding (cart fare, Elkoy escort) put the ride first.
+                match ix.answer_choice(NPC_RIDE_CHOICE) {
                     SendResult::Sent { .. } => {
                         hop.dialog_answered = true;
                         if crate::debug_enabled() {
                             eprintln!(
-                                "[nav-transport] answered fare choice {} for npc {}",
-                                edge.option, edge.loc_id
+                                "[nav-transport] answered ride choice {} for npc {}",
+                                NPC_RIDE_CHOICE, edge.loc_id
                             );
                         }
                     }
@@ -1520,6 +1525,14 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
         .min_by_key(|(_, gap)| *gap)
         .map(|(loc, _)| loc)
 }
+
+/// The chat-modal choice an Npc hop answers to ride: the ride is always
+/// the modal's FIRST choice (the cart drivers' "Yes please…" fare and
+/// Elkoy's escort both present it first). This is the hop's dialog rule,
+/// independent of the NPC op index — [`TransportEdge::option`] is the op
+/// (Talk-to is op 1, the essence wizard's teleport op 3/4) and stays the
+/// interact's operation.
+const NPC_RIDE_CHOICE: i32 = 1;
 
 /// The live target of a transport hop: the edge's loc view (doors,
 /// ladders, stairs, boats, agility, gliders, spirit trees) or — for an
@@ -2368,15 +2381,33 @@ mod tests {
     /// the cart-driver shape): the live target a `TransportKind::Npc`
     /// edge's `loc_id` resolves through.
     fn plant_driver_npc(c: &mut Client, type_id: usize, x: i32, z: i32) {
+        plant_npc_ops(c, type_id, x, z, "Cart driver", &["Pay-fare"]);
+    }
+
+    /// The essence-wizard shape: an NPC whose op 1 is Talk-to and op 3
+    /// the direct teleport (no dialog) — a Npc hop with `option: 3`.
+    fn plant_wizard_npc(c: &mut Client, type_id: usize, x: i32, z: i32) {
+        plant_npc_ops(c, type_id, x, z, "Essence wizard", &["Talk-to", "Talk-to", "Teleport"]);
+    }
+
+    /// An NPC of cache type `type_id` at scene (x, z) → world tile
+    /// (3200 + x, 3200 + z) in slot 0, with `name` and the given op
+    /// labels (one per action slot).
+    fn plant_npc_ops(c: &mut Client, type_id: usize, x: i32, z: i32, name: &str, ops: &[&str]) {
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
             while cache.npcs.len() <= type_id {
                 cache.npcs.push(NpcType::default());
             }
+            let mut op: Vec<Option<String>> = ops
+                .iter()
+                .map(|s| Some((*s).to_string()))
+                .collect();
+            op.resize(5, None);
             cache.npcs[type_id] = NpcType {
                 id: type_id as i32,
-                name: "Cart driver".into(),
-                op: vec![Some("Pay-fare".into()), None, None, None, None],
+                name: name.into(),
+                op,
                 ..Default::default()
             };
         }
@@ -3060,6 +3091,75 @@ mod tests {
         }
         assert_eq!(rec.npc_ops, 1, "one OP_NPC interact");
         assert_eq!(rec.loc_ops, 0, "an Npc edge never sends OP_LOC1");
+    }
+
+    #[test]
+    fn follow_npc_edge_answers_choice_one_not_the_op_index() {
+        // An Npc hop's `option` is the NPC op index (essence's opnpc3
+        // teleport; the cart drivers' Talk-to op 1) — never the dialog
+        // choice. A hop whose op is 3 but whose dialog puts the ride
+        // first must answer the FIRST choice, and the fake must record
+        // the op-3 interact as an npc op. (Regressions for the
+        // `edge.option` conflation and the OP_NPC1-only matcher.)
+        let mut c = scene_client();
+        plant_wizard_npc(&mut c, 7, 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = TransportEdge {
+            option: 3, // essence-style op index, not a dialog choice
+            ..cart_edge()
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop sends the OP_NPC3 interact.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.npc_ops, 1,
+            "an op-3 interact counts as an npc op (matcher covers OP_NPC2..=5)"
+        );
+        assert_eq!(rec.if_buttons, 0, "no dialog answer before it opens");
+
+        // The driver opens a two-choice dialog: the hop answers the FIRST
+        // choice (component 101), never the op index (there is no choice
+        // 3 on the page).
+        plant_choice_dialog(&mut c, &["Yes please.", "Not now, thanks."]);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.if_buttons, 1, "the ride choice is pressed");
+        assert_eq!(
+            rec.if_button_components,
+            vec![101],
+            "the first chat option is the ride, independent of the op index"
+        );
+
+        // The hop carries the player over: the run arrives.
+        plant_player(&mut c, 100, 0);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { at })
+                if at == WorldTile {
+                    x: 3300,
+                    z: 3200,
+                    level: 0
+                }
+        ));
     }
 
     #[test]
@@ -3928,6 +4028,9 @@ mod tests {
         loc_ops: usize,
         npc_ops: usize,
         if_buttons: usize,
+        /// The component ids pressed via IF_BUTTON, in order (the dialog
+        /// ride-choice arm asserts *which* choice was answered).
+        if_button_components: Vec<i32>,
         pause_buttons: usize,
         reject_far: bool,
         route: Option<(i32, i32)>,
@@ -3938,8 +4041,15 @@ mod tests {
         fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, _c: i32) {
             match action {
                 MiniMenuAction::OP_LOC1 => self.loc_ops += 1,
-                MiniMenuAction::OP_NPC1 => self.npc_ops += 1,
-                MiniMenuAction::IF_BUTTON => self.if_buttons += 1,
+                MiniMenuAction::OP_NPC1
+                | MiniMenuAction::OP_NPC2
+                | MiniMenuAction::OP_NPC3
+                | MiniMenuAction::OP_NPC4
+                | MiniMenuAction::OP_NPC5 => self.npc_ops += 1,
+                MiniMenuAction::IF_BUTTON => {
+                    self.if_buttons += 1;
+                    self.if_button_components.push(_c);
+                }
                 MiniMenuAction::PAUSE_BUTTON => self.pause_buttons += 1,
                 _ => {}
             }
