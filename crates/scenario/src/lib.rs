@@ -111,6 +111,12 @@ pub enum StepKind {
     /// that ends anywhere but the destination fails the step with the
     /// terminal outcome's message.
     Follow { dest: WorldTile },
+    /// Whole-world nav with the any-tile teleport layer on: like
+    /// [`StepKind::Follow`], but the route arms with
+    /// `FindOptions::allow_teleports`, so a destination only the packed
+    /// spell/jewellery teleport edges reach routes (and the traveller
+    /// executes the packed op — never the WalkTo `::tele` cheat).
+    FollowTele { dest: WorldTile },
     /// Whole-window shot at the moment `wait.arm` holds: nothing is sent,
     /// then the runner fires the shot sink (headed: the panel captures
     /// the window; headless: a no-op) with the label + the terminal
@@ -174,6 +180,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_cart" => Some(nav_cart_scenario()),
         "nav_essence" => Some(nav_essence_scenario()),
         "nav_elkoy" => Some(nav_elkoy_scenario()),
+        "nav_tele" => Some(nav_tele_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         _ => None,
@@ -190,6 +197,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_cart",
         "nav_essence",
         "nav_elkoy",
+        "nav_tele",
         "nav_routes",
         "nav_paint_path",
     ]
@@ -900,6 +908,92 @@ fn nav_elkoy_scenario() -> Scenario {
     }
 }
 
+/// The packed dueling-ring landing: the Al Kharid Duel Arena (m51_50
+/// local (51,35)) — the `to` of the packed `ring_of_dueling_8` rub edge
+/// (obj 2552, `opheld4`), a random standable tile within the
+/// `map_findsquare` scatter, never the tile exactly.
+const DUEL_ARENA: WorldTile = WorldTile {
+    x: 3315,
+    z: 3235,
+    level: 0,
+};
+
+/// The `nav_tele` scenario: the packed Teleport execute twin. Log in
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, clear the
+/// persistent slot's backpack (`~clearinv`) and cheat-give a charged
+/// dueling ring (the packed jewellery rub edge's `item_req`),
+/// then `Follow` with `allow_teleports` on to the Al Kharid Duel Arena —
+/// a destination the 2-tick rub edge always beats (the walk is toll-
+/// gated and over a hundred ticks, so the packed leg only ever routes
+/// when the layer is on and the item is held). The traveller rubs the
+/// held ring (`OpTarget::Item` + option 4 — never the WalkTo `::tele`
+/// cheat), answers the destination choice the rub opens, and PASSes on
+/// `TravelOutcome::Arrived` within the packed landing's scatter radius.
+fn nav_tele_scenario() -> Scenario {
+    let dest = DUEL_ARENA;
+    Scenario {
+        name: "nav_tele",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "clear the backpack and give the charged dueling ring",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        // The persistent `test` slot's backpack fills up
+                        // across prior live twins, so the give silently
+                        // drops when there is no room — clear the default
+                        // inventory first (`[debugproc,clearinv]`).
+                        cheat(c, "~clearinv");
+                        cheat(c, "give ring_of_dueling_8 1");
+                        true
+                    }),
+                },
+                // The arm waits for the ring to actually land in the
+                // inventory: the WorldState of the follow step then proves
+                // the packed rub edge's `item_req`, or the router falls
+                // back to the walk.
+                wait: Wait {
+                    arm: Proof::Item {
+                        name: "Ring of dueling(8)",
+                        count: 1,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            Step {
+                name: "follow the packed ring rub to the Duel Arena",
+                kind: StepKind::FollowTele { dest },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: dest.x,
+                        z: dest.z,
+                        level: dest.level,
+                        radius: 2,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::ArrivedNear {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+            radius: 2,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            nav_debug: true,
+            deadline: Duration::from_secs(360),
+            terminal_shot: Some("nav_tele terminal"),
+            ..Default::default()
+        },
+    }
+}
+
 /// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
 /// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
 /// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
@@ -1252,6 +1346,7 @@ mod tests {
                 "nav_cart",
                 "nav_essence",
                 "nav_elkoy",
+                "nav_tele",
                 "nav_routes",
                 "nav_paint_path"
             ]
@@ -1384,6 +1479,64 @@ mod tests {
         assert_eq!(s.proof.name(), "arrived(2776,3214,0)");
         assert!(s.companions.is_empty());
         assert!(names().contains(&"nav_cart"));
+    }
+
+    #[test]
+    fn nav_tele_gives_the_ring_and_follows_the_packed_rub_with_teleports_on() {
+        let s = get("nav_tele").expect("nav_tele is registered");
+        assert_eq!(s.name, "nav_tele");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(s.seed.mainland);
+        assert_eq!(
+            s.steps.len(),
+            2,
+            "give the ring + follow with allow_teleports"
+        );
+        // Step 1 clears the backpack and cheats the charged ring (the
+        // packed rub edge's item_req); the arm waits for the ring to land
+        // in the inventory.
+        match &s.steps[0].kind {
+            StepKind::Perform { .. } => {}
+            _ => panic!("nav_tele step 1 must be Perform"),
+        }
+        assert!(matches!(
+            s.steps[0].wait.arm,
+            Proof::Item {
+                name: "Ring of dueling(8)",
+                count: 1
+            }
+        ));
+        // Step 2 is the teleport-layer follow: only a `FollowTele` step
+        // arms `allow_teleports`, so the destination must be the packed
+        // dueling-ring landing and the arm its scatter radius.
+        let (dest, arm) = match &s.steps[1].kind {
+            StepKind::FollowTele { dest } => (
+                *dest,
+                match &s.steps[1].wait.arm {
+                    Proof::ArrivedNear {
+                        x,
+                        z,
+                        level,
+                        radius,
+                    } => (*x, *z, *level, *radius),
+                    other => panic!("follow-tele arm must be arrivedNear, got {other:?}"),
+                },
+            ),
+            _ => panic!("nav_tele step 2 must be FollowTele"),
+        };
+        assert_eq!(
+            dest,
+            WorldTile {
+                x: 3315,
+                z: 3235,
+                level: 0
+            },
+            "the destination is the Al Kharid Duel Arena"
+        );
+        assert_eq!(arm, (3315, 3235, 0, 2));
+        assert_eq!(s.proof.name(), "arrived_near(3315,3235,0,2)");
+        assert!(s.companions.is_empty());
+        assert!(names().contains(&"nav_tele"));
     }
 
     #[test]

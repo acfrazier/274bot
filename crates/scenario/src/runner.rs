@@ -330,7 +330,9 @@ impl ScenarioRunner {
                 // traveller still watching the hop, dropping the session
                 // latch (the exit route then fails closed).
                 let nav_done = match &self.current_step().kind {
-                    StepKind::Walk { .. } | StepKind::Follow { .. } => self.route.is_none(),
+                    StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. } => {
+                        self.route.is_none()
+                    }
                     _ => true,
                 };
                 if nav_done {
@@ -461,6 +463,13 @@ impl ScenarioRunner {
             StepKind::Walk { dest } | StepKind::Follow { dest } => {
                 self.arm_route(*dest, FindOptions::default())
             }
+            StepKind::FollowTele { dest } => self.arm_route(
+                *dest,
+                FindOptions {
+                    allow_teleports: true,
+                    ..FindOptions::default()
+                },
+            ),
         }
     }
 

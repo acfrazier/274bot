@@ -15,11 +15,11 @@
 use std::collections::VecDeque;
 
 use api::interact::{
-    op_loc, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
+    op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
 };
 use api::query::{ChatQueryExt, Query, SceneQuery};
 use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
-use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WorldTile};
+use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WidgetView, WorldTile};
 use client::dash3d::CollisionFlag;
 
 use crate::arrival::arrived as grid_arrived;
@@ -30,6 +30,98 @@ use crate::essence::{
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{DoorDir, TransportEdge, TransportKind};
+
+/// The magic side-tab index (the 2004 icon order: combat 0, stats 1,
+/// quests 2, inventory 3, equipment 4, prayer 5, magic 6).
+const MAGIC_TAB: usize = 6;
+
+/// Teleport landing scatter: `player_teleport_normal` lands at
+/// `map_findsquare(to, 0, 2, lineofwalk)` — a random standable tile
+/// within chebyshev 2 of the packed landing, never the tile exactly. A
+/// teleport hop's arrive arm (and a scenario's dest proof) must accept
+/// this radius, independent of the runner's exact `close_enough`.
+const TELEPORT_ARRIVE_RADIUS: i32 = 2;
+
+/// One standard spellbook teleport: the packed landing tile the edge's
+/// `to` identifies, the spellbook button's label word (`Cast @gre@<word>
+/// teleport`, the 2004 spellbook text), and the 2004 spellbook component
+/// id used when the live tree carries no matching button text.
+#[derive(Debug, Clone, Copy)]
+struct SpellTeleport {
+    dest: &'static str,
+    to: WorldTile,
+    fallback_com_id: i32,
+}
+
+/// The seven spell teleports `derive_transports` packs (from
+/// `magic_spells.dbrow` `tele_coord` + runes). A spell edge carries no
+/// widget on the wire (`loc_id` 0), so the traveller resolves the button
+/// from the landing.
+const SPELL_TELEPORTS: &[SpellTeleport] = &[
+    SpellTeleport {
+        dest: "Varrock",
+        to: WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0,
+        },
+        fallback_com_id: 1164,
+    },
+    SpellTeleport {
+        dest: "Lumbridge",
+        to: WorldTile {
+            x: 3221,
+            z: 3218,
+            level: 0,
+        },
+        fallback_com_id: 1167,
+    },
+    SpellTeleport {
+        dest: "Falador",
+        to: WorldTile {
+            x: 2965,
+            z: 3378,
+            level: 0,
+        },
+        fallback_com_id: 1170,
+    },
+    SpellTeleport {
+        dest: "Camelot",
+        to: WorldTile {
+            x: 2757,
+            z: 3478,
+            level: 0,
+        },
+        fallback_com_id: 1174,
+    },
+    SpellTeleport {
+        dest: "Ardougne",
+        to: WorldTile {
+            x: 2661,
+            z: 3301,
+            level: 0,
+        },
+        fallback_com_id: 1540,
+    },
+    SpellTeleport {
+        dest: "Watchtower",
+        to: WorldTile {
+            x: 2933,
+            z: 4713,
+            level: 2,
+        },
+        fallback_com_id: 1541,
+    },
+    SpellTeleport {
+        dest: "Trollheim",
+        to: WorldTile {
+            x: 2890,
+            z: 3679,
+            level: 0,
+        },
+        fallback_com_id: 7455,
+    },
+];
 
 /// The traveller's state, reported by each [`Traveller::tick`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -605,6 +697,59 @@ impl FollowRun {
                     };
                     fire_leg(options, &leg, LegPhase::Start);
                     let here = here(snapshot);
+                    // A packed Teleport hop is any-tile: no approach and no
+                    // loc/npc target — the edge names the op itself (the
+                    // held-item Rub on the charged jewellery obj, or the
+                    // spellbook button of the standard spell the landing
+                    // identifies), never the WalkTo `::tele` cheat.
+                    if edge.kind == TransportKind::Teleport {
+                        match teleport_send(snapshot, d, edge) {
+                            TeleportSend::Sent => {
+                                let to = edge.to;
+                                self.loc_wait = 0;
+                                self.transport = Some(TransportHop {
+                                    leg,
+                                    to,
+                                    ticks_waited: 0,
+                                    sent_tile: Some(here),
+                                    tries: 0,
+                                    troll: false,
+                                    chat_seq: chat_seq(snapshot),
+                                    dialog_answered: false,
+                                    approach: None,
+                                });
+                                return None;
+                            }
+                            TeleportSend::Refused(reason) => {
+                                fire_leg(options, &leg, LegPhase::Failed);
+                                return Some(TravelOutcome::Refused { at: here, reason });
+                            }
+                            TeleportSend::Wait => {
+                                self.loc_wait += 1;
+                                if self.loc_wait > self.budget {
+                                    fire_leg(options, &leg, LegPhase::Failed);
+                                    return Some(TravelOutcome::Blocked {
+                                        at: here,
+                                        leg: self.leg_index,
+                                        detail: format!(
+                                            "packed teleport to ({}, {}, {}) never became workable in the loaded scene",
+                                            edge.to.x, edge.to.z, edge.to.level
+                                        ),
+                                    });
+                                }
+                                self.legs.push_front(leg);
+                                return None;
+                            }
+                            TeleportSend::Blocked(detail) => {
+                                fire_leg(options, &leg, LegPhase::Failed);
+                                return Some(TravelOutcome::Blocked {
+                                    at: here,
+                                    leg: self.leg_index,
+                                    detail,
+                                });
+                            }
+                        }
+                    }
                     // Multiloc open-state: when the live door loc at `at`
                     // already reads open, interacting is wrong (an OP on
                     // the open leaf would Close it) — walk straight
@@ -1008,13 +1153,18 @@ impl FollowRun {
         }
         // An Npc hop's first op can open a chat dialog instead of riding
         // immediately (the live cart drivers' `opnpc1` says "Hello!", then
-        // asks "Is that Ok?" with a "Yes please…" choice). Drive the
-        // dialog: press the modal's continue button while it is up (each
-        // press advances a page — including the post-choice "Great!"
-        // pages and mesboxes before the ride), and press the ride choice
-        // exactly once when the choice page is up, then keep watching
-        // `arrived(to)` for the ride.
-        if edge.kind == TransportKind::Npc {
+        // asks "Is that Ok?" with a "Yes please…" choice), and a jewellery
+        // rub opens the destination choice (the dueling ring's "Where
+        // would you like to teleport to?" with the arena first and
+        // "Nowhere." last). Drive the dialog the same way: press the
+        // modal's continue button while it is up (each press advances a
+        // page — including the post-choice "Great!" pages and mesboxes
+        // before the ride), and press the ride choice exactly once when
+        // the choice page is up, then keep watching `arrived(to)` for the
+        // ride.
+        if edge.kind == TransportKind::Npc
+            || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
+        {
             let mut ix = Interactions::new(snapshot, d);
             if snapshot.chat_continue_component_id() != -1 {
                 match ix.continue_dialog() {
@@ -1032,7 +1182,8 @@ impl FollowRun {
                 // The ride choice is the chat modal's first choice — a
                 // hop's dialog rule, independent of the NPC op index
                 // (`edge.option`: Talk-to is op 1, the essence wizard's
-                // teleport op 3/4). Both content dialogs that ask before
+                // teleport op 3/4, the jewellery rub op 4). Both content
+                // dialogs that ask before
                 // riding (cart fare, Elkoy escort) put the ride first.
                 match ix.answer_choice(NPC_RIDE_CHOICE) {
                     SendResult::Sent { .. } => {
@@ -1081,6 +1232,13 @@ impl FollowRun {
                             <= ESSENCE_MINE_EXIT_ARRIVE_RADIUS
                 })
             })
+        } else if edge.kind == TransportKind::Teleport {
+            // `player_teleport_normal` lands at `map_findsquare(to, 0, 2,
+            // lineofwalk)`: a random standable tile within chebyshev 2 of
+            // the packed landing, never the tile exactly — so the hop
+            // accepts that radius regardless of the runner's exact
+            // `close_enough`.
+            arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
         } else {
             arrived(edge.to, close_enough)
         };
@@ -1604,6 +1762,102 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
 /// interact's operation.
 const NPC_RIDE_CHOICE: i32 = 1;
 
+/// The outcome of sending a packed teleport hop's op.
+enum TeleportSend {
+    /// The op was accepted; the hop now settles `arrived(to)`.
+    Sent,
+    /// The interact/press was refused by the driver.
+    Refused(SendReason),
+    /// The hop cannot be worked yet (the charged item is not in the
+    /// loaded inventory, or the driver dropped the press): keep waiting,
+    /// bounded by the hop budget.
+    Wait,
+    /// The edge can never be executed (a spell landing outside the seven
+    /// standard spellbook teleports).
+    Blocked(String),
+}
+
+/// The magic-tab button of a spell teleport edge: the standard spell the
+/// edge's landing names, looked up live by the spellbook button text
+/// (`Cast @gre@<dest> teleport`, the 2004 label), else the 2004
+/// spellbook component id. `None` when the landing is not one of the
+/// seven standard spellbook teleports (a pack row this model cannot
+/// execute).
+fn spell_button(snapshot: &GameSnapshot, edge: &TransportEdge) -> Option<i32> {
+    let spell = SPELL_TELEPORTS.iter().find(|s| s.to == edge.to)?;
+    let root = snapshot
+        .side_tabs()
+        .get(MAGIC_TAB)
+        .map(|t| t.root_component_id)
+        .unwrap_or(-1);
+    let label = format!("Cast @gre@{} teleport", spell.dest);
+    if root != -1 {
+        let com_id = api::query::widget_search::button_by_text(snapshot, root, &label);
+        if com_id != -1 {
+            return Some(com_id);
+        }
+    }
+    Some(spell.fallback_com_id)
+}
+
+/// The widget view for `com_id` in the snapshot's open roots or side
+/// tabs, `None` when no live tree carries it.
+fn find_component<'s>(snapshot: &'s GameSnapshot, com_id: i32) -> Option<&'s WidgetView> {
+    snapshot
+        .widgets()
+        .iter()
+        .chain(snapshot.side_tabs().iter().flat_map(|t| t.widgets.iter()))
+        .find(|w| w.component_id == com_id)
+}
+
+/// Send a packed `TransportKind::Teleport` hop's op: a held-item Rub
+/// (`OP_HELD<option>` on the charged jewellery obj the edge names) or the
+/// spellbook button of the standard spell the edge's landing names (a
+/// gated IF_BUTTON press on the live button, else the unconditional 2004
+/// fallback id). Never the WalkTo `::tele` cheat.
+fn teleport_send<D: Driver>(
+    snapshot: &GameSnapshot,
+    d: &mut D,
+    edge: &TransportEdge,
+) -> TeleportSend {
+    if edge.loc_id > 0 {
+        let Some(item) = snapshot
+            .inventory()
+            .iter()
+            .find(|it| it.def.id == edge.loc_id)
+        else {
+            return TeleportSend::Wait;
+        };
+        let mut ix = Interactions::new(snapshot, d);
+        return match ix.interact(OpTarget::Item(item), ActionSpec::Operation(edge.option)) {
+            SendResult::Sent { .. } => TeleportSend::Sent,
+            SendResult::Refused { reason, .. } => TeleportSend::Refused(reason),
+        };
+    }
+    let Some(com_id) = spell_button(snapshot, edge) else {
+        return TeleportSend::Blocked(format!(
+            "packed spell teleport to ({}, {}, {}) is not one of the seven standard spellbook teleports",
+            edge.to.x, edge.to.z, edge.to.level
+        ));
+    };
+    match find_component(snapshot, com_id) {
+        Some(widget) => {
+            let mut ix = Interactions::new(snapshot, d);
+            match ix.press(widget) {
+                SendResult::Sent { .. } => TeleportSend::Sent,
+                SendResult::Refused { reason, .. } => TeleportSend::Refused(reason),
+            }
+        }
+        None => {
+            if press(d, com_id) {
+                TeleportSend::Sent
+            } else {
+                TeleportSend::Wait
+            }
+        }
+    }
+}
+
 /// The live target of a transport hop: the edge's loc view (doors,
 /// ladders, stairs, boats, agility, gliders, spirit trees) or — for an
 /// NPC-triggered hop (`TransportKind::Npc`: cart, essence-mine wizard,
@@ -1741,8 +1995,8 @@ mod tests {
     use api::prot::Out;
     use api::snapshot::{GameSnapshot, WorldTile};
     use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
-    use client::config::if_type::ButtonType;
-    use client::config::{IfType, IfTypeMut, LocType, NpcType};
+    use client::config::if_type::{ButtonType, ComponentType};
+    use client::config::{IfType, IfTypeMut, LocType, NpcType, ObjType};
     use client::dash3d::ClientNpc;
     use client::io::{ClientStream, ServerProt};
     use std::sync::Arc;
@@ -3466,6 +3720,347 @@ mod tests {
         assert_eq!(t.essence(), None, "an exit hop never latches the session");
     }
 
+    // --- Task 5: packed Teleport execute (never the WalkTo `::tele` cheat) ---
+
+    /// A packed jewellery Teleport edge: the charged dueling ring (obj
+    /// 2552, `opheld4` Rub) carries the player to the Al Kharid Duel
+    /// Arena. `at` is the any-tile placeholder — never indexed.
+    fn ring_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3315,
+                z: 3235,
+                level: 0,
+            },
+            loc_id: 2552,
+            option: 4, // Rub (opheld4)
+            ticks: 2,  // OP_BASE + the rub p_delay(1)
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(2552, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
+    /// A packed spell Teleport edge: Varrock (Magic 25, fire/air/law
+    /// runes). `loc_id` 0 = "a spell button, not a loc/obj use"; the
+    /// traveller resolves the spellbook button from the landing tile.
+    fn varrock_spell_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3213,
+                z: 3424,
+                level: 0,
+            },
+            loc_id: 0, // a spell button, not a loc/obj use
+            option: 0,
+            ticks: 3, // OP_BASE + the cast p_delay(2)
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![(6, 25)],
+            item_req: vec![(554, 1), (556, 3), (563, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
+    /// A packed spell Teleport edge: Lumbridge (Magic 31, earth/air/law
+    /// runes). `loc_id` 0 = "a spell button, not a loc/obj use"; the
+    /// traveller resolves the spellbook button from the landing tile.
+    fn lumbridge_spell_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Teleport,
+            at: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3221,
+                z: 3218,
+                level: 0,
+            },
+            loc_id: 0, // a spell button, not a loc/obj use
+            option: 0,
+            ticks: 3, // OP_BASE + the cast p_delay(2)
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![(6, 31)],
+            item_req: vec![(557, 1), (556, 3), (563, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        }
+    }
+
+    /// The inventory tab (side 3) with a TYPE_INV child carrying one
+    /// charged obj `obj_id` (stored `obj_id + 1`), whose def offers the
+    /// Rub op in slot 4: the container the jewellery-rub arm reads the
+    /// packed item from.
+    fn plant_inv_item(c: &mut Client, obj_id: i32) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= obj_id as usize {
+                cache.objs.push(ObjType::default());
+            }
+            cache.objs[obj_id as usize] = ObjType {
+                id: obj_id,
+                iop: [None, None, None, Some("Rub".into()), None],
+                ..Default::default()
+            };
+        }
+        c.side_icon[3] = 300;
+        c.set_iface(
+            300,
+            IfType {
+                id: 300,
+                layer_id: 300,
+                children: Some(vec![301]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            301,
+            IfType {
+                id: 301,
+                layer_id: 300,
+                r#type: ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![obj_id + 1]),
+                link_obj_number: Some(vec![1]),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// The magic tab (side 6) with the Lumbridge spellbook button: the
+    /// live button the spell arm presses when the loaded tree carries the
+    /// 2004 button text.
+    fn plant_spell_button(c: &mut Client) {
+        c.side_icon[6] = 500;
+        c.set_iface(
+            500,
+            IfType {
+                id: 500,
+                layer_id: 500,
+                children: Some(vec![501]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            501,
+            IfType {
+                id: 501,
+                layer_id: 500,
+                button_text: "Cast @gre@Lumbridge teleport".into(),
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            501,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_OK,
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn follow_jewellery_teleport_rubs_the_packed_item_and_arrives() {
+        // A `TransportKind::Teleport` edge with a charged obj id and the
+        // `opheld4` Rub op: the hop must interact the inventory item (an
+        // OP_HELD4 press), answer the destination choice the rub opens
+        // (the dueling ring asks "Where would you like to teleport to?"
+        // with the arena first and "Nowhere." last), and settle the
+        // landing within the packed `to`'s scatter radius — never the
+        // WalkTo `::tele` cheat.
+        let mut c = scene_client();
+        plant_inv_item(&mut c, 2552);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: ring_edge(),
+            }],
+            dest: WorldTile {
+                x: 3315,
+                z: 3235,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions::default();
+        // Poll 1: the hop interacts the packed item — the OP_HELD4 Rub.
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.held_ops, 1, "one OP_HELD4 rub sent");
+        assert_eq!(rec.loc_ops, 0, "a teleport edge never sends OP_LOC1");
+        assert_eq!(rec.npc_ops, 0, "a teleport edge never sends OP_NPC");
+        assert!(
+            rec.sink.strings.is_empty(),
+            "the packed op is never the ::tele cheat"
+        );
+        // The rub opens the destination choice: answer the first (the
+        // arena), exactly once.
+        plant_choice_dialog(&mut c, &["Al Kharid Duel Arena.", "Nowhere."]);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.if_buttons, 1, "the destination choice is answered");
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.if_buttons, 1, "the choice is never re-pressed");
+        // The ring lands the player a tile off the packed landing (the
+        // `map_findsquare` scatter): the hop accepts the radius.
+        plant_player(&mut c, 113, 35); // world (3313, 3235), cheb 2 from `to`
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3313,
+                        z: 3235,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+        assert_eq!(rec.held_ops, 1, "one rub total");
+        assert_eq!(rec.loc_ops, 0);
+        assert!(rec.sink.strings.is_empty());
+    }
+
+    #[test]
+    fn follow_spell_teleport_presses_the_spellbook_button_and_arrives() {
+        // A `TransportKind::Teleport` spell edge names no widget on the
+        // wire (`loc_id` 0): the hop resolves the standard spell the
+        // packed landing identifies and presses its magic-tab button — the
+        // 2004 component id when the loaded scene carries no spellbook
+        // text — never `::tele`.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: varrock_spell_edge(),
+            }],
+            dest: WorldTile {
+                x: 3213,
+                z: 3424,
+                level: 0,
+            },
+            ticks: 3.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![1164],
+            "the fallback 2004 Varrock spellbook button is pressed"
+        );
+        assert_eq!(rec.held_ops, 0, "a spell is a button, never a held op");
+        assert!(
+            rec.sink.strings.is_empty(),
+            "the spell cast is never the ::tele cheat"
+        );
+        // The spell lands the player at the packed landing: the hop
+        // arrives within the scatter radius.
+        plant_player(&mut c, 13, 224); // world (3213, 3424)
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { at })
+                if at == WorldTile {
+                    x: 3213,
+                    z: 3424,
+                    level: 0
+                }
+        ));
+        assert!(rec.sink.strings.is_empty());
+    }
+
+    #[test]
+    fn follow_spell_teleport_presses_the_live_spellbook_button_by_text() {
+        // When the magic tab's tree carries the 2004 spellbook button
+        // text, the hop presses the live button (a gated IF_BUTTON)
+        // instead of the baked fallback id. The planted tree spells
+        // Lumbridge, so the edge must be the Lumbridge standard spell
+        // (the `widget_search` match keys on the landing's dest word).
+        let mut c = scene_client();
+        plant_spell_button(&mut c);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: lumbridge_spell_edge(),
+            }],
+            dest: WorldTile {
+                x: 3221,
+                z: 3218,
+                level: 0,
+            },
+            ticks: 3.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![501],
+            "the live spellbook button is pressed by text"
+        );
+        assert!(rec.sink.strings.is_empty());
+        plant_player(&mut c, 21, 18); // world (3221, 3218)
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { .. })
+        ));
+    }
+
     #[test]
     fn follow_essence_entry_does_not_latch_for_a_cart_driver() {
         // A non-wizard Npc hop (the cart driver) arrives like always but
@@ -4402,6 +4997,8 @@ mod tests {
         walked: Vec<(i32, i32)>,
         loc_ops: usize,
         npc_ops: usize,
+        /// Held-item ops (OP_HELD1..=5): the jewellery rub arm's press.
+        held_ops: usize,
         if_buttons: usize,
         /// The component ids pressed via IF_BUTTON, in order (the dialog
         /// ride-choice arm asserts *which* choice was answered).
@@ -4421,6 +5018,11 @@ mod tests {
                 | MiniMenuAction::OP_NPC3
                 | MiniMenuAction::OP_NPC4
                 | MiniMenuAction::OP_NPC5 => self.npc_ops += 1,
+                MiniMenuAction::OP_HELD1
+                | MiniMenuAction::OP_HELD2
+                | MiniMenuAction::OP_HELD3
+                | MiniMenuAction::OP_HELD4
+                | MiniMenuAction::OP_HELD5 => self.held_ops += 1,
                 MiniMenuAction::IF_BUTTON => {
                     self.if_buttons += 1;
                     self.if_button_components.push(_c);
@@ -4730,15 +5332,21 @@ mod tests {
         }
     }
 
-    /// Minimal outbound sink: the recording driver never writes packets.
+    /// Minimal outbound sink: records the `pjstr` payloads (the `::tele`
+    /// cheat writes its body through `pjstr`, so a non-empty `strings`
+    /// proves a cheat was queued — the teleport-arm tests assert empty).
     #[derive(Default)]
-    struct Sink;
+    struct Sink {
+        strings: Vec<String>,
+    }
 
     impl Out for Sink {
         fn p1_enc(&mut self, _opcode: i32) {}
         fn p1(&mut self, _value: i32) {}
         fn p2(&mut self, _value: i32) {}
         fn p4(&mut self, _value: i32) {}
-        fn pjstr(&mut self, _s: &str) {}
+        fn pjstr(&mut self, s: &str) {
+            self.strings.push(s.to_string());
+        }
     }
 }
