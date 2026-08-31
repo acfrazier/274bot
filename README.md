@@ -15,7 +15,7 @@ This tag is the public surface for the **host + API + nav**. The script *kernel*
 
 A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`host-play`** is the headless CLI over the same kernel.
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte 5), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **6**, compact walk words), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -80,7 +80,7 @@ Bake the collision + transport pack, then WalkTo / `Traveller::follow` over it:
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte 5). Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `nav_full` and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **6**). Rebake after this tag — v5 files are `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `nav_full` and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests
 

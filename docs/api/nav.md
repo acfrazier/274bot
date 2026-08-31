@@ -20,14 +20,16 @@ the three dirs if yours lives elsewhere. Output goes to `$NAV_PACK` or
 `~/.274bot/274bot.navpack`. `gates.loc` is derived from the maps dir's
 parent (`content/scripts/general_use/configs/gates.loc`).
 
-The pack serializes the whole-world `WorldCollision` (four planes, one
-`CollisionFlag` bitmask per tile, row-major z-then-x, u32 each) plus the
-derived `TransportGraph`. Magic `b"274V"`, version byte **5** (v4 streams
-still decode with empty `worn_req`; older v2/v3 streams are rejected).
+The pack serializes the whole-world `WorldCollision` (four planes, packed
+`u16` walk words per tile, row-major z-then-x) plus the derived
+`TransportGraph`. Magic `b"274V"`, version byte **6**. Raw `u32` flags are
+not on the v6 wire; the optional `274F` sidecar holds them for collision
+paint. `decode_v2` accepts version 6 only — v5 and older are
+`BadVersion`. The v1 `274N` decoder stays for old boolean-walk files.
 
 ## Collision (`nav::collision`)
 
-`WorldCollision { origin, width, height, flags: Vec<u32> }` bakes every
+`WorldCollision { origin, width, height, walk: Vec<u16>, flags: Option<Vec<u32>> }` bakes every
 mapsquare's `MAP fN` land flags and `LOC` placements into the client's
 `CollisionFlag` bitmasks, mirroring the client's `CollisionMap`
 `add_wall`/`add_loc` stamping (walls → per-direction `W_*` faces,

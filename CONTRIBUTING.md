@@ -23,10 +23,10 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
 - RSA: stock LC Server uses the **Java default pair** — no bake. Rotated
   `private.pem` is read at login from `$ENGINE_DIR/data/config/private.pem`
   (or `LOGIN_RSAN` / `LOGIN_RSAE`).
-- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack`, baked with
-  `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
+- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack` (`274V` v6), baked
+  with `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
   `gates.loc` follows the maps dir's parent. Alpha assumes you already
-  have a Server tree.
+  have a Server tree. Rebake after this tag (v5 is `BadVersion`).
 
 ## Clone and run
 

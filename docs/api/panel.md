@@ -134,7 +134,9 @@ body focuses the member. The dot is error **red**, then ingame **amber**,
 then FIFO-queue **warn**, else grey. **only render selected** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
-member paints.
+member paints. The Game pane always follows **focus** — a rail-Off
+member still grows a head while it is the selected slot (stress50: one
+GPU seat, not glued to `s00`).
 
 ### Grid
 
