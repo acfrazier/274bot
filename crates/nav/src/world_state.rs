@@ -327,7 +327,7 @@ mod tests {
         c.bump_gens(ServerProt::IF_OPENMAIN); // iface gen (quest + equipment)
 
         let mut snap = GameSnapshot::new();
-        assert!(snap.rebuild(&mut c), "every planted family rebuilds");
+        assert!(snap.rebuild(&c), "every planted family rebuilds");
         let s = WorldState::from_snapshot(&snap);
 
         assert_eq!(s.inv.get(&995), Some(&10));

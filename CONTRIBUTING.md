@@ -54,7 +54,7 @@ CI (`fmt` + `clippy --no-deps` + `cargo test`) never sets `LIVE=1`.
 
 ```bash
 cargo fmt -p host -p vault -p api -p host-play -p e2e -p panel -p nav -p script -p scenario -- --check
-cargo clippy --workspace --exclude client --all-targets --no-deps
+cargo clippy --workspace --exclude client --all-targets --no-deps -- -D warnings
 cargo test --workspace --exclude client
 ```
 

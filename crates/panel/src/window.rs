@@ -642,7 +642,7 @@ impl AppWindow {
                 let slice = rb.buffer.slice(..);
                 let mapped = Arc::new(AtomicBool::new(false));
                 let flag = Arc::clone(&mapped);
-                let _ = slice.map_async(wgpu::MapMode::Read, move |res| {
+                slice.map_async(wgpu::MapMode::Read, move |res| {
                     if res.is_ok() {
                         flag.store(true, Ordering::Release);
                     }

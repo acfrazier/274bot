@@ -95,6 +95,7 @@ pub enum StepKind {
     /// 377 `perform(step, { arms, budgetTicks })`: run the closure once,
     /// then wait for `wait.arm` within `wait.budget_ticks`.
     Perform {
+        #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
     /// Nav walk: arm `nav::router::find` over the collision + transport
@@ -1152,7 +1153,7 @@ fn nav_shantay_scenario() -> Scenario {
 /// Borrowed OD pairs: rs2b0t `script-routes.hardest.json` plus
 /// `transport-heavy.routes.json` / boat table so we hit walk, stairs,
 /// doors, Karamja fare, slashable web, and gnome glider. Teleports off.
-const NAV_ROUTES: &[(&'static str, WorldTile, WorldTile)] = &[
+const NAV_ROUTES: &[(&str, WorldTile, WorldTile)] = &[
     // HARD COMMUTE-14-R
     (
         "Seers bank → RockCrab field",

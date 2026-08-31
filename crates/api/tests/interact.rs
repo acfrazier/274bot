@@ -712,10 +712,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         OpTarget::GroundItem(&gi),
         OpTarget::Item(&item),
     ];
-    let distinct = targets
-        .iter()
-        .map(|t| discriminant(t))
-        .collect::<HashSet<_>>();
+    let distinct = targets.iter().map(discriminant).collect::<HashSet<_>>();
     assert_eq!(
         distinct.len(),
         targets.len(),
@@ -750,10 +747,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         },
         WireCommand::ClearLocalModal { component_id: 18 },
     ];
-    let distinct = commands
-        .iter()
-        .map(|c| discriminant(c))
-        .collect::<HashSet<_>>();
+    let distinct = commands.iter().map(discriminant).collect::<HashSet<_>>();
     assert_eq!(
         distinct.len(),
         commands.len(),
@@ -809,10 +803,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         };
         assert!(!label.is_empty());
     }
-    let distinct = reasons
-        .iter()
-        .map(|r| discriminant(r))
-        .collect::<HashSet<_>>();
+    let distinct = reasons.iter().map(discriminant).collect::<HashSet<_>>();
     assert_eq!(
         distinct.len(),
         reasons.len(),

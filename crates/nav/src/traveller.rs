@@ -6,7 +6,7 @@
 //!
 //! The high-level [`Traveller::follow`] is a new pollable layer: it drives
 //! a [`crate::router::Route`] leg-by-leg through `api::interact::Interactions`
-//! + `api::settle::Settle` (walk legs via `walk` + an `arrived` arm,
+//! and `api::settle::Settle` (walk legs via `walk` + an `arrived` arm,
 //! transport legs via `interact` on the transport loc + a positional
 //! `arrived(edge.to)` arm), advancing one step per call. The host calls it
 //! every tick and gets `None` while the route is still being followed and
@@ -213,6 +213,7 @@ pub struct TravelOptions<'a> {
     pub teleports: Option<&'a [TransportEdge]>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
+    #[allow(clippy::type_complexity)]
     pub on_leg: Option<Box<dyn FnMut(&Leg, LegPhase) + 'a>>,
 }
 
@@ -1839,7 +1840,7 @@ fn spell_button(snapshot: &GameSnapshot, edge: &TransportEdge) -> Option<i32> {
 
 /// The widget view for `com_id` in the snapshot's open roots or side
 /// tabs, `None` when no live tree carries it.
-fn find_component<'s>(snapshot: &'s GameSnapshot, com_id: i32) -> Option<&'s WidgetView> {
+fn find_component(snapshot: &GameSnapshot, com_id: i32) -> Option<&WidgetView> {
     snapshot
         .widgets()
         .iter()
@@ -5554,7 +5555,7 @@ mod tests {
         plant_player(&mut c, 2, 5);
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&mut c);
+        snap.rebuild(&c);
         assert!(matches!(
             run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
             Poll::LegDone

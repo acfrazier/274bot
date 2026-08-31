@@ -863,7 +863,8 @@ fn case_value(key: &str, constants: &HashMap<String, i32>) -> Option<i32> {
 /// `switch_int (%<varp>) { case … }` from a block: the varp name and every
 /// case's `(keys, body)`. `default` is kept as a key so a gate that only
 /// opens on `default` can never match (it has no numeric keys).
-fn switch_varp_cases(block: &str) -> Option<(String, Vec<(Vec<String>, String)>)> {
+type SwitchVarpCases = (String, Vec<(Vec<String>, String)>);
+fn switch_varp_cases(block: &str) -> Option<SwitchVarpCases> {
     let lines: Vec<&str> = block.lines().collect();
     let mut si = None;
     for (idx, raw) in lines.iter().enumerate() {
@@ -1473,7 +1474,8 @@ fn shortcut_edges(
     skipped: &mut HashMap<&'static str, usize>,
 ) {
     let reqs = shortcut_agility_reqs(content_root);
-    let makers: [(&str, fn(&Placement) -> Vec<WorldTile>); 3] = [
+    type PlacementMaker = fn(&Placement) -> Vec<WorldTile>;
+    let makers: [(&str, PlacementMaker); 3] = [
         ("fullstyle", fullstyle_dests),
         ("watchshortcut", watchshortcut_dests),
         ("castlecrumbly", castlecrumbly_dests),
@@ -2719,8 +2721,8 @@ fn toll_edges(
 // The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
 // ---------------------------------------------------------------------------
 
-/// The Zanaris shed door ticks: OP_BASE 1 + the door block's `p_delay(1)`
-/// + the `player_teleport_normal` cast `p_delay(2)` (the whole Open
+/// The Zanaris shed door ticks: OP_BASE 1, the door block's `p_delay(1)`,
+/// and the `player_teleport_normal` cast `p_delay(2)` (the whole Open
 /// channel; the shimmer `mes` and the open anim add no delay).
 const ZANARIS_DOOR_TICKS: i32 = 4;
 
@@ -2851,7 +2853,8 @@ fn spell_teleports(
         return;
     };
     // (levelrequired, rune pairs, tele_coord) of the current teleport block.
-    let mut cur: Option<(Option<i32>, Vec<(String, i32)>, Option<String>)> = None;
+    type SpellTeleportBlock = (Option<i32>, Vec<(String, i32)>, Option<String>);
+    let mut cur: Option<SpellTeleportBlock> = None;
     for raw in text.lines() {
         let line = raw.trim();
         if let Some(name) = dbrow_block(line) {
@@ -3102,9 +3105,7 @@ fn jewellery_header(line: &str) -> Option<((&str, &str), Option<&str>)> {
     if !word(a) || !word(b) {
         return None;
     }
-    if tail.is_empty() {
-        Some(((a, b), None))
-    } else if tail.starts_with('(') && tail.ends_with(')') {
+    if tail.is_empty() || (tail.starts_with('(') && tail.ends_with(')')) {
         Some(((a, b), None))
     } else {
         Some(((a, b), Some(tail)))
@@ -3239,10 +3240,9 @@ fn switch_kind(line: &str) -> Option<(SwitchKind, String)> {
     let rest = line.strip_prefix("switch_")?;
     let (kind, rest) = if let Some(r) = rest.strip_prefix("coord") {
         (SwitchKind::Coord, r)
-    } else if let Some(r) = rest.strip_prefix("int") {
-        (SwitchKind::Int, r)
     } else {
-        return None;
+        let r = rest.strip_prefix("int")?;
+        (SwitchKind::Int, r)
     };
     let after = rest.as_bytes().first();
     if !matches!(after, None | Some(b' ') | Some(b'\t') | Some(b'(')) {
@@ -4585,10 +4585,7 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
             parse_statement("@stair_options(2_50_50_5_9, 0_50_50_5_9);"),
             Some(Outcome::Skipped(SKIP_DIALOG))
         ));
-        assert!(matches!(
-            parse_statement("@unhandled_stairs(loc_coord);"),
-            None
-        ));
+        assert!(parse_statement("@unhandled_stairs(loc_coord);").is_none());
         assert!(matches!(
             parse_statement("@ladder_to_dwarf_remains;"),
             Some(Outcome::Skipped(SKIP_HANDOFF))
@@ -4597,7 +4594,7 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
             parse_statement("def_int $option = ~p_choice2_header(\"Climb Up.\", 1, \"Climb Down.\", 2, \"Climb up or down the ladder?\");"),
             Some(Outcome::Skipped(SKIP_DIALOG))
         ));
-        assert!(matches!(parse_statement("p_arrivedelay;"), None));
+        assert!(parse_statement("p_arrivedelay;").is_none());
     }
 
     #[test]

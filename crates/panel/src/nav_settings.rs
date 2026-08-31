@@ -151,8 +151,10 @@ mod tests {
     /// flags).
     #[test]
     fn allow_bank_fetch_round_trips_through_serde() {
-        let mut s = NavSettings::default();
-        s.allow_bank_fetch = true;
+        let s = NavSettings {
+            allow_bank_fetch: true,
+            ..Default::default()
+        };
         let bytes = serde_json::to_vec(&s).unwrap();
         let back: NavSettings = serde_json::from_slice(&bytes).unwrap();
         assert!(back.allow_bank_fetch);
@@ -161,9 +163,11 @@ mod tests {
 
     #[test]
     fn effective_without_live_force_is_saved_unchanged() {
-        let mut saved = NavSettings::default();
-        saved.show_nav_path = true;
-        saved.color_path = "#AABBCC".into();
+        let saved = NavSettings {
+            show_nav_path: true,
+            color_path: "#AABBCC".into(),
+            ..Default::default()
+        };
         let e = effective(&saved, false);
         assert_eq!(e, saved);
     }

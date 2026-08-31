@@ -39,10 +39,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The vendored client is a path dependency with its own lint debt; clippy
       # lints path deps even when excluded, so --no-deps keeps the pass on the
-      # 274bot crates only. Alpha does not `-D warnings` (nav rewrite is
-      # v0.1.1; deny-warnings is a beta goal, not a clippy-allow farm).
+      # 274bot crates only. `-D warnings` denies host-crate lint debt.
       - name: Clippy (bot crates)
-        run: cargo clippy --workspace --exclude client --all-targets --no-deps
+        run: cargo clippy --workspace --exclude client --all-targets --no-deps -- -D warnings
 
   test:
     name: test

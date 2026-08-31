@@ -291,10 +291,8 @@ pub fn hull_targets(
                     };
                     let next = !seen_loc_hop;
                     seen_loc_hop = true;
-                    if next || tile_idx <= next_only_plus {
-                        if !out.contains(&hop) {
-                            out.push(hop);
-                        }
+                    if (next || tile_idx <= next_only_plus) && !out.contains(&hop) {
+                        out.push(hop);
                     }
                 }
                 tile_idx += 2;

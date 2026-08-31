@@ -498,7 +498,7 @@ fn publish_nav_debug(
                         // fill draws only `show_collision && !reach`.
                         reach: reach_bits
                             .as_deref()
-                            .map_or(true, |bits| reached(bits, &world.collision, wt)),
+                            .is_none_or(|bits| reached(bits, &world.collision, wt)),
                     });
                 }
             }
@@ -2737,7 +2737,7 @@ mod tests {
     #[test]
     fn debug_maxme_is_setstat_99_not_maxme_proc() {
         let cmds = debug_maxme_cheats();
-        assert!(!cmds.iter().any(|c| *c == "maxme"));
+        assert!(!cmds.contains(&"maxme"));
         assert!(cmds.contains(&"setstat attack 99"));
         assert_eq!(cmds.len(), 19);
     }
@@ -2832,7 +2832,7 @@ mod tests {
         let width = 64;
         let height = 64;
         let mut flags = vec![0u32; width * height];
-        flags[1 * width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
+        flags[width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
         NavWorld {
             collision: WorldCollision {
@@ -2958,7 +2958,7 @@ mod tests {
         // at scene (1,1) and a blocked door-loc seed at scene (2,2).
         let (width, height) = (65usize, 65usize);
         let mut flags = vec![0u32; width * height];
-        flags[1 * width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        flags[width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
         let world = NavWorld {
             collision: WorldCollision {
@@ -3164,7 +3164,7 @@ mod tests {
         let width = 64;
         let height = 64;
         let mut flags = vec![0u32; width * height];
-        flags[1 * width + 1] = CollisionFlag::W_S as u32;
+        flags[width + 1] = CollisionFlag::W_S as u32;
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {
@@ -3374,7 +3374,7 @@ mod tests {
             paint.path.len()
         );
         assert!(
-            paint.path.iter().any(|&p| p == (300, 0, true)),
+            paint.path.contains(&(300, 0, true)),
             "the transport hop is never subsampled away"
         );
         assert_eq!(
@@ -3383,7 +3383,7 @@ mod tests {
             "the terminal hop tile always survives"
         );
         assert!(
-            paint.path.iter().any(|&p| p == (0, 0, false))
+            paint.path.contains(&(0, 0, false))
                 && paint
                     .path
                     .iter()
@@ -3928,7 +3928,7 @@ mod tests {
         );
         c.bump_gens(ServerProt::UPDATE_INV_FULL);
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&mut c);
+        snap.rebuild(&c);
         WorldState::from_snapshot(&snap)
     }
 

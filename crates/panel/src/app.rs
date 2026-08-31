@@ -779,7 +779,7 @@ fn live_smoke_tick(
     if smoke_should_fire(
         true,
         live.saw_scene2_at.is_some(),
-        slot.map_or(false, |s| s.ingame),
+        slot.is_some_and(|s| s.ingame),
         slot.map_or(0, |s| s.scene_state),
     ) {
         live.saw_scene2_at = Some(Instant::now());
@@ -799,11 +799,11 @@ fn live_smoke_tick(
             live.failed = Some(msg.clone());
             return Some(msg);
         }
-        Some(scenario::RunnerStatus::Running { step, total }) => {
-            if live.last_step != Some((step, total)) {
-                live.last_step = Some((step, total));
-                println!("smoke: running step {step}/{total}");
-            }
+        Some(scenario::RunnerStatus::Running { step, total })
+            if live.last_step != Some((step, total)) =>
+        {
+            live.last_step = Some((step, total));
+            println!("smoke: running step {step}/{total}");
         }
         _ => {}
     }
@@ -1610,10 +1610,8 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                 }
                 ui.set_item_tooltip("19× setstat 99");
             }
-            "Teles" => {
-                if ui.button_with_size(caption, [w, 0.0]) {
-                    ui.open_popup("##debug-teles");
-                }
+            "Teles" if ui.button_with_size(caption, [w, 0.0]) => {
+                ui.open_popup("##debug-teles");
             }
             _ => {}
         }
@@ -2595,10 +2593,8 @@ fn chooser_window(ui: &Ui, session: &mut Session) {
             let focused = session.focused_name();
             let members = session.wall.members.clone();
             let multibox = session.multibox;
-            if multibox {
-                if ui.button_with_size("Load all", [w, 0.0]) {
-                    session.load_all();
-                }
+            if multibox && ui.button_with_size("Load all", [w, 0.0]) {
+                session.load_all();
             }
             if ui.button_with_size("New profile", [w, 0.0]) {
                 session.begin_edit_profile(None);
@@ -2669,10 +2665,8 @@ fn chooser_window(ui: &Ui, session: &mut Session) {
                     .build();
                 let avail = ui.content_region_avail()[0];
                 let (bw, stack) = button_row_layout(avail, 2);
-                if ui.button_with_size("Save", [bw, 0.0]) {
-                    if session.save_credentials() {
-                        session.cancel_edit_profile();
-                    }
+                if ui.button_with_size("Save", [bw, 0.0]) && session.save_credentials() {
+                    session.cancel_edit_profile();
                 }
                 if !stack {
                     ui.same_line();
@@ -2766,7 +2760,7 @@ fn chooser_row(ui: &Ui, name: &str, selected: bool) -> (bool, bool, bool) {
 /// per-run shot dir plus the sink bridging the slot-threaded runner to
 /// the window readback — it enqueues `(label, snapshot JSON)`, and
 /// `ui_frame` hands the requests to the render pass, then writes the PNG
-/// + sidecar from the returned bytes. Shared by `--live script_*` and
+/// and sidecar from the returned bytes. Shared by `--live script_*` and
 /// `--smoke`.
 fn arm_scenario_shots(state: &mut PanelState) {
     state.shot_dir = scenario::shot::create_run_dir()
@@ -2900,8 +2894,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
         Some(LiveHarness::Smoke(s)) => !smoke_settled(
             s.saw_scene2_at,
             Instant::now(),
-            focused_slot(&state.session, &state.session.statuses())
-                .map_or(false, |slot| slot.ingame),
+            focused_slot(&state.session, &state.session.statuses()).is_some_and(|slot| slot.ingame),
         ),
         _ => false,
     };
@@ -3022,7 +3015,7 @@ mod tests {
             Some(Boot::Live(LiveBoot::Smoke))
         ));
         assert!(
-            matches!(boot_for(&RunMode::Interactive, None), None),
+            boot_for(&RunMode::Interactive, None).is_none(),
             "no boot with no live arg and no pass"
         );
     }

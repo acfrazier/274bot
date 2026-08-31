@@ -1299,7 +1299,7 @@ fn widget_search_finds_buttons_and_styles() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Widgets));
+    assert!(snap.rebuild_family(&c, Family::Widgets));
     assert_eq!(snap.widgets().len(), 9, "the root plus its eight children");
 
     assert_eq!(widget_search::close_button_com_id(&snap, 1000), 1001);

@@ -175,7 +175,9 @@ fn nav_tele() {
     }
     // A default find (layer off) never uses a packed teleport — the
     // arena may be walkable in the bake, but never through the layer.
-    match find_with(
+    // Walk-unreachable with the layer off is fine (the arena then
+    // requires allow_teleports); the routed-tele check is above.
+    if let Ok(route) = find_with(
         &world.collision,
         &world.graph,
         COURTYARD,
@@ -183,22 +185,17 @@ fn nav_tele() {
         FindOptions::default(),
         &ring_state(),
     ) {
-        Ok(route) => {
-            if route.legs.iter().any(|l| {
-                matches!(
-                    l,
-                    Leg::Transport { edge } if edge.kind == TransportKind::Teleport
-                )
-            }) {
-                fail(&format!(
-                    "nav_tele: default find used a packed teleport: {:?}",
-                    route.legs
-                ));
-            }
+        if route.legs.iter().any(|l| {
+            matches!(
+                l,
+                Leg::Transport { edge } if edge.kind == TransportKind::Teleport
+            )
+        }) {
+            fail(&format!(
+                "nav_tele: default find used a packed teleport: {:?}",
+                route.legs
+            ));
         }
-        // Walk-unreachable with the layer off is fine (the arena then
-        // requires allow_teleports); the routed-tele check is above.
-        Err(_) => {}
     }
     println!(
         "PASS: nav_tele pack carries the dueling-ring rub edge ({} edges, {} teleports)",

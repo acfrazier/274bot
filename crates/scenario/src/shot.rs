@@ -109,8 +109,7 @@ pub fn write_shot_at(
             ),
         )
     })?;
-    img.save(&png_path)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    img.save(&png_path).map_err(io::Error::other)?;
     std::fs::write(dir.join(format!("{base}.json")), snapshot_json)?;
     Ok(png_path)
 }

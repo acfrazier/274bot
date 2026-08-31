@@ -61,6 +61,7 @@ impl Evidence {
     }
 
     /// Build the terminal-state record from the snapshot + predicate.
+    #[allow(clippy::too_many_arguments)]
     pub fn terminal(
         scenario: &str,
         outcome: &'static str,
@@ -166,9 +167,9 @@ mod tests {
 
     #[test]
     fn evidence_json_names_predicate_tile_inv_and_stat() {
-        let mut c = seeded();
+        let c = seeded();
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&mut c);
+        snap.rebuild(&c);
         let started = Instant::now() - Duration::from_millis(12);
         let ev = Evidence::terminal(
             "walk",
@@ -198,9 +199,9 @@ mod tests {
 
     #[test]
     fn fail_evidence_carries_the_message() {
-        let mut c = seeded();
+        let c = seeded();
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&mut c);
+        snap.rebuild(&c);
         let ev = Evidence::terminal(
             "walk",
             "FAIL",

@@ -288,8 +288,10 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackErro
     // Cap the preallocation at what the remaining bytes can hold; the reads
     // themselves still fail with Truncated past the real end.
     let remaining = bytes.len().saturating_sub(r.position() as usize);
-    let mut graph = TransportGraph::default();
-    graph.edges = Vec::with_capacity(n_edges.min(remaining / 41));
+    let mut graph = TransportGraph {
+        edges: Vec::with_capacity(n_edges.min(remaining / 41)),
+        ..Default::default()
+    };
     for _ in 0..n_edges {
         let mut kind = [0u8; 1];
         r.read_exact(&mut kind).map_err(|_| PackError::Truncated)?;
@@ -621,10 +623,8 @@ pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i3
         let header =
             loc_header(line).or_else(|| named_loc_header(line).and_then(|n| ids.get(n).copied()));
         if let Some(n) = header {
-            if let Some((id, open)) = cur {
-                if let Some(open) = open {
-                    out.insert(id, open);
-                }
+            if let Some((id, Some(open))) = cur {
+                out.insert(id, open);
             }
             cur = Some((n, None));
         } else if let Some((_, open)) = cur.as_mut() {
@@ -637,10 +637,8 @@ pub fn parse_door_open_ids(text: &str, ids: &HashMap<String, i32>) -> HashMap<i3
             }
         }
     }
-    if let Some((id, open)) = cur {
-        if let Some(open) = open {
-            out.insert(id, open);
-        }
+    if let Some((id, Some(open))) = cur {
+        out.insert(id, open);
     }
     out
 }

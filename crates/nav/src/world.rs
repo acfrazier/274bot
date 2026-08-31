@@ -322,7 +322,7 @@ mod tests {
         // A leftover v5 (pre-v6) `274V` pack is not a 274N grid pack:
         // load must surface BadVersion(5) so the operator rebakes, not
         // fall into the grid decoder and come out as a confusing BadMagic.
-        let mut plane = vec![0u32; 4];
+        let plane = vec![0u32; 4];
         let collision = WorldCollision {
             origin: tile(0, 0, 0),
             width: 2,

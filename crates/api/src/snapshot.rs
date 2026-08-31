@@ -2477,7 +2477,7 @@ fn widget_view(
         scroll_position: com.scroll_pos,
         hidden: com.hide,
         text: non_empty(com.text),
-        alternate_text: non_empty(com.text2),
+        alternate_text: non_empty(&com.text2),
         button_text: non_empty(&com.button_text),
         target_verb: non_empty(&com.target_verb),
         target_base: non_empty(&com.target_base),

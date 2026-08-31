@@ -427,6 +427,7 @@ pub fn walk_word_from_u16(cell: u16) -> u32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Stamp one mapsquare's MAP flags and LOC placements into the bbox grid.
 fn stamp_square(
     flags: &mut [u32],
@@ -524,8 +525,8 @@ fn stamp_square(
         );
         let def = loc_defs.loc(loc.loc_id);
         // Unknown loc ids default to blocking, as the walk-byte bake did.
-        let blockwalk = def.map_or(true, |d| d.block_walk);
-        let blockrange = def.map_or(true, |d| d.block_range);
+        let blockwalk = def.is_none_or(|d| d.block_walk);
+        let blockrange = def.is_none_or(|d| d.block_range);
         // Openable wall doors are stamped blocked-when-closed, even though
         // the door-edge extraction is the transport task's. Everything
         // stamps its own (LINK_BELOW-corrected) level plane, never a
@@ -542,7 +543,7 @@ fn stamp_square(
                 LocShape::GROUND_DECOR => {
                     // The client's `block_ground` (WR_GRND) is what blocks
                     // walk on a blockwalk, active ground decor.
-                    if blockwalk && def.map_or(false, |d| d.active) {
+                    if blockwalk && def.is_some_and(|d| d.active) {
                         set_at(
                             flags,
                             width,
@@ -568,13 +569,12 @@ fn stamp_square(
                 LocShape::WALL_STRAIGHT
                 | LocShape::WALL_DIAGONAL_CORNER
                 | LocShape::WALL_L
-                | LocShape::WALL_SQUARE_CORNER => {
-                    if blockwalk {
-                        add_wall(
-                            flags, width, height, lx, lz, loc.shape, loc.angle, blockrange,
-                            true_level,
-                        );
-                    }
+                | LocShape::WALL_SQUARE_CORNER
+                    if blockwalk =>
+                {
+                    add_wall(
+                        flags, width, height, lx, lz, loc.shape, loc.angle, blockrange, true_level,
+                    );
                 }
                 // Wall decor (4..=8) and unknown shapes carry no collision.
                 _ => {}
@@ -584,6 +584,7 @@ fn stamp_square(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Client `CollisionMap.add_wall` mirror: stamp wall direction flags on the
 /// wall tile and the tiles it borders, exactly like the client.
 fn add_wall(
@@ -679,6 +680,7 @@ fn add_wall(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Client `CollisionMap.add_loc` mirror: stamp a `WALK_SCENERY` footprint,
 /// swapping width/length for north/south angles.
 fn add_loc(
@@ -1114,8 +1116,8 @@ mod tests {
         // Origin is the western/northern corner; both walkable tiles are in.
         assert_eq!(wc.origin.x, 3200);
         assert_eq!(wc.origin.z, 3200);
-        assert_eq!(wc.width, 3 * SQUARE as usize);
-        assert_eq!(wc.height, 3 * SQUARE as usize);
+        assert_eq!(wc.width, 3 * SQUARE);
+        assert_eq!(wc.height, 3 * SQUARE);
         assert!(wc.walkable(WorldTile {
             x: 3200,
             z: 3200,

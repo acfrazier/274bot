@@ -45,12 +45,12 @@ fn client_with_npc() -> Client {
 /// call returns the same slice pointer and the same views.
 #[test]
 fn unchanged_npc_gen_reuses_last_rebuild() {
-    let mut c = client_with_npc();
+    let c = client_with_npc();
     let mut snap = GameSnapshot::new();
-    assert!(!snap.rebuild_family(&mut c, Family::Npc));
+    assert!(!snap.rebuild_family(&c, Family::Npc));
 
     let ptr = snap.npcs().as_ptr();
-    assert!(!snap.rebuild_family(&mut c, Family::Npc));
+    assert!(!snap.rebuild_family(&c, Family::Npc));
     assert_eq!(snap.npcs().as_ptr(), ptr);
     assert!(snap.npcs().is_empty());
 }
@@ -63,13 +63,13 @@ fn npc_bump_copies_list_once_then_idempotent() {
     let mut snap = GameSnapshot::new();
 
     c.bump_gens(ServerProt::NPC_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Npc));
+    assert!(snap.rebuild_family(&c, Family::Npc));
     assert_eq!(snap.npcs().len(), 1);
     assert_eq!(snap.npcs()[0].index, 7);
     assert_eq!(snap.npcs()[0].x, 100);
 
     let ptr = snap.npcs().as_ptr();
-    assert!(!snap.rebuild_family(&mut c, Family::Npc));
+    assert!(!snap.rebuild_family(&c, Family::Npc));
     assert_eq!(snap.npcs().as_ptr(), ptr);
     assert_eq!(snap.npcs().len(), 1);
 }
@@ -82,13 +82,13 @@ fn walk_in_place_does_not_clone_for_previous_readers() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    snap.rebuild_family(&mut c, Family::Npc);
+    snap.rebuild_family(&c, Family::Npc);
 
     let old_ptr = snap.npcs().as_ptr();
     c.npc[7].as_mut().unwrap().entity.x = 999;
     c.npc[7].as_mut().unwrap().entity.yaw = 42;
 
-    assert!(!snap.rebuild_family(&mut c, Family::Npc));
+    assert!(!snap.rebuild_family(&c, Family::Npc));
     assert_eq!(snap.npcs().as_ptr(), old_ptr);
     assert_eq!(snap.npcs()[0].index, 7);
     assert_eq!(snap.npcs()[0].x, 100);
@@ -101,11 +101,11 @@ fn second_bump_refreshes_copied_data() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    snap.rebuild_family(&mut c, Family::Npc);
+    snap.rebuild_family(&c, Family::Npc);
 
     c.bump_gens(ServerProt::NPC_INFO);
     c.npc[7].as_mut().unwrap().entity.x = 555;
-    assert!(snap.rebuild_family(&mut c, Family::Npc));
+    assert!(snap.rebuild_family(&c, Family::Npc));
     assert_eq!(snap.npcs()[0].x, 555);
 }
 
@@ -115,11 +115,11 @@ fn other_family_bump_leaves_npc_rebuild_untouched() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    snap.rebuild_family(&mut c, Family::Npc);
+    snap.rebuild_family(&c, Family::Npc);
 
     let ptr = snap.npcs().as_ptr();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(!snap.rebuild_family(&mut c, Family::Npc));
+    assert!(!snap.rebuild_family(&c, Family::Npc));
     assert_eq!(snap.npcs().as_ptr(), ptr);
     assert_eq!(snap.npcs().len(), 1);
 }
@@ -130,11 +130,11 @@ fn snapshot_tracks_family_generations() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
 
-    assert!(!snap.rebuild_family(&mut c, Family::Inv));
+    assert!(!snap.rebuild_family(&c, Family::Inv));
     assert_eq!(snap.gens().inv, 0);
 
     c.bump_gens(ServerProt::VARP_SMALL);
-    assert!(snap.rebuild_family(&mut c, Family::Varp));
+    assert!(snap.rebuild_family(&c, Family::Varp));
     assert_eq!(snap.gens().varp, 1);
     assert_eq!(snap.gens().npc, 0);
 }
@@ -147,7 +147,7 @@ fn npc_rebuild_skips_out_of_range_index() {
     c.npc_count = 1;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    snap.rebuild_family(&mut c, Family::Npc);
+    snap.rebuild_family(&c, Family::Npc);
     assert!(snap.npcs().is_empty());
 }
 
@@ -158,9 +158,9 @@ fn stat_rebuild_copies_runenergy() {
     c.runenergy = 20;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_RUNENERGY);
-    assert!(snap.rebuild_family(&mut c, Family::Stat));
+    assert!(snap.rebuild_family(&c, Family::Stat));
     assert_eq!(snap.runenergy(), 20);
-    assert!(!snap.rebuild_family(&mut c, Family::Stat));
+    assert!(!snap.rebuild_family(&c, Family::Stat));
 }
 
 /// Queries borrow one family without allocating: by slot index or by tile.
@@ -172,7 +172,7 @@ fn queries_borrow_by_index_and_tile() {
     c.npc_count = 2;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    snap.rebuild_family(&mut c, Family::Npc);
+    snap.rebuild_family(&c, Family::Npc);
 
     let view = npc_by_index(snap.npcs(), 7).expect("slot 7 live");
     assert_eq!(view.x, 100);
@@ -193,16 +193,16 @@ fn player_rebuild_records_base_and_tile() {
     c.map_build_base_z = 3200;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::PLAYER_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert!(snap.rebuild_family(&c, Family::Player));
     assert_eq!(snap.base(), Some((3200, 3200)));
     assert_eq!(snap.tile(), None, "no local player decoded yet");
 
     c.local_player = Some(ClientPlayer::at(20, 12));
     c.bump_gens(ServerProt::PLAYER_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert!(snap.rebuild_family(&c, Family::Player));
     assert_eq!(snap.tile(), Some((3220, 3212, 0)));
 
-    assert!(!snap.rebuild_family(&mut c, Family::Player));
+    assert!(!snap.rebuild_family(&c, Family::Player));
 }
 
 /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The iface
@@ -235,13 +235,13 @@ fn inv_rebuild_reads_the_type_inv_iface() {
     }
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Inv));
+    assert!(snap.rebuild_family(&c, Family::Inv));
     assert_eq!(snap.inv(), &[(525, 1), (994, 100)]);
     assert_eq!(snap.inv_count(525), 1);
     assert_eq!(snap.inv_count(994), 100);
     assert_eq!(snap.inv_count(526), 0, "the stored value is obj id + 1");
     assert_eq!(snap.inv_count(0), 0);
-    assert!(!snap.rebuild_family(&mut c, Family::Inv));
+    assert!(!snap.rebuild_family(&c, Family::Inv));
 }
 
 /// The legacy `inv()` family and the iface-derived `inventory()` family
@@ -280,8 +280,8 @@ fn inv_ids_match_inventory_def_ids() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Inv));
-    assert!(snap.rebuild_family(&mut c, Family::Inventory));
+    assert!(snap.rebuild_family(&c, Family::Inv));
+    assert!(snap.rebuild_family(&c, Family::Inventory));
 
     assert_eq!(snap.inv(), &[(3, 1), (4, 100)]);
     let inv_ids: Vec<i32> = snap.inv().iter().map(|(id, _)| *id).collect();
@@ -331,7 +331,7 @@ fn inv_rebuild_prefers_the_side_tab_container_over_an_earlier_type_inv() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Inv));
+    assert!(snap.rebuild_family(&c, Family::Inv));
     assert_eq!(
         snap.inv(),
         &[(525, 1), (994, 100)],
@@ -345,12 +345,12 @@ fn chat_rebuild_reads_the_ring_head() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
     assert_eq!(snap.chat(), None, "empty ring head reads as none");
 
     c.chat_text[0] = "Welcome to RuneScape".into();
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
     assert_eq!(snap.chat(), Some("Welcome to RuneScape"));
 }
 
@@ -362,10 +362,10 @@ fn scene_rebuild_records_ingame_and_scene_state() {
     c.scene_state = 2;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild_family(&mut c, Family::Scene));
+    assert!(snap.rebuild_family(&c, Family::Scene));
     assert!(snap.ingame());
     assert_eq!(snap.scene_state(), 2);
-    assert!(!snap.rebuild_family(&mut c, Family::Scene));
+    assert!(!snap.rebuild_family(&c, Family::Scene));
 }
 
 /// The position of each `Family` variant in the enum. An exhaustive
@@ -415,12 +415,12 @@ fn family_enum_covers_all_client_gens() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
 
-    assert!(!snap.rebuild_family(&mut c, Family::Iface));
-    assert!(!snap.rebuild_family(&mut c, Family::Camera));
-    assert!(!snap.rebuild_family(&mut c, Family::MapFlag));
-    assert!(!snap.rebuild_family(&mut c, Family::World));
-    assert!(!snap.rebuild_family(&mut c, Family::Loc));
-    assert!(!snap.rebuild_family(&mut c, Family::GroundItem));
+    assert!(!snap.rebuild_family(&c, Family::Iface));
+    assert!(!snap.rebuild_family(&c, Family::Camera));
+    assert!(!snap.rebuild_family(&c, Family::MapFlag));
+    assert!(!snap.rebuild_family(&c, Family::World));
+    assert!(!snap.rebuild_family(&c, Family::Loc));
+    assert!(!snap.rebuild_family(&c, Family::GroundItem));
     assert_eq!(snap.gens().iface, 0);
     assert_eq!(snap.gens().camera, 0);
     assert_eq!(snap.gens().map_flag, 0);
@@ -431,28 +431,28 @@ fn family_enum_covers_all_client_gens() {
     c.bump_gens(ServerProt::UNSET_MAP_FLAG);
     c.bump_gens(ServerProt::SET_MULTIWAY);
 
-    assert!(snap.rebuild_family(&mut c, Family::Iface));
-    assert!(snap.rebuild_family(&mut c, Family::Camera));
-    assert!(snap.rebuild_family(&mut c, Family::MapFlag));
-    assert!(snap.rebuild_family(&mut c, Family::World));
+    assert!(snap.rebuild_family(&c, Family::Iface));
+    assert!(snap.rebuild_family(&c, Family::Camera));
+    assert!(snap.rebuild_family(&c, Family::MapFlag));
+    assert!(snap.rebuild_family(&c, Family::World));
     assert_eq!(snap.gens().iface, 1);
     assert_eq!(snap.gens().camera, 1);
     assert_eq!(snap.gens().map_flag, 1);
     assert_eq!(snap.gens().world, 1);
 
-    assert!(!snap.rebuild_family(&mut c, Family::Iface));
-    assert!(!snap.rebuild_family(&mut c, Family::Camera));
-    assert!(!snap.rebuild_family(&mut c, Family::MapFlag));
-    assert!(!snap.rebuild_family(&mut c, Family::World));
+    assert!(!snap.rebuild_family(&c, Family::Iface));
+    assert!(!snap.rebuild_family(&c, Family::Camera));
+    assert!(!snap.rebuild_family(&c, Family::MapFlag));
+    assert!(!snap.rebuild_family(&c, Family::World));
 
     // Loc and ground-item changes arrive on scene-family packets.
-    assert!(!snap.rebuild_family(&mut c, Family::Loc));
-    assert!(!snap.rebuild_family(&mut c, Family::GroundItem));
+    assert!(!snap.rebuild_family(&c, Family::Loc));
+    assert!(!snap.rebuild_family(&c, Family::GroundItem));
     c.bump_gens(ServerProt::OBJ_ADD);
-    assert!(snap.rebuild_family(&mut c, Family::Loc));
-    assert!(snap.rebuild_family(&mut c, Family::GroundItem));
-    assert!(!snap.rebuild_family(&mut c, Family::Loc));
-    assert!(!snap.rebuild_family(&mut c, Family::GroundItem));
+    assert!(snap.rebuild_family(&c, Family::Loc));
+    assert!(snap.rebuild_family(&c, Family::GroundItem));
+    assert!(!snap.rebuild_family(&c, Family::Loc));
+    assert!(!snap.rebuild_family(&c, Family::GroundItem));
 }
 
 /// `GameSnapshot::rebuild` (the harness read) rebuilds every family and
@@ -468,10 +468,10 @@ fn rebuild_all_families_reports_dirty_once() {
     c.bump_gens(ServerProt::UPDATE_RUNENERGY);
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     let mut snap = GameSnapshot::new();
-    assert!(snap.rebuild(&mut c));
+    assert!(snap.rebuild(&c));
     assert_eq!(snap.tile(), Some((3220, 3212, 0)));
     assert_eq!(snap.runenergy(), 20);
-    assert!(!snap.rebuild(&mut c), "unchanged gens are not dirty again");
+    assert!(!snap.rebuild(&c), "unchanged gens are not dirty again");
 }
 
 /// `check_scene` flips `scene_state = 2` on the SIM loop with no scene
@@ -484,13 +484,13 @@ fn scene_status_is_always_fresh_without_a_gen_bump() {
     c.scene_state = 1;
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     let mut snap = GameSnapshot::new();
-    snap.rebuild(&mut c);
+    snap.rebuild(&c);
     assert_eq!(snap.scene_state(), 1);
 
     // The scene completes with no packet behind it: no gen moves, but
     // the snapshot must read the live state.
     c.scene_state = 2;
-    assert!(!snap.rebuild(&mut c), "no gen moved");
+    assert!(!snap.rebuild(&c), "no gen moved");
     assert_eq!(snap.scene_state(), 2, "scene status is always fresh");
     assert!(snap.ingame());
 }
@@ -532,7 +532,7 @@ fn stat_view_rebuild_reads_full_skills() {
     c.runenergy = 20;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_STAT);
-    assert!(snap.rebuild_family(&mut c, Family::Stat));
+    assert!(snap.rebuild_family(&c, Family::Stat));
 
     let stats = snap.stats();
     assert_eq!(stats.len(), 25);
@@ -552,7 +552,7 @@ fn stat_view_rebuild_reads_full_skills() {
     assert_eq!(stats[20].name, "runecraft");
     assert!(stats[20].used);
     assert_eq!(snap.runenergy(), 20);
-    assert!(!snap.rebuild_family(&mut c, Family::Stat));
+    assert!(!snap.rebuild_family(&c, Family::Stat));
 }
 
 /// An npc rebuild copies the full actor view: tile, distance, anims,
@@ -596,7 +596,7 @@ fn npc_rebuild_reads_full_actor_view() {
     }
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Npc));
+    assert!(snap.rebuild_family(&c, Family::Npc));
 
     let v = &snap.npcs()[0];
     assert_eq!(v.index, 7);
@@ -661,7 +661,7 @@ fn npc_face_target_encodes_npc_and_player_kinds() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::NPC_INFO);
-    snap.rebuild_family(&mut c, Family::Npc);
+    snap.rebuild_family(&c, Family::Npc);
 
     assert_eq!(
         npc_by_index(snap.npcs(), 7).unwrap().target,
@@ -716,7 +716,7 @@ fn player_rebuild_reads_local_and_remote_players() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::PLAYER_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert!(snap.rebuild_family(&c, Family::Player));
 
     let local_view = snap.local_player().expect("local player view");
     assert_eq!(local_view.player.index, 7);
@@ -789,7 +789,7 @@ fn player_rebuild_reads_local_and_remote_players() {
     // The canonical tile carries the real scene level (`minusedlevel`).
     assert_eq!(snap.tile(), Some((3220, 3212, 1)));
 
-    assert!(!snap.rebuild_family(&mut c, Family::Player));
+    assert!(!snap.rebuild_family(&c, Family::Player));
 }
 
 /// Loc-family rebuild sweeps the sim world and resolves the loc's
@@ -825,7 +825,7 @@ fn loc_view_rebuild_reads_world_locs() {
         .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild_family(&mut c, Family::Loc));
+    assert!(snap.rebuild_family(&c, Family::Loc));
 
     assert_eq!(snap.locs().len(), 1);
     let v = &snap.locs()[0];
@@ -859,10 +859,7 @@ fn loc_view_rebuild_reads_world_locs() {
     assert_eq!(v.map_function, -1);
     assert_eq!(v.map_scene, -1);
     assert_eq!(v.force_approach, 0);
-    assert!(
-        !snap.rebuild_family(&mut c, Family::Loc),
-        "unchanged scene gen"
-    );
+    assert!(!snap.rebuild_family(&c, Family::Loc), "unchanged scene gen");
 }
 
 /// Loc typecodes can change on the sim world after the observer already
@@ -882,7 +879,7 @@ fn loc_view_is_always_fresh_without_a_gen_bump() {
         .set_wall(0, 3, 4, 0, 0, 0, closed, 1 << 6, 0, 0, 0, 0);
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     let mut snap = GameSnapshot::new();
-    assert!(snap.rebuild_family(&mut c, Family::Loc));
+    assert!(snap.rebuild_family(&c, Family::Loc));
     assert_eq!(
         snap.locs()[0].id,
         1530,
@@ -892,10 +889,7 @@ fn loc_view_is_always_fresh_without_a_gen_bump() {
     // The live loc flips with no packet / no scene gen — the snapshot
     // must still read the open leaf.
     c.world.set_wall(0, 3, 4, 0, 0, 0, open, 1 << 6, 0, 0, 0, 0);
-    assert!(
-        !snap.rebuild_family(&mut c, Family::Loc),
-        "no scene gen moved"
-    );
+    assert!(!snap.rebuild_family(&c, Family::Loc), "no scene gen moved");
     assert_eq!(
         snap.locs()[0].id,
         1531,
@@ -923,7 +917,7 @@ fn loc_view_reads_all_four_layers() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild_family(&mut c, Family::Loc));
+    assert!(snap.rebuild_family(&c, Family::Loc));
 
     let locs = snap.locs();
     assert_eq!(locs.len(), 4, "one view per non-empty layer");
@@ -994,7 +988,7 @@ fn loc_view_unknown_id_reads_defaults() {
     c.world.set_wall(0, 1, 2, 0, 0, 0, typecode, 0, 0, 0, 0, 0);
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    snap.rebuild_family(&mut c, Family::Loc);
+    snap.rebuild_family(&c, Family::Loc);
     let v = &snap.locs()[0];
     assert_eq!(v.id, id);
     assert_eq!(v.name, None);
@@ -1039,7 +1033,7 @@ fn ground_item_view_rebuild_reads_ground_obj() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild_family(&mut c, Family::GroundItem));
+    assert!(snap.rebuild_family(&c, Family::GroundItem));
 
     let items = snap.ground_items();
     assert_eq!(items.len(), 2, "one view per list node");
@@ -1067,7 +1061,7 @@ fn ground_item_view_rebuild_reads_ground_obj() {
         }
     );
     assert_eq!(items[0].distance, 10); // chebyshev from (3220, 3212)
-    assert!(!snap.rebuild_family(&mut c, Family::GroundItem));
+    assert!(!snap.rebuild_family(&c, Family::GroundItem));
 }
 
 /// Scene-family rebuild reads the collision map's per-tile flags, the
@@ -1084,7 +1078,7 @@ fn scene_view_rebuild_reads_collision_flags() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild_family(&mut c, Family::Scene));
+    assert!(snap.rebuild_family(&c, Family::Scene));
 
     let scene = snap.scene();
     assert!(scene.available);
@@ -1098,7 +1092,7 @@ fn scene_view_rebuild_reads_collision_flags() {
     assert_eq!(flag_at(5, 6), CollisionFlag::W_W);
     assert_eq!(flag_at(4, 6), CollisionFlag::W_E);
     assert_eq!(flag_at(50, 50), CollisionFlag::_OPEN, "open tile stays 0");
-    assert!(!snap.rebuild_family(&mut c, Family::Scene));
+    assert!(!snap.rebuild_family(&c, Family::Scene));
 }
 
 /// World-state rebuild copies the client's world scalars.
@@ -1115,7 +1109,7 @@ fn world_view_rebuild_reads_client_state() {
     c.loop_cycle = 412;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::SET_MULTIWAY);
-    assert!(snap.rebuild_family(&mut c, Family::World));
+    assert!(snap.rebuild_family(&c, Family::World));
 
     let w = snap.world();
     assert_eq!(w.map_base_x, 3200);
@@ -1129,7 +1123,7 @@ fn world_view_rebuild_reads_client_state() {
     // Cheap scalars copy every rebuild, so counts stay fresh without a
     // world-gen bump (like the scene family's always-fresh status).
     c.player_count = 8;
-    assert!(!snap.rebuild_family(&mut c, Family::World));
+    assert!(!snap.rebuild_family(&c, Family::World));
     assert_eq!(snap.world().player_count, 8);
 }
 
@@ -1148,7 +1142,7 @@ fn camera_view_rebuild_reads_client_camera() {
     c.cinema_cam = true;
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::CAM_LOOKAT);
-    assert!(snap.rebuild_family(&mut c, Family::Camera));
+    assert!(snap.rebuild_family(&c, Family::Camera));
 
     let cam = snap.camera();
     assert_eq!(cam.x, 1);
@@ -1161,7 +1155,7 @@ fn camera_view_rebuild_reads_client_camera() {
     assert!(cam.cinematic);
     // The follow camera eases every frame with no packet; always fresh.
     c.cam_y = 99;
-    assert!(!snap.rebuild_family(&mut c, Family::Camera));
+    assert!(!snap.rebuild_family(&c, Family::Camera));
     assert_eq!(snap.camera().y, 99);
 }
 
@@ -1171,13 +1165,13 @@ fn map_flag_view_reads_minimap_flag() {
     let mut c = client_with_npc();
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UNSET_MAP_FLAG);
-    assert!(snap.rebuild_family(&mut c, Family::MapFlag));
+    assert!(snap.rebuild_family(&c, Family::MapFlag));
     assert_eq!(snap.map_flag(), None, "flag 0 reads None");
 
     c.minimap_flag_x = 12;
     c.minimap_flag_z = 34;
     c.bump_gens(ServerProt::UNSET_MAP_FLAG);
-    assert!(snap.rebuild_family(&mut c, Family::MapFlag));
+    assert!(snap.rebuild_family(&c, Family::MapFlag));
     let flag = snap.map_flag().expect("flag set");
     assert_eq!(flag.lx, 12);
     assert_eq!(flag.lz, 34);
@@ -1186,10 +1180,7 @@ fn map_flag_view_reads_minimap_flag() {
     // clears it the same way); the view stays fresh like the scene status.
     c.minimap_flag_x = 0;
     c.minimap_flag_z = 0;
-    assert!(
-        !snap.rebuild_family(&mut c, Family::MapFlag),
-        "no gen moved"
-    );
+    assert!(!snap.rebuild_family(&c, Family::MapFlag), "no gen moved");
     assert_eq!(snap.map_flag(), None, "the flag view is always fresh");
 }
 
@@ -1286,8 +1277,8 @@ fn item_view_reads_inventory_and_bank_containers() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Inventory));
-    assert!(snap.rebuild_family(&mut c, Family::Bank));
+    assert!(snap.rebuild_family(&c, Family::Inventory));
+    assert!(snap.rebuild_family(&c, Family::Bank));
 
     let inv = snap.inventory();
     assert_eq!(inv.len(), 2);
@@ -1310,11 +1301,8 @@ fn item_view_reads_inventory_and_bank_containers() {
         cache.objs[4].iop = [Some("Wield".into()), None, None, None, None];
     }
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Inventory));
-    assert!(
-        snap.rebuild_family(&mut c, Family::Bank),
-        "the inv gen moved"
-    );
+    assert!(snap.rebuild_family(&c, Family::Inventory));
+    assert!(snap.rebuild_family(&c, Family::Bank), "the inv gen moved");
     assert_eq!(
         snap.inventory()[1].actions,
         vec![Some("Wield".into()), None, None, None, Some("Drop".into())],
@@ -1333,10 +1321,10 @@ fn item_view_reads_inventory_and_bank_containers() {
     assert_eq!(bank[0].component_id, 601);
 
     assert!(
-        !snap.rebuild_family(&mut c, Family::Inventory),
+        !snap.rebuild_family(&c, Family::Inventory),
         "unchanged gens"
     );
-    assert!(!snap.rebuild_family(&mut c, Family::Bank));
+    assert!(!snap.rebuild_family(&c, Family::Bank));
 }
 
 /// The bank-side (deposit) container reads the side modal's `deposit`
@@ -1416,8 +1404,8 @@ fn bank_side_and_equipment_read_their_components() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::BankSide));
-    assert!(snap.rebuild_family(&mut c, Family::Equipment));
+    assert!(snap.rebuild_family(&c, Family::BankSide));
+    assert!(snap.rebuild_family(&c, Family::Equipment));
 
     let side = snap.bank_side();
     assert_eq!(side.len(), 1);
@@ -1526,7 +1514,7 @@ fn widget_view_reads_iface_fields_and_varp_bindings() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_SETTEXT);
-    assert!(snap.rebuild_family(&mut c, Family::Widgets));
+    assert!(snap.rebuild_family(&c, Family::Widgets));
 
     let ws = snap.widgets();
     assert_eq!(ws.len(), 3, "root plus two children");
@@ -1587,10 +1575,7 @@ fn widget_view_reads_iface_fields_and_varp_bindings() {
         vec![Some("Toggle".into()), None, None, None, None]
     );
 
-    assert!(
-        !snap.rebuild_family(&mut c, Family::Widgets),
-        "unchanged gens"
-    );
+    assert!(!snap.rebuild_family(&c, Family::Widgets), "unchanged gens");
 }
 
 /// TYPE_INV components inside a widget tree expose their slots as
@@ -1636,7 +1621,7 @@ fn widget_items_read_inv_component_slots() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Widgets));
+    assert!(snap.rebuild_family(&c, Family::Widgets));
 
     let items = &snap
         .widgets()
@@ -1705,7 +1690,7 @@ fn widget_roots_cover_main_side_chat_and_tutorial() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
-    assert!(snap.rebuild_family(&mut c, Family::Widgets));
+    assert!(snap.rebuild_family(&c, Family::Widgets));
 
     let root_of = |root: WidgetRoot| {
         snap.widgets()
@@ -1724,7 +1709,7 @@ fn widget_roots_cover_main_side_chat_and_tutorial() {
     c.side_icon[3] = 1100;
     c.active_icon = 3;
     c.bump_gens(ServerProt::IF_CLOSE);
-    assert!(snap.rebuild_family(&mut c, Family::Widgets));
+    assert!(snap.rebuild_family(&c, Family::Widgets));
     assert!(snap
         .widgets()
         .iter()
@@ -1771,7 +1756,7 @@ fn side_tabs_report_available_active_visible_and_widgets() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_SETICON);
-    assert!(snap.rebuild_family(&mut c, Family::SideTabs));
+    assert!(snap.rebuild_family(&c, Family::SideTabs));
 
     let tabs = snap.side_tabs();
     assert_eq!(tabs.len(), 14);
@@ -1787,7 +1772,7 @@ fn side_tabs_report_available_active_visible_and_widgets() {
 
     c.side_modal_id = 1200;
     c.bump_gens(ServerProt::IF_OPENSIDE);
-    assert!(snap.rebuild_family(&mut c, Family::SideTabs));
+    assert!(snap.rebuild_family(&c, Family::SideTabs));
     assert!(snap.side_tabs()[3].active, "the tab stays selected");
     assert!(!snap.side_tabs()[3].visible, "a side modal hides the tab");
 }
@@ -1910,7 +1895,7 @@ fn trade_view_reads_offer_confirm_and_containers() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
-    assert!(snap.rebuild_family(&mut c, Family::Trade));
+    assert!(snap.rebuild_family(&c, Family::Trade));
 
     let t = snap.trade();
     assert!(t.offer_open);
@@ -1937,7 +1922,7 @@ fn trade_view_reads_offer_confirm_and_containers() {
     // The confirm screen is a different main modal.
     c.main_modal_id = 3443;
     c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
-    assert!(snap.rebuild_family(&mut c, Family::Trade));
+    assert!(snap.rebuild_family(&c, Family::Trade));
     assert!(snap.trade().confirm_open);
     assert!(!snap.trade().offer_open);
 
@@ -1956,7 +1941,7 @@ fn trade_view_reads_offer_confirm_and_containers() {
         },
     );
     c.bump_gens(ServerProt::IF_SETTEXT);
-    assert!(snap.rebuild_family(&mut c, Family::Trade));
+    assert!(snap.rebuild_family(&c, Family::Trade));
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));
 }
 
@@ -1970,7 +1955,7 @@ fn chat_lines_read_the_full_ring_in_order() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
 
     let lines = snap.chat_lines();
     assert_eq!(lines.len(), 2);
@@ -1988,7 +1973,7 @@ fn chat_lines_read_the_full_ring_in_order() {
     let head_seq = lines[0].sequence;
     c.add_chat(0, "third", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
     let lines = snap.chat_lines();
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[0].text, "third");
@@ -2009,14 +1994,14 @@ fn chat_burst_in_one_gen_gets_distinct_sequences() {
     c.add_chat(0, "one", "");
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
     let last = snap.chat_lines()[0].sequence;
 
     // A burst of two messages before the next gen bump.
     c.add_chat(0, "two", "");
     c.add_chat(0, "three", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
 
     let lines = snap.chat_lines();
     assert_eq!(lines[0].text, "three", "index 0 is the newest line");
@@ -2033,7 +2018,7 @@ fn chat_burst_in_one_gen_gets_distinct_sequences() {
 
     // Sequences are stable: a rebuild with no new chat keeps them.
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    assert!(snap.rebuild_family(&mut c, Family::Chat));
+    assert!(snap.rebuild_family(&c, Family::Chat));
     let lines = snap.chat_lines();
     assert_eq!(lines[0].sequence, three_seq);
     assert_eq!(lines[1].sequence, two_seq);
@@ -2133,7 +2118,7 @@ fn chat_options_and_continue_read_the_chat_modal() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_OPENCHAT);
-    assert!(snap.rebuild_family(&mut c, Family::ChatOptions));
+    assert!(snap.rebuild_family(&c, Family::ChatOptions));
 
     assert_eq!(snap.chat_continue_component_id(), 2003);
     let options = snap.chat_options();
@@ -2145,7 +2130,7 @@ fn chat_options_and_continue_read_the_chat_modal() {
 
     c.resumed_pause_button = true;
     c.bump_gens(ServerProt::IF_SETTEXT);
-    assert!(snap.rebuild_family(&mut c, Family::ChatOptions));
+    assert!(snap.rebuild_family(&c, Family::ChatOptions));
     assert_eq!(
         snap.chat_continue_component_id(),
         -1,
@@ -2241,7 +2226,7 @@ fn make_products_read_the_make_modal() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_OPENCHAT);
-    assert!(snap.rebuild_family(&mut c, Family::MakeProducts));
+    assert!(snap.rebuild_family(&c, Family::MakeProducts));
 
     let products = snap.make_products();
     assert_eq!(products.len(), 2);
@@ -2307,7 +2292,7 @@ fn make_products_ignores_mysterious_cube_obj_models() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_OPENMAIN);
-    assert!(snap.rebuild_family(&mut c, Family::MakeProducts));
+    assert!(snap.rebuild_family(&c, Family::MakeProducts));
     assert!(
         snap.make_products().is_empty(),
         "cube obj models are not make-X products"
@@ -2374,7 +2359,7 @@ fn quest_statuses_read_the_quest_tab() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_SETICON);
-    assert!(snap.rebuild_family(&mut c, Family::QuestStatuses));
+    assert!(snap.rebuild_family(&c, Family::QuestStatuses));
 
     let statuses = snap.quest_statuses();
     assert_eq!(
@@ -2467,7 +2452,7 @@ fn controls_read_the_player_controls_overlay() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_SETTEXT);
-    assert!(snap.rebuild_family(&mut c, Family::Controls));
+    assert!(snap.rebuild_family(&c, Family::Controls));
 
     let run = snap.run_controls().expect("run toggle pair");
     assert_eq!(run.on_component_id, 6, "children[5] toggles run on");
@@ -2482,10 +2467,7 @@ fn controls_read_the_player_controls_overlay() {
         "children[3] toggles retaliate off"
     );
 
-    assert!(
-        !snap.rebuild_family(&mut c, Family::Controls),
-        "unchanged gens"
-    );
+    assert!(!snap.rebuild_family(&c, Family::Controls), "unchanged gens");
 }
 
 /// Modals read the open modal ids + the count-dialog/active-tab scalars
@@ -2563,8 +2545,8 @@ fn modals_menu_and_modal_texts_read_client_state() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::IF_OPENMAIN);
-    assert!(snap.rebuild_family(&mut c, Family::Modals));
-    assert!(snap.rebuild_family(&mut c, Family::Menu));
+    assert!(snap.rebuild_family(&c, Family::Modals));
+    assert!(snap.rebuild_family(&c, Family::Menu));
 
     let modals = snap.modals();
     assert_eq!(modals.main, 600);
@@ -2594,10 +2576,10 @@ fn modals_menu_and_modal_texts_read_client_state() {
     c.menu_num_entries = 1;
     c.login_mes1 = String::new();
     assert!(
-        !snap.rebuild_family(&mut c, Family::Modals),
+        !snap.rebuild_family(&c, Family::Modals),
         "no iface gen moved"
     );
-    assert!(!snap.rebuild_family(&mut c, Family::Menu));
+    assert!(!snap.rebuild_family(&c, Family::Menu));
     assert!(!snap.count_dialog_open());
     assert_eq!(snap.active_side_tab(), 2);
     assert_eq!(snap.menu_entries(), &["Cancel".to_string()]);
@@ -2626,10 +2608,7 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
         Family::Controls,
         Family::Menu,
     ] {
-        assert!(
-            !snap.rebuild_family(&mut c, family),
-            "{family:?} starts clean"
-        );
+        assert!(!snap.rebuild_family(&c, family), "{family:?} starts clean");
     }
 
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
@@ -2642,14 +2621,8 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
         Family::Widgets,
         Family::SideTabs,
     ] {
-        assert!(
-            snap.rebuild_family(&mut c, family),
-            "{family:?} moves on inv"
-        );
-        assert!(
-            !snap.rebuild_family(&mut c, family),
-            "{family:?} then stays"
-        );
+        assert!(snap.rebuild_family(&c, family), "{family:?} moves on inv");
+        assert!(!snap.rebuild_family(&c, family), "{family:?} then stays");
     }
 
     c.bump_gens(ServerProt::IF_SETTEXT);
@@ -2664,14 +2637,8 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
         Family::Controls,
         Family::Menu,
     ] {
-        assert!(
-            snap.rebuild_family(&mut c, family),
-            "{family:?} moves on iface"
-        );
-        assert!(
-            !snap.rebuild_family(&mut c, family),
-            "{family:?} then stays"
-        );
+        assert!(snap.rebuild_family(&c, family), "{family:?} moves on iface");
+        assert!(!snap.rebuild_family(&c, family), "{family:?} then stays");
     }
 }
 
@@ -2690,15 +2657,15 @@ fn player_rebuild_reads_self_slot_and_bumps_tick() {
     assert_eq!(snap.tick(), 0);
 
     c.bump_gens(ServerProt::PLAYER_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert!(snap.rebuild_family(&c, Family::Player));
     assert_eq!(snap.self_slot(), 7);
     assert_eq!(snap.tick(), 1);
 
     c.bump_gens(ServerProt::PLAYER_INFO);
-    assert!(snap.rebuild_family(&mut c, Family::Player));
+    assert!(snap.rebuild_family(&c, Family::Player));
     assert_eq!(snap.tick(), 2, "each PLAYER_INFO is one game tick");
 
-    assert!(!snap.rebuild_family(&mut c, Family::Player));
+    assert!(!snap.rebuild_family(&c, Family::Player));
     assert_eq!(snap.tick(), 2, "no player gen move: no tick");
 }
 
@@ -2715,11 +2682,11 @@ fn scene_rebuild_reads_attached_from_the_socket() {
     let mut snap = GameSnapshot::new();
 
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild_family(&mut c, Family::Scene));
+    assert!(snap.rebuild_family(&c, Family::Scene));
     assert!(!snap.attached(), "no socket yet");
 
     c.stream = Some(stream);
-    assert!(!snap.rebuild_family(&mut c, Family::Scene));
+    assert!(!snap.rebuild_family(&c, Family::Scene));
     assert!(
         snap.attached(),
         "a connected stream marks the slot attached"
@@ -2742,7 +2709,7 @@ fn varp_family_rebuild_reads_the_varp_table() {
     assert_eq!(snap.varps(), &[]);
 
     c.bump_gens(ServerProt::VARP_SMALL);
-    assert!(snap.rebuild_family(&mut c, Family::Varp));
+    assert!(snap.rebuild_family(&c, Family::Varp));
     assert_eq!(
         snap.varps(),
         &[
@@ -2754,7 +2721,7 @@ fn varp_family_rebuild_reads_the_varp_table() {
         ],
         "one view per definition, unset values default to 0"
     );
-    assert!(!snap.rebuild_family(&mut c, Family::Varp));
+    assert!(!snap.rebuild_family(&c, Family::Varp));
 }
 
 /// `inventory_size` is the inv tab component's slot count (0 until the
@@ -2821,14 +2788,14 @@ fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
     let mut snap = GameSnapshot::new();
     assert_eq!(snap.bank_component_id(), -1, "no bank open by default");
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    assert!(snap.rebuild_family(&mut c, Family::Inventory));
-    assert!(snap.rebuild_family(&mut c, Family::Bank));
+    assert!(snap.rebuild_family(&c, Family::Inventory));
+    assert!(snap.rebuild_family(&c, Family::Bank));
     assert_eq!(snap.inventory_size(), 4, "the inv component's slot count");
     assert_eq!(snap.bank_component_id(), 601);
 
     c.main_modal_id = -1;
     c.bump_gens(ServerProt::IF_OPENMAIN);
-    assert!(snap.rebuild_family(&mut c, Family::Bank));
+    assert!(snap.rebuild_family(&c, Family::Bank));
     assert_eq!(snap.bank_component_id(), -1, "no bank: -1, not component 0");
     assert!(snap.bank().is_empty());
 }
@@ -3322,7 +3289,7 @@ fn read_context_round_trips_every_family() {
 
     let mut snap = GameSnapshot::new();
     c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(snap.rebuild(&mut c));
+    assert!(snap.rebuild(&c));
     let ctx = ReadContext::new(&snap);
 
     // scalars + player family

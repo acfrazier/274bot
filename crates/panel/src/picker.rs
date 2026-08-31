@@ -452,7 +452,8 @@ fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<Worl
 /// (each new arm re-reports even for the same tiles), the seed pair, and
 /// the component sizes (which change when the player steps into the
 /// dest's component).
-static FLOOD_REPORT: Mutex<Option<(u64, WorldTile, WorldTile, usize, usize)>> = Mutex::new(None);
+type FloodKey = (u64, WorldTile, WorldTile, usize, usize);
+static FLOOD_REPORT: Mutex<Option<FloodKey>> = Mutex::new(None);
 
 /// The `nav-flood` line to print this frame, `None` when nothing changed
 /// since the last report. The arm generation is part of the key, so a
@@ -1274,7 +1275,7 @@ mod tests {
         // wall at (1,1). Painting must read the passed level, not the bake's
         // origin plane.
         let mut flags = vec![0u32; 2 * 9];
-        flags[9 + 1 * 3 + 1] = CollisionFlag::WR_GRND as u32;
+        flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
         let world = NavWorld {
             collision: WorldCollision {
                 origin: WorldTile {

@@ -110,9 +110,9 @@ fn nav_collision() {
                 if guard.is_none() {
                     let level = c.minusedlevel as usize;
                     let mut link_below = vec![[false; SCENE]; SCENE];
-                    for lx in 0..SCENE {
-                        for lz in 0..SCENE {
-                            link_below[lx][lz] = c.mapl[1][lx][lz] & LINK_BELOW != 0;
+                    for (lx, row) in link_below.iter_mut().enumerate() {
+                        for (lz, cell) in row.iter_mut().enumerate() {
+                            *cell = c.mapl[1][lx][lz] & LINK_BELOW != 0;
                         }
                     }
                     *guard = Some(Captured {

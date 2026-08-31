@@ -196,8 +196,10 @@ mod tests {
             }
         }
         c.chat_text[0] = "Welcome to RuneScape".into();
-        let mut npc = ClientNpc::default();
-        npc.r#type = Some(708);
+        let mut npc = ClientNpc {
+            r#type: Some(708),
+            ..Default::default()
+        };
         npc.entity.x = 100;
         npc.entity.z = 200;
         c.npc[3] = Some(Box::new(npc));
@@ -336,7 +338,7 @@ mod tests {
         lp.entity.z = 1633 * 128 + 64;
         c.local_player = Some(lp);
         c.bump_gens(ServerProt::PLAYER_INFO);
-        s.rebuild(&mut c);
+        s.rebuild(&c);
         assert!(Proof::EssenceMine.check(&s, None));
         assert_eq!(Proof::EssenceMine.name(), "in_essence_mine");
     }
@@ -352,7 +354,7 @@ mod tests {
         // A `p_choice2_header`-shape modal: root 100 with two BUTTON_OK
         // children (the quest-seed dialogs).
         for (i, text) in ["Black Arm Gang.", "Phoenix Gang."].iter().enumerate() {
-            let id = 101 + i as usize;
+            let id = 101 + i;
             c.set_iface(
                 id,
                 IfType {
@@ -381,7 +383,7 @@ mod tests {
         );
         c.chat_modal_id = 100;
         c.bump_gens(ServerProt::IF_OPENCHAT);
-        s.rebuild(&mut c);
+        s.rebuild(&c);
         assert!(Proof::ChatChoice.check(&s, None));
         assert_eq!(Proof::ChatChoice.name(), "chat_choice");
     }
@@ -444,7 +446,7 @@ mod tests {
             },
         );
         c.bump_gens(ServerProt::IF_OPENMAIN);
-        s.rebuild(&mut c);
+        s.rebuild(&c);
         assert!(Proof::QuestDone { name: "Lost City" }.check(&s, None));
         assert!(
             !Proof::QuestDone {

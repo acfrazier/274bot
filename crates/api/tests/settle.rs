@@ -84,9 +84,9 @@ fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
 
 /// The inventory tab (side tab 3) with `(stored, count)` slots; stored ids
 /// are `obj id + 1` (0 = empty), so a stored 4 reads as obj id 3.
-fn plant_inv(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
+fn plant_inv(c: &mut Client, stored: &[i32], counts: &[i32]) {
     set_iface(
-        &mut c,
+        c,
         500,
         IfType {
             id: 500,
@@ -96,7 +96,7 @@ fn plant_inv(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
         },
     );
     set_iface_mut(
-        &mut c,
+        c,
         500,
         IfTypeMut {
             link_obj_type: Some(stored.to_vec()),
@@ -109,9 +109,9 @@ fn plant_inv(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
 }
 
 /// The worn-items tab (side tab 4) with its slots (stored 7 = obj id 6).
-fn plant_equipment(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
+fn plant_equipment(c: &mut Client, stored: &[i32], counts: &[i32]) {
     set_iface(
-        &mut c,
+        c,
         711,
         IfType {
             id: 711,
@@ -120,7 +120,7 @@ fn plant_equipment(mut c: &mut Client, stored: &[i32], counts: &[i32]) {
         },
     );
     set_iface_mut(
-        &mut c,
+        c,
         711,
         IfTypeMut {
             link_obj_type: Some(stored.to_vec()),

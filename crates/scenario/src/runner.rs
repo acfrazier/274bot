@@ -83,12 +83,13 @@ pub struct ScenarioRunner {
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
     /// the default no-op.
+    #[allow(clippy::type_complexity)]
     shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
 }
 
 impl ScenarioRunner {
     /// A runner for `scenario`; the whole-world router surface (collision
-    /// + transport graph) loads from the standard pack path (`None` when
+    /// and transport graph) loads from the standard pack path (`None` when
     /// no pack, so `Walk`/`Follow` steps fail with a clear message).
     pub fn new(scenario: Scenario) -> Self {
         let pack = crate::default_pack_path();
@@ -137,6 +138,7 @@ impl ScenarioRunner {
     /// Install the whole-window shot sink (headed: the panel's window
     /// capture bridge; headless: a no-op). Fired when a `Shot` step's
     /// arm holds.
+    #[allow(clippy::type_complexity)]
     pub fn set_shot_sink(&mut self, sink: Box<dyn FnMut(&str, &GameSnapshot) + Send>) {
         self.shot_sink = Some(sink);
     }
@@ -436,9 +438,10 @@ impl ScenarioRunner {
         match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } => {
                 if send(client, &self.snapshot) {
-                    return Ok(());
+                    Ok(())
+                } else {
+                    Err("driver rejected the send".into())
                 }
-                return Err("driver rejected the send".into());
             }
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
@@ -456,7 +459,7 @@ impl ScenarioRunner {
                     }
                 }
             }
-            StepKind::Shot { .. } => return Ok(()),
+            StepKind::Shot { .. } => Ok(()),
             StepKind::Walk { dest } | StepKind::Follow { dest } => {
                 self.arm_route(*dest, FindOptions::default())
             }
@@ -875,7 +878,7 @@ mod tests {
                 panic!("walk never arrived; status={:?}", runner.status());
             }
             steps += 1;
-            c.local_player = Some(ClientPlayer::at(5, steps as i32));
+            c.local_player = Some(ClientPlayer::at(5, steps));
             c.bump_gens(ServerProt::PLAYER_INFO);
             runner.tick(&mut c);
         }
@@ -1011,7 +1014,7 @@ mod tests {
                 panic!("follow never arrived; status={:?}", runner.status());
             }
             steps += 1;
-            c.local_player = Some(ClientPlayer::at(5, steps as i32));
+            c.local_player = Some(ClientPlayer::at(5, steps));
             c.bump_gens(ServerProt::PLAYER_INFO);
             runner.tick(&mut c);
         }
@@ -1260,8 +1263,8 @@ mod tests {
 
     #[test]
     fn terminal_shot_fires_the_sink_on_pass_and_fail() {
-        let sink_events: Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>> =
-            Arc::new(Mutex::new(Vec::new()));
+        type SinkEvents = Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>>;
+        let sink_events: SinkEvents = Arc::new(Mutex::new(Vec::new()));
         let pass_sink = Arc::clone(&sink_events);
         let mut pass = ScenarioRunner::new(stat_scenario(1, 10));
         pass.set_scene_settle(Duration::ZERO);
@@ -1370,8 +1373,8 @@ mod tests {
         let mut c = seeded_client();
         let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
         runner.set_scene_settle(Duration::ZERO);
-        let fired: Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>> =
-            Arc::new(Mutex::new(Vec::new()));
+        type Fired = Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>>;
+        let fired: Fired = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&fired);
         runner.set_shot_sink(Box::new(move |label, snap| {
             sink.lock().unwrap().push((label.to_string(), snap.tile()));

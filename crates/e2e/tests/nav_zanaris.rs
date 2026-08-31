@@ -65,10 +65,9 @@ fn nav_zanaris() {
         .cloned()
         .collect();
     if shed.is_empty() {
-        fail(&format!(
-            "nav_zanaris: pack carries no shed Door edge with a worn req \
-             (rebake with `cargo run -p nav --bin nav-pack`)"
-        ));
+        fail(
+            "nav_zanaris: pack carries no shed Door edge with a worn req              (rebake with `cargo run -p nav --bin nav-pack`)",
+        );
     }
     let e = &shed[0];
     if e.worn_req.is_empty() {

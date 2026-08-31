@@ -310,6 +310,7 @@ fn find_bounded(
 /// stepping into (or landing in) the wilderness zone; `state` gates every
 /// transport edge (walked or teleported) on its requirements — an edge
 /// the state cannot prove is not relaxed.
+#[allow(clippy::too_many_arguments)]
 fn find_bounded_impl(
     collision: &WorldCollision,
     graph: &TransportGraph,

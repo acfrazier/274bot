@@ -1373,9 +1373,8 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// Unpack the config/interface jags once and share the tables across slots
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
-fn load_template(
-    cache_dir: &str,
-) -> (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>) {
+type IfaceTables = (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>);
+fn load_template(cache_dir: &str) -> IfaceTables {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
         Ok(bytes) => {
             std::panic::catch_unwind(AssertUnwindSafe(|| Cache::unpack(&JagFile::new(bytes))))
@@ -2401,7 +2400,8 @@ mod tests {
 
     /// Empty nav rig for observe tests that never touch `ctx.walk`: no
     /// nav bots and no nav world (the walk hook would refuse anyway).
-    fn empty_nav() -> (Arc<Mutex<HashMap<String, NavBot>>>, Option<Arc<NavWorld>>) {
+    type EmptyNav = (Arc<Mutex<HashMap<String, NavBot>>>, Option<Arc<NavWorld>>);
+    fn empty_nav() -> EmptyNav {
         (Arc::new(Mutex::new(HashMap::new())), None)
     }
 
@@ -2651,7 +2651,7 @@ mod tests {
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
         }));
-        let mut client = prepare_client(
+        let client = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 1,
