@@ -764,7 +764,7 @@ mod tests {
 
     /// The drain's dirty flags must feed `rebuild_dirty` for the four new
     /// families too, or `snapshot.gens().{iface,camera,map_flag,world}`
-    /// stay permanently 0 (the API-v2 views will rely on this path).
+    /// stay permanently 0 (the snapshot views rely on this path).
     #[test]
     fn drain_rebuilds_the_four_new_families() {
         let mut client = prepare_client(cfg(), 1, Arc::new(Cache::default()), Arc::new(vec![]), Vec::new());
@@ -807,8 +807,8 @@ mod tests {
         );
     }
 
-    /// The drain's iface/inv flags must rebuild the iface-derived v2
-    /// families too, or the host path (as opposed to the scenario
+    /// The drain's iface/inv flags must rebuild the iface-derived
+    /// snapshot families too, or the host path (as opposed to the scenario
     /// runner's `GameSnapshot::rebuild`) would keep their views
     /// permanently empty.
     #[test]
@@ -844,7 +844,7 @@ mod tests {
         );
         assert_eq!(slot.snapshot.inventory_size(), 3);
 
-        // A quiet drain leaves the v2 gates alone: unchanged gens do not
+        // A quiet drain leaves the snapshot gens alone: unchanged gens do not
         // re-mark anything dirty.
         let result = slot.after_drain(&mut client);
         assert!(!result.dirty.any());

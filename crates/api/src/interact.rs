@@ -299,7 +299,7 @@ pub fn logout<D: Driver + ?Sized>(
 }
 
 // ---------------------------------------------------------------------------
-// Wire types (api-v2). `Interactions` (task 9) resolves a `WireCommand` from
+// Wire types. `Interactions` resolves a `WireCommand` from
 // a target/action pair, gates it, and returns a `SendResult`; these enums
 // only carry the command + refusal shape — the `Driver` calls stay here.
 // ---------------------------------------------------------------------------
@@ -396,7 +396,7 @@ pub enum SendResult<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Interactions orchestration (api-v2, task 9). Above `Driver`: every
+// Interactions orchestration. Above `Driver`: every
 // method reads the snapshot, runs the m8aq preconditions (attached/
 // ingame/scene/count-dialog), re-checks the target identity, resolves a
 // label or operation to a `MiniMenuAction` opcode, and dispatches the

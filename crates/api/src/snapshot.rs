@@ -128,9 +128,8 @@ pub struct NpcView {
     pub in_combat: bool,
     pub level: i32,
     pub size: i32,
-    /// Legacy position aliases (the pre-v2 `NpcView` surface; `query::npcs_at`
-    /// and the old tests read them). These are the raw entity pixel coords,
-    /// not the world `tile` above.
+    /// Legacy position aliases (`query::npcs_at` and older tests read them).
+    /// These are the raw entity pixel coords, not the world `tile` above.
     pub x: i32,
     pub z: i32,
     pub yaw: i32,

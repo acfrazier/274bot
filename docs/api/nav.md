@@ -123,7 +123,7 @@ true` while a tick-perfect closer keeps the door closed; PASS on
 
 ## Credit
 
-Router/Traveller shape borrows from m8aq's apiv2 nav/travel and the
+Router/Traveller shape borrows from m8aq's api nav/travel and the
 RuneLite `shortest-path` plugin (collision + transport graph + Dijkstra).
 The Rust is our own; no rsmod wasm is vendored. Collision/transport truth
 is the Server content, scoped to the 2004 surface.
