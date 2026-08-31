@@ -590,6 +590,14 @@ pub struct Session {
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`Traveller::follow`]).
     pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    /// Per-username gating facts for WalkTo routing: each slot thread
+    /// publishes its live `GameSnapshot` (rebuilt incrementally — views
+    /// copy only when a family's gen moved) plus the [`WorldState`]
+    /// derived from it, so the UI thread can prove payable edges (a toll
+    /// with coins on the player routes). A slot that has not published
+    /// yet (no player decoded) is absent and routing fails closed on the
+    /// empty state.
+    pub nav_states: Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
     /// The tile the user last picked for WalkTo; `None` until armed. Read
     /// by [`Session::walk_status_text`] so the status row stays honest even
     /// when no route could be found.
@@ -749,6 +757,7 @@ impl Session {
             cred_pass: String::new(),
             chooser_edit: None,
             travellers: Arc::new(Mutex::new(HashMap::new())),
+            nav_states: Arc::new(Mutex::new(HashMap::new())),
             walk_dest: None,
             walk_clear: Arc::new(AtomicBool::new(false)),
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
@@ -1055,6 +1064,7 @@ impl Session {
         let mainland_sent = Arc::clone(&self.mainland_sent);
         let scatter = Arc::clone(&self.scatter);
         let travellers = Arc::clone(&self.travellers);
+        let nav_states = Arc::clone(&self.nav_states);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
         let scenario = Arc::clone(&self.scenario);
@@ -1221,6 +1231,21 @@ impl Session {
                     z: c.map_build_base_z + rz,
                     level: 0,
                 };
+                // Publish the slot's gating facts (inv/equipment/stats/
+                // varps/quests) for the UI thread's WalkTo routing: a
+                // toll/cart edge is only usable when the search can prove
+                // the player pays it. The snapshot rebuild is incremental
+                // — views copy only when a family's gen moved, so a quiet
+                // frame publishes nothing new.
+                {
+                    let mut states = nav_states.lock().unwrap();
+                    let slot = states
+                        .entry(name.to_string())
+                        .or_insert_with(|| (GameSnapshot::new(), WorldState::empty()));
+                    if slot.0.rebuild(c) {
+                        slot.1 = WorldState::from_snapshot(&slot.0);
+                    }
+                }
                 let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
                     return;
                 };
@@ -2218,6 +2243,22 @@ impl Session {
         self.walk_clear.store(false, Ordering::Relaxed);
     }
 
+    /// The gating facts for the focused slot's WalkTo route: the slot's
+    /// last published [`WorldState`] (inv/equipment/stats/varps/quests
+    /// from its live snapshot), or the fail-closed empty state when the
+    /// slot has not published yet (still logging in / no player decoded).
+    fn focused_walk_state(&self) -> WorldState {
+        self.focused_name()
+            .and_then(|name| {
+                self.nav_states
+                    .lock()
+                    .unwrap()
+                    .get(&name)
+                    .map(|(_, w)| w.clone())
+            })
+            .unwrap_or_else(WorldState::empty)
+    }
+
     /// Arm a walk to `dest` and route it on `world` from `from` (the
     /// player's observed tile). On `Ok(route)` the focused username's walk
     /// arm stores the route so the observe tick can step it via
@@ -2225,10 +2266,9 @@ impl Session {
     /// `error` carries a short message. The Nav settings' [`FindOptions`]
     /// apply: `ui.nav.allow_teleports` unions the any-tile teleport layer
     /// in and `ui.nav.allow_wilderness` allows entering the wilderness.
-    /// The gating [`WorldState`] is the fail-closed empty state — the
-    /// picker has no live snapshot at arm time, so gated edges (tolls,
-    /// carts, quest hops) stay refused until a later task wires the
-    /// focused slot's facts through.
+    /// The gating [`WorldState`] is the focused slot's last published
+    /// snapshot facts (see [`Session::nav_states`]); a slot that has not
+    /// published yet falls back to the fail-closed empty state.
     /// Callers that do not know the player's tile fall back to
     /// [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
@@ -2244,6 +2284,7 @@ impl Session {
             z: dest.z,
             level: dest.level,
         };
+        let state = self.focused_walk_state();
         let routed = find_with(
             &world.collision,
             &world.graph,
@@ -2254,7 +2295,7 @@ impl Session {
                 allow_wilderness: self.ui.nav.allow_wilderness,
                 allow_bank_fetch: self.ui.nav.allow_bank_fetch,
             },
-            &WorldState::empty(),
+            &state,
         );
         match routed {
             Ok(route) => {
@@ -2563,8 +2604,11 @@ mod tests {
         stream_capture, walkto_tele_cmd, Session, SlotIo,
     };
     use crate::focus::draw_for_slot;
-    use api::snapshot::WorldTile;
+    use api::snapshot::{GameSnapshot, WorldTile};
+    use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::dash3d::CollisionFlag;
+    use client::io::ServerProt;
     use client::render::nav_debug::{FACE_N, FACE_S};
     use host::{FrameBuf, InputEv, SlotInput};
     use host_play::{SlotArm, SlotStatus};
@@ -2574,6 +2618,7 @@ mod tests {
     use nav::tile::Tile;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use nav::world::NavWorld;
+    use nav::WorldState;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::time::Duration;
@@ -3677,6 +3722,157 @@ mod tests {
                 .route
                 .is_none()),
             "no route must be armed when find fails"
+        );
+    }
+
+    /// A 5×5 world walled between x=1 and x=2, crossed only by a 10-coin
+    /// toll door (the `toll_edges` shape: loc 2882, `item_req` coins 10).
+    fn toll_world() -> NavWorld {
+        let mut flags = vec![0u32; 25];
+        for z in 0..5 {
+            flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
+        }
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile { x: 1, z: 2, level: 0 },
+            to: WorldTile { x: 2, z: 2, level: 0 },
+            loc_id: 2882,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(995, 10)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        };
+        let mut graph = TransportGraph::default();
+        graph.at.entry(edge.at).or_default().push(0);
+        graph.edges.push(edge);
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile { x: 0, z: 0, level: 0 },
+                width: 5,
+                height: 5,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
+            },
+            graph,
+        }
+    }
+
+    /// A `WorldState` with 10 coins, derived through the slot-thread
+    /// publish path: a client with a TYPE_INV iface, rebuilt into a
+    /// snapshot, mapped via [`WorldState::from_snapshot`]. The cache dir
+    /// is a unique scratch dir so a stray real cache (e.g. jags under
+    /// `/tmp`) cannot seed other ifaces.
+    fn coins_snapshot_state() -> WorldState {
+        let cache_dir = std::env::temp_dir().join(format!(
+            "274bot-panel-toll-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut c = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: cache_dir.to_str().unwrap().into(),
+            members: true,
+            lowmem: false,
+        });
+        let inv_id = c.push_iface(IfType {
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        });
+        c.set_iface_mut(
+            inv_id,
+            IfTypeMut {
+                link_obj_type: Some(vec![996]), // obj 995 → stored 996
+                link_obj_number: Some(vec![10]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&mut c);
+        WorldState::from_snapshot(&snap)
+    }
+
+    /// The focused slot's published snapshot facts gate the WalkTo route:
+    /// 10 coins on the player let `arm_walk_on` cross a toll that an
+    /// empty state refuses.
+    #[test]
+    fn arm_walk_on_uses_focused_slot_state_across_a_toll() {
+        let world = toll_world();
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        // The slot thread published 10 coins (derived from a live
+        // snapshot); the picker routes with those facts.
+        s.nav_states.lock().unwrap().insert(
+            "alice".into(),
+            (GameSnapshot::new(), coins_snapshot_state()),
+        );
+        s.arm_walk_on(
+            &world,
+            Tile { x: 0, z: 0, level: 0 },
+            Tile { x: 4, z: 4, level: 0 },
+        );
+        assert!(
+            s.error.is_none(),
+            "coins on the player pay the toll: {:?}",
+            s.error
+        );
+        let route = s
+            .travellers
+            .lock()
+            .unwrap()
+            .get("alice")
+            .expect("focused walk arm exists")
+            .lock()
+            .unwrap()
+            .route
+            .clone();
+        assert!(
+            route
+                .expect("the toll route armed")
+                .legs
+                .iter()
+                .any(|l| matches!(
+                    l,
+                    Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
+                )),
+            "the route must cross the toll"
+        );
+    }
+
+    /// No published facts for the slot (still logging in / no player
+    /// decoded yet) keeps the fail-closed behavior: the toll stays
+    /// unusable and `arm_walk_on` reports `NoPath`.
+    #[test]
+    fn arm_walk_on_falls_back_to_empty_when_slot_has_no_state() {
+        let world = toll_world();
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.arm_walk_on(
+            &world,
+            Tile { x: 0, z: 0, level: 0 },
+            Tile { x: 4, z: 4, level: 0 },
+        );
+        assert!(
+            s.error.as_ref().unwrap().contains("no path"),
+            "no published facts -> the toll stays unusable"
+        );
+        assert!(
+            s.travellers.lock().unwrap().get("alice").is_none_or(|a| a
+                .lock()
+                .unwrap()
+                .route
+                .is_none()),
+            "no route armed when the toll is unpayable"
         );
     }
 

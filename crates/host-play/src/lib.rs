@@ -31,6 +31,7 @@ use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, 
 use nav::router::{find_with, FindOptions, Route};
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
+use nav::WorldState;
 pub use rss::{count_tcp_to, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 
@@ -186,16 +187,20 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// any cheats the panel queued. `driver` is the slot body's own `Client`
 /// (the only `Driver`); `here` is the local player's world tile
 /// `(x, z, level)` when the body decoded one, else `None` (then the walk
-/// hooks refuse to arm). `navs`/`world` back the `ctx.walk` and
-/// `ctx.walk_with` closures — one shared arm ([`WalkArm`]) takes the
-/// [`FindOptions`] (`walk` passes the defaults): the arm refuses
-/// synchronously only when there is no tile, no nav world, or a route
-/// already queued; `find_with` runs off-pump on a short-lived worker per
-/// request, storing the route in the uid's nav bot when one exists (a walk
-/// that would panic on the first follow step must not succeed when no
-/// route can arm). Returns whether the driver's out buffer was written
-/// (the slot's own `Client` sends on its next mainloop pass). A slot whose
-/// script is Idle/Paused publishes nothing — no dispatch, no flush.
+/// hooks refuse to arm). `state` is the slot's gating facts at observe
+/// time (built from its live snapshot); `None` when no player is decoded
+/// — the walk arm then routes with the fail-closed empty [`WorldState`],
+/// so an edge whose requirements the state cannot prove is never relaxed.
+/// `navs`/`world` back the `ctx.walk` and `ctx.walk_with` closures — one
+/// shared arm ([`WalkArm`]) takes the [`FindOptions`] (`walk` passes the
+/// defaults): the arm refuses synchronously only when there is no tile,
+/// no nav world, or a route already queued; `find_with` runs off-pump on
+/// a short-lived worker per request, storing the route in the uid's nav
+/// bot when one exists (a walk that would panic on the first follow step
+/// must not succeed when no route can arm). Returns whether the driver's
+/// out buffer was written (the slot's own `Client` sends on its next
+/// mainloop pass). A slot whose script is Idle/Paused publishes nothing
+/// — no dispatch, no flush.
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
 #[allow(clippy::too_many_arguments)]
@@ -207,6 +212,7 @@ fn script_observe(
     tick: u64,
     here: Option<(i32, i32, i32)>,
     inv: Option<&[(i32, i32)]>,
+    state: Option<WorldState>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -230,6 +236,7 @@ fn script_observe(
                     world: world.clone(),
                     navs: Arc::clone(navs),
                     name: name.to_string(),
+                    state,
                 };
                 let mut walk_with = {
                     let arm = arm.clone();
@@ -313,6 +320,10 @@ struct WalkArm {
     world: Option<Arc<NavWorld>>,
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     name: String,
+    /// The slot's gating facts at arm time (from its live snapshot);
+    /// `None` when no player is decoded — the worker then routes with
+    /// the fail-closed empty [`WorldState`].
+    state: Option<WorldState>,
 }
 
 impl WalkArm {
@@ -349,19 +360,19 @@ impl WalkArm {
         let world = Arc::clone(world);
         let navs = Arc::clone(&self.navs);
         let name = self.name.clone();
+        let state = self.state.clone();
         // Routing is the expensive part: run `find_with` off-pump on a
         // short-lived worker. The worker is detached and exits right after
         // storing the route; it never touches the scripts map (lock order
-        // stays scripts → navs).
+        // stays scripts → navs). The arm's facts gate the route — a gated
+        // edge the state cannot prove (an unpaid toll, an unearned quest
+        // hop) stays refused; no state at all fails closed.
         thread::Builder::new()
             .name(format!("nav-find-{name}"))
             .spawn(move || {
-                // The slot's inventory is not carried onto the worker yet,
-                // so the search gates on the fail-closed empty state:
-                // gated edges (tolls, carts, quest hops) stay refused
-                // until a later task wires the live facts through.
-                let empty = nav::WorldState::empty();
-                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts, &empty)
+                let empty = WorldState::empty();
+                let state = state.as_ref().unwrap_or(&empty);
+                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts, state)
                 {
                     navs.lock().unwrap().entry(name).or_default().route = Some(route);
                 }
@@ -1171,9 +1182,10 @@ fn spawn_slot_thread(
                         // skip until either changes so the hop budget counts
                         // server ticks, not 20 ms frames (panel `tick_latch`).
                         let mut last_nav_step: Option<NavStepKey> = None;
-                        // The slot's per-tick nav snapshot, rebuilt only
-                        // when a route is armed (the follow surface reads
-                        // the canonical base + route-head tile).
+                        // The slot's per-tick nav snapshot: rebuilt each
+                        // observe when a family's gen moved (the walk arm
+                        // gates on its facts; the follow surface reads the
+                        // canonical base + route-head tile from it).
                         let mut nav_snapshot = GameSnapshot::new();
                         move |c, _ignored, run_sends| {
                             let name = &obs_name;
@@ -1234,6 +1246,17 @@ fn spawn_slot_thread(
                             } else {
                                 None
                             };
+                            // The slot's per-tick nav snapshot, rebuilt when
+                            // a family's gen moved (the incremental rebuild
+                            // is cheap when nothing changed). The walk arm
+                            // gates its routes on the same facts the
+                            // snapshot proves — a slot with coins on the
+                            // player can cross a toll, a player without
+                            // them cannot.
+                            nav_snapshot.rebuild(c);
+                            let nav_state = here
+                                .is_some()
+                                .then(|| WorldState::from_snapshot(&nav_snapshot));
                             script_observe(
                                 c,
                                 name,
@@ -1242,6 +1265,7 @@ fn spawn_slot_thread(
                                 script_tick,
                                 here,
                                 inv.as_deref(),
+                                nav_state,
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
                                 &slot_cheats,
@@ -1251,9 +1275,8 @@ fn spawn_slot_thread(
                             // Per-uid nav step on the pump, gated on the
                             // player-gen/tile latch like the panel's WalkTo
                             // hook so a hop is sent once per server tick,
-                            // not re-sent every 20 ms frame. The snapshot is
-                            // rebuilt only when the bot has an armed route
-                            // (the rebuild is cheap when no gen moved).
+                            // not re-sent every 20 ms frame. The snapshot
+                            // was already rebuilt above.
                             let nav_key = (c.gens.player, here);
                             if last_nav_step != Some(nav_key) {
                                 last_nav_step = Some(nav_key);
@@ -1264,7 +1287,6 @@ fn spawn_slot_thread(
                                         .get(name)
                                         .is_some_and(|b| b.route.is_some())
                                 {
-                                    nav_snapshot.rebuild(c);
                                     step_nav_bot(
                                         c,
                                         name,
@@ -1437,6 +1459,7 @@ mod tests {
 
     use client::client::ClientConfig;
     use client::config::Cache;
+    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use vault::ProfileSettings;
 
     #[test]
@@ -2396,23 +2419,23 @@ mod tests {
         );
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
-            &mut c, "alice", false, true, 1, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", false, true, 1, None, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
         script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
         script_observe(
-            &mut c, "alice", true, false, 2, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", true, false, 2, None, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
         assert!(script_observe(
-            &mut c, "alice", true, true, 3, None, None, None, &scripts, &cheats, &navs, &world
+            &mut c, "alice", true, true, 3, None, None, None, None, &scripts, &cheats, &navs, &world
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -2442,7 +2465,7 @@ mod tests {
         // Never started: no SlotScript entry (Idle). Edge + up publishes
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, None, None, None, &scripts, &cheats, &navs, &world
+            &mut c, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs, &world
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
@@ -2459,7 +2482,7 @@ mod tests {
             script::RunState::Idle
         );
         assert!(!script_observe(
-            &mut c, "alice", true, true, 2, None, None, None, &scripts, &cheats, &navs, &world
+            &mut c, "alice", true, true, 2, None, None, None, None, &scripts, &cheats, &navs, &world
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
@@ -2492,7 +2515,7 @@ mod tests {
             .unwrap()
             .push_back("setvar tutorial 1000".into());
         let wrote = script_observe(
-            &mut c, "alice", true, false, 0, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut c, "alice", true, false, 0, None, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
@@ -2569,6 +2592,7 @@ mod tests {
             1,
             None,
             Some(&inv),
+            None,
             Some(&names),
             &scripts,
             &cheats,
@@ -2732,14 +2756,10 @@ mod tests {
     }
 
     fn nav_rig() -> NavRig {
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
-        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
         // An all-walkable 40×1 world at (0,0): x in 0..40 at z=0, no
         // transport edges — the v2-world shape `find` consumes, built
         // directly (no pack file on disk in unit tests).
-        let world = Some(Arc::new(NavWorld {
+        nav_rig_with(Some(Arc::new(NavWorld {
             collision: nav::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
@@ -2752,7 +2772,16 @@ mod tests {
                 flags: None,
             },
             graph: nav::transport::TransportGraph::default(),
-        }));
+        })))
+    }
+
+    /// [`nav_rig`] on the given world (the walk-probe target stays
+    /// `(4,0,0)`; callers that walk elsewhere override `walk_target`).
+    fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
         let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(Vec::new()));
         let walk_ret = Arc::new(Mutex::new(None));
         let walk_target = Arc::new(Mutex::new((4, 0, 0)));
@@ -2857,6 +2886,7 @@ mod tests {
             Some((0, 0, 0)),
             None,
             None,
+            None,
             &scripts,
             &cheats,
             &navs,
@@ -2903,6 +2933,143 @@ mod tests {
         }
     }
 
+    /// A 5×5 world walled between x=1 and x=2, crossed only by a 10-coin
+    /// toll door (the `toll_edges` shape: loc 2882, `item_req` coins 10).
+    fn toll_nav_world() -> NavWorld {
+        let mut flags = vec![0u32; 25];
+        for z in 0..5 {
+            flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
+        }
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile { x: 1, z: 2, level: 0 },
+            to: WorldTile { x: 2, z: 2, level: 0 },
+            loc_id: 2882,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(995, 10)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        };
+        let mut graph = TransportGraph::default();
+        graph.at.entry(edge.at).or_default().push(0);
+        graph.edges.push(edge);
+        NavWorld {
+            collision: nav::collision::WorldCollision {
+                origin: WorldTile { x: 0, z: 0, level: 0 },
+                width: 5,
+                height: 5,
+                walk: nav::collision::pack_walk_u16(&flags),
+                flags: None,
+            },
+            graph,
+        }
+    }
+
+    /// The script walk arm's facts gate the route: with 10 coins in the
+    /// slot's state, `ctx.walk` crosses the toll; the armed route carries
+    /// the toll Transport leg.
+    #[test]
+    fn script_observe_walk_uses_slot_state_across_a_toll() {
+        let NavRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            walk_ret,
+            walk_target,
+            ..
+        } = nav_rig_with(Some(Arc::new(toll_nav_world())));
+        *walk_target.lock().unwrap() = (4, 4, 0);
+        let mut d = NavRec::default();
+        let state = Some(WorldState {
+            inv: std::collections::HashMap::from([(995, 10)]),
+            ..WorldState::default()
+        });
+        assert!(script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            Some((0, 0, 0)),
+            None,
+            state,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+        ));
+        assert_eq!(*walk_ret.lock().unwrap(), Some(true));
+        assert!(
+            wait_until(100, || queued(&navs)
+                == Some(WorldTile {
+                    x: 4,
+                    z: 4,
+                    level: 0
+                })),
+            "the worker armed the toll route"
+        );
+        let route = navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .and_then(|b| b.route.clone())
+            .expect("armed route");
+        assert!(
+            route.legs.iter().any(|l| matches!(
+                l,
+                nav::router::Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
+            )),
+            "the route must cross the toll"
+        );
+    }
+
+    /// No slot state (no player decoded): the walk arm fails closed — the
+    /// toll stays unusable and no route arms.
+    #[test]
+    fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
+        let NavRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            walk_ret,
+            walk_target,
+            ..
+        } = nav_rig_with(Some(Arc::new(toll_nav_world())));
+        *walk_target.lock().unwrap() = (4, 4, 0);
+        let mut d = NavRec::default();
+        assert!(script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            Some((0, 0, 0)),
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+        ));
+        assert_eq!(*walk_ret.lock().unwrap(), Some(true), "request queued");
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            queued(&navs),
+            None,
+            "no facts -> the toll stays unusable, no route arms"
+        );
+    }
+
     #[test]
     fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         let NavRig {
@@ -2919,7 +3086,7 @@ mod tests {
 
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
-            &mut d, "alice", true, true, 1, None, None, None, &scripts, &cheats, &navs, &world,
+            &mut d, "alice", true, true, 1, None, None, None, None, &scripts, &cheats, &navs, &world,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 
@@ -2931,6 +3098,7 @@ mod tests {
             true,
             2,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             &scripts,
@@ -2951,6 +3119,7 @@ mod tests {
             true,
             3,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             &scripts,
@@ -2975,6 +3144,7 @@ mod tests {
             true,
             4,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             &scripts,
@@ -3003,6 +3173,7 @@ mod tests {
             true,
             5,
             Some((0, 0, 0)),
+            None,
             None,
             None,
             &scripts,
