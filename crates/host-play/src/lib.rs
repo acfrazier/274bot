@@ -7,7 +7,7 @@ pub mod audio;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -43,6 +43,26 @@ pub fn world_host_for_bot_target(target: Option<&str>) -> String {
 /// Active world host (`BOT_TARGET` / `--prod`).
 pub fn default_world_host() -> String {
     client::world_host()
+}
+
+/// Mint `n` per-run usernames for a live boot (`live<token>_<i>`). The
+/// engine auto-registers unknown names, so a minted name logs into a
+/// fresh save instead of the shared `test` account. The engine enforces
+/// the classic 12-character username limit, so the token is the pid plus
+/// a per-process serial, truncated to fit `live<token>_<i>` in 12 chars.
+/// Player saves accumulate under the engine's `player/` dir — wipe it to
+/// reset.
+pub fn mint_live_names(n: usize) -> Vec<String> {
+    static SERIAL: AtomicUsize = AtomicUsize::new(0);
+    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let slot_digits = n.saturating_sub(1).max(1).to_string().len();
+    let max_token = 12usize.saturating_sub(4 + 1 + slot_digits).max(1);
+    let token: String = format!("{pid:x}{serial:x}")
+        .chars()
+        .take(max_token)
+        .collect();
+    (0..n).map(|i| format!("live{token}_{i}")).collect()
 }
 
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
@@ -1483,6 +1503,47 @@ mod tests {
         assert_eq!(world_host_for_bot_target(Some("prod")), "w1.rs2b2t.com");
         assert_eq!(world_host_for_bot_target(Some("local")), "127.0.0.1");
         assert_eq!(world_host_for_bot_target(None), "127.0.0.1");
+    }
+
+    #[test]
+    fn mint_live_names_are_unique_and_never_test() {
+        let a = mint_live_names(2);
+        let b = mint_live_names(2);
+        assert_eq!(a.len(), 2);
+        assert_eq!(b.len(), 2);
+        let mut all: Vec<&String> = a.iter().chain(b.iter()).collect();
+        all.sort();
+        all.dedup();
+        assert_eq!(
+            all.len(),
+            4,
+            "every minted name must be unique per invocation: {all:?}"
+        );
+        for name in all {
+            assert_ne!(name, "test", "a live boot must never log in `test`");
+            assert!(name.starts_with("live"), "minted name: {name}");
+            assert!(
+                name.len() <= 12,
+                "the engine enforces the 12-char username limit: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn mint_live_names_keep_the_12_char_limit_at_scale() {
+        for n in [1, 2, 10, 50] {
+            for name in mint_live_names(n) {
+                assert!(
+                    name.len() <= 12,
+                    "{name} (n={n}) exceeds the 12-char username limit"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mint_live_names_zero_is_empty() {
+        assert!(mint_live_names(0).is_empty());
     }
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {

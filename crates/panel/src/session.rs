@@ -991,22 +991,24 @@ impl Session {
     }
 
     /// Live `script_<name>` setup: temp vault with the scenario's seed
-    /// profiles, mainland hop per the seed, single-client boot (the
-    /// MultiBox wall for a fleet — more than one seed profile — so the
-    /// sidecar rail pops out and every bot is visible), and the shared
-    /// [`scenario::ScenarioRunner`] installed for the slot thread's
-    /// per-frame hook. The UI frame reads the runner's status/evidence.
+    /// profiles minted to unique per-run usernames (the engine
+    /// auto-registers unknown names, so a live boot never logs the shared
+    /// `test` account — player saves accumulate under the engine's
+    /// `player/` dir, wipe it to reset), mainland hop per the seed,
+    /// single-client boot (the MultiBox wall for a fleet — more than one
+    /// seed profile — so the sidecar rail pops out and every bot is
+    /// visible), and the shared [`scenario::ScenarioRunner`] installed for
+    /// the slot thread's per-frame hook. The UI frame reads the runner's
+    /// status/evidence.
     pub fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         // Ephemeral boot: never persist focus/last_focus from a live run.
         self.persist_ui = false;
         // Copy the view knobs before `scenario` moves into the runner.
         let view = scenario.settings.clone();
-        let entries: Vec<(&str, &str)> = scenario
-            .seed
-            .profiles
-            .iter()
-            .map(|(u, p)| (*u, *p))
-            .collect();
+        // Mint one name per seed slot (fleet included): both slots get a
+        // fresh account for this invocation.
+        let names = host_play::mint_live_names(scenario.seed.profiles.len());
+        let entries: Vec<(String, String)> = names.iter().map(|u| (u.clone(), u.clone())).collect();
         let path = temp_live_vault(&entries);
         if !self.unlock_at(&path, "bot") {
             return Err(self
@@ -1024,12 +1026,6 @@ impl Session {
             self.set_multibox(true);
         }
         self.wall.chooser_open = false;
-        let names: Vec<String> = scenario
-            .seed
-            .profiles
-            .iter()
-            .map(|(u, _)| u.to_string())
-            .collect();
         for name in &names {
             self.load(name);
         }
@@ -1047,6 +1043,9 @@ impl Session {
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
         let mut runner = scenario::ScenarioRunner::new(scenario);
+        // The runner drives/companions the minted names, never the seed's
+        // `test`/`test2` (the vault holds the fresh accounts).
+        runner.set_live_names(&names);
         if let Some(play) = &self.play {
             runner.set_obj_names(play.obj_names());
         }
@@ -1896,9 +1895,17 @@ impl Session {
         true
     }
 
-    /// Game-pane lowmem (General config). Rail members stay lowmem.
+    /// Game-pane lowmem (General config). Follows the focused slot's
+    /// Music/SFX gate — the per-frame driver of the spawned `Client`'s
+    /// `config.lowmem` — so the status row can never show "lowmem" while
+    /// audio plays (a live boot's throwaway profile defaults lowmem, but
+    /// the slot runs what the gate says). Falls back to the session's
+    /// `ui.lowmem` when no slot is focused.
     pub fn focused_lowmem(&self) -> bool {
-        self.ui.lowmem
+        let Some(name) = self.focused_name() else {
+            return self.ui.lowmem;
+        };
+        !self.audio.music_on(&name)
     }
 
     /// Game-pane none/GPU/CPU (General config). Rail members stay GPU
@@ -2522,13 +2529,14 @@ impl Session {
 
 /// Throwaway encrypted vault for live prepare (e2e `temp_vault` pattern,
 /// kept panel-private so panel does not depend on the e2e crate).
-/// Null raster keeps base uid `274_000_001`.
-fn temp_live_vault(entries: &[(&str, &str)]) -> PathBuf {
+/// Null raster keeps base uid `274_000_001`. Accepts `&str` or `String`
+/// entries (live scripts mint per-run usernames).
+fn temp_live_vault<S: AsRef<str>>(entries: &[(S, S)]) -> PathBuf {
     temp_live_vault_from(entries, 274_000_001)
 }
 
 /// Same as [`temp_live_vault`] with an explicit uid base (`base + i`).
-fn temp_live_vault_from(entries: &[(&str, &str)], uid_base: i32) -> PathBuf {
+fn temp_live_vault_from<S: AsRef<str>>(entries: &[(S, S)], uid_base: i32) -> PathBuf {
     // Unique per call: parallel tests boot several scenarios and must not
     // race on one temp vault path.
     static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -2548,8 +2556,8 @@ fn temp_live_vault_from(entries: &[(&str, &str)], uid_base: i32) -> PathBuf {
     for (i, (user, pass)) in entries.iter().enumerate() {
         vault
             .upsert(Profile {
-                username: (*user).into(),
-                password: (*pass).into(),
+                username: user.as_ref().into(),
+                password: pass.as_ref().into(),
                 uid: uid_base + i as i32,
                 settings: vault::ProfileSettings::default(),
             })
@@ -4756,21 +4764,33 @@ mod tests {
         let mut s = Session::new();
         let scenario = scenario::get("walk").expect("walk scenario in registry");
         s.live_prepare_script(scenario).expect("prepare");
+        // Live boots a minted per-run account — never the registry's
+        // `test` (engine auto-registers unknown names).
+        let name = s
+            .vault
+            .as_ref()
+            .expect("live vault open")
+            .profiles()
+            .next()
+            .expect("minted profile")
+            .username
+            .clone();
+        assert_ne!(name, "test", "live must not log in `test`");
         let play = s.play.as_ref().expect("play started");
         assert!(
-            play.arm("test").unwrap().want_login.load(Ordering::Relaxed),
-            "login all arms the seed profile's handshake"
+            play.arm(&name).unwrap().want_login.load(Ordering::Relaxed),
+            "login all arms the minted profile's handshake"
         );
         let runner = s.scenario.lock().unwrap();
         let runner = runner.as_ref().expect("scenario runner installed");
-        assert_eq!(runner.profile_name(), "test");
+        assert_eq!(runner.profile_name(), name);
         assert!(
             matches!(runner.status(), scenario::RunnerStatus::Seeding),
             "a fresh runner holds in seeding until ingame scene 2"
         );
         assert!(
-            runner.drives("test") && !runner.drives("test2"),
-            "the runner ticks only its seed profile's slot"
+            runner.drives(&name) && !runner.drives("test"),
+            "the runner ticks only its minted profile's slot"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
     }
@@ -4796,10 +4816,22 @@ mod tests {
             s.focus.lock().unwrap().wall_open,
             "multibox mirrors onto the focus so every bot rasters"
         );
-        assert!(
-            s.wall.members.iter().any(|m| m == "test2"),
-            "every seed profile is a wall member"
-        );
+        // Both fleet slots are minted fresh accounts, not `test`/`test2`.
+        let vault_names: Vec<String> = s
+            .vault
+            .as_ref()
+            .expect("live vault open")
+            .profiles()
+            .map(|p| p.username.clone())
+            .collect();
+        assert_eq!(vault_names.len(), 2, "a fleet mints both slots");
+        for name in &vault_names {
+            assert_ne!(name, "test", "live must not log in `test`");
+            assert!(
+                s.wall.members.iter().any(|m| m == name),
+                "every minted profile is a wall member"
+            );
+        }
         assert!(!s.wall.chooser_open, "live keeps the chooser closed");
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
 
@@ -4817,6 +4849,56 @@ mod tests {
             "no wall members, no extra rasters"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn live_prepare_script_never_upserts_the_operator_vault() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+        // The operator vault must stay byte-identical across a live boot:
+        // `--live` unlocks only the throwaway temp vault.
+        fn stamp(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
+            std::fs::metadata(p)
+                .ok()
+                .map(|m| (m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len()))
+        }
+        let op = crate::session::default_vault_path();
+        let before = stamp(&op);
+        let mut s = Session::new();
+        s.live_prepare_script(scenario::get("walk").unwrap())
+            .expect("prepare");
+        let after = stamp(&op);
+        assert_eq!(
+            before,
+            after,
+            "--live must never create or touch the operator vault at {}",
+            op.display()
+        );
+        assert!(!s.persist_ui, "live boot keeps persist_ui off");
+    }
+
+    #[test]
+    fn focused_lowmem_follows_the_spawned_slot_not_a_session_leftover() {
+        let path = tmp_vault("mem-gate.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        s.select("alice");
+        assert!(s.focused_lowmem(), "throwaway profile defaults lowmem");
+        // The slot's Music/SFX gate drives `Client.config.lowmem`; the HUD
+        // must follow it even when `ui.lowmem` still reads the profile
+        // default (the "lowmem while audio plays" bug).
+        s.audio.set_music("alice", true);
+        assert!(
+            !s.focused_lowmem(),
+            "status follows the slot, not ui.lowmem"
+        );
+        assert!(s.ui.lowmem, "ui.lowmem is a separate session leftover");
+        s.audio.set_music("alice", false);
+        assert!(s.focused_lowmem());
     }
 
     #[test]

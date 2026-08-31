@@ -78,6 +78,10 @@ pub struct ScenarioRunner {
     /// The seed waits for a mainland build base (>= 3000); tests on
     /// fixture grids relax this.
     require_mainland_base: bool,
+    /// Per-run minted usernames replacing `seed.profiles` (live boots mint
+    /// unique names so the engine auto-registers a fresh account instead
+    /// of logging the shared `test`). Empty = the registry's seed names.
+    live_names: Vec<String>,
     evidence: Option<Evidence>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
@@ -130,6 +134,7 @@ impl ScenarioRunner {
             scene_settle: Duration::from_secs(2),
             scene2_since: None,
             require_mainland_base,
+            live_names: Vec::new(),
             evidence: None,
             shot_sink: None,
         }
@@ -174,6 +179,27 @@ impl ScenarioRunner {
         self.deadline
     }
 
+    /// Per-run minted usernames replacing `seed.profiles` (live boots mint
+    /// unique names so the engine auto-registers a fresh account instead
+    /// of logging the shared `test`). Empty = the registry's seed names.
+    pub fn set_live_names(&mut self, names: &[String]) {
+        debug_assert_eq!(
+            names.len(),
+            self.scenario.seed.profiles.len(),
+            "live names must cover every seed profile"
+        );
+        self.live_names = names.to_vec();
+    }
+
+    /// The login name of seed slot `index` (minted live name when armed,
+    /// else the registry's seed name).
+    fn seed_name(&self, index: usize) -> &str {
+        self.live_names
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or(self.scenario.seed.profiles[index].0)
+    }
+
     /// Override the scene-settle wall-clock hold. Tests use
     /// `Duration::ZERO` so the gate reduces to `scene_state == 2`.
     pub fn set_scene_settle(&mut self, settle: Duration) {
@@ -187,10 +213,10 @@ impl ScenarioRunner {
         self.require_mainland_base = false;
     }
 
-    /// The profile the runner drives (`seed.profiles[0]`); per-frame hooks
-    /// tick only this slot's client.
-    pub fn profile_name(&self) -> &'static str {
-        self.scenario.seed.profiles[0].0
+    /// The profile the runner drives (`seed.profiles[0]`, or the minted
+    /// live name when armed); per-frame hooks tick only this slot's client.
+    pub fn profile_name(&self) -> &str {
+        self.seed_name(0)
     }
 
     /// Whether `name` is the slot this runner drives.
@@ -200,9 +226,9 @@ impl ScenarioRunner {
 
     /// The companion slot at `index`'s profile name
     /// (`seed.profiles[companion.profile].0`).
-    pub fn companion_profile_name(&self, index: usize) -> &'static str {
+    pub fn companion_profile_name(&self, index: usize) -> &str {
         let profile = self.scenario.companions[index].profile;
-        self.scenario.seed.profiles[profile].0
+        self.seed_name(profile)
     }
 
     /// The companion slot whose profile name is `name`, `None` when no
@@ -213,7 +239,7 @@ impl ScenarioRunner {
         self.scenario
             .companions
             .iter()
-            .position(|c| self.scenario.seed.profiles[c.profile].0 == name)
+            .position(|c| self.seed_name(c.profile) == name)
     }
 
     /// Run companion `index`'s per-frame hook once on `client`. No sleeps;
@@ -1259,6 +1285,54 @@ mod tests {
             .expect("the companion slot resolves by profile name");
         runner.companion_tick(index, &mut c);
         assert!(flipped.load(Ordering::Relaxed));
+    }
+
+    /// Live boots mint per-run usernames: the runner drives/companions the
+    /// minted names (never the registry's `test`/`test2`), so the vault's
+    /// fresh accounts are the slots its per-frame hooks tick.
+    #[test]
+    fn live_names_replace_the_seed_names_for_dispatch() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flipped = Arc::new(AtomicBool::new(false));
+        let hook = Arc::clone(&flipped);
+        let scenario = Scenario {
+            name: "companion",
+            seed: Seed {
+                profiles: vec![("test", "test"), ("test2", "test2")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "set run energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 99;
+                        true
+                    }),
+                },
+                wait: wait(Proof::Stat { id: 16, min: 1 }, 10),
+            }],
+            proof: Proof::Stat { id: 16, min: 1 },
+            companions: vec![Companion {
+                profile: 1,
+                per_frame: Box::new(move |_| {
+                    hook.store(true, Ordering::Relaxed);
+                }),
+            }],
+            settings: ScenarioSettings::default(),
+        };
+        let mut runner = ScenarioRunner::new(scenario);
+        let live = vec!["live1_0".to_string(), "live1_1".to_string()];
+        runner.set_live_names(&live);
+        runner.set_scene_settle(Duration::ZERO);
+        assert_eq!(runner.profile_name(), "live1_0");
+        assert_eq!(runner.companion_profile_name(0), "live1_1");
+        assert!(runner.drives("live1_0"));
+        assert!(
+            !runner.drives("test"),
+            "a live runner must not drive `test`"
+        );
+        assert_eq!(runner.companion_for("live1_1"), Some(0));
+        assert_eq!(runner.companion_for("test2"), None);
     }
 
     #[test]

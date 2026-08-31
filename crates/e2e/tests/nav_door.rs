@@ -17,7 +17,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{fail, live, options, profiles, wait_ingame};
+use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use scenario::{RunnerStatus, ScenarioRunner};
 
@@ -30,14 +30,19 @@ fn nav_door() {
 
     let scenario = scenario::get("nav_door").expect("nav_door scenario in registry");
     let mainland = scenario.seed.mainland;
-    let seed_profiles = scenario.seed.profiles.clone();
+    let n = scenario.seed.profiles.len();
     let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
     // The headless twin never writes shots: explicit no-op sink (the same
-    // behavior as the runner's default).
-    runner.lock().unwrap().set_shot_sink(Box::new(|_, _| {}));
+    // behavior as the runner's default). Both fleet slots get minted
+    // per-run accounts — never the shared `test`/`test2` saves.
+    let entries = {
+        let mut r = runner.lock().unwrap();
+        r.set_shot_sink(Box::new(|_, _| {}));
+        mint_seed(&mut r, n)
+    };
     let mut opts = options();
     opts.mainland = mainland;
-    let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
+    let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
         move |c, name| {
             let mut r = runner.lock().unwrap();

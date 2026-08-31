@@ -16,7 +16,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{fail, live, options, profiles, wait_ingame};
+use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use scenario::{RunnerStatus, ScenarioRunner};
 
@@ -35,18 +35,21 @@ fn nav_full() {
 
     let scenario = scenario::get("nav_full").expect("nav_full scenario in registry");
     let mainland = scenario.seed.mainland;
-    let seed_profiles = scenario.seed.profiles.clone();
+    let n = scenario.seed.profiles.len();
     let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
-    {
+    let entries = {
         let mut r = runner.lock().unwrap();
         // The headless twin never writes shots: explicit no-op sink (the
         // same behavior as the runner's default). Runner deadline is
         // `settings.deadline` (360s); 400s is the process backstop.
         r.set_shot_sink(Box::new(|_, _| {}));
-    }
+        // Mint a fresh per-run account: the engine auto-registers unknown
+        // names, so this run never logs the shared `test` save.
+        mint_seed(&mut r, n)
+    };
     let mut opts = options();
     opts.mainland = mainland;
-    let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
+    let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
         move |c, name| {
             let mut r = runner.lock().unwrap();

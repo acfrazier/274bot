@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use api::snapshot::WorldTile;
-use common::{fail, live, options, profiles, wait_ingame};
+use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
 use nav::router::find_with;
 use nav::transport::TransportKind;
@@ -243,12 +243,18 @@ fn nav_essence_follow() {
 
     let scenario = scenario::get("nav_essence").expect("nav_essence scenario in registry");
     let mainland = scenario.seed.mainland;
-    let seed_profiles = scenario.seed.profiles.clone();
+    let n = scenario.seed.profiles.len();
     let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
-    runner.lock().unwrap().set_shot_sink(Box::new(|_, _| {}));
+    // Mint a fresh per-run account: the engine auto-registers unknown
+    // names, so this run never logs the shared `test` save.
+    let entries = {
+        let mut r = runner.lock().unwrap();
+        r.set_shot_sink(Box::new(|_, _| {}));
+        mint_seed(&mut r, n)
+    };
     let mut opts = options();
     opts.mainland = mainland;
-    let play = run_with_io(&opts, profiles(&seed_profiles), |_| (None, None), {
+    let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
         move |c, name| {
             let mut r = runner.lock().unwrap();
