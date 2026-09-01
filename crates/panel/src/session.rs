@@ -706,6 +706,10 @@ pub struct Session {
     /// The out-of-tree JS library (`~/.274bot/js-scripts.json`). Loaded
     /// cards appear in Browse and Start spawns their isolate.
     pub js: script::JsLibrary,
+    /// True once the `$RS2B0T` catalog has been parsed for this session
+    /// (first Load/Browse). Keeps the ambient env/persisted root out of
+    /// boot and of every `Session::new`.
+    rs2b0t_filled: bool,
     /// The Load modal's path scratch buffer.
     pub load_scratch: String,
     /// Shared `--live script_*` harness runner (Task 6): the slot thread
@@ -751,7 +755,7 @@ impl Session {
     /// Empty session: no vault, no slots, default `PlayOptions` (same engine
     /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
     pub fn new() -> Self {
-        let mut s = Self {
+        Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
                 renderer: true,
@@ -810,6 +814,7 @@ impl Session {
                 let _ = js.restore(); // missing/broken store is not fatal here
                 js
             },
+            rs2b0t_filled: false,
             load_scratch: String::new(),
             scenario: Arc::new(Mutex::new(None)),
             audio: Arc::new(AudioGate::new()),
@@ -823,16 +828,20 @@ impl Session {
                 // spawn-time PlayOptions.mainland stays false.
                 mainland: false,
             },
-        };
-        s.fill_rs2b0t_cards();
-        s
+        }
     }
 
-    /// First Load/Browse: when `$RS2B0T` (or a previously persisted root)
-    /// is available, parse the catalog registry and register its JS cards.
-    /// No V8 here — sources are read and classified only; the isolate is
-    /// spawned on Start.
-    fn fill_rs2b0t_cards(&mut self) {
+    /// First Load/Browse: fill the JS library from the `$RS2B0T` catalog
+    /// exactly once per session. `$RS2B0T` (or the persisted root path) is
+    /// read only here — never in [`Session::new`] — so boot and unit tests
+    /// that merely construct a `Session` do not parse a real catalog or
+    /// rewrite `~/.274bot/rs2b0t-path`. No V8 here: sources are read and
+    /// classified only; the isolate is spawned on Start.
+    pub fn fill_rs2b0t_cards_once(&mut self) {
+        if self.rs2b0t_filled {
+            return;
+        }
+        self.rs2b0t_filled = true;
         if let Some(root) = script::rs2b0t_root() {
             if let Err(e) = self
                 .js
@@ -6236,12 +6245,12 @@ mod tests {
     }
 
     #[test]
-    fn session_new_registers_rs2b0t_cards_when_env_set() {
+    fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         // `$RS2B0T` + HOME point at a fake catalog so the fill never
-        // touches the operator's home. Env is restored right after
-        // `Session::new()`; a concurrent `Session::new()` in another test
-        // that observes the window only gains the same in-memory card,
-        // which no test asserts against.
+        // touches the operator's home. `Session::new()` must stay
+        // catalog-free: the fill is first Load/Browse only, so panel unit
+        // tests that merely construct a `Session` never parse a real
+        // catalog or rewrite `~/.274bot/rs2b0t-path`.
         let dir =
             std::env::temp_dir().join(format!("274bot-panel-rs2b0t-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -6267,7 +6276,30 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         let orig_rs2b0t = std::env::var("RS2B0T").ok();
         std::env::set_var("HOME", &home);
         std::env::set_var("RS2B0T", &root);
-        let s = Session::new();
+        let mut s = Session::new();
+        // Construction alone must stay catalog-free (hermetic unit tests).
+        assert!(
+            s.js.get("BoneBurier").is_none(),
+            "Session::new must not parse $RS2B0T"
+        );
+        assert!(
+            !home.join(".274bot/rs2b0t-path").exists(),
+            "Session::new must not rewrite the persisted root"
+        );
+        // First Browse fills once.
+        s.fill_rs2b0t_cards_once();
+        let card = s
+            .js
+            .get("BoneBurier")
+            .expect("BoneBurier card filled on first Browse");
+        assert_eq!(card.shape, script::LoadShape::CompatClass);
+        assert!(
+            home.join(".274bot/rs2b0t-path").is_file(),
+            "the first successful parse persists the root path"
+        );
+        assert_eq!(s.js.cards().len(), 1, "once-only fill");
+        s.fill_rs2b0t_cards_once();
+        assert_eq!(s.js.cards().len(), 1, "a second Browse does not re-parse");
         match orig_rs2b0t {
             Some(v) => std::env::set_var("RS2B0T", v),
             None => std::env::remove_var("RS2B0T"),
@@ -6276,16 +6308,6 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),
         }
-
-        let card = s
-            .js
-            .get("BoneBurier")
-            .expect("BoneBurier card filled from $RS2B0T");
-        assert_eq!(card.shape, script::LoadShape::CompatClass);
-        assert!(
-            home.join(".274bot/rs2b0t-path").is_file(),
-            "the first successful parse persists the root path"
-        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

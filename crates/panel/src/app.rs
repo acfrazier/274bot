@@ -1682,6 +1682,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None
         };
         if ui.button_with_size("Browse…", [w, 0.0]) {
+            session.fill_rs2b0t_cards_once();
             session.script_browse_open = true;
         }
         ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
@@ -1696,6 +1697,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None
         };
         if ui.button_with_size("Load", [w, 0.0]) {
+            session.fill_rs2b0t_cards_once();
             session.script_load_open = true;
         }
         ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
