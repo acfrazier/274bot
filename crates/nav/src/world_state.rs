@@ -98,6 +98,21 @@ impl WorldState {
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
             && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
     }
+
+    /// Like [`WorldState::allows`] but ignoring the `item_req`/`worn_req`
+    /// gates: every other requirement still fails closed. This is the
+    /// BankBudget diagnosis arm only ([`crate::router::find_missing_item_reqs`]
+    /// feeds it the search's relaxed gate) — [`find`] and [`find_with`]
+    /// never skip a carry/wear gate.
+    pub fn allows_without_carry_worn(&self, e: &TransportEdge) -> bool {
+        e.skill_req
+            .iter()
+            .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
+            && e.quest_req.iter().all(|q| self.quests.contains(q))
+            && e.varp_req
+                .iter()
+                .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
+    }
 }
 
 #[cfg(test)]

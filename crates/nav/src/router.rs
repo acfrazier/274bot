@@ -87,10 +87,14 @@ impl CostModel {
 /// defaults. `allow_teleports` unions the any-tile teleport layer in;
 /// `allow_wilderness` lets the search step into (or land in) the
 /// wilderness zone ([`crate::wilderness::in_wilderness`]).
-/// `allow_bank_fetch` is the 0.1.1 BankBudget stub: this tag it must
-/// NOT insert a bank leg or relax an item req — an edge stays unusable
-/// unless the search's [`WorldState`] already proves it (the bank-trip
-/// execute is 0.1.5). `essence` is the per-slot Rune Essence mine latch
+/// `allow_bank_fetch` is the BankBudget opt-in: on its own it never
+/// inserts a bank leg or relaxes an item req — an edge stays unusable
+/// unless the search's [`WorldState`] already proves it. The
+/// fetch-and-wear session lives outside the router
+/// ([`crate::bank_fetch::plan_bank_fetch`], whose diagnosis arm is
+/// [`find_missing_item_reqs`]); a caller that sets the flag but plans no
+/// session gets exactly the fail-closed search. `essence` is the
+/// per-slot Rune Essence mine latch
 /// ([`EssenceSession`]): when the player stands inside the enclosed mine
 /// the search relaxes the exit portal's return hop to the entry wizard's
 /// overworld anchor. `None` (the default) keeps the mine a sealed dead
@@ -175,10 +179,12 @@ pub fn find(
 }
 
 /// [`find`] with explicit opt-ins ([`FindOptions::allow_teleports`],
-/// [`FindOptions::allow_wilderness`], and the [`FindOptions::allow_bank_fetch`]
-/// stub) and the gating [`WorldState`]: an edge is relaxed only when
+/// [`FindOptions::allow_wilderness`], and [`FindOptions::allow_bank_fetch`])
+/// and the gating [`WorldState`]: an edge is relaxed only when
 /// every `skill_req` / `item_req` / `quest_req` / `varp_req` / `worn_req`
-/// is satisfied by the state. Missing facts fail closed.
+/// is satisfied by the state. Missing facts fail closed — the flag alone
+/// never fetches ([`find_missing_item_reqs`] is the session's diagnosis
+/// arm, and the session itself lives in [`crate::bank_fetch`]).
 pub fn find_with(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -198,7 +204,76 @@ pub fn find_with(
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
+        false,
     )
+}
+
+/// A missing `item_req`/`worn_req` fact the BankBudget session must
+/// supply before a strict [`find_with`] can route: the obj id, whether
+/// it must be worn (`worn_req`) rather than merely carried (`item_req`),
+/// and the count a carried `item_req` needs. [`find_missing_item_reqs`]
+/// is the only producer — [`find`]/[`find_with`] never relax an edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MissingReq {
+    /// The edge needs `count` of obj `id` carried (`item_req`).
+    Carry { id: i32, count: i32 },
+    /// The edge needs obj `id` worn (`worn_req`).
+    Wear { id: i32 },
+}
+
+/// Diagnose a strict [`find_with`] `NoPath`: run the same search with
+/// only the `item_req`/`worn_req` gates ignored, and collect every such
+/// fact on the relaxed route that `state` could not prove. Returns
+/// `None` when the relaxed search also fails — a skill/quest/varp gate
+/// or a plain hole in the graph blocks, and no fetch-and-wear session
+/// can help. This is the BankBudget session's diagnosis arm
+/// ([`crate::bank_fetch::plan_bank_fetch`]); [`find`] and [`find_with`]
+/// themselves never ignore an item gate — missing facts still fail
+/// closed.
+pub fn find_missing_item_reqs(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+) -> Option<Vec<MissingReq>> {
+    let route = find_bounded_impl(
+        collision,
+        graph,
+        from,
+        to,
+        CostModel::running(),
+        NODE_BUDGET,
+        opts.allow_teleports,
+        opts.allow_wilderness,
+        state,
+        opts.essence.as_ref(),
+        true,
+    )
+    .ok()?;
+    let mut missing = Vec::new();
+    for leg in &route.legs {
+        let Leg::Transport { edge } = leg else {
+            continue;
+        };
+        for &(id, count) in &edge.item_req {
+            if state.inv.get(&id).is_none_or(|&c| c < count) {
+                missing.push(MissingReq::Carry { id, count });
+            }
+        }
+        for &id in &edge.worn_req {
+            if !state.worn.contains(&id) {
+                missing.push(MissingReq::Wear { id });
+            }
+        }
+    }
+    missing.sort_by_key(|r| match r {
+        MissingReq::Carry { id, .. } => (*id, 0),
+        MissingReq::Wear { id } => (*id, 1),
+    });
+    missing.dedup();
+    Some(missing)
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -220,6 +295,7 @@ pub fn find_with_model(
         false,
         &WorldState::empty(),
         None,
+        false,
     )
 }
 
@@ -271,6 +347,7 @@ pub fn find_allow_teleports_with_model(
         false,
         state,
         None,
+        false,
     )
 }
 
@@ -299,6 +376,7 @@ fn find_bounded(
         false,
         &WorldState::empty(),
         None,
+        false,
     )
 }
 
@@ -309,7 +387,10 @@ fn find_bounded(
 /// directional [`step_ok`] test throughout. `allow_wilderness` gates
 /// stepping into (or landing in) the wilderness zone; `state` gates every
 /// transport edge (walked or teleported) on its requirements — an edge
-/// the state cannot prove is not relaxed.
+/// the state cannot prove is not relaxed. `relax_carry_worn` is the
+/// BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
+/// gates so the session can tell a missing-item failure from a
+/// skill/quest/varp gate. Every production entry point passes `false`.
 #[allow(clippy::too_many_arguments)]
 fn find_bounded_impl(
     collision: &WorldCollision,
@@ -322,6 +403,7 @@ fn find_bounded_impl(
     allow_wilderness: bool,
     state: &WorldState,
     essence: Option<&EssenceSession>,
+    relax_carry_worn: bool,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -404,7 +486,12 @@ fn find_bounded_impl(
                     };
                     for &ei in idxs {
                         let edge = &graph.edges[ei];
-                        if !state.allows(edge) {
+                        let gate_ok = if relax_carry_worn {
+                            state.allows_without_carry_worn(edge)
+                        } else {
+                            state.allows(edge)
+                        };
+                        if !gate_ok {
                             continue;
                         }
                         if !wildy_step_ok(cur, edge.to, allow_wilderness) {
@@ -462,7 +549,12 @@ fn find_bounded_impl(
         // declares it).
         if use_teleports {
             for (ti, edge) in graph.teleports.iter().enumerate() {
-                if !state.allows(edge) {
+                let gate_ok = if relax_carry_worn {
+                    state.allows_without_carry_worn(edge)
+                } else {
+                    state.allows(edge)
+                };
+                if !gate_ok {
                     continue;
                 }
                 if !wildy_step_ok(cur, edge.to, allow_wilderness) {
@@ -891,8 +983,9 @@ mod tests {
     use crate::collision::{bake_from_maps, WorldCollision};
     use crate::grid::StepGrid;
     use crate::router::{
-        find, find_allow_teleports, find_bounded, find_on_grid, find_with, find_with_model,
-        step_ok, CostModel, FindOptions, GridLeg, Leg, RouteError, PER_STEP_WALK,
+        find, find_allow_teleports, find_bounded, find_missing_item_reqs, find_on_grid, find_with,
+        find_with_model, step_ok, CostModel, FindOptions, GridLeg, Leg, MissingReq, RouteError,
+        PER_STEP_WALK,
     };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -1572,9 +1665,11 @@ mod tests {
         );
     }
 
-    /// The `allow_bank_fetch` stub must not insert a bank leg or relax an
-    /// item req this tag: with the flag on and no coins, the toll edge
-    /// stays unusable and the search is still `NoPath`.
+    /// The `allow_bank_fetch` opt-in must not insert a bank leg or relax
+    /// an item req: with the flag on and no coins, the toll edge stays
+    /// unusable and the search is still `NoPath`. The BankBudget session
+    /// lives OUTSIDE the router — a bare `find_with` (flag on, no
+    /// session planned) never fetches.
     #[test]
     fn allow_bank_fetch_does_not_relax_item_reqs() {
         let wc = walled_5x5();
@@ -1594,7 +1689,118 @@ mod tests {
                 ),
                 Err(RouteError::NoPath)
             ),
-            "allow_bank_fetch is a stub: no coins still means no route"
+            "allow_bank_fetch alone must not fetch: no coins still means no route"
+        );
+        // The flag must not BLOCK a state-proven edge either — it only
+        // opts the caller into the session, and this state proves the
+        // toll on its own.
+        let rich = WorldState {
+            inv: HashMap::from([(995, 10)]),
+            ..WorldState::default()
+        };
+        assert!(
+            find_with(
+                &wc,
+                &g,
+                tile(0, 0, 0),
+                tile(4, 4, 0),
+                FindOptions {
+                    allow_bank_fetch: true,
+                    ..FindOptions::default()
+                },
+                &rich,
+            )
+            .is_ok(),
+            "the flag never blocks a state-proven edge"
+        );
+    }
+
+    /// The BankBudget diagnosis: `find_missing_item_reqs` re-runs the
+    /// search with only the carry/wear gates ignored and reports exactly
+    /// the facts the strict search could not prove. `find_with` itself
+    /// never relaxes — this arm is the session's.
+    #[test]
+    fn find_missing_item_reqs_reports_only_unproven_carry_and_wear() {
+        let wc = walled_5x5();
+        let g = toll_graph();
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        assert_eq!(
+            find_missing_item_reqs(
+                &wc,
+                &g,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty(),
+            ),
+            Some(vec![MissingReq::Carry { id: 995, count: 10 }]),
+            "the empty state misses the 10-coin toll"
+        );
+        // A short stack is still missing: the relaxed route crosses but
+        // the strict gate needs the full count.
+        let poor = WorldState {
+            inv: HashMap::from([(995, 5)]),
+            ..WorldState::default()
+        };
+        assert_eq!(
+            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &poor),
+            Some(vec![MissingReq::Carry { id: 995, count: 10 }])
+        );
+        // A state-proven edge needs no fetch.
+        let rich = WorldState {
+            inv: HashMap::from([(995, 10)]),
+            ..WorldState::default()
+        };
+        assert_eq!(
+            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &rich),
+            Some(vec![]),
+            "a state-proven edge needs no fetch"
+        );
+    }
+
+    /// `worn_req` diagnoses as [`MissingReq::Wear`], any-of style: only
+    /// the un-worn listed ids are missing.
+    #[test]
+    fn find_missing_item_reqs_reports_unworn_worn_req() {
+        let wc = walled_5x5();
+        let mut g = toll_graph();
+        g.edges[0].item_req = vec![];
+        g.edges[0].worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        let s = WorldState {
+            worn: HashSet::from([1321]),
+            ..WorldState::default()
+        };
+        assert_eq!(
+            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &s),
+            Some(vec![MissingReq::Wear { id: 1277 }]),
+            "wearing one listed blade leaves only the other missing"
+        );
+    }
+
+    /// A route blocked by a skill gate is not a banking problem: the
+    /// relaxed search still fails, so the diagnosis is `None` and no
+    /// session can help.
+    #[test]
+    fn find_missing_item_reqs_is_none_when_a_non_item_gate_blocks() {
+        let wc = walled_5x5();
+        let mut g = toll_graph();
+        g.edges[0].skill_req = vec![(6, 25)]; // Magic 25
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        assert_eq!(
+            find_missing_item_reqs(
+                &wc,
+                &g,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty(),
+            ),
+            None,
+            "a Magic 25 gate is not an item/worn gap: no session"
         );
     }
 

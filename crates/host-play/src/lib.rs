@@ -3461,6 +3461,205 @@ mod tests {
         );
     }
 
+    /// The BankBudget session fixture: [`bank_client`] plus a junk
+    /// inventory (Bones × 3 on side tab 3), the bank's obj 2 renamed
+    /// "Knife", and the bank's withdraw component holding the knife
+    /// (stored 3 = obj 2) — the worn-req item the session must fetch.
+    fn bank_fetch_client() -> Client {
+        let mut c = bank_client();
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs[2].name = "Knife".into();
+        }
+        c.side_icon[3] = 500;
+        c.set_iface(
+            500,
+            IfType {
+                id: 500,
+                r#type: ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            500,
+            IfTypeMut {
+                link_obj_type: Some(vec![2, 0]), // stored 2 = obj 1 (Bones)
+                link_obj_number: Some(vec![3, 0]),
+                ..Default::default()
+            },
+        );
+        // The bank's withdraw component (601) holds the knife, not Bones.
+        c.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![3, 0]), // stored 3 = obj 2 (Knife)
+                link_obj_number: Some(vec![20, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        c
+    }
+
+    /// A 5×5 world walled between x=1 and x=2, crossed only by a door
+    /// gated on wearing a knife (obj `knife_id`), with a bank booth
+    /// stand at (0, 4).
+    fn knife_nav_world(knife_id: i32) -> NavWorld {
+        let mut flags = vec![0u32; 25];
+        for z in 0..5 {
+            flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
+            flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
+        }
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 1,
+                z: 2,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+            loc_id: 2882,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![knife_id],
+        };
+        let mut graph = TransportGraph::default();
+        graph.at.entry(edge.at).or_default().push(0);
+        graph.edges.push(edge);
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 5,
+                height: 5,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            vec![nav::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: WorldTile {
+                    x: 0,
+                    z: 4,
+                    level: 0,
+                },
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            }],
+        )
+    }
+
+    /// Task 8 — the BankBudget session unit: the inventory is full of
+    /// junk and the knife is in the **bank snapshot**. The strict
+    /// `find_with` stays fail-closed (no knife worn); the diagnosis
+    /// names only the worn knife; the session plans walk → open →
+    /// deposit the backpack → withdraw the knife → wear → close; and the
+    /// post-session strict re-find crosses. `find` itself never fetches.
+    #[test]
+    fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
+        let c = bank_fetch_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        // The junk backpack and the open bank's knife row come from the
+        // snapshot, exactly as the pump would read them.
+        assert_eq!(snap.inv(), &[(1, 3)], "the junk backpack");
+        assert!(
+            snap.bank().iter().any(|it| it.def.id == 2 && it.count >= 1),
+            "the knife is in the open bank"
+        );
+        let world = knife_nav_world(2);
+        let from = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let to = WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let state = WorldState::from_snapshot(&snap);
+        assert!(
+            matches!(
+                find_with(
+                    &world.collision,
+                    &world.graph,
+                    from,
+                    to,
+                    FindOptions::default(),
+                    &state,
+                ),
+                Err(nav::router::RouteError::NoPath)
+            ),
+            "junk but no knife stays fail-closed even for the session"
+        );
+        let missing = nav::router::find_missing_item_reqs(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions::default(),
+            &state,
+        )
+        .expect("only the worn knife is missing");
+        assert_eq!(missing, vec![nav::router::MissingReq::Wear { id: 2 }]);
+        let bank_rows: Vec<(i32, i32)> = snap
+            .bank()
+            .iter()
+            .map(|it| (it.def.id, it.count))
+            .collect();
+        let fetch = nav::bank_fetch::plan_bank_fetch(
+            &missing,
+            &state,
+            &bank_rows,
+            world.banks(),
+            from,
+        )
+        .expect("the banked knife plans a trip");
+        assert_eq!(
+            fetch.steps,
+            vec![
+                nav::bank_fetch::BankStep::Walk {
+                    x: 0,
+                    z: 4,
+                    level: 0
+                },
+                nav::bank_fetch::BankStep::Open,
+                nav::bank_fetch::BankStep::DepositAll,
+                nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
+                nav::bank_fetch::BankStep::Wear { id: 2 },
+                nav::bank_fetch::BankStep::Close,
+            ],
+            "deposit the junk, withdraw the knife, wear it, close"
+        );
+        let r = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions::default(),
+            &fetch.state,
+        )
+        .expect("the post-session strict re-find crosses");
+        assert_eq!(r.dest, to);
+    }
+
     /// Test script that counts ticks into a shared cell (the panel cannot
     /// read a running script's internals, so the wiring tests observe the
     /// side effect instead).

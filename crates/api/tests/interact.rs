@@ -1400,6 +1400,99 @@ fn use_item_on_selects_held_item_then_aims_target() {
     );
 }
 
+/// `Interactions::wear` resolves the held item by obj id and dispatches
+/// its Wear op (or Wield for weapons) — the BankBudget session's arm.
+#[test]
+fn wear_dispatches_the_held_wear_op() {
+    let mut s = scene();
+    plant_inventory(&mut s.client);
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        cache.objs.resize(4, ObjType::default());
+        cache.objs[3] = ObjType {
+            id: 3,
+            iop: [Some("Wear".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.inventory()[0].def.id, 3);
+    assert_eq!(snap.inventory()[0].actions[0].as_deref(), Some("Wear"));
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.wear(3) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::Op { operation: 1, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::OP_HELD1, 3, 0, 500)],
+        "OP_HELD1 at the held item id/slot/component"
+    );
+}
+
+/// Weapons menu their op as Wield; `wear` accepts that label too.
+#[test]
+fn wear_accepts_a_wield_weapon_menu() {
+    let mut s = scene();
+    plant_inventory(&mut s.client);
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        cache.objs.resize(4, ObjType::default());
+        cache.objs[3] = ObjType {
+            id: 3,
+            iop: [Some("Wield".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(ix.wear(3), SendResult::Sent { .. }));
+    }
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::OP_HELD1, 3, 0, 500)],
+        "a Wield weapon wears through the same op"
+    );
+}
+
+/// `wear` fails closed: a non-wearable item (no Wear/Wield slot) is
+/// `InvalidAction`, and an item that is not held is `StaleTarget`.
+#[test]
+fn wear_refuses_non_wearable_and_missing_items() {
+    let mut s = scene();
+    plant_inventory(&mut s.client); // no iop: only a Drop slot
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.wear(3),
+            SendResult::Refused {
+                reason: SendReason::InvalidAction,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.wear(999),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty(), "nothing sent");
+    assert!(rec.menus.is_empty());
+}
+
 /// `press` dispatches a BUTTON_OK through IF_BUTTON and refuses the
 /// target-verb and client-code arms before the driver sees them.
 #[test]
