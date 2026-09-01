@@ -3618,7 +3618,10 @@ mod tests {
             &state,
         )
         .expect("only the worn knife is missing");
-        assert_eq!(missing, vec![nav::router::MissingReq::Wear { id: 2 }]);
+        assert_eq!(
+            missing,
+            vec![nav::router::MissingReq::WearAny { ids: vec![2] }]
+        );
         let bank_rows: Vec<(i32, i32)> = snap
             .bank()
             .iter()

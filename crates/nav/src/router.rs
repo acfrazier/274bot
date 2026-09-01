@@ -209,16 +209,17 @@ pub fn find_with(
 }
 
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
-/// supply before a strict [`find_with`] can route: the obj id, whether
-/// it must be worn (`worn_req`) rather than merely carried (`item_req`),
-/// and the count a carried `item_req` needs. [`find_missing_item_reqs`]
-/// is the only producer — [`find`]/[`find_with`] never relax an edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// supply before a strict [`find_with`] can route: an `item_req` stack
+/// count the state cannot prove, or a `worn_req` list (any-of) with no
+/// worn alternative. [`find_missing_item_reqs`] is the only producer —
+/// [`find`]/[`find_with`] never relax an edge.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MissingReq {
     /// The edge needs `count` of obj `id` carried (`item_req`).
     Carry { id: i32, count: i32 },
-    /// The edge needs obj `id` worn (`worn_req`).
-    Wear { id: i32 },
+    /// The edge needs any one of `ids` worn (`worn_req` is any-of): the
+    /// session fetches whichever alternative the player can obtain.
+    WearAny { ids: Vec<i32> },
 }
 
 /// Diagnose a strict [`find_with`] `NoPath`: run the same search with
@@ -262,15 +263,18 @@ pub fn find_missing_item_reqs(
                 missing.push(MissingReq::Carry { id, count });
             }
         }
-        for &id in &edge.worn_req {
-            if !state.worn.contains(&id) {
-                missing.push(MissingReq::Wear { id });
-            }
+        // `worn_req` is any-of: nothing is missing while any listed id is
+        // worn; with none worn, the session must fetch one alternative.
+        // An empty list is no gate at all (matches `WorldState::allows`).
+        if !edge.worn_req.is_empty() && !edge.worn_req.iter().any(|id| state.worn.contains(id)) {
+            missing.push(MissingReq::WearAny {
+                ids: edge.worn_req.clone(),
+            });
         }
     }
     missing.sort_by_key(|r| match r {
         MissingReq::Carry { id, .. } => (*id, 0),
-        MissingReq::Wear { id } => (*id, 1),
+        MissingReq::WearAny { ids } => (ids.first().copied().unwrap_or(0), 1),
     });
     missing.dedup();
     Some(missing)
@@ -1759,24 +1763,35 @@ mod tests {
         );
     }
 
-    /// `worn_req` diagnoses as [`MissingReq::Wear`], any-of style: only
-    /// the un-worn listed ids are missing.
+    /// `worn_req` is any-of: while any listed id is worn nothing is
+    /// missing (the edge already passes); with none worn the diagnosis
+    /// is one [`MissingReq::WearAny`] carrying the whole alternative
+    /// list, so the session can fetch whichever one the player can get.
     #[test]
-    fn find_missing_item_reqs_reports_unworn_worn_req() {
+    fn find_missing_item_reqs_treats_worn_req_as_any_of() {
         let wc = walled_5x5();
         let mut g = toll_graph();
         g.edges[0].item_req = vec![];
         g.edges[0].worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
         let from = tile(0, 0, 0);
         let to = tile(4, 4, 0);
-        let s = WorldState {
+        // One listed blade worn: the worn gate passes, nothing to fetch.
+        let wearing = WorldState {
             worn: HashSet::from([1321]),
             ..WorldState::default()
         };
         assert_eq!(
-            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &s),
-            Some(vec![MissingReq::Wear { id: 1277 }]),
-            "wearing one listed blade leaves only the other missing"
+            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &wearing),
+            Some(vec![]),
+            "any-of means a worn alternative leaves nothing missing"
+        );
+        // None worn: one WearAny listing both alternatives.
+        assert_eq!(
+            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &WorldState::empty()),
+            Some(vec![MissingReq::WearAny {
+                ids: vec![1277, 1321],
+            }]),
+            "no worn alternative: the session may fetch either blade"
         );
     }
 

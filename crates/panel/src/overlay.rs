@@ -123,8 +123,8 @@ mod tests {
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -136,8 +136,9 @@ mod tests {
                 blocked: vec![0u64; (w * h).div_ceil(64)],
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     #[test]

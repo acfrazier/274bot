@@ -9,10 +9,10 @@
 //! through the [`crate::traveller::Traveller`] and the `api::interact`
 //! bank path (open/deposit/withdraw/close/wear), plus the [`WorldState`]
 //! those steps leave behind for the post-session re-find. A `worn_req`
-//! item already carried plans a bare [`BankStep::Wear`] — no bank walk.
-//! Anything the plan cannot supply (the item is in neither the
-//! inventory nor the open bank, or the relaxed diagnosis shows a
-//! skill/quest/varp gate) is `None`: the caller reports `NoPath`.
+//! alternative already carried plans a bare [`BankStep::Wear`] — no
+//! bank walk. Anything the plan cannot supply (neither carried nor
+//! bankable, or the relaxed diagnosis shows a skill/quest/varp gate) is
+//! `None`: the caller reports `NoPath`.
 
 use api::snapshot::WorldTile;
 
@@ -58,12 +58,15 @@ pub struct BankFetch {
 /// stand table ([`crate::world::NavWorld::banks`]); `from` is the
 /// player's tile, which picks the nearest stand.
 ///
-/// A `worn_req` item already carried plans only [`BankStep::Wear`] — no
-/// bank walk. Otherwise the plan walks to the nearest stand, opens the
-/// bank, deposits the backpack, withdraws every missing item (a
-/// `worn_req` one is then worn), and closes; every missing req must be
-/// covered by the bank. `None` when the plan cannot be built — the
-/// caller reports [`crate::router::RouteError::NoPath`].
+/// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
+/// — no bank walk. Otherwise the plan walks to the nearest stand, opens
+/// the bank, deposits the backpack, withdraws every missing item (a
+/// `worn_req` one is then worn), and closes. The deposit supplies the
+/// bank with the carried stack, so a `worn_req` alternative that is
+/// merely carried is fetchable after it; every needed amount must be
+/// covered by bank + carried stacks combined. `None` when the plan
+/// cannot be built — the caller reports
+/// [`crate::router::RouteError::NoPath`].
 pub fn plan_bank_fetch(
     missing: &[MissingReq],
     state: &WorldState,
@@ -74,50 +77,59 @@ pub fn plan_bank_fetch(
     if missing.is_empty() {
         return None;
     }
-    // Wear-from-inventory only: every missing req is a worn_req whose
-    // item is already carried. No bank trip at all.
+    // Wear-from-inventory only: every missing req is a worn_req with at
+    // least one alternative already carried. No bank trip at all.
     let all_worn_carried = missing.iter().all(|r| match r {
-        MissingReq::Wear { id } => state.inv.get(id).is_some_and(|&c| c >= 1),
+        MissingReq::WearAny { ids } => ids
+            .iter()
+            .any(|id| state.inv.get(id).is_some_and(|&c| c >= 1)),
         MissingReq::Carry { .. } => false,
     });
     if all_worn_carried {
         let mut post = state.clone();
-        let steps = missing
-            .iter()
-            .map(|r| match r {
-                MissingReq::Wear { id } => {
-                    post.worn.insert(*id);
-                    if let Some(c) = post.inv.get_mut(id) {
+        let mut steps = Vec::new();
+        for r in missing {
+            match r {
+                MissingReq::WearAny { ids } => {
+                    let id = ids
+                        .iter()
+                        .find(|id| state.inv.get(id).is_some_and(|&c| c >= 1))
+                        .copied()
+                        .expect("all-worn-carry checked the alternatives");
+                    post.worn.insert(id);
+                    if let Some(c) = post.inv.get_mut(&id) {
                         *c -= 1;
                         if *c <= 0 {
-                            post.inv.remove(id);
+                            post.inv.remove(&id);
                         }
                     }
-                    BankStep::Wear { id: *id }
+                    steps.push(BankStep::Wear { id });
                 }
                 MissingReq::Carry { .. } => unreachable!("all-worn-carry arm"),
-            })
-            .collect();
+            }
+        }
         return Some(BankFetch { steps, state: post });
     }
 
-    // Bank trip: every missing req must be in the open bank, in the
-    // amount the strict gate needs.
+    // Bank trip. The deposit moves the carried stacks into the bank, so
+    // every needed amount may come from the bank's rows plus the
+    // backpack: `supply` is the combined count.
     let bank_count = |id: i32| {
         bank.iter()
             .find(|&&(i, _)| i == id)
             .map(|&(_, c)| c)
             .unwrap_or(0)
     };
+    let supply = |id: i32| bank_count(id) + state.inv.get(&id).copied().unwrap_or(0);
     for r in missing {
         match r {
             MissingReq::Carry { id, count } => {
-                if bank_count(*id) < *count {
+                if supply(*id) < *count {
                     return None;
                 }
             }
-            MissingReq::Wear { id } => {
-                if bank_count(*id) < 1 {
+            MissingReq::WearAny { ids } => {
+                if !ids.iter().any(|id| supply(*id) >= 1) {
                     return None;
                 }
             }
@@ -153,10 +165,15 @@ pub fn plan_bank_fetch(
                 });
                 post.inv.insert(*id, *count);
             }
-            MissingReq::Wear { id } => {
-                steps.push(BankStep::Withdraw { id: *id, count: 1 });
-                steps.push(BankStep::Wear { id: *id });
-                post.worn.insert(*id);
+            MissingReq::WearAny { ids } => {
+                let id = ids
+                    .iter()
+                    .find(|id| supply(**id) >= 1)
+                    .copied()
+                    .expect("the supply check passed an alternative");
+                steps.push(BankStep::Withdraw { id, count: 1 });
+                steps.push(BankStep::Wear { id });
+                post.worn.insert(id);
             }
         }
     }
@@ -278,7 +295,12 @@ mod tests {
         ));
         let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
             .expect("only the worn knife is missing");
-        assert_eq!(missing, vec![MissingReq::Wear { id: KNIFE }]);
+        assert_eq!(
+            missing,
+            vec![MissingReq::WearAny {
+                ids: vec![KNIFE],
+            }]
+        );
         let fetch = plan_bank_fetch(&missing, &state, &[], &[stand(4, 0)], from)
             .expect("a carried knife plans a bare wear");
         assert_eq!(
@@ -318,7 +340,12 @@ mod tests {
         ));
         let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
             .expect("only the worn knife is missing");
-        assert_eq!(missing, vec![MissingReq::Wear { id: KNIFE }]);
+        assert_eq!(
+            missing,
+            vec![MissingReq::WearAny {
+                ids: vec![KNIFE],
+            }]
+        );
         // The bank snapshot holds the knife (1).
         let bank = [(KNIFE, 1)];
         let fetch = plan_bank_fetch(&missing, &state, &bank, &[stand(4, 0)], from)
@@ -404,7 +431,9 @@ mod tests {
         assert_eq!(
             missing,
             vec![
-                MissingReq::Wear { id: KNIFE },
+                MissingReq::WearAny {
+                    ids: vec![KNIFE],
+                },
                 MissingReq::Carry { id: 995, count: 10 },
             ]
         );
@@ -430,6 +459,102 @@ mod tests {
         assert_eq!(r.dest, to);
     }
 
+    /// `worn_req` is any-of: the session fetches whichever alternative
+    /// the bank actually holds — a bank with only the scimitar plans a
+    /// scimitar trip, not a NoPath for the sword.
+    #[test]
+    fn bank_trip_fetches_any_one_worn_alternative() {
+        let wc = walled_5x5();
+        let mut g = knife_graph();
+        g.edges[0].worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        let state = WorldState {
+            inv: HashMap::from([(1, 3)]),
+            ..WorldState::default()
+        };
+        let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
+            .expect("only the worn blade is missing");
+        assert_eq!(
+            missing,
+            vec![MissingReq::WearAny {
+                ids: vec![1277, 1321],
+            }]
+        );
+        // The bank holds only the scimitar: that one is fetched.
+        let bank = [(1321, 1)];
+        let fetch = plan_bank_fetch(&missing, &state, &bank, &[stand(4, 0)], from)
+            .expect("one banked alternative is enough");
+        assert_eq!(
+            fetch.steps,
+            vec![
+                BankStep::Walk {
+                    x: 4,
+                    z: 0,
+                    level: 0
+                },
+                BankStep::Open,
+                BankStep::DepositAll,
+                BankStep::Withdraw { id: 1321, count: 1 },
+                BankStep::Wear { id: 1321 },
+                BankStep::Close,
+            ],
+            "the banked alternative is withdrawn and worn"
+        );
+        let r = find_with(&wc, &g, from, to, FindOptions::default(), &fetch.state).unwrap();
+        assert_eq!(r.dest, to);
+    }
+
+    /// The deposit supplies the bank with the carried stack: a carried
+    /// knife (no bank row) plus banked coins plans a trip that withdraws
+    /// and wears the knife after the deposit — it must not fail closed.
+    #[test]
+    fn bank_trip_supply_includes_the_deposited_backpack() {
+        let wc = walled_5x5();
+        let mut g = toll_graph();
+        g.edges[0].worn_req = vec![KNIFE];
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        let state = WorldState {
+            inv: HashMap::from([(KNIFE, 1)]),
+            ..WorldState::default()
+        };
+        let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
+            .expect("the worn knife and the toll count are missing");
+        assert_eq!(
+            missing,
+            vec![
+                MissingReq::WearAny {
+                    ids: vec![KNIFE],
+                },
+                MissingReq::Carry { id: 995, count: 10 },
+            ]
+        );
+        // The bank holds coins only — the knife is carried, not banked.
+        let bank = [(995, 50)];
+        let fetch = plan_bank_fetch(&missing, &state, &bank, &[stand(4, 0)], from)
+            .expect("the deposit supplies the knife");
+        assert_eq!(
+            fetch.steps,
+            vec![
+                BankStep::Walk {
+                    x: 4,
+                    z: 0,
+                    level: 0
+                },
+                BankStep::Open,
+                BankStep::DepositAll,
+                BankStep::Withdraw { id: KNIFE, count: 1 },
+                BankStep::Wear { id: KNIFE },
+                BankStep::Withdraw { id: 995, count: 10 },
+                BankStep::Close,
+            ],
+            "the deposited knife is withdrawn and worn, then the toll stack"
+        );
+        let r = find_with(&wc, &g, from, to, FindOptions::default(), &fetch.state).unwrap();
+        assert_eq!(r.dest, to);
+    }
+
     /// A missing req whose item is neither carried nor in the bank, or an
     /// item_req the bank cannot cover in full, fails closed to `None` —
     /// the caller reports `NoPath`.
@@ -441,7 +566,7 @@ mod tests {
         };
         assert_eq!(
             plan_bank_fetch(
-                &[MissingReq::Wear { id: KNIFE }],
+                &[MissingReq::WearAny { ids: vec![KNIFE] }],
                 &state,
                 &[],
                 &[stand(4, 0)],
@@ -464,7 +589,7 @@ mod tests {
         );
         assert_eq!(
             plan_bank_fetch(
-                &[MissingReq::Wear { id: KNIFE }],
+                &[MissingReq::WearAny { ids: vec![KNIFE] }],
                 &state,
                 &[(KNIFE, 1)],
                 &[],
@@ -479,7 +604,7 @@ mod tests {
     #[test]
     fn plans_walk_to_the_nearest_stand() {
         let fetch = plan_bank_fetch(
-            &[MissingReq::Wear { id: KNIFE }],
+            &[MissingReq::WearAny { ids: vec![KNIFE] }],
             &WorldState::default(),
             &[(KNIFE, 1)],
             &[stand(9, 9), stand(4, 0)],

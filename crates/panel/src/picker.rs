@@ -975,8 +975,8 @@ mod tests {
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -988,8 +988,9 @@ mod tests {
                 blocked: vec![0u64; (w * h).div_ceil(64)],
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     #[test]
@@ -1013,8 +1014,8 @@ mod tests {
         let mut flags = vec![0u32; 5];
         flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let w = NavWorld {
-            collision: WorldCollision {
+        let w = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -1026,8 +1027,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        };
+            TransportGraph::default(),
+            Vec::new(),
+        );
         let t = snap(&w, 2.2, 0.1, 0).unwrap();
         assert_eq!(
             t,
@@ -1054,8 +1056,8 @@ mod tests {
         let mut flags = vec![0u32; 4 * 9];
         flags[9 + 4] = CollisionFlag::WALK_SCENERY as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let w2 = NavWorld {
-            collision: WorldCollision {
+        let w2 = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -1067,8 +1069,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        };
+            TransportGraph::default(),
+            Vec::new(),
+        );
         assert_eq!(available_levels(&w2), vec![0, 1]);
     }
 
@@ -1230,8 +1233,8 @@ mod tests {
             flags[z as usize * w + x as usize] |= f;
         }
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -1243,8 +1246,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     /// A 7×7 bake: a 3×3 open corner plus an isolated open tile moated by
@@ -1296,8 +1300,8 @@ mod tests {
         let mut flags = vec![0u32; 2 * 9];
         flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -1309,8 +1313,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        };
+            TransportGraph::default(),
+            Vec::new(),
+        );
         let view = PackView {
             x0: 0,
             z0: 0,
@@ -1372,9 +1377,11 @@ mod tests {
         // door edge outside it: the reach BFS floods the open ground but
         // never the courtyard, so only the courtyard tile paints
         // walkable-unreached.
-        let world = bake_world(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]);
-        let world = NavWorld {
-            graph: TransportGraph {
+        let base = bake_world(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]);
+        let banks = base.banks().to_vec();
+        let world = NavWorld::from_parts(
+            base.collision,
+            TransportGraph {
                 edges: vec![TransportEdge {
                     kind: TransportKind::Door,
                     at: WorldTile {
@@ -1400,8 +1407,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            ..world
-        };
+            banks,
+        );
         let view = PackView {
             x0: 0,
             z0: 0,

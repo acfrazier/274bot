@@ -2883,8 +2883,8 @@ mod tests {
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -2896,8 +2896,9 @@ mod tests {
                 blocked: vec![0u64; (w * h).div_ceil(64)],
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     /// The Rune Essence mine mapsquare (m45_75) as a sealed 64×64
@@ -2905,8 +2906,8 @@ mod tests {
     /// placements inside, nothing packed — the session return hop is
     /// synthesized by the router, so a walk out only arms with a latch.
     fn mine_world() -> NavWorld {
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 2880,
                     z: 4800,
@@ -2918,8 +2919,9 @@ mod tests {
                 blocked: vec![0u64; (64usize * 64).div_ceil(64)],
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     /// A synthetic offline client with a fake mainland scene base (same
@@ -2952,8 +2954,8 @@ mod tests {
         flags[width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 3200,
                     z: 3200,
@@ -2965,8 +2967,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     #[test]
@@ -3087,8 +3090,8 @@ mod tests {
         flags[width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 3200,
                     z: 3200,
@@ -3100,7 +3103,7 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph {
+            TransportGraph {
                 edges: vec![TransportEdge {
                     kind: TransportKind::Door,
                     at: WorldTile {
@@ -3126,7 +3129,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        };
+            Vec::new(),
+        );
         let layers = NavSettings {
             collision_fill: true,
             nsew_labels: true,
@@ -3294,8 +3298,8 @@ mod tests {
         let mut flags = vec![0u32; width * height];
         flags[width + 1] = CollisionFlag::W_S as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 3200,
                     z: 3200,
@@ -3307,8 +3311,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        };
+            TransportGraph::default(),
+            Vec::new(),
+        );
         let mut c = paint_client();
         let layers = NavSettings {
             collision_fill: true,
@@ -3934,8 +3939,8 @@ mod tests {
             flags[z * 3 + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         }
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -3947,8 +3952,9 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        };
+            TransportGraph::default(),
+            Vec::new(),
+        );
         let dest = Tile {
             x: 2,
             z: 1,
@@ -4014,8 +4020,8 @@ mod tests {
         graph.at.entry(edge.at).or_default().push(0);
         graph.edges.push(edge);
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -4028,7 +4034,8 @@ mod tests {
                 flags: None,
             },
             graph,
-        }
+            Vec::new(),
+        )
     }
 
     /// A `WorldState` with 10 coins, derived through the slot-thread
@@ -4203,8 +4210,8 @@ mod tests {
             worn_req: vec![],
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -4217,7 +4224,8 @@ mod tests {
                 flags: None,
             },
             graph,
-        };
+            Vec::new(),
+        );
         let origin = Tile {
             x: 0,
             z: 0,
@@ -4295,8 +4303,8 @@ mod tests {
             worn_req: vec![],
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 3099,
                     z: 3518,
@@ -4309,7 +4317,8 @@ mod tests {
                 flags: None,
             },
             graph,
-        };
+            Vec::new(),
+        );
         let origin = Tile {
             x: 3100,
             z: 3519,
