@@ -450,6 +450,7 @@ fn step_nav_bot<D: Driver>(
         // clears (the v1 traveller arrived the same way).
         close_enough: 0,
         teleports: world.map(|w| w.graph.teleports.as_slice()),
+        edges: world.map(|w| w.graph.edges.as_slice()),
         ..TravelOptions::default()
     };
     let queued = {

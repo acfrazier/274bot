@@ -41,6 +41,14 @@ const MAGIC_TAB: usize = 6;
 /// teleport hop's arrive arm (and a scenario's dest proof) must accept
 /// this radius, independent of the runner's exact `close_enough`.
 const TELEPORT_ARRIVE_RADIUS: i32 = 2;
+/// Gnome glider landing scatter: `p_teleport(map_findsquare($dest, 0, 1,
+/// lineofwalk))` in `gnome_glider.rs2` — chebyshev 1, never the pad
+/// exactly when a loc/NPC occupies it.
+const GLIDER_ARRIVE_RADIUS: i32 = 1;
+/// Sailors, customs, glider pilots wander. Content uses an 8-tile inzone
+/// around the packed pad (`gnome_glider.rs2`); looking up only cheb 3 of
+/// packed `at` misses them and Talk-to from the spawn is Unreachable.
+const NPC_SEARCH_RADIUS: i32 = 8;
 
 /// One standard spellbook teleport: the packed landing tile the edge's
 /// `to` identifies, the spellbook button's label word (`Cast @gre@<word>
@@ -211,6 +219,9 @@ pub struct TravelOptions<'a> {
     /// modal's first choice — the dueling ring's single arena, and every
     /// Npc ride dialog.
     pub teleports: Option<&'a [TransportEdge]>,
+    /// Packed loc/npc edges (`TransportGraph::edges`): spirit-tree and
+    /// glider destination dialogs index `to` among same-`loc_id` siblings.
+    pub edges: Option<&'a [TransportEdge]>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     #[allow(clippy::type_complexity)]
@@ -224,6 +235,7 @@ impl Default for TravelOptions<'_> {
             budget_ticks_per_hop: 60,
             max_hops: 60,
             teleports: None,
+            edges: None,
             on_leg: None,
         }
     }
@@ -669,35 +681,21 @@ impl FollowRun {
                         self.leg_index += 1;
                         continue;
                     }
-                    if self.hops >= self.max_hops {
-                        fire_leg(options, &leg, LegPhase::Failed);
-                        return Some(TravelOutcome::GaveUp {
-                            at: here(snapshot),
-                            hops: self.hops,
-                        });
-                    }
-                    self.hops += 1;
                     let here = here(snapshot);
-                    let (aim, aim_index) = pick_aim(tiles, here, 0);
-                    let mut ix = Interactions::new(snapshot, d);
-                    match ix.walk(aim) {
-                        SendResult::Sent { .. } => {
-                            self.walk = Some(WalkHop {
-                                leg,
-                                cursor: 0,
-                                aim,
-                                aim_index,
-                                sent: true,
-                                ticks_waited: 0,
-                                sent_tile: Some(here),
-                                tries: 0,
-                            });
-                            return None;
-                        }
-                        SendResult::Refused { reason, .. } => {
-                            fire_leg(options, &leg, LegPhase::Failed);
-                            return Some(TravelOutcome::Refused { at: here, reason });
-                        }
+                    let hop = WalkHop {
+                        leg,
+                        cursor: 0,
+                        aim: here,
+                        aim_index: 0,
+                        sent: false,
+                        ticks_waited: 0,
+                        sent_tile: None,
+                        tries: 0,
+                    };
+                    match self.send_walk_hop(d, snapshot, options, hop, here) {
+                        Poll::Watching => return None,
+                        Poll::Terminal(outcome) => return Some(outcome),
+                        Poll::LegDone => continue,
                     }
                 }
                 Leg::Transport { .. } => {
@@ -725,7 +723,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     chat_seq: chat_seq(snapshot),
-                                    dialog_answered: false,
+                                    dialog_page: None,
                                     approach: None,
                                 });
                                 return None;
@@ -781,7 +779,7 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     chat_seq: chat_seq(snapshot),
-                                    dialog_answered: false,
+                                    dialog_page: None,
                                     approach: None,
                                 });
                                 return None;
@@ -793,13 +791,42 @@ impl FollowRun {
                         }
                     }
                     // The game only accepts an `op_loc`/`op_npc` from
-                    // adjacent: when the player is not yet within chebyshev
-                    // 1 of `at`, walk to the nearest standable tile there
-                    // first and wait to arrive (the approach, settled by
-                    // the transport hop), before the target is found and
-                    // interacted with.
-                    if cheb(here, edge.at) > 1 {
-                        let Some(approach) = approach_tile(snapshot, edge, here) else {
+                    // adjacent. Packed `at` is the spawn, not a leash:
+                    // sailors/officers/pilots wander, so NPC hops approach
+                    // the live tile (Musa customs Talk-to from the packed
+                    // pier while the officer is four tiles away is
+                    // Unreachable). Loc hops still use packed `at`.
+                    let approach_at = if npc_backed(edge) {
+                        match find_transport_target(snapshot, edge) {
+                            Some(TransportTarget::Npc(npc)) => npc.tile,
+                            Some(TransportTarget::Loc(loc)) => loc.tile,
+                            None => {
+                                self.loc_wait += 1;
+                                if self.loc_wait > self.budget {
+                                    fire_leg(options, &leg, LegPhase::Failed);
+                                    return Some(TravelOutcome::Blocked {
+                                        at: here,
+                                        leg: self.leg_index,
+                                        detail: format!(
+                                            "transport {} {} is not within {} tiles of ({}, {}, {}) in the loaded scene",
+                                            target_word(edge),
+                                            edge.loc_id,
+                                            NPC_SEARCH_RADIUS,
+                                            edge.at.x,
+                                            edge.at.z,
+                                            edge.at.level
+                                        ),
+                                    });
+                                }
+                                self.legs.push_front(leg);
+                                return None;
+                            }
+                        }
+                    } else {
+                        edge.at
+                    };
+                    if cheb(here, approach_at) > 1 {
+                        let Some(approach) = approach_tile(snapshot, approach_at, here) else {
                             // No standable tile adjacent to the target in
                             // the loaded scene: keep waiting, bounded by
                             // the hop budget. The leg stays on the front
@@ -824,7 +851,6 @@ impl FollowRun {
                             return None;
                         };
                         let to = edge.to;
-                        let at = edge.at;
                         let mut ix = Interactions::new(snapshot, d);
                         match ix.walk(approach) {
                             SendResult::Sent { .. } => {
@@ -837,10 +863,10 @@ impl FollowRun {
                                     tries: 0,
                                     troll: false,
                                     chat_seq: chat_seq(snapshot),
-                                    dialog_answered: false,
+                                    dialog_page: None,
                                     approach: Some(ApproachHop {
                                         tile: approach,
-                                        at,
+                                        at: approach_at,
                                         ticks_waited: 0,
                                     }),
                                 });
@@ -856,7 +882,7 @@ impl FollowRun {
                         Some(target) => {
                             let to = edge.to;
                             let mut ix = Interactions::new(snapshot, d);
-                            match interact_transport(&mut ix, target, edge.option) {
+                            match interact_transport(snapshot, &mut ix, target, edge) {
                                 SendResult::Sent { .. } => {
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
@@ -867,7 +893,7 @@ impl FollowRun {
                                         tries: 0,
                                         troll: false,
                                         chat_seq: chat_seq(snapshot),
-                                        dialog_answered: false,
+                                        dialog_page: None,
                                         approach: None,
                                     });
                                     return None;
@@ -910,8 +936,8 @@ impl FollowRun {
 
     /// One walk-hop step: send an armed (unsent) hop, or settle the sent
     /// one against the `arrived` arm and the hop budget. A still-watching
-    /// settle ends the call; a matched hop arms the next hop (sent on the
-    /// next call) or completes the leg.
+    /// settle ends the call; a matched mid-leg hop click-aheads the next
+    /// walk on this same poll so the player does not stop on the hop tile.
     fn poll_walk<D: Driver>(
         &mut self,
         d: &mut D,
@@ -921,41 +947,17 @@ impl FollowRun {
         let mut hop = self.walk.take().expect("walk hop present");
         let here = here(snapshot);
         if !hop.sent {
-            // The previous poll matched mid-leg and armed this hop: send
-            // it now (one walk per call).
-            if self.hops >= self.max_hops {
-                fire_leg(options, &hop.leg(), LegPhase::Failed);
-                return Poll::Terminal(TravelOutcome::GaveUp {
-                    at: here,
-                    hops: self.hops,
-                });
-            }
-            self.hops += 1;
-            let (aim, aim_index) = pick_aim(hop.tiles(), here, hop.cursor);
-            let mut ix = Interactions::new(snapshot, d);
-            return match ix.walk(aim) {
-                SendResult::Sent { .. } => {
-                    hop.aim = aim;
-                    hop.aim_index = aim_index;
-                    hop.sent = true;
-                    hop.ticks_waited = 0;
-                    hop.sent_tile = Some(here);
-                    self.walk = Some(hop);
-                    Poll::Watching
-                }
-                SendResult::Refused { reason, .. } => {
-                    fire_leg(options, &hop.leg(), LegPhase::Failed);
-                    Poll::Terminal(TravelOutcome::Refused { at: here, reason })
-                }
-            };
+            return self.send_walk_hop(d, snapshot, options, hop, here);
         }
-        // Last tile of the walk is the dest: exact stand. A loose
-        // close_enough reports Arrived short; the runner then re-arms the
-        // original route and the walker yo-yos back through the door.
-        let radius = if hop.aim_index + 1 >= hop.tiles().len() {
+        // Last tile of the walk is the dest: exact stand. Mid-hops
+        // click-ahead at Chebyshev 2 (at least `close_enough`) so the
+        // next walk goes out while the player is still moving.
+        const CLICK_AHEAD: i32 = 2;
+        let last = hop.aim_index + 1 >= hop.tiles().len();
+        let radius = if last {
             0
         } else {
-            self.close_enough
+            self.close_enough.max(CLICK_AHEAD)
         };
         let arms = [("arrived", arrived(hop.aim, radius))];
         if crate::debug_enabled() {
@@ -984,11 +986,10 @@ impl FollowRun {
                     self.leg_index += 1;
                     return Poll::LegDone;
                 }
-                // Mid-leg: arm the next hop; the next call sends it.
+                // Mid-leg click-ahead: send the next hop on this poll.
                 hop.cursor = hop.aim_index + 1;
                 hop.sent = false;
-                self.walk = Some(hop);
-                Poll::Watching
+                self.send_walk_hop(d, snapshot, options, hop, here)
             }
             // A disconnect ends the watch; the hop was effectively dropped.
             Some(Outcome::Expired { .. }) => {
@@ -1099,7 +1100,7 @@ impl FollowRun {
             return match find_transport_target(snapshot, &edge) {
                 Some(target) => {
                     let mut ix = Interactions::new(snapshot, d);
-                    match interact_transport(&mut ix, target, edge.option) {
+                    match interact_transport(snapshot, &mut ix, target, &edge) {
                         SendResult::Sent { .. } => {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
@@ -1188,7 +1189,7 @@ impl FollowRun {
                     }
                     SendResult::Refused { .. } => {}
                 }
-            } else if !hop.dialog_answered && !snapshot.chat_options().is_empty() {
+            } else if !snapshot.chat_options().is_empty() {
                 // A jewellery rub's destination choice is the edge's case
                 // index: the script maps the answered option through
                 // `switch_int($choice)`, so the choice of the edge being
@@ -1198,18 +1199,62 @@ impl FollowRun {
                 // Elkoy escort) always answer the modal's FIRST choice,
                 // independent of the NPC op index (`edge.option`: Talk-to
                 // is op 1, the essence wizard's teleport op 3/4).
-                let choice = jewellery_choice(&hop.leg, options.teleports);
-                match ix.answer_choice(choice) {
-                    SendResult::Sent { .. } => {
-                        hop.dialog_answered = true;
-                        if crate::debug_enabled() {
-                            eprintln!(
-                                "[nav-transport] answered choice {} for jewellery {}",
-                                choice, edge.loc_id
-                            );
+                // Spirit trees are two pages: adult trees ask "Where can I
+                // go?" before the dest list; answering the dest index on
+                // the first page is "No thanks, old tree." and the hop
+                // returns. Answer each distinct option-page once.
+                let page = chat_page_key(snapshot);
+                if hop.dialog_page.as_deref() != Some(page.as_str()) {
+                    let choice = hop_dialog_choice(
+                        &hop.leg,
+                        options.teleports,
+                        options.edges,
+                        snapshot.chat_options().len(),
+                    );
+                    match ix.answer_choice(choice) {
+                        SendResult::Sent { .. } => {
+                            hop.dialog_page = Some(page);
+                            if crate::debug_enabled() {
+                                eprintln!(
+                                    "[nav-transport] answered choice {} for {} {}",
+                                    choice,
+                                    match edge.kind {
+                                        TransportKind::SpiritTree => "spirit tree",
+                                        TransportKind::Teleport => "jewellery",
+                                        _ => "npc",
+                                    },
+                                    edge.loc_id
+                                );
+                            }
+                        }
+                        SendResult::Refused { .. } => {}
+                    }
+                }
+            } else if snapshot.modals().main == GLIDER_MAP_ROOT {
+                // Gnome glider: after "Can you take me on the glider?" the
+                // script `if_openmain(glidermap)` and dests are IF_BUTTON
+                // on com_21..=25, not chat. Boat `ship_journey` has no
+                // dest buttons — the hop just waits for the telejump.
+                if let Some(com) = dest_map_component(&edge) {
+                    let page = format!("if:{com}");
+                    if hop.dialog_page.as_deref() != Some(page.as_str()) {
+                        if let Some(widget) =
+                            snapshot.widgets().iter().find(|w| w.component_id == com)
+                        {
+                            match ix.press(widget) {
+                                SendResult::Sent { .. } => {
+                                    hop.dialog_page = Some(page);
+                                    if crate::debug_enabled() {
+                                        eprintln!(
+                                            "[nav-transport] pressed glidermap {} for dest ({}, {}, {})",
+                                            com, edge.to.x, edge.to.z, edge.to.level
+                                        );
+                                    }
+                                }
+                                SendResult::Refused { .. } => {}
+                            }
                         }
                     }
-                    SendResult::Refused { .. } => {}
                 }
             }
         }
@@ -1253,6 +1298,8 @@ impl FollowRun {
             // accepts that radius regardless of the runner's exact
             // `close_enough`.
             arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
+        } else if edge.kind == TransportKind::Glider {
+            arrived(edge.to, GLIDER_ARRIVE_RADIUS)
         } else {
             arrived(edge.to, close_enough)
         };
@@ -1287,6 +1334,29 @@ impl FollowRun {
                 })
             }
             Some(Outcome::Matched { .. }) => {
+                // Agility forcemove holds the player after they land on
+                // `to`. Completing on the first arrived poll sends the
+                // next walk into a locked player (live Yanille ledge
+                // Dropped at 2580,9512). Packed `edge.ticks` is the anim
+                // delay — stay on this hop until it elapses.
+                if let Leg::Transport { edge } = &hop.leg {
+                    let delay = edge.ticks.max(0) as u32;
+                    if edge.kind == TransportKind::AgilityShortcut && delay > 0 {
+                        // Count packed ticks from the first landed poll, not
+                        // from the interact — the forcemove can land on `to`
+                        // while the player is still locked (live ledge
+                        // Dropped the next walk).
+                        if hop.sent_tile.is_some() {
+                            hop.sent_tile = None;
+                            hop.ticks_waited = 0;
+                        }
+                        hop.ticks_waited += 1;
+                        if hop.ticks_waited < delay {
+                            self.transport = Some(hop);
+                            return Poll::Watching;
+                        }
+                    }
+                }
                 // A completed essence entry hop latches the mine session:
                 // the exit portal may only return to this wizard.
                 if let Some(wizard) = entry_wizard {
@@ -1355,6 +1425,73 @@ impl FollowRun {
                 } else {
                     self.transport = Some(hop);
                     Poll::Watching
+                }
+            }
+        }
+    }
+
+    fn send_walk_hop<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions,
+        mut hop: WalkHop,
+        here: WorldTile,
+    ) -> Poll {
+        if self.hops >= self.max_hops {
+            fire_leg(options, &hop.leg(), LegPhase::Failed);
+            return Poll::Terminal(TravelOutcome::GaveUp {
+                at: here,
+                hops: self.hops,
+            });
+        }
+        let tiles = hop.tiles();
+        let here_i = tiles
+            .iter()
+            .position(|t| *t == here)
+            .filter(|&i| i >= hop.cursor)
+            .unwrap_or(hop.cursor);
+        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene());
+        loop {
+            if aim == here {
+                self.walk = Some(hop);
+                return Poll::Watching;
+            }
+            let mut ix = Interactions::new(snapshot, d);
+            match ix.walk(aim) {
+                SendResult::Sent { .. } => {
+                    self.hops += 1;
+                    hop.aim = aim;
+                    hop.aim_index = idx;
+                    hop.sent = true;
+                    hop.ticks_waited = 0;
+                    hop.sent_tile = Some(here);
+                    self.walk = Some(hop);
+                    return Poll::Watching;
+                }
+                SendResult::Refused {
+                    reason: SendReason::OffScene | SendReason::Unreachable,
+                    ..
+                } if idx > here_i + 1 => {
+                    // Far hop left the scene or the local route died:
+                    // walk the index back (the v1 traveller retried the
+                    // tile after `here`). Click-ahead can outrun rebuild.
+                    idx -= 1;
+                    aim = tiles[idx];
+                }
+                SendResult::Refused {
+                    reason:
+                        SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable,
+                    ..
+                } => {
+                    // Rebuild (`scene_state != 2`) refuses the walk before
+                    // a packet goes out — wait, do not fail the follow.
+                    self.walk = Some(hop);
+                    return Poll::Watching;
+                }
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg(), LegPhase::Failed);
+                    return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
                 }
             }
         }
@@ -1478,7 +1615,7 @@ impl FollowRun {
         // instead of the interact. Only once adjacent does the troll
         // re-send `op_loc` + the same-tick walk.
         if cheb(here, edge.at) > 1 {
-            let Some(approach) = approach_tile(snapshot, &edge, here) else {
+            let Some(approach) = approach_tile(snapshot, edge.at, here) else {
                 // No standable tile adjacent to the door in the loaded
                 // scene: keep waiting, bounded by the hop budget.
                 self.loc_wait += 1;
@@ -1555,7 +1692,7 @@ impl FollowRun {
         // through this tick (do not click — that slams it in the walker's
         // face and they turn back to the door).
         if !open {
-            match ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option)) {
+            match interact_transport(snapshot, &mut ix, TransportTarget::Loc(loc), &edge) {
                 SendResult::Sent { .. } => {
                     if crate::debug_enabled() {
                         eprintln!("[nav-troll] Open SENT");
@@ -1602,7 +1739,7 @@ struct WalkHop {
     aim: WorldTile,
     aim_index: usize,
     /// Whether the walk for `aim` has been sent; a matched mid-leg hop is
-    /// re-armed with `sent: false` and sent on the next call.
+    /// re-armed with `sent: false` and sent on the same poll (click-ahead).
     sent: bool,
     ticks_waited: u32,
     /// The player's tile when the hop's walk was sent (stall detection).
@@ -1643,10 +1780,10 @@ struct TransportHop {
     tries: u32,
     troll: bool,
     chat_seq: i32,
-    /// Whether an Npc hop's fare/choice dialog was answered (the cart
-    /// driver's `opnpc1` asks "Is that Ok?" before riding; the edge's
-    /// `option` names the choice). Answered once, never re-pressed.
-    dialog_answered: bool,
+    /// The chat option-page last answered (joined option texts). A new
+    /// page (spirit-tree dest list after "Where can I go?") is answered;
+    /// the same page is never re-pressed.
+    dialog_page: Option<String>,
     /// The pre-interact approach walk: the standable take-off tile within
     /// chebyshev 1 of the edge's `at` the player must reach before the loc
     /// interact can be sent. `None` once the player stands adjacent (or on
@@ -1703,6 +1840,38 @@ fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, 
     }
 }
 
+fn tile_in_scene(scene: &api::snapshot::SceneView, t: WorldTile) -> bool {
+    if scene.width <= 0 || scene.height <= 0 {
+        return true;
+    }
+    let lx = t.x - scene.base_x;
+    let lz = t.z - scene.base_z;
+    lx >= 0 && lz >= 0 && lx < scene.width && lz < scene.height
+}
+
+/// [`pick_aim`] then walk the index back until the tile is inside the
+/// loaded scene, so click-ahead cannot `OffScene` at the 104-edge.
+fn pick_aim_in_scene(
+    tiles: &[WorldTile],
+    here: WorldTile,
+    cursor: usize,
+    scene: &api::snapshot::SceneView,
+) -> (WorldTile, usize) {
+    let (aim, mut idx) = pick_aim(tiles, here, cursor);
+    if tile_in_scene(scene, aim) {
+        return (aim, idx);
+    }
+    let here_i = tiles
+        .iter()
+        .position(|t| *t == here)
+        .filter(|&i| i >= cursor)
+        .unwrap_or(cursor);
+    while idx > here_i && !tile_in_scene(scene, tiles[idx]) {
+        idx -= 1;
+    }
+    (tiles[idx], idx)
+}
+
 /// The eight tiles within chebyshev 1 of a tile, swept in a fixed order so
 /// the nearest-approach choice is deterministic.
 const APPROACH_RING: [(i32, i32); 8] = [
@@ -1723,17 +1892,13 @@ const APPROACH_RING: [(i32, i32); 8] = [
 /// [`scene_standable`] mirrors `WorldCollision::standable` against the
 /// loaded scene's collision flags. `None` when no adjacent tile is
 /// standable.
-fn approach_tile(
-    snapshot: &GameSnapshot,
-    edge: &TransportEdge,
-    here: WorldTile,
-) -> Option<WorldTile> {
+fn approach_tile(snapshot: &GameSnapshot, at: WorldTile, here: WorldTile) -> Option<WorldTile> {
     APPROACH_RING
         .iter()
         .map(|(dx, dz)| WorldTile {
-            x: edge.at.x + dx,
-            z: edge.at.z + dz,
-            level: edge.at.level,
+            x: at.x + dx,
+            z: at.z + dz,
+            level: at.level,
         })
         .filter(|t| scene_standable(snapshot, *t))
         .min_by_key(|t| cheb(*t, here))
@@ -1781,23 +1946,155 @@ const NPC_RIDE_CHOICE: i32 = 1;
 /// the edge's `to` among the packed same-`loc_id` rub edges — the
 /// `switch_int($choice)` case order the bake emitted (the dueling ring's
 /// only sibling answers 1). Npc hops (and jewellery hops without a
-/// teleport list) fall back to the modal's FIRST choice.
-fn jewellery_choice(leg: &Leg, teleports: Option<&[TransportEdge]>) -> i32 {
-    let Some(edges) = teleports else {
-        return NPC_RIDE_CHOICE;
-    };
+/// teleport list) fall back to the modal's FIRST choice. Spirit-tree dest
+/// pages use the same rule among same-`loc_id`/`at` packed siblings.
+fn dest_dialog_choice(
+    leg: &Leg,
+    teleports: Option<&[TransportEdge]>,
+    packed: Option<&[TransportEdge]>,
+) -> i32 {
     let Leg::Transport { edge } = leg else {
         return NPC_RIDE_CHOICE;
     };
-    if edge.kind != TransportKind::Teleport || edge.loc_id <= 0 {
+    let siblings = match edge.kind {
+        TransportKind::Teleport if edge.loc_id > 0 => teleports,
+        TransportKind::SpiritTree => packed,
+        _ => return NPC_RIDE_CHOICE,
+    };
+    let Some(list) = siblings else {
         return NPC_RIDE_CHOICE;
-    }
-    edges
-        .iter()
-        .filter(|e| e.kind == TransportKind::Teleport && e.loc_id == edge.loc_id)
+    };
+    list.iter()
+        .filter(|e| e.kind == edge.kind && e.loc_id == edge.loc_id)
+        .filter(|e| edge.kind != TransportKind::SpiritTree || e.at == edge.at)
         .position(|e| e.to == edge.to)
         .map(|i| i as i32 + 1)
         .unwrap_or(NPC_RIDE_CHOICE)
+}
+
+/// Joined chat option texts: a new dest-list page is a different key
+/// than the spirit-tree "Where can I go?" gate that opened it.
+fn chat_page_key(snapshot: &GameSnapshot) -> String {
+    snapshot
+        .chat_options()
+        .iter()
+        .map(|o| o.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The chat choice this hop presses on the current option page.
+/// Jewellery dests and Npc fare use [`dest_dialog_choice`]. Adult spirit
+/// trees (`spirit_tree.rs2` ent / stronghold_ent) put "No thanks, old
+/// tree." first on a 2-option page; dest-index 1 there silently drops
+/// the hop. The 2-option page answers 2 ("Where can I go?"); the 3-option
+/// dest list then uses packed sibling order. The young tree (loc 1317)
+/// is a single "Yes please." / "No thank you." — choice 1 rides.
+fn hop_dialog_choice(
+    leg: &Leg,
+    teleports: Option<&[TransportEdge]>,
+    packed: Option<&[TransportEdge]>,
+    n_options: usize,
+) -> i32 {
+    let Leg::Transport { edge } = leg else {
+        return NPC_RIDE_CHOICE;
+    };
+    if edge.kind == TransportKind::SpiritTree {
+        return spirit_tree_choice(leg, edge, packed, n_options);
+    }
+    dest_dialog_choice(leg, teleports, packed)
+}
+
+fn spirit_tree_choice(
+    leg: &Leg,
+    edge: &TransportEdge,
+    packed: Option<&[TransportEdge]>,
+    n_options: usize,
+) -> i32 {
+    let n_dests = spirit_tree_dest_count(edge, packed);
+    if n_dests == 1 {
+        return NPC_RIDE_CHOICE;
+    }
+    if n_options >= 3 {
+        return dest_dialog_choice(leg, None, packed);
+    }
+    2
+}
+
+fn spirit_tree_dest_count(edge: &TransportEdge, packed: Option<&[TransportEdge]>) -> usize {
+    let Some(list) = packed else {
+        return 0;
+    };
+    let mut dests: Vec<WorldTile> = Vec::new();
+    for e in list {
+        if e.kind == TransportKind::SpiritTree && e.loc_id == edge.loc_id && !dests.contains(&e.to)
+        {
+            dests.push(e.to);
+        }
+    }
+    dests.len()
+}
+
+/// `glidermap` (interface.pack 802): dest IF_BUTTON children of
+/// `if_openmain(glidermap)` in `gnome_glider.rs2`.
+const GLIDER_MAP_ROOT: i32 = 802;
+
+/// Packed glider `to` → `glidermap:com_21`..=`com_25` (interface.pack
+/// 824..=828). Pad tiles match `GLIDER_PADS` / `GLIDER_HUB` in transport.rs.
+const GLIDER_DEST_BUTTONS: &[(WorldTile, i32)] = &[
+    (
+        WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        },
+        824,
+    ), // gandius — com_21
+    (
+        WorldTile {
+            x: 2465,
+            z: 3501,
+            level: 3,
+        },
+        825,
+    ), // ta_quir_priw — com_22
+    (
+        WorldTile {
+            x: 2850,
+            z: 3497,
+            level: 0,
+        },
+        826,
+    ), // sindarpos — com_23
+    (
+        WorldTile {
+            x: 3320,
+            z: 3430,
+            level: 0,
+        },
+        827,
+    ), // lemanto_andra — com_24
+    (
+        WorldTile {
+            x: 3284,
+            z: 3211,
+            level: 0,
+        },
+        828,
+    ), // kar_hewo — com_25
+];
+
+/// The glidermap dest button for a Glider hop's `to`, if that landing is
+/// one of the five Gnome Air pads. Other kinds (boat `ship_journey`) have
+/// no dest IF_BUTTON.
+fn dest_map_component(edge: &TransportEdge) -> Option<i32> {
+    if edge.kind != TransportKind::Glider {
+        return None;
+    }
+    GLIDER_DEST_BUTTONS
+        .iter()
+        .find(|(to, _)| *to == edge.to)
+        .map(|(_, id)| *id)
 }
 
 /// The outcome of sending a packed teleport hop's op.
@@ -1907,15 +2204,15 @@ enum TransportTarget<'s> {
 
 /// The snapshot target for a transport edge: the edge's `loc_id` within
 /// 3 tiles of `edge.at` for loc edges ([`find_transport_loc`]), or the
-/// edge's npc type id within 3 tiles of `edge.at` for
-/// [`TransportKind::Npc`] edges (the m8aq `gap <= 3`), nearest first.
+/// edge's npc type id within [`NPC_SEARCH_RADIUS`] of `edge.at` for
+/// [`TransportKind::Npc`] edges ([`NPC_SEARCH_RADIUS`], nearest first).
 /// An Npc edge's `loc_id` is the npc.pack type id, matched against the
 /// live NPC's `r#type`.
 fn find_transport_target<'s>(
     snapshot: &'s GameSnapshot,
     edge: &TransportEdge,
 ) -> Option<TransportTarget<'s>> {
-    if edge.kind == TransportKind::Npc {
+    if npc_backed(edge) {
         snapshot
             .npcs()
             .iter()
@@ -1923,7 +2220,7 @@ fn find_transport_target<'s>(
                 npc.r#type == Some(edge.loc_id as usize) && npc.tile.level == edge.at.level
             })
             .map(|npc| (npc, cheb(npc.tile, edge.at)))
-            .filter(|(_, gap)| *gap <= 3)
+            .filter(|(_, gap)| *gap <= NPC_SEARCH_RADIUS)
             .min_by_key(|(_, gap)| *gap)
             .map(|(npc, _)| TransportTarget::Npc(npc))
     } else {
@@ -1933,26 +2230,57 @@ fn find_transport_target<'s>(
 
 /// Send the transport hop's interact for the edge's target kind: an
 /// `op_loc` for loc edges, an `op_npc` for `TransportKind::Npc` edges,
-/// both with the edge's `option`.
+/// both with the edge's `option`. `option` 0 on a loc hop uses the first
+/// `item_req` obj on the loc (`oplocu` — unequippable knife on a web).
 fn interact_transport<'t>(
+    snapshot: &'t GameSnapshot,
     ix: &mut Interactions<'t>,
     target: TransportTarget<'t>,
-    option: i32,
+    edge: &TransportEdge,
 ) -> SendResult<'t> {
     match target {
-        TransportTarget::Loc(loc) => ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(option)),
-        TransportTarget::Npc(npc) => ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(option)),
+        TransportTarget::Loc(loc) if uses_held_on_loc(edge) => {
+            let id = edge.item_req[0].0;
+            match snapshot.inventory().iter().find(|it| it.def.id == id) {
+                Some(item) => ix.use_item_on(item, OpTarget::Loc(loc)),
+                None => SendResult::Refused {
+                    tick: snapshot.tick() as u64,
+                    reason: SendReason::StaleTarget,
+                },
+            }
+        }
+        TransportTarget::Loc(loc) => {
+            ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(edge.option))
+        }
+        TransportTarget::Npc(npc) => {
+            ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(edge.option))
+        }
     }
+}
+
+/// Knife-on-web: `option` 0 + an `item_req` means `oplocu`, not `oploc1`.
+fn uses_held_on_loc(edge: &TransportEdge) -> bool {
+    edge.option == 0 && !edge.item_req.is_empty()
 }
 
 /// The block message's target word for an edge: "npc" for
 /// [`TransportKind::Npc`] edges, "loc" for every loc-targeted kind.
 fn target_word(edge: &TransportEdge) -> &'static str {
-    if edge.kind == TransportKind::Npc {
+    if npc_backed(edge) {
         "npc"
     } else {
         "loc"
     }
+}
+
+/// Dock sailors / cart drivers: `loc_id` is the npc.pack type. Boat was
+/// packed as `TransportKind::Boat` with that id; looking it up as a loc
+/// (Port Sarim seaman 378) is why live Follow died on the pier.
+fn npc_backed(edge: &TransportEdge) -> bool {
+    matches!(
+        edge.kind,
+        TransportKind::Npc | TransportKind::Boat | TransportKind::Glider
+    )
 }
 
 /// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
@@ -1973,14 +2301,17 @@ fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option
 
 /// Whether a transport hop drives the script's chat dialogs itself: an
 /// Npc hop's `opnpc1` opens the ride's chat (the cart fare, Elkoy's
-/// escort), a jewellery rub opens its destination choice, and the Shantay
-/// henge's gated branch (loc 4031 `oploc1` in `shantay_pass.rs2`) shows
-/// the pass handover (`~chatnpc`/`~objbox`/`~chatplayer`, each a
+/// escort), a jewellery rub opens its destination choice, a spirit tree's
+/// `oploc1` opens the dest dialog (`spirit_tree.rs2`: "Where can I go?"
+/// then the sibling list, or the young tree's "Yes please."), and the
+/// Shantay henge's gated branch (loc 4031 `oploc1` in `shantay_pass.rs2`)
+/// shows the pass handover (`~chatnpc`/`~objbox`/`~chatplayer`, each a
 /// `p_pausebutton` chat modal) before consuming the pass and teleporting.
 /// A plain door hop never opens chat, and the toll gates' branch choices
 /// differ (their follow is not driven here).
 fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
-    edge.kind == TransportKind::Npc
+    npc_backed(edge)
+        || edge.kind == TransportKind::SpiritTree
         || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
         || (edge.kind == TransportKind::Door && edge.loc_id == SHANTAY_HENGE_LOC_ID)
 }
@@ -2872,6 +3203,44 @@ mod tests {
         c.bump_gens(ServerProt::IF_OPENCHAT);
     }
 
+    /// `if_openmain(glidermap)` with one dest IF_BUTTON (com_21..=25).
+    fn plant_glider_map(c: &mut Client, dest_com: i32) {
+        c.chat_modal_id = -1;
+        c.main_modal_id = super::GLIDER_MAP_ROOT;
+        c.set_iface(
+            super::GLIDER_MAP_ROOT as usize,
+            IfType {
+                id: super::GLIDER_MAP_ROOT,
+                r#type: ComponentType::TYPE_LAYER,
+                width: 512,
+                height: 334,
+                children: Some(vec![dest_com]),
+                child_x: Some(vec![0]),
+                child_y: Some(vec![0]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            dest_com as usize,
+            IfType {
+                id: dest_com,
+                layer_id: super::GLIDER_MAP_ROOT,
+                r#type: ComponentType::TYPE_MODEL,
+                width: 59,
+                height: 81,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            dest_com as usize,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_OK,
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+    }
+
     fn plant_door_at(c: &mut Client, open: bool, scene_x: i32, scene_z: i32) {
         let id = if open { 1531 } else { 1530 };
         {
@@ -3242,6 +3611,94 @@ mod tests {
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
     }
 
+    /// Agility forcemove holds the player after they land on `to`. Completing
+    /// the hop on the first arrived poll sends the next walk into a locked
+    /// player (live Yanille ledge: Dropped at 2580,9512 aiming 2580,9501).
+    /// Packed `edge.ticks` is the anim delay; stay on the hop until it elapses.
+    #[test]
+    fn follow_agility_shortcut_waits_packed_ticks_after_landing() {
+        let mut c = scene_client();
+        plant_ladder(&mut c, Some("Climb"));
+        let mut snap = snap_at(&mut c, 1, 4);
+        let mut rec = FollowRec {
+            route: Some((1, 4)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let mut edge = ladder_edge();
+        edge.kind = TransportKind::AgilityShortcut;
+        edge.ticks = 4;
+        let dest = edge.to;
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 4.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "approach/interact"
+        );
+        plant_player(&mut c, 2, 5);
+        bump_rebuild(&mut c, &mut snap);
+        for i in 0..3 {
+            assert!(
+                t.follow(&mut rec, &snap, route.clone(), &mut options)
+                    .is_none(),
+                "still on the anim delay after landing poll {i}"
+            );
+        }
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => assert_eq!(at, dest),
+            other => panic!("expected Arrived after packed ticks, got {other:?}"),
+        }
+    }
+
+    /// Unequippable knife: the packed web hop is `option` 0 + `item_req`
+    /// knife, so follow must `oplocu` (USEHELD_ONLOC), never Slash.
+    #[test]
+    fn follow_web_knife_edge_uses_the_held_knife_on_the_loc() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
+        plant_inv_item(&mut c, 946);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let mut edge = door_edge();
+        edge.loc_id = 733;
+        edge.option = 0;
+        edge.item_req = vec![(946, 1)];
+        edge.open_loc_id = Some(734);
+        let dest = edge.to;
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions::default();
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 3, 0);
+            },
+        );
+        assert!(
+            matches!(outcome, TravelOutcome::Arrived { at } if at == dest),
+            "got {outcome:?}"
+        );
+        assert_eq!(rec.loc_ops, 0, "Slash oploc1 is the worn-blade hop");
+        assert_eq!(rec.loc_uses, 1, "oplocu the knife on the web");
+    }
+
     #[test]
     fn follow_npc_edge_sends_op_npc_and_arrives() {
         // Task 2: a `TransportKind::Npc` edge (cart, essence wizard,
@@ -3287,6 +3744,439 @@ mod tests {
     }
 
     #[test]
+    fn follow_boat_edge_ops_the_seaman_npc_not_a_loc() {
+        // Port Sarim → Musa is `TransportKind::Boat` with loc_id = npc 378.
+        // Looking it up as a loc is the live "loc 378 not within 3 tiles"
+        // fail; the hop must OP_NPC1 the sailor.
+        let mut c = scene_client();
+        plant_npc_ops(&mut c, 378, 1, 1, "Seaman Thresnor", &["Talk-to"]);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let mut edge = cart_edge();
+        edge.kind = TransportKind::Boat;
+        edge.loc_id = 378;
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 9.0,
+        };
+        let mut options = TravelOptions::default();
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 100, 0);
+            },
+        );
+        assert!(matches!(outcome, TravelOutcome::Arrived { .. }));
+        assert_eq!(rec.npc_ops, 1, "Talk-to the seaman");
+        assert_eq!(rec.loc_ops, 0, "a Boat edge is not a loc");
+    }
+
+    #[test]
+    fn follow_disembark_plank_ops_the_boat_side_loc() {
+        // After set_sail the player is on the Musa deck (2956,3143,1).
+        // The Boat edge must not swallow the gangplank: Cross loc 2082
+        // at (2956,3144,1) lands on the dock (2956,3146,0).
+        let mut c = scene_client();
+        plant_loc(&mut c, 2082, "Gangplank", "Cross", 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let dock = WorldTile {
+            x: 3201,
+            z: 3203,
+            level: 0,
+        };
+        let edge = TransportEdge {
+            kind: TransportKind::Ladder,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: dock,
+            loc_id: 2082,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: dock,
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions::default();
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 1, 3);
+            },
+        );
+        assert!(matches!(outcome, TravelOutcome::Arrived { .. }));
+        assert_eq!(rec.loc_ops, 1, "Cross the boat-side gangplank");
+        assert_eq!(rec.npc_ops, 0);
+    }
+
+    #[test]
+    fn dest_dialog_choice_indexes_spirit_tree_siblings() {
+        let village = WorldTile {
+            x: 2542,
+            z: 3169,
+            level: 0,
+        };
+        let varrock = WorldTile {
+            x: 2542,
+            z: 3168,
+            level: 0,
+        };
+        let tree = |to| TransportEdge {
+            kind: TransportKind::SpiritTree,
+            at: WorldTile {
+                x: 2461,
+                z: 3444,
+                level: 0,
+            },
+            to,
+            loc_id: 1293,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        };
+        let packed = [tree(village), tree(varrock)];
+        let leg = Leg::Transport {
+            edge: packed[1].clone(),
+        };
+        assert_eq!(
+            super::dest_dialog_choice(&leg, None, Some(&packed)),
+            2,
+            "the second dest of the same tree is choice 2"
+        );
+        // Adult tree dest 1 (village) on the 2-option gate is "No thanks,
+        // old tree." — that is the silent drop. The gate answers 2.
+        let village_leg = Leg::Transport {
+            edge: packed[0].clone(),
+        };
+        assert_eq!(
+            super::hop_dialog_choice(&village_leg, None, Some(&packed), 2),
+            2,
+            "gate page is Where can I go?, never dest-index 1"
+        );
+        assert_eq!(
+            super::hop_dialog_choice(&leg, None, Some(&packed), 3),
+            2,
+            "dest page uses packed sibling order"
+        );
+        let mut young = [tree(village)];
+        young[0].loc_id = 1317;
+        let young_leg = Leg::Transport {
+            edge: young[0].clone(),
+        };
+        assert_eq!(
+            super::hop_dialog_choice(&young_leg, None, Some(&young), 2),
+            1,
+            "young tree Yes please"
+        );
+    }
+
+    #[test]
+    fn dest_map_component_is_the_glidermap_button_for_the_pad() {
+        let mut edge = cart_edge();
+        edge.kind = TransportKind::Glider;
+        edge.loc_id = 170;
+        edge.to = WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        };
+        assert_eq!(
+            super::dest_map_component(&edge),
+            Some(824),
+            "gandius is glidermap:com_21"
+        );
+        edge.kind = TransportKind::Boat;
+        assert_eq!(
+            super::dest_map_component(&edge),
+            None,
+            "ship_journey has no dest IF_BUTTON"
+        );
+    }
+
+    #[test]
+    fn follow_glider_answers_talk_then_presses_the_map_dest() {
+        // Gnome Air: Talk-to the pilot, first chat choice ("Can you take
+        // me on the glider?"), then IF_BUTTON the packed dest on
+        // glidermap — never dest-index chat and never Close Window.
+        let mut c = scene_client();
+        plant_npc_ops(&mut c, 170, 1, 1, "Gnome pilot", &["Talk-to"]);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let gandius = WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        };
+        let mut edge = cart_edge();
+        edge.kind = TransportKind::Glider;
+        edge.loc_id = 170;
+        edge.to = gandius;
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: gandius,
+            ticks: 4.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.npc_ops, 1, "Talk-to the pilot");
+        plant_choice_dialog(
+            &mut c,
+            &[
+                "Can you take me on the glider?",
+                "Why are gliders better than other transport?",
+                "Sorry, I don't want anything now.",
+            ],
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![101],
+            "first chat choice, not a dest index"
+        );
+        plant_glider_map(&mut c, 824);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![101, 824],
+            "glidermap dest is IF_BUTTON 824 (gandius)"
+        );
+        plant_player(&mut c, -229, -231); // world (2971, 2969)
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => assert_eq!(at, gandius),
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+    }
+
+    /// `gnome_glider.rs2` lands at `map_findsquare($dest, 0, 1,
+    /// lineofwalk)` — chebyshev 1, never the pad exactly when the pad is
+    /// occupied. Live Kar-Hewo Expired on (3285,3211) aiming (3284,3211)
+    /// because the hop used the runner's exact `close_enough`.
+    #[test]
+    fn follow_glider_arrives_within_map_findsquare_radius_1() {
+        let mut c = scene_client();
+        plant_npc_ops(&mut c, 170, 1, 1, "Gnome pilot", &["Talk-to"]);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let pad = WorldTile {
+            x: 3284,
+            z: 3211,
+            level: 0,
+        };
+        let mut edge = cart_edge();
+        edge.kind = TransportKind::Glider;
+        edge.loc_id = 170;
+        edge.to = pad;
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: pad,
+            ticks: 4.0,
+        };
+        let mut options = TravelOptions {
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        plant_choice_dialog(
+            &mut c,
+            &[
+                "Can you take me on the glider?",
+                "Why are gliders better than other transport?",
+                "Sorry, I don't want anything now.",
+            ],
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        plant_glider_map(&mut c, 828);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        plant_player(&mut c, 85, 11); // world (3285, 3211), cheb 1 of the pad
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => assert_eq!(
+                at,
+                WorldTile {
+                    x: 3285,
+                    z: 3211,
+                    level: 0
+                }
+            ),
+            other => panic!("expected Arrived within radius 1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn follow_spirit_tree_answers_gate_then_second_dest() {
+        // Adult spirit tree (`spirit_tree.rs2` ent): mesbox continues,
+        // then "No thanks" / "Where can I go?", then the 3 dests.
+        // Dest-index 1 on the gate page returns without a telejump.
+        let mut c = scene_client();
+        plant_loc(&mut c, 1293, "Spirit tree", "Talk-to", 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let at = WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        };
+        let village = WorldTile {
+            x: 2542,
+            z: 3169,
+            level: 0,
+        };
+        let varrock = WorldTile {
+            x: 3179,
+            z: 3507,
+            level: 0,
+        };
+        let khazard = WorldTile {
+            x: 2555,
+            z: 3259,
+            level: 0,
+        };
+        let tree = |to| TransportEdge {
+            kind: TransportKind::SpiritTree,
+            at,
+            to,
+            loc_id: 1293,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+        };
+        let packed = [tree(village), tree(varrock), tree(khazard)];
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: packed[1].clone(),
+            }],
+            dest: varrock,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            edges: Some(&packed),
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1, "oploc1 the tree");
+        plant_continue_dialog(&mut c);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.pause_buttons, 1, "mesbox continue");
+        plant_choice_dialog(&mut c, &["No thanks, old tree.", "Where can I go?"]);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![102],
+            "gate answers Where can I go? (choice 2), not No thanks"
+        );
+        plant_choice_dialog(
+            &mut c,
+            &[
+                "Tree Gnome Village.",
+                "Forest north of Varrock.",
+                "Battlefield of Khazard.",
+            ],
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.if_button_components,
+            vec![102, 102],
+            "dest page answers Forest north of Varrock (choice 2)"
+        );
+        plant_player(&mut c, -21, 307);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, varrock);
+            }
+            other => panic!("expected Arrived, got {other:?}"),
+        }
+        assert_eq!(rec.if_buttons, 2, "gate and dest, never re-pressed");
+    }
+
+    #[test]
     fn follow_approaches_an_npc_before_interacting() {
         // The game only accepts an interact from adjacent: starting 3
         // tiles away from the driver NPC, `follow` must first walk to the
@@ -3324,6 +4214,52 @@ mod tests {
             .follow(&mut rec, &snap, route.clone(), &mut options)
             .is_none());
         assert_eq!(rec.npc_ops, 1, "one OP_NPC1 once adjacent");
+        plant_player(&mut c, 100, 0);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { .. })
+        ));
+    }
+
+    /// Packed `at` is the pier spawn, not a leash. Live Musa customs
+    /// wander; talking from cheb-1 of the spawn while the officer is
+    /// four tiles away is `I can't reach that!`. Approach the live tile.
+    #[test]
+    fn follow_npc_edge_approaches_the_live_tile_when_the_driver_wandered() {
+        let mut c = scene_client();
+        plant_driver_npc(&mut c, 7, 5, 1); // world (3205, 3201), 4 tiles east of packed at
+        let mut snap = snap_at(&mut c, 1, 1); // packed cart_edge.at
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport { edge: cart_edge() }],
+            dest: WorldTile {
+                x: 3300,
+                z: 3200,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.npc_ops, 0, "do not Talk-to from the packed spawn");
+        assert!(
+            !rec.walked.is_empty(),
+            "walk toward the live NPC, got {:?}",
+            rec.walked
+        );
+        plant_player(&mut c, 4, 1);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.npc_ops, 1, "Talk-to once adjacent to the wanderer");
         // The cart carries the player to `edge.to`: the run arrives.
         plant_player(&mut c, 100, 0);
         bump_rebuild(&mut c, &mut snap);
@@ -3344,7 +4280,7 @@ mod tests {
 
     #[test]
     fn follow_npc_edge_blocks_when_the_driver_is_out_of_scene() {
-        // No NPC of the edge's type within 3 of `at`: the hop waits out
+        // No NPC of the edge's type within search radius of `at`: the hop waits out
         // its loc budget and reports `Blocked`, never a loc-shaped lookup
         // against a phantom loc id.
         let mut c = scene_client();
@@ -5032,9 +5968,9 @@ mod tests {
     }
 
     #[test]
-    fn follow_refuses_when_the_walk_send_is_rejected() {
+    fn follow_retries_a_near_tile_when_the_far_hop_is_unreachable() {
         let mut c = scene_client();
-        let mut snap = snap_at(&mut c, 0, 0);
+        let snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
             route: Some((0, 0)),
             reject_far: true,
@@ -5054,27 +5990,19 @@ mod tests {
                 z: 3204,
                 level: 0,
             },
-            ticks: 2.0, // 4 run steps at 0.5 ticks each
+            ticks: 2.0,
         };
         let mut options = TravelOptions::default();
-        // The driver rejects the multi-tile hop: `Interactions::walk`
-        // refuses with `Unreachable`, and follow reports it verbatim.
-        let outcome = drive(
-            &mut t,
-            &mut rec,
-            &mut c,
-            &mut snap,
-            &route,
-            &mut options,
-            |_| {},
+        // The driver rejects a multi-tile hop: follow walks the index
+        // back to the adjacent tile (the v1 traveller's fallback).
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.walked.last().copied(),
+            Some((0, 1)),
+            "the adjacent tile is the fallback hop"
         );
-        assert!(matches!(
-            outcome,
-            TravelOutcome::Refused {
-                reason: SendReason::Unreachable,
-                ..
-            }
-        ));
     }
 
     #[test]
@@ -5292,6 +6220,8 @@ mod tests {
     struct FollowRec {
         walked: Vec<(i32, i32)>,
         loc_ops: usize,
+        /// `USEHELD_ONLOC` (oplocu): the web-knife arm.
+        loc_uses: usize,
         npc_ops: usize,
         /// Held-item ops (OP_HELD1..=5): the jewellery rub arm's press.
         held_ops: usize,
@@ -5309,6 +6239,7 @@ mod tests {
         fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, _c: i32) {
             match action {
                 MiniMenuAction::OP_LOC1 => self.loc_ops += 1,
+                MiniMenuAction::USEHELD_ONLOC => self.loc_uses += 1,
                 MiniMenuAction::OP_NPC1
                 | MiniMenuAction::OP_NPC2
                 | MiniMenuAction::OP_NPC3
@@ -5481,6 +6412,81 @@ mod tests {
     }
 
     #[test]
+    fn follow_click_ahead_sends_the_next_hop_before_exact_stand() {
+        // Mid-hop: standing Chebyshev 2 from the current aim must send
+        // the next walk on the same poll (no extra tick of standing).
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let tiles: Vec<(i32, i32)> = (0..40).map(|z| (3200, 3200 + z)).collect();
+        let route = Route {
+            legs: vec![walk_leg(&tiles)],
+            dest: WorldTile {
+                x: 3200,
+                z: 3239,
+                level: 0,
+            },
+            ticks: 19.5,
+        };
+        let mut options = TravelOptions {
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        let first = rec.walked.len();
+        assert_eq!(first, 1, "the opening hop went out");
+        // 15-tile aim from (3200,3200) is z=15; stand at z=13 (cheb 2).
+        plant_player(&mut c, 0, 13);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert!(
+            rec.walked.len() > first,
+            "click-ahead must send the next hop at cheb 2, got {}",
+            rec.walked.len()
+        );
+    }
+
+    #[test]
+    fn pick_aim_in_scene_clips_a_hop_that_would_leave_the_104() {
+        let tiles: Vec<WorldTile> = (0..120)
+            .map(|z| WorldTile {
+                x: 3200,
+                z: 3200 + z,
+                level: 0,
+            })
+            .collect();
+        let here = WorldTile {
+            x: 3200,
+            z: 3290,
+            level: 0,
+        };
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 104,
+            height: 104,
+            collision_flags: vec![],
+        };
+        let (aim, _) = super::pick_aim_in_scene(&tiles, here, 0, &scene);
+        let lz = aim.z - scene.base_z;
+        assert!(
+            (0..104).contains(&lz),
+            "clipped aim must stay in the loaded scene, lz={lz}"
+        );
+        assert!(aim.z > here.z, "still aims forward");
+    }
+
+    #[test]
     fn level_change_transport_requires_proximity_to_to() {
         // Regression: a level-changing transport completes only when the
         // player is within `close_enough` of `to` on the destination level
@@ -5540,7 +6546,7 @@ mod tests {
             tries: 0,
             troll: false,
             chat_seq: 0,
-            dialog_answered: false,
+            dialog_page: None,
             approach: None,
         });
         // The player is on the destination level (1) but far from `to`:
