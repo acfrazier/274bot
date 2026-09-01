@@ -3304,7 +3304,13 @@ mod tests {
                 id: 601,
                 layer_id: 600,
                 r#type: ComponentType::TYPE_INV,
-                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                iop: [
+                    Some("Withdraw 1".into()),
+                    Some("Withdraw 5".into()),
+                    Some("Withdraw 10".into()),
+                    Some("Withdraw All".into()),
+                    None,
+                ],
                 ..Default::default()
             },
         );
@@ -3379,22 +3385,55 @@ mod tests {
             "the seeded booth loc carries the Use-quickly op"
         );
         let out_before = c.out.pos;
-        assert!(dispatch_script_interact(
-            &mut c,
-            &snap,
-            Some(&names),
-            Some((3205, 3205, 0)),
-            &navs,
-            &world,
-            None,
-            "alice",
-            vec![
-                script::shim::InteractReq::OpenBooth { x: 3205, z: 3206, level: 0 },
-                script::shim::InteractReq::Deposit { name: "Bones".into() },
-                script::shim::InteractReq::Withdraw { name: "Bones".into(), action: "Withdraw-All".into() },
-                script::shim::InteractReq::Close,
-            ],
-        ));
+        // Each op must send on its own, not be masked by the others:
+        // open-booth (Use-quickly), bank-side Deposit-All, a withdraw by
+        // name whose hyphenated label resolves to the seeded "Withdraw All"
+        // op, and close. `dispatch_script_interact` returns whether the
+        // driver's out buffer was written.
+        for (label, req) in [
+            (
+                "open-booth",
+                script::shim::InteractReq::OpenBooth {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+            ),
+            (
+                "deposit",
+                script::shim::InteractReq::Deposit {
+                    name: "Bones".into(),
+                },
+            ),
+            (
+                "withdraw",
+                script::shim::InteractReq::Withdraw {
+                    name: "Bones".into(),
+                    action: "Withdraw-All".into(),
+                },
+            ),
+            ("close", script::shim::InteractReq::Close),
+        ] {
+            let before = c.out.pos;
+            assert!(
+                dispatch_script_interact(
+                    &mut c,
+                    &snap,
+                    Some(&names),
+                    Some((3205, 3205, 0)),
+                    &navs,
+                    &world,
+                    None,
+                    "alice",
+                    vec![req],
+                ),
+                "{label} must dispatch"
+            );
+            assert!(
+                c.out.pos > before,
+                "{label} must write the driver (masked by the other ops?)"
+            );
+        }
         assert!(
             c.out.pos > out_before,
             "open + deposit + withdraw + close wrote to the driver"
