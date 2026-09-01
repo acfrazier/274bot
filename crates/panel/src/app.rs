@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::window::{self, Gpu, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
-    ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder, DockNodeFlags,
+    ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder, DockNodeFlags,
     DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, TreeNodeFlags, Ui,
     WindowClass, WindowFlags,
 };
@@ -172,15 +172,17 @@ struct LiveStress {
 /// Headed `script_<name>` watch. The shared `ScenarioRunner` lives on the
 /// `Session` (the slot thread ticks it); this struct only mirrors the
 /// last-reported step for progress lines and latches the terminal state.
+/// PASS → the caller exits 0; FAIL → exit 1. A terminal shot holds either
+/// exit until the capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
 struct LiveScript {
     name: String,
     passed: bool,
     failed: Option<String>,
     last_step: Option<(usize, usize)>,
-    /// FAIL terminal-shot drain: the instant the runner first reported
-    /// `Failed` while a terminal shot was armed. The watch keeps pumping
+    /// Terminal-shot drain: the instant the runner first reported a
+    /// terminal status while a shot was armed. The watch keeps pumping
     /// (returning `None`) until the shot writes or [`NAV_FULL_SHOT_DRAIN`]
-    /// lapses, so a FAIL screenshot lands before exit 1.
+    /// lapses, so the screenshot lands before the process exits.
     drain_started: Option<Instant>,
 }
 
@@ -675,12 +677,33 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
     None
 }
 
+/// Hold a terminal-shot exit until `pump_shots` writes (or the drain
+/// lapses). Returns true while the caller must keep pumping.
+fn hold_terminal_shot(live: &mut LiveScript, wants: bool, wrote_shots: usize) -> bool {
+    if !wants {
+        return false;
+    }
+    let held = match live.drain_started {
+        Some(t0) => t0.elapsed() >= NAV_FULL_SHOT_DRAIN,
+        // The frame the terminal status is first seen: the request is
+        // already in `shot_state`, but `pump_shots` ran before this tick,
+        // so the write needs at least one more frame.
+        None => false,
+    };
+    if !held && wrote_shots == 0 {
+        if live.drain_started.is_none() {
+            live.drain_started = Some(Instant::now());
+        }
+        return true;
+    }
+    false
+}
+
 /// Headed script watch: mirror the shared `ScenarioRunner` each frame.
-/// PASS prints the JSON evidence record and keeps the window open (visual
-/// debug); FAIL prints the record and returns the message (the caller
-/// exits 1, the existing live FAIL contract). When the runner armed a
-/// terminal shot, a FAIL holds the exit until the capture writes (or
-/// [`NAV_FULL_SHOT_DRAIN`] lapses), so the FAIL screenshot lands too.
+/// PASS prints the JSON evidence record and latches `passed` (the caller
+/// exits 0); FAIL prints the record and returns the message (exit 1).
+/// When the runner armed a terminal shot, either outcome holds until the
+/// capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
 fn live_script_tick(
     live: &mut LiveScript,
     session: &mut Session,
@@ -702,25 +725,16 @@ fn live_script_tick(
     };
     match status {
         Some(scenario::RunnerStatus::Passed) => {
+            if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
+                return None;
+            }
             println!("PASS: live {} {}", live.name, record(&evidence));
             live.passed = true;
             None
         }
         Some(scenario::RunnerStatus::Failed(msg)) => {
-            if wants_terminal_shot {
-                let held = match live.drain_started {
-                    Some(t0) => t0.elapsed() >= NAV_FULL_SHOT_DRAIN,
-                    // The frame the failure is first seen: the request is
-                    // already in `shot_state`, but `pump_shots` ran before
-                    // this tick, so the write needs at least one more frame.
-                    None => false,
-                };
-                if !held && wrote_shots == 0 {
-                    if live.drain_started.is_none() {
-                        live.drain_started = Some(Instant::now());
-                    }
-                    return None;
-                }
+            if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
+                return None;
             }
             eprintln!("FAIL: live {} {}", live.name, record(&evidence));
             live.failed = Some(msg.clone());
@@ -1881,6 +1895,9 @@ fn nav_settings_window(ui: &Ui, session: &mut Session) {
                     nav.hop_label_px = clamp_hop_label_px(nav.hop_label_px);
                     changed = true;
                 }
+                if ui.checkbox("camera follow", &mut nav.camera_follow) {
+                    changed = true;
+                }
             }
 
             ui.spacing();
@@ -1909,15 +1926,25 @@ fn nav_settings_window(ui: &Ui, session: &mut Session) {
     session.nav_settings_open = open;
 }
 
-/// `#RRGGBB` field for one nav paint colour. The raw string is stored;
-/// the paint side falls back through `parse_html_color` when invalid.
+/// Nav paint colour: imgui color-edit (preview square opens the picker)
+/// plus hex display. The stored string stays `#RRGGBB`.
 fn nav_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
-    ui.set_next_item_width(110.0);
-    ui.input_text(format!("{label}##nav-color-{label}"), color)
-        .hint("#RRGGBB")
-        .chars_uppercase(true)
-        .chars_no_blank(true)
-        .build()
+    let [r, g, b] = crate::nav_settings::parse_html_color(color, [0xff, 0xff, 0xff]);
+    let mut rgb = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+    ui.set_next_item_width(148.0);
+    let edited = ui
+        .color_edit3_config(format!("{label}##nav-color-{label}"), &mut rgb)
+        .display_mode(ColorDisplayMode::Hex)
+        .build();
+    if edited {
+        *color = format!(
+            "#{:02X}{:02X}{:02X}",
+            (rgb[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (rgb[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (rgb[2] * 255.0).round().clamp(0.0, 255.0) as u8
+        );
+    }
+    edited
 }
 
 /// parameters: uncollapses the selected compiled script's default key/value
@@ -2929,6 +2956,9 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 // green, leave with 0.
                 std::process::exit(0);
             }
+            LiveHarness::Script(s) if s.passed => {
+                std::process::exit(0);
+            }
             _ => {}
         }
     }
@@ -3452,10 +3482,10 @@ mod tests {
         c
     }
 
-    /// Headed contract: PASS keeps the window open (returns `None`),
+    /// Headed contract: PASS latches `passed` (the caller exits 0),
     /// FAIL returns the message the caller turns into exit 1.
     #[test]
-    fn live_script_tick_keeps_window_open_on_pass_and_reports_fail() {
+    fn live_script_tick_latches_pass_and_reports_fail() {
         use scenario::{
             Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
             Wait,
@@ -3507,7 +3537,7 @@ mod tests {
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),
             None,
-            "PASS keeps the window open"
+            "PASS latches; the caller exits 0"
         );
         assert!(live.passed);
 
@@ -3609,6 +3639,67 @@ mod tests {
         let msg = live_script_tick(&mut live, &mut s, 1).expect("FAIL after the shot writes");
         assert!(live.failed.is_some());
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
+    }
+
+    /// A terminal-shot PASS holds the exit until the shot writes, then
+    /// latches `passed` so the caller exits 0.
+    #[test]
+    fn live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes() {
+        use scenario::{
+            Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
+            Wait,
+        };
+        let mut s = crate::session::Session::new();
+        let pass = Scenario {
+            name: "t",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 5;
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 5 },
+                    budget_ticks: 5,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 5 },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        };
+        let mut runner = ScenarioRunner::new(pass);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.set_terminal_shot("t-pass");
+        {
+            let mut c = script_client();
+            runner.tick(&mut c);
+            c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+            runner.tick(&mut c);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        *s.scenario.lock().unwrap() = Some(runner);
+        let mut live = LiveScript {
+            name: "script_t".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, 0),
+            None,
+            "the first PASS frame holds so the shot can land"
+        );
+        assert!(!live.passed);
+        assert!(live.drain_started.is_some());
+        assert_eq!(live_script_tick(&mut live, &mut s, 1), None);
+        assert!(live.passed, "PASS after the shot writes; caller exits 0");
     }
 
     fn smoke_at(started: Instant) -> LiveSmoke {

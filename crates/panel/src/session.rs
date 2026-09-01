@@ -31,7 +31,7 @@ use host_play::{
     open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
 };
 use nav::paint::{
-    collision_at_with, hull_targets, reached, remaining_path_tiles, remaining_trail,
+    collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
     select_draw_indices, trail_tones, TrailTone,
 };
 use nav::router::{find_with, FindOptions, Route};
@@ -42,7 +42,7 @@ use nav::WorldState;
 use vault::{Profile, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
-use crate::nav_settings::{effective, parse_html_color, NavSettings};
+use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -215,27 +215,7 @@ pub fn debug_dest_cheats() -> &'static [DebugDest] {
 
 /// `setstat <skill> 99` for the skills `[debugproc,maxme]` advances.
 pub fn debug_maxme_cheats() -> &'static [&'static str] {
-    &[
-        "setstat attack 99",
-        "setstat defence 99",
-        "setstat strength 99",
-        "setstat hitpoints 99",
-        "setstat ranged 99",
-        "setstat prayer 99",
-        "setstat magic 99",
-        "setstat cooking 99",
-        "setstat woodcutting 99",
-        "setstat fletching 99",
-        "setstat fishing 99",
-        "setstat firemaking 99",
-        "setstat crafting 99",
-        "setstat smithing 99",
-        "setstat mining 99",
-        "setstat herblore 99",
-        "setstat agility 99",
-        "setstat thieving 99",
-        "setstat runecraft 99",
-    ]
+    api::interact::MAXME_SETSTATS
 }
 
 /// Engine `::tele` body for a WalkTo tile.
@@ -368,15 +348,29 @@ const SCENE_TILES: i32 = 104;
 /// the client only projects the locs inside its loaded scene anyway.
 const HULL_WINDOW: usize = 48;
 
+/// Prefer the live-scenario Follow/Walk route when this slot is the
+/// driven client. WalkTo's `WalkArm` is only the fallback — a `--live
+/// script_nav_*` follow never writes that map, so painting from it
+/// alone drops the red baked path even with the toggle on.
+fn live_or_walk_paint(
+    driven: bool,
+    live: (Option<Route>, Option<WorldTile>),
+    walk: (Option<Route>, Option<WorldTile>),
+) -> (Option<Route>, Option<WorldTile>) {
+    if driven && live.0.is_some() {
+        live
+    } else {
+        walk
+    }
+}
+
 /// Per-frame nav-paint mirror: the slot threads read it each observe to
 /// publish the focused drawing slot's scene paint.
-/// [`Session::pump_status`] re-copies it from `Session::ui.nav` +
-/// `nav_live_force_layers` every UI frame, so modal edits and live-overlay
-/// flips land within a frame.
+/// [`Session::pump_status`] re-copies it from `Session::nav_overlay` (live)
+/// or `Session::ui.nav` every UI frame.
 #[derive(Clone, Default)]
 struct NavPublishCfg {
     settings: NavSettings,
-    live_force_layers: bool,
 }
 
 /// Publish the nav-debug scene paint for the focused drawing slot each
@@ -536,6 +530,10 @@ fn publish_nav_debug(
                     scene_z: h.at.z - base_z,
                 })
                 .collect();
+            paint.labels = hop_captions(route, here)
+                .into_iter()
+                .map(|c| (c.at.x - base_x, c.at.z - base_z, c.text))
+                .collect();
         }
     }
     // Trail: client trail tones (two-tone while running). `show_nav_path`
@@ -555,6 +553,51 @@ fn publish_nav_debug(
     }
     client.set_nav_debug_paint(Some(paint));
 }
+
+/// Ease orbit yaw toward the remaining path (host-write, no client opcode).
+/// Desired heading is held until it moves ≥ `TARGET_RETARGET_MIN` so a
+/// corridor does not twitch; ease velocity is ours, not the keycam field
+/// (`follow_camera` would double-integrate it).
+fn apply_path_camera(client: &mut Client, route: Option<&Route>, here: Option<WorldTile>) {
+    if client.shell.key_held[1] == 1 || client.shell.key_held[2] == 1 {
+        return;
+    }
+    let Some(route) = route else {
+        return;
+    };
+    let Some(here) = here else {
+        return;
+    };
+    let tiles = remaining_path_tiles(route, Some(here));
+    if tiles.is_empty() {
+        return;
+    }
+    let world: Vec<_> = tiles.iter().map(|p| p.tile).collect();
+    let hops: Vec<_> = tiles.iter().map(|p| p.transport).collect();
+    let Some(sampled) = nav::camera::path_facing_yaw(here, &world, &hops, 12) else {
+        return;
+    };
+    let mut hold = PATH_CAM.lock().unwrap();
+    hold.desired = Some(nav::camera::hold_desired(hold.desired, sampled));
+    let Some(target) = hold.desired else {
+        return;
+    };
+    let (yaw, v) = nav::camera::ease_yaw(client.orbit_camera_yaw, target, hold.vel);
+    hold.vel = v;
+    client.orbit_camera_yaw = yaw;
+    // Keycam must not also integrate our ease velocity.
+    client.orbit_camera_yaw_velocity = 0;
+}
+
+struct PathCamHold {
+    desired: Option<i32>,
+    vel: f32,
+}
+
+static PATH_CAM: Mutex<PathCamHold> = Mutex::new(PathCamHold {
+    desired: None,
+    vel: 0.0,
+});
 
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
@@ -624,8 +667,11 @@ pub struct Session {
     /// Chooser ✕ waiting on the same confirm popup; `None` not pending.
     pub pending_profile_delete: Option<String>,
     pub delete_understood: bool,
-    /// Live-harness overlay: force the paint-layer toggles on for this
-    /// session without writing prefs (`NavSettings::effective`).
+    /// Live-harness overlay: the scenario's `NavSettings` for this session
+    /// without writing prefs. `None` = operator `ui.nav`.
+    pub nav_overlay: Option<NavSettings>,
+    /// @deprecated alias kept so tests that still name the force bool
+    /// compile during the overlay swap — prefer [`Session::nav_overlay`].
     pub nav_live_force_layers: bool,
     /// Per-frame nav-paint mirror the slot threads publish from each
     /// observe (see [`publish_nav_debug`]); `pump_status` re-copies it
@@ -770,6 +816,7 @@ impl Session {
             vault_reset_understood: false,
             pending_profile_delete: None,
             delete_understood: false,
+            nav_overlay: None,
             nav_live_force_layers: false,
             nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
             route_gen: 0,
@@ -1036,10 +1083,9 @@ impl Session {
         self.focus.lock().unwrap().only_render_selected = view.only_render_selected;
         self.set_capture(view.capture);
         self.set_live_full_rate(view.full_rate);
-        // A nav_debug scenario forces the paint-layer toggles on for the
-        // run. The force lives on the session only — never ui_state::save'd
-        // — so a live boot cannot clobber the operator's nav prefs.
-        self.nav_live_force_layers = view.nav_debug;
+        // Scenario nav bag is session-only — never ui_state::save'd.
+        self.nav_overlay = Some(from_scenario(&view.nav));
+        self.nav_live_force_layers = view.nav.show_nav_path;
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
         let mut runner = scenario::ScenarioRunner::new(scenario);
@@ -1089,19 +1135,22 @@ impl Session {
                 // Nav-debug scene paint: only the focused drawing slot
                 // publishes; a slot that stops drawing stores None so a
                 // stale paint cannot linger.
-                let (nav_settings, live_force) = {
-                    let cfg = nav_publish.lock().unwrap();
-                    (cfg.settings.clone(), cfg.live_force_layers)
-                };
-                let layers = effective(&nav_settings, live_force);
+                let layers = nav_publish.lock().unwrap().settings.clone();
                 let drawing = focused.as_deref() == Some(name) && draw;
-                let (route, click) = match travellers.lock().unwrap().get(name).cloned() {
+                let walk = match travellers.lock().unwrap().get(name).cloned() {
                     Some(arm) => {
                         let arm = arm.lock().unwrap();
                         (arm.route.clone(), arm.traveller.current_aim())
                     }
                     None => (None, None),
                 };
+                let (driven, live) = match scenario.lock().unwrap().as_ref() {
+                    Some(runner) if runner.drives(name) => {
+                        (true, (runner.armed_route().cloned(), runner.current_aim()))
+                    }
+                    _ => (false, (None, None)),
+                };
+                let (route, click) = live_or_walk_paint(driven, live, walk);
                 match crate::picker::pack() {
                     Some(world) => {
                         let here = c.local_player.as_ref().map(|lp| WorldTile {
@@ -1139,6 +1188,9 @@ impl Session {
                             &layers,
                             drawing,
                         );
+                        if drawing && layers.camera_follow {
+                            apply_path_camera(c, route.as_ref(), here);
+                        }
                     }
                     None => c.set_nav_debug_paint(None),
                 }
@@ -1274,6 +1326,7 @@ impl Session {
                         // the same way).
                         close_enough: 0,
                         teleports: world.as_ref().map(|w| w.graph.teleports.as_slice()),
+                        edges: world.as_ref().map(|w| w.graph.edges.as_slice()),
                         ..TravelOptions::default()
                     };
                     let outcome = arm.traveller.follow(c, &snapshot, route, &mut options);
@@ -1646,9 +1699,15 @@ impl Session {
     /// UI frame so a modal edit or live-overlay flip lands within a frame.
     fn sync_nav_publish(&self) {
         *self.nav_publish.lock().unwrap() = NavPublishCfg {
-            settings: self.ui.nav.clone(),
-            live_force_layers: self.nav_live_force_layers,
+            settings: self.effective_nav(),
         };
+    }
+
+    /// Live overlay when a scenario armed one, else the operator prefs.
+    pub fn effective_nav(&self) -> NavSettings {
+        self.nav_overlay
+            .clone()
+            .unwrap_or_else(|| self.ui.nav.clone())
     }
 
     /// Game window `.build()` Some/None. Closing the pane turns capture off
@@ -2559,7 +2618,13 @@ fn temp_live_vault_from<S: AsRef<str>>(entries: &[(S, S)], uid_base: i32) -> Pat
                 username: user.as_ref().into(),
                 password: pass.as_ref().into(),
                 uid: uid_base + i as i32,
-                settings: vault::ProfileSettings::default(),
+                settings: vault::ProfileSettings {
+                    // Relog leaves run_client when !ingame; auto_login
+                    // keeps want_login armed so the FIFO handshakes again
+                    // instead of sitting on the title ("logging in…").
+                    auto_login: true,
+                    ..vault::ProfileSettings::default()
+                },
             })
             .unwrap();
     }
@@ -2623,9 +2688,10 @@ impl Drop for Session {
 mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
-        is_local_engine, maybe_send_click, parse_getvar_line, publish_nav_debug, script_active,
-        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        stream_capture, walkto_tele_cmd, Session, SlotIo, WalkArm,
+        is_local_engine, live_or_walk_paint, maybe_send_click, parse_getvar_line,
+        publish_nav_debug, script_active, script_pause_enabled, script_status_text,
+        script_stop_enabled, seed_on_first_world, stream_capture, walkto_tele_cmd, Session, SlotIo,
+        WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -2650,6 +2716,26 @@ mod tests {
     use vault::{Profile, ProfileSettings, Vault};
 
     use crate::nav_settings::{effective, NavSettings};
+
+    #[test]
+    fn live_follow_route_wins_over_empty_walkto_arm() {
+        let dest = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        let live_route = Route {
+            legs: vec![Leg::Walk { tiles: vec![dest] }],
+            dest,
+            ticks: 1.0,
+        };
+        let (route, click) =
+            live_or_walk_paint(true, (Some(live_route.clone()), Some(dest)), (None, None));
+        assert_eq!(route.unwrap().dest, dest);
+        assert_eq!(click, Some(dest));
+        let (route, _) = live_or_walk_paint(true, (None, None), (None, None));
+        assert!(route.is_none(), "no live route falls back to WalkTo");
+    }
 
     #[test]
     fn is_local_engine_is_loopback_only() {
@@ -2866,8 +2952,15 @@ mod tests {
     fn focused_slot_publishes_scene_collision_for_loaded_map() {
         let mut c = paint_client();
         let world = walled_world();
-        // Live-harness layers force collision_fill + nsew_labels on.
-        let layers = effective(&NavSettings::default(), true);
+        // Collision + NSEW on so face bits publish (the live overlay no
+        // longer forces NSEW).
+        let layers = NavSettings {
+            collision_fill: true,
+            nsew_labels: true,
+            show_nav_path: true,
+            hop_labels: true,
+            ..NavSettings::default()
+        };
         let route = Route {
             legs: vec![Leg::Walk {
                 tiles: vec![
@@ -3196,7 +3289,11 @@ mod tests {
             graph: TransportGraph::default(),
         };
         let mut c = paint_client();
-        let layers = effective(&NavSettings::default(), true);
+        let layers = NavSettings {
+            collision_fill: true,
+            nsew_labels: true,
+            ..NavSettings::default()
+        };
         publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
         let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
         let face_only = paint
@@ -4986,31 +5083,33 @@ mod tests {
             ..Default::default()
         });
         let mut s = Session::new();
-        s.nav_live_force_layers = true;
+        s.nav_overlay = Some(crate::nav_settings::from_scenario(
+            &scenario::nav_test_paints(),
+        ));
         assert!(
-            crate::nav_settings::effective(&s.ui.nav, s.nav_live_force_layers).show_nav_path,
-            "the live force drives the effective paint layers at runtime"
+            s.effective_nav().show_nav_path,
+            "the live overlay drives the effective paint layers at runtime"
         );
         // A save/load roundtrip of the panel prefs must not persist the
-        // forced layer bools: `nav_live_force_layers` is session-only.
+        // overlay bools: `nav_overlay` is session-only.
         let ui = crate::ui_state::load();
         assert!(
             !ui.nav.show_nav_path,
             "forced layers must never reach panel-ui.json"
         );
-        // And a live boot of a nav_debug scenario arms the force without
-        // writing the prefs.
         let mut s = Session::new();
         s.live_prepare_script(scenario::get("nav_door").unwrap())
             .expect("prepare");
         assert!(
-            s.nav_live_force_layers,
-            "nav_debug scenario arms the live overlay"
+            s.nav_overlay
+                .as_ref()
+                .is_some_and(|n| n.show_nav_path && n.collision_fill && n.camera_follow),
+            "nav scenario arms the live overlay"
         );
         let ui = crate::ui_state::load();
         assert!(
             !ui.nav.show_nav_path,
-            "live boot of a nav_debug scenario never writes the prefs"
+            "live boot of a nav scenario never writes the prefs"
         );
     }
 

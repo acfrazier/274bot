@@ -29,6 +29,8 @@ pub struct NavSettings {
     pub color_client: String,
     pub color_client_run_alt: String,
     pub component_flood: bool,
+    /// Ease orbit yaw toward the remaining path (rs2b0t `navCameraFollow`).
+    pub camera_follow: bool,
 }
 
 impl Default for NavSettings {
@@ -53,23 +55,44 @@ impl Default for NavSettings {
             color_client: "#00D4FF".into(),
             color_client_run_alt: "#FFFF00".into(),
             component_flood: false,
+            camera_follow: false,
         }
     }
 }
 
 /// Live harness overlay: when `live_force_layers`, force the paint-layer
 /// toggles on for this session without writing prefs. Teleports and
-/// colours still come from `saved`.
+/// colours still come from `saved`. Prefer a full [`NavSettings`] overlay
+/// from the scenario bag (`Session::nav_overlay`) over this bool.
 pub fn effective(saved: &NavSettings, live_force_layers: bool) -> NavSettings {
     let mut e = saved.clone();
     if live_force_layers {
         e.show_nav_path = true;
         e.collision_fill = true;
-        e.nsew_labels = true;
         e.client_trail = true;
-        e.component_flood = true;
+        e.hop_labels = true;
+        e.camera_follow = true;
     }
     e
+}
+
+/// Map a scenario's session-only nav bag onto panel settings. Colours stay
+/// the rs2b0t Path-paint defaults (the scenario does not author HTML).
+pub fn from_scenario(n: &scenario::ScenarioNav) -> NavSettings {
+    NavSettings {
+        allow_teleports: n.allow_teleports,
+        allow_wilderness: n.allow_wilderness,
+        allow_bank_fetch: false,
+        show_nav_path: n.show_nav_path,
+        hop_labels: n.hop_labels,
+        hop_label_px: n.hop_label_px,
+        collision_fill: n.collision_fill,
+        nsew_labels: n.nsew_labels,
+        client_trail: n.client_trail,
+        component_flood: n.component_flood,
+        camera_follow: n.camera_follow,
+        ..NavSettings::default()
+    }
 }
 
 /// `#RGB` / `#RRGGBB` (leading `#` optional) to RGB bytes; any other
@@ -113,6 +136,12 @@ mod tests {
     use super::{effective, parse_html_color, NavSettings};
 
     #[test]
+    fn html_hex_roundtrips_from_bytes() {
+        assert_eq!(format!("#{:02X}{:02X}{:02X}", 0xff, 0x00, 0x00), "#FF0000");
+        assert_eq!(parse_html_color("#00D4FF", [0, 0, 0]), [0x00, 0xd4, 0xff]);
+    }
+
+    #[test]
     fn defaults_match_rs2b0t_path_paint() {
         let d = NavSettings::default();
         assert!(!d.allow_teleports);
@@ -136,9 +165,11 @@ mod tests {
         assert!(
             e.show_nav_path
                 && e.collision_fill
-                && e.nsew_labels
+                && e.hop_labels
                 && e.client_trail
-                && e.component_flood
+                && e.camera_follow
+                && !e.nsew_labels
+                && !e.component_flood
         );
         assert!(!e.allow_teleports);
         assert!(!e.allow_wilderness);

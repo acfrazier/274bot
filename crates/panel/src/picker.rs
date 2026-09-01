@@ -19,7 +19,7 @@ use nav::router::Route;
 use nav::tile::{chebyshev, Tile};
 use nav::world::NavWorld;
 
-use crate::nav_settings::{effective, parse_html_color, NavSettings};
+use crate::nav_settings::{parse_html_color, NavSettings};
 use crate::session::Session;
 use crate::theme::{ACCENT, TEXT};
 
@@ -577,19 +577,23 @@ pub(crate) fn pack_map_tiles(
     out
 }
 
-/// The focused walk arm's route clone, `None` when nothing is armed.
+/// The focused paint route: live scenario Follow if armed, else WalkTo.
 fn focused_route(session: &Session) -> Option<Route> {
     let name = session.focused_name()?;
-    session
+    let walk = session
         .travellers
         .lock()
         .unwrap()
         .get(&name)
-        .cloned()?
+        .cloned()
+        .and_then(|a| a.lock().unwrap().route.clone());
+    let live = session
+        .scenario
         .lock()
         .unwrap()
-        .route
-        .clone()
+        .as_ref()
+        .and_then(|r| r.drives(&name).then(|| r.armed_route().cloned()).flatten());
+    live.or(walk)
 }
 
 /// `[u8; 3]` to an opaque RGBA float colour for the draw list.
@@ -758,7 +762,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             // The visible tile rectangle and the pack-map paints inside it.
             // Layers paint only these tiles; the bake outside the view is
             // never iterated.
-            let layers = effective(&session.ui.nav, session.nav_live_force_layers);
+            let layers = session.effective_nav();
             let reach_on = reach_bitset(world).is_some();
             let any_layer =
                 layers.collision_fill || layers.show_nav_path || layers.component_flood || reach_on;
