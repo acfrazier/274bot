@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 7, collision origin
+//! Pack format (274V): magic `b"274V"`, version `u8` 8, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
 //! packed walk surface — first the `u8` face byte per tile per level,
 //! four planes, level-major, each `width × height` (row-major z then x),
@@ -26,17 +26,24 @@
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode`] splits them back out
-//! and never indexes them into `at`. The raw flags are not on the v7 wire
+//! and never indexes them into `at`. The raw flags are not on the v8 wire
 //! — the flags sidecar is separate: magic `b"274F"`, version 1, the same
 //! origin/width/height header as the pack, then the level-major u32le flags
-//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). [`decode`]
-//! accepts version 7 only — any earlier stream (v6 packed u16 words
-//! included) is [`PackError::BadVersion`];
+//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). After the edges,
+//! v8 appends the content-derived bank stand table: count u32le, then per
+//! stand a length-prefixed name, the `x/z/level` tile i32le, and the
+//! access (`u8` tag: 0 = [`BankAccess::Booth`] `op` i32le, 1 =
+//! [`BankAccess::Npc`] length-prefixed npc name + `op` i32le + an optional
+//! dialog choice as a presence `u8` then a length-prefixed string), see
+//! [`derive_banks`]. [`decode`] accepts version 8 only — a v7 stream (or
+//! any earlier one, the v6 packed u16 words included) is
+//! [`PackError::BadVersion`];
 //! there is no flags→walk compat load. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v7.
+//! old `.navpack` files; `nav-pack` now writes v8.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::fs;
 use std::io::{self, Cursor, Read};
 use std::path::Path;
 
@@ -56,13 +63,17 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// planes, v5 adds the per-edge worn-item id list `worn_req`, and v6 —
 /// the packed-walk wire — replaces the four u32 flag planes with the
 /// compact packed u16 walk words (no resident u32 flags; the flags
-/// sidecar is separate). v7 — the current wire — splits that u16 walk
+/// sidecar is separate). v7 splits that u16 walk
 /// word into the `u8` face byte per cell plus the packed `SQ_BLOCKED`
-/// bit-plane (9 bits per cell instead of 16). The v4 wire also carries
+/// bit-plane (9 bits per cell instead of 16). v8 — the current wire —
+/// appends the content-derived bank stand table ([`BankStand`], baked by
+/// [`derive_banks`]) after the transport edges; the v4 wire also carries
 /// the spirit-tree (7) and reserved NPC (8) transport kinds on the same
-/// kind byte — no version bump. [`decode`] accepts version 7 only; 6,
+/// kind byte — no version bump. [`decode`] accepts version 8 only; 7, 6,
 /// 5, and older streams are rejected rather than compat-loaded.
-const VERSION: u8 = 7;
+/// Rebake with `nav-pack` over `$ENGINE_DIR/../content/maps` whenever the
+/// Server content changes (new loc/NPC placements, pack bumps).
+const VERSION: u8 = 8;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Flags sidecar format version.
@@ -105,6 +116,35 @@ impl fmt::Display for PackError {
 }
 
 impl std::error::Error for PackError {}
+
+/// One bank stand on the v8 wire: a named interact target — either a
+/// booth loc or a teller NPC — that opens a bank. The router's banking
+/// session walks to `tile` and uses the `access` op on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BankStand {
+    /// The stand's display name ("Bank booth", the teller's NPC name).
+    pub name: String,
+    /// The interact tile (the booth loc tile or the NPC's tile).
+    pub tile: WorldTile,
+    /// How the stand is used.
+    pub access: BankAccess,
+}
+
+/// How a [`BankStand`] is activated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BankAccess {
+    /// A `bankbooth` loc: use `op` on it to open the bank (2 = the
+    /// `Use-quickly` op of `scripts/interface_bank/configs/bank_booth.loc`).
+    Booth { op: i32 },
+    /// A teller NPC: use `op` on the named NPC to open the bank
+    /// (`choose` is the dialog option text when the op itself only starts
+    /// the dialogue, not the bank).
+    Npc {
+        name: String,
+        op: i32,
+        choose: Option<String>,
+    },
+}
 
 /// Serialize `g` to the 274N grid byte format.
 pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
@@ -203,18 +243,26 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
     decode_grid(&bytes)
 }
 
-/// Serialize the whole-world collision + transport graph to the v7 pack
-/// byte format. The graph's `at` index is not stored; [`decode`]
+/// Serialize the whole-world collision + transport graph + bank stand
+/// table to the v8 pack byte format. The graph's `at` index is not
+/// stored; [`decode`]
 /// rebuilds it from the edges. Teleports (kind-4 edges) are written after
-/// the ordinary edges in the same array. The v7 wire (version byte 7)
+/// the ordinary edges in the same array. The v8 wire (version byte 8)
 /// carries the [`WorldCollision`] as the `u8` face bytes per tile per
 /// level (four level-major planes) plus the packed `SQ_BLOCKED`
-/// bit-plane, and the per-edge `worn_req` id list; the raw flags are
+/// bit-plane, the per-edge `worn_req` id list, and the trailing bank
+/// stand table (see [`BankStand`]); the raw flags are
 /// not resident and not on the wire (see the flags sidecar).
-pub fn encode(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
+pub fn encode(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    banks: &[BankStand],
+) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
-        4 + 1 + 12 + 8 + collision.walk.len() + collision.blocked.len() * 8 + 4 + edge_count * 96,
+        4 + 1 + 12 + 8 + collision.walk.len() + collision.blocked.len() * 8 + 4 + edge_count * 96
+            + 4
+            + banks.len() * 48,
     );
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
@@ -247,18 +295,20 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph) -> Vec<u8> {
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
     }
+    write_bank_stands(&mut out, banks);
     out
 }
 
 /// Deserialize the whole-world pack, validating magic, version, and
 /// lengths. The `at` index is rebuilt from the decoded edges; kind-4
 /// (teleport) edges split back into [`TransportGraph::teleports`] and are
-/// excluded from it. Version 7 is the only accepted wire: the collision
+/// excluded from it. Version 8 is the only accepted wire: the collision
 /// decodes as the `u8` face bytes plus the packed `SQ_BLOCKED`
 /// bit-plane with no resident flags (`flags` is
-/// `None` until the sidecar is loaded); any other version — 6, 5, or
-/// older — is rejected rather than mis-read or compat-loaded.
-pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackError> {
+/// `None` until the sidecar is loaded), and the trailing bank stand table
+/// (see [`BankStand`]) decodes after the edges; any other version — 7, 6,
+/// 5, or older — is rejected rather than mis-read or compat-loaded.
+pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
@@ -347,6 +397,7 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackErro
     for (i, e) in graph.edges.iter().enumerate() {
         graph.at.entry(e.at).or_default().push(i);
     }
+    let banks = read_bank_stands(&mut r)?;
     Ok((
         WorldCollision {
             origin,
@@ -359,6 +410,7 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph), PackErro
             flags: None,
         },
         graph,
+        banks,
     ))
 }
 
@@ -549,6 +601,166 @@ fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
         out.push(read_i32(r)?);
     }
     Ok(out)
+}
+
+/// Fewest bytes one [`BankStand`] can occupy on the v8 wire (name len
+/// prefix + empty name + tile + access tag + op) — a preallocation cap.
+const MIN_BANK_BYTES: usize = 4 + 12 + 1 + 4;
+
+/// The `[bankbooth]` block of `scripts/interface_bank/configs/bank_booth.loc`.
+const BANK_BOOTH_CONFIG: &str = "scripts/interface_bank/configs/bank_booth.loc";
+
+/// Write the bank stand table: count u32le, then per stand a
+/// length-prefixed name, the `x/z/level` tile i32le, and the access (u8
+/// tag 0 = Booth `op` i32le, 1 = Npc length-prefixed name + `op` i32le +
+/// an optional dialog choice: presence u8 then a length-prefixed string).
+fn write_bank_stands(out: &mut Vec<u8>, banks: &[BankStand]) {
+    out.extend_from_slice(&(banks.len() as u32).to_le_bytes());
+    for b in banks {
+        write_name(out, &b.name);
+        for v in [b.tile.x, b.tile.z, b.tile.level] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        match &b.access {
+            BankAccess::Booth { op } => {
+                out.push(0);
+                out.extend_from_slice(&op.to_le_bytes());
+            }
+            BankAccess::Npc { name, op, choose } => {
+                out.push(1);
+                write_name(out, name);
+                out.extend_from_slice(&op.to_le_bytes());
+                match choose {
+                    Some(c) => {
+                        out.push(1);
+                        write_name(out, c);
+                    }
+                    None => out.push(0),
+                }
+            }
+        }
+    }
+}
+
+/// Read the bank stand table written by [`write_bank_stands`].
+fn read_bank_stands(r: &mut Cursor<&[u8]>) -> Result<Vec<BankStand>, PackError> {
+    let n = read_u32(r)? as usize;
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let mut out = Vec::with_capacity(n.min(remaining / MIN_BANK_BYTES));
+    for _ in 0..n {
+        let name = read_name(r)?;
+        let tile = WorldTile {
+            x: read_i32(r)?,
+            z: read_i32(r)?,
+            level: read_i32(r)?,
+        };
+        let access = match read_u8(r)? {
+            0 => BankAccess::Booth {
+                op: read_i32(r)?,
+            },
+            1 => {
+                let npc = read_name(r)?;
+                let op = read_i32(r)?;
+                let choose = if read_u8(r)? != 0 {
+                    Some(read_name(r)?)
+                } else {
+                    None
+                };
+                BankAccess::Npc {
+                    name: npc,
+                    op,
+                    choose,
+                }
+            }
+            tag => {
+                return Err(PackError::BadLength(format!(
+                    "unknown bank access tag {tag}"
+                )))
+            }
+        };
+        out.push(BankStand { name, tile, access });
+    }
+    Ok(out)
+}
+
+/// A length-prefixed UTF-8 string (the bank stand name fields).
+fn write_name(out: &mut Vec<u8>, s: &str) {
+    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// Read a length-prefixed UTF-8 string (see [`write_name`]).
+fn read_name(r: &mut Cursor<&[u8]>) -> Result<String, PackError> {
+    let len = read_u32(r)? as usize;
+    let mut buf = vec![0u8; len];
+    r.read_exact(&mut buf).map_err(|_| PackError::Truncated)?;
+    String::from_utf8(buf).map_err(|_| {
+        PackError::BadLength("bank stand name is not UTF-8".into())
+    })
+}
+
+/// Bake the bank stand table from the Server content tree (the maps
+/// dir's parent): the same jm2 LOC pass the collision bake uses
+/// ([`crate::transport`]'s placement reader). Every `bankbooth` loc
+/// placement becomes a [`BankStand::Booth`] stand — named from the
+/// `[bankbooth]` block of `scripts/interface_bank/configs/bank_booth.loc`
+/// and accessed with the Use-quickly op (2, `[oploc2,bankbooth]`). The
+/// closed-booth (`bankboothclosed`) and tutorial (`newbiebankbooth`) loc
+/// ids are never looked up, so they cannot enter the table; NPC teller
+/// stands (`category=bank_teller`) join when a bake parses the jm2 NPC
+/// placements — booth-only for now. Stands sort by tile for a
+/// deterministic wire.
+pub fn derive_banks(content_root: &Path) -> Vec<BankStand> {
+    let ids = crate::transport::loc_ids_by_name(content_root);
+    let Some(&booth_id) = ids.get("bankbooth") else {
+        return Vec::new();
+    };
+    let name = bank_booth_name(content_root);
+    let positions = crate::transport::loc_positions(content_root);
+    let mut banks: Vec<BankStand> = positions
+        .get(&booth_id)
+        .map(|placements| {
+            placements
+                .iter()
+                .map(|p| BankStand {
+                    name: name.clone(),
+                    tile: WorldTile {
+                        x: p.x,
+                        z: p.z,
+                        level: p.level,
+                    },
+                    access: BankAccess::Booth { op: 2 },
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    banks.sort_by_key(|b| (b.tile.level, b.tile.x, b.tile.z));
+    banks
+}
+
+/// The `name=` of the `[bankbooth]` block (the booth loc config's display
+/// name), `"Bank booth"` when the config is missing.
+fn bank_booth_name(content_root: &Path) -> String {
+    let Ok(text) = fs::read_to_string(content_root.join(BANK_BOOTH_CONFIG)) else {
+        return "Bank booth".to_string();
+    };
+    let mut in_block = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            in_block = line == "[bankbooth]";
+            continue;
+        }
+        if in_block {
+            if let Some(v) = line.strip_prefix("name=") {
+                let v = v.trim();
+                if !v.is_empty() {
+                    return v.to_string();
+                }
+            }
+        }
+    }
+    "Bank booth".to_string()
 }
 
 /// All walkable tiles of `grid` on `level`, in row-major (z then x) order.
@@ -1056,9 +1268,10 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{
-        decode, decode_flags_sidecar, decode_grid, encode, encode_flags_sidecar, encode_grid,
-        merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
-        parse_mapsquare_text, parse_passable_locs, walkable_dots, Mapsquare, SQUARE, VERSION,
+        decode, decode_flags_sidecar, decode_grid, derive_banks, encode, encode_flags_sidecar,
+        encode_grid, merge_squares, parse_door_config, parse_door_config_ids,
+        parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, walkable_dots, BankAccess,
+        BankStand, Mapsquare, SQUARE, VERSION,
     };
     use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
@@ -1096,7 +1309,7 @@ mod tests {
     }
 
     #[test]
-    fn v7_pack_has_no_resident_flags() {
+    fn v8_pack_has_no_resident_flags() {
         let flags = vec![0u32; 4 * 2 * 2];
         let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
@@ -1111,15 +1324,15 @@ mod tests {
             blocked,
             flags: None,
         };
-        let bytes = encode(&collision, &TransportGraph::default());
+        let bytes = encode(&collision, &TransportGraph::default(), &[]);
         assert_eq!(bytes[4], VERSION);
-        let (c, _) = decode(&bytes).unwrap();
+        let (c, _, _) = decode(&bytes).unwrap();
         assert!(c.flags.is_none());
         assert_eq!(c.walk.len(), 16);
     }
 
     #[test]
-    fn v7_decode_rejects_v6_and_older() {
+    fn v8_decode_rejects_v7_and_older() {
         let flags = vec![0u32; 4 * 2 * 2];
         let (walk, blocked) = pack_walk(&flags);
         let collision = WorldCollision {
@@ -1134,7 +1347,9 @@ mod tests {
             blocked,
             flags: None,
         };
-        let mut bytes = encode(&collision, &TransportGraph::default());
+        let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+        bytes[4] = 7;
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(7))));
         bytes[4] = 6;
         assert!(matches!(decode(&bytes), Err(PackError::BadVersion(6))));
         bytes[4] = 5;
@@ -1338,8 +1553,8 @@ mod tests {
         graph.at.entry(graph.edges[si].at).or_default().push(si);
         graph.at.entry(graph.edges[ni].at).or_default().push(ni);
 
-        let bytes = encode(&collision, &graph);
-        let (c, g) = decode(&bytes).unwrap();
+        let bytes = encode(&collision, &graph, &[]);
+        let (c, g, _) = decode(&bytes).unwrap();
         assert_eq!(c.origin, collision.origin);
         assert_eq!(c.width, collision.width);
         assert_eq!(c.height, collision.height);
@@ -1377,7 +1592,7 @@ mod tests {
         // A version-2 or version-3 stream (pre-four-plane wire) is
         // rejected, not mis-read: the re-bake immediately rewrites it at
         // the current version. Versions 4, 5, and 6 are rejected too (see
-        // `v7_decode_rejects_v6_and_older`).
+        // `v8_decode_rejects_v7_and_older`).
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
@@ -1395,7 +1610,7 @@ mod tests {
             flags: None,
         };
         let graph = TransportGraph::default();
-        let mut bytes = encode(&collision, &graph);
+        let mut bytes = encode(&collision, &graph, &[]);
         // The version byte sits right after the 4-byte magic.
         bytes[4] = 3;
         assert!(matches!(decode(&bytes), Err(PackError::BadVersion(3))));
@@ -1404,9 +1619,9 @@ mod tests {
     }
 
     #[test]
-    fn v7_roundtrips_worn_req() {
-        // v7 carries the fifth per-edge req list (the worn-item ids) on
-        // the packed-walk wire; no pre-v7 stream decodes.
+    fn v8_roundtrips_worn_req() {
+        // v8 carries the fifth per-edge req list (the worn-item ids) on
+        // the packed-walk wire; no pre-v8 stream decodes.
         let plane = vec![0, 0, 1, 0, 0, 0];
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
@@ -1449,10 +1664,10 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.edges.push(door.clone());
         graph.at.entry(door.at).or_default().push(0);
-        let bytes = encode(&collision, &graph);
-        // The version byte sits right after the 4-byte magic: v7 now.
+        let bytes = encode(&collision, &graph, &[]);
+        // The version byte sits right after the 4-byte magic: v8 now.
         assert_eq!(bytes[4], VERSION);
-        let (c, g) = decode(&bytes).unwrap();
+        let (c, g, _) = decode(&bytes).unwrap();
         assert_eq!(g.edges, graph.edges);
         assert_eq!(g.edges[0].worn_req, vec![772]);
         assert_eq!(g.at, graph.at);
@@ -1891,5 +2106,98 @@ blockwalk=yes
             walk,
             doors: vec![],
         }
+    }
+
+    #[test]
+    fn v8_roundtrips_bank_stands() {
+        // The v8 wire carries the bank stand table after the transport
+        // edges: a booth round-trips its name, tile, and the Use-quickly
+        // op; the NPC variant round-trips its npc name, op, and the
+        // optional dialog choice.
+        let flags = vec![0u32; 4 * 2 * 2];
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 2,
+            height: 2,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let banks = vec![
+            BankStand {
+                name: "Bank booth".into(),
+                tile: WorldTile {
+                    x: 3205,
+                    z: 3441,
+                    level: 0,
+                },
+                access: BankAccess::Booth { op: 2 },
+            },
+            BankStand {
+                name: "Banker".into(),
+                tile: WorldTile {
+                    x: 2810,
+                    z: 3445,
+                    level: 0,
+                },
+                access: BankAccess::Npc {
+                    name: "shilobanker".into(),
+                    op: 3,
+                    choose: Some("I'd like to access my bank account, please.".into()),
+                },
+            },
+        ];
+        let bytes = encode(&collision, &TransportGraph::default(), &banks);
+        assert_eq!(bytes[4], VERSION);
+        let (c, g, out) = decode(&bytes).unwrap();
+        assert_eq!(out, banks);
+        assert_eq!(c.walk, collision.walk);
+        assert!(g.edges.is_empty());
+    }
+
+    #[test]
+    fn bake_emits_bankbooth_use_quickly_only() {
+        // The bake derives booth stands from the same content loc pass as
+        // the collision bake: `bankbooth` placements join the table with
+        // the Use-quickly op (2); the closed booth (`bankboothclosed`) and
+        // the tutorial `newbiebankbooth` never do.
+        let dir = std::env::temp_dir().join(format!("274bot-nav-banks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for sub in ["", "pack", "scripts/interface_bank/configs", "maps"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        std::fs::write(
+            dir.join("pack/loc.pack"),
+            "2213=bankbooth\n2215=bankboothclosed\n3045=newbiebankbooth\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("scripts/interface_bank/configs/bank_booth.loc"),
+            "[bankbooth]\nname=Bank booth\nop2=Use-quickly\n\n[bankboothclosed]\nname=Closed bank booth\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("maps/m50_50.jm2"),
+            "==== MAP ====\n0 0 0: h1 o6 u48\n==== LOC ====\n0 12 32: 2213 10 1\n0 13 32: 2215 10 1\n0 14 32: 3045 10 1\n",
+        )
+        .unwrap();
+        let banks = derive_banks(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(banks.len(), 1, "only the bankbooth placement becomes a stand");
+        assert_eq!(banks[0].name, "Bank booth");
+        assert_eq!(
+            banks[0].tile,
+            WorldTile {
+                x: 50 * 64 + 12,
+                z: 50 * 64 + 32,
+                level: 0,
+            }
+        );
+        assert_eq!(banks[0].access, BankAccess::Booth { op: 2 });
     }
 }

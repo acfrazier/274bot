@@ -373,17 +373,17 @@ fn report(content_root: &Path, graph: &TransportGraph, skipped: &HashMap<&'stati
 // ---------------------------------------------------------------------------
 
 /// One loc placement read from a jm2 file (all levels).
-struct Placement {
-    id: i32,
-    shape: i32,
-    angle: i32,
-    level: i32,
-    x: i32,
-    z: i32,
+pub(crate) struct Placement {
+    pub(crate) id: i32,
+    pub(crate) shape: i32,
+    pub(crate) angle: i32,
+    pub(crate) level: i32,
+    pub(crate) x: i32,
+    pub(crate) z: i32,
 }
 
 /// `pack/loc.pack` id→name lines → name → id (m8aq `locIdsByName`).
-fn loc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
+pub(crate) fn loc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
     pack_ids_by_name(content_root, "loc.pack")
 }
 
@@ -415,7 +415,7 @@ fn pack_ids_by_name(content_root: &Path, file: &str) -> HashMap<String, i32> {
 }
 
 /// All jm2 loc placements grouped by id (m8aq `locPositions`).
-fn loc_positions(content_root: &Path) -> HashMap<i32, Vec<Placement>> {
+pub(crate) fn loc_positions(content_root: &Path) -> HashMap<i32, Vec<Placement>> {
     let mut out: HashMap<i32, Vec<Placement>> = HashMap::new();
     let Ok(entries) = fs::read_dir(content_root.join("maps")) else {
         return out;

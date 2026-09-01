@@ -1,6 +1,7 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
-//! [`WorldCollision`] walk surface plus the transport [`TransportGraph`].
-//! The v7 pack file stores the compact packed walk surface and the
+//! [`WorldCollision`] walk surface plus the transport [`TransportGraph`]
+//! and the content-derived bank stand table ([`crate::pack::BankStand`]).
+//! The v8 pack file stores the compact packed walk surface and the
 //! transport edges, so the Dijkstra router ([`crate::router::find`])
 //! consumes one artifact — live harnesses load this and route on the
 //! packed collision. The legacy 274N grid pack (boolean walk bytes +
@@ -16,7 +17,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode, load_grid, PackError};
+use crate::pack::{decode, load_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -24,23 +25,35 @@ use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 /// (a 274N grid walk byte is boolean; there are no half-open faces to keep).
 const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
 
-/// The whole-world collision + transport graph the router consumes.
+/// The whole-world collision + transport graph + bank stand table the
+/// router consumes.
 pub struct NavWorld {
     pub collision: WorldCollision,
     pub graph: TransportGraph,
+    banks: Vec<BankStand>,
 }
 
 impl NavWorld {
+    /// The baked bank stands ([`BankStand`]) the banking session walks to
+    /// and opens, ordered by tile.
+    pub fn banks(&self) -> &[BankStand] {
+        &self.banks
+    }
+
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
-    /// router's world. Whole-world packs (collision + transport graph)
-    /// load directly; legacy 274N grid packs fall back to
+    /// router's world. Whole-world packs (collision + transport graph +
+    /// bank stands) load directly; legacy 274N grid packs fall back to
     /// [`Self::from_grid`]. The fallback triggers on bad magic only — a
     /// `274V` pack with a stale version stays [`PackError::BadVersion`]
     /// so the operator rebakes.
     pub fn load_pack(path: &Path) -> Result<Self, PackError> {
         let bytes = std::fs::read(path).map_err(PackError::Io)?;
         match decode(&bytes) {
-            Ok((collision, graph)) => Ok(NavWorld { collision, graph }),
+            Ok((collision, graph, banks)) => Ok(NavWorld {
+                collision,
+                graph,
+                banks,
+            }),
             Err(PackError::BadMagic) => Ok(Self::from_grid(&load_grid(path)?)),
             Err(e) => Err(e),
         }
@@ -135,7 +148,11 @@ impl NavWorld {
             });
             graph.at.entry(graph.edges[i].at).or_default().push(i);
         }
-        NavWorld { collision, graph }
+        NavWorld {
+            collision,
+            graph,
+            banks: Vec::new(),
+        }
     }
 }
 
@@ -356,7 +373,7 @@ mod tests {
             blocked,
             flags: None,
         };
-        let mut bytes = encode(&collision, &TransportGraph::default());
+        let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
         bytes[4] = 5;
         let dir = std::env::temp_dir().join(format!(
             "274bot-navworld-v5-{}-{}",
@@ -421,7 +438,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fixture.navpack");
-        std::fs::write(&path, encode(&collision, &graph)).unwrap();
+        std::fs::write(&path, encode(&collision, &graph, &[])).unwrap();
         let w = NavWorld::load_pack(&path).expect("pack loads");
         assert_eq!(w.collision.origin, tile(0, 0, 0));
         assert_eq!(w.collision.walk, collision.walk);
@@ -483,7 +500,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fixture-teles.navpack");
-        std::fs::write(&path, encode(&collision, &graph)).unwrap();
+        std::fs::write(&path, encode(&collision, &graph, &[])).unwrap();
         let w = NavWorld::load_pack(&path).expect("pack loads");
         assert_eq!(w.graph.teleports, graph.teleports);
         assert!(w.graph.edges.is_empty());
@@ -501,6 +518,48 @@ mod tests {
             .unwrap();
         assert_eq!(r.ticks, 3.0);
         assert!(r.legs.iter().any(|l| matches!(l, Leg::Transport { .. })));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_pack_round_trips_bank_stands() {
+        // The v8 pack stores the bank stand table; NavWorld::banks exposes
+        // it to the Banking session.
+        let mut plane = vec![0u32; 4];
+        plane[0] = BLOCKED;
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 2,
+            height: 2,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let banks = vec![crate::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: tile(1, 1, 0),
+            access: crate::pack::BankAccess::Booth { op: 2 },
+        }];
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-navworld-banks-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture-banks.navpack");
+        std::fs::write(
+            &path,
+            encode(&collision, &TransportGraph::default(), &banks),
+        )
+        .unwrap();
+        let w = NavWorld::load_pack(&path).expect("pack loads");
+        assert_eq!(w.banks(), &banks);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
