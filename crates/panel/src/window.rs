@@ -715,7 +715,7 @@ fn to_rgba(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
         wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
     ) {
         let mut rgba = bytes.to_vec();
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
         rgba

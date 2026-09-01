@@ -50,10 +50,10 @@ prompt.
 
 ## Toolchain
 
-Rust **1.97.1** for this tag (`rust-toolchain.toml` in this repo and in
+Rust **1.98.0** for this tag (`rust-toolchain.toml` in this repo and in
 `vendor/fr-client-rust`). GitHub Actions uses the same number, not
-`@stable`. Bump both files and both workflows together in the 0.1.2
-session — do not `rustup update` into a new clippy `-D` set mid-tag.
+`@stable`. Bump both files and both workflows together — do not
+`rustup update` into a new clippy `-D` set mid-tag.
 
 ## Tests
 

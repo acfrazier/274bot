@@ -7,7 +7,9 @@
 //! doors) still loads through [`NavWorld::from_grid`] as a fallback for
 //! old `.navpack` files.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;

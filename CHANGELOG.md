@@ -3,6 +3,10 @@
 All notable public changes to 274bot. Crate versions are `0.1.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.1.2
+
+- Rust **1.98.0** is pinned (`rust-toolchain.toml` + CI, host and client).
+
 ## [0.1.1] — 2026-09-01
 
 Nav **execute**. Headed gold: `panel-play --live script_nav_routes`
