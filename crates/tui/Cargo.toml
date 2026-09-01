@@ -6,6 +6,15 @@ publish = false
 
 [dependencies]
 api = { path = "../api" }
+client = { workspace = true }
 crossterm = "0.29"
+host-play = { path = "../host-play" }
 nav = { path = "../nav" }
 ratatui = "0.30"
+scenario = { path = "../scenario" }
+script = { path = "../script" }
+vault = { path = "../vault" }
+
+[[bin]]
+name = "tui-play"
+path = "src/main.rs"

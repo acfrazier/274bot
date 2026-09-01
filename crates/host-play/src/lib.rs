@@ -24,11 +24,15 @@ use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
+/// The random-event guardian's published status (see [`SlotStatus::random`]
+/// — the chrome contract both the panel and the TUI bind).
+pub use host::{RandomClaim, RandomStatus};
 mod rss;
 mod scatter;
 use api::snapshot::{GameSnapshot, WorldTile};
-use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
-use host::{DetectedRandom, RandomClaim, RandomStatus};
+use host::{
+    should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Pump, SlotInput, SlotPark, SlotWake,
+};
 use nav::router::{find_with, FindOptions, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
@@ -173,6 +177,24 @@ impl WalkArm {
             level: r.dest.level,
         })
     }
+}
+
+/// One operator interaction queued from a view (the TUI) onto a slot.
+/// The slot thread drains the queue in its observe hook through
+/// [`api::interact::Interactions`] on its own `Client` — the same wire
+/// path the scenario runner and the guardian use, so a queued send
+/// respects the same preconditions and lands on the slot's live socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireCmd {
+    /// `Interactions::continue_dialog`: press the chat modal's Continue
+    /// button. Unsticks NPC dialogue the guardian is not handling.
+    Continue,
+    /// `Interactions::answer_choice(option)`: press the chat modal's
+    /// `option`-th BUTTON_OK choice (1-based).
+    Answer(i32),
+    /// `Interactions::walk` to an adjacent world tile (WASD one-step, a
+    /// direct `try_move` — not a routed walk arm).
+    Walk { x: i32, z: i32, level: i32 },
 }
 
 /// Route `from` → `dest` over `world` and latch the found route on the
@@ -423,6 +445,34 @@ fn script_observe(
 /// hop is sent once per server tick, not every 20 ms frame (panel
 /// `tick_latch`).
 type NavStepKey = (u64, Option<(i32, i32, i32)>);
+
+/// Run the queued [`WireCmd`]s through `Interactions` on the slot's own
+/// Driver. `hold` freezes WASD walks (the guardian's hold freezes the
+/// follow too); chat sends still go out so the operator can unstick a
+/// dialog the guardian is not talking through.
+fn dispatch_wires(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    cmds: Vec<WireCmd>,
+    hold: bool,
+) {
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    for cmd in cmds {
+        match cmd {
+            WireCmd::Continue => {
+                ix.continue_dialog();
+            }
+            WireCmd::Answer(option) => {
+                ix.answer_choice(option);
+            }
+            WireCmd::Walk { x, z, level } => {
+                if !hold {
+                    ix.walk(WorldTile { x, z, level });
+                }
+            }
+        }
+    }
+}
 
 /// True when `name`'s slot script is Running — the only state that builds
 /// the per-observe inventory view (the observe re-checks the gate inside).
@@ -741,6 +791,10 @@ pub struct Play {
     /// Per-slot cheat commands the panel queued; each slot thread runs
     /// `api::interact::cheat` on its own Driver and flushes the socket.
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    /// Per-slot wire commands the TUI queued (chat Continue/Answer, WASD
+    /// walk); each slot thread runs them through `Interactions` on its own
+    /// Driver and flushes the socket.
+    wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     /// Per-uid nav bots: `ctx.walk` stores a route in the uid's bot and
     /// the slot pump polls `Traveller::follow` with it one step per
     /// player-info tick. One struct per bot on the pump — no per-bot nav
@@ -781,6 +835,7 @@ impl Play {
             focused: None,
             scripts: Arc::new(Mutex::new(HashMap::new())),
             cheats: Arc::new(Mutex::new(HashMap::new())),
+            wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
             world: NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new),
             wakes: HashMap::new(),
@@ -986,6 +1041,17 @@ impl Play {
         self.wake(user);
     }
 
+    /// Queue a [`WireCmd`] (chat Continue/Answer or a WASD one-tile walk)
+    /// for `user`'s slot: its own thread runs it through `Interactions`
+    /// on the slot's Driver and flushes. No-op when the user is not a
+    /// running slot.
+    pub fn queue_wire(&self, user: &str, cmd: WireCmd) {
+        if let Some(q) = self.wires.lock().unwrap().get_mut(user) {
+            q.push_back(cmd);
+        }
+        self.wake(user);
+    }
+
     /// Stop one running slot: flag its arm `stop`, drop its login-FIFO
     /// place immediately (a queued slot must not keep later slots behind
     /// it even if the thread is still blocked in `wait_for_permit`),
@@ -1006,6 +1072,7 @@ impl Play {
         self.arms.remove(name);
         self.scripts.lock().unwrap().remove(name);
         self.cheats.lock().unwrap().remove(name);
+        self.wires.lock().unwrap().remove(name);
         if self.focused.as_deref() == Some(name) {
             self.focused = None;
         }
@@ -1086,6 +1153,7 @@ impl Play {
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
             Arc::clone(&self.cheats),
+            Arc::clone(&self.wires),
             Arc::clone(&self.navs),
             self.world.clone(),
             Arc::clone(&self.obj_names),
@@ -1215,6 +1283,7 @@ fn spawn_slot_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
@@ -1249,6 +1318,11 @@ fn spawn_slot_thread(
                 .entry(username.clone())
                 .or_default();
             slot_cheats
+                .lock()
+                .unwrap()
+                .entry(username.clone())
+                .or_default();
+            slot_wires
                 .lock()
                 .unwrap()
                 .entry(username.clone())
@@ -1347,6 +1421,7 @@ fn spawn_slot_thread(
                         let slot_statuses = Arc::clone(&slot_statuses);
                         let slot_scripts = Arc::clone(&slot_scripts);
                         let slot_cheats = Arc::clone(&slot_cheats);
+                        let slot_wires = Arc::clone(&slot_wires);
                         let slot_obj_names = Arc::clone(&slot_obj_names);
                         let slot_navs = Arc::clone(&slot_navs);
                         let slot_world = slot_world.clone();
@@ -1452,6 +1527,24 @@ fn spawn_slot_thread(
                                 &slot_world,
                                 status.hold,
                             );
+                            // TUI chat / WASD sends: run the queued wire
+                            // commands through `Interactions` on this
+                            // slot's own Client, so Continue/Answer/Walk
+                            // respect the same preconditions as the
+                            // guardian and the scenario runner. The slot
+                            // must not be frozen by the guardian's hold
+                            // when it presses a dialog the guardian is
+                            // talking through, but a walk while held is
+                            // dropped (the hold freezes the follow too).
+                            let wires = {
+                                let mut all = slot_wires.lock().unwrap();
+                                all.get_mut(name)
+                                    .map(std::mem::take)
+                                    .unwrap_or_default()
+                            };
+                            if !wires.is_empty() {
+                                dispatch_wires(c, &nav_snapshot, wires.into(), status.hold);
+                            }
                             // Per-uid nav step on the pump, gated on the
                             // player-gen/tile latch like the panel's WalkTo
                             // hook so a hop is sent once per server tick,
@@ -1488,6 +1581,11 @@ fn spawn_slot_thread(
                             // the observe hook reports it every frame.
                             script_running(&slot_scripts, name)
                                 || slot_cheats
+                                    .lock()
+                                    .unwrap()
+                                    .get(name)
+                                    .is_some_and(|q| !q.is_empty())
+                                || slot_wires
                                     .lock()
                                     .unwrap()
                                     .get(name)
@@ -2665,6 +2763,113 @@ mod tests {
             play.cheats.lock().unwrap().is_empty(),
             "unknown uid cheat is a no-op"
         );
+        play.queue_wire("ghost", WireCmd::Continue);
+        play.queue_wire(
+            "ghost",
+            WireCmd::Walk {
+                x: 3220,
+                z: 3221,
+                level: 0,
+            },
+        );
+        assert!(
+            play.wires.lock().unwrap().is_empty(),
+            "unknown uid wire is a no-op"
+        );
+    }
+
+    #[test]
+    fn queue_wire_lands_on_the_named_slots_queue() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _| {},
+        );
+        // `auto_login = false` arm sits on the title (no TCP).
+        play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));
+        assert!(
+            wait_until(500, || play.wires.lock().unwrap().contains_key("a")),
+            "the slot thread registers its wire queue at spawn"
+        );
+        play.queue_wire("a", WireCmd::Continue);
+        play.queue_wire("a", WireCmd::Answer(2));
+        let queued = play.wires.lock().unwrap().get("a").unwrap().clone();
+        assert_eq!(
+            queued,
+            VecDeque::from([WireCmd::Continue, WireCmd::Answer(2)]),
+            "queued wires keep their order"
+        );
+        play.stop_slot("a");
+        assert!(
+            !play.wires.lock().unwrap().contains_key("a"),
+            "stop_slot drops the slot's wire queue"
+        );
+    }
+
+    /// `dispatch_wires` is safe on a snapshot with nothing open: the
+    /// Continue/Answer sends refuse (no chat modal) and the driver's out
+    /// buffer stays untouched.
+    #[test]
+    fn dispatch_wires_with_no_modal_stays_quiet() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let snap = GameSnapshot::new();
+        dispatch_wires(
+            &mut c,
+            &snap,
+            vec![WireCmd::Continue, WireCmd::Answer(1)],
+            false,
+        );
+        assert_eq!(c.out.pos, 0, "no chat modal → nothing dispatched");
+    }
+
+    /// A guardian hold drops WASD walks (the follow is frozen too) but
+    /// still lets chat Continue/Answer through.
+    #[test]
+    fn dispatch_wires_drops_walk_while_hold_but_keeps_chat() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let snap = GameSnapshot::new();
+        dispatch_wires(
+            &mut c,
+            &snap,
+            vec![WireCmd::Walk {
+                x: 3220,
+                z: 3221,
+                level: 0,
+            }],
+            true,
+        );
+        assert_eq!(c.out.pos, 0, "hold drops the walk send");
     }
 
     /// Test script that counts ticks into a shared cell (the panel cannot

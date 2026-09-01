@@ -5687,9 +5687,14 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "api",
+ "client",
  "crossterm",
+ "host-play",
  "nav",
  "ratatui",
+ "scenario",
+ "script",
+ "vault",
 ]
 
 [[package]]
