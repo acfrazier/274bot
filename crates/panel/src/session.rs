@@ -1954,6 +1954,38 @@ impl Session {
         true
     }
 
+    /// Persist the focused profile's guardian settings (`random_events`,
+    /// `lamp_skill`, `lamp_auto`) to the vault — the same upsert path as
+    /// auto-login. Never spawns or stops a slot. A running slot picks the
+    /// toggle up at its next spawn (the slot loop reads the profile once).
+    pub fn set_random_settings(
+        &mut self,
+        name: &str,
+        random_events: bool,
+        lamp_skill: &str,
+        lamp_auto: bool,
+    ) -> bool {
+        let Some(vault) = self.vault.as_mut() else {
+            self.error = Some("random: vault locked".into());
+            return false;
+        };
+        let Some(mut profile) = vault.get(name).cloned() else {
+            self.error = Some(format!("random: no profile {name}"));
+            return false;
+        };
+        profile.settings.random_events = random_events;
+        profile.settings.lamp_skill = lamp_skill.to_string();
+        profile.settings.lamp_auto = lamp_auto;
+        match vault.upsert(profile) {
+            Ok(()) => self.error = None,
+            Err(e) => {
+                self.error = Some(format!("random: {e}"));
+                return false;
+            }
+        }
+        true
+    }
+
     /// Game-pane lowmem (General config). Follows the focused slot's
     /// Music/SFX gate — the per-frame driver of the spawned `Client`'s
     /// `config.lowmem` — so the status row can never show "lowmem" while
@@ -5610,6 +5642,49 @@ mod tests {
                 .settings
                 .auto_login
         );
+    }
+
+    #[test]
+    fn set_random_settings_upserts_all_three_fields_without_spawning() {
+        let path = tmp_vault("random-settings.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        assert!(s.set_random_settings("alice", false, "magic", false));
+        let p = s.vault.as_ref().unwrap().get("alice").unwrap();
+        assert!(!p.settings.random_events, "random events persist off");
+        assert_eq!(p.settings.lamp_skill, "magic");
+        assert!(!p.settings.lamp_auto, "lamp auto persists off");
+        assert!(
+            s.slots.is_empty(),
+            "set_random_settings must not spawn a slot"
+        );
+        assert!(s.set_random_settings("alice", true, "strength", true));
+        let p = s.vault.as_ref().unwrap().get("alice").unwrap();
+        assert!(p.settings.random_events);
+        assert_eq!(p.settings.lamp_skill, "strength");
+        assert!(p.settings.lamp_auto);
+    }
+
+    #[test]
+    fn set_random_settings_rejects_unknown_or_locked_vault() {
+        let path = tmp_vault("random-settings-unknown.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        assert!(
+            !s.set_random_settings("nobody", false, "magic", false),
+            "unknown profile must fail"
+        );
+        let mut s = Session::new();
+        assert!(
+            !s.set_random_settings("alice", false, "magic", false),
+            "locked vault must fail"
+        );
+        assert!(s.error.is_some());
     }
 
     #[test]

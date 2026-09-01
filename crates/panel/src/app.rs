@@ -2007,7 +2007,46 @@ fn edit_parameters_enabled() -> bool {
     false
 }
 
-/// status: rs2b0t key/value rows (state, player, tile, modals), wrapped.
+/// `random` status-row value: `dialog: mysterious old man`, plus `(hold)`
+/// while the slot freezes on the event and `(off)` when the profile toggle
+/// is off (toggle-off still detects + publishes). `None` when nothing is
+/// detected — the caller skips the row then.
+fn random_status_text(r: &host::RandomStatus) -> Option<String> {
+    let kind = r.kind?;
+    let mut text = format!(
+        "{}: {}",
+        random_kind_name(kind),
+        r.name.as_deref().unwrap_or("?")
+    );
+    if r.hold {
+        text.push_str(" (hold)");
+    }
+    if !r.toggle {
+        text.push_str(" (off)");
+    }
+    Some(text)
+}
+
+/// Status-row names for the guardian kinds (kebab-case, like the spec's
+/// `evade: swarm` / `lost-tool` rows).
+fn random_kind_name(kind: api::RandomKind) -> &'static str {
+    use api::RandomKind::*;
+    match kind {
+        Dialog => "dialog",
+        Pick => "pick",
+        Evade => "evade",
+        Maze => "maze",
+        Mime => "mime",
+        Box => "box",
+        Lamp => "lamp",
+        Hazard => "hazard",
+        LostTool => "lost-tool",
+        LostGear => "lost-gear",
+    }
+}
+
+/// status: rs2b0t key/value rows (state, player, tile, modals, random),
+/// wrapped.
 fn status_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "status") {
         return;
@@ -2055,6 +2094,9 @@ fn status_section(ui: &Ui, session: &mut Session) {
     let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
     kv_row(ui, "queue", &queue);
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
+    if let Some(random) = random_status_text(&s.random) {
+        kv_row(ui, "random", &random);
+    }
     kv_row(
         ui,
         "mem",
@@ -2756,10 +2798,79 @@ fn settings_window(ui: &Ui, session: &mut Session) {
             config_heading(ui, "render");
             slot_render_section(ui, session);
             ui.spacing();
+            config_heading(ui, "random");
+            slot_random_section(ui, session);
+            ui.spacing();
             config_heading(ui, "global");
             global_config_section(ui, session);
         });
     session.global_settings_open = open;
+}
+
+/// random: the guardian's per-profile toggles + lamp reward settings
+/// (guardian spec `ProfileSettings`). Checkboxes and the skill combo write
+/// straight through the vault upsert (`Session::set_random_settings`); the
+/// lamp itself stays inert until 0.1.5.
+fn slot_random_section(ui: &Ui, session: &mut Session) {
+    let Some(name) = session.focused_name() else {
+        ui.text_wrapped("focus a profile to edit its random-event and lamp settings");
+        return;
+    };
+    let settings = session
+        .vault
+        .as_ref()
+        .and_then(|v| v.get(&name))
+        .map(|p| p.settings.clone())
+        .unwrap_or_default();
+    let mut events = settings.random_events;
+    if ui.checkbox("random events", &mut events) {
+        session.set_random_settings(&name, events, &settings.lamp_skill, settings.lamp_auto);
+    }
+    ui.text_wrapped("talk random events through on this profile. Off: never talk, never hold — still detects and shows the status row.");
+    let mut auto = settings.lamp_auto;
+    if ui.checkbox("lamp auto", &mut auto) {
+        session.set_random_settings(&name, settings.random_events, &settings.lamp_skill, auto);
+    }
+    ui.text_wrapped("claim a lamp reward without a confirmation click (the rub lands in 0.1.5).");
+    let mut skill = settings.lamp_skill.clone();
+    if lamp_skill_combo(ui, &mut skill) {
+        session.set_random_settings(&name, settings.random_events, &skill, settings.lamp_auto);
+    }
+}
+
+/// lamp skill combo: the client skill table (the lamp dialogue's own
+/// names), previewing the current value even when it is not in the list.
+/// Returns true when the pick changes `skill`.
+fn lamp_skill_combo(ui: &Ui, skill: &mut String) -> bool {
+    let presets = lamp_skill_presets();
+    let preview = skill.clone();
+    ui.set_next_item_width(-1.0);
+    let opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+    let mut changed = false;
+    if let Some(_open) = ui.begin_combo_with_flags("##lamp-skill", &preview, opts) {
+        for preset in presets {
+            let selected = preset == skill;
+            let _row = ui.push_style_color(StyleColor::Text, if selected { ACCENT } else { TEXT });
+            if ui.selectable_config(preset).selected(selected).build() {
+                *skill = preset.to_string();
+                changed = true;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    changed
+}
+
+/// The lamp dialogue's skill names from the client skill table, minus the
+/// unused slots.
+fn lamp_skill_presets() -> Vec<&'static str> {
+    client::client::Skill::names
+        .iter()
+        .copied()
+        .filter(|n| !n.starts_with('-'))
+        .collect()
 }
 
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
@@ -3000,9 +3111,9 @@ mod tests {
         apply_only_render_selected, apply_ui_scale, boot_for, capture_key_ch,
         chooser_should_open_popup, clamp_hop_label_px, debug_caption, edit_parameters_enabled,
         game_window_flags, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
-        manual_shot_label, parse_live_args, runner_config, smoke_settled, smoke_should_fire, Boot,
-        LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        manual_shot_label, parse_live_args, random_status_text, runner_config, smoke_settled,
+        smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode,
+        BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -3883,5 +3994,55 @@ mod tests {
         assert_eq!(live_stress_tick(&mut live, &rows), None);
         assert!(live.passed, "50 scene-2 Clients pass");
         assert_eq!(live.last_announced, 50);
+    }
+
+    #[test]
+    fn random_status_text_names_kind_hold_and_off() {
+        let r = host::RandomStatus {
+            kind: Some(api::RandomKind::Dialog),
+            name: Some("mysterious old man".into()),
+            toggle: true,
+            hold: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            random_status_text(&r).as_deref(),
+            Some("dialog: mysterious old man (hold)")
+        );
+        let r = host::RandomStatus {
+            kind: Some(api::RandomKind::Dialog),
+            name: Some("mysterious old man".into()),
+            toggle: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            random_status_text(&r).as_deref(),
+            Some("dialog: mysterious old man (off)")
+        );
+        let r = host::RandomStatus {
+            kind: Some(api::RandomKind::Lamp),
+            name: Some("genie".into()),
+            toggle: true,
+            ..Default::default()
+        };
+        assert_eq!(random_status_text(&r).as_deref(), Some("lamp: genie"));
+        let r = host::RandomStatus::default();
+        assert_eq!(random_status_text(&r), None, "no event, no row");
+    }
+
+    #[test]
+    fn random_status_text_kebab_cases_lost_kinds() {
+        let r = host::RandomStatus {
+            kind: Some(api::RandomKind::LostTool),
+            toggle: true,
+            ..Default::default()
+        };
+        assert_eq!(random_status_text(&r).as_deref(), Some("lost-tool: ?"));
+        let r = host::RandomStatus {
+            kind: Some(api::RandomKind::LostGear),
+            toggle: true,
+            ..Default::default()
+        };
+        assert_eq!(random_status_text(&r).as_deref(), Some("lost-gear: ?"));
     }
 }
