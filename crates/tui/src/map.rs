@@ -143,8 +143,8 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
         match key.code {
             KeyCode::Left | KeyCode::Char('h') => self.pan_by(-1, 0),
             KeyCode::Right | KeyCode::Char('l') => self.pan_by(1, 0),
-            KeyCode::Up | KeyCode::Char('k') => self.pan_by(0, -1),
-            KeyCode::Down | KeyCode::Char('j') => self.pan_by(0, 1),
+            KeyCode::Up | KeyCode::Char('k') => self.pan_by(0, 1),
+            KeyCode::Down | KeyCode::Char('j') => self.pan_by(0, -1),
             KeyCode::Enter => self.confirm(),
             KeyCode::Esc => {
                 self.view.selection = None;
@@ -166,8 +166,9 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
         }
     }
 
-    /// Pan the view by one zoom step; content follows the key (east =
-    /// centre +x, north = centre +z, same as the headed picker).
+    /// Pan the view by one zoom step: the camera follows the key (Right
+    /// east, Up north, Left west, Down south — +x east, +z north), the
+    /// same orientation as the headed picker.
     fn pan_by(&mut self, dx: i32, dz: i32) -> MapAction {
         let step = ZOOMS[self.view.zoom.min(ZOOMS.len() - 1)] as i32;
         self.view.pan.0 += dx * step;
@@ -468,14 +469,16 @@ mod tests {
         assert_eq!(map.view.pan, (1, 0));
         assert_eq!(map.on_key(key(KeyCode::Char('h'))), MapAction::Moved);
         assert_eq!(map.view.pan, (0, 0));
+        // North-up camera: j/down is south (centre -z), k/up is north
+        // (centre +z), mirroring Right = east.
         assert_eq!(map.on_key(key(KeyCode::Char('j'))), MapAction::Moved);
-        assert_eq!(map.view.pan, (0, 1));
+        assert_eq!(map.view.pan, (0, -1));
         assert_eq!(map.on_key(key(KeyCode::Char('k'))), MapAction::Moved);
         assert_eq!(map.view.pan, (0, 0));
         assert_eq!(map.on_key(key(KeyCode::Char('l'))), MapAction::Moved);
         assert_eq!(map.view.pan, (1, 0));
         assert_eq!(map.on_key(key(KeyCode::Up)), MapAction::Moved);
-        assert_eq!(map.view.pan, (1, -1));
+        assert_eq!(map.view.pan, (1, 1));
         assert_eq!(map.on_key(key(KeyCode::Down)), MapAction::Moved);
         assert_eq!(map.view.pan, (1, 0));
 
@@ -490,6 +493,24 @@ mod tests {
             &text[4 * 9 + 3..4 * 9 + 4],
             "@",
             "pan right moves the player left"
+        );
+
+        // Pan north (centre +z): on the north-up buffer the player tile
+        // sinks one row.
+        let mut map = Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0));
+        assert_eq!(map.on_key(key(KeyCode::Char('h'))), MapAction::Moved);
+        assert_eq!(map.view.pan, (0, 0));
+        assert_eq!(map.on_key(key(KeyCode::Char('k'))), MapAction::Moved);
+        assert_eq!(map.view.pan, (0, 1));
+        let text = render(
+            Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0)),
+            9,
+            9,
+        );
+        assert_eq!(
+            &text[5 * 9 + 4..5 * 9 + 5],
+            "@",
+            "pan north moves the player down the buffer"
         );
     }
 
