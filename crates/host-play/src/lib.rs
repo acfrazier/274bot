@@ -30,6 +30,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
 use host::{DetectedRandom, RandomClaim, RandomStatus};
 use nav::router::{find_with, FindOptions, Route};
+use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -149,6 +150,102 @@ pub fn player_world_tile(
     (map_build_base_x + route_x, map_build_base_z + route_z)
 }
 
+/// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
+/// [`Route`] it is following. [`arm_walk_on`] stores the route (found
+/// over the shared [`NavWorld`]); the slot hook polls
+/// [`Traveller::follow`] with a clone of it one step per player-info
+/// tick. `route` being set is the "armed" gate the status row and the
+/// overlay read; any terminal outcome clears it (arrival and stall
+/// alike). Shared by the panel and the TUI so a walk armed from either
+/// view drives the same follow path.
+#[derive(Default)]
+pub struct WalkArm {
+    pub traveller: Traveller,
+    pub route: Option<Route>,
+}
+
+impl WalkArm {
+    /// The armed route's dest as a tile, `None` when idle.
+    pub fn queued_tile(&self) -> Option<Tile> {
+        self.route.as_ref().map(|r| Tile {
+            x: r.dest.x,
+            z: r.dest.z,
+            level: r.dest.level,
+        })
+    }
+}
+
+/// Route `from` → `dest` over `world` and latch the found route on the
+/// focused slot's [`WalkArm`] (keyed by username) when one is named.
+/// `options` carries the caller's nav settings (`allow_teleports` /
+/// `allow_wilderness` / `allow_bank_fetch`); the focused arm's latched
+/// essence-mine session is fed in after — a player inside the mine can
+/// walk out through the exit portal's return hop, a slot with no latch
+/// keeps the mine sealed. `state` gates payable edges: the focused slot's
+/// last published snapshot facts, fail-closed [`WorldState::empty`] when
+/// none. On success the caller's picked dest is stored by the arm's
+/// route; returns `Err` when no path exists (the caller keeps its picked
+/// dest and shows a short error).
+pub fn arm_walk_on(
+    world: &NavWorld,
+    from: Tile,
+    dest: Tile,
+    options: FindOptions,
+    state: &WorldState,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    focused: Option<&str>,
+) -> Result<Route, ()> {
+    let from_w = WorldTile {
+        x: from.x,
+        z: from.z,
+        level: from.level,
+    };
+    let dest_w = WorldTile {
+        x: dest.x,
+        z: dest.z,
+        level: dest.level,
+    };
+    // The focused slot's latched essence-mine session: a player standing
+    // inside the mine can WalkTo out through the exit portal (the router
+    // synthesizes the return hop from the latch). A slot with no latch
+    // stays fail-closed — the mine is sealed, exactly like the packed
+    // graph.
+    let mut options = options;
+    options.essence = focused.and_then(|name| {
+        travellers
+            .lock()
+            .unwrap()
+            .get(name)
+            .and_then(|arm| arm.lock().unwrap().traveller.essence())
+    });
+    let routed = find_with(
+        &world.collision,
+        &world.graph,
+        from_w,
+        dest_w,
+        options,
+        state,
+    );
+    match routed {
+        Ok(route) => {
+            if let Some(name) = focused {
+                let arm = travellers
+                    .lock()
+                    .unwrap()
+                    .entry(name.to_string())
+                    .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
+                    .clone();
+                let mut arm = arm.lock().unwrap();
+                // A fresh arm replaces any in-flight follow run.
+                arm.traveller.clear();
+                arm.route = Some(route.clone());
+            }
+            Ok(route)
+        }
+        Err(_) => Err(()),
+    }
+}
+
 /// Nav pack path: `$NAV_PACK`, else `~/.274bot/274bot.navpack` (same rule
 /// as the panel picker; host-play must not depend on panel).
 pub fn default_pack_path() -> std::path::PathBuf {
@@ -222,7 +319,7 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// (`varp`, `stat_level`, `chat`, `bank`, …); it stays `None` only when
 /// no snapshot was built, and the getters fail closed on it.
 /// `navs`/`world` back the `ctx.walk` and `ctx.walk_with` closures — one
-/// shared arm ([`WalkArm`]) takes the [`FindOptions`] (`walk` passes the
+/// shared arm ([`ScriptWalkArm`]) takes the [`FindOptions`] (`walk` passes the
 /// defaults): the arm refuses synchronously only when there is no tile,
 /// no nav world, or a route already queued; `find_with` runs off-pump on
 /// a short-lived worker per request, storing the route in the uid's nav
@@ -267,7 +364,7 @@ fn script_observe(
                 // default-options adapter (rs2b0t `walk` semantics stay
                 // default-off for teleports and wilderness). Each closure
                 // owns its own clone of the arm.
-                let arm = WalkArm {
+                let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
                     navs: Arc::clone(navs),
@@ -349,11 +446,12 @@ struct NavBot {
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and
-/// `ctx.walk_with` (explicit options) route through [`WalkArm::route`].
-/// Each observe clones the arm once per hook (all fields are `Clone`), so
-/// the two `&mut` hooks never share a mutable borrow.
+/// `ctx.walk_with` (explicit options) route through
+/// [`ScriptWalkArm::route`]. Each observe clones the arm once per hook
+/// (all fields are `Clone`), so the two `&mut` hooks never share a
+/// mutable borrow.
 #[derive(Clone)]
-struct WalkArm {
+struct ScriptWalkArm {
     here: Option<(i32, i32, i32)>,
     world: Option<Arc<NavWorld>>,
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
@@ -364,7 +462,7 @@ struct WalkArm {
     state: Option<WorldState>,
 }
 
-impl WalkArm {
+impl ScriptWalkArm {
     /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
     /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
     /// Refuses synchronously only when there is no player tile, no nav
@@ -1550,7 +1648,9 @@ mod tests {
     use client::config::if_type::ButtonType;
     use client::config::Cache;
     use client::io::ServerProt;
+    use nav::collision::WorldCollision;
     use nav::router::Leg;
+    use nav::tile::Tile;
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
     use vault::ProfileSettings;
 
@@ -2275,6 +2375,92 @@ mod tests {
             player_world_tile(3200, 3200, 22, 20),
             (22 * 128, 20 * 128),
             "must not report scene pixels"
+        );
+    }
+
+    fn open_world(w: usize, h: usize) -> NavWorld {
+        NavWorld {
+            collision: WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: w,
+                height: h,
+                walk: vec![0u8; w * h],
+                blocked: vec![0u64; (w * h).div_ceil(64)],
+                flags: None,
+            },
+            graph: TransportGraph::default(),
+        }
+    }
+
+    /// The shared walk arm (panel `Session::arm_walk_on` is a thin
+    /// wrapper over this; the TUI calls it directly) routes over the
+    /// world and latches the route on the focused uid's arm.
+    #[test]
+    fn arm_walk_on_routes_and_latches_the_focused_arm() {
+        let world = open_world(3, 3);
+        let travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let dest = Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let route = arm_walk_on(
+            &world,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            dest,
+            FindOptions::default(),
+            &WorldState::empty(),
+            &travellers,
+            Some("alice"),
+        )
+        .expect("the open 3x3 world routes");
+        assert_eq!((route.dest.x, route.dest.z, route.dest.level), (2, 2, 0));
+        let all = travellers.lock().unwrap();
+        let arm = all
+            .get("alice")
+            .expect("the focused slot's walk arm exists");
+        assert_eq!(
+            arm.lock().unwrap().queued_tile(),
+            Some(dest),
+            "the arm latches the routed dest"
+        );
+    }
+
+    #[test]
+    fn arm_walk_on_without_focus_latches_no_arm() {
+        let world = open_world(3, 3);
+        let travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        arm_walk_on(
+            &world,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+            FindOptions::default(),
+            &WorldState::empty(),
+            &travellers,
+            None,
+        )
+        .expect("the open 3x3 world routes without a focused slot");
+        assert!(
+            travellers.lock().unwrap().is_empty(),
+            "no focused name to key a walk arm"
         );
     }
 

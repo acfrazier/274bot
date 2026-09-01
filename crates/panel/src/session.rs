@@ -28,15 +28,15 @@ use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
-    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus,
+    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
     select_draw_indices, trail_tones, TrailTone,
 };
-use nav::router::{find_with, FindOptions, Route};
+use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
-use nav::traveller::{TravelOptions, Traveller};
+use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 use vault::{Profile, Vault};
@@ -631,7 +631,7 @@ pub struct Session {
     pub chooser_edit: Option<String>,
     /// Per-username walk arms; the focused slot's arm carries the armed
     /// whole-world route (polled from `start_play` `per_frame` via
-    /// [`Traveller::follow`]).
+    /// [`nav::traveller::Traveller::follow`]).
     pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
     /// Per-username gating facts for WalkTo routing: each slot thread
     /// publishes its live `GameSnapshot` (rebuilt incrementally — views
@@ -725,29 +725,6 @@ pub struct Session {
 
 /// Keep each per-name panel log bounded.
 const LOG_CAP: usize = 200;
-
-/// Per-username walk arm: the whole-world [`Traveller`] plus the [`Route`]
-/// it is following. [`Session::arm_walk_on`] stores the route (found over
-/// the shared `NavWorld`); the slot hook polls [`Traveller::follow`] with a
-/// clone of it one step per player-info tick. `route` being set is the
-/// "armed" gate the status row and the overlay read; any terminal outcome
-/// clears it (arrival and stall alike).
-#[derive(Default)]
-pub struct WalkArm {
-    pub traveller: Traveller,
-    pub route: Option<Route>,
-}
-
-impl WalkArm {
-    /// The armed route's dest as a panel tile, `None` when idle.
-    fn queued_tile(&self) -> Option<Tile> {
-        self.route.as_ref().map(|r| Tile {
-            x: r.dest.x,
-            z: r.dest.z,
-            level: r.dest.level,
-        })
-    }
-}
 
 /// Log bucket for vault errors and lines with no username.
 pub const PROCESS: &str = "*";
@@ -2362,71 +2339,44 @@ impl Session {
     }
 
     /// Arm a walk to `dest` and route it on `world` from `from` (the
-    /// player's observed tile). On `Ok(route)` the focused username's walk
-    /// arm stores the route so the observe tick can step it via
-    /// [`Traveller::follow`]; on `NoPath` only the dest is stored and
-    /// `error` carries a short message. The Nav settings' [`FindOptions`]
-    /// apply: `ui.nav.allow_teleports` unions the any-tile teleport layer
-    /// in and `ui.nav.allow_wilderness` allows entering the wilderness.
-    /// The gating [`WorldState`] is the focused slot's last published
-    /// snapshot facts (see [`Session::nav_states`]); a slot that has not
-    /// published yet falls back to the fail-closed empty state.
+    /// player's observed tile). On a found route the focused username's
+    /// walk arm stores the route so the observe tick can step it via
+    /// [`nav::traveller::Traveller::follow`]; on `NoPath` only the dest is
+    /// stored and `error` carries a short message. The Nav settings'
+    /// [`FindOptions`] apply: `ui.nav.allow_teleports` unions the any-tile
+    /// teleport layer in and `ui.nav.allow_wilderness` allows entering the
+    /// wilderness. The gating [`WorldState`] is the focused slot's last
+    /// published snapshot facts (see [`Session::nav_states`]); a slot that
+    /// has not published yet falls back to the fail-closed empty state.
+    /// The routing and arm latching live in
+    /// [`host_play::arm_walk_on`] (shared with the TUI) — this wrapper
+    /// only stores the picked dest, applies the panel nav settings, and
+    /// reflects the outcome.
     /// Callers that do not know the player's tile fall back to
     /// [`Session::arm_walk`].
     pub fn arm_walk_on(&mut self, world: &NavWorld, from: Tile, dest: Tile) {
         self.walk_dest = Some(dest);
         self.walk_clear.store(false, Ordering::Relaxed);
-        let from_w = WorldTile {
-            x: from.x,
-            z: from.z,
-            level: from.level,
-        };
-        let dest_w = WorldTile {
-            x: dest.x,
-            z: dest.z,
-            level: dest.level,
-        };
+        let name = self.focused_name();
         let state = self.focused_walk_state();
-        // The focused slot's latched essence-mine session: a player
-        // standing inside the mine can WalkTo out through the exit portal
-        // (the router synthesizes the return hop from the latch). A slot
-        // with no latch stays fail-closed — the mine is sealed, exactly
-        // like the packed graph.
-        let essence = self.focused_name().as_deref().and_then(|name| {
-            let travellers = self.travellers.lock().unwrap();
-            travellers
-                .get(name)
-                .and_then(|arm| arm.lock().unwrap().traveller.essence())
-        });
-        let routed = find_with(
-            &world.collision,
-            &world.graph,
-            from_w,
-            dest_w,
+        let routed = host_play::arm_walk_on(
+            world,
+            from,
+            dest,
             FindOptions {
                 allow_teleports: self.ui.nav.allow_teleports,
                 allow_wilderness: self.ui.nav.allow_wilderness,
                 allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-                essence,
+                ..FindOptions::default()
             },
             &state,
+            &self.travellers,
+            name.as_deref(),
         );
         match routed {
-            Ok(route) => {
+            Ok(_) => {
                 self.error = None;
-                if let Some(name) = self.focused_name() {
-                    let arm = self
-                        .travellers
-                        .lock()
-                        .unwrap()
-                        .entry(name.clone())
-                        .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
-                        .clone();
-                    let mut arm = arm.lock().unwrap();
-                    // A fresh arm replaces any in-flight follow run.
-                    arm.traveller.clear();
-                    arm.route = Some(route);
-                    drop(arm);
+                if let Some(name) = name {
                     self.tick_latch.lock().unwrap().remove(&name);
                     // Rising edge: the overlay must paint the new route on
                     // this frame, not after the 1 s raster cadence.
