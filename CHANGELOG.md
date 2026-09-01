@@ -7,6 +7,42 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 
 - Rust **1.98.0** is pinned (`rust-toolchain.toml` + CI, host and client).
 
+### Random-event guardian
+
+- Detect-all + owner: every random kind this rev spawns is named in
+  `RandomStatus`; `ours` is a hard NPC target (`target == self`) or an
+  overhead-name match, no distance-grab.
+- Dialog act: Talk-to + chat continue for genie, drunken dwarf,
+  mysterious old man, sandwich lady, frog — no WalkTo, no fail-teleport.
+- Hold while a dialog is in flight or the slot is trapped (maze / mime /
+  box): script ticks **and** the nav route freeze, then resume latched;
+  `on_random` knock (`RandomClaim::Host` default, no in-tree `Handle`);
+  45 s wrong-talk cooldown per NPC slot.
+- `ProfileSettings.random_events` (default on; off still detects and
+  publishes), `lamp_skill`, `lamp_auto` — the lamp stays inert this tag.
+- Panel status row binds the same `RandomStatus`.
+
+### TUI operator panel
+
+- New `crates/tui`: `tui-play` (ratatui + crossterm) is the headless
+  second view of `host_play::Play` — same slots, raster Off, no GPU.
+- Classic collision-dot map (basemap off) with town pins, You Are Here,
+  and the remaining-walk polyline; Walk-confirm routes via `arm_walk_on`
+  (lifted to host-play), WASD one-tile walks, chat / NPC dialogue
+  Continue/Answer, status + `RandomStatus`, inv / stats / nearby locs,
+  settings popup; script chrome is shape-only.
+- `tui-play --live script_*` runs the same scenarios as `panel-play`;
+  e2e unchanged. TestBackend tests in CI, no GitHub TTY.
+
+### After 0.1.2 (v0.1.5)
+
+- Evade flee, plant pick, maze / mime / strange-box solvers, lamp rub
+  (`lamp_auto`).
+- WalkTo a live NPC tile when Talk-to is out of range.
+- Hitsplat window (`combat_cycle > loop_cycle`) as an extra ours signal.
+- JS / TS shim `on_random` / `EventSignal.pending()`.
+- Per-name ignore list (rs2b0t `setIgnoredRandoms`).
+
 ## [0.1.1] — 2026-09-01
 
 Nav **execute**. Headed gold: `panel-play --live script_nav_routes`

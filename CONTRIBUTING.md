@@ -48,6 +48,11 @@ Save credentials. `--vault-pass` is a **host-play** flag (same as
 `BOT_VAULT_PASS`); the panel reads `BOT_VAULT_PASS` or the in-window
 prompt.
 
+**tui-play** (`cargo run --release -p tui --bin tui-play`) is the
+headless operator panel: ratatui + crossterm, same flags and vault as
+`panel-play`, slots spawn raster Off (no GPU). `--live script_<name>`
+runs the same scenario harness as `panel-play --live`.
+
 ## Toolchain
 
 Rust **1.98.0** for this tag (`rust-toolchain.toml` in this repo and in
@@ -84,6 +89,7 @@ Wait `ingame && scene_state == 2`. Quiet unless `BOT_DEBUG=1`.
 ```bash
 LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
 LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
+LIVE=1 cargo run --release -p tui --bin tui-play -- --live script_nav_door
 ```
 
 Nav / panel / scenario twins live in `crates/e2e`. Login / RSS / null-raster
