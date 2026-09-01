@@ -21,16 +21,16 @@ the three dirs if yours lives elsewhere. Output goes to `$NAV_PACK` or
 parent (`content/scripts/general_use/configs/gates.loc`).
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
-`u16` walk words per tile, row-major z-then-x) plus the derived
-`TransportGraph`. Magic `b"274V"`, version byte **6**. Raw `u32` flags are
-not on the v6 wire; the optional `274F` sidecar holds them for collision
-paint. `decode` accepts version 6 only — v5 and older are
-`BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
+9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
+the derived `TransportGraph`. Magic `b"274V"`, version byte **7**. Raw
+`u32` flags are not on the v7 wire; the optional `274F` sidecar holds
+them for collision paint. `decode` accepts version 7 only — v6 and older
+are `BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
 boolean-walk files.
 
 ## Collision (`nav::collision`)
 
-`WorldCollision { origin, width, height, walk: Vec<u16>, flags: Option<Vec<u32>> }` bakes every
+`WorldCollision { origin, width, height, walk: Vec<u8>, blocked: Vec<u64>, flags: Option<Vec<u32>> }` bakes every
 mapsquare's `MAP fN` land flags and `LOC` placements into the client's
 `CollisionFlag` bitmasks, mirroring the client's `CollisionMap`
 `add_wall`/`add_loc` stamping (walls → per-direction `W_*` faces,
@@ -48,15 +48,18 @@ standable check (`WALK_BLOCK_FLAGS | WALK_SCENERY | WR_GRND == 0`); the
 `areas/` rs2 scripts (`p_telejump`/`p_teleport`/`~climb_ladder`,
 `movecoord` landings), `skill_magic/` teleports, `skill_agility/`
 shortcuts, spirit trees, Shilo↔Brimhaven cart NPC hops, Ardougne
-wilderness levers, Al Kharid toll / Shantay northbound, essence-mine
-wizard **entry**, Elkoy maze escorts, Zanaris shed door with worn Dramen
-req. A `TransportEdge` carries `kind` (Door/Ladder/Stairs/Boat/Teleport/
-AgilityShortcut/Glider/SpiritTree/Npc), `from`/`to`, `loc_id`, the
-1-based menu `option`, `ticks`, and requirement vectors including
-`worn_req`. Spell teleports have no fixed origin: they live on
-`TransportGraph::teleports` and stay out of Dijkstra unless
-`FindOptions::allow_teleports`. Wilderness tiles stay out unless
-`FindOptions::allow_wilderness`. Both default **off**.
+wilderness levers, Al Kharid toll / Shantay **both ways**, essence-mine
+wizard **entry and EssenceSession return**, Elkoy maze escorts, Zanaris
+shed door with worn Dramen req, slashable webs (knife `oplocu` or worn
+slash blade), gnome gliders, and boat NPC + gangplank. A `TransportEdge`
+carries `kind` (Door/Ladder/Stairs/Boat/Teleport/AgilityShortcut/Glider/
+SpiritTree/Npc), `from`/`to`, `loc_id`, the 1-based menu `option`
+(`0` = use first `item_req` on the loc), `ticks`, and requirement
+vectors including `worn_req` (**any-of**). Spell teleports have no fixed
+origin: they live on `TransportGraph::teleports` and stay out of Dijkstra
+unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
+`FindOptions::allow_wilderness`. Both default **off**. `find` also
+fail-closes on live `WorldState`.
 
 ## Router (`nav::router`)
 
@@ -72,10 +75,10 @@ collapse, `Leg::Transport { edge }` is one per transport. `RouteError` is
 `NoPath` or `BudgetExhausted` (a node-expansion cap). `find` is CPU-heavy;
 run it off-pump (a short-lived worker) and arm the result.
 
-`Traveller::follow` still walks door/ladder-style loc hops. **OP_NPC
-execute** (cart / essence wizard / Elkoy), EssenceSession return, Shantay
-free-exit, and tele **execution** are not in this tag: the pack can
-contain the edges, the walker does not yet fire those ops.
+`Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
+gliders, webs, EssenceSession, Shantay, and teles. NPC-backed hops use
+the live NPC tile (search radius 8). Glider landings settle Chebyshev 1.
+Agility waits packed `edge.ticks` after land.
 
 ## Traveller (`nav::traveller`)
 
@@ -119,7 +122,8 @@ walker crosses Catherby door 1530 to (2817,3443,0) with `troll_doors:
 true` while a tick-perfect closer keeps the door closed; PASS on
 `Arrived`. Additional live tests under `crates/e2e/tests`: `nav_gates`,
 `nav_cart`, `nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`,
-`nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`.
+`nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`. Headed
+corpus: `cargo run --release -p panel --bin panel-play -- --live script_nav_routes`.
 
 ## Credit
 

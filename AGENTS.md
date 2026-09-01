@@ -10,19 +10,21 @@ Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
 **Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,script,scenario,e2e}` (`panel` is the native UI).
 
-**Scope (v0.1.0 alpha):** the **wall** is landed — MultiBox sidecar rail,
-grid mode, profile chooser. **Nav** is landed (pack bake, router/traveller,
-WalkTo picker, live door harness). Still no dummy tick-end opcode. GPU 3D
-(wgpu) lives in the client submodule (headed default; `BOT_CPU=1` is
-CpuPix3D). Compiled script *kernel* and WalkTo are in-tree; do not start
-honest script ports unless the human says so. Do not invent a tick-end
-opcode or put 274bot crates in the client repo.
+**Scope (v0.1.1 alpha):** the **wall** is landed — MultiBox sidecar rail,
+grid mode, profile chooser. **Nav execute** is landed (pack `274V` v7,
+router/traveller loc+NPC+boat+glider+web+tele, WalkTo, headed
+`script_nav_routes`). Still no dummy tick-end opcode. GPU 3D (wgpu) lives
+in the client submodule (headed default; `BOT_CPU=1` is CpuPix3D; last-FBO
+freeze while `scene_state==1`). Compiled script *kernel* and WalkTo are
+in-tree; do not start honest script ports unless the human says so. Do
+not invent a tick-end opcode or put 274bot crates in the client repo.
 
 **SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
 **Git (this is the only copy of the rule — plans must not restate it):**
 - **Flash / SDD implementer / spawned subagent:** forbidden on `main`. Run `git branch --show-current`. If it is `main`, **stop** and tell the orch. Commit only on the orch-named branch or a worktree (`isolation: worktree`). Never merge, never push remotes, never `checkout main`.
 - **Orch / grok with the human on this checkout:** `main` only when the human said **inline**. Campaign SDD still uses a branch; orch merges.
+- **origin:** GitHub `main` is this checkout’s commit history. Tag `0.1.0` is the squash that first went public; from `0.1.1` publishes are ordinary pushes + annotated tags. Do not squash-publish. Do not `git pull` the `0.1.0` squash onto local `main`. Force-push only when the human said **inline**.
 Copied “commit on main” in a plan or a stale session snapshot is not consent.
 
 **Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Write the report file the orch named.

@@ -1,8 +1,8 @@
 # 274bot
 
-**Alpha `0.1.0`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, and whole-world nav.
+**Alpha `0.1.1`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, and whole-world nav.
 
-This tag is the public surface for the **host + API + nav**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — that campaign comes after this tag. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+This tag is the public surface for the **host + API + nav execute**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — that campaign comes after this tag. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 | | |
 |--|--|
@@ -15,7 +15,7 @@ This tag is the public surface for the **host + API + nav**. The script *kernel*
 
 A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`host-play`** is the headless CLI over the same kernel.
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **6**, compact walk words), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **7**), Dijkstra router, and pollable `Traveller::follow` (loc, NPC, boat, glider, web, tele, EssenceSession) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -45,8 +45,10 @@ cargo run --release -p host-play -- --user test
 # Panel: same vault, native UI (MultiBox, --live)
 cargo run --release -p panel --bin panel-play
 
-# Headed live (BOT_VAULT_PASS unused): FAIL+exit 1; PASS keeps the window up
+# Headed live (BOT_VAULT_PASS unused): FAIL+exit 1
 cargo run --release -p panel --bin panel-play -- --live null_raster
+# Nav execute corpus (local engine; unique live account):
+# cargo run --release -p panel --bin panel-play -- --live script_nav_routes
 # or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 
 # Headless RSS ladder (all slots Null / set_draw=false). One N per process.
@@ -57,7 +59,7 @@ cargo run --release -p panel --bin panel-play -- --live stress50
 # 50-bot full-rate Game + sidecar (run after stress50 holds)
 cargo run --release -p panel --bin panel-play -- --live stress50_full
 
-# Unit tests (no engine). CI: fmt + clippy --no-deps + cargo test (no LIVE=1)
+# Unit tests (no engine). Local CI: fmt + clippy -D + test on host *and* vendor/fr-client-rust (no LIVE=1). GH Actions is a subset.
 cargo test -p nav --offline
 cargo test -p api --offline
 ```
@@ -80,7 +82,7 @@ Bake the collision + transport pack, then WalkTo / `Traveller::follow` over it:
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **6**). Rebake after this tag — v5 files are `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `nav_full` and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **7**). Rebake after this tag — v6 files are `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests
 

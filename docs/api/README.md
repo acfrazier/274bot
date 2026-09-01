@@ -1,10 +1,11 @@
 # Agent API
 
-Alpha `0.1.0` kernel surface a bot agent codes against: reading world
+Alpha `0.1.1` kernel surface a bot agent codes against: reading world
 state, acting, settling, navigating, and logging in — all through the
 `api` crate (`crates/api`) plus `nav` (`crates/nav`) and the host tick.
 Honest bot scripts are **not** in this tag; the script crate is the
-runner kernel only.
+runner kernel only. Nav **execute** (`Traveller::follow` loc/NPC/boat/
+glider/web/tele) is in this tag.
 
 - [snapshot.md](snapshot.md) — the full gen-stamped world read model
   (`GameSnapshot` + `ReadContext`)
