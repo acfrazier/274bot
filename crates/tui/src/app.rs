@@ -246,14 +246,19 @@ impl TuiApp {
         None
     }
 
-    /// The slot name whose span the strip click lands on. The strip is
+    /// The slot the strip click selects. The strip is
     /// `[{names joined by " "}] …`, so name `i` starts one cell after the
-    /// leading `[` plus every earlier `len + 1` span.
-    fn strip_select(&self, col: u16) -> Option<String> {
+    /// leading `[` plus every earlier `len + 1` span. Sets `app.focused`
+    /// to the clicked name's index — the same bookkeeping [`cycle_focus`]
+    /// does — and returns the name so the binary can mirror it onto
+    /// `Play::focus`. Without the app-side update the UI would keep
+    /// driving the old slot while the session samples the new one.
+    fn strip_select(&mut self, col: u16) -> Option<String> {
         let mut cursor = 1u16; // after the leading `[`
-        for name in &self.names {
+        for (i, name) in self.names.iter().enumerate() {
             let len = name.len() as u16;
             if col >= cursor && col < cursor + len {
+                self.focused = Some(i);
                 return Some(name.clone());
             }
             cursor += len + 1;
@@ -706,9 +711,20 @@ mod tests {
         // Strip text: `[a b]  focused: …`. Name spans: `a` at col 1,
         // `b` at col 3.
         assert_eq!(app.on_click(1, 0), AppAction::Focus("a".into()));
+        assert_eq!(
+            app.focused,
+            Some(0),
+            "the strip click updates the app focus, not only Play"
+        );
         assert_eq!(app.on_click(3, 0), AppAction::Focus("b".into()));
+        assert_eq!(
+            app.focused,
+            Some(1),
+            "clicking slot B focuses B in the app too, so UI + input agree"
+        );
         // Between the names is a miss.
         assert_eq!(app.on_click(2, 0), AppAction::None);
+        assert_eq!(app.focused, Some(1), "a miss keeps the current focus");
     }
 
     #[test]
