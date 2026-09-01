@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use api::interact::set_run;
 use api::snapshot::{Family, GameSnapshot};
-use auto_run::auto_run_tick;
+use auto_run::{auto_run_ready, auto_run_tick};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::render::backend::FrameOutput;
@@ -616,11 +616,9 @@ impl SlotLoop {
         let result = self.pump.drain(client.gens);
         rebuild_dirty(&mut self.snapshot, client, result.dirty);
 
-        let energy = if self.snapshot.gens().stat > 0 {
-            self.snapshot.runenergy()
-        } else {
-            client.runenergy
-        };
+        // Live client field: UPDATE_RUNENERGY writes here. Snapshot energy
+        // can stay 0 if a stat-family rebuild ran before the energy packet.
+        let energy = client.runenergy;
         if let Some(echo) = run_echo(client) {
             self.run_on = echo;
         }
@@ -628,7 +626,10 @@ impl SlotLoop {
             // Cannot be running; wins over a stale run-on echo.
             self.run_on = false;
         }
-        if auto_run_tick(energy, self.run_on) && set_run(client, true) {
+        if auto_run_ready(client.ingame, client.scene_state)
+            && auto_run_tick(energy, self.run_on)
+            && set_run(client, true)
+        {
             self.run_on = true;
             self.run_sends += 1;
         }
@@ -870,6 +871,36 @@ mod tests {
         assert!(!result.dirty.any());
     }
 
+    fn ingame_scene2(client: &mut Client) {
+        client.ingame = true;
+        client.scene_state = 2;
+    }
+
+    #[test]
+    fn auto_run_does_not_send_on_the_title() {
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let mut slot = SlotLoop::new();
+        client.runenergy = 100;
+        client.gens.stat = 1;
+        slot.after_drain(&mut client);
+        assert_eq!(
+            slot.run_sends, 0,
+            "title IF_BUTTON is ignored; sending here sticks run_on"
+        );
+        assert!(!slot.run_on);
+
+        ingame_scene2(&mut client);
+        slot.after_drain(&mut client);
+        assert_eq!(slot.run_sends, 1);
+        assert!(slot.run_on);
+    }
+
     #[test]
     fn auto_run_20_0_20_sends_twice() {
         let mut client = prepare_client(
@@ -880,6 +911,7 @@ mod tests {
             Vec::new(),
         );
         let mut slot = SlotLoop::new();
+        ingame_scene2(&mut client);
         client.runenergy = 20;
         client.gens.stat = 1;
         slot.after_drain(&mut client);
@@ -925,6 +957,7 @@ mod tests {
         );
         client.runenergy = 20;
         client.gens.stat = 1;
+        ingame_scene2(&mut client);
         let mut slot = SlotLoop::new();
         slot.after_drain(&mut client);
         assert_eq!(slot.run_sends, 0, "already on → no extra send");
@@ -945,6 +978,7 @@ mod tests {
         );
         client.runenergy = 20;
         client.gens.stat = 1;
+        ingame_scene2(&mut client);
         let mut slot = SlotLoop::new();
         slot.after_drain(&mut client);
         assert_eq!(slot.run_sends, 1);

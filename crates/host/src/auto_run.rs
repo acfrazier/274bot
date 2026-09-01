@@ -11,9 +11,26 @@ pub fn auto_run_tick(energy: i32, run_on: bool) -> bool {
     !run_on && energy >= RUN_ENERGY_THRESHOLD
 }
 
+/// Auto-run is a bothost host feature (2004 had no always-on run). The
+/// IF_BUTTON orb send is ignored on the title / before the controls
+/// overlay exists, so we only arm once `ingame && scene_state == 2`.
+/// Sending earlier sticks `run_on` and never retries.
+pub fn auto_run_ready(ingame: bool, scene_state: i32) -> bool {
+    ingame && scene_state == 2
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{auto_run_tick, RUN_ENERGY_THRESHOLD};
+    use super::{auto_run_ready, auto_run_tick, RUN_ENERGY_THRESHOLD};
+
+    #[test]
+    fn ready_only_after_ingame_scene_2() {
+        assert!(!auto_run_ready(false, 0));
+        assert!(!auto_run_ready(false, 2));
+        assert!(!auto_run_ready(true, 0));
+        assert!(!auto_run_ready(true, 1));
+        assert!(auto_run_ready(true, 2));
+    }
 
     /// Energy crossing 19 → 20 with run off: the crossing tick sends; with
     /// the slot's `run_on` flipped after the send, the next tick stays quiet
