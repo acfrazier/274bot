@@ -73,12 +73,29 @@ const STRANGE_BOX_OBJ: i32 = 3062;
 /// `Lamp` (the genie lamp) obj id (verified against the Lost City pack).
 const LAMP_OBJ: i32 = 2528;
 
+/// Ground-search radius for lost tool/gear (rs2b0t `.within(10)`).
+const LOST_GEAR_RADIUS: i32 = 10;
+
+/// Fishing gear the macro randoms can knock off (rs2b0t `FISHING_GEAR`).
+const FISHING_GEAR: &[&str] = &[
+    "small fishing net",
+    "big fishing net",
+    "fishing rod",
+    "oily fishing rod",
+    "fly fishing rod",
+    "harpoon",
+    "lobster pot",
+    "fishing bait",
+    "feather",
+];
+
 /// Detect the first random event the snapshot shows, in rs2b0t
 /// `detectRaw` order: maze/mime by map square, then scene NPCs/locs,
-/// then inv-held box/lamp, then lost-tool. Returns `None` when nothing
-/// applies. NPC kinds are owner-gated (except `pick`, which the TUI may
-/// show as not ours). `lost-gear` needs the rs2b0t gear-loss time window,
-/// which is caller state; deferred to the act task (no act/hold anyway).
+/// then lost-gear on the ground, then inv-held box/lamp, then lost-tool.
+/// Returns `None` when nothing applies. NPC kinds are owner-gated
+/// (except `pick`, which the TUI may show as not ours). The rs2b0t
+/// gear-loss 90 s window (the caller-state half of `lost-gear`) is not
+/// needed here: gear on the ground and out of the inventory detects.
 pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Option<DetectedRandom> {
     if let Some((x, z, level)) = snap.tile() {
         if level == 0 {
@@ -92,6 +109,9 @@ pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Optio
     }
     if let Some(ev) = detect_scene(snap, now_ms, cooldown) {
         return Some(ev);
+    }
+    if let Some(gear) = lost_gear(snap) {
+        return Some(no_npc_event(RandomKind::LostGear, &gear));
     }
     if snap.inv().iter().any(|(id, _)| *id == STRANGE_BOX_OBJ) {
         return Some(no_npc_event(RandomKind::Box, "strange box"));
@@ -228,8 +248,8 @@ fn is_ours(npc: &NpcView, self_slot: i32, display_name: Option<&str>) -> bool {
     }
 }
 
-/// The random's axe/pickaxe handle sits in the inventory or worn
-/// (rs2b0t `handleLocation`).
+/// The random's axe/pickaxe handle sits in the inventory, worn, or on
+/// the ground near us (rs2b0t `handleLocation` vs inv/ground).
 fn has_lost_tool(snap: &GameSnapshot) -> bool {
     let handle = |name: Option<&str>| {
         name.is_some_and(|n| {
@@ -244,14 +264,43 @@ fn has_lost_tool(snap: &GameSnapshot) -> bool {
             .equipment()
             .iter()
             .any(|i| handle(i.def.name.as_deref()))
+        || snap
+            .ground_items()
+            .iter()
+            .any(|g| g.distance <= LOST_GEAR_RADIUS && handle(g.def.name.as_deref()))
+}
+
+/// A fishing-gear item on the ground near us that we are not holding
+/// (rs2b0t `GearLossTracker` ground search, minus the 90 s window).
+fn lost_gear(snap: &GameSnapshot) -> Option<String> {
+    for gear in FISHING_GEAR {
+        let in_inv = snap
+            .inventory()
+            .iter()
+            .any(|i| item_named(i.def.name.as_deref(), gear));
+        if !in_inv
+            && snap
+                .ground_items()
+                .iter()
+                .any(|g| g.distance <= LOST_GEAR_RADIUS && item_named(g.def.name.as_deref(), gear))
+        {
+            return Some((*gear).to_string());
+        }
+    }
+    None
+}
+
+fn item_named(name: Option<&str>, want: &str) -> bool {
+    name.is_some_and(|n| n.eq_ignore_ascii_case(want))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use client::client::{Client, ClientConfig, ClientPlayer};
-    use client::config::{Cache, NpcType};
-    use client::dash3d::ClientNpc;
+    use client::config::{Cache, NpcType, ObjType};
+    use client::dash3d::{ClientNpc, ClientObj};
+    use client::datastruct::LinkList;
     use std::sync::Arc;
 
     fn cfg() -> ClientConfig {
@@ -323,10 +372,32 @@ mod tests {
         c.npc_count = c.npc_ids.len() as i32;
     }
 
-    /// Rebuild a fresh snapshot with the npc and player families moved.
+    /// A ground item of cache obj `name` on scene tile (x, z) (level 0).
+    fn plant_ground_obj(c: &mut Client, x: i32, z: i32, obj_id: i32, name: Option<&str>) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= obj_id as usize {
+                cache.objs.push(ObjType::default());
+            }
+            if let Some(name) = name {
+                cache.objs[obj_id as usize] = ObjType {
+                    id: obj_id,
+                    name: name.to_string(),
+                    ..Default::default()
+                };
+            }
+        }
+        let mut list = LinkList::new();
+        list.push_front(ClientObj::new(obj_id, 1));
+        c.ground_obj[0][x as usize][z as usize] = Some(Box::new(list));
+    }
+
+    /// Rebuild a fresh snapshot with the npc, player and scene families
+    /// moved (scene moves the loc/ground-item views too).
     fn snap_at(c: &mut Client) -> GameSnapshot {
         c.gens.npc = 1;
         c.gens.player = 1;
+        c.gens.scene = 1;
         let mut snap = GameSnapshot::new();
         snap.rebuild(c);
         snap
@@ -387,6 +458,32 @@ mod tests {
         let ev = detect(&snap, 0, &no_cooldown()).expect("maze detected");
         assert_eq!(ev.kind, RandomKind::Maze);
         assert_eq!(ev.name, "maze");
+        assert!(ev.ours);
+        assert_eq!(ev.npc_index, None);
+    }
+
+    #[test]
+    fn ground_axe_handle_is_lost_tool() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_ground_obj(&mut c, 0, 0, 500, Some("Axe handle"));
+        let snap = snap_at(&mut c);
+        let ev = detect(&snap, 0, &no_cooldown()).expect("lost-tool detected");
+        assert_eq!(ev.kind, RandomKind::LostTool);
+        assert_eq!(ev.name, "lost tool");
+        assert!(ev.ours);
+        assert_eq!(ev.npc_index, None);
+    }
+
+    #[test]
+    fn ground_fishing_gear_not_in_inv_is_lost_gear() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_ground_obj(&mut c, 0, 0, 501, Some("Fishing rod"));
+        let snap = snap_at(&mut c);
+        let ev = detect(&snap, 0, &no_cooldown()).expect("lost-gear detected");
+        assert_eq!(ev.kind, RandomKind::LostGear);
+        assert_eq!(ev.name, "fishing rod");
         assert!(ev.ours);
         assert_eq!(ev.npc_index, None);
     }
