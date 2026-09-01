@@ -8,5 +8,7 @@
 //! events.
 
 pub mod app;
+pub mod map;
 
 pub use app::TuiApp;
+pub use map::{Map, MapAction, MapView};
