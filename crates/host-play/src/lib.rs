@@ -1148,6 +1148,8 @@ impl Play {
         // profile at spawn. The store goes through the shared inner field
         // so a caller's own clone cannot keep a stale uid.
         arm.uid.store(profile.uid, Ordering::Relaxed);
+        arm.random_events
+            .store(profile.settings.random_events, Ordering::Relaxed);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         // The control wake: `Play::wake` kicks the parked slot thread on
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
@@ -1423,11 +1425,6 @@ fn spawn_slot_thread(
                         .map(|slot| slot.on_random(ev))
                         .unwrap_or(RandomClaim::Host)
                 };
-                // Live toggle: spawn seeds from the vault profile; panel/TUI
-                // may flip `arm.random_events` without a respawn.
-                arm_obs
-                    .random_events
-                    .store(profile.settings.random_events, Ordering::Relaxed);
                 Host::run_client(
                     &mut client,
                     &username,

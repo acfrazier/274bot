@@ -102,7 +102,7 @@ fn nav_collision() {
     let captured: Arc<Mutex<Option<Captured>>> = Arc::new(Mutex::new(None));
     let cap = Arc::clone(&captured);
     let play = run_with_io(&opts, profiles(&[("test", "test")]), |_| (None, None), {
-        move |c, _name| {
+        move |c, _name, _hold| {
             // The tutorial island also reaches scene 2; only capture once
             // the mainland hop has landed and the Lumbridge scene is up.
             if c.ingame && c.scene_state == 2 && !c.within_tutorial_island {
