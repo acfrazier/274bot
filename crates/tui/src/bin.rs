@@ -488,8 +488,7 @@ impl TuiSession {
         let random_events = profile.settings.random_events;
         let _ = vault.upsert(profile);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-            arm.random_events
-                .store(random_events, Ordering::Relaxed);
+            arm.random_events.store(random_events, Ordering::Relaxed);
         }
     }
 
@@ -506,6 +505,10 @@ impl TuiSession {
         }
         app.names = names;
         app.statuses = statuses;
+        // The map paints `Play`'s packed collision, not the live loc
+        // snapshot. Copy the session world each pump (an `Arc` clone)
+        // so a loaded pack is not stuck behind the empty-state title.
+        app.world = self.nav_world.lock().unwrap().clone();
         app.refresh();
 
         // The settings popup edits the focused profile: reload when the
@@ -782,6 +785,51 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
     let spawned = session.spawn_all();
     if spawned > 0 {
         app.error = Some(format!("spawned {spawned} slot(s)"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nav::grid::StepGrid;
+    use nav::world::NavWorld;
+
+    fn dummy_options() -> PlayOptions {
+        PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        }
+    }
+
+    /// The map pane reads `TuiApp::world`. The session holds the pack on
+    /// `nav_world` after `Play` loads it; pump must copy that Arc so a
+    /// running script's loc list is not the only live world view.
+    #[test]
+    fn pump_copies_nav_world_onto_the_app() {
+        let mut session = TuiSession::new(dummy_options());
+        *session.nav_world.lock().unwrap() =
+            Some(Arc::new(NavWorld::from_grid(&StepGrid::fixture_open_3x3())));
+        let mut app = TuiApp::new("274bot headless");
+        assert!(app.world.is_none(), "fresh app has no pack");
+        session.pump(&mut app);
+        assert!(
+            app.world.is_some(),
+            "pump copies the session nav world onto the map"
+        );
+    }
+
+    #[test]
+    fn pump_leaves_app_world_none_when_no_pack_loaded() {
+        let mut session = TuiSession::new(dummy_options());
+        let mut app = TuiApp::new("274bot headless");
+        session.pump(&mut app);
+        assert!(
+            app.world.is_none(),
+            "no session pack stays the empty-state title"
+        );
     }
 }
 

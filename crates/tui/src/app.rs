@@ -532,6 +532,38 @@ mod tests {
             text.contains("274bot"),
             "buffer does not contain 274bot: {text:?}"
         );
+        assert!(
+            text.contains("no nav pack"),
+            "empty world must title the map pane as missing the pack: {text:?}"
+        );
+    }
+
+    /// A loaded world drops the empty-state title; the map paints the
+    /// walkable field instead of a hollow "no nav pack" block.
+    #[test]
+    fn draw_map_paints_walkable_dots_when_the_pack_is_loaded() {
+        let mut app = TuiApp::new("274bot headless");
+        app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
+            &nav::grid::StepGrid::fixture_open_3x3(),
+        )));
+        app.here = Some(api::snapshot::WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            !text.contains("no nav pack"),
+            "loaded pack must not keep the empty-state title: {text:?}"
+        );
+        assert!(text.contains('.'), "walkable tiles paint as dots: {text:?}");
+        assert!(
+            text.contains('@'),
+            "the here marker paints on the player tile: {text:?}"
+        );
     }
 
     /// The spec's WASD test: from (10,10) W steps north. +z is north on
