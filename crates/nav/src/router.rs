@@ -1980,16 +1980,10 @@ mod tests {
         // at 3253,3266/3267) is adjacent from inside. The north-west road
         // gate at (3241,3301) is three tiles through the north fence —
         // INTERACT_RADIUS 3 lets find "use" it from inside and the walker
-        // then aims at the fence.
-        let pack = match std::env::var("NAV_PACK") {
-            Ok(p) => PathBuf::from(p),
-            Err(_) => PathBuf::from(format!(
-                "{}/.274bot/274bot.navpack",
-                std::env::var("HOME").unwrap()
-            )),
+        // then aims at the fence. GitHub has no pack — skip, do not panic.
+        let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+            return;
         };
-        let world = crate::world::NavWorld::load_pack(&pack)
-            .unwrap_or_else(|e| panic!("nav pack {}: {e:?}", pack.display()));
         let from = WorldTile {
             x: 3253,
             z: 3282,
