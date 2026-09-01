@@ -7,9 +7,9 @@
 
 use std::collections::HashMap;
 
-use api::interact::{walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
+use api::interact::{press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
 use api::query::npc_by_index;
-use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView};
+use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext};
 use vault::ProfileSettings;
 
 // The detect/claim contracts live in `api::random` so `script` can answer
@@ -57,6 +57,24 @@ const PICK_NAME: &str = "strange plant";
 const STRANGE_BOX_OBJ: i32 = 3062;
 /// `Lamp` (the genie lamp) obj id (verified against the Lost City pack).
 const LAMP_OBJ: i32 = 2528;
+
+/// Mime emote-chat root (rs2b0t `MIME_IF.root`; Lost City
+/// `macro_mime_emotes` — the 274 interface jag verifies 6543 with
+/// children 6544..6553, `com_2..com_9` the emote buttons).
+const MIME_IF_ROOT: i32 = 6543;
+/// The eight emote buttons, answer index → child id (`com_2..com_9`).
+const MIME_IF_BUTTONS: [i32; 8] = [6546, 6547, 6548, 6549, 6550, 6551, 6552, 6553];
+
+/// Strange-box cube root (rs2b0t `CUBE_IF.root`; Lost City `macro_cube`,
+/// the 274 interface jag verifies 6554 with three TYPE_MODEL children,
+/// the question text and the answer buttons).
+const CUBE_IF_ROOT: i32 = 6554;
+/// The three spinning obj models, in answer-button order.
+const CUBE_IF_MODELS: [i32; 3] = [6555, 6557, 6559];
+/// The cube's question TYPE_TEXT child.
+const CUBE_IF_QUESTION: i32 = 6561;
+/// The three answer buttons (center/side/top, rs2b0t `CUBE_IF.buttons`).
+const CUBE_IF_BUTTONS: [i32; 3] = [6562, 6563, 6564];
 
 /// Ground-search radius for lost tool/gear (rs2b0t `.within(10)`).
 const LOST_GEAR_RADIUS: i32 = 10;
@@ -331,6 +349,79 @@ fn skill_match(text: &str, want: &str) -> bool {
     text.trim().eq_ignore_ascii_case(want.trim())
 }
 
+/// Mime anim seq → answer index (rs2b0t `MIME_EMOTE_BY_SEQ`; the Lost
+/// City `macro_event_mime` `case` order: cry, think, laugh, dance,
+/// climb-rope, lean, glass-wall, glass-box). Unknown → `None`.
+fn mime_answer(seq: i32) -> Option<usize> {
+    match seq {
+        860 => Some(0),   // emote_cry
+        857 => Some(1),   // emote_think
+        861 => Some(2),   // emote_laugh
+        866 => Some(3),   // emote_dance
+        1130 => Some(4),  // emote_climbing_rope
+        1129 => Some(5),  // emote_mime_lean
+        1128 => Some(6),  // emote_glass_wall
+        1131 => Some(7),  // emote_glass_box
+        _ => None,
+    }
+}
+
+/// Strange-box cube part model id → (shape, colour) (rs2b0t
+/// `CUBE_PARTS`, all 15 shape×colour combos).
+fn cube_part(id: i32) -> Option<(&'static str, &'static str)> {
+    Some(match id {
+        3063 => ("triangle", "red"),
+        3065 => ("triangle", "blue"),
+        3067 => ("triangle", "yellow"),
+        3069 => ("square", "red"),
+        3071 => ("square", "blue"),
+        3073 => ("square", "yellow"),
+        3075 => ("circle", "red"),
+        3077 => ("circle", "blue"),
+        3079 => ("circle", "yellow"),
+        3081 => ("star", "red"),
+        3083 => ("star", "blue"),
+        3085 => ("star", "yellow"),
+        3087 => ("half moon", "red"),
+        3089 => ("half moon", "blue"),
+        3091 => ("half moon", "yellow"),
+        _ => return None,
+    })
+}
+
+/// Which of the three cube models answers the question (rs2b0t
+/// `solveCube`): "What colour is the X?" picks the model whose shape is
+/// X, "Which shape is X?" the model whose colour is X, in answer-button
+/// order. An unknown model or unrecognised question → `None` (no click).
+fn solve_cube(question: &str, models: [Option<i32>; 3]) -> Option<usize> {
+    let parts: [Option<(&str, &str)>; 3] = models.map(|id| id.and_then(cube_part));
+    if parts.iter().any(Option::is_none) {
+        return None;
+    }
+    let q = question.trim().to_lowercase();
+    if let Some(shape) = q
+        .strip_prefix("what colour is the ")
+        .and_then(|r| r.strip_suffix('?'))
+    {
+        let shape = shape.trim();
+        return parts.iter().position(|p| p.expect("checked above").0 == shape);
+    }
+    if let Some(colour) = q
+        .strip_prefix("which shape is ")
+        .and_then(|r| r.strip_suffix('?'))
+    {
+        let colour = colour.trim();
+        return parts.iter().position(|p| p.expect("checked above").1 == colour);
+    }
+    None
+}
+
+/// Whether the local player stands on the mime stage square.
+fn on_mime_square(snap: &GameSnapshot) -> bool {
+    snap.tile()
+        .is_some_and(|(x, z, level)| level == 0 && x >> 6 == MIME_X && z >> 6 == MIME_Z)
+}
+
 /// Whether the backpack has no free slot (the pack-full gate for the
 /// lost gear/tool sacrificial drop).
 fn pack_full(snap: &GameSnapshot) -> bool {
@@ -465,6 +556,15 @@ pub struct Guardian {
     /// Lost-tool: the handle's base tool name (the handle name minus the
     /// "handle" suffix), the re-wield target after reattach.
     tool_handle_base: Option<String>,
+    /// Mime: the last emote anim seq the mime NPC showed.
+    mime_last_seen: Option<i32>,
+    /// Mime: the emote button went out for the open chat — no repeat
+    /// press until the chat closes.
+    mime_answered: bool,
+    /// Box: the held-box count when the answer went out; the solver
+    /// waits for it to drop (the answer consumed a box) before handling
+    /// the next held box (rs2b0t waits on the count drop the same way).
+    box_answer_count: Option<i32>,
 }
 
 impl Default for Guardian {
@@ -489,6 +589,9 @@ impl Guardian {
             flee_from: None,
             tool_was_worn: false,
             tool_handle_base: None,
+            mime_last_seen: None,
+            mime_answered: false,
+            box_answer_count: None,
         }
     }
 
@@ -665,10 +768,8 @@ impl Guardian {
             }
             return;
         }
-        if matches!(
-            ev.kind,
-            RandomKind::Maze | RandomKind::Mime | RandomKind::Box
-        ) {
+        if matches!(ev.kind, RandomKind::Maze) {
+            // The maze solver is a later task; the square keeps holding.
             return;
         }
         self.acting = true;
@@ -722,6 +823,8 @@ impl Guardian {
             RandomKind::Lamp => self.step_lamp(driver, snap, settings),
             RandomKind::LostGear => self.step_lost_gear(driver, snap, ev),
             RandomKind::LostTool => self.step_lost_tool(driver, snap),
+            RandomKind::Mime => self.step_mime(driver, snap),
+            RandomKind::Box => self.step_box(driver, snap),
             _ => self.acting = false,
         }
     }
@@ -755,6 +858,9 @@ impl Guardian {
         self.flee_from = None;
         self.tool_was_worn = false;
         self.tool_handle_base = None;
+        self.mime_last_seen = None;
+        self.mime_answered = false;
+        self.box_answer_count = None;
     }
 
     /// Talk-to, gated on range: an NPC further than Chebyshev 1 gets a
@@ -864,6 +970,87 @@ impl Guardian {
             if walk(driver, x, z) {
                 break;
             }
+        }
+    }
+
+    /// Copy the mime's performance: watch the mime NPC's anim; when the
+    /// emote chat (6543) opens, press the button for the last seen
+    /// emote, once per chat-open (rs2b0t `performMimeStage`). The
+    /// trapped hold is the square's; the act ends when the player leaves
+    /// the stage.
+    fn step_mime<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
+        if !on_mime_square(snap) {
+            self.acting = false;
+            return;
+        }
+        // Watch the mime NPC (rs2b0t watches every frame).
+        for npc in snap.npcs() {
+            if npc.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case("mime"))
+                && mime_answer(npc.animation).is_some()
+            {
+                self.mime_last_seen = Some(npc.animation);
+            }
+        }
+        // Emote chat up: answer with the last seen emote, then wait for
+        // the chat to close (a still-open chat must not re-press).
+        if snap.modals().chat == MIME_IF_ROOT {
+            if !self.mime_answered {
+                if let Some(answer) = self.mime_last_seen.and_then(mime_answer) {
+                    press(driver, MIME_IF_BUTTONS[answer]);
+                    self.mime_answered = true;
+                }
+            }
+            return;
+        }
+        self.mime_answered = false;
+    }
+
+    /// Solve a held Strange box (rs2b0t `solveAllBoxes`): Open the box,
+    /// read the cube question + three obj models, press the matching
+    /// answer button, wait for one box to be consumed, then repeat while
+    /// the inventory holds a box. Unknown question / missing model →
+    /// fail closed: no click, the trapped hold stays.
+    fn step_box<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
+        // Total held quantity (rs2b0t `Inventory.count('Strange box')`:
+        // the box can sit as one row of a multi-box stack).
+        let count: i32 = snap
+            .inventory()
+            .iter()
+            .filter(|i| i.def.id == STRANGE_BOX_OBJ)
+            .map(|i| i.count.max(0))
+            .sum();
+        if count == 0 {
+            self.acting = false;
+            return;
+        }
+        // An answer went out: wait for one box to be consumed before
+        // acting again (rs2b0t waits on the count drop).
+        if let Some(before) = self.box_answer_count {
+            if count >= before {
+                return;
+            }
+            self.box_answer_count = None;
+        }
+        if snap.modals().main == CUBE_IF_ROOT {
+            let ctx = ReadContext::new(snap);
+            let question = ctx.component_text(CUBE_IF_QUESTION).unwrap_or("");
+            let models = CUBE_IF_MODELS.map(|id| ctx.component_model_obj_id(id));
+            let Some(answer) = solve_cube(question, models) else {
+                self.acting = false;
+                return;
+            };
+            self.box_answer_count = Some(count);
+            press(driver, CUBE_IF_BUTTONS[answer]);
+            return;
+        }
+        let Some(held) = snap.inventory().iter().find(|i| i.def.id == STRANGE_BOX_OBJ) else {
+            self.acting = false;
+            return;
+        };
+        let mut ix = Interactions::new(snap, driver);
+        match ix.interact(OpTarget::Item(held), ActionSpec::Label("Open".to_string())) {
+            SendResult::Sent { .. } => {}
+            SendResult::Refused { .. } => self.acting = false,
         }
     }
 
@@ -2120,5 +2307,375 @@ mod tests {
             "Pick is the plant's 1st op"
         );
         assert_eq!(drv.actions, vec![0]);
+    }
+
+    // --- Task 10: mime + strange-box solvers ---
+
+    #[test]
+    fn mime_answer_maps_seq_to_button_index() {
+        assert_eq!(mime_answer(860), Some(0), "emote_cry");
+        assert_eq!(mime_answer(857), Some(1), "emote_think");
+        assert_eq!(mime_answer(861), Some(2), "emote_laugh");
+        assert_eq!(mime_answer(866), Some(3), "emote_dance");
+        assert_eq!(mime_answer(1130), Some(4), "emote_climbing_rope");
+        assert_eq!(mime_answer(1129), Some(5), "emote_mime_lean");
+        assert_eq!(mime_answer(1128), Some(6), "emote_glass_wall");
+        assert_eq!(mime_answer(1131), Some(7), "emote_glass_box");
+    }
+
+    #[test]
+    fn mime_answer_unknown_seq_is_none() {
+        assert_eq!(mime_answer(858), None, "bow");
+        assert_eq!(mime_answer(862), None, "cheer/idle");
+        assert_eq!(mime_answer(0), None);
+    }
+
+    #[test]
+    fn solve_cube_answers_colour_question_by_shape_position() {
+        assert_eq!(
+            solve_cube("What colour is the Square?", [Some(3069), Some(3065), Some(3075)]),
+            Some(0),
+            "square-red sits in model slot 0"
+        );
+        assert_eq!(
+            solve_cube("What colour is the Star?", [Some(3063), Some(3085), Some(3071)]),
+            Some(1),
+            "the star is model slot 1"
+        );
+        assert_eq!(
+            solve_cube("What colour is the Half Moon?", [Some(3089), Some(3063), Some(3079)]),
+            Some(0),
+            "two-word shape still matches"
+        );
+    }
+
+    #[test]
+    fn solve_cube_answers_shape_question_by_colour_position() {
+        assert_eq!(
+            solve_cube("Which shape is Blue?", [Some(3063), Some(3085), Some(3089)]),
+            Some(2),
+            "the blue part is model slot 2"
+        );
+    }
+
+    #[test]
+    fn solve_cube_unknown_question_or_missing_model_is_none() {
+        assert_eq!(solve_cube("??", [Some(3063), Some(3071), Some(3079)]), None);
+        assert_eq!(
+            solve_cube("What colour is the Star?", [None, Some(3063), Some(3071)]),
+            None,
+            "a missing model obj id is unsolvable"
+        );
+        assert_eq!(
+            solve_cube("What colour is the Potato?", [Some(3063), Some(3071), Some(3079)]),
+            None,
+            "a shape not on the cube is unsolvable"
+        );
+    }
+
+    /// Plant `qty` Strange boxes (obj 3062, `Open` as held op 1) into the
+    /// inv (one stacked row).
+    fn plant_inv_box(c: &mut Client, qty: i32) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= STRANGE_BOX_OBJ as usize {
+                cache.objs.push(client::config::ObjType::default());
+            }
+            cache.objs[STRANGE_BOX_OBJ as usize] = client::config::ObjType {
+                id: STRANGE_BOX_OBJ,
+                name: "Strange box".to_string(),
+                iop: [Some("Open".into()), None, None, None, None],
+                ..Default::default()
+            };
+        }
+        c.side_icon[3] = 300;
+        c.set_iface(
+            300,
+            IfType {
+                id: 300,
+                layer_id: 300,
+                children: Some(vec![301]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            301,
+            IfType {
+                id: 301,
+                layer_id: 300,
+                r#type: ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![STRANGE_BOX_OBJ + 1, 0]),
+                link_obj_number: Some(vec![qty, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    }
+
+    /// Open the mysterious-cube main modal (macro_cube 6554) with three
+    /// obj-model children, the question text and the three answer buttons.
+    fn open_cube(c: &mut Client, question: &str, models: [i32; 3]) {
+        c.set_iface(
+            6554,
+            IfType {
+                id: 6554,
+                layer_id: 6554,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![6555, 6557, 6559, 6561, 6562, 6563, 6564]),
+                ..Default::default()
+            },
+        );
+        for (com, obj) in [(6555, models[0]), (6557, models[1]), (6559, models[2])] {
+            c.set_iface(
+                com as usize,
+                IfType {
+                    id: com,
+                    layer_id: 6554,
+                    r#type: ComponentType::TYPE_MODEL,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                com as usize,
+                IfTypeMut {
+                    model1_type: 4,
+                    model1_id: obj,
+                    ..Default::default()
+                },
+            );
+        }
+        c.set_iface(
+            6561,
+            IfType {
+                id: 6561,
+                layer_id: 6554,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            6561,
+            IfTypeMut {
+                text: question.to_string(),
+                ..Default::default()
+            },
+        );
+        for com in [6562, 6563, 6564] {
+            c.set_iface(
+                com as usize,
+                IfType {
+                    id: com,
+                    layer_id: 6554,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                com as usize,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    ..Default::default()
+                },
+            );
+        }
+        c.main_modal_id = 6554;
+        c.gens.iface += 1;
+    }
+
+    #[test]
+    fn mime_square_answers_emote_and_holds_until_off_square() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 31 * 64, 74 * 64);
+        plant_npc(&mut c, 0, "Mime", -1, None);
+        c.npc[0].as_mut().expect("planted").entity.primary_anim = 860;
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: on the square, no emote chat yet → the guardian watches
+        // the mime, sends nothing.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Mime));
+        assert!(status.hold, "on the mime square the slot holds");
+        assert!(drv.menus.is_empty(), "no press before the emote chat opens");
+        assert!(drv.actions.is_empty());
+
+        // Tick 2: the emote chat (6543) opens → IF_BUTTON on the button
+        // for the last seen emote (cry → index 0 → 6546).
+        drv.menus.clear();
+        drv.actions.clear();
+        c.chat_modal_id = 6543;
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 6546)],
+            "emote index 0 maps to button 6546"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 3: the chat stays open → one press per chat-open, no spam.
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert!(drv.menus.is_empty(), "no repeat press while the chat stays up");
+        assert!(drv.actions.is_empty());
+
+        // Tick 4: off the mime square → the hold lifts.
+        drv.menus.clear();
+        drv.actions.clear();
+        plant_player(&mut c, "Test", 0, 0);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold, "off the mime square the hold lifts");
+        assert!(drv.menus.is_empty());
+        assert!(drv.actions.is_empty());
+    }
+
+    #[test]
+    fn strange_box_opens_solves_and_holds_until_consumed() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_box(&mut c, 1);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: no cube iface yet → Open the held box (held op 1).
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Box));
+        assert_eq!(status.name.as_deref(), Some("strange box"));
+        assert!(status.hold, "a held strange box holds the slot");
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_HELD1, STRANGE_BOX_OBJ, 0, 301)],
+            "Open is the box's 1st held op"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 2: the cube iface opens → the Square question answers the
+        // square-red model (slot 0) via IF_BUTTON 6562.
+        drv.menus.clear();
+        drv.actions.clear();
+        open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 6562)],
+            "square-red is model slot 0 → answer button 1"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 3: the box is consumed → the hold lifts.
+        drv.menus.clear();
+        drv.actions.clear();
+        clear_inv(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold, "no box: no hold");
+        assert!(drv.menus.is_empty());
+    }
+
+    #[test]
+    fn strange_box_reopens_while_more_boxes_held() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_box(&mut c, 2);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: Open the first box.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_HELD1, STRANGE_BOX_OBJ, 0, 301)],
+            "a held box opens"
+        );
+
+        // Tick 2: the cube iface answers the first box.
+        drv.menus.clear();
+        drv.actions.clear();
+        open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(drv.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 6562)]);
+
+        // Tick 3: one box consumed (2→1) and the modal closed → the next
+        // held box opens (rs2b0t repeats while the inv holds one).
+        drv.menus.clear();
+        drv.actions.clear();
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![STRANGE_BOX_OBJ + 1, 0]),
+                link_obj_number: Some(vec![1, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+        c.main_modal_id = -1;
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_HELD1, STRANGE_BOX_OBJ, 0, 301)],
+            "a second held box reopens after the first was consumed"
+        );
+        assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn strange_box_unknown_question_sends_no_click() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_box(&mut c, 1);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: open the box.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Box));
+        assert!(status.hold);
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 2: an unsolvable cube question → fail closed: no click,
+        // the trapped hold stays while the box is held.
+        drv.menus.clear();
+        drv.actions.clear();
+        open_cube(&mut c, "??", [3063, 3071, 3079]);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Box));
+        assert!(status.hold, "an unsolvable cube keeps the trapped hold");
+        assert!(drv.menus.is_empty(), "unknown question: no click");
+        assert!(drv.actions.is_empty());
     }
 }
