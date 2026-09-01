@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Mutex, Once};
+use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::rs2b0t_registry::{parse_registry, persist_rs2b0t_root_at, script_file_path};
@@ -570,6 +570,11 @@ mod isolate {
         tick_loop(runtime, cmds, out);
     }
 
+    /// Monotonic clock backing the prelude's `performance.now()` shim
+    /// (rustyscript's default extensions define no `performance`). First
+    /// call anchors at isolate-thread start.
+    static CLOCK_START: OnceLock<Instant> = OnceLock::new();
+
     /// Load `source` into `runtime` as a module and wire the global tick
     /// entry. Native sources export `tick(api)`; compat sources
     /// default-export a `defineBot` config and tick through `create()`'s
@@ -588,6 +593,17 @@ mod isolate {
         }
         let source = crate::shim::remap_rs2b0t_api(source);
         runtime
+            .register_function(
+                "__rs2b0t_now",
+                |_args: &[rustyscript::serde_json::Value]| {
+                    let start = CLOCK_START.get_or_init(Instant::now);
+                    Ok(rustyscript::serde_json::Value::from(
+                        start.elapsed().as_millis() as f64,
+                    ))
+                },
+            )
+            .map_err(|e| format!("register now: {e}"))?;
+        runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
         let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
@@ -595,12 +611,14 @@ mod isolate {
             LoadShape::NativeTick => {
                 rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN)
             }
-            LoadShape::CompatDefineBot => {
-                rustyscript::Module::new(crate::shim::MAIN_MODULE, COMPAT_MAIN)
-            }
-            LoadShape::CompatClass => {
-                rustyscript::Module::new(crate::shim::MAIN_MODULE, COMPAT_CLASS_MAIN)
-            }
+            LoadShape::CompatDefineBot => rustyscript::Module::new(
+                crate::shim::MAIN_MODULE,
+                format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
+            ),
+            LoadShape::CompatClass => rustyscript::Module::new(
+                crate::shim::MAIN_MODULE,
+                format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
+            ),
             LoadShape::Reject => unreachable!("rejected above"),
         };
         // Side modules load in order, so the shim modules (which the bot
@@ -654,31 +672,44 @@ globalThis.__rs_api = api;
 globalThis.__rs_tick = (n) => { api.tick = n; return tick(api); };
 "#;
 
-    /// Compat wrapper: `create()` the bot instance, call `onStart` once,
-    /// then `loop()` (and `onPaint` with the dummy ctx) every tick.
+    /// Compat wrapper: `create()` the bot instance, then the shared compat
+    /// runner (onStart once, awaited, then loop/onPaint every tick).
     const COMPAT_MAIN: &str = r#"
 import bot from './bot.js';
 const inst = (bot && typeof bot.create === 'function') ? bot.create() : (bot || null);
-if (inst && typeof inst.onStart === 'function') { inst.onStart(); }
-globalThis.__rs_tick = () => {
-    if (!inst) return;
-    if (typeof inst.loop === 'function') { inst.loop(); }
-    if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
-};
 "#;
 
     /// Compat class wrapper: instantiate the default-export
-    /// `LoopingBot`/`TaskBot`/`TreeBot` subclass, call `onStart` once,
-    /// then `loop()` (and `onPaint` with the dummy ctx) every tick. The
-    /// instance is exposed as `__rs_bot` for probe read-back.
+    /// `LoopingBot`/`TaskBot`/`TreeBot` subclass, then the shared compat
+    /// runner. The instance is exposed as `__rs_bot` for probe read-back.
     const COMPAT_CLASS_MAIN: &str = r#"
 import bot from './bot.js';
 const inst = new bot();
 globalThis.__rs_bot = inst;
-if (inst && typeof inst.onStart === 'function') { inst.onStart(); }
-globalThis.__rs_tick = () => {
+"#;
+
+    /// The shared compat tick runner (defineBot and class shapes): `onStart`
+    /// once (awaited), then `loop()` (awaited), then `onPaint` with the
+    /// dummy ctx. `__rs2b0t_tick_async` is async so an Execution wait parks
+    /// the whole runner; `__rs_tick` is the synchronous entry the thread
+    /// calls (it returns immediately — parked or not), and the wait is
+    /// settled by `__rs2b0t_pump` on later posted ticks instead of a
+    /// re-entrant `loop()`. Async errors (a cond that throws) land on the
+    /// host handle's `lastError` for the thread to log.
+    const COMPAT_RUNNER: &str = r#"
+globalThis.__rs_tick = (n) => {
     if (!inst) return;
-    if (typeof inst.loop === 'function') { inst.loop(); }
+    globalThis.__rs2b0t_tick_async(n).catch((e) => {
+        globalThis.__rs2b0t_host.lastError = String((e && e.message) || e);
+    });
+};
+globalThis.__rs2b0t_tick_async = async (n) => {
+    globalThis.__rs2b0t_host.tick = n;
+    if (!globalThis.__rs2b0t_started) {
+        globalThis.__rs2b0t_started = true;
+        if (typeof inst.onStart === 'function') { await inst.onStart(); }
+    }
+    if (typeof inst.loop === 'function') { await inst.loop(); }
     if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
 };
 "#;
@@ -709,8 +740,42 @@ globalThis.__rs_tick = () => {
                         continue;
                     }
                     let start = Instant::now();
-                    let result: Result<serde_json::Value, rustyscript::Error> =
-                        runtime.call_function(None, "__rs_tick", json_args!(n));
+                    // Guardian hold: skip `loop()` AND skip resolving
+                    // parked conds (time waits too) — the wait stays parked
+                    // until the hold lifts. Pause already freezes above.
+                    let held = runtime
+                        .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.hold)")
+                        .unwrap_or(false);
+                    if held {
+                        let _ = out.send(ThreadMsg::Completed(n));
+                        continue;
+                    }
+                    // A parked Execution wait: settle it (cond / due tick /
+                    // due time) so the loop's continuation runs — never call
+                    // `loop()` again while parked. Otherwise start a fresh
+                    // tick. `__rs2b0t_pump` is async and awaited through the
+                    // event loop, so the resolved wait's continuation (which
+                    // may re-park or complete the tick) lands here.
+                    let parked = runtime
+                        .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)")
+                        .unwrap_or(false);
+                    let result: Result<serde_json::Value, rustyscript::Error> = if parked {
+                        runtime.call_function(None, "__rs2b0t_pump", json_args!(n))
+                    } else {
+                        // `__rs_tick` is a synchronous entry that returns
+                        // immediately (parked or not), so this cannot hang on
+                        // a wait. Drain microtasks so the runner's await
+                        // continuations and onPaint land inside this tick; a
+                        // parked wait leaves no pending work, so the drain
+                        // returns at once (the timeout is only a backstop).
+                        let result =
+                            runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
+                        let _ = runtime.block_on_event_loop(
+                            rustyscript::deno_core::PollEventLoopOptions::default(),
+                            Some(Duration::from_millis(10)),
+                        );
+                        result
+                    };
                     // The host may have armed `terminate_execution` to
                     // interrupt a slow tick; clear it now that the tick's
                     // JS frames have fully unwound. This is the only cancel
@@ -722,6 +787,15 @@ globalThis.__rs_tick = () => {
                         .cancel_terminate_execution();
                     let elapsed = start.elapsed();
                     if let Err(e) = result {
+                        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                    }
+                    // Async errors (a cond that throws, a rejected wait)
+                    // surface on the runner's catch instead of throwing the
+                    // tick; fold them into the log like sync tick errors.
+                    let async_err: Option<String> = runtime
+                        .eval("(() => { const e = globalThis.__rs2b0t_host.lastError; if (e) { globalThis.__rs2b0t_host.lastError = null; return e; } return null; })()")
+                        .unwrap_or(None);
+                    if let Some(e) = async_err {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
                     }
                     // ScriptRunner.stop signal: the script flags the host

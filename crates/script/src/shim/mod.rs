@@ -21,6 +21,12 @@ pub(crate) const MAIN_MODULE: &str = "/rs2b0t/bot/scripts/bot/main.js";
 /// `instanceof` agree with the tick wrapper; `Bot.js` re-exports them.
 pub(crate) const PRELUDE: &str = r#"
 globalThis.__rs2b0t_host = {};
+// Monotonic isolate clock (rustyscript's default extensions have no
+// `performance`): elapsed ms since the isolate thread started, from the
+// host-registered `__rs2b0t_now`. Execution delay/delayUntil use it.
+globalThis.performance = {
+    now: () => globalThis.rustyscript.functions.__rs2b0t_now(),
+};
 globalThis.defineBot = (manifest) => {
     if (!manifest || typeof manifest.name !== 'string' || manifest.name.length === 0 || typeof manifest.create !== 'function') {
         throw new Error('defineBot requires { name, create }');
@@ -66,6 +72,10 @@ globalThis.__dummy_ctx = {
 pub(crate) fn shim_modules() -> Vec<Module> {
     vec![
         Module::new("/rs2b0t/bot/api/game/Game.js", include_str!("game.js")),
+        Module::new(
+            "/rs2b0t/bot/api/execution/Execution.js",
+            include_str!("execution.js"),
+        ),
         Module::new(
             "/rs2b0t/bot/adapter/ClientAdapter.js",
             include_str!("client_adapter.js"),

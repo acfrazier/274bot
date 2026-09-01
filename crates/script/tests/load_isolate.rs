@@ -714,6 +714,162 @@ export default class T extends TaskBot {
     iso.join();
 }
 
+// Task 4 — Execution.delayUntil parks the loop: `loop()` awaits a cond on
+// `Game.tick()`; posted ticks pump the wait (the isolate does NOT call
+// `loop()` again while parked); the third `loop` runs only after the cond
+// cleared.
+#[test]
+fn isolate_execution_delay_until_parks_loop_until_cond() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            globalThis.__rs_ok = null;
+            globalThis.__rs_ok = await Execution.delayUntil(() => Game.tick() >= 3, 6000);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 1, "parked: loop must not re-enter while the wait is active");
+    let ok = iso.probe("__rs_ok").unwrap();
+    assert_eq!(ok, serde_json::Value::Null, "delayUntil not settled yet");
+    iso.on_game_tick(3); // cond true: the wait clears, loop 1 finishes
+    let ok = iso.probe("__rs_ok").unwrap();
+    assert_eq!(ok, true, "delayUntil resolved true on the posted tick");
+    iso.on_game_tick(4); // not parked any more: the third loop runs
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 2, "loop re-enters after the park cleared");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("error")),
+        "delayUntil ran clean: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 4 — guardian hold freezes loop() AND the parked cond: ticks posted
+// while `__rs2b0t_host.hold` is set neither run loop() nor settle the
+// wait; after the hold lifts, the pump resumes and the next loop runs.
+#[test]
+fn isolate_hold_freezes_loop_and_parked_conds() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            await Execution.delayUntil(() => Game.tick() >= 3, 6000);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop parked");
+    iso.probe("__rs2b0t_host.hold = true").unwrap();
+    iso.on_game_tick(2);
+    iso.on_game_tick(3);
+    iso.on_game_tick(4);
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 1, "hold freezes loop: count does not increase");
+    let _ = iso.probe("__rs2b0t_host.hold = false");
+    iso.on_game_tick(5); // cond true now (tick 5 >= 3): loop 1 finishes
+    iso.on_game_tick(6); // loop 2 runs
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 2, "loop resumes after the hold lifts");
+    iso.join();
+}
+
+// Task 4 — Execution.delayTicks(n) parks for n posted ticks (dueTick =
+// current + n), then the loop continues and re-enters on the next tick.
+#[test]
+fn isolate_execution_delay_ticks_parks_n_ticks() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            await Execution.delayTicks(2);
+            globalThis.__rs_done = true;
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let done = iso.probe("__rs_done");
+    assert!(done.is_err(), "two posted ticks are not enough for delayTicks(2)");
+    iso.on_game_tick(3); // dueTick reached: the wait clears
+    let done = iso.probe("__rs_done").unwrap();
+    assert_eq!(done, true, "delayTicks(2) settled after two posted ticks");
+    iso.on_game_tick(4);
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 2, "loop re-enters after delayTicks");
+    iso.join();
+}
+
+// Task 4 — Execution.delay(ms) parks on wall-clock time (isolate time):
+// after the wait elapses the next posted tick settles it.
+#[test]
+fn isolate_execution_delay_parks_on_wall_clock() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            await Execution.delay(100);
+            globalThis.__rs_done = true;
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    std::thread::sleep(std::time::Duration::from_millis(140));
+    iso.on_game_tick(2); // wall clock elapsed: the wait settles
+    let done = iso.probe("__rs_done").unwrap();
+    assert_eq!(done, true, "delay(100) settled after the wall clock elapsed");
+    iso.on_game_tick(3);
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 2, "loop re-enters after delay");
+    iso.join();
+}
+
+// Task 4 — delayUntil with a never-true cond resolves false on timeout.
+#[test]
+fn isolate_execution_delay_until_times_out_false() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            globalThis.__rs_ok = null;
+            globalThis.__rs_ok = await Execution.delayUntil(() => false, 100);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    std::thread::sleep(std::time::Duration::from_millis(140));
+    iso.on_game_tick(2); // timeout elapsed: the wait resolves false
+    let ok = iso.probe("__rs_ok").unwrap();
+    assert_eq!(ok, false, "delayUntil times out to false");
+    iso.join();
+}
+
 // Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
 // host and readable; every other member read or set throws `not v1`.
 #[test]
