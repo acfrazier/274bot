@@ -229,6 +229,64 @@ pub struct HullTarget {
     pub at: WorldTile,
 }
 
+/// One hop caption: the interact `at` tile and a short kind word.
+/// Teleport / EssenceExit are skipped (the landing floats off-scene).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HopCaption {
+    pub at: WorldTile,
+    pub text: String,
+}
+
+fn hop_kind_word(kind: TransportKind) -> Option<&'static str> {
+    match kind {
+        TransportKind::Door => Some("Door"),
+        TransportKind::Ladder => Some("Ladder"),
+        TransportKind::Stairs => Some("Stairs"),
+        TransportKind::Boat => Some("Boat"),
+        TransportKind::AgilityShortcut => Some("Shortcut"),
+        TransportKind::Glider => Some("Glider"),
+        TransportKind::SpiritTree => Some("Spirit tree"),
+        TransportKind::Npc => Some("Npc"),
+        TransportKind::Teleport | TransportKind::EssenceExit => None,
+    }
+}
+
+/// Remaining transport hops that get a caption, one per hop at `at`.
+pub fn hop_captions(route: &Route, here: Option<WorldTile>) -> Vec<HopCaption> {
+    let mut leg = 0;
+    if let Some(here) = here {
+        while leg < route.legs.len() {
+            let done = match &route.legs[leg] {
+                Leg::Walk { tiles } => tiles.last().is_some_and(|last| *last == here),
+                Leg::Transport { edge } => edge.to == here,
+            };
+            if !done {
+                break;
+            }
+            leg += 1;
+        }
+    }
+    let mut out = Vec::new();
+    for l in route.legs.iter().skip(leg) {
+        if let Leg::Transport { edge } = l {
+            let text = if edge.loc_id == 733 {
+                Some("Web")
+            } else {
+                hop_kind_word(edge.kind)
+            };
+            if let Some(text) = text {
+                if out.last().is_none_or(|c: &HopCaption| c.at != edge.at) {
+                    out.push(HopCaption {
+                        at: edge.at,
+                        text: text.into(),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Transport kinds with a loc to hull. Teleport, Boat and Glider hops are
 /// NPC/spell-backed and draw no hull.
 fn is_loc_backed(kind: TransportKind) -> bool {
@@ -567,6 +625,25 @@ mod tests {
             tiles[2..].iter().all(|p| p.transport),
             "at and to carry the transport flag"
         );
+    }
+
+    #[test]
+    fn hop_captions_label_at_only_and_skip_teleports() {
+        let r = route(vec![
+            Leg::Walk {
+                tiles: vec![tile(0, 0, 0), tile(1, 0, 0)],
+            },
+            Leg::Transport {
+                edge: edge(TransportKind::Door, tile(2, 0, 0), tile(3, 0, 0), 1530),
+            },
+            Leg::Transport {
+                edge: edge(TransportKind::Teleport, tile(3, 0, 0), tile(80, 80, 0), 1),
+            },
+        ]);
+        let caps = hop_captions(&r, Some(tile(0, 0, 0)));
+        assert_eq!(caps.len(), 1, "one caption per loc hop, none for teleport");
+        assert_eq!(caps[0].at, tile(2, 0, 0));
+        assert_eq!(caps[0].text, "Door");
     }
 
     #[test]
