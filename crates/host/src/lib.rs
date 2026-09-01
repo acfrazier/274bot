@@ -18,9 +18,11 @@ use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::render::backend::FrameOutput;
 use client::render::Renderer;
-use vault::Profile;
+use vault::{Profile, ProfileSettings};
 
-pub use random::{detect, CooldownMap, DetectedRandom, RandomKind};
+pub use random::{
+    detect, CooldownMap, DetectedRandom, Guardian, RandomClaim, RandomKind, RandomStatus,
+};
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake,
@@ -375,6 +377,17 @@ impl Host {
         }
         slot.log_n = slot.log_n.wrapping_add(1);
         let result = slot.after_drain(client);
+        // Random-event guardian (spec pump placement): the snapshot is
+        // fresh after the drain. Task 4 runs default-on settings; Task 5
+        // passes the slot's real `ProfileSettings` from host-play and
+        // publishes the returned `RandomStatus` on the status row.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let _status =
+            slot.guardian
+                .tick(client, &slot.snapshot, &ProfileSettings::default(), now_ms);
         if should_emit_tick(result.player_info) {
             slot.tick_n = slot.tick_n.wrapping_add(1);
         }
@@ -558,12 +571,16 @@ fn raster_this_tick(
 }
 
 /// Per-slot post-drain state: snapshot, auto-run, the full-rate
-/// switch, and the optional `Renderer` a drawing slot owns.
+/// switch, the random-event guardian, and the optional `Renderer` a
+/// drawing slot owns.
 struct SlotLoop {
     pump: Pump,
     snapshot: GameSnapshot,
     run_on: bool,
     run_sends: u32,
+    /// Random-event guardian (Task 4 act/hold; Task 5 freezes follow and
+    /// passes the real `ProfileSettings` from host-play).
+    guardian: Guardian,
     renderer: Option<Renderer>,
     /// The `prefer_cpu` request the attached head was built with, so a
     /// GPU↔CPU flip on a live slot is a drop+reattach, not a restart.
@@ -599,6 +616,7 @@ impl SlotLoop {
             snapshot: GameSnapshot::new(),
             run_on: false,
             run_sends: 0,
+            guardian: Guardian::new(),
             renderer: None,
             renderer_prefer_cpu: None,
             renderer_lowmem: None,
@@ -2038,5 +2056,71 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("stop must still return the slot");
         handle.join().unwrap();
+    }
+
+    /// The guardian kicks from `client_frame` right after `after_drain`
+    /// (Task 4): a dialog NPC on a fresh snapshot gets a Talk-to through
+    /// the real `Client` driver, and the slot latches `in_flight`.
+    #[test]
+    fn client_frame_kicks_guardian_after_drain() {
+        use client::client::{ClientNpc, ClientPlayer};
+        use client::config::NpcType;
+
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        // Attached + ingame scene-2 so the `Interactions` preconditions
+        // pass; the guardian then sends through the real client driver.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port())
+            .expect("connect");
+        std::mem::forget(listener);
+        c.stream = Some(stream);
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 0;
+        c.map_build_base_z = 0;
+        c.self_slot = 0;
+
+        // The local player and a dialog NPC that owns us (overhead name).
+        let mut lp = ClientPlayer::at(0, 0);
+        lp.name = Some("Test".to_string());
+        c.local_player = Some(lp);
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.npcs.push(NpcType {
+                id: 0,
+                name: "Genie".to_string(),
+                op: vec![Some("Talk-to".to_string())],
+                ..Default::default()
+            });
+        }
+        let mut npc = ClientNpc::at(0, 0);
+        npc.r#type = Some(0);
+        npc.entity.chat_message = Some("Greetings Test!".to_string());
+        c.npc[0] = Some(Box::new(npc));
+        c.npc_ids[0] = 0;
+        c.npc_count = 1;
+        // Dirty families so `after_drain` rebuilds the snapshot.
+        c.gens.npc = 1;
+        c.gens.player = 1;
+        c.gens.scene = 1;
+
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        assert!(
+            slot.guardian.in_flight,
+            "client_frame must run the guardian on a dialog NPC"
+        );
+        assert!(
+            c.out.pos > 0,
+            "the Talk-to went out on the real client driver"
+        );
     }
 }

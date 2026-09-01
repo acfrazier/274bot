@@ -6,7 +6,9 @@
 
 use std::collections::HashMap;
 
+use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, NpcView};
+use vault::ProfileSettings;
 
 /// The kind of random event one detection found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,10 +296,241 @@ fn item_named(name: Option<&str>, want: &str) -> bool {
     name.is_some_and(|n| n.eq_ignore_ascii_case(want))
 }
 
+// ---------------------------------------------------------------------------
+// Guardian (the act/hold-while-handling half; skip-tick/follow freeze and
+// the `on_random` knock are Task 5). One instance per slot.
+// ---------------------------------------------------------------------------
+
+/// The dialog-continue ceiling (rs2b0t `MAX_DIALOGUE_STEPS`).
+const MAX_CONTINUES: u32 = 25;
+
+/// Wrong-talk cooldown for an NPC slot (rs2b0t 45 s).
+const WRONG_TALK_COOLDOWN_MS: u64 = 45_000;
+
+/// Chat markers of a failed Talk-to: the NPC is not the event's owner.
+const WRONG_TALK_MARKERS: &[&str] = &["trying to talk to", "It's not here for you."];
+
+/// Who handles a detected random event. Task 5 wires `Script::on_random`;
+/// nothing overrides `Host` this tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RandomClaim {
+    Host,
+    Handle,
+}
+
+/// The chrome contract both views bind (guardian spec `RandomStatus`):
+/// published every tick on the slot status row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RandomStatus {
+    /// The detected event; `None` when the snapshot shows nothing.
+    pub kind: Option<RandomKind>,
+    pub name: Option<String>,
+    pub ours: bool,
+    /// A dialog handle is in flight (the host is talking it through).
+    pub handling: bool,
+    /// The slot must skip script tick / follow (Task 5 enforces the
+    /// freeze). Task 4 fills the dialog-in-flight arm only.
+    pub hold: bool,
+    pub toggle: bool,
+    pub claim: RandomClaim,
+    /// The shown NPC slot is in the 45 s wrong-talk bin.
+    pub cooldown: bool,
+}
+
+/// Per-slot random-event guardian state.
+pub struct Guardian {
+    /// A Talk-to went out and the dialog may still be open.
+    pub in_flight: bool,
+    /// The snapshot tick the last act ran on (one scan per game tick).
+    pub last_tick: u64,
+    /// NPC slot → wrong-talk cooldown expiry `now_ms`.
+    pub cooldown: CooldownMap,
+    /// Signature (kind+name) of the last handled event (the Task 5
+    /// rising-edge `on_random` key).
+    pub sig: Option<String>,
+    /// Who handles the current event (always `Host` until Task 5).
+    pub claim: RandomClaim,
+    /// The NPC slot the in-flight dialog targets (the cooldown key).
+    in_flight_index: Option<usize>,
+    /// Continues sent for the in-flight dialog ([`MAX_CONTINUES`] cap).
+    continues: u32,
+    /// Newest chat sequence already scanned for wrong-talk lines, so a
+    /// stale rejection line cannot re-bin a later NPC.
+    chat_seen: i32,
+}
+
+impl Default for Guardian {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Guardian {
+    pub fn new() -> Self {
+        Self {
+            in_flight: false,
+            last_tick: 0,
+            cooldown: HashMap::new(),
+            sig: None,
+            claim: RandomClaim::Host,
+            in_flight_index: None,
+            continues: 0,
+            chat_seen: 0,
+        }
+    }
+
+    /// One guardian pass per caller frame: detect + publish the status
+    /// every frame, but act at most once per snapshot `tick` (the
+    /// PLAYER_INFO game-tick edge). Talk-to runs only for a dialog event
+    /// that is ours on an un-binned slot; an open dialog then continues
+    /// via `continue_dialog` / `answer_choice` (first option), max
+    /// [`MAX_CONTINUES`]. A wrong-talk chat line bins that NPC slot for
+    /// 45 s. Toggle off: never act, never hold, still detect+publish.
+    pub fn tick<D: Driver>(
+        &mut self,
+        driver: &mut D,
+        snap: &GameSnapshot,
+        settings: &ProfileSettings,
+        now_ms: u64,
+    ) -> RandomStatus {
+        let tick = snap.tick() as u64;
+        let fresh = self.last_tick != tick;
+        let ev = detect(snap, now_ms, &self.cooldown);
+        let active = snap.ingame() && snap.scene_state() == SCENE_READY;
+
+        if fresh && active {
+            // Fresh chat only: a stale wrong-talk line must not re-bin a
+            // later NPC the guardian talks to.
+            let head = snap
+                .chat_lines()
+                .first()
+                .map(|l| l.sequence)
+                .unwrap_or(self.chat_seen);
+            let mut new_lines = snap
+                .chat_lines()
+                .iter()
+                .take_while(|l| l.sequence > self.chat_seen);
+            if self.in_flight
+                && new_lines.any(|l| WRONG_TALK_MARKERS.iter().any(|w| l.text.contains(w)))
+            {
+                if let Some(index) = self.in_flight_index {
+                    self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
+                }
+                self.clear_handle();
+            }
+            self.chat_seen = head;
+            // The dialog ended: the chat is closed and the NPC is gone.
+            if self.in_flight && self.dialog_done(snap) {
+                self.clear_handle();
+            }
+        }
+
+        if fresh && active && settings.random_events && self.claim == RandomClaim::Host {
+            self.act(driver, snap, ev.as_ref(), now_ms);
+        }
+        self.last_tick = tick;
+
+        let cooldown = ev
+            .as_ref()
+            .and_then(|e| e.npc_index)
+            .is_some_and(|i| binned(i, now_ms, &self.cooldown));
+        RandomStatus {
+            kind: ev.as_ref().map(|e| e.kind),
+            name: ev.as_ref().map(|e| e.name.clone()),
+            ours: ev.as_ref().map(|e| e.ours).unwrap_or(false),
+            handling: self.in_flight,
+            hold: self.in_flight && settings.random_events && self.claim == RandomClaim::Host,
+            toggle: settings.random_events,
+            claim: self.claim,
+            cooldown,
+        }
+    }
+
+    /// One send per game tick: Talk-to on the rising edge, then continue
+    /// while the chat stays open. Refuses silently when the wire layer
+    /// says no (not ingame, stale target, chat closed), so the machine is
+    /// driven by the snapshot, not by error paths.
+    fn act<D: Driver>(
+        &mut self,
+        driver: &mut D,
+        snap: &GameSnapshot,
+        ev: Option<&DetectedRandom>,
+        now_ms: u64,
+    ) {
+        let Some(ev) = ev else { return };
+        if ev.kind != RandomKind::Dialog || !ev.ours {
+            return;
+        }
+        let Some(index) = ev.npc_index else { return };
+        // A slot binned this pass (the wrong-talk above) or earlier is
+        // not re-engaged; detect skips binned slots, this guards the
+        // same-tick bin.
+        if binned(index, now_ms, &self.cooldown) {
+            return;
+        }
+        let Some(npc) = snap.npcs().get(index) else {
+            return;
+        };
+
+        let mut ix = Interactions::new(snap, driver);
+        if self.in_flight {
+            // Keep talking the open dialog through.
+            if self.continues >= MAX_CONTINUES {
+                self.clear_handle();
+                return;
+            }
+            let result = if snap.chat_options().is_empty() {
+                ix.continue_dialog()
+            } else {
+                ix.answer_choice(1)
+            };
+            if let SendResult::Sent { .. } = result {
+                self.continues += 1;
+            }
+        } else {
+            match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".to_string())) {
+                SendResult::Sent { .. } => {
+                    self.in_flight = true;
+                    self.in_flight_index = Some(index);
+                    self.continues = 0;
+                    self.sig = Some(format!("{:?}:{}", ev.kind, ev.name));
+                }
+                SendResult::Refused { .. } => {}
+            }
+        }
+    }
+
+    /// The handle lifts when the chat is fully closed and the in-flight
+    /// NPC has left the scene (the spec's "NPC gone and chat closed").
+    fn dialog_done(&self, snap: &GameSnapshot) -> bool {
+        let chat_open = snap.chat_continue_component_id() != -1
+            || !snap.chat_options().is_empty()
+            || snap.modals().chat != -1;
+        let npc_here = self
+            .in_flight_index
+            .is_some_and(|i| snap.npcs().iter().any(|v| v.index == i));
+        !chat_open && !npc_here
+    }
+
+    fn clear_handle(&mut self) {
+        self.in_flight = false;
+        self.in_flight_index = None;
+        self.continues = 0;
+    }
+}
+
+/// Whether NPC slot `index` is in the 45 s wrong-talk bin at `now_ms`
+/// (cooldown map values are expiry timestamps).
+fn binned(index: usize, now_ms: u64, cooldown: &CooldownMap) -> bool {
+    cooldown.get(&index).is_some_and(|until| now_ms < *until)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::client::{Client, ClientConfig, ClientPlayer};
+    use api::prot::Out;
+    use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
+    use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::config::{Cache, NpcType, ObjType};
     use client::dash3d::{ClientNpc, ClientObj};
     use client::datastruct::LinkList;
@@ -357,6 +590,7 @@ mod tests {
             cache.npcs[type_id] = NpcType {
                 id: type_id as i32,
                 name: name.to_string(),
+                op: vec![Some("Talk-to".to_string())],
                 ..Default::default()
             };
         }
@@ -368,8 +602,11 @@ mod tests {
             c.npc.push(None);
         }
         c.npc[slot] = Some(Box::new(npc));
-        c.npc_ids.push(slot as i32);
-        c.npc_count = c.npc_ids.len() as i32;
+        // `npc_ids` is a fixed `vec![0; MAX_NPC_COUNT]`; write the slot at
+        // the count index (like `handle_packet`) instead of pushing, so the
+        // snapshot's view list is exactly the planted slots in order.
+        c.npc_ids[c.npc_count as usize] = slot as i32;
+        c.npc_count += 1;
     }
 
     /// A ground item of cache obj `name` on scene tile (x, z) (level 0).
@@ -401,6 +638,19 @@ mod tests {
         let mut snap = GameSnapshot::new();
         snap.rebuild(c);
         snap
+    }
+
+    /// Advance every packet family and rebuild the **persistent**
+    /// snapshot: like the host's drain, one call per game tick, so
+    /// `snap.tick()` climbs 1, 2, … (a fresh `GameSnapshot` starts its
+    /// tick at 0 again, which is why the guardian tests reuse one).
+    fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
+        c.gens.npc = c.gens.npc.wrapping_add(1);
+        c.gens.player = c.gens.player.wrapping_add(1);
+        c.gens.scene = c.gens.scene.wrapping_add(1);
+        c.gens.iface = c.gens.iface.wrapping_add(1);
+        c.gens.chat = c.gens.chat.wrapping_add(1);
+        snap.rebuild(c);
     }
 
     fn no_cooldown() -> CooldownMap {
@@ -486,5 +736,237 @@ mod tests {
         assert_eq!(ev.name, "fishing rod");
         assert!(ev.ours);
         assert_eq!(ev.npc_index, None);
+    }
+
+    // --- Guardian (Task 4): act + hold-while-handling, fake Driver ---
+
+    /// No-op packet sink the recording driver hands out.
+    struct NoopOut;
+    impl Out for NoopOut {
+        fn p1_enc(&mut self, _opcode: i32) {}
+        fn p1(&mut self, _value: i32) {}
+        fn p2(&mut self, _value: i32) {}
+        fn p4(&mut self, _value: i32) {}
+        fn pjstr(&mut self, _s: &str) {}
+    }
+
+    /// Recording driver: captures every `set_menu`/`do_action` instead of
+    /// sending, so the guardian's sends are asserted directly.
+    struct FakeDriver {
+        menus: Vec<(i32, i32, i32, i32, i32)>,
+        actions: Vec<i32>,
+        out: NoopOut,
+    }
+
+    impl Default for FakeDriver {
+        fn default() -> Self {
+            Self {
+                menus: Vec::new(),
+                actions: Vec::new(),
+                out: NoopOut,
+            }
+        }
+    }
+
+    impl Driver for FakeDriver {
+        fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
+            self.menus.push((slot, action, a, b, c));
+        }
+        fn do_action(&mut self, slot: i32) -> bool {
+            self.actions.push(slot);
+            true
+        }
+        fn try_move(
+            &mut self,
+            _src_x: i32,
+            _src_z: i32,
+            _dx: i32,
+            _dz: i32,
+            _try_nearest: bool,
+            _loc_width: i32,
+            _loc_length: i32,
+            _loc_angle: i32,
+            _loc_shape: i32,
+            _forceapproach: i32,
+            _t: i32,
+        ) -> bool {
+            false
+        }
+        fn local_route(&self) -> Option<(i32, i32)> {
+            None
+        }
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
+        }
+        fn out(&mut self) -> &mut dyn Out {
+            &mut self.out
+        }
+        fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+            false
+        }
+    }
+
+    /// Attach a socket and set ingame scene-2 so the `Interactions`
+    /// preconditions (attached / ingame / scene ready) pass.
+    fn ingame_scene(c: &mut Client) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port())
+            .expect("connect");
+        std::mem::forget(listener);
+        c.stream = Some(stream);
+        c.ingame = true;
+        c.scene_state = 2;
+    }
+
+    /// The chat modal root + its BUTTON_CONTINUE child (an open dialog).
+    const CHAT_ROOT: i32 = 500;
+    const CHAT_CONTINUE: i32 = 501;
+
+    /// Open the chat modal with a continue button (the "dialog is open"
+    /// state the guardian continues through).
+    fn open_chat(c: &mut Client) {
+        c.set_iface(
+            CHAT_ROOT as usize,
+            IfType {
+                id: CHAT_ROOT,
+                children: Some(vec![CHAT_CONTINUE]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            CHAT_CONTINUE as usize,
+            IfType {
+                id: CHAT_CONTINUE,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            CHAT_CONTINUE as usize,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = CHAT_ROOT;
+        c.gens.iface += 1;
+    }
+
+    #[test]
+    fn guardian_talks_to_old_man_then_continues_open_chat() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Mysterious old man", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: our old man is a dialog event → Talk-to.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000);
+        assert_eq!(status.kind, Some(RandomKind::Dialog));
+        assert_eq!(status.name.as_deref(), Some("mysterious old man"));
+        assert!(status.ours);
+        assert!(status.handling);
+        assert!(status.hold);
+        assert!(status.toggle);
+        assert!(!status.cooldown);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)],
+            "Talk-to is the npc's first menu op"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 2: the dialog is open → continue, not a second Talk-to.
+        drv.menus.clear();
+        drv.actions.clear();
+        open_chat(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000);
+        assert!(status.handling);
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
+            "an open chat continues"
+        );
+        assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn toggle_off_detects_but_never_sends() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings {
+            random_events: false,
+            ..ProfileSettings::default()
+        };
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0);
+        assert!(drv.menus.is_empty(), "toggle off: no Talk-to");
+        assert!(drv.actions.is_empty());
+        assert_eq!(status.kind, Some(RandomKind::Dialog), "detect still fills");
+        assert_eq!(status.name.as_deref(), Some("genie"));
+        assert!(status.ours);
+        assert!(!status.toggle);
+        assert!(!status.handling);
+        assert!(!status.hold);
+    }
+
+    #[test]
+    fn wrong_talk_bins_npc_slot_and_other_slots_still_talk() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: talk-to the genie.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0);
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 2: the chat rejects the talk → the slot is binned, and the
+        // guardian neither continues nor re-talks it.
+        drv.menus.clear();
+        drv.actions.clear();
+        c.add_chat(0, "It's not here for you.", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000);
+        assert!(drv.actions.is_empty(), "wrong talk must not keep handling");
+        assert!(status.cooldown, "the rejected slot is in the 45s bin");
+
+        // Tick 3: the binned slot is skipped by detect — no send.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000);
+        assert!(drv.actions.is_empty());
+        assert_eq!(status.kind, None);
+
+        // A second genie on another slot is still talk-to-able.
+        plant_npc(&mut c, 1, "Genie", -1, Some("Greetings Test!"));
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 3_000);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 1, 0, 0)],
+            "an un-binned slot still gets Talk-to"
+        );
+        assert_eq!(drv.actions, vec![0]);
     }
 }
