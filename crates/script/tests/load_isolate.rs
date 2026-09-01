@@ -16,8 +16,11 @@ use script::ctx::ScriptCtx;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CompiledId, SlotScript};
 
-// The brief's native fixture: exported `tick` that counts on `api`.
-const NATIVE_TICK: &str = "export function tick(api) { api._n = (api._n||0)+1 }";
+// The brief's native fixture: exported `tick` that counts on its own
+// global (the `api` object is host-owned: `api.tick` is the only member,
+// every other read/set throws `not v1`).
+const NATIVE_TICK: &str =
+    "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
 
 // The brief's compat fixture: defineBot config with a `create()` bot.
 const COMPAT_FIXTURE: &str =
@@ -135,7 +138,11 @@ fn js_library_same_name_replaces_path_and_source() {
     let store = dir.join("js-scripts.json");
     let a = write_file(&dir, "t.js", NATIVE_TICK);
     let sub = scratch("same_name_b");
-    let b = write_file(&sub, "t.js", "export function tick(api) { api._n = 99 }");
+    let b = write_file(
+        &sub,
+        "t.js",
+        "export function tick(api) { globalThis.__rs_n = 99 }",
+    );
     let mut lib = JsLibrary::new(store.clone());
 
     lib.load(&a).unwrap();
@@ -230,7 +237,7 @@ fn isolate_spawn_ticks_probe_and_joins() {
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     iso.on_game_tick(3);
-    let n = iso.probe("__rs_api._n").expect("api object readable");
+    let n = iso.probe("__rs_n").expect("native counter readable");
     assert_eq!(n, 3, "three ticks reached the JS tick function");
     iso.join();
 }
@@ -260,11 +267,11 @@ fn isolate_pause_ignores_ticks_and_resume_continues() {
     iso.pause();
     iso.on_game_tick(2);
     iso.on_game_tick(3);
-    let n = iso.probe("__rs_api._n").unwrap();
+    let n = iso.probe("__rs_n").unwrap();
     assert_eq!(n, 1, "paused ticks do not run");
     iso.resume();
     iso.on_game_tick(4);
-    let n = iso.probe("__rs_api._n").unwrap();
+    let n = iso.probe("__rs_n").unwrap();
     assert_eq!(n, 2, "resume re-arms tick dispatch");
     iso.join();
 }
@@ -278,7 +285,7 @@ fn isolate_join_returns_and_isolates_are_reusable() {
 
     let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
     iso.on_game_tick(2);
-    let n = iso.probe("__rs_api._n").unwrap();
+    let n = iso.probe("__rs_n").unwrap();
     assert_eq!(n, 1, "fresh isolate, fresh api");
     iso.join();
 }
@@ -289,7 +296,7 @@ fn isolate_logs_tick_errors() {
     let src = "export function tick(api) { throw new Error('boom') }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
     iso.on_game_tick(1);
-    let _ = iso.probe("__rs_api._n"); // round-trip: the tick finished first
+    let _ = iso.probe("__rs_n"); // round-trip: the tick finished first
     let logs = iso.drain_logs();
     assert!(
         logs.iter().any(|l| l.contains("boom")),
@@ -304,8 +311,7 @@ fn isolate_logs_tick_errors() {
 #[test]
 fn slow_tick_is_interrupted_and_isolate_survives() {
     // The first tick spins forever; later ticks count.
-    let src =
-        "export function tick(api) { api._n = (api._n||0)+1; if (api._n === 1) { while(true){} } }";
+    let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
     iso.on_game_tick(1);
     // Let the thread enter the spin; pause then arms a terminate for the
@@ -318,7 +324,7 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
     // frames unwound (a host-side cancel would race and never interrupt).
     iso.on_game_tick(2);
     let n = iso
-        .probe("__rs_api._n")
+        .probe("__rs_n")
         .expect("isolate must stay usable after an interrupted tick");
     assert_eq!(n, 2, "the post-interrupt tick reached the JS");
     let logs = iso.drain_logs();
@@ -508,6 +514,198 @@ fn isolate_spawn_compat_class_ticks_and_joins() {
     assert!(
         logs.iter().all(|l| !l.contains("error")),
         "class loop ran clean: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 3 — import remap: the relative `../../api/...` imports resolve to
+// our Game module (not the rs2b0t tree); ticks run clean, and
+// `Game.teleport` throws `not v1` (logged, never fatal).
+#[test]
+fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
+    let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.ingame(); } }";
+    let iso =
+        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("remapped import loads");
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let _ = iso.probe("__rs_bot"); // round-trip: both ticks finished first
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("error")),
+        "remapped ticks ran clean: {logs:?}"
+    );
+    iso.join();
+
+    // Game.teleport is a real member that throws at runtime.
+    let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.teleport('Lumbridge'); } }";
+    let iso =
+        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("teleport bot loads");
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("Game.teleport")),
+        "teleport throws not v1: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 3 — the `@rs2b0t/api` bare specifier remaps to the same shim.
+#[test]
+fn isolate_rs2b0t_api_bare_import_resolves_to_our_shim() {
+    let src = "import { Game } from '@rs2b0t/api'; export default class T extends LoopingBot { loop() { Game.ingame(); } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass)
+        .expect("bare @rs2b0t/api import loads");
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("error")),
+        "bare @rs2b0t/api ticks ran clean: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 3 — Paint.begin(title/row/gap/end) records a ScriptPaint on the
+// host handle (no canvas); the widget methods throw `not v1`.
+#[test]
+fn isolate_paint_begin_records_script_paint() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    loop() {
+        const p = Paint.begin(null, { accent: '#f3e6a2' });
+        p.title('BoneBurier — digging');
+        p.row('Runtime: 1.2m', 'Buried: 3');
+        p.gap();
+        p.end();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("paint bot loads");
+    iso.on_game_tick(1);
+    let value = iso
+        .probe("__rs2b0t_host.paint")
+        .expect("paint record readable");
+    let paint: script::shim::ScriptPaint =
+        serde_json::from_value(value).expect("decodes as ScriptPaint");
+    assert_eq!(paint.title.as_deref(), Some("BoneBurier — digging"));
+    assert_eq!(paint.accent.as_deref(), Some("#f3e6a2"));
+    assert_eq!(paint.lines, vec!["Runtime: 1.2m | Buried: 3", ""]);
+    iso.join();
+}
+
+// Task 3 — reader.worldTile / inventorySize and actions.closeModal are
+// thin stubs (no snapshot this tag: null / 0 / false); missing members
+// throw `not v1`.
+#[test]
+fn isolate_reader_and_actions_expose_thin_stubs_and_throw_on_missing() {
+    let src = r#"
+import { reader, actions } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            tile: reader.worldTile(),
+            inv: reader.inventorySize(),
+            closed: actions.closeModal(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").expect("stub reads back");
+    assert_eq!(value["tile"], serde_json::Value::Null, "no snapshot tile");
+    assert_eq!(value["inv"], 0, "no snapshot inventory");
+    assert_eq!(value["closed"], false, "no open modal");
+    iso.join();
+
+    let src = "import { reader } from '../../adapter/ClientAdapter.js'; export default class T extends LoopingBot { loop() { reader.bankOpen(); } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("reader.bankOpen")),
+        "missing reader member throws: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 3 — ScriptRunner.stop signals the host stop flag (the isolate
+// thread logs the clear hook; Stop dispatch lands with Execution wiring).
+#[test]
+fn isolate_script_runner_stop_signals_host_stop() {
+    let src = "import { ScriptRunner } from '../../runtime/ScriptRunner.js'; export default class T extends LoopingBot { loop() { ScriptRunner.stop('done'); } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let flag = iso
+        .probe("__rs2b0t_host.stopRequested === true")
+        .expect("stop flag readable");
+    assert_eq!(flag, serde_json::Value::Bool(true));
+    let _ = iso.probe("__rs_bot"); // round-trip so the hook log lands
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("stop")),
+        "host stop hook logged: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 3 — TaskBot.loop runs the first task whose validate() passes (the
+// rs2b0t priority order), via onStart's this.add(...).
+#[test]
+fn isolate_task_bot_loop_runs_first_passing_validate() {
+    let src = r#"
+import { TaskBot } from '../../api/bot/Bot.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.runs = [];
+        this.add(
+            { validate: () => false, execute: () => this.runs.push('first') },
+            { validate: () => true, execute: () => this.runs.push('second') },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let runs = iso.probe("__rs_bot.runs").expect("task runs readable");
+    assert_eq!(
+        runs,
+        serde_json::json!(["second", "second"]),
+        "only the passing task executes, once per tick"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("error")),
+        "task loop ran clean: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
+// host and readable; every other member read or set throws `not v1`.
+#[test]
+fn isolate_native_tick_api_is_throw_on_missing_proxy() {
+    let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let n = iso.probe("__rs_n").unwrap();
+    assert_eq!(n, 2, "two ticks reached the JS tick function");
+    let tick = iso.probe("__rs_api.tick").expect("api.tick is set");
+    assert_eq!(tick, 2, "api.tick holds the dispatched tick number");
+    assert!(
+        iso.probe("__rs_api._n").is_err(),
+        "reading an unknown api member throws"
+    );
+    assert!(
+        iso.probe("__rs_api.missing = 1").is_err(),
+        "setting an unknown api member throws"
     );
     iso.join();
 }

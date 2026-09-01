@@ -452,7 +452,7 @@ mod isolate {
         }
 
         /// Evaluate `expr` in the isolate's global scope and return its
-        /// JSON value (test/status read-back; e.g. `"__rs_api._n"`).
+        /// JSON value (test/status read-back; e.g. `"__rs_bot.n"`).
         pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
             let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
             self.tx
@@ -576,26 +576,43 @@ mod isolate {
     /// `loop()`, and the catalog shape default-exports a
     /// `LoopingBot`/`TaskBot`/`TreeBot` subclass that is instantiated and
     /// ticked through its `loop()`.
+    ///
+    /// The shim prelude and the extra rs2b0t-named modules are wired first
+    /// so relative `../../api/...` imports and the remapped
+    /// `@rs2b0t/api` bundle resolve to our modules; an import that does
+    /// not name a shim module (e.g. `../../api/bank/Banking.js` before
+    /// its task) fails the load honestly.
     fn wire_runtime(runtime: &mut Runtime, source: &str, shape: LoadShape) -> Result<(), String> {
-        let bot = rustyscript::Module::new("bot.js", source);
-        let main = match shape {
-            LoadShape::NativeTick => rustyscript::Module::new("main.js", NATIVE_MAIN),
-            LoadShape::CompatDefineBot | LoadShape::CompatClass => {
-                runtime
-                    .eval::<()>(COMPAT_SHIM)
-                    .map_err(|e| format!("shim: {e}"))?;
-                let compat_main = match shape {
-                    LoadShape::CompatDefineBot => COMPAT_MAIN,
-                    _ => COMPAT_CLASS_MAIN,
-                };
-                rustyscript::Module::new("main.js", compat_main)
-            }
-            LoadShape::Reject => return Err("not a bot shape".to_string()),
-        };
-        // Loading evaluates the module, so a missing `tick`/default export
-        // or a syntax error surfaces here, before any tick runs.
+        if shape == LoadShape::Reject {
+            return Err("not a bot shape".to_string());
+        }
+        let source = crate::shim::remap_rs2b0t_api(source);
         runtime
-            .load_modules(&main, vec![&bot])
+            .eval::<()>(crate::shim::PRELUDE)
+            .map_err(|e| format!("shim: {e}"))?;
+        let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
+        let main = match shape {
+            LoadShape::NativeTick => {
+                rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN)
+            }
+            LoadShape::CompatDefineBot => {
+                rustyscript::Module::new(crate::shim::MAIN_MODULE, COMPAT_MAIN)
+            }
+            LoadShape::CompatClass => {
+                rustyscript::Module::new(crate::shim::MAIN_MODULE, COMPAT_CLASS_MAIN)
+            }
+            LoadShape::Reject => unreachable!("rejected above"),
+        };
+        // Side modules load in order, so the shim modules (which the bot
+        // imports) must precede the bot's own module.
+        let mut side = crate::shim::shim_modules();
+        side.push(bot);
+        let side: Vec<&rustyscript::Module> = side.iter().collect();
+        // Loading evaluates the modules, so a missing `tick`/default
+        // export, an unresolvable import, or a syntax error surfaces
+        // here, before any tick runs.
+        runtime
+            .load_modules(&main, side)
             .map_err(|e| format!("load: {e}"))?;
         Ok(())
     }
@@ -616,47 +633,54 @@ mod isolate {
     }
 
     /// Native wrapper: re-export the module's `tick` behind a global that
-    /// receives the tick number and a persistent `api` object.
+    /// receives the tick number and a persistent `api` object. `api` is a
+    /// Proxy: the host owns it (`api.tick` is set each tick); reading or
+    /// writing any other member throws `not v1` — a script stashes its own
+    /// state elsewhere, never in host-owned slots.
     const NATIVE_MAIN: &str = r#"
 import { tick } from './bot.js';
-const api = {};
+const api = new Proxy({}, {
+    get(target, prop) {
+        if (typeof prop === 'symbol') return undefined;
+        if (prop === 'tick') return target.tick;
+        throw new Error('not v1: api.' + String(prop));
+    },
+    set(target, prop, value) {
+        if (prop === 'tick') { target.tick = value; return true; }
+        throw new Error('not v1: api.' + String(prop));
+    },
+});
 globalThis.__rs_api = api;
 globalThis.__rs_tick = (n) => { api.tick = n; return tick(api); };
 "#;
 
-    /// Compat shim: the 20-line prelude that stands in for `@rs2b0t/api`.
-    /// `defineBot` returns the module's config; the class names are the
-    /// old bot base classes. Not the full API — a script touching
-    /// `Game.teleport` etc. throws at runtime (logged, never faked).
-    const COMPAT_SHIM: &str = r#"
-globalThis.defineBot = (m) => m;
-globalThis.LoopingBot = class LoopingBot {
-    onStart() {}
-    loop() {}
-};
-globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {};
-globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {};
-"#;
-
     /// Compat wrapper: `create()` the bot instance, call `onStart` once,
-    /// then `loop()` every tick.
+    /// then `loop()` (and `onPaint` with the dummy ctx) every tick.
     const COMPAT_MAIN: &str = r#"
 import bot from './bot.js';
 const inst = (bot && typeof bot.create === 'function') ? bot.create() : (bot || null);
 if (inst && typeof inst.onStart === 'function') { inst.onStart(); }
-globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { inst.loop(); } };
+globalThis.__rs_tick = () => {
+    if (!inst) return;
+    if (typeof inst.loop === 'function') { inst.loop(); }
+    if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
+};
 "#;
 
     /// Compat class wrapper: instantiate the default-export
     /// `LoopingBot`/`TaskBot`/`TreeBot` subclass, call `onStart` once,
-    /// then `loop()` every tick. The instance is exposed as `__rs_bot`
-    /// for probe read-back.
+    /// then `loop()` (and `onPaint` with the dummy ctx) every tick. The
+    /// instance is exposed as `__rs_bot` for probe read-back.
     const COMPAT_CLASS_MAIN: &str = r#"
 import bot from './bot.js';
 const inst = new bot();
 globalThis.__rs_bot = inst;
 if (inst && typeof inst.onStart === 'function') { inst.onStart(); }
-globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { inst.loop(); } };
+globalThis.__rs_tick = () => {
+    if (!inst) return;
+    if (typeof inst.loop === 'function') { inst.loop(); }
+    if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
+};
 "#;
 
     /// The tick loop: commands are serialized on this thread; ticks run
@@ -671,6 +695,7 @@ globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { in
     fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>) {
         let mut paused = false;
         let mut pending: Option<IsolateCmd> = None;
+        let mut stop_logged = false;
         loop {
             let cmd = match pending.take() {
                 Some(cmd) => cmd,
@@ -699,6 +724,23 @@ globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { in
                     let elapsed = start.elapsed();
                     if let Err(e) = result {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                    }
+                    // ScriptRunner.stop signal: the script flags the host
+                    // handle; log the clear hook once (Stop dispatch lands
+                    // with the Execution wiring, later task).
+                    if !stop_logged {
+                        let stopped = runtime
+                            .eval::<bool>(
+                                "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.stopRequested)",
+                            )
+                            .unwrap_or(false);
+                        if stopped {
+                            stop_logged = true;
+                            let _ = out.send(ThreadMsg::Log(
+                                "script requested stop (Stop dispatch lands with Execution wiring)"
+                                    .to_string(),
+                            ));
+                        }
                     }
                     if elapsed > SLOW_TICK {
                         let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
@@ -741,14 +783,25 @@ globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { in
         use super::*;
 
         #[test]
-        fn shim_defines_globals_for_compat_fixture() {
+        fn shim_prelude_defines_globals_for_compat_fixture() {
             ensure_platform();
             let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-            runtime.eval::<()>(COMPAT_SHIM).unwrap();
+            runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
             let t: bool = runtime.eval("typeof defineBot === 'function'").unwrap();
             assert!(t);
             let t: bool = runtime.eval("typeof TaskBot === 'function'").unwrap();
             assert!(t);
+            let t: bool = runtime.eval("typeof TreeBot === 'function'").unwrap();
+            assert!(t);
+            let t: bool = runtime.eval("typeof LoopingBot === 'function'").unwrap();
+            assert!(t);
+            let t: bool = runtime.eval("typeof __rs2b0t_host === 'object'").unwrap();
+            assert!(t);
+            // defineBot validates { name, create } instead of no-op'ing.
+            let err: bool = runtime
+                .eval("(() => { try { defineBot({}); return false; } catch { return true; } })()")
+                .unwrap();
+            assert!(err, "defineBot throws without a name/create pair");
         }
     }
 }

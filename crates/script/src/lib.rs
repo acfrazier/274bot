@@ -9,6 +9,8 @@ pub mod params;
 pub mod ported;
 pub mod registry;
 pub mod rs2b0t_registry;
+#[cfg(feature = "load")]
+pub mod shim;
 pub mod slot;
 
 pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
