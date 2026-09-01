@@ -23,6 +23,16 @@ const NATIVE_TICK: &str = "export function tick(api) { api._n = (api._n||0)+1 }"
 const COMPAT_FIXTURE: &str =
     r#"export default defineBot({ name: "t", create() { return new (class { loop() {} }) } })"#;
 
+// The catalog shape: a TS file with a typed default-export LoopingBot
+// subclass. Transpiled at Load and at isolate spawn (types gone).
+const CLASS_TS_FIXTURE: &str = r#"
+export default class Burier extends LoopingBot {
+    override loopDelay = 600;
+    private n: number = 0;
+    override loop() { this.n += 1; }
+}
+"#;
+
 /// Accept-everything driver stub (same shape as the other script tests:
 /// the crate's `test_support` module is unit-test-only, so integration
 /// tests copy the stub).
@@ -435,4 +445,48 @@ fn default_js_store_is_dot_274bot_json() {
     let p = script::load::default_js_store();
     let s = p.to_string_lossy().to_string();
     assert!(s.ends_with(".274bot/js-scripts.json"), "{s}");
+}
+
+// (8) The catalog shape loads: a TS file with a typed default-export
+// `LoopingBot` subclass is `CompatClass`, transpiles at Load (types gone)
+// and validates in the throwaway compile Runtime.
+#[test]
+fn js_library_loads_compat_class_ts() {
+    let dir = scratch("compat_class");
+    let path = write_file(&dir, "Burier.ts", CLASS_TS_FIXTURE);
+    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+
+    let card = lib.load(&path).expect("compat class TS loads");
+    assert_eq!(card.shape, LoadShape::CompatClass);
+    assert_eq!(card.name, "Burier");
+    assert_eq!(lib.cards().len(), 1);
+}
+
+// (8b) `transpile_ts` strips TS-only syntax so V8 can parse the output.
+#[test]
+fn transpile_ts_strips_types_and_v8_can_parse_it() {
+    let js = script::load::transpile_ts(
+        "export default class X extends LoopingBot { private n: number = 0 }",
+    )
+    .expect("transpiles");
+    assert!(!js.contains(": number"), "type annotation gone: {js}");
+    assert!(!js.contains("private"), "private marker gone: {js}");
+}
+
+// (8c) The catalog shape spawns: the isolate instantiated the default
+// export and `loop()` runs on ticks (the instance is probed back).
+#[test]
+fn isolate_spawn_compat_class_ticks_and_joins() {
+    let iso = LoadIsolate::spawn(CLASS_TS_FIXTURE.to_string(), LoadShape::CompatClass)
+        .expect("spawn compat class isolate");
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let n = iso.probe("__rs_bot.n").expect("instance readable");
+    assert_eq!(n, 2, "two ticks reached the class loop");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("error")),
+        "class loop ran clean: {logs:?}"
+    );
+    iso.join();
 }

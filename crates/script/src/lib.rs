@@ -17,4 +17,4 @@ pub use registry::{compiled_ids, factory, is_whale, CompiledId};
 pub use slot::{RunState, SlotScript};
 
 #[cfg(feature = "load")]
-pub use load::LoadIsolate;
+pub use load::{transpile_ts, LoadIsolate};

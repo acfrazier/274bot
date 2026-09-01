@@ -19,6 +19,9 @@ use crate::registry::compiled_ids;
 pub enum LoadShape {
     /// Old rs2b0t `defineBot(...)` / manifest-flagged source.
     CompatDefineBot,
+    /// Catalog shape: default-export `LoopingBot`/`TaskBot`/`TreeBot`
+    /// subclass (TS, transpiled at Load and at isolate spawn).
+    CompatClass,
     /// Modern source exporting a `tick` function.
     NativeTick,
     /// Not a recognized bot shape.
@@ -26,10 +29,18 @@ pub enum LoadShape {
 }
 
 /// Classify a JS source by marker scan. Compat markers win over the
-/// native `tick` export when a source carries both.
+/// native `tick` export when a source carries both, and a default-export
+/// `LoopingBot`/`TaskBot`/`TreeBot` subclass (the catalog shape) also
+/// wins over the native `tick` export.
 pub fn detect_shape(source: &str) -> LoadShape {
     if source.contains("defineBot(") || source.contains("__rs2b0tManifest") {
         LoadShape::CompatDefineBot
+    } else if source.contains("export default class")
+        && ["LoopingBot", "TaskBot", "TreeBot"]
+            .iter()
+            .any(|base| source.contains(&format!("extends {base}")))
+    {
+        LoadShape::CompatClass
     } else if source.contains("export function tick")
         || source.contains("export async function tick")
     {
@@ -37,6 +48,37 @@ pub fn detect_shape(source: &str) -> LoadShape {
     } else {
         LoadShape::Reject
     }
+}
+
+/// Strip TypeScript from `source` (types, `private`/`override` markers,
+/// type-only imports) and re-emit as a JavaScript module V8 can parse.
+/// Plain JS passes through unchanged in behaviour. A parse failure means
+/// the source is not readable TypeScript/JavaScript.
+#[cfg(feature = "load")]
+pub fn transpile_ts(source: &str) -> Result<String, String> {
+    let specifier = deno_ast::ModuleSpecifier::parse("file:///bot.ts")
+        .map_err(|e| format!("ts specifier: {e}"))?;
+    let parsed = deno_ast::parse_module(deno_ast::ParseParams {
+        specifier,
+        text: source.to_string().into(),
+        media_type: deno_ast::MediaType::TypeScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .map_err(|e| format!("ts parse: {e}"))?;
+    let emitted = parsed
+        .transpile(
+            &deno_ast::TranspileOptions::default(),
+            &deno_ast::TranspileModuleOptions::default(),
+            &deno_ast::EmitOptions {
+                source_map: deno_ast::SourceMapOption::None,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?
+        .into_source();
+    Ok(emitted.text)
 }
 
 /// A loaded JS bot: the picker name (file stem), its source path, the
@@ -136,7 +178,12 @@ impl JsLibrary {
             return Err(format!("not a bot shape: {name}"));
         }
         #[cfg(feature = "load")]
-        isolate::validate_compiles(&source, shape).map_err(|e| format!("{name}: {e}"))?;
+        {
+            // Transpile at Load (types gone) so the throwaway Runtime
+            // validates the JS V8 will actually parse.
+            let js = transpile_ts(&source).map_err(|e| format!("{name}: {e}"))?;
+            isolate::validate_compiles(&js, shape).map_err(|e| format!("{name}: {e}"))?;
+        }
         let card = JsCard {
             name,
             path: path.to_path_buf(),
@@ -277,15 +324,19 @@ mod isolate {
     impl LoadIsolate {
         /// Spawn the isolate thread: init V8, create the Runtime (heap
         /// capped, per-op timeout), wire the module, then return a handle.
-        /// Fails with a message when the source cannot be wired.
+        /// The source is transpiled first (types gone) — plain JS passes
+        /// through unchanged in behaviour — so both JS and TS cards run
+        /// the same V8-parseable text. Fails with a message when the
+        /// source cannot be wired.
         pub fn spawn(source: String, shape: LoadShape) -> Result<Self, String> {
             ensure_platform();
+            let js = transpile_ts(&source)?;
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
             let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
             let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
             let handle = std::thread::Builder::new()
                 .name("js-isolate".into())
-                .spawn(move || isolate_main(source, shape, rx, msg_tx, setup_tx))
+                .spawn(move || isolate_main(js, shape, rx, msg_tx, setup_tx))
                 .map_err(|e| format!("isolate thread: {e}"))?;
             let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
                 Ok(Ok(handle)) => handle,
@@ -477,17 +528,24 @@ mod isolate {
     }
 
     /// Load `source` into `runtime` as a module and wire the global tick
-    /// entry. Native sources export `tick(api)`; compat sources default-
-    /// export a `defineBot` config and tick through `create()`'s `loop()`.
+    /// entry. Native sources export `tick(api)`; compat sources
+    /// default-export a `defineBot` config and tick through `create()`'s
+    /// `loop()`, and the catalog shape default-exports a
+    /// `LoopingBot`/`TaskBot`/`TreeBot` subclass that is instantiated and
+    /// ticked through its `loop()`.
     fn wire_runtime(runtime: &mut Runtime, source: &str, shape: LoadShape) -> Result<(), String> {
         let bot = rustyscript::Module::new("bot.js", source);
         let main = match shape {
             LoadShape::NativeTick => rustyscript::Module::new("main.js", NATIVE_MAIN),
-            LoadShape::CompatDefineBot => {
+            LoadShape::CompatDefineBot | LoadShape::CompatClass => {
                 runtime
                     .eval::<()>(COMPAT_SHIM)
                     .map_err(|e| format!("shim: {e}"))?;
-                rustyscript::Module::new("main.js", COMPAT_MAIN)
+                let compat_main = match shape {
+                    LoadShape::CompatDefineBot => COMPAT_MAIN,
+                    _ => COMPAT_CLASS_MAIN,
+                };
+                rustyscript::Module::new("main.js", compat_main)
             }
             LoadShape::Reject => return Err("not a bot shape".to_string()),
         };
@@ -534,6 +592,7 @@ globalThis.LoopingBot = class LoopingBot {
     loop() {}
 };
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {};
+globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {};
 "#;
 
     /// Compat wrapper: `create()` the bot instance, call `onStart` once,
@@ -541,6 +600,18 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {};
     const COMPAT_MAIN: &str = r#"
 import bot from './bot.js';
 const inst = (bot && typeof bot.create === 'function') ? bot.create() : (bot || null);
+if (inst && typeof inst.onStart === 'function') { inst.onStart(); }
+globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { inst.loop(); } };
+"#;
+
+    /// Compat class wrapper: instantiate the default-export
+    /// `LoopingBot`/`TaskBot`/`TreeBot` subclass, call `onStart` once,
+    /// then `loop()` every tick. The instance is exposed as `__rs_bot`
+    /// for probe read-back.
+    const COMPAT_CLASS_MAIN: &str = r#"
+import bot from './bot.js';
+const inst = new bot();
+globalThis.__rs_bot = inst;
 if (inst && typeof inst.onStart === 'function') { inst.onStart(); }
 globalThis.__rs_tick = () => { if (inst && typeof inst.loop === 'function') { inst.loop(); } };
 "#;

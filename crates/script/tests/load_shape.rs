@@ -33,6 +33,14 @@ const x = 1 + 1;
 console.log('not a bot shape at all', x);
 "#;
 
+// Fixture 4: BoneBurier-shaped TS — default-export LoopingBot subclass
+// with typed private fields (the catalog shape).
+const CLASS_TS_FIXTURE: &str = r#"
+export default class BoneBurier extends LoopingBot {
+    private n: number = 0;
+}
+"#;
+
 #[test]
 fn native_fixture_is_native_tick() {
     assert_eq!(detect_shape(NATIVE_FIXTURE), LoadShape::NativeTick);
@@ -86,6 +94,52 @@ fn compat_wins_over_native_when_both_present() {
     // also export a tick: route it to the compat loader, never native.
     assert_eq!(
         detect_shape("defineBot({ loop() {} });\nexport function tick() {}"),
+        LoadShape::CompatDefineBot
+    );
+}
+
+#[test]
+fn class_fixture_is_compat_class() {
+    assert_eq!(detect_shape(CLASS_TS_FIXTURE), LoadShape::CompatClass);
+}
+
+#[test]
+fn compat_class_marker_variants() {
+    // All three catalog base classes route to the compat class loader.
+    for base in ["LoopingBot", "TaskBot", "TreeBot"] {
+        assert_eq!(
+            detect_shape(&format!("export default class X extends {base} {{}}")),
+            LoadShape::CompatClass
+        );
+    }
+    // A default-export class extending something else is not the shape.
+    assert_eq!(
+        detect_shape("export default class X extends Object {}"),
+        LoadShape::Reject
+    );
+    // A bare `extends LoopingBot` class that is not default-exported is
+    // not a loadable card.
+    assert_eq!(
+        detect_shape("class X extends LoopingBot {}"),
+        LoadShape::Reject
+    );
+}
+
+#[test]
+fn compat_class_wins_over_native_tick() {
+    // Class markers win over the native `tick` export, exactly like the
+    // defineBot markers.
+    assert_eq!(
+        detect_shape("export default class X extends LoopingBot {}\nexport function tick() {}"),
+        LoadShape::CompatClass
+    );
+}
+
+#[test]
+fn compat_define_bot_still_wins_over_class() {
+    // defineBot markers keep the highest precedence.
+    assert_eq!(
+        detect_shape("defineBot({ name: 'A' });\nexport default class X extends LoopingBot {}"),
         LoadShape::CompatDefineBot
     );
 }
