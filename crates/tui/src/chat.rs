@@ -102,9 +102,9 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
 
     /// A click inside the pane: an option row answers that choice, any
     /// other row continues the dialog. `area` is the pane's buffer rect;
-    /// `row` is the click's buffer row.
-    pub fn on_click(&mut self, area: Rect, row: u16) -> ChatAction {
-        if !area.contains(Position::new(0, row)) {
+    /// `(col, row)` is the click's buffer position.
+    pub fn on_click(&mut self, area: Rect, col: u16, row: u16) -> ChatAction {
+        if !area.contains(Position::new(col, row)) {
             return ChatAction::None;
         }
         let action = if self.view.options.is_empty() {
@@ -349,7 +349,7 @@ mod tests {
         let area = ratatui::layout::Rect::new(0, 0, 60, 8);
         let (a1, a2) = {
             let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
-            (chat.on_click(area, 3), chat.on_click(area, 4))
+            (chat.on_click(area, 10, 3), chat.on_click(area, 10, 4))
         };
         assert_eq!(
             a1,
@@ -380,7 +380,7 @@ mod tests {
             let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
             // A click below the option rows is not an option — it does not
             // continue through the choices.
-            chat.on_click(area, 7)
+            chat.on_click(area, 10, 7)
         };
         assert_eq!(action, ChatAction::None);
         assert!(sent.is_empty());

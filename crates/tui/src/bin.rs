@@ -728,6 +728,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => match app.on_key(k) {
                     AppAction::Quit => app.quit = true,
+                    AppAction::Focus(name) => session.focus(&name),
                     AppAction::ArmWalk(tile) => session.arm_walk_on(&mut app, tile),
                     AppAction::WalkTile(tile) => session.wasd_walk(&app, tile),
                     AppAction::Chat(action) => session.chat_send(&app, action),
@@ -738,6 +739,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
                     if let MouseEventKind::Down(_) = m.kind {
                         match app.on_click(m.column, m.row) {
                             AppAction::Chat(action) => session.chat_send(&app, action),
+                            AppAction::Focus(name) => session.focus(&name),
                             AppAction::Quit => app.quit = true,
                             _ => {}
                         }

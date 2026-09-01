@@ -27,10 +27,12 @@ use crate::settings::{SettingsKey, SettingsPane, SettingsState};
 use crate::status::StatusPane;
 
 /// One operator action the binary dispatches onto `host_play::Play`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
+    /// Switch the focused slot to `name` (mirror onto `Play::focus`).
+    Focus(String),
     /// Map Walk-confirm: route `from` → tile and arm via `arm_walk_on`.
     ArmWalk(Tile),
     /// WASD one-tile walk: queue a `host_play::WireCmd::Walk`.
@@ -221,10 +223,13 @@ impl TuiApp {
     }
 
     /// Cycle the focus to the next running slot (the strip's `[Tab]`).
-    fn cycle_focus(&mut self) {
+    /// Returns the newly focused name so the binary can mirror it onto
+    /// `Play::focus` — the app's index alone would leave the session on
+    /// the boot slot's sample gate.
+    fn cycle_focus(&mut self) -> Option<String> {
         let running: Vec<&str> = self.statuses.iter().map(|s| s.username.as_str()).collect();
         if running.is_empty() {
-            return;
+            return None;
         }
         let current = self.focused_name();
         let pos = current
@@ -236,7 +241,24 @@ impl TuiApp {
         let name = running[pos];
         if let Some(i) = self.names.iter().position(|n| n == name) {
             self.focused = Some(i);
+            return Some(name.to_string());
         }
+        None
+    }
+
+    /// The slot name whose span the strip click lands on. The strip is
+    /// `[{names joined by " "}] …`, so name `i` starts one cell after the
+    /// leading `[` plus every earlier `len + 1` span.
+    fn strip_select(&self, col: u16) -> Option<String> {
+        let mut cursor = 1u16; // after the leading `[`
+        for name in &self.names {
+            let len = name.len() as u16;
+            if col >= cursor && col < cursor + len {
+                return Some(name.clone());
+            }
+            cursor += len + 1;
+        }
+        None
     }
 
     /// One key event. Priority: global keys, the settings popup, the chat
@@ -256,8 +278,10 @@ impl TuiApp {
             }
             KeyCode::Char('m') => return AppAction::SpawnAll,
             KeyCode::Tab => {
-                self.cycle_focus();
-                return AppAction::None;
+                return self
+                    .cycle_focus()
+                    .map(AppAction::Focus)
+                    .unwrap_or(AppAction::None)
             }
             _ => {}
         }
@@ -279,16 +303,24 @@ impl TuiApp {
         self.map_on_key(key)
     }
 
-    /// One mouse click (crossterm col/row). The chat pane answers options
-    /// / continues; the script pane answers button labels the binary
-    /// ignores (not wired this tag).
+    /// One mouse click (crossterm col/row). The strip selects a slot; the
+    /// chat pane answers options / continues; the script pane answers
+    /// button labels the binary ignores (not wired this tag).
     pub fn on_click(&mut self, col: u16, row: u16) -> AppAction {
         if self.settings_state.open {
             return AppAction::None;
         }
+        // The slot strip is the top row: clicking a name focuses that
+        // slot (mirrored onto `Play::focus` by the binary, like Tab).
+        if row == 0 {
+            return self
+                .strip_select(col)
+                .map(AppAction::Focus)
+                .unwrap_or(AppAction::None);
+        }
         if self.chat_area.contains(Position::new(col, row)) {
             let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
-            match chat.on_click(self.chat_area, row) {
+            match chat.on_click(self.chat_area, col, row) {
                 action @ (ChatAction::Continue | ChatAction::Answer(_)) => {
                     return AppAction::Chat(action)
                 }
@@ -628,8 +660,12 @@ mod tests {
         );
     }
 
+    /// The review's focus test: Tab must produce an action that carries
+    /// the newly focused name, so the binary can mirror it onto
+    /// `Play::focus` (the app's index alone leaves the session on the
+    /// boot slot's sample gate).
     #[test]
-    fn focus_cycles_through_running_slots() {
+    fn tab_produces_a_focus_action_for_the_next_running_slot() {
         let mut app = TuiApp::new("274bot headless");
         app.names = vec!["a".into(), "b".into()];
         app.focused = Some(0);
@@ -643,10 +679,36 @@ mod tests {
                 ..host_play::SlotStatus::default()
             },
         ];
-        app.on_key(key(KeyCode::Tab));
+        assert_eq!(
+            app.on_key(key(KeyCode::Tab)),
+            AppAction::Focus("b".into()),
+            "Tab names the newly focused slot so Play::focus follows"
+        );
         assert_eq!(app.focused, Some(1));
-        app.on_key(key(KeyCode::Tab));
-        assert_eq!(app.focused, Some(0), "focus wraps around");
+        assert_eq!(
+            app.on_key(key(KeyCode::Tab)),
+            AppAction::Focus("a".into()),
+            "focus wraps around"
+        );
+        assert_eq!(app.focused, Some(0));
+    }
+
+    #[test]
+    fn tab_with_no_running_slots_does_nothing() {
+        let mut app = TuiApp::new("274bot headless");
+        assert_eq!(app.on_key(key(KeyCode::Tab)), AppAction::None);
+    }
+
+    #[test]
+    fn strip_click_selects_the_clicked_slot_name() {
+        let mut app = TuiApp::new("274bot headless");
+        app.names = vec!["a".into(), "b".into()];
+        // Strip text: `[a b]  focused: …`. Name spans: `a` at col 1,
+        // `b` at col 3.
+        assert_eq!(app.on_click(1, 0), AppAction::Focus("a".into()));
+        assert_eq!(app.on_click(3, 0), AppAction::Focus("b".into()));
+        // Between the names is a miss.
+        assert_eq!(app.on_click(2, 0), AppAction::None);
     }
 
     #[test]
