@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
+# adapter (SKIP_GPU=1). The cargo graph is the same as local — host workspace
+# plus vendor/fr-client-rust — once ALSA/X11 headers are present. ubuntu-latest
+# does not ship libasound; panel enables client `audio` (cpal → alsa-sys).
+
 jobs:
   fmt:
     name: fmt
@@ -21,10 +26,10 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      # Bot crates only: --all would also format the vendored client submodule
-      # (separate workspace, intentionally not reformatted).
-      - name: Check formatting (bot crates)
-        run: cargo fmt -p host -p vault -p api -p host-play -p e2e -p panel -p nav -p script -p scenario -- --check
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --all -- --check --manifest-path vendor/fr-client-rust/Cargo.toml
 
   clippy:
     name: clippy
@@ -36,22 +41,48 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Native libs (ALSA + window)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libasound2-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev
       - uses: Swatinem/rust-cache@v2
-      # The vendored client is a path dependency with its own lint debt; clippy
-      # lints path deps even when excluded, so --no-deps keeps the pass on the
-      # 274bot crates only. `-D warnings` denies host-crate lint debt.
-      - name: Clippy (bot crates)
-        run: cargo clippy --workspace --exclude client --all-targets --no-deps -- -D warnings
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets --no-deps -- -D warnings
+          cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
 
   test:
     name: test
     runs-on: ubuntu-latest
+    env:
+      SKIP_GPU: "1"
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      - name: Native libs (ALSA + window)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libasound2-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev
       - uses: Swatinem/rust-cache@v2
-      # No LIVE=1: the live harness tests stay #[ignore]d.
-      - name: Test (bot crates)
-        run: cargo test --workspace --exclude client
+      - name: Test
+        run: |
+          cargo test --workspace
+          cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace

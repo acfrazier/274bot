@@ -1,12 +1,12 @@
 # Contributing
 
-274bot is **alpha** (`0.1.0` crate versions, no crates.io publish). This
-tag is the host + API + nav surface. The script *kernel* (Browse / Start /
-Pause / Stop, JS Load) and WalkTo are in-tree; honest bot scripts are not
-this tag (see [CHANGELOG.md](CHANGELOG.md) for v0.1.1 / v0.1.5 / v0.2.x).
+274bot is **alpha** (`0.1.0` crate versions, no crates.io publish; git
+tag `0.1.1`). This tag is the host + API + nav **execute** surface. The
+script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are
+in-tree; honest bot scripts are not this tag (see [CHANGELOG.md](CHANGELOG.md)
+for v0.1.2 / v0.1.5 / v0.2.x).
 
-The contributor fence is **do you know what you are doing with your
-tools**. Alpha is not turnkey rs2b2t: you run a local engine and point
+Alpha is not turnkey rs2b2t: you run a local 274 engine and point
 `--cache` at a pack. Live cache fetch is a beta goal. PRs that read like
 unreviewed model output will be rejected; the product bar is a host that
 does not suck.
@@ -23,10 +23,10 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
 - RSA: stock LC Server uses the **Java default pair** — no bake. Rotated
   `private.pem` is read at login from `$ENGINE_DIR/data/config/private.pem`
   (or `LOGIN_RSAN` / `LOGIN_RSAE`).
-- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack` (`274V` v6), baked
+- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack` (`274V` v7), baked
   with `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
   `gates.loc` follows the maps dir's parent. Alpha assumes you already
-  have a Server tree. Rebake after this tag (v5 is `BadVersion`).
+  have a Server tree. Rebake after this tag (`274V` v7; v6 is `BadVersion`).
 
 ## Clone and run
 
@@ -50,13 +50,26 @@ prompt.
 
 ## Tests
 
-CI (`fmt` + `clippy --no-deps` + `cargo test`) never sets `LIVE=1`.
+**Local CI** is this checkout: host workspace and the vendored client
+workspace, same bar. Client is a path dep (not a 274bot workspace member),
+so that is two cargo manifests — not a second product. Never sets
+`LIVE=1`.
 
 ```bash
-cargo fmt -p host -p vault -p api -p host-play -p e2e -p panel -p nav -p script -p scenario -- --check
-cargo clippy --workspace --exclude client --all-targets --no-deps -- -D warnings
-cargo test --workspace --exclude client
+cargo fmt --all -- --check
+cargo fmt --all -- --check --manifest-path vendor/fr-client-rust/Cargo.toml
+
+cargo clippy --workspace --all-targets --no-deps -- -D warnings
+cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
+
+cargo test --workspace
+cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
 ```
+
+GitHub Actions runs the same two manifests after installing ALSA + X11
+headers (`libasound2-dev` — panel pulls client `audio` / cpal). It is still
+a **subset**: `SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`.
+A green GH job is not a headed or engine pass.
 
 Live harnesses need the engine. Failures print `FAIL:` and `exit(1)`.
 Wait `ingame && scene_state == 2`. Quiet unless `BOT_DEBUG=1`.
