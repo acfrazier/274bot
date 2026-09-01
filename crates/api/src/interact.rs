@@ -226,6 +226,30 @@ pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
 
 /// Queue a `CLIENT_CHEAT` (`::` command) through the ISAAC sink.
 /// `cmd` is the cheat without the `::` prefix (Java `chatInput.substring(2)`).
+/// `setstat <skill> 99` for the skills `[debugproc,maxme]` advances.
+/// The debug heading and live nav kit share this list — never `~maxme`.
+pub const MAXME_SETSTATS: &[&str] = &[
+    "setstat attack 99",
+    "setstat defence 99",
+    "setstat strength 99",
+    "setstat hitpoints 99",
+    "setstat ranged 99",
+    "setstat prayer 99",
+    "setstat magic 99",
+    "setstat cooking 99",
+    "setstat woodcutting 99",
+    "setstat fletching 99",
+    "setstat fishing 99",
+    "setstat firemaking 99",
+    "setstat crafting 99",
+    "setstat smithing 99",
+    "setstat mining 99",
+    "setstat herblore 99",
+    "setstat agility 99",
+    "setstat thieving 99",
+    "setstat runecraft 99",
+];
+
 pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
     let out = driver.out();
     out.p1_enc(ClientProt::CLIENT_CHEAT.id);
@@ -236,7 +260,8 @@ pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
 
 /// Tutorial-skip hop used by rs2b0t `mainlandAccount`: tele off the island
 /// then `setvar tutorial 1000`. Call after `ingame && scene_state == 2`.
-/// Does **not** relog (side icons stay tutorial-locked).
+/// Does **not** relog — side icons stay tutorial-locked until a clean
+/// IF_BUTTON logout + login (scenario `StepKind::Relog`).
 pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
     let tele = format!("tele {OFF_ISLAND_TELE}");
     cheat(driver, &tele);

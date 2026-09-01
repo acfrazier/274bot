@@ -22,13 +22,18 @@ pub struct Evidence {
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// The player's world tile at the terminal state `[x, z]`.
+    /// The player's world tile at the terminal state `[x, z, level]`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tile: Option<[i32; 2]>,
+    pub tile: Option<[i32; 3]>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub inv: Vec<InvRow>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stat: Option<StatRow>,
+    /// Chat ring at the terminal state, newest first. Empty on a quiet
+    /// PASS (`skip_serializing_if`); a FAIL dumps the lines so an ignored
+    /// random event is readable without a screen.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub chat: Vec<ChatRow>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
 }
@@ -47,6 +52,14 @@ pub struct InvRow {
 #[derive(Debug, Clone, Serialize)]
 pub struct StatRow {
     pub runenergy: i32,
+}
+
+/// One chat-ring line (newest first in [`Evidence::chat`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatRow {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 impl Evidence {
@@ -89,11 +102,19 @@ impl Evidence {
             message,
             ticks,
             elapsed_ms: started.elapsed().as_millis() as u64,
-            tile: snap.tile().map(|(x, z, _)| [x, z]),
+            tile: snap.tile().map(|(x, z, level)| [x, z, level]),
             inv,
             stat: Some(StatRow {
                 runenergy: snap.runenergy(),
             }),
+            chat: snap
+                .chat_lines()
+                .iter()
+                .map(|l| ChatRow {
+                    text: l.text.clone(),
+                    username: l.username.clone(),
+                })
+                .collect(),
             scene: snap.scene_state(),
         }
     }
@@ -186,7 +207,8 @@ mod tests {
         assert_eq!(v["scenario"], "walk");
         assert_eq!(v["outcome"], "PASS");
         assert_eq!(v["predicate"], "arrived(3220,3212,0)");
-        assert_eq!(v["tile"], serde_json::json!([3220, 3212]));
+        assert_eq!(v["tile"], serde_json::json!([3220, 3212, 0]));
+        assert!(v.get("chat").is_none(), "empty ring omitted on PASS");
         assert_eq!(v["inv"][0]["id"], 526);
         assert_eq!(v["inv"][0]["name"], "Bones");
         assert_eq!(v["inv"][0]["count"], 1);
@@ -222,6 +244,41 @@ mod tests {
         assert!(
             v["inv"][0].get("name").is_none(),
             "no obj table -> no names"
+        );
+    }
+
+    /// FAIL dumps carry the chat ring (newest first). Random-event
+    /// ignores (`No-one ignores me!`) never showed up on the old record.
+    #[test]
+    fn fail_evidence_carries_the_chat_ring() {
+        let mut c = seeded();
+        c.chat_text[0] = "No-one ignores me!".into();
+        c.chat_username[0] = "Mysterious Old Man".into();
+        c.chat_text[1] = "It's really rude to ignore someone, Test!".into();
+        c.bump_gens(ServerProt::MESSAGE_GAME);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let ev = Evidence::terminal(
+            "nav_routes",
+            "FAIL",
+            "arrived(2612,3092,0)".into(),
+            Some("step 19: follow Stalled".into()),
+            615,
+            &snap,
+            None,
+            Instant::now(),
+        );
+        let json = serde_json::to_string(&ev).expect("evidence serializes");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["chat"][0]["text"], "No-one ignores me!");
+        assert_eq!(v["chat"][0]["username"], "Mysterious Old Man");
+        assert_eq!(
+            v["chat"][1]["text"],
+            "It's really rude to ignore someone, Test!"
+        );
+        assert!(
+            v["chat"][1].get("username").is_none(),
+            "empty username omitted"
         );
     }
 }

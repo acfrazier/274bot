@@ -24,7 +24,7 @@ pub mod shot;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::interact::{cheat, op_loc, tele_args, Driver};
+use api::interact::{cheat, op_loc, tele_args, Driver, MAXME_SETSTATS};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 
@@ -45,18 +45,124 @@ pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(180);
 
 /// Boot defaults for a scenario. View knobs are headed-only; deadline /
 /// terminal shot / mainland-base gate are consumed by `ScenarioRunner`.
-/// `nav_debug` arms the panel's live overlay: the paint-layer toggles are
-/// forced on for the run without writing the persisted panel prefs.
+/// `nav` is the session-only nav overlay (paints, camera, tickrate, find
+/// flags) — applied for `--live` without writing panel prefs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioSettings {
     pub renderer: bool,
     pub only_render_selected: bool,
     pub capture: bool,
     pub full_rate: bool,
-    pub nav_debug: bool,
+    pub nav: ScenarioNav,
     pub deadline: Duration,
     pub terminal_shot: Option<&'static str>,
     pub require_mainland_base: bool,
+    /// Background cheats the runner fires while the scenario is running
+    /// (377 sustain: energy, HP, stats). Empty for most scenarios.
+    pub sustains: Vec<Sustain>,
+}
+
+/// Session-only nav overlay a scenario applies (never persisted prefs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioNav {
+    pub allow_teleports: bool,
+    pub allow_wilderness: bool,
+    pub show_nav_path: bool,
+    pub hop_labels: bool,
+    pub hop_label_px: i32,
+    pub collision_fill: bool,
+    pub nsew_labels: bool,
+    pub client_trail: bool,
+    pub component_flood: bool,
+    pub camera_follow: bool,
+    /// `speed N` cheat once the seed releases. `None` keeps the engine
+    /// at 600ms (door-troll / timing cards).
+    pub engine_speed_ms: Option<u32>,
+}
+
+impl Default for ScenarioNav {
+    fn default() -> Self {
+        Self {
+            allow_teleports: false,
+            allow_wilderness: false,
+            show_nav_path: false,
+            hop_labels: true,
+            hop_label_px: 11,
+            collision_fill: false,
+            nsew_labels: false,
+            client_trail: false,
+            component_flood: false,
+            camera_follow: false,
+            engine_speed_ms: None,
+        }
+    }
+}
+
+/// Visual + camera preset for headed nav tests. Routing flags stay off;
+/// tickrate is opt-in via [`ScenarioNav::with_tick_ms`].
+pub fn nav_test_paints() -> ScenarioNav {
+    ScenarioNav {
+        show_nav_path: true,
+        hop_labels: true,
+        hop_label_px: 11,
+        collision_fill: true,
+        client_trail: true,
+        camera_follow: true,
+        nsew_labels: false,
+        component_flood: false,
+        allow_teleports: false,
+        allow_wilderness: false,
+        engine_speed_ms: None,
+    }
+}
+
+impl ScenarioNav {
+    pub fn with_tick_ms(mut self, ms: u32) -> Self {
+        self.engine_speed_ms = Some(ms);
+        self
+    }
+}
+
+/// A poll or per-leg cheat. `when` is a [`Proof`] that must hold for
+/// [`SustainWhen::Poll`]; [`SustainWhen::EachNavStep`] fires at the start
+/// of every Walk/Follow/FollowTele (rs2b0t `restoreRunEnergy` each OD).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sustain {
+    pub when: SustainWhen,
+    pub cheat: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SustainWhen {
+    /// Fire once when a nav step begins.
+    EachNavStep,
+    /// Fire every running tick while `proof` holds (e.g. energy ≤ 25).
+    Poll(Proof),
+}
+
+impl Sustain {
+    pub fn each_nav_step(cheat: &'static str) -> Self {
+        Self {
+            when: SustainWhen::EachNavStep,
+            cheat,
+        }
+    }
+
+    pub fn poll(when: Proof, cheat: &'static str) -> Self {
+        Self {
+            when: SustainWhen::Poll(when),
+            cheat,
+        }
+    }
+}
+
+/// rs2b0t nav energy: `~energy` each WalkTo leg, and whenever run energy
+/// is at or below 25 (content debugproc, not engine `energy`).
+pub fn nav_energy_sustains() -> Vec<Sustain> {
+    vec![
+        Sustain::each_nav_step("~energy"),
+        Sustain::poll(Proof::StatAtMost { id: 16, max: 25 }, "~energy"),
+    ]
 }
 
 impl Default for ScenarioSettings {
@@ -66,10 +172,11 @@ impl Default for ScenarioSettings {
             only_render_selected: true,
             capture: false,
             full_rate: false,
-            nav_debug: false,
+            nav: ScenarioNav::default(),
             deadline: DEFAULT_DEADLINE,
             terminal_shot: None,
             require_mainland_base: false,
+            sustains: Vec::new(),
         }
     }
 }
@@ -132,6 +239,18 @@ pub enum StepKind {
     /// open main modal stalls the engine's script queue). A no-op send is
     /// harmless, so the re-send drains each dialog as it appears.
     DrainDialogs { choice: i32 },
+    /// Clean IF_BUTTON logout (CC_LOGOUT), pressed once. The slot thread
+    /// leaves `run_client` when `!ingame` and the host-play login FIFO
+    /// handshakes again — do not call blocking `Client::login` from the
+    /// runner (that freezes the panel on "logging in…"). Side icons and
+    /// quest-list colour refresh from that login payload.
+    Relog,
+    /// Like [`StepKind::Perform`], but re-sends every tick until `wait.arm`
+    /// holds (`getvar` polls, sticky `setvar tutorial`).
+    Repeat {
+        #[allow(clippy::type_complexity)]
+        send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
+    },
 }
 
 /// Evidence wait for a step: a named predicate and a tick budget.
@@ -344,6 +463,7 @@ pub fn nav_full_scenario() -> Scenario {
         settings: ScenarioSettings {
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_full terminal"),
+            nav: nav_test_paints().with_tick_ms(300),
             ..Default::default()
         },
     }
@@ -424,7 +544,7 @@ fn nav_door_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             only_render_selected: false,
-            nav_debug: true,
+            nav: nav_test_paints(),
             ..Default::default()
         },
     }
@@ -672,7 +792,7 @@ fn nav_cart_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_cart terminal"),
             ..Default::default()
@@ -794,7 +914,7 @@ fn nav_essence_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_essence terminal"),
             ..Default::default()
@@ -906,7 +1026,7 @@ fn nav_elkoy_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_elkoy terminal"),
             ..Default::default()
@@ -992,7 +1112,7 @@ fn nav_tele_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_tele terminal"),
             ..Default::default()
@@ -1142,7 +1262,7 @@ fn nav_shantay_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
             deadline: Duration::from_secs(420),
             terminal_shot: Some("nav_shantay terminal"),
             ..Default::default()
@@ -1296,11 +1416,15 @@ const NAV_ROUTES: &[(&str, WorldTile, WorldTile)] = &[
     ),
 ];
 
-/// Headed corpus smoke: seed knife + coins + glider quest, then tele+Follow
-/// each borrowed OD pair. Proof is arrival at the last dest. Teleports off.
+/// Headed corpus smoke: mainland hop (unique live accounts spawn on
+/// tutorial), `setvar` the transport-quest perm varps, clean logout +
+/// login so the quest list and side icons refresh from the login payload
+/// (no `~completequests` dialog pile), then the rs2b0t item kit (knife,
+/// coins) and tele+Follow each borrowed OD pair. Proof is arrival at the
+/// last dest. Teleports off. Auto-run is the host bothost feature.
 fn nav_routes_scenario() -> Scenario {
     let last = NAV_ROUTES[NAV_ROUTES.len() - 1].2;
-    let mut steps = vec![nav_routes_seed_step()];
+    let mut steps = nav_kit_steps();
     for (note, from, to) in NAV_ROUTES {
         steps.push(tele_step(note, *from));
         steps.push(follow_step(note, *to));
@@ -1309,7 +1433,7 @@ fn nav_routes_scenario() -> Scenario {
         name: "nav_routes",
         seed: Seed {
             profiles: vec![("test", "test")],
-            mainland: false,
+            mainland: true,
         },
         steps,
         proof: Proof::Arrived {
@@ -1320,8 +1444,10 @@ fn nav_routes_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
+            require_mainland_base: true,
             deadline: Duration::from_secs(3600),
+            sustains: nav_energy_sustains(),
             ..Default::default()
         },
     }
@@ -1329,7 +1455,7 @@ fn nav_routes_scenario() -> Scenario {
 
 /// The `nav_paint_path` scenario: log in `test`/`test`, mainland-hop into
 /// the Lumbridge courtyard, and walk ~8 tiles south in one `Walk` step.
-/// `nav_debug` arms the panel's live overlay, so the headed runner shows
+/// `nav` arms the panel's live overlay, so the headed runner shows
 /// the red baked path clipped to the viewport, the cyan client trail, and
 /// (with run on) the two-tone run-alt trail. No closer, no transport — the
 /// whole point is a plain courtyard path the camera can hold.
@@ -1365,28 +1491,164 @@ fn nav_paint_path_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav_debug: true,
+            nav: nav_test_paints().with_tick_ms(300),
+            require_mainland_base: true,
             ..Default::default()
         },
     }
 }
 
-/// Knife (slashable webs / Yanille dungeon), coins (Karamja 30-coin fare),
-/// Grand Tree complete so gnome glider edges are offered live.
-fn nav_routes_seed_step() -> Step {
+/// rs2b0t transport-quest perm varps (`transportQuestSetvarCommands`).
+/// Journal colour is login-time `~update_questlist`; the Relog step after
+/// these cheats is what actually opens packed quest-gated edges.
+const TRANSPORT_QUEST_SETVARS: &[&str] = &[
+    "setvar runemysteries 6",
+    "setvar grandtree 160",
+    "setvar treequest 9",
+    "setvar zombiequeen 15",
+    "setvar priestperil 60",
+    "setvar elenaquest 30",
+    "setvar itwatchtower 14",
+    "setvar eadgar_quest 110",
+    "setvar waterfall_quest 10",
+    "setvar dragonquest 10",
+    "setvar desertrescue 30",
+];
+
+/// Live nav kit. Mainland hop, stick `tutorial=1000`, quest `setvar`s,
+/// clean Relog (side tab 3 bound), then rs2b0t `seedTeleKit`: knife, coins,
+/// runes, charged jewellery. Auto-run is host bothost.
+fn nav_kit_steps() -> Vec<Step> {
+    vec![
+        Step {
+            name: "stick tutorial skip",
+            kind: StepKind::Repeat {
+                send: Box::new(|c, _| {
+                    cheat(c, "setvar tutorial 1000");
+                    cheat(c, "getvar tutorial");
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Chat {
+                    needle: "get tutorial: 1000",
+                },
+                budget_ticks: 200,
+            },
+        },
+        Step {
+            name: "setvar transport quests",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    for cmd in TRANSPORT_QUEST_SETVARS {
+                        cheat(c, cmd);
+                    }
+                    true
+                }),
+            },
+            wait: Wait {
+                // Already on the mainland courtyard after the seed hop;
+                // this only sequences the cheats before Relog.
+                arm: Proof::Arrived {
+                    x: 3220,
+                    z: 3220,
+                    level: 0,
+                },
+                budget_ticks: 30,
+            },
+        },
+        Step {
+            name: "relog so journal, side icons, and tutorial lock refresh",
+            kind: StepKind::Relog,
+            wait: Wait {
+                // rs2b0t mainlandAccount: sideIcon[3] bound after relog.
+                arm: Proof::SideTabAvailable { index: 3 },
+                budget_ticks: 600,
+            },
+        },
+        Step {
+            name: "journal shows Grand Tree complete",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::QuestDone {
+                    name: "The Grand Tree",
+                },
+                budget_ticks: 200,
+            },
+        },
+        Step {
+            name: "maxme setstat 99 (debug heading, not ~maxme)",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    for cmd in MAXME_SETSTATS {
+                        cheat(c, cmd);
+                    }
+                    true
+                }),
+            },
+            wait: Wait {
+                // Attack is skill 0; Stat id 16 is run energy, not agility.
+                arm: Proof::Stat { id: 0, min: 99 },
+                budget_ticks: 80,
+            },
+        },
+        seed_give("seed knife", "knife", 1, "Knife", 1),
+        seed_give("seed coins for fares", "coins", 5000, "Coins", 5000),
+        // Lean tele kit: one Varrock-shaped hop (nav-tele-smoke), not
+        // RUNE_SEEDS 80/200/80/80/80. Jewellery is one charged copy each.
+        seed_give("seed law runes", "lawrune", 10, "Law rune", 1),
+        seed_give("seed air runes", "airrune", 30, "Air rune", 1),
+        seed_give("seed fire runes", "firerune", 10, "Fire rune", 1),
+        seed_give(
+            "seed dueling ring",
+            "ring_of_dueling_8",
+            1,
+            "Ring of dueling(8)",
+            1,
+        ),
+        seed_give(
+            "seed glory",
+            "amulet_of_glory_4",
+            1,
+            "Amulet of glory(4)",
+            1,
+        ),
+        seed_give(
+            "seed games necklace",
+            "necklace_of_minigames_8",
+            1,
+            "Games necklace(8)",
+            1,
+        ),
+    ]
+}
+
+/// One `give <debug> <qty>`, then wait until that display name is in the
+/// pack (rs2b0t `seedItem`: give once, poll presence — not re-give every
+/// tick).
+fn seed_give(
+    step: &'static str,
+    debug: &'static str,
+    qty: i32,
+    display: &'static str,
+    want: i32,
+) -> Step {
     Step {
-        name: "seed knife, coins, grandtree",
+        name: step,
         kind: StepKind::Perform {
-            send: Box::new(|c, _| {
-                cheat(c, "give knife 1");
-                cheat(c, "give coins 10000");
-                cheat(c, "setvar grandtree 160");
+            send: Box::new(move |c, _| {
+                cheat(c, &format!("give {debug} {qty}"));
                 true
             }),
         },
         wait: Wait {
-            arm: Proof::Stat { id: 16, min: 0 },
-            budget_ticks: 5,
+            arm: Proof::Item {
+                name: display,
+                count: want,
+            },
+            budget_ticks: 80,
         },
     }
 }
@@ -1409,18 +1671,38 @@ fn tele_step(note: &'static str, tile: WorldTile) -> Step {
 }
 
 fn follow_step(note: &'static str, dest: WorldTile) -> Step {
+    let arm = if glider_landing(dest) {
+        // `map_findsquare($dest, 0, 1, lineofwalk)` — live Kar-Hewo
+        // landed (3285,3211) for packed (3284,3211).
+        Proof::ArrivedNear {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+            radius: 1,
+        }
+    } else {
+        Proof::Arrived {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+        }
+    };
     Step {
         name: note,
         kind: StepKind::Follow { dest },
         wait: Wait {
-            arm: Proof::Arrived {
-                x: dest.x,
-                z: dest.z,
-                level: dest.level,
-            },
+            arm,
             budget_ticks: 600,
         },
     }
+}
+
+/// Packed Gnome Air pads + hub (`gnome_glider.rs2` / `glider.constant`).
+fn glider_landing(tile: WorldTile) -> bool {
+    matches!(
+        (tile.x, tile.z, tile.level),
+        (2465, 3501, 3) | (2971, 2969, 0) | (2850, 3497, 0) | (3320, 3430, 0) | (3284, 3211, 0)
+    )
 }
 
 /// 377 `fail()`: print and exit 1. The headed runner calls this on a
@@ -1838,19 +2120,52 @@ mod tests {
     }
 
     #[test]
+    fn every_nav_scenario_uses_the_paint_preset() {
+        for name in names() {
+            if !name.starts_with("nav_") {
+                continue;
+            }
+            let s = get(name).expect(name);
+            let n = &s.settings.nav;
+            assert!(
+                n.show_nav_path
+                    && n.collision_fill
+                    && n.hop_labels
+                    && n.client_trail
+                    && n.camera_follow,
+                "{name} missing a nav-test paint layer"
+            );
+            assert!(
+                !n.nsew_labels && !n.component_flood,
+                "{name} must not force NSEW / flood"
+            );
+            if name == "nav_door" {
+                assert!(n.engine_speed_ms.is_none(), "door-troll stays 600ms ticks");
+            } else {
+                assert_eq!(n.engine_speed_ms, Some(300), "{name} halves the tickrate");
+            }
+        }
+    }
+
+    #[test]
     fn scenario_settings_default_matches_the_bag() {
         let d = ScenarioSettings::default();
         assert!(d.renderer);
         assert!(d.only_render_selected);
         assert!(!d.capture);
         assert!(!d.full_rate);
-        assert!(!d.nav_debug, "paint layers are opt-in per scenario");
+        assert_eq!(
+            d.nav,
+            ScenarioNav::default(),
+            "paint layers are opt-in per scenario"
+        );
         assert_eq!(d.deadline, DEFAULT_DEADLINE);
         assert_eq!(d.terminal_shot, None);
         assert!(
             !d.require_mainland_base,
             "gate is opt-in for brand-new tutorial accounts"
         );
+        assert!(d.sustains.is_empty());
     }
 
     #[test]
@@ -1865,9 +2180,10 @@ mod tests {
     }
 
     #[test]
-    fn nav_door_settings_force_nav_debug() {
+    fn nav_door_settings_use_the_paint_preset_without_halved_ticks() {
         let s = nav_door_scenario();
-        assert!(s.settings.nav_debug);
+        assert_eq!(s.settings.nav, nav_test_paints());
+        assert!(s.settings.nav.engine_speed_ms.is_none());
         assert!(s.settings.full_rate);
     }
 
@@ -1877,6 +2193,7 @@ mod tests {
         assert_eq!(s.name, "nav_paint_path");
         assert_eq!(s.seed.profiles, [("test", "test")]);
         assert!(s.seed.mainland, "the hop lands the courtyard walk");
+        assert!(s.settings.require_mainland_base);
         assert_eq!(s.steps.len(), 1, "one short WalkTo step");
         let (dest, arm) = match &s.steps[0].kind {
             StepKind::Walk { dest } => (
@@ -1902,7 +2219,11 @@ mod tests {
         assert_eq!(s.proof.name(), "arrived(3220,3212,0)");
         assert!(s.companions.is_empty(), "no closer for the paint path");
         assert!(s.settings.full_rate);
-        assert!(s.settings.nav_debug);
+        assert_eq!(
+            s.settings.nav,
+            nav_test_paints().with_tick_ms(300),
+            "nav tests use the paint preset and speed 300"
+        );
         assert!(
             names().contains(&"nav_paint_path"),
             "registered for --live script_nav_paint_path"
@@ -1935,13 +2256,62 @@ mod tests {
         let s = get("nav_routes").expect("nav_routes is registered");
         assert_eq!(s.name, "nav_routes");
         assert_eq!(s.seed.profiles, [("test", "test")]);
-        assert!(!s.seed.mainland);
+        assert!(s.seed.mainland, "unique live accounts spawn on tutorial");
+        assert!(s.settings.require_mainland_base);
         assert_eq!(NAV_ROUTES.len(), 10);
-        // Seed + tele+follow per OD.
-        assert_eq!(s.steps.len(), 1 + NAV_ROUTES.len() * 2);
+        // tutorial + quest setvars + relog + journal + maxme + knife/coins/lean tele kit,
+        // then tele+follow per OD.
+        assert_eq!(s.steps.len(), 13 + NAV_ROUTES.len() * 2);
+        assert!(matches!(s.steps[0].kind, StepKind::Repeat { .. }));
+        assert!(matches!(s.steps[2].kind, StepKind::Relog));
+        assert!(matches!(
+            s.steps[2].wait.arm,
+            Proof::SideTabAvailable { index: 3 }
+        ));
+        assert!(matches!(
+            s.steps[4].wait.arm,
+            Proof::Stat { id: 0, min: 99 }
+        ));
+        assert!(matches!(
+            s.steps[5].wait.arm,
+            Proof::Item {
+                name: "Knife",
+                count: 1
+            }
+        ));
+        assert!(matches!(
+            s.steps[6].wait.arm,
+            Proof::Item {
+                name: "Coins",
+                count: 5000
+            }
+        ));
+        assert!(matches!(
+            s.steps[12].wait.arm,
+            Proof::Item {
+                name: "Games necklace(8)",
+                count: 1
+            }
+        ));
+        let kar_hewo = s
+            .steps
+            .iter()
+            .find(|st| {
+                matches!(
+                    st.kind,
+                    StepKind::Follow {
+                        dest: WorldTile {
+                            x: 3284,
+                            z: 3211,
+                            level: 0
+                        }
+                    }
+                )
+            })
+            .expect("Kar-Hewo follow");
         assert!(
-            matches!(s.steps[0].kind, StepKind::Perform { .. }),
-            "first step seeds knife/coins/grandtree"
+            matches!(kar_hewo.wait.arm, Proof::ArrivedNear { radius: 1, .. }),
+            "glider map_findsquare radius 1, not exact pad"
         );
         let last = NAV_ROUTES[9].2;
         let dest = match &s.steps[s.steps.len() - 1].kind {
@@ -1951,8 +2321,13 @@ mod tests {
         assert_eq!(dest, last);
         assert_eq!(s.proof.name(), "arrived(2817,3443,0)");
         assert!(s.settings.full_rate);
-        assert!(s.settings.nav_debug, "seam run forces the paint layers");
+        assert_eq!(
+            s.settings.nav,
+            nav_test_paints().with_tick_ms(300),
+            "seam run uses the paint preset and speed 300"
+        );
         assert_eq!(s.settings.deadline, Duration::from_secs(3600));
+        assert_eq!(s.settings.sustains, nav_energy_sustains());
         assert!(names().contains(&"nav_routes"));
     }
 }

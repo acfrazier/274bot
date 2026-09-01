@@ -37,6 +37,12 @@ pub enum Proof {
     /// quest's row green — the same journal read the nav
     /// [`nav::WorldState`] gates quest edges on.
     QuestDone { name: &'static str },
+    /// Tutorial overlay is closed (`tut_com_id == -1`).
+    TutorialClosed,
+    /// Side tab `index` is bound (`side_icon[i] != -1`). rs2b0t
+    /// `mainlandAccount` checks tab 3 after relog — the tutorial UI lock
+    /// refresh. The overlay can stay up even when the skip varp stuck.
+    SideTabAvailable { index: i32 },
     /// `varp(id) >= min`: a transmitted varp's value. The snapshot's
     /// varp table only lists varps the server transmitted (`cache.varps`
     /// definitions), so an absent id fails closed — never a fake 0.
@@ -45,6 +51,8 @@ pub enum Proof {
     /// energy; every other id reads the snapshot stat table's effective
     /// level.
     Stat { id: i32, min: i32 },
+    /// `stat(id) <= max`: sustain polls (energy/HP below a refill line).
+    StatAtMost { id: i32, max: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
     /// An NPC of `r#type` stands on the tile.
@@ -69,8 +77,11 @@ impl Proof {
             Proof::EssenceMine => "in_essence_mine".to_string(),
             Proof::ChatChoice => "chat_choice".to_string(),
             Proof::QuestDone { name } => format!("quest_done({name})"),
+            Proof::TutorialClosed => "tutorial_closed".to_string(),
+            Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
+            Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
@@ -82,9 +93,21 @@ impl Proof {
     /// table, which makes every `Item` predicate fail.
     pub fn check(&self, snap: &GameSnapshot, names: Option<&ObjNames>) -> bool {
         match self {
-            Proof::Item { name, count } => names
-                .and_then(|n| n.by_name(name))
-                .is_some_and(|id| snap.inv_count(id) >= *count),
+            Proof::Item { name, count } => {
+                // Sum every inv stack whose def name matches. `by_name`
+                // returns the *lowest* id (a stub "Coins" at id 0/1), so
+                // a 5000-stack of obj 995 would fail closed.
+                let Some(names) = names else {
+                    return false;
+                };
+                let got: i32 = snap
+                    .inv()
+                    .iter()
+                    .filter(|(id, _)| names.name(*id) == Some(*name))
+                    .map(|(_, n)| *n)
+                    .sum();
+                got >= *count
+            }
             Proof::Arrived { x, z, level } => snap.tile().is_some_and(|(tx, tz, tl)| {
                 arrived(
                     Tile {
@@ -131,12 +154,19 @@ impl Proof {
             Proof::QuestDone { name } => {
                 nav::WorldState::from_snapshot(snap).quests.contains(*name)
             }
+            Proof::TutorialClosed => snap.modals().tutorial == -1,
+            Proof::SideTabAvailable { index } => snap
+                .side_tabs()
+                .iter()
+                .find(|t| t.index == *index)
+                .is_some_and(|t| t.available),
             Proof::Varp { id, min } => snap
                 .varps()
                 .iter()
                 .find(|v| v.index == *id)
                 .is_some_and(|v| v.value >= *min),
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
+            Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
             Proof::NpcAt { r#type, x, z } => snap
                 .npcs()
@@ -294,6 +324,59 @@ mod tests {
             count: 1
         }
         .check(&s, None));
+    }
+
+    #[test]
+    fn item_sums_every_stack_with_that_name_not_the_lowest_id() {
+        let mut c = seeded();
+        // stored values are obj_id+1; 995 Coins → 996.
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![996]);
+            inv.link_obj_number = Some(vec![5000]);
+        }
+        let s = snap(&mut c);
+        let names = ObjNames::from_objs(&[
+            ObjType {
+                id: 1,
+                name: "Coins".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 995,
+                name: "Coins".into(),
+                ..Default::default()
+            },
+        ]);
+        assert!(
+            Proof::Item {
+                name: "Coins",
+                count: 5000
+            }
+            .check(&s, Some(&names)),
+            "must not use by_name's first id (1) when the stack is 995"
+        );
+    }
+
+    #[test]
+    fn stat_at_most_is_the_sustain_refill_line() {
+        let s = snap(&mut seeded());
+        assert!(!Proof::StatAtMost { id: 16, max: 25 }.check(&s, None));
+        let mut c = seeded();
+        c.runenergy = 20;
+        let s = snap(&mut c);
+        assert!(Proof::StatAtMost { id: 16, max: 25 }.check(&s, None));
+    }
+
+    #[test]
+    fn tutorial_closed_reads_the_overlay_root() {
+        let mut c = seeded();
+        c.tut_com_id = 548;
+        let s = snap(&mut c);
+        assert!(!Proof::TutorialClosed.check(&s, None));
+        c.tut_com_id = -1;
+        let s = snap(&mut c);
+        assert!(Proof::TutorialClosed.check(&s, None));
     }
 
     #[test]

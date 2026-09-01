@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use api::interact::{Interactions, SendResult};
+use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
@@ -17,7 +17,7 @@ use nav::world::NavWorld;
 
 use crate::evidence::Evidence;
 use crate::proof::Proof;
-use crate::{Scenario, StepKind, Wait};
+use crate::{Scenario, StepKind, SustainWhen, Wait};
 
 /// The runner's pollable status (the UI and the headless test read it).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +82,11 @@ pub struct ScenarioRunner {
     /// unique names so the engine auto-registers a fresh account instead
     /// of logging the shared `test`). Empty = the registry's seed names.
     live_names: Vec<String>,
+    /// Relog: logout IF_BUTTON has gone out once this step. Do not re-press
+    /// (that re-arms the 250-frame logout timer and never leaves the game).
+    relog_logout_sent: bool,
+    engine_speed_ms: Option<u32>,
+    engine_speed_sent: bool,
     evidence: Option<Evidence>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
@@ -116,6 +121,7 @@ impl ScenarioRunner {
         let deadline = scenario.settings.deadline;
         let terminal_shot = scenario.settings.terminal_shot;
         let require_mainland_base = scenario.settings.require_mainland_base;
+        let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         Self {
             scenario,
             snapshot: GameSnapshot::new(),
@@ -135,6 +141,9 @@ impl ScenarioRunner {
             scene2_since: None,
             require_mainland_base,
             live_names: Vec::new(),
+            relog_logout_sent: false,
+            engine_speed_ms,
+            engine_speed_sent: false,
             evidence: None,
             shot_sink: None,
         }
@@ -222,6 +231,18 @@ impl ScenarioRunner {
     /// Whether `name` is the slot this runner drives.
     pub fn drives(&self, name: &str) -> bool {
         name == self.profile_name()
+    }
+
+    /// The Follow/Walk route currently armed, if any. The headed panel
+    /// paints this as the red baked path; WalkTo's arm is a different
+    /// traveller and does not see live-scenario hops.
+    pub fn armed_route(&self) -> Option<&Route> {
+        self.route.as_ref()
+    }
+
+    /// The current walk (or transport-approach) aim, when a hop is out.
+    pub fn current_aim(&self) -> Option<WorldTile> {
+        self.traveller.current_aim()
     }
 
     /// The companion slot at `index`'s profile name
@@ -313,13 +334,25 @@ impl ScenarioRunner {
                 Some(since) => since.elapsed() >= self.scene_settle,
                 None => false,
             };
-            if !settled {
+            // Relog is off-world between logout and login; do not hold the
+            // scene-2 settle gate or the login never goes out.
+            let relog_off_world =
+                matches!(self.current_step().kind, StepKind::Relog) && !self.snapshot.ingame();
+            if !settled && !relog_off_world {
                 return;
             }
+            if !self.engine_speed_sent {
+                if let Some(ms) = self.engine_speed_ms {
+                    cheat(client, &format!("speed {ms}"));
+                }
+                self.engine_speed_sent = true;
+            }
+            self.fire_poll_sustains(client);
             if dirty {
                 self.step_route(client);
             }
             if !self.step_sent {
+                self.fire_nav_step_sustains(client);
                 if let Err(msg) = self.send_current(client) {
                     self.finish_fail(&format!(
                         "step {} ({}): {msg}",
@@ -333,7 +366,10 @@ impl ScenarioRunner {
                 // prompts) and closes the quest-scroll modals until its
                 // arm holds, so the send stays armed — and the step's
                 // tick budget keeps counting.
-                self.step_sent = !matches!(self.current_step().kind, StepKind::DrainDialogs { .. });
+                self.step_sent = !matches!(
+                    self.current_step().kind,
+                    StepKind::DrainDialogs { .. } | StepKind::Relog | StepKind::Repeat { .. }
+                );
                 if self.step_sent {
                     self.ticks_waited = 0;
                 }
@@ -439,9 +475,41 @@ impl ScenarioRunner {
 
     fn begin_step(&mut self) {
         self.step_sent = false;
+        self.relog_logout_sent = false;
         self.ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
+    }
+
+    fn fire_poll_sustains(&self, client: &mut Client) {
+        let names = self.obj_names.as_deref();
+        let cheats: Vec<&'static str> = self
+            .scenario
+            .settings
+            .sustains
+            .iter()
+            .filter_map(|s| match s.when {
+                SustainWhen::Poll(p) if p.check(&self.snapshot, names) => Some(s.cheat),
+                _ => None,
+            })
+            .collect();
+        for cmd in cheats {
+            cheat(client, cmd);
+        }
+    }
+
+    fn fire_nav_step_sustains(&self, client: &mut Client) {
+        if !matches!(
+            self.current_step().kind,
+            StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. }
+        ) {
+            return;
+        }
+        for s in &self.scenario.settings.sustains {
+            if matches!(s.when, SustainWhen::EachNavStep) {
+                cheat(client, s.cheat);
+            }
+        }
     }
 
     fn advance_step(&mut self) {
@@ -462,7 +530,7 @@ impl ScenarioRunner {
     /// sends nothing (the step only waits for its arm to capture it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         match &self.scenario.steps[self.step].kind {
-            StepKind::Perform { send } => {
+            StepKind::Perform { send } | StepKind::Repeat { send } => {
                 if send(client, &self.snapshot) {
                     Ok(())
                 } else {
@@ -486,16 +554,31 @@ impl ScenarioRunner {
                 }
             }
             StepKind::Shot { .. } => Ok(()),
-            StepKind::Walk { dest } | StepKind::Follow { dest } => {
-                self.arm_route(*dest, FindOptions::default())
+            StepKind::Relog => {
+                if client.ingame && !self.relog_logout_sent {
+                    let ifaces = std::sync::Arc::clone(&client.ifaces);
+                    if !logout(client, ifaces.as_slice()) {
+                        return Err(
+                            "logout iface missing (side icons still tutorial-locked?)".into()
+                        );
+                    }
+                    self.relog_logout_sent = true;
+                }
+                Ok(())
             }
-            StepKind::FollowTele { dest } => self.arm_route(
-                *dest,
-                FindOptions {
-                    allow_teleports: true,
-                    ..FindOptions::default()
-                },
-            ),
+            StepKind::Walk { dest } | StepKind::Follow { dest } => {
+                self.arm_route(*dest, self.nav_find_opts(false))
+            }
+            StepKind::FollowTele { dest } => self.arm_route(*dest, self.nav_find_opts(true)),
+        }
+    }
+
+    fn nav_find_opts(&self, force_teleports: bool) -> FindOptions {
+        let n = &self.scenario.settings.nav;
+        FindOptions {
+            allow_teleports: force_teleports || n.allow_teleports,
+            allow_wilderness: n.allow_wilderness,
+            ..FindOptions::default()
         }
     }
 
@@ -579,6 +662,7 @@ impl ScenarioRunner {
                     .nav_world
                     .as_ref()
                     .map(|w| w.graph.teleports.as_slice()),
+                edges: self.nav_world.as_ref().map(|w| w.graph.edges.as_slice()),
                 ..TravelOptions::default()
             };
             self.traveller
@@ -666,15 +750,16 @@ fn wait(arm: Proof, budget_ticks: u32) -> Wait {
 mod tests {
     use super::*;
     use client::client::{Client, ClientConfig};
+    use client::config::IfType;
     use client::dash3d::ClientPlayer;
-    use client::io::ServerProt;
+    use client::io::{ClientProt, ServerProt};
     use nav::grid::StepGrid;
     use nav::tile::Tile;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use crate::{Companion, Scenario, ScenarioSettings, Seed, Step, StepKind};
+    use crate::{Companion, Scenario, ScenarioSettings, Seed, Step, StepKind, Sustain};
 
     fn cfg() -> ClientConfig {
         ClientConfig {
@@ -770,7 +855,7 @@ mod tests {
         let ev = runner.evidence().expect("evidence at PASS");
         assert_eq!(ev.outcome, "PASS");
         assert_eq!(ev.predicate, "stat(16)>=1");
-        assert_eq!(ev.tile, Some([3220, 3220]));
+        assert_eq!(ev.tile, Some([3220, 3220, 0]));
     }
 
     #[test]
@@ -797,6 +882,25 @@ mod tests {
         assert_eq!(ev.outcome, "FAIL");
         assert_eq!(ev.predicate, "stat(16)>=999");
         assert!(ev.message.is_some());
+    }
+
+    #[test]
+    fn poll_sustain_sends_the_cheat_when_energy_is_at_or_below_the_line() {
+        let mut scenario = stat_scenario(1, 10);
+        scenario.settings.sustains = vec![Sustain::poll(
+            Proof::StatAtMost { id: 16, max: 25 },
+            "~energy",
+        )];
+        let mut c = seeded_client();
+        c.runenergy = 10;
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick(&mut c);
+        assert_eq!(
+            c.out.data().first().copied(),
+            Some(ClientProt::CLIENT_CHEAT.id as u8),
+            "~energy is CLIENT_CHEAT, not a host set_run"
+        );
     }
 
     #[test]
@@ -894,6 +998,10 @@ mod tests {
             RunnerStatus::Running { step: 0, total: 1 },
             "send armed the whole-world route"
         );
+        assert!(
+            runner.armed_route().is_some(),
+            "the headed paint reads this route as the red baked path"
+        );
 
         // Advance the player north one tile per tick; the follow polls its
         // settle on every delivered frame and the arm fires on the exact
@@ -909,7 +1017,7 @@ mod tests {
             runner.tick(&mut c);
         }
         let ev = runner.evidence().expect("evidence at PASS");
-        assert_eq!(ev.tile, Some([3205, 3230]));
+        assert_eq!(ev.tile, Some([3205, 3230, 0]));
         assert_eq!(ev.predicate, "arrived(3205,3230,0)");
         assert!(ev.ticks > 0, "the walk counted delivered frames");
     }
@@ -1045,7 +1153,7 @@ mod tests {
             runner.tick(&mut c);
         }
         let ev = runner.evidence().expect("evidence at PASS");
-        assert_eq!(ev.tile, Some([3205, 3230]));
+        assert_eq!(ev.tile, Some([3205, 3230, 0]));
         assert_eq!(ev.predicate, "arrived(3205,3230,0)");
         assert!(ev.ticks > 0, "the walk counted delivered frames");
     }
@@ -1503,5 +1611,47 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
         assert_eq!(v["tile"], serde_json::json!([3220, 3220, 0]));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn relog_presses_the_logout_button_while_ingame() {
+        let mut c = seeded_client();
+        let mut com = IfType::default();
+        com.client_code = api::interact::CC_LOGOUT;
+        c.set_iface(2458, com);
+        let scenario = Scenario {
+            name: "relog",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "relog",
+                kind: StepKind::Relog,
+                wait: wait(
+                    Proof::QuestDone {
+                        name: "The Grand Tree",
+                    },
+                    10,
+                ),
+            }],
+            proof: Proof::QuestDone {
+                name: "The Grand Tree",
+            },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        };
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick(&mut c);
+        assert_eq!(
+            c.out.data().first().copied(),
+            Some(ClientProt::IF_BUTTON.id as u8),
+            "clean logout is IF_BUTTON, not a socket drop"
+        );
+        assert!(
+            matches!(runner.status(), RunnerStatus::Running { .. }),
+            "still waiting to come back; we do not DC-wait"
+        );
     }
 }
