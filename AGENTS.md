@@ -8,16 +8,17 @@ Read this file once. Do **not** search the disk for another `AGENTS.md`.
 
 **Client fork:** Patch `FR-client-bothost` `r274-bh-modular` (instrumentation, skip-paint, wgpu). `r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork — do not push there. **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 
-**Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,script,scenario,e2e}` (`panel` is the native UI).
+**Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,script,scenario,e2e,tui}` (`panel` is the native UI; `tui` is `tui-play`).
 
-**Scope (v0.1.1 alpha):** the **wall** is landed — MultiBox sidecar rail,
-grid mode, profile chooser. **Nav execute** is landed (pack `274V` v7,
-router/traveller loc+NPC+boat+glider+web+tele, WalkTo, headed
-`script_nav_routes`). Still no dummy tick-end opcode. GPU 3D (wgpu) lives
-in the client submodule (headed default; `BOT_CPU=1` is CpuPix3D; last-FBO
-freeze while `scene_state==1`). Compiled script *kernel* and WalkTo are
-in-tree; do not start honest script ports unless the human says so. Do
-not invent a tick-end opcode or put 274bot crates in the client repo.
+**Scope (v0.1.2 alpha):** the **wall**, **nav execute** (pack `274V` v7),
+**random-event guardian**, and **headless TUI** (`tui-play`) are landed.
+Still no dummy tick-end opcode. GPU 3D (wgpu) lives in the client
+submodule (headed default; `BOT_CPU=1` is CpuPix3D; last-FBO freeze
+while `scene_state==1`). Compiled script *kernel* and WalkTo are
+in-tree; do not start honest script ports unless the human says so.
+**Next session is v0.1.5** (TS shim + listed scripts, guardian solver
+stubs). Do not invent a tick-end opcode or put 274bot crates in the
+client repo.
 
 **SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 

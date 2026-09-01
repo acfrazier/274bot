@@ -3,9 +3,11 @@
 Alpha **kernel**. Compiled cards are meant to be **rust-first rewrites**
 on 274bot `api`, not rs2b0t file-ports. This tag does **not** ship honest
 skilling/farming bots. The Load/`@rs2b0t` shim is for out-of-tree /
-non-technical authors. WalkTo is **host nav** (panel picker), not a
-script card. The 0.1.5 shim loads listed scripts from `$RS2B0T/src/bot/scripts`
-(upstream `rs2b2t/rs2b0t`), not a copy in this tree.
+non-technical authors. WalkTo is **host nav** (panel picker / TUI map), not a
+script card. `Script::on_random` is a rising-edge knock (`RandomClaim::Host`
+default); `Handle` is unnamed in-tree. The 0.1.5 shim loads listed scripts
+from `$RS2B0T/src/bot/scripts` (upstream `rs2b2t/rs2b0t`), not a copy in
+this tree.
 
 ## Two runners
 

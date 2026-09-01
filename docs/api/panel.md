@@ -3,7 +3,8 @@
 `crates/panel` is the native **dear-app / ImGui** UI over the same kernel
 slots `host-play` runs ([login.md](login.md), [vault.md](vault.md)).
 Single-bot chrome plus the **MultiBox wall** (sidecar rail, grid mode,
-profile chooser).
+profile chooser). The headless twin is [`tui-play`](tui.md) (raster Off,
+no GPU).
 It does **not** reimplement the client UI — there is **no Present**, no client
 window feature. The client rasters into a frame (wgpu GPU 3D by default,
 CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.

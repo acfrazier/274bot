@@ -32,6 +32,9 @@ v.upsert(profile)?                              // rewrites the file; error leav
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
 blobs that only carried `lowmem` deserialize with the box unchecked; the
 panel's General config → slot "auto-login on title" checkbox reads and upserts it.
+`ProfileSettings.random_events` defaults **on** (detect + dialog act);
+off still detects and publishes `RandomStatus`. `lamp_skill` /
+`lamp_auto` persist; lamp rub is a 0.1.5 stub.
 `ProfileSettings.tutorial_skipped` is `Option<bool>` (serde default
 `None` = unknown). The panel `getvar tutorial`s unknown profiles, then
 caches `Some(true)` once skipped (`>= 1000` or TutSkip); live

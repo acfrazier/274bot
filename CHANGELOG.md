@@ -3,7 +3,13 @@
 All notable public changes to 274bot. Crate versions are `0.1.0` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [Unreleased] — 0.1.2
+## [Unreleased] — 0.1.5
+
+TS rs2b0t compatibility shim (listed scripts, not all-ports). Guardian
+solvers that were stubbed in 0.1.2 (evade, plant, maze / mime / box,
+lamp rub). See the 0.1.2 “After” list.
+
+## [0.1.2] — 2026-09-01
 
 - Rust **1.98.0** is pinned (`rust-toolchain.toml` + CI, host and client).
 
@@ -33,6 +39,9 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
   settings popup; script chrome is shape-only.
 - `tui-play --live script_*` runs the same scenarios as `panel-play`;
   e2e unchanged. TestBackend tests in CI, no GitHub TTY.
+- Map pane paints the packed collision (`Play`’s nav world), not the
+  live loc list — a missing copy left `map (no nav pack)` while routes
+  still ran.
 
 ### After 0.1.2 (v0.1.5)
 

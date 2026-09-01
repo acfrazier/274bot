@@ -1,8 +1,8 @@
 # 274bot
 
-**Alpha `0.1.1`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, and whole-world nav.
+**Alpha `0.1.2`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
 
-This tag is the public surface for the **host + API + nav execute**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — that campaign comes after this tag. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+This tag is the public surface for the **host + API + nav execute + guardian + TUI**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — the 0.1.5 TS shim is next. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 | | |
 |--|--|
@@ -13,7 +13,7 @@ This tag is the public surface for the **host + API + nav execute**. The script 
 
 ## What it is
 
-A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`host-play`** is the headless CLI over the same kernel.
+A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (dear-app/ImGui): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
 The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **7**), Dijkstra router, and pollable `Traveller::follow` (loc, NPC, boat, glider, web, tele, EssenceSession) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
@@ -44,6 +44,9 @@ cargo run --release -p host-play -- --user test
 
 # Panel: same vault, native UI (MultiBox, --live)
 cargo run --release -p panel --bin panel-play
+
+# TUI: same vault, raster Off (no GPU)
+cargo run --release -p tui --bin tui-play
 
 # Headed live (BOT_VAULT_PASS unused): FAIL+exit 1
 cargo run --release -p panel --bin panel-play -- --live null_raster

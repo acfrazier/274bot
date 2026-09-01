@@ -1,6 +1,6 @@
 # 274bot docs
 
-Committed product docs (alpha `0.1.1`): [`api/`](api/README.md).
+Committed product docs (alpha `0.1.2`): [`api/`](api/README.md).
 
 Start here: [README.md](../README.md), [CONTRIBUTING.md](../CONTRIBUTING.md),
 [CHANGELOG.md](../CHANGELOG.md), [NOTICE.md](../NOTICE.md). Coding-agent

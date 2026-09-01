@@ -1,11 +1,11 @@
 # Agent API
 
-Alpha `0.1.1` kernel surface a bot agent codes against: reading world
+Alpha `0.1.2` kernel surface a bot agent codes against: reading world
 state, acting, settling, navigating, and logging in — all through the
 `api` crate (`crates/api`) plus `nav` (`crates/nav`) and the host tick.
 Honest bot scripts are **not** in this tag; the script crate is the
-runner kernel only. Nav **execute** (`Traveller::follow` loc/NPC/boat/
-glider/web/tele) is in this tag.
+runner kernel only. Nav **execute**, the random-event guardian, and
+`tui-play` are in this tag.
 
 - [snapshot.md](snapshot.md) — the full gen-stamped world read model
   (`GameSnapshot` + `ReadContext`)
@@ -18,6 +18,7 @@ glider/web/tele) is in this tag.
 - [vault.md](vault.md) — encrypted profile vault, `BOT_VAULT_PASS` / `--vault-pass`
 - [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox wall, renderer, scripts
 - [script.md](script.md) — compiled `tick` vs Load isolate; PLAYER_INFO wake
+- [tui.md](tui.md) — headless operator panel (`tui-play`): same `Play`, raster Off
 
 ## Layout
 
@@ -32,6 +33,7 @@ glider/web/tele) is in this tag.
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`); ignored unless that env is set |
 | `panel` | Native UI (`panel-play`): profile name + Profiles picker, Log in/Logout, WalkTo, debug heading, script Browse/Start/Pause/Stop, MultiBox wall |
+| `tui` | Headless operator panel (`tui-play`): ratatui + crossterm, same `host_play::Play`, raster Off |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
 The kernel talks to it through `api::interact::Driver` (real impl: `Client`)

@@ -1,10 +1,10 @@
 # Contributing
 
 274bot is **alpha** (`0.1.0` crate versions, no crates.io publish; git
-tag `0.1.1`). This tag is the host + API + nav **execute** surface. The
-script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are
-in-tree; honest bot scripts are not this tag (see [CHANGELOG.md](CHANGELOG.md)
-for v0.1.2 / v0.1.5 / v0.2.x).
+tag `0.1.2`). This tag is the host + API + nav **execute** + random-event
+guardian + headless TUI. The script *kernel* (Browse / Start / Pause /
+Stop, JS Load) and WalkTo are in-tree; honest bot scripts are not this
+tag (see [CHANGELOG.md](CHANGELOG.md) for v0.1.5 / v0.2.x).
 
 Alpha is not turnkey rs2b2t: you run a local 274 engine and point
 `--cache` at a pack. Live cache fetch is a beta goal. PRs that read like
@@ -111,9 +111,9 @@ without bot-host hooks; `r274-bothost` is the pre-modular fork.
 
 ## Scope (do not invent)
 
-No dummy tick-end opcode. No deep-copy of the world every read. Nav and
-the MultiBox wall are in-tree. Script *ports* of farming bots are not
-this tag.
+No dummy tick-end opcode. No deep-copy of the world every read. Nav, the
+MultiBox wall, the random-event guardian, and `tui-play` are in-tree.
+Script *ports* of farming bots and the 0.1.5 TS shim are not this tag.
 
 ## License
 
