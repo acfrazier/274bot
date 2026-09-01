@@ -2716,8 +2716,10 @@ mod tests {
 
     /// Records whether the per-tick snapshot reached the script ctx and
     /// what the `varp` getter read through it.
+    type SnapProbeSeen = Option<(bool, Option<i32>)>;
+
     #[derive(Default)]
-    struct SnapProbe(Arc<Mutex<Option<(bool, Option<i32>)>>>);
+    struct SnapProbe(Arc<Mutex<SnapProbeSeen>>);
 
     impl script::Script for SnapProbe {
         fn name(&self) -> &str {
@@ -2744,10 +2746,12 @@ mod tests {
             .unwrap();
         // A transmitted varp table so the probe's `varp(101)` has a value
         // to read (the snapshot only lists transmitted definitions).
-        let mut cache = Cache::default();
-        cache.varps = (0..102)
-            .map(|_| client::config::VarpType::default())
-            .collect();
+        let cache = Cache {
+            varps: (0..102)
+                .map(|_| client::config::VarpType::default())
+                .collect(),
+            ..Default::default()
+        };
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),

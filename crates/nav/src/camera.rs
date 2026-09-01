@@ -89,10 +89,9 @@ pub fn path_facing_yaw(
     let mut dz = 0i32;
     let mut n = 0i32;
     let mut prev = from;
-    for i in start..=end {
-        let t = tiles[i];
+    for (i, t) in tiles.iter().enumerate().take(end + 1).skip(start) {
         let hop = transport.get(i).copied().unwrap_or(false);
-        if is_transport_boundary(prev, t, hop) {
+        if is_transport_boundary(prev, *t, hop) {
             break;
         }
         if t.level != from.level {
@@ -101,7 +100,7 @@ pub fn path_facing_yaw(
         dx += t.x - from.x;
         dz += t.z - from.z;
         n += 1;
-        prev = t;
+        prev = *t;
     }
     if n == 0 || (dx == 0 && dz == 0) {
         return None;

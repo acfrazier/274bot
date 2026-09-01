@@ -84,9 +84,7 @@ impl ScriptCtx<'_> {
     /// lists only definitions the server sent — an absent id fails
     /// closed, never a fake 0).
     pub fn varp(&self, id: i32) -> Option<i32> {
-        let Some(snap) = self.snapshot else {
-            return None;
-        };
+        let snap = self.snapshot?;
         snap.varps().iter().find(|v| v.index == id).map(|v| v.value)
     }
 
@@ -95,9 +93,7 @@ impl ScriptCtx<'_> {
     /// when the observe snapshot is absent or the id is outside the
     /// table (fail-closed).
     pub fn stat_level(&self, id: i32) -> Option<i32> {
-        let Some(snap) = self.snapshot else {
-            return None;
-        };
+        let snap = self.snapshot?;
         match id {
             16 => Some(snap.runenergy()),
             id => snap
@@ -114,9 +110,7 @@ impl ScriptCtx<'_> {
     /// (`0xF800` green = done, `0xF80000` red = not started, yellow =
     /// started).
     pub fn quest_status(&self, name: &str) -> Option<i32> {
-        let Some(snap) = self.snapshot else {
-            return None;
-        };
+        let snap = self.snapshot?;
         snap.quest_statuses()
             .iter()
             .find(|q| q.name.eq_ignore_ascii_case(name))
@@ -247,8 +241,10 @@ mod tests {
         let mut c = Client::new(cfg());
         c.runenergy = 42;
         c.stat_effective_level[7] = 40;
-        let mut cache = Cache::default();
-        cache.varps = (0..102).map(|_| VarpType::default()).collect();
+        let cache = Cache {
+            varps: (0..102).map(|_| VarpType::default()).collect(),
+            ..Default::default()
+        };
         c.cache = Arc::new(cache);
         c.var = vec![0; 102];
         c.var[101] = 5;

@@ -608,8 +608,10 @@ mod tests {
         // Plant a transmitted varp table (the snapshot only lists varps
         // the server transmitted — `cache.varps` definitions), varp 101
         // set to 5.
-        let mut cache = Cache::default();
-        cache.varps = (0..102).map(|_| VarpType::default()).collect();
+        let cache = Cache {
+            varps: (0..102).map(|_| VarpType::default()).collect(),
+            ..Default::default()
+        };
         c.cache = Arc::new(cache);
         c.var = vec![0; 102];
         c.var[101] = 5;
@@ -620,8 +622,10 @@ mod tests {
         // A raw `var` slot without a transmitted definition is absent
         // from the snapshot — fail closed at min 0 (never a fake 0).
         let mut c2 = seeded();
-        let mut cache2 = Cache::default();
-        cache2.varps = (0..5).map(|_| VarpType::default()).collect();
+        let cache2 = Cache {
+            varps: (0..5).map(|_| VarpType::default()).collect(),
+            ..Default::default()
+        };
         c2.cache = Arc::new(cache2);
         c2.var = vec![0; 102];
         c2.var[101] = 5;

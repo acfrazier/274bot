@@ -1616,8 +1616,10 @@ mod tests {
     #[test]
     fn relog_presses_the_logout_button_while_ingame() {
         let mut c = seeded_client();
-        let mut com = IfType::default();
-        com.client_code = api::interact::CC_LOGOUT;
+        let com = IfType {
+            client_code: api::interact::CC_LOGOUT,
+            ..Default::default()
+        };
         c.set_iface(2458, com);
         let scenario = Scenario {
             name: "relog",
