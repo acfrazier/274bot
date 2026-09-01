@@ -81,9 +81,10 @@ impl WorldState {
 
     /// Whether the edge's requirements are all satisfied: every
     /// `skill_req` level met, every `item_req` count carried, every
-    /// `quest_req` completed, every `varp_req` value reached, and every
-    /// `worn_req` obj worn. Any requirement the state cannot prove fails
-    /// the edge.
+    /// `quest_req` completed, every `varp_req` value reached, and **any**
+    /// `worn_req` obj worn (empty is no worn gate — a Dramen staff is a
+    /// one-id list; a slash-weapon web lists every slash blade). Any
+    /// requirement the state cannot prove fails the edge.
     pub fn allows(&self, e: &TransportEdge) -> bool {
         e.skill_req
             .iter()
@@ -95,7 +96,7 @@ impl WorldState {
             && e.varp_req
                 .iter()
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
-            && e.worn_req.iter().all(|id| self.worn.contains(id))
+            && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
     }
 }
 
@@ -200,6 +201,31 @@ mod tests {
         assert!(!s.allows(&e), "quest not done -> refused");
         s.quests.insert("Rune Mysteries".to_string());
         assert!(s.allows(&e), "all facts back -> passes");
+    }
+
+    /// `worn_req` is any-of: a slash-weapon web hop lists every blade
+    /// with a slash anim; wearing one of them is enough. Empty is no
+    /// worn gate. A single Dramen staff stays a one-id list.
+    #[test]
+    fn worn_req_passes_when_any_listed_obj_is_worn() {
+        let mut e = gated_edge();
+        e.skill_req.clear();
+        e.item_req.clear();
+        e.quest_req.clear();
+        e.varp_req.clear();
+        e.worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
+        let mut s = WorldState::empty();
+        assert!(!s.allows(&e), "nothing worn");
+        s.worn.insert(1321);
+        assert!(s.allows(&e), "one of the listed blades is enough");
+        s.worn.clear();
+        s.worn.insert(946);
+        assert!(!s.allows(&e), "an unlisted obj does not count");
+        e.worn_req.clear();
+        assert!(
+            WorldState::empty().allows(&e),
+            "empty worn_req is not a gate"
+        );
     }
 
     /// An empty state proves nothing: even a req-free edge passes, every

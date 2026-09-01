@@ -16,7 +16,8 @@
 //! configs + the baked collision (`at` = the loc tile, `to` each
 //! direction's far-side walk-out, `open_loc_id` from the config's
 //! `next_loc_stage`). Boats are
-//! an explicit 2004 route table (dock NPC tile → post-gangplank dock tile,
+//! an explicit 2004 route table (dock NPC tile → destination ship deck,
+//! then a loc-backed Cross on the boat-side `_gangplank_disembark`),
 //! mined from the `areas/*` `~set_sail(` call sites and the `==== NPC ====`
 //! map placements), and gnome gliders a fixed platform table with their
 //! quest gate. Teleports are the one any-tile layer: spell teleports
@@ -85,9 +86,11 @@ pub enum DoorDir {
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare (empty when the source
-/// declares nothing). `worn_req` is the list of obj ids that must be
-/// equipped (worn) to take the hop, read from the source's own `worn`
-/// inventory checks.
+/// declares nothing). `worn_req` is the obj ids of which **any one** must
+/// be equipped (a Dramen staff is a one-id list; slashable webs list
+/// every blade whose `slashattack_anim` is not unarmed). `option` 0 on a
+/// loc hop means use the first `item_req` obj on the loc (`oplocu`);
+/// option 1 is `oploc1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
@@ -165,6 +168,14 @@ pub fn derive_transports(
         &mut graph,
         &mut skipped,
     );
+    web_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        collision,
+        &mut skipped,
+    );
     boat_edges(&mut graph);
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
@@ -201,6 +212,7 @@ const SKIP_TELEPORT_BAD_DEST: &str = "teleport destination does not parse";
 const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.pack";
 const SKIP_TELEPORT_UNRESOLVED_ITEM: &str = "jewellery item name not in pack/obj.pack";
 const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destination";
+const SKIP_WEB_NO_FAR: &str = "slashable web has no standable far side";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -302,6 +314,9 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("fullstyle", 1),
     ("watchshortcut", 0),
     ("castlecrumbly", 2),
+    // agility_dungeon.rs2: Walk-across the Yanille balancing ledge
+    // (forcemove 8 tiles + p_delay).
+    ("balancing_ledge3", 8),
 ];
 
 fn extra_ticks(name: &str) -> Option<i32> {
@@ -615,6 +630,138 @@ fn opposite(dir: DoorDir) -> DoorDir {
 /// direction (`dir`: N→+z, S→-z, E→+x, W→-x) one tile at a time until
 /// `collision.standable` accepts one. A door whose far side never becomes
 /// standable inside the bake yields no edge.
+/// Slashable webs (`bigweb_slashable` / loc 733): two edges per
+/// far-side dir — `oplocu` with an unequippable knife (`option` 0,
+/// `item_req`), and `oploc1` Slash (`option` 1) when any
+/// `slashattack_anim` blade is worn (`worn_req`, any-of). `loc_change`
+/// to `bigweb_slashed`. Same crossing shape as a door so the traveller
+/// trolls the 50% slash fail. Wilderness placements pack too; [`crate::router::find`]
+/// still refuses wildy tiles unless the search opts in.
+const WEB_TICKS: i32 = 2;
+/// `oplocu`: use the first `item_req` obj on the loc (the knife).
+const WEB_USE_OPTION: i32 = 0;
+
+fn web_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    collision: &WorldCollision,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let Some(&closed) = ids.get("bigweb_slashable") else {
+        return;
+    };
+    let open_id = ids.get("bigweb_slashed").copied();
+    let objs = obj_ids_by_name(content_root);
+    let knife = objs.get("knife").copied().unwrap_or(946);
+    let slash_blades: Vec<i32> = slash_weapon_ids(content_root, &objs)
+        .into_iter()
+        .filter(|&id| id != knife)
+        .collect();
+    let Some(placements) = positions.get(&closed) else {
+        return;
+    };
+    for p in placements {
+        if p.level != 0 {
+            continue;
+        }
+        let Some(dir) = door_dir(p.angle) else {
+            continue;
+        };
+        let at = WorldTile {
+            x: p.x,
+            z: p.z,
+            level: p.level,
+        };
+        for dir in [dir, opposite(dir)] {
+            let Some(to) = door_far_side(at, dir, collision) else {
+                bump(skipped, SKIP_WEB_NO_FAR, 1);
+                continue;
+            };
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Door,
+                at,
+                to,
+                loc_id: closed,
+                option: WEB_USE_OPTION,
+                ticks: WEB_TICKS,
+                dir: Some(dir),
+                open_loc_id: open_id,
+                skill_req: vec![],
+                item_req: vec![(knife, 1)],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+            });
+            if !slash_blades.is_empty() {
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: closed,
+                    option: 1,
+                    ticks: WEB_TICKS,
+                    dir: Some(dir),
+                    open_loc_id: open_id,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: slash_blades.clone(),
+                });
+            }
+        }
+    }
+}
+
+/// Obj ids whose `.obj` block sets `slashattack_anim` to something other
+/// than `human_unarmedpunch` — the same test `~slash_checker` uses on the
+/// worn right hand. Unnamed pack rows are skipped.
+fn slash_weapon_ids(content_root: &Path, objs: &HashMap<String, i32>) -> Vec<i32> {
+    let mut names: HashSet<String> = HashSet::new();
+    let mut stack = vec![content_root.join("scripts")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("obj") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut current: Option<String> = None;
+            for raw in text.lines() {
+                let line = raw.trim();
+                if let Some(name) = config_header(line) {
+                    current = Some(name.to_string());
+                    continue;
+                }
+                let Some(name) = current.as_deref() else {
+                    continue;
+                };
+                let Some(anim) = line.strip_prefix("param=slashattack_anim,") else {
+                    continue;
+                };
+                if anim.trim() != "human_unarmedpunch" {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+    }
+    let mut ids: Vec<i32> = names.iter().filter_map(|n| objs.get(n).copied()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
     let (dx, dz) = match dir {
         DoorDir::N => (0, 1),
@@ -1475,10 +1622,11 @@ fn shortcut_edges(
 ) {
     let reqs = shortcut_agility_reqs(content_root);
     type PlacementMaker = fn(&Placement) -> Vec<WorldTile>;
-    let makers: [(&str, PlacementMaker); 3] = [
+    let makers: [(&str, PlacementMaker); 4] = [
         ("fullstyle", fullstyle_dests),
         ("watchshortcut", watchshortcut_dests),
         ("castlecrumbly", castlecrumbly_dests),
+        ("balancing_ledge3", balancing_ledge3_dests),
     ];
     for (loc_name, dests) in makers {
         let Some(&id) = ids.get(loc_name) else {
@@ -1582,41 +1730,63 @@ fn castlecrumbly_dests(loc: &Placement) -> Vec<WorldTile> {
     }]
 }
 
+/// Yanille dungeon ledge (`agility_dungeon.rs2` `balancing_ledge3`):
+/// `coordz(loc_coord) > 9518` walks south to `0_40_148_20_40` (2580,9512);
+/// else north to `0_40_148_20_48` (2580,9520). Dual placements, one
+/// directed hop each. `at` is the loc tile (mid-ledge, blocked); take-off
+/// is the standable start tile one step away (`INTERACT_RADIUS` 1).
+fn balancing_ledge3_dests(loc: &Placement) -> Vec<WorldTile> {
+    let to_z = if loc.z > 9518 { 9512 } else { 9520 };
+    vec![WorldTile {
+        level: loc.level,
+        x: loc.x,
+        z: to_z,
+    }]
+}
+
 /// The `stat(agility) < N` level each `[oploc1,<name>]` block declares.
 fn shortcut_agility_reqs(content_root: &Path) -> HashMap<String, i32> {
     let mut out = HashMap::new();
-    let scripts = content_root
-        .join("scripts")
-        .join("skill_agility")
-        .join("scripts");
-    let Ok(entries) = fs::read_dir(&scripts) else {
-        return out;
-    };
-    for ent in entries.flatten() {
-        let path = ent.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("rs2") {
-            continue;
-        }
-        let Ok(text) = fs::read_to_string(&path) else {
+    for dir in [
+        content_root
+            .join("scripts")
+            .join("skill_agility")
+            .join("scripts"),
+        content_root
+            .join("scripts")
+            .join("areas")
+            .join("area_yanille")
+            .join("scripts"),
+    ] {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
-        let mut current: Option<String> = None;
-        for raw in text.lines() {
-            let line = raw.trim();
-            if line.starts_with('[') {
-                current = None;
-                if let Some((a, b)) = script_header(line) {
-                    if oploc_option(a).is_some() {
-                        current = Some(b.to_string());
-                    }
-                }
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("rs2") {
                 continue;
             }
-            let Some(name) = &current else {
+            let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
-            if let Some(level) = agility_level_req(line) {
-                out.entry(name.clone()).or_insert(level);
+            let mut current: Option<String> = None;
+            for raw in text.lines() {
+                let line = raw.trim();
+                if line.starts_with('[') {
+                    current = None;
+                    if let Some((a, b)) = script_header(line) {
+                        if oploc_option(a).is_some() {
+                            current = Some(b.to_string());
+                        }
+                    }
+                    continue;
+                }
+                let Some(name) = &current else {
+                    continue;
+                };
+                if let Some(level) = agility_level_req(line) {
+                    out.entry(name.clone()).or_insert(level);
+                }
             }
         }
     }
@@ -1640,21 +1810,31 @@ fn agility_level_req(line: &str) -> Option<i32> {
 // the any-tile layer (see `teleport_edges` below).
 // ---------------------------------------------------------------------------
 
-/// One 2004 boat journey: talk to the dock NPC at `at`, sail to the
-/// destination dock, and walk off the destination gangplank. `at` is the
-/// NPC's spawn tile (jm2 `==== NPC ====` section, id resolved through
-/// `pack/npc.pack`), never the origin gangplank; `to` is the dock tile past
-/// the destination gangplank, never a boat-interior/water tile — the
-/// gangplank crossing is folded into `ticks` (= the
-/// `~set_sail(`/`~set_sail_cairn(` `p_delay` + 2 crossing ticks).
+/// Destination-ship disembark: `oploc1` `Cross` on the `_gangplank_disembark`
+/// loc (`gangplank.rs2`), landing on the dock. Live Port Sarim → Musa
+/// stalls on the Musa deck if this hop is folded into the Boat edge —
+/// `set_sail` only telejumps onto the ship.
+#[derive(Debug, Clone, Copy)]
+struct DisembarkPlank {
+    loc_id: i32,
+    at: WorldTile,
+    to: WorldTile,
+}
+
+/// One 2004 boat journey: talk to the dock NPC at `at`, sail onto the
+/// destination ship (`to` = the `set_sail` deck tile). `plank` is the
+/// boat-side gangplank off that ship; Shanks `set_sail_cairn` lands on
+/// the dock with `plank: None`. `at` is the NPC spawn, never the origin
+/// gangplank (board planks refuse until the sailor is spoken to).
 #[derive(Debug, Clone, Copy)]
 struct BoatRoute {
     /// npc.pack id of the dock NPC who starts the journey.
     npc: i32,
     at: WorldTile,
     to: WorldTile,
-    /// `set_sail` delay + gangplank crossing; no crossing when the landing
-    /// is a direct dock tile (`set_sail_cairn`).
+    plank: Option<DisembarkPlank>,
+    /// `set_sail` / `set_sail_cairn` `p_delay` only (plank ticks are on
+    /// the disembark edge).
     ticks: i32,
     /// `(obj id, count)` fare the journey charges, if any.
     fare: Option<(i32, i32)>,
@@ -1662,19 +1842,16 @@ struct BoatRoute {
     varp_req: Option<(i32, i32)>,
 }
 
-/// The 2004 boat journeys: destinations and delays from the `~set_sail(`/
-/// `~set_sail_cairn(` call sites in `content/scripts/areas/*` (the customs
-/// officers, sailors, monks of Entrana, and Captain Shanks), origin tiles
-/// from the `==== NPC ====` placements in `content/maps/*.jm2`, destination
-/// dock tiles from the `_gangplank_disembark` locs of
-/// `content/scripts/general_use/configs/gangplank.loc` (crossed after the
-/// journey lands on the boat), and ids from `pack/npc.pack`/`pack/obj.pack`/
-/// `pack/varp.pack`.
+/// The 2004 boat journeys: `~set_sail(` landings from area scripts, NPC
+/// tiles from jm2, disembark locs from `gangplank.loc` / loc.pack (jm2
+/// placements). Board planks (`*_on`) are not packed — they mes and
+/// refuse until the sailor is spoken to.
+const GANGPLANK_TICKS: i32 = 2;
+
 const BOAT_ROUTES: &[BoatRoute] = &[
     // Seaman Thresnor (npc 378) on the Port Sarim pier (m47_50): lands on
-    // the Karamja ship (2956,3143,1), then off `sarimshipplank_off`
-    // (loc 2082, north-facing at 2956,3144,1) to the Karamja dock
-    // (2956,3146,0). Delay 7 + 2.
+    // the Karamja ship (2956,3143,1); `sarimshipplank_off` (loc 2082 at
+    // 2956,3144,1, m46_49) Cross to the Karamja dock (2956,3146,0).
     BoatRoute {
         npc: 378,
         at: WorldTile {
@@ -1684,17 +1861,29 @@ const BOAT_ROUTES: &[BoatRoute] = &[
         },
         to: WorldTile {
             x: 2956,
-            z: 3146,
-            level: 0,
+            z: 3143,
+            level: 1,
         },
-        ticks: 9,
+        plank: Some(DisembarkPlank {
+            loc_id: 2082,
+            at: WorldTile {
+                x: 2956,
+                z: 3144,
+                level: 1,
+            },
+            to: WorldTile {
+                x: 2956,
+                z: 3146,
+                level: 0,
+            },
+        }),
+        ticks: 7,
         fare: Some((995, 30)),
         varp_req: None,
     },
     // Customs officer (npc 380) at Musa Point (m46_49): lands on the Port
-    // Sarim ship (3032,3217,1), then off `karamjashipplank_off` (loc 2084,
-    // west-facing at 3031,3217,1) to the Port Sarim dock (3029,3217,0).
-    // Delay 7 + 2.
+    // Sarim ship (3032,3217,1); `karamjashipplank_off` (loc 2084 at
+    // 3031,3217,1, m47_50) to the Port Sarim dock (3029,3217,0).
     BoatRoute {
         npc: 380,
         at: WorldTile {
@@ -1703,18 +1892,30 @@ const BOAT_ROUTES: &[BoatRoute] = &[
             level: 0,
         },
         to: WorldTile {
-            x: 3029,
+            x: 3032,
             z: 3217,
-            level: 0,
+            level: 1,
         },
-        ticks: 9,
+        plank: Some(DisembarkPlank {
+            loc_id: 2084,
+            at: WorldTile {
+                x: 3031,
+                z: 3217,
+                level: 1,
+            },
+            to: WorldTile {
+                x: 3029,
+                z: 3217,
+                level: 0,
+            },
+        }),
+        ticks: 7,
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Customs officer (npc 380) at the Brimhaven dock (nearest spawn to the
-    // rs2b0t-observed stand, 2772,3234): lands on the Ardougne ship
-    // (2683,3268,1), then off `brimhavenshipplank_off` (loc 2086) to the
-    // Ardougne dock (2683,3271,0). Delay 7 + 2.
+    // Customs officer (npc 380) at the Brimhaven dock: lands on the
+    // Ardougne ship (2683,3268,1); `brimhavenshipplank_off` (loc 2086 at
+    // 2683,3269,1, m41_51) to the Ardougne dock (2683,3271,0).
     BoatRoute {
         npc: 380,
         at: WorldTile {
@@ -1724,16 +1925,29 @@ const BOAT_ROUTES: &[BoatRoute] = &[
         },
         to: WorldTile {
             x: 2683,
-            z: 3271,
-            level: 0,
+            z: 3268,
+            level: 1,
         },
-        ticks: 9,
+        plank: Some(DisembarkPlank {
+            loc_id: 2086,
+            at: WorldTile {
+                x: 2683,
+                z: 3269,
+                level: 1,
+            },
+            to: WorldTile {
+                x: 2683,
+                z: 3271,
+                level: 0,
+            },
+        }),
+        ticks: 7,
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Captain Barnaby (npc 381) at the Ardougne dock (m41_51): lands on the
-    // Brimhaven ship (2775,3234,1), then off `ardougneshipplank_off`
-    // (loc 2088) to the Brimhaven dock (2772,3234,0). Delay 7 + 2.
+    // Captain Barnaby (npc 381) at the Ardougne dock: lands on the
+    // Brimhaven ship (2775,3234,1); `ardougneshipplank_off` (loc 2088 at
+    // 2774,3234,1, m43_50) to the Brimhaven dock (2772,3234,0).
     BoatRoute {
         npc: 381,
         at: WorldTile {
@@ -1742,18 +1956,30 @@ const BOAT_ROUTES: &[BoatRoute] = &[
             level: 0,
         },
         to: WorldTile {
-            x: 2772,
+            x: 2775,
             z: 3234,
-            level: 0,
+            level: 1,
         },
-        ticks: 9,
+        plank: Some(DisembarkPlank {
+            loc_id: 2088,
+            at: WorldTile {
+                x: 2774,
+                z: 3234,
+                level: 1,
+            },
+            to: WorldTile {
+                x: 2772,
+                z: 3234,
+                level: 0,
+            },
+        }),
+        ticks: 7,
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Monk of Entrana (shipmonk, npc 657) on the Port Sarim dock (nearest
-    // spawn to the rs2b0t-observed stand, 3048,3236): lands on the Entrana
-    // ship (2834,3331,1), then off `ship_from_entrana_off` (loc 2415) to the
-    // Entrana dock (2834,3335,0). Delay 13 + 2.
+    // Monk of Entrana (shipmonk, npc 657): lands on the Entrana ship
+    // (2834,3331,1); `ship_from_entrana_off` (loc 2415 at 2834,3333,1,
+    // m44_52) to the Entrana dock (2834,3335,0). Delay 13.
     BoatRoute {
         npc: 657,
         at: WorldTile {
@@ -1763,17 +1989,29 @@ const BOAT_ROUTES: &[BoatRoute] = &[
         },
         to: WorldTile {
             x: 2834,
-            z: 3335,
-            level: 0,
+            z: 3331,
+            level: 1,
         },
-        ticks: 15,
+        plank: Some(DisembarkPlank {
+            loc_id: 2415,
+            at: WorldTile {
+                x: 2834,
+                z: 3333,
+                level: 1,
+            },
+            to: WorldTile {
+                x: 2834,
+                z: 3335,
+                level: 0,
+            },
+        }),
+        ticks: 13,
         fare: None,
         varp_req: None,
     },
-    // Monk of Entrana (shipmonk2, npc 658) on the Entrana dock (nearest
-    // spawn to the rs2b0t-observed stand, 2834,3335): lands on the Port
-    // Sarim ship (3048,3231,1), then off `ship_to_entrana_off` (loc 2413) to
-    // the Port Sarim dock (3048,3234,0). Delay 14 + 2.
+    // Monk of Entrana (shipmonk2, npc 658): lands on the Port Sarim ship
+    // (3048,3231,1); `ship_to_entrana_off` (loc 2413 at 3048,3232,1,
+    // m47_50) to the Port Sarim dock (3048,3234,0). Delay 14.
     BoatRoute {
         npc: 658,
         at: WorldTile {
@@ -1783,10 +2021,23 @@ const BOAT_ROUTES: &[BoatRoute] = &[
         },
         to: WorldTile {
             x: 3048,
-            z: 3234,
-            level: 0,
+            z: 3231,
+            level: 1,
         },
-        ticks: 16,
+        plank: Some(DisembarkPlank {
+            loc_id: 2413,
+            at: WorldTile {
+                x: 3048,
+                z: 3232,
+                level: 1,
+            },
+            to: WorldTile {
+                x: 3048,
+                z: 3234,
+                level: 0,
+            },
+        }),
+        ticks: 14,
         fare: None,
         varp_req: None,
     },
@@ -1806,6 +2057,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
             z: 3150,
             level: 0,
         },
+        plank: None,
         ticks: 9,
         fare: None,
         varp_req: Some((116, 15)),
@@ -1823,6 +2075,7 @@ const BOAT_ROUTES: &[BoatRoute] = &[
             z: 3235,
             level: 0,
         },
+        plank: None,
         ticks: 15,
         fare: None,
         varp_req: Some((116, 15)),
@@ -1830,7 +2083,9 @@ const BOAT_ROUTES: &[BoatRoute] = &[
 ];
 
 /// Boat edges from the explicit 2004 route table: one `Talk-to` edge per
-/// journey, keyed from the dock NPC's tile.
+/// journey (NPC tile → `set_sail` deck), plus a loc-backed disembark
+/// hop (`Cross` on the boat-side gangplank → dock). Kind is Ladder: a
+/// level-changing loc op, not an NPC.
 fn boat_edges(graph: &mut TransportGraph) {
     for r in BOAT_ROUTES {
         graph.edges.push(TransportEdge {
@@ -1848,6 +2103,23 @@ fn boat_edges(graph: &mut TransportGraph) {
             varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
             worn_req: vec![],
         });
+        if let Some(p) = r.plank {
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Ladder,
+                at: p.at,
+                to: p.to,
+                loc_id: p.loc_id,
+                option: 1,
+                ticks: GANGPLANK_TICKS,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+            });
+        }
     }
 }
 
@@ -2220,8 +2492,11 @@ const GNOME_PILOT: i32 = 170;
 /// The glider quest gate: the pilot offers Gnome Air only once the Grand
 /// Tree quest is complete (`%grandtree >= ^grandtree_complete`, varp 150
 /// = 160 in `scripts/areas/area_gnome/scripts/gnome_glider.rs2`'s
-/// `[opnpc1,gnomepilot]` block).
+/// `[opnpc1,gnomepilot]` block). Live `WorldState` may prove that as the
+/// varp **or** as the green journal row (the kit waits `QuestDone`);
+/// missing varps fail closed, so each flight packs both proofs.
 const GLIDER_QUEST_REQ: (i32, i32) = (150, 160);
+const GLIDER_QUEST_NAME: &str = "The Grand Tree";
 
 /// Glider edges from the fixed platform table: the hub to every pad, and
 /// back from the round-trip pads. `calc_glidervar` in `gnome_glider.rs2`
@@ -2231,14 +2506,19 @@ const GLIDER_QUEST_REQ: (i32, i32) = (150, 160);
 /// `Talk-to` op.
 fn glider_edges(graph: &mut TransportGraph) {
     for (pad, round_trip) in GLIDER_PADS {
-        graph.edges.push(glider_edge(GLIDER_HUB, *pad));
+        push_glider_flight(graph, GLIDER_HUB, *pad);
         if *round_trip {
-            graph.edges.push(glider_edge(*pad, GLIDER_HUB));
+            push_glider_flight(graph, *pad, GLIDER_HUB);
         }
     }
 }
 
-fn glider_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
+fn push_glider_flight(graph: &mut TransportGraph, at: WorldTile, to: WorldTile) {
+    graph.edges.push(glider_edge(at, to, true));
+    graph.edges.push(glider_edge(at, to, false));
+}
+
+fn glider_edge(at: WorldTile, to: WorldTile, varp_gate: bool) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Glider,
         at,
@@ -2250,8 +2530,16 @@ fn glider_edge(at: WorldTile, to: WorldTile) -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
-        quest_req: vec![],
-        varp_req: vec![GLIDER_QUEST_REQ],
+        quest_req: if varp_gate {
+            vec![]
+        } else {
+            vec![GLIDER_QUEST_NAME.to_string()]
+        },
+        varp_req: if varp_gate {
+            vec![GLIDER_QUEST_REQ]
+        } else {
+            vec![]
+        },
         worn_req: vec![],
     }
 }
@@ -3683,7 +3971,7 @@ mod tests {
         let e = graph
             .edges
             .iter()
-            .find(|e| e.kind == TransportKind::Door && !e.worn_req.is_empty())
+            .find(|e| e.kind == TransportKind::Door && e.worn_req == [772])
             .expect("shed door");
         assert!(!e.worn_req.is_empty());
         assert!(
@@ -4688,9 +4976,9 @@ p_arrivedelay;
         let defs = loc_defs(&[(1747, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let graph = derive_transports(fx.path(), &defs, &wc);
-        // The unknown ladder name resolves nothing; the only edges are the
-        // explicit 2004 boat route, cart, essence-wizard, and gnome-glider
-        // tables.
+        // The unknown ladder name resolves nothing; remaining edges are the
+        // explicit 2004 boat/cart/wizard/glider tables plus boat-side
+        // disembark planks (Ladder loc hops, not script-derived ladders).
         let explicit = graph
             .edges
             .iter()
@@ -4698,9 +4986,18 @@ p_arrivedelay;
                 e.kind == TransportKind::Boat
                     || e.kind == TransportKind::Glider
                     || e.kind == TransportKind::Npc
+                    || e.kind == TransportKind::Ladder
             })
             .count();
         assert_eq!(explicit, graph.edges.len());
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .filter(|e| e.kind == TransportKind::Ladder)
+                .count(),
+            6
+        );
         assert_eq!(
             graph
                 .edges
@@ -4725,7 +5022,7 @@ p_arrivedelay;
                 .iter()
                 .filter(|e| e.kind == TransportKind::Glider)
                 .count(),
-            7
+            14
         );
     }
 
@@ -4769,11 +5066,8 @@ p_arrivedelay;
                 .unwrap_or_else(|| panic!("boat route npc {npc} at {at:?}"))
         };
 
-        // Port Sarim → Musa: `at` is Seaman Thresnor's tile (npc 378, jm2
-        // m47_50 `==== NPC ====`), NOT the origin gangplank; `to` is the
-        // Karamja dock past `sarimshipplank_off` (loc 2082, north-facing,
-        // disembark lands loc + (0,-1,+2) = (2956,3146,0)), never the boat
-        // interior (2956,3143,1).
+        // Port Sarim → Musa: Talk-to lands on the Karamja ship deck;
+        // `sarimshipplank_off` (loc 2082) is a separate loc hop off the boat.
         let ps_musa = boat(
             378,
             WorldTile {
@@ -4786,19 +5080,39 @@ p_arrivedelay;
             ps_musa.to,
             WorldTile {
                 x: 2956,
+                z: 3143,
+                level: 1
+            }
+        );
+        assert_eq!(ps_musa.option, 1); // Talk-to
+        assert_eq!(ps_musa.ticks, 7); // set_sail delay only
+        assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
+        assert!(ps_musa.varp_req.is_empty());
+        let musa_plank = graph
+            .edges
+            .iter()
+            .find(|e| e.kind == TransportKind::Ladder && e.loc_id == 2082)
+            .expect("sarimshipplank_off");
+        assert_eq!(
+            musa_plank.at,
+            WorldTile {
+                x: 2956,
+                z: 3144,
+                level: 1
+            }
+        );
+        assert_eq!(
+            musa_plank.to,
+            WorldTile {
+                x: 2956,
                 z: 3146,
                 level: 0
             }
         );
-        assert_eq!(ps_musa.option, 1); // Talk-to
-        assert_eq!(ps_musa.ticks, 9); // set_sail delay 7 + gangplank crossing 2
-        assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
-        assert!(ps_musa.varp_req.is_empty());
+        assert_eq!(musa_plank.option, 1); // Cross
+        assert_eq!(musa_plank.ticks, GANGPLANK_TICKS);
 
-        // Musa → Port Sarim: the customs officer (npc 380) at (2955,3146,0),
-        // landing on the Port Sarim dock past `karamjashipplank_off`
-        // (loc 2084, west-facing, disembark lands loc + (-2,-1,0) =
-        // (3029,3217,0)).
+        // Musa → Port Sarim: deck landing, then karamjashipplank_off 2084.
         let musa_ps = boat(
             380,
             WorldTile {
@@ -4810,39 +5124,42 @@ p_arrivedelay;
         assert_eq!(
             musa_ps.to,
             WorldTile {
-                x: 3029,
+                x: 3032,
                 z: 3217,
-                level: 0
+                level: 1
             }
         );
-        assert_eq!(musa_ps.ticks, 9);
+        assert_eq!(musa_ps.ticks, 7);
+        assert!(graph
+            .edges
+            .iter()
+            .any(|e| e.kind == TransportKind::Ladder && e.loc_id == 2084));
 
-        // No boat edge lands on a boat-interior/water tile: every `to` is a
-        // dock tile past the destination gangplank.
+        // Sail hops land on the ship; Shanks is the exception (direct dock).
         let interiors = [
-            (2956, 3143), // Musa ship deck
-            (3032, 3217), // Port Sarim ship deck
-            (2683, 3268), // Ardougne ship deck
-            (2775, 3234), // Brimhaven ship deck
-            (2834, 3331), // Entrana ship deck
-            (3048, 3231), // Port Sarim → Entrana ship deck
+            (2956, 3143, 1),
+            (3032, 3217, 1),
+            (2683, 3268, 1),
+            (2775, 3234, 1),
+            (2834, 3331, 1),
+            (3048, 3231, 1),
         ];
-        for b in &boats {
+        for b in boats.iter().filter(|b| b.loc_id != 518) {
             assert!(
-                !interiors.contains(&(b.to.x, b.to.z)),
-                "boat edge ends on a boat interior: {:?}",
+                interiors.contains(&(b.to.x, b.to.z, b.to.level)),
+                "sail hop should land on the ship deck, got {:?}",
                 b.to
             );
         }
 
-        // Shilo boats (Captain Shanks, npc 518) carry the Shilo Village gate:
-        // `%zombiequeen >= ^zombiequeen_complete` (varp 116 = 15), and land
-        // directly on the declared dock tiles (no gangplank crossing).
+        // Shilo boats (Captain Shanks, npc 518) carry the Shilo Village gate
+        // and land directly on the dock (`set_sail_cairn`, no plank).
         let shanks: Vec<_> = boats.iter().filter(|e| e.loc_id == 518).collect();
         assert_eq!(shanks.len(), 2);
         for s in &shanks {
             assert_eq!(s.varp_req, vec![(116, 15)]);
             assert_eq!(s.option, 1);
+            assert_eq!(s.to.level, 0);
         }
         let khazard = boat(
             518,
@@ -4860,7 +5177,7 @@ p_arrivedelay;
                 level: 0
             }
         );
-        assert_eq!(khazard.ticks, 9); // set_sail_cairn delay 9, direct landing
+        assert_eq!(khazard.ticks, 9);
         let shanks_sarim = shanks
             .iter()
             .find(|s| {
@@ -4872,6 +5189,229 @@ p_arrivedelay;
             })
             .expect("Shilo → Port Sarim boat");
         assert_eq!(shanks_sarim.ticks, 15);
+    }
+
+    /// Slashable webs pack two edges per crossing: knife `oplocu`
+    /// (`option` 0, `item_req` knife — the knife is unequippable) and
+    /// `oploc1` Slash (`option` 1, `worn_req` every slash-anim blade).
+    /// Wilderness placements (z ≥ 3520) are included; `find` still gates wildy.
+    #[test]
+    fn derive_transports_emits_slashable_web_knife_edges() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let webs: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 733)
+            .collect();
+        assert!(
+            !webs.is_empty(),
+            "bigweb_slashable placements must pack (Yanille + wilderness)"
+        );
+        let knife: Vec<_> = webs.iter().filter(|w| w.option == 0).collect();
+        let slash: Vec<_> = webs.iter().filter(|w| w.option == 1).collect();
+        assert_eq!(
+            knife.len(),
+            slash.len(),
+            "one knife use + one Slash per dir"
+        );
+        assert!(!knife.is_empty());
+        for w in &knife {
+            assert_eq!(w.item_req, vec![(946, 1)], "unequippable knife: {w:?}");
+            assert!(w.worn_req.is_empty(), "{w:?}");
+            assert_eq!(w.open_loc_id, Some(734), "{w:?}");
+            assert_eq!(w.ticks, WEB_TICKS);
+            assert!(w.dir.is_some());
+        }
+        for w in &slash {
+            assert!(w.item_req.is_empty(), "Slash is worn-blade, not inv: {w:?}");
+            assert!(
+                w.worn_req.contains(&1277),
+                "bronze_sword is a slash blade: {w:?}"
+            );
+            assert!(!w.worn_req.contains(&946), "knife is unequippable");
+            assert_eq!(w.open_loc_id, Some(734), "{w:?}");
+            assert_eq!(w.ticks, WEB_TICKS);
+            assert!(w.dir.is_some());
+        }
+        assert!(
+            webs.iter()
+                .any(|e| e.at.z >= 3520 && e.at.x >= 2944 && e.at.x <= 3391),
+            "wilderness webs pack too (surface band z≥3520)"
+        );
+        // Yanille dungeon mouth (m40_48).
+        assert!(
+            webs.iter()
+                .any(|e| e.at.x >= 2560 && e.at.x < 2624 && e.at.z >= 3072 && e.at.z < 3136),
+            "Yanille webs pack (m40_48)"
+        );
+    }
+
+    /// The Yanille dungeon balancing ledge (`balancing_ledge3` / loc 2303)
+    /// is the hop that connects the cellar landing to the chaos-druid
+    /// warrior field. `agility_dungeon.rs2` `oploc1` Walk-across, Agility
+    /// 40, start tiles `0_40_148_20_48` / `_20_40`.
+    #[test]
+    fn derive_transports_emits_yanille_balancing_ledge() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let ledges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == 2303)
+            .collect();
+        assert_eq!(
+            ledges.len(),
+            2,
+            "balancing_ledge3 dual placements (N→S and S→N)"
+        );
+        for e in &ledges {
+            assert_eq!(e.option, 1, "Walk-across: {e:?}");
+            assert_eq!(e.skill_req, vec![(SKILL_AGILITY, 40)], "{e:?}");
+            assert_eq!(e.at.x, 2580);
+            assert_eq!(e.to.x, 2580);
+            assert!(e.item_req.is_empty());
+        }
+        assert!(
+            ledges.iter().any(|e| e.to.z == 9512),
+            "N→S lands 0_40_148_20_40: {ledges:?}"
+        );
+        assert!(
+            ledges.iter().any(|e| e.to.z == 9520),
+            "S→N lands 0_40_148_20_48: {ledges:?}"
+        );
+    }
+
+    /// Live step 27: Yanille bank → dungeon warriors. Knife (web) +
+    /// Agility 40 (ledge). Empty WorldState stays NoPath.
+    #[test]
+    fn yanille_bank_reaches_dungeon_warriors_with_knife_and_agility() {
+        let Some((graph, collision)) = derive_from_real_content() else {
+            return;
+        };
+        let bank = WorldTile {
+            x: 2612,
+            z: 3092,
+            level: 0,
+        };
+        let warriors = WorldTile {
+            x: 2580,
+            z: 9501,
+            level: 0,
+        };
+        assert!(
+            crate::router::find_with(
+                &collision,
+                &graph,
+                bank,
+                warriors,
+                crate::router::FindOptions::default(),
+                &crate::world_state::WorldState::empty(),
+            )
+            .is_err(),
+            "empty WorldState cannot take the knife web or the Agility-40 ledge"
+        );
+        let mut state = crate::world_state::WorldState::empty();
+        state.inv.insert(946, 1);
+        state.stats.insert(SKILL_AGILITY, 40);
+        let route = crate::router::find_with(
+            &collision,
+            &graph,
+            bank,
+            warriors,
+            crate::router::FindOptions::default(),
+            &state,
+        )
+        .expect("Yanille bank → dungeon warriors with knife + Agility 40");
+        let hops: Vec<_> = route
+            .legs
+            .iter()
+            .filter_map(|l| match l {
+                crate::router::Leg::Transport { edge } => {
+                    Some((edge.kind, edge.loc_id, edge.at, edge.to, edge.option))
+                }
+                crate::router::Leg::Walk { .. } => None,
+            })
+            .collect();
+        assert!(
+            hops.iter()
+                .any(|(_, loc_id, _, _, option)| *loc_id == 733 && *option == 0),
+            "knife in inv takes the oplocu hop: {hops:?}"
+        );
+        let mut worn = crate::world_state::WorldState::empty();
+        worn.stats.insert(SKILL_AGILITY, 40);
+        worn.worn.insert(1277);
+        let worn_route = crate::router::find_with(
+            &collision,
+            &graph,
+            bank,
+            warriors,
+            crate::router::FindOptions::default(),
+            &worn,
+        )
+        .expect("Yanille bank → dungeon warriors with a worn bronze sword");
+        assert!(
+            worn_route.legs.iter().any(|l| match l {
+                crate::router::Leg::Transport { edge } => {
+                    edge.loc_id == 733 && edge.option == 1
+                }
+                _ => false,
+            }),
+            "worn slash blade takes oploc1 Slash"
+        );
+        let walked_web = route.legs.iter().any(|l| match l {
+            crate::router::Leg::Walk { tiles } => tiles.iter().any(|t| {
+                t.level == 0
+                    && t.x >= 2568
+                    && t.x <= 2578
+                    && t.z >= 3120
+                    && t.z <= 3128
+                    && graph.edges.iter().any(|e| {
+                        e.loc_id == 733 && e.at.x == t.x && e.at.z == t.z && e.at.level == 0
+                    })
+            }),
+            _ => false,
+        });
+        assert!(
+            !walked_web,
+            "walk must not step onto the web loc tile: {hops:?}"
+        );
+    }
+
+    /// The Yanille cellar stairs pack (in-town and outside-town mouths).
+    #[test]
+    fn yanille_cellar_stairs_pack_to_the_dungeon() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        assert!(
+            graph.edges.iter().any(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.at
+                        == WorldTile {
+                            x: 2569,
+                            z: 3122,
+                            level: 0,
+                        }
+                    && e.to.z >= 9472
+            }),
+            "outside-town cellar stairs 2569,3122 → dungeon"
+        );
+        assert!(
+            graph.edges.iter().any(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.at
+                        == WorldTile {
+                            x: 2603,
+                            z: 3078,
+                            level: 0,
+                        }
+                    && e.to.z >= 9472
+            }),
+            "in-town cellar stairs 2603,3078 → dungeon"
+        );
     }
 
     #[test]
@@ -4992,8 +5532,9 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             .filter(|e| e.kind == TransportKind::Glider)
             .collect();
         // The Grand Tree hub flies to all four pads and back from three of
-        // them (`calc_glidervar` has no lemanto_andra → hub pair): 7 edges.
-        assert_eq!(gliders.len(), 7);
+        // them (`calc_glidervar` has no lemanto_andra → hub pair): 7
+        // flights × varp + journal proofs.
+        assert_eq!(gliders.len(), 14);
         let hub = WorldTile {
             x: 2465,
             z: 3501,
@@ -5015,21 +5556,80 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
             level: 0,
         };
         let hub_edges: Vec<_> = gliders.iter().filter(|e| e.at == hub).collect();
-        assert_eq!(hub_edges.len(), 4);
+        assert_eq!(hub_edges.len(), 8);
         assert!(hub_edges.iter().any(|e| e.to == sindarpos));
         assert!(hub_edges.iter().any(|e| e.to == gandius));
         assert!(hub_edges.iter().any(|e| e.to == lemanto_andra));
         let sindarpos_edges: Vec<_> = gliders.iter().filter(|e| e.at == sindarpos).collect();
-        assert_eq!(sindarpos_edges.len(), 1);
+        assert_eq!(sindarpos_edges.len(), 2);
         assert_eq!(sindarpos_edges[0].to, hub);
         // Lemanto Andra is one-way: no pad → hub flight exists in
         // gnome_glider.rs2.
         assert!(gliders.iter().all(|e| e.at != lemanto_andra));
         for g in &gliders {
-            assert_eq!(g.varp_req, vec![(150, 160)]); // Grand Tree complete
-            assert_eq!(g.option, 1); // Talk-to the Gnome pilot
+            assert_eq!(g.option, 1, "Talk-to the Gnome pilot");
             assert_eq!(g.loc_id, 170);
+            let varp = g.varp_req == [(150, 160)];
+            let journal = g.quest_req == ["The Grand Tree".to_string()];
+            assert!(
+                varp ^ journal,
+                "each flight is varp XOR journal, not both: {g:?}"
+            );
         }
+    }
+
+    /// Live step 29: Gandius pad → Grand Tree hub. Empty WorldState
+    /// cannot prove `%grandtree >= 160`; with that varp the packed glider
+    /// hop is the route.
+    #[test]
+    fn gandius_glider_reaches_grand_tree_hub_with_grandtree_varp() {
+        let Some((graph, collision)) = derive_from_real_content() else {
+            return;
+        };
+        let pad = WorldTile {
+            x: 2971,
+            z: 2969,
+            level: 0,
+        };
+        let hub = WorldTile {
+            x: 2465,
+            z: 3501,
+            level: 3,
+        };
+        assert!(
+            crate::router::find_with(
+                &collision,
+                &graph,
+                pad,
+                hub,
+                crate::router::FindOptions::default(),
+                &crate::world_state::WorldState::empty(),
+            )
+            .is_err(),
+            "empty WorldState cannot take the Grand Tree glider"
+        );
+        let mut state = crate::world_state::WorldState::empty();
+        state.varps.insert(150, 160);
+        crate::router::find_with(
+            &collision,
+            &graph,
+            pad,
+            hub,
+            crate::router::FindOptions::default(),
+            &state,
+        )
+        .expect("Gandius → Grand Tree hub with grandtree 160");
+        let mut journal = crate::world_state::WorldState::empty();
+        journal.quests.insert("The Grand Tree".into());
+        crate::router::find_with(
+            &collision,
+            &graph,
+            pad,
+            hub,
+            crate::router::FindOptions::default(),
+            &journal,
+        )
+        .expect("Gandius → Grand Tree hub with journal complete");
     }
 
     #[test]
