@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
+use api::query::npc_by_index;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, NpcView};
 use vault::ProfileSettings;
 
@@ -384,8 +385,10 @@ impl Guardian {
     /// PLAYER_INFO game-tick edge). Talk-to runs only for a dialog event
     /// that is ours on an un-binned slot; an open dialog then continues
     /// via `continue_dialog` / `answer_choice` (first option), max
-    /// [`MAX_CONTINUES`]. A wrong-talk chat line bins that NPC slot for
-    /// 45 s. Toggle off: never act, never hold, still detect+publish.
+    /// [`MAX_CONTINUES`] — the continue is keyed to the in-flight handle,
+    /// not to a fresh detect, so a despawned genie cannot stall the chat.
+    /// A wrong-talk chat line bins that NPC slot for 45 s. Toggle off:
+    /// never act, never hold, still detect+publish.
     pub fn tick<D: Driver>(
         &mut self,
         driver: &mut D,
@@ -457,6 +460,26 @@ impl Guardian {
         ev: Option<&DetectedRandom>,
         now_ms: u64,
     ) {
+        // The in-flight dialog continues on its own handle, independent
+        // of a fresh detect: the genie can despawn while the chat is
+        // still open, and detect would then return None.
+        if self.in_flight {
+            if self.continues >= MAX_CONTINUES {
+                self.clear_handle();
+                return;
+            }
+            let mut ix = Interactions::new(snap, driver);
+            let result = if snap.chat_options().is_empty() {
+                ix.continue_dialog()
+            } else {
+                ix.answer_choice(1)
+            };
+            if let SendResult::Sent { .. } = result {
+                self.continues += 1;
+            }
+            return;
+        }
+
         let Some(ev) = ev else { return };
         if ev.kind != RandomKind::Dialog || !ev.ours {
             return;
@@ -468,35 +491,20 @@ impl Guardian {
         if binned(index, now_ms, &self.cooldown) {
             return;
         }
-        let Some(npc) = snap.npcs().get(index) else {
+        // `ev.npc_index` is the client NPC slot (`NpcView.index`), not
+        // the dense view-vec position, so the lookup must scan by slot.
+        let Some(npc) = npc_by_index(snap.npcs(), index) else {
             return;
         };
-
         let mut ix = Interactions::new(snap, driver);
-        if self.in_flight {
-            // Keep talking the open dialog through.
-            if self.continues >= MAX_CONTINUES {
-                self.clear_handle();
-                return;
+        match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".to_string())) {
+            SendResult::Sent { .. } => {
+                self.in_flight = true;
+                self.in_flight_index = Some(index);
+                self.continues = 0;
+                self.sig = Some(format!("{:?}:{}", ev.kind, ev.name));
             }
-            let result = if snap.chat_options().is_empty() {
-                ix.continue_dialog()
-            } else {
-                ix.answer_choice(1)
-            };
-            if let SendResult::Sent { .. } = result {
-                self.continues += 1;
-            }
-        } else {
-            match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".to_string())) {
-                SendResult::Sent { .. } => {
-                    self.in_flight = true;
-                    self.in_flight_index = Some(index);
-                    self.continues = 0;
-                    self.sig = Some(format!("{:?}:{}", ev.kind, ev.name));
-                }
-                SendResult::Refused { .. } => {}
-            }
+            SendResult::Refused { .. } => {}
         }
     }
 
@@ -896,6 +904,72 @@ mod tests {
             drv.menus,
             vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
             "an open chat continues"
+        );
+        assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn guardian_talks_to_a_sparse_npc_slot() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        // Only one live NPC, at client slot 7: the snapshot view list has
+        // one entry (index 7), so a dense-vec lookup by `npc_index` would
+        // miss it.
+        plant_npc(&mut c, 7, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0);
+        assert!(status.handling);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 7, 0, 0)],
+            "Talk-to must address the npc slot, not the dense vec position"
+        );
+        assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn in_flight_dialog_continues_after_genie_despawns() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: talk-to the genie.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0);
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 2: the chat opens → continue.
+        drv.menus.clear();
+        drv.actions.clear();
+        open_chat(&mut c);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0);
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 3: the genie despawns while the chat is still open. detect
+        // now finds nothing, but the in-flight dialog must keep continuing.
+        drv.menus.clear();
+        drv.actions.clear();
+        c.npc[0] = None;
+        c.npc_count = 0;
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0);
+        assert!(status.handling, "the open dialog keeps the handle");
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
+            "a despawned genie must not stop the open chat"
         );
         assert_eq!(drv.actions, vec![0]);
     }
