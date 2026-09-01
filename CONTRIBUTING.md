@@ -48,6 +48,13 @@ Save credentials. `--vault-pass` is a **host-play** flag (same as
 `BOT_VAULT_PASS`); the panel reads `BOT_VAULT_PASS` or the in-window
 prompt.
 
+## Toolchain
+
+Rust **1.97.1** for this tag (`rust-toolchain.toml` in this repo and in
+`vendor/fr-client-rust`). GitHub Actions uses the same number, not
+`@stable`. Bump both files and both workflows together in the 0.1.2
+session — do not `rustup update` into a new clippy `-D` set mid-tag.
+
 ## Tests
 
 **Local CI** is this checkout: host workspace and the vendored client

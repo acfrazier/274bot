@@ -1,0 +1,4 @@
+# 0.1.1 pin. Bump with the 0.1.2 session, not as a drive-by.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

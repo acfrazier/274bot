@@ -62,6 +62,8 @@ Nav **execute**. Headed gold: `panel-play --live script_nav_routes`
 - `origin/main` is this checkout’s commit history. The `0.1.0` tag remains
   the squash that first went public. Later tags are ordinary annotated
   tags on `main`. Do not squash-publish.
+- Rust **1.97.1** is pinned (`rust-toolchain.toml` + CI). Bump in the
+  0.1.2 session.
 
 ### After 0.1.1 (planned, not this tag)
 
