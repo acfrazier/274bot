@@ -64,7 +64,7 @@ so that is two cargo manifests — not a second product. Never sets
 
 ```bash
 cargo fmt --all -- --check
-cargo fmt --all -- --check --manifest-path vendor/fr-client-rust/Cargo.toml
+cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check
 
 cargo clippy --workspace --all-targets --no-deps -- -D warnings
 cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings

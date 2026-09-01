@@ -29,7 +29,7 @@ jobs:
       - name: Check formatting
         run: |
           cargo fmt --all -- --check
-          cargo fmt --all -- --check --manifest-path vendor/fr-client-rust/Cargo.toml
+          cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check
 
   clippy:
     name: clippy
