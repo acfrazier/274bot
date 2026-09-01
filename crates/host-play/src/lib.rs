@@ -4495,12 +4495,15 @@ mod tests {
     }
 
     #[test]
-    fn after_genie_gone_lamp_in_inv_detects_without_hold() {
+    fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
         let mut c = guardian_client();
         plant_npc(&mut c, 0, "Genie", Some("Greetings Test!"));
         let mut g = Guardian::new();
         let mut drv = GuardRec::default();
-        let settings = ProfileSettings::default();
+        let settings = ProfileSettings {
+            lamp_auto: false,
+            ..ProfileSettings::default()
+        };
         let mut snap = GameSnapshot::new();
 
         // Tick 1: the host talks to the genie and holds the slot.
