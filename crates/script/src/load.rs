@@ -345,6 +345,10 @@ mod isolate {
 
     enum ThreadMsg {
         Log(String),
+        /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
+        /// JSON array of [`crate::shim::InteractReq`]s forwarded after the
+        /// tick's JS finished (parked or not).
+        Interact(String),
         /// The highest tick the thread has fully processed (ran or skipped).
         Completed(u64),
     }
@@ -357,6 +361,9 @@ mod isolate {
         tx: Sender<IsolateCmd>,
         rx: Mutex<Receiver<ThreadMsg>>,
         logs: Mutex<Vec<String>>,
+        /// Interact requests forwarded by the tick thread (the shim
+        /// `Bank`/`Banking` queue), drained by the host like logs.
+        interacts: Mutex<Vec<crate::shim::InteractReq>>,
         handle: Option<JoinHandle<()>>,
         /// Thread-safe handle used to terminate a runaway tick from this
         /// side of the channel. The terminate stays armed until the isolate
@@ -394,6 +401,7 @@ mod isolate {
                 tx,
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
+                interacts: Mutex::new(Vec::new()),
                 handle: Some(handle),
                 terminate,
                 in_flight: Mutex::new(None),
@@ -484,6 +492,15 @@ mod isolate {
             std::mem::take(&mut *self.logs.lock().unwrap())
         }
 
+        /// Drain the interact requests the tick's shim queued
+        /// (`__rs2b0t_host.interact`), forwarded by the tick thread in
+        /// tick order. The host dispatches them through the slot Driver;
+        /// a malformed entry is logged and dropped, never fatal.
+        pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
+            self.pump_logs();
+            std::mem::take(&mut *self.interacts.lock().unwrap())
+        }
+
         /// Stop the isolate: tell the thread to exit, interrupt any running
         /// JS so the join cannot hang, and wait for the thread (the Runtime
         /// is dropped there). The wait is bounded by [`Self::JOIN_TIMEOUT`]:
@@ -522,6 +539,17 @@ mod isolate {
             for msg in msgs {
                 match msg {
                     ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                    ThreadMsg::Interact(json) => {
+                        match serde_json::from_str::<Vec<crate::shim::InteractReq>>(&json) {
+                            Ok(reqs) => self.interacts.lock().unwrap().extend(reqs),
+                            Err(e) => {
+                                self.logs
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("interact: {e}"))
+                            }
+                        }
+                    }
                     ThreadMsg::Completed(up_to) => {
                         clear_through = Some(clear_through.map_or(up_to, |c| c.max(up_to)));
                     }
@@ -823,6 +851,21 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     if let Some(e) = async_err {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
                     }
+                    // Forward the tick's shim interact queue (Bank/Banking
+                    // requests written to `__rs2b0t_host.interact`) to the
+                    // host, then clear it for the next tick. The queue is
+                    // evaluated only now, after the tick's JS (and any
+                    // parked continuation) has fully run, so a request
+                    // reaches the host exactly once.
+                    let interact: Result<String, rustyscript::Error> = runtime.eval(
+                        "JSON.stringify(globalThis.__rs2b0t_host.interact || [])",
+                    );
+                    if let Ok(json) = interact {
+                        if json != "[]" {
+                            let _ = out.send(ThreadMsg::Interact(json));
+                        }
+                    }
+                    let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     // ScriptRunner.stop signal: the script flags the host
                     // handle. The isolate treats it like `IsolateCmd::Stop`
                     // — fold the completed tick, log the stop, and break the

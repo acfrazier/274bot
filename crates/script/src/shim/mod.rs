@@ -81,12 +81,17 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("skills.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/api/execution/EventSignal.js",
-            include_str!("event_signal.js"),
-        ),
-        Module::new(
             "/rs2b0t/bot/api/execution/Execution.js",
             include_str!("execution.js"),
+        ),
+        Module::new("/rs2b0t/bot/api/bank/Bank.js", include_str!("bank.js")),
+        Module::new(
+            "/rs2b0t/bot/api/bank/Banking.js",
+            include_str!("banking.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/execution/EventSignal.js",
+            include_str!("event_signal.js"),
         ),
         Module::new(
             "/rs2b0t/bot/adapter/ClientAdapter.js",
@@ -137,4 +142,46 @@ pub struct ScriptPaint {
     pub title: Option<String>,
     pub accent: Option<String>,
     pub lines: Vec<String>,
+}
+
+/// One interact request the shim `Bank`/`Banking` modules queue on the
+/// host handle (`__rs2b0t_host.interact`); the isolate thread forwards the
+/// queue to the host after each tick, and host-play dispatches each op
+/// through the slot Driver. Missing targets fail closed at dispatch (no
+/// matching loc/npc/item row → nothing is sent).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "op")]
+pub enum InteractReq {
+    /// Open the bank booth loc at `(x, z, level)` with its Use-quickly op.
+    #[serde(rename = "open-booth")]
+    OpenBooth { x: i32, z: i32, level: i32 },
+    /// Use a packed stand the player is adjacent to: a booth loc
+    /// (Use-quickly) or a teller NPC (its 1-based op slot from the pack;
+    /// `choose` is the dialog option the op's dialogue needs, deferred).
+    #[serde(rename = "open-stand")]
+    OpenStand {
+        x: i32,
+        z: i32,
+        level: i32,
+        kind: String,
+        name: Option<String>,
+        /// The stand's 1-based access op slot (booth Use-quickly or the
+        /// teller NPC op from the pack).
+        stand_op: Option<i32>,
+        choose: Option<String>,
+    },
+    /// Walk to the packed stand tile through the slot's traveller with
+    /// default options (no teleports, no wilderness, no bank fetch).
+    #[serde(rename = "walk")]
+    Walk { x: i32, z: i32, level: i32 },
+    /// Deposit-all the bank-side item named `name`.
+    #[serde(rename = "deposit")]
+    Deposit { name: String },
+    /// Withdraw the bank item named `name` with the action label
+    /// (`Withdraw All` / `Withdraw 10` / `Withdraw 1`).
+    #[serde(rename = "withdraw")]
+    Withdraw { name: String, action: String },
+    /// Close the open bank modal.
+    #[serde(rename = "close")]
+    Close,
 }

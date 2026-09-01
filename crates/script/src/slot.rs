@@ -169,6 +169,17 @@ impl SlotScript {
         }
     }
 
+    /// Drain the Load isolate's forwarded interact requests (the shim
+    /// Bank/Banking queue), in tick order; empty for a compiled script or
+    /// no isolate. The host dispatches them through the slot Driver.
+    #[cfg(feature = "load")]
+    pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
+        match &self.load {
+            Some(isolate) => isolate.drain_interacts(),
+            None => Vec::new(),
+        }
+    }
+
     /// Call only on observed server tick. Dispatches the JS isolate's
     /// `on_game_tick` (compiled path) only while Running && want_run. A
     /// compiled panic is caught: the slot goes Error with the message, the

@@ -139,8 +139,8 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.edges.push(door(at, to));
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 3200,
                     z: 3200,
@@ -153,7 +153,8 @@ mod tests {
                 flags: None,
             },
             graph,
-        };
+            Vec::new(),
+        );
         let seeds = walkable_seeds(&world);
         assert_eq!(seeds.len(), 5);
         assert!(!seeds.contains(&WorldTile {
@@ -193,8 +194,8 @@ mod tests {
         let mut graph = TransportGraph::default();
         graph.edges.push(door(at, to));
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        let world = NavWorld {
-            collision: WorldCollision {
+        let world = NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -207,7 +208,8 @@ mod tests {
                 flags: None,
             },
             graph,
-        };
+            Vec::new(),
+        );
         let seeds = walkable_seeds(&world);
         assert!(
             !seeds.contains(&WorldTile {

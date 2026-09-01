@@ -49,13 +49,24 @@ impl NavWorld {
     pub fn load_pack(path: &Path) -> Result<Self, PackError> {
         let bytes = std::fs::read(path).map_err(PackError::Io)?;
         match decode(&bytes) {
-            Ok((collision, graph, banks)) => Ok(NavWorld {
-                collision,
-                graph,
-                banks,
-            }),
+            Ok((collision, graph, banks)) => Ok(Self::from_parts(collision, graph, banks)),
             Err(PackError::BadMagic) => Ok(Self::from_grid(&load_grid(path)?)),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Build the router's world from already-decoded parts (the pack
+    /// decode and external fixtures share this; `banks` is the baked
+    /// stand table [`Self::banks`] reads).
+    pub fn from_parts(
+        collision: WorldCollision,
+        graph: TransportGraph,
+        banks: Vec<BankStand>,
+    ) -> Self {
+        NavWorld {
+            collision,
+            graph,
+            banks,
         }
     }
 

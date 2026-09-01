@@ -1025,3 +1025,213 @@ fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     );
     iso.join();
 }
+
+// Task 7 — Banking shim: `Banking.open()` with a scene booth at Chebyshev
+// 1 queues the open-booth request (no walk); a far packed stand queues a
+// walk; `Bank.depositAllMatching` records a BankSide Deposit-All request
+// per matching row; `Bank.withdraw` records the Withdraw-All/10/1 op. The
+// requests land on `__rs2b0t_host.interact` and the tick thread forwards
+// them to the host (`drain_interacts`), like logs.
+#[test]
+fn isolate_banking_open_booth_in_range_queues_open_op_no_walk() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_ok = await Banking.open();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.post_snapshot(
+        &serde_json::json!({
+            "tick": 1,
+            "here": { "x": 100, "z": 100, "level": 0 },
+            "ingame": true,
+            "inv": [],
+            "stats": [],
+            "booths": [{ "x": 101, "z": 100, "level": 0 }],
+            "banks": [{ "name": "Bank booth", "x": 101, "z": 100, "level": 0, "kind": "booth", "op": 2 }],
+            "bank": [],
+            "bank_side": [],
+            "bank_open": false,
+            "bank_loaded": false,
+            "hold": false,
+            "ours": false,
+        })
+        .to_string(),
+    );
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::OpenBooth {
+            x: 101,
+            z: 100,
+            level: 0
+        }],
+        "booth at Chebyshev 1 queues the open op and no walk"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_open_far_stand_queues_a_walk() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_ok = await Banking.open();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.post_snapshot(
+        &serde_json::json!({
+            "tick": 1,
+            "here": { "x": 100, "z": 100, "level": 0 },
+            "ingame": true,
+            "inv": [],
+            "stats": [],
+            "booths": [],
+            "banks": [{ "name": "Bank booth", "x": 200, "z": 100, "level": 0, "kind": "booth", "op": 2 }],
+            "bank": [],
+            "bank_side": [],
+            "bank_open": false,
+            "bank_loaded": false,
+            "hold": false,
+            "ours": false,
+        })
+        .to_string(),
+    );
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Walk { x: 200, z: 100, level: 0 }],
+        "no booth in range: the nearest packed stand gets a walk"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_deposit_all_matching_records_bank_side_ops() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        Bank.depositAllMatching((name) => true);
+        Bank.withdraw('Bones', 'all');
+        Bank.withdraw('Lobster', 10);
+        Bank.withdraw('Vial', 1);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.post_snapshot(
+        &serde_json::json!({
+            "tick": 1,
+            "here": { "x": 100, "z": 100, "level": 0 },
+            "ingame": true,
+            "inv": [],
+            "stats": [],
+            "booths": [],
+            "banks": [],
+            "bank": [
+                { "name": "Bones", "count": 20 },
+                { "name": "Lobster", "count": 30 },
+                { "name": "Vial", "count": 1 }
+            ],
+            "bank_side": [
+                { "name": "Bones", "count": 3 },
+                { "name": "Big bones", "count": 1 }
+            ],
+            "bank_open": true,
+            "bank_loaded": true,
+            "hold": false,
+            "ours": false,
+        })
+        .to_string(),
+    );
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![
+            script::shim::InteractReq::Deposit {
+                name: "Bones".into()
+            },
+            script::shim::InteractReq::Deposit {
+                name: "Big bones".into()
+            },
+            script::shim::InteractReq::Withdraw {
+                name: "Bones".into(),
+                action: "Withdraw All".into()
+            },
+            script::shim::InteractReq::Withdraw {
+                name: "Lobster".into(),
+                action: "Withdraw 10".into()
+            },
+            script::shim::InteractReq::Withdraw {
+                name: "Vial".into(),
+                action: "Withdraw 1".into()
+            },
+        ],
+        "depositAllMatching queues one Deposit-All per row; withdraw maps name + op"
+    );
+    iso.join();
+}
+
+// Task 7 — a bank deposit request never matches a name the 274 obj table
+// does not know (the host resolves names through ObjNames): a blob row
+// with a null name is skipped, and a missing member still throws.
+#[test]
+fn isolate_banking_deposit_skips_unknown_names_and_missing_members_throw() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        Bank.depositAllMatching(() => true);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.post_snapshot(
+        &serde_json::json!({
+            "tick": 1,
+            "here": { "x": 100, "z": 100, "level": 0 },
+            "ingame": true,
+            "inv": [],
+            "stats": [],
+            "booths": [],
+            "banks": [],
+            "bank": [],
+            "bank_side": [{ "name": null, "count": 3 }],
+            "bank_open": true,
+            "bank_loaded": true,
+            "hold": false,
+            "ours": false,
+        })
+        .to_string(),
+    );
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
+    assert_eq!(
+        iso.drain_interacts(),
+        Vec::<script::shim::InteractReq>::new(),
+        "a null-name row never queues a deposit"
+    );
+    iso.join();
+
+    let src = "import { Banking } from '../../api/bank/Banking.js'; export default class T extends LoopingBot { loop() { Banking.close(); } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot"); // round-trip: the tick finished first
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("Banking.close")),
+        "missing Banking member throws: {logs:?}"
+    );
+    iso.join();
+}

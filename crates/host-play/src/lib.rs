@@ -388,6 +388,7 @@ fn script_observe(
     ours: bool,
 ) -> bool {
     let mut wrote = false;
+    let mut interact = Vec::new();
     {
         let mut all = scripts.lock().unwrap();
         if let Some(slot) = all.get_mut(name) {
@@ -399,11 +400,12 @@ fn script_observe(
             if tick_edge && slot.state() == script::RunState::Running {
                 // Task 5: post the JSON snapshot blob on every tick edge —
                 // held or not — so the isolate's
-                // Game/Inventory/Skills/EventSignal read what this observe
-                // saw (only these JSON fields — no World clone). The blob's
-                // `hold` mirrors the guardian's freeze onto the host handle;
-                // while it is set the tick is still not dispatched below
-                // (a held script is frozen, never looped).
+                // Game/Inventory/Skills/Bank/Banking/EventSignal read what
+                // this observe saw (only these JSON fields — no World
+                // clone). The blob's `hold` mirrors the guardian's freeze
+                // onto the host handle; while it is set the tick is still
+                // not dispatched below (a held script is frozen, never
+                // looped).
                 slot.post_snapshot(&script_snapshot_json(
                     tick,
                     here,
@@ -411,6 +413,7 @@ fn script_observe(
                     inv,
                     snapshot,
                     obj_names,
+                    world.as_deref(),
                     hold,
                     ours,
                 ));
@@ -425,7 +428,7 @@ fn script_observe(
                         world: world.clone(),
                         navs: Arc::clone(navs),
                         name: name.to_string(),
-                        state,
+                        state: state.clone(),
                     };
                     let mut walk_with = {
                         let arm = arm.clone();
@@ -462,6 +465,31 @@ fn script_observe(
                     wrote = true;
                 }
             }
+            // Fold the isolate's forwarded shim interact requests (queued
+            // by the tick's Bank/Banking calls) on every frame — they land
+            // a frame after the tick that produced them, tick edge or not —
+            // and dispatch them below.
+            interact = slot.drain_interacts();
+        }
+    }
+    // Dispatch the shim's interact requests through the slot's own Driver
+    // (open/deposit/withdraw) and the shared walk arm (bank-stand walks
+    // with default FindOptions, so wilderness/quest gates fail closed).
+    // The guardian's hold drops them: the script's parked wait stays
+    // frozen, and a later retry re-queues what still matters.
+    if !hold && !interact.is_empty() {
+        if let Some(snapshot) = snapshot {
+            wrote |= dispatch_script_interact(
+                driver,
+                snapshot,
+                obj_names,
+                here,
+                navs,
+                world,
+                state.clone(),
+                name,
+                interact,
+            );
         }
     }
     let cmds = {
@@ -473,6 +501,153 @@ fn script_observe(
         wrote = true;
     }
     wrote
+}
+
+/// Dispatch one isolate's shim interact requests. Open/close/deposit/
+/// withdraw run through [`api::interact::Interactions`] on the slot's
+/// snapshot + Driver — a request whose target is missing (no loc at the
+/// tile, no bank-side row with the resolved name, no bank open) fails
+/// closed with no send; `walk` routes through the shared
+/// [`ScriptWalkArm`] with default [`FindOptions`], so the traveller's
+/// wilderness/quest gates decide. Returns whether the driver's out buffer
+/// was written.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_script_interact(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    here: Option<(i32, i32, i32)>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<WorldState>,
+    name: &str,
+    reqs: Vec<script::shim::InteractReq>,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    use script::shim::InteractReq;
+    let mut wrote = false;
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    let open_booth = |ix: &mut api::interact::Interactions<'_>, x: i32, z: i32, level: i32| {
+        let loc = snapshot
+            .locs()
+            .iter()
+            .find(|l| l.tile.x == x && l.tile.z == z && l.tile.level == level);
+        if let Some(loc) = loc {
+            if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
+                return matches!(
+                    ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
+                    SendResult::Sent { .. }
+                );
+            }
+        }
+        false
+    };
+    for req in reqs {
+        match req {
+            InteractReq::OpenBooth { x, z, level } => {
+                wrote |= open_booth(&mut ix, x, z, level);
+            }
+            InteractReq::OpenStand {
+                x,
+                z,
+                level,
+                kind,
+                name,
+                stand_op,
+                ..
+            } => {
+                if kind == "booth" {
+                    wrote |= open_booth(&mut ix, x, z, level);
+                } else if kind == "npc" {
+                    let npc = snapshot.npcs().iter().find(|n| {
+                        name.as_deref().is_some_and(|wanted| {
+                            n.name
+                                .as_deref()
+                                .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                        })
+                    });
+                    if let Some(npc) = npc {
+                        if let Some(op) = stand_op {
+                            wrote |= matches!(
+                                ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
+                                SendResult::Sent { .. }
+                            );
+                        }
+                    }
+                }
+            }
+            InteractReq::Walk { x, z, level } => {
+                let arm = ScriptWalkArm {
+                    here,
+                    world: world.clone(),
+                    navs: Arc::clone(navs),
+                    name: name.to_string(),
+                    state: state.clone(),
+                };
+                wrote |= arm.route(x, z, level, FindOptions::default());
+            }
+            InteractReq::Deposit { name } => {
+                let wanted = name.to_lowercase();
+                for item in snapshot.bank_side() {
+                    let resolved = obj_names.and_then(|n| n.name(item.def.id));
+                    if resolved.is_some_and(|n| n.eq_ignore_ascii_case(&wanted)) {
+                        if let Some(op) = all_slot(&item.actions) {
+                            wrote |= matches!(
+                                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                                SendResult::Sent { .. }
+                            );
+                        }
+                    }
+                }
+            }
+            InteractReq::Withdraw { name, action } => {
+                let wanted = name.to_lowercase();
+                if let Some(item) = snapshot.bank().iter().find(|it| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                }) {
+                    if let Some(op) = action_slot(&item.actions, &action) {
+                        wrote |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
+            InteractReq::Close => {
+                wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
+            }
+        }
+    }
+    wrote
+}
+
+/// Action-label lookup matching rs2b0t's `norm` (lowercase, whitespace and
+/// `-`/`_` separators gone): `Withdraw All`, `Withdraw-All` and
+/// `Withdraw  All` all resolve to the same slot.
+fn action_slot(actions: &[Option<String>], wanted: &str) -> Option<i32> {
+    let wanted = norm_action(wanted);
+    actions
+        .iter()
+        .position(|a| a.as_deref().map(norm_action).as_deref() == Some(wanted.as_str()))
+        .map(|i| i as i32 + 1)
+}
+
+/// The bank-side op slot whose label contains "all" (Deposit All / the
+/// deposit window's bulk op), 1-based.
+fn all_slot(actions: &[Option<String>]) -> Option<i32> {
+    actions
+        .iter()
+        .position(|a| a.as_deref().is_some_and(|s| norm_action(s).contains("all")))
+        .map(|i| i as i32 + 1)
+}
+
+fn norm_action(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .collect()
 }
 
 /// Per-slot nav latch key: the `(player gen, here)` pair the pump last
@@ -510,15 +685,22 @@ fn dispatch_wires(
 }
 
 /// The JSON snapshot blob posted into a Load isolate each PLAYER_INFO:
-/// `{ tick, here, ingame, inv: [{name, count}], stats, bank_open,
-/// bank_loaded, hold, ours }` — the exact fields the shim
-/// Game/Inventory/Skills/EventSignal read, and nothing else (no World
-/// clone). `here` is the local player's tile `{x, z, level}` (null when
-/// the body decoded none); `inv` rows carry the obj's resolved name (null
-/// when the shared table has none — a name a script queries never
-/// matches); `stats` rows carry the snapshot's stat index/name/xp;
-/// `hold`/`ours` are the guardian's published status that
+/// `{ tick, here, ingame, inv: [{name, count}], stats, booths, banks,
+/// bank, bank_side, bank_open, bank_loaded, hold, ours }` — the exact
+/// fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read,
+/// and nothing else (no World clone). `here` is the local player's tile
+/// `{x, z, level}` (null when the body decoded none); `inv` rows carry
+/// the obj's resolved name (null when the shared table has none — a name
+/// a script queries never matches); `stats` rows carry the snapshot's
+/// stat index/name/xp; `booths` are the scene locs whose actions include
+/// `Use-quickly` (a name/action a script interacts with never appears
+/// otherwise); `banks` are the packed bank stands (`{name, x, z, level,
+/// kind: booth|npc, op, choose}`) the shim walks to; `bank`/`bank_side`
+/// are the open bank's withdraw/deposit rows with the obj's resolved
+/// name (null when the table has none — a deposit/withdraw by that name
+/// never matches); `hold`/`ours` are the guardian's published status that
 /// `EventSignal.pending()` reads.
+#[allow(clippy::too_many_arguments)]
 fn script_snapshot_json(
     tick: u64,
     here: Option<(i32, i32, i32)>,
@@ -526,6 +708,7 @@ fn script_snapshot_json(
     inv: Option<&[(i32, i32)]>,
     snapshot: Option<&GameSnapshot>,
     obj_names: Option<&api::obj_names::ObjNames>,
+    world: Option<&NavWorld>,
     hold: bool,
     ours: bool,
 ) -> String {
@@ -552,12 +735,77 @@ fn script_snapshot_json(
                 .collect::<Vec<_>>()
         )
     });
+    // The scene bank booths: the openable locs (`Use-quickly` is the
+    // bankbooth op the pack bakes from `scripts/interface_bank/configs/
+    // bank_booth.loc`). Only the tile is posted — the shim never reads a
+    // loc definition.
+    let booths = snapshot.map(|s| {
+        serde_json::json!(
+            s.locs()
+                .iter()
+                .filter(|l| {
+                    l.actions
+                        .iter()
+                        .any(|a| a.as_deref().is_some_and(|a| a.eq_ignore_ascii_case("Use-quickly")))
+                })
+                .map(|l| {
+                    serde_json::json!({
+                        "x": l.tile.x,
+                        "z": l.tile.z,
+                        "level": l.tile.level,
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    });
+    let banks = world.map(|w| {
+        use nav::pack::BankAccess;
+        serde_json::json!(
+            w.banks()
+                .iter()
+                .map(|b| {
+                    let (kind, op, choose) = match &b.access {
+                        BankAccess::Booth { op } => ("booth", Some(*op), None),
+                        BankAccess::Npc { op, choose, .. } => {
+                            ("npc", Some(*op), choose.clone())
+                        }
+                    };
+                    serde_json::json!({
+                        "name": b.name,
+                        "x": b.tile.x,
+                        "z": b.tile.z,
+                        "level": b.tile.level,
+                        "kind": kind,
+                        "op": op,
+                        "choose": choose,
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    });
+    let bank_rows = |items: &[api::snapshot::ItemView]| {
+        serde_json::json!(
+            items
+                .iter()
+                .map(|it| {
+                    serde_json::json!({
+                        "name": obj_names.and_then(|names| names.name(it.def.id)),
+                        "count": it.count,
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    };
     serde_json::json!({
         "tick": tick,
         "here": here,
         "ingame": ingame,
         "inv": inv,
         "stats": stats,
+        "booths": booths,
+        "banks": banks,
+        "bank": snapshot.map(|s| bank_rows(s.bank())),
+        "bank_side": snapshot.map(|s| bank_rows(s.bank_side())),
         "bank_open": snapshot.is_some_and(|s| s.bank_component_id() != -1),
         "bank_loaded": snapshot
             .is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
@@ -2581,8 +2829,8 @@ mod tests {
     }
 
     fn open_world(w: usize, h: usize) -> NavWorld {
-        NavWorld {
-            collision: WorldCollision {
+        NavWorld::from_parts(
+            WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -2594,8 +2842,9 @@ mod tests {
                 blocked: vec![0u64; (w * h).div_ceil(64)],
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     #[test]
@@ -2980,6 +3229,197 @@ mod tests {
             true,
         );
         assert_eq!(c.out.pos, 0, "hold drops the walk send");
+    }
+
+    /// A client seeded for the shim interact dispatch: ingame with a ready
+    /// scene at base (3200, 3200), the player at scene (5, 5), a Bank
+    /// booth loc at scene (5, 6) whose def's second op is `Use-quickly`,
+    /// an open bank (main modal 600 wrapping withdraw component 601
+    /// holding Bones × 20 with a `Withdraw 1` op) and its deposit side
+    /// modal (700 wrapping 701 holding Bones × 3 with a `Deposit All` op).
+    fn bank_client() -> Client {
+        use client::client::ClientPlayer;
+        use client::config::{LocType, ObjType};
+        // A real (loopback) stream so the snapshot passes `Interactions`'
+        // attached precondition, like the nav-client fixture.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream =
+            client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        std::mem::forget(listener);
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.stream = Some(stream);
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.minusedlevel = 0;
+        c.local_player = Some(ClientPlayer::at(5, 5));
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs.resize(3, ObjType::default());
+            cache.objs[1].id = 1;
+            cache.objs[1].name = "Bones".into();
+            cache.objs[2].id = 2;
+            cache.objs[2].name = "Lobster".into();
+            cache.locs.extend(
+                (0..(2214usize.saturating_sub(cache.locs.len())))
+                    .map(|_| LocType::default()),
+            );
+            cache.locs[2213].id = 2213;
+            cache.locs[2213].name = "Bank booth".into();
+            cache.locs[2213].op = vec![None, Some("Use-quickly".into()), None, None, None];
+        }
+        // The booth: a wall at scene (5, 6) whose typecode encodes loc 2213.
+        let booth_typecode = 0x4000_0000 + (2213 << 14) + 1 + (2 << 7);
+        c.world.set_wall(0, 5, 6, 0, 0, 0, booth_typecode, 0, 0, 0, 0, 0);
+        // Bank: main modal 600 wrapping the withdraw component 601
+        // (Bones × 20, ops `[Withdraw 1, ...]`).
+        c.main_modal_id = 600;
+        c.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            601,
+            IfType {
+                id: 601,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![2, 0]),
+                link_obj_number: Some(vec![20, 0]),
+                ..Default::default()
+            },
+        );
+        // Deposit side modal: 700 wrapping 701 (Bones × 3, `Deposit All`).
+        c.side_modal_id = 700;
+        c.set_iface(
+            700,
+            IfType {
+                id: 700,
+                layer_id: 700,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![701]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            701,
+            IfType {
+                id: 701,
+                layer_id: 700,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Deposit All".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            701,
+            IfTypeMut {
+                link_obj_type: Some(vec![2, 0]),
+                link_obj_number: Some(vec![3, 0]),
+                ..Default::default()
+            },
+        );
+        for prot in [
+            ServerProt::IF_OPENMAIN,
+            ServerProt::IF_OPENCHAT,
+            ServerProt::UPDATE_INV_FULL,
+            ServerProt::REBUILD_NORMAL,
+            ServerProt::PLAYER_INFO,
+        ] {
+            c.bump_gens(prot);
+        }
+        c
+    }
+
+    /// Task 7 — the shim's interact requests dispatch through the slot
+    /// Driver: the booth Use-quickly op at the loc tile, the bank-side
+    /// Deposit-All for a matching name, the bank withdraw op, and close.
+    /// A request whose target the snapshot lacks fails closed (nothing is
+    /// sent).
+    #[test]
+    fn dispatch_script_interact_sends_open_deposit_withdraw() {
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&mut c);
+        let names = api::obj_names::ObjNames::from_objs(&{
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs.clone()
+        });
+        let (navs, world) = empty_nav();
+        assert_eq!(
+            snap.locs().iter().find(|l| l.tile.x == 3205 && l.tile.z == 3206).map(|l| l.actions.clone()),
+            Some(vec![None, Some("Use-quickly".into()), None, None, None]),
+            "the seeded booth loc carries the Use-quickly op"
+        );
+        let out_before = c.out.pos;
+        assert!(dispatch_script_interact(
+            &mut c,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![
+                script::shim::InteractReq::OpenBooth { x: 3205, z: 3206, level: 0 },
+                script::shim::InteractReq::Deposit { name: "Bones".into() },
+                script::shim::InteractReq::Withdraw { name: "Bones".into(), action: "Withdraw-All".into() },
+                script::shim::InteractReq::Close,
+            ],
+        ));
+        assert!(
+            c.out.pos > out_before,
+            "open + deposit + withdraw + close wrote to the driver"
+        );
+        // A request with no matching target sends nothing.
+        let out_before = c.out.pos;
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![
+                script::shim::InteractReq::OpenBooth { x: 3299, z: 3299, level: 0 },
+                script::shim::InteractReq::Deposit { name: "Lobster".into() },
+                script::shim::InteractReq::Withdraw { name: "Lobster".into(), action: "Withdraw 1".into() },
+            ],
+        ));
+        assert_eq!(
+            c.out.pos, out_before,
+            "missing targets fail closed: nothing is sent"
+        );
     }
 
     /// Test script that counts ticks into a shared cell (the panel cannot
@@ -3387,6 +3827,7 @@ mod tests {
                 Some(&inv),
                 Some(&snap),
                 Some(&names),
+                None,
                 true,
                 false,
             ))
@@ -3405,12 +3846,24 @@ mod tests {
         assert_eq!(blob["stats"][7], serde_json::json!({ "index": 7, "name": "cooking", "xp": 1300 }));
         assert_eq!(blob["bank_open"], false, "no bank component in the fixture");
         assert_eq!(blob["bank_loaded"], false);
+        assert_eq!(
+            blob["booths"],
+            serde_json::json!([]),
+            "no Use-quickly scene locs in the fixture"
+        );
+        assert_eq!(
+            blob["banks"],
+            serde_json::Value::Null,
+            "no nav world: no packed stands posted"
+        );
+        assert_eq!(blob["bank"], serde_json::json!([]));
+        assert_eq!(blob["bank_side"], serde_json::json!([]));
         assert_eq!(blob["hold"], true);
         assert_eq!(blob["ours"], false);
 
         // No tile / no snapshot: fail-closed nulls and flags.
         let bare: serde_json::Value =
-            serde_json::from_str(&script_snapshot_json(1, None, false, None, None, None, false, true))
+            serde_json::from_str(&script_snapshot_json(1, None, false, None, None, None, None, false, true))
                 .unwrap();
         assert_eq!(bare["here"], serde_json::Value::Null);
         assert_eq!(bare["inv"], serde_json::Value::Null);
@@ -3941,8 +4394,8 @@ mod tests {
         // An all-walkable 40×1 world at (0,0): x in 0..40 at z=0, no
         // transport edges — the collision+graph shape `find` consumes, built
         // directly (no pack file on disk in unit tests).
-        nav_rig_with(Some(Arc::new(NavWorld {
-            collision: nav::collision::WorldCollision {
+        nav_rig_with(Some(Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -3954,8 +4407,9 @@ mod tests {
                 blocked: vec![0u64; 40usize.div_ceil(64)],
                 flags: None,
             },
-            graph: nav::transport::TransportGraph::default(),
-        })))
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        ))))
     }
 
     /// [`nav_rig`] on the given world (the walk-probe target stays
@@ -4287,8 +4741,8 @@ mod tests {
                 ..glory_edge()
             },
         ];
-        let world = Some(Arc::new(NavWorld {
-            collision: nav::collision::WorldCollision {
+        let world = Some(Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -4300,11 +4754,12 @@ mod tests {
                 blocked: vec![0u64; 1],
                 flags: None,
             },
-            graph: TransportGraph {
+            TransportGraph {
                 teleports: glory.to_vec(),
                 ..TransportGraph::default()
             },
-        }));
+            Vec::new(),
+        )));
         let NavRig {
             navs,
             world,
@@ -4403,8 +4858,8 @@ mod tests {
         graph.at.entry(edge.at).or_default().push(0);
         graph.edges.push(edge);
         let (walk, blocked) = nav::collision::pack_walk(&flags);
-        NavWorld {
-            collision: nav::collision::WorldCollision {
+        NavWorld::from_parts(
+            nav::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -4417,7 +4872,8 @@ mod tests {
                 flags: None,
             },
             graph,
-        }
+            Vec::new(),
+        )
     }
 
     /// The script walk arm's facts gate the route: with 10 coins in the
@@ -4489,8 +4945,8 @@ mod tests {
     /// synthesized by the router, so a script walk out only arms with a
     /// latch.
     fn mine_nav_world() -> NavWorld {
-        NavWorld {
-            collision: nav::collision::WorldCollision {
+        NavWorld::from_parts(
+            nav::collision::WorldCollision {
                 origin: WorldTile {
                     x: 2880,
                     z: 4800,
@@ -4502,8 +4958,9 @@ mod tests {
                 blocked: vec![0u64; (64usize * 64).div_ceil(64)],
                 flags: None,
             },
-            graph: TransportGraph::default(),
-        }
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     /// `ctx.walk` feeds the uid's latched essence session: a bot whose
