@@ -634,23 +634,50 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 3 — ScriptRunner.stop signals the host stop flag (the isolate
-// thread logs the clear hook; Stop dispatch lands with Execution wiring).
+// Task 3 — ScriptRunner.stop stops the isolate: the stop flag breaks the
+// tick loop on the isolate thread (like IsolateCmd::Stop), the Runtime is
+// dropped, and the host sees a dead isolate.
 #[test]
-fn isolate_script_runner_stop_signals_host_stop() {
-    let src = "import { ScriptRunner } from '../../runtime/ScriptRunner.js'; export default class T extends LoopingBot { loop() { ScriptRunner.stop('done'); } }";
+fn isolate_script_runner_stop_stops_the_isolate() {
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
+        ScriptRunner.stop('done');
+    }
+}
+"#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
     iso.on_game_tick(1);
-    let flag = iso
-        .probe("__rs2b0t_host.stopRequested === true")
-        .expect("stop flag readable");
-    assert_eq!(flag, serde_json::Value::Bool(true));
-    let _ = iso.probe("__rs_bot"); // round-trip so the hook log lands
-    let logs = iso.drain_logs();
+    // The flag is read inside the tick; the thread logs and breaks. Poll
+    // for the log (a probe round-trip would race the thread exit).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let logs = loop {
+        let logs = iso.drain_logs();
+        if logs.iter().any(|l| l.contains("stop")) || std::time::Instant::now() > deadline {
+            break logs;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
     assert!(
         logs.iter().any(|l| l.contains("stop")),
-        "host stop hook logged: {logs:?}"
+        "the stop hook must be logged: {logs:?}"
     );
+    // The isolate stopped itself: it no longer answers probes (the thread
+    // exited, so the channel is closed). A live Runtime would keep
+    // answering — this is the regression the fix guards.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if iso.probe("1 + 1").is_err() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the isolate must stop answering probes after ScriptRunner.stop"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     iso.join();
 }
 

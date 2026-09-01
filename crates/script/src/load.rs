@@ -695,7 +695,6 @@ globalThis.__rs_tick = () => {
     fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>) {
         let mut paused = false;
         let mut pending: Option<IsolateCmd> = None;
-        let mut stop_logged = false;
         loop {
             let cmd = match pending.take() {
                 Some(cmd) => cmd,
@@ -726,21 +725,22 @@ globalThis.__rs_tick = () => {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
                     }
                     // ScriptRunner.stop signal: the script flags the host
-                    // handle; log the clear hook once (Stop dispatch lands
-                    // with the Execution wiring, later task).
-                    if !stop_logged {
-                        let stopped = runtime
-                            .eval::<bool>(
-                                "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.stopRequested)",
-                            )
-                            .unwrap_or(false);
-                        if stopped {
-                            stop_logged = true;
-                            let _ = out.send(ThreadMsg::Log(
-                                "script requested stop (Stop dispatch lands with Execution wiring)"
-                                    .to_string(),
-                            ));
-                        }
+                    // handle. The isolate treats it like `IsolateCmd::Stop`
+                    // — fold the completed tick, log the stop, and break the
+                    // loop so the Runtime is dropped and the host's join
+                    // returns. A later task may also surface the stop to the
+                    // slot, but Stop is never parked on Execution wiring.
+                    let stopped = runtime
+                        .eval::<bool>(
+                            "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.stopRequested)",
+                        )
+                        .unwrap_or(false);
+                    if stopped {
+                        let _ = out.send(ThreadMsg::Completed(n));
+                        let _ = out.send(ThreadMsg::Log(format!(
+                            "script requested stop on tick {n}; isolate stopping"
+                        )));
+                        break;
                     }
                     if elapsed > SLOW_TICK {
                         let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
