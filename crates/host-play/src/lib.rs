@@ -358,7 +358,9 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// must not succeed when no route can arm). `hold` is the guardian's
 /// random-event freeze: while true the tick is not dispatched (follow is
 /// frozen by the pump too), so a script cannot walk through an in-flight
-/// dialog or a trapped maze/mime/box. `ours` is the guardian's published
+/// dialog or a trapped maze/mime/box — the snapshot blob still posts on
+/// the held tick edge, so EventSignal reads the freeze the script is
+/// frozen by. `ours` is the guardian's published
 /// detected-ours flag (posted into the isolate for `EventSignal.pending()`).
 /// Returns whether the driver's
 /// out buffer was written (the slot's own `Client` sends on its next
@@ -390,46 +392,18 @@ fn script_observe(
         let mut all = scripts.lock().unwrap();
         if let Some(slot) = all.get_mut(name) {
             slot.on_is_up(up);
-            // skip script snapshot unless SlotScript is Running, and skip
-            // the dispatch entirely while the guardian holds the slot.
-            if tick_edge && !hold && slot.state() == script::RunState::Running {
-                // One shared arm for both hooks: `walk_with` carries the
-                // script's options through to `find_with`; `walk` is the
-                // default-options adapter (rs2b0t `walk` semantics stay
-                // default-off for teleports and wilderness). Each closure
-                // owns its own clone of the arm.
-                let arm = ScriptWalkArm {
-                    here,
-                    world: world.clone(),
-                    navs: Arc::clone(navs),
-                    name: name.to_string(),
-                    state,
-                };
-                let mut walk_with = {
-                    let arm = arm.clone();
-                    move |x: i32, z: i32, level: i32, o: script::FindOptions| -> bool {
-                        arm.route(
-                            x,
-                            z,
-                            level,
-                            FindOptions {
-                                allow_teleports: o.allow_teleports,
-                                allow_wilderness: o.allow_wilderness,
-                                allow_bank_fetch: o.allow_bank_fetch,
-                                ..FindOptions::default()
-                            },
-                        )
-                    }
-                };
-                let mut walk = {
-                    let arm = arm.clone();
-                    move |x: i32, z: i32, level: i32| -> bool {
-                        arm.route(x, z, level, FindOptions::default())
-                    }
-                };
-                // Task 5: post the JSON snapshot blob before the tick, so
-                // the isolate's Game/Inventory/Skills/EventSignal read what
-                // this observe saw (only these JSON fields — no World clone).
+            // Post the snapshot only while the slot script is Running, and
+            // skip the tick dispatch entirely while the guardian holds the
+            // slot (the blob still posts while held, so EventSignal reads
+            // the freeze the script is frozen by).
+            if tick_edge && slot.state() == script::RunState::Running {
+                // Task 5: post the JSON snapshot blob on every tick edge —
+                // held or not — so the isolate's
+                // Game/Inventory/Skills/EventSignal read what this observe
+                // saw (only these JSON fields — no World clone). The blob's
+                // `hold` mirrors the guardian's freeze onto the host handle;
+                // while it is set the tick is still not dispatched below
+                // (a held script is frozen, never looped).
                 slot.post_snapshot(&script_snapshot_json(
                     tick,
                     here,
@@ -440,17 +414,53 @@ fn script_observe(
                     hold,
                     ours,
                 ));
-                slot.on_game_tick(&mut ScriptCtx {
-                    driver,
-                    tick,
-                    here,
-                    walk: Some(&mut walk),
-                    walk_with: Some(&mut walk_with),
-                    inv,
-                    snapshot,
-                    obj_names,
-                });
-                wrote = true;
+                if !hold {
+                    // One shared arm for both hooks: `walk_with` carries the
+                    // script's options through to `find_with`; `walk` is the
+                    // default-options adapter (rs2b0t `walk` semantics stay
+                    // default-off for teleports and wilderness). Each closure
+                    // owns its own clone of the arm.
+                    let arm = ScriptWalkArm {
+                        here,
+                        world: world.clone(),
+                        navs: Arc::clone(navs),
+                        name: name.to_string(),
+                        state,
+                    };
+                    let mut walk_with = {
+                        let arm = arm.clone();
+                        move |x: i32, z: i32, level: i32, o: script::FindOptions| -> bool {
+                            arm.route(
+                                x,
+                                z,
+                                level,
+                                FindOptions {
+                                    allow_teleports: o.allow_teleports,
+                                    allow_wilderness: o.allow_wilderness,
+                                    allow_bank_fetch: o.allow_bank_fetch,
+                                    ..FindOptions::default()
+                                },
+                            )
+                        }
+                    };
+                    let mut walk = {
+                        let arm = arm.clone();
+                        move |x: i32, z: i32, level: i32| -> bool {
+                            arm.route(x, z, level, FindOptions::default())
+                        }
+                    };
+                    slot.on_game_tick(&mut ScriptCtx {
+                        driver,
+                        tick,
+                        here,
+                        walk: Some(&mut walk),
+                        walk_with: Some(&mut walk_with),
+                        inv,
+                        snapshot,
+                        obj_names,
+                    });
+                    wrote = true;
+                }
             }
         }
     }
@@ -3607,6 +3617,55 @@ mod tests {
             &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1, "an unheld edge dispatches");
+    }
+
+    #[test]
+    fn script_observe_posts_blob_while_held_and_skips_dispatch() {
+        // Fix-round regression (Task 5): the snapshot blob must post on the
+        // held tick edge too, so EventSignal.pending() sees the freeze the
+        // guardian holds the script by — while on_game_tick is still
+        // skipped. The blob's contents are pinned by the script crate's
+        // load_isolate tests; here the held edge drives a live isolate's
+        // post path without dispatching, and the unheld edge dispatches.
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let src =
+            "export default class T extends LoopingBot { loop() { globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1; } }";
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .expect("load isolate starts");
+        // Held edge: the blob posts into the live isolate (no dispatch, no
+        // driver write).
+        assert!(!script_observe(
+            &mut c, "alice", true, true, 1, Some((3200, 3200, 0)), None, None, None, None,
+            &scripts, &cheats, &navs, &world, true, false
+        ));
+        // Unheld edge: the same slot dispatches.
+        assert!(script_observe(
+            &mut c, "alice", true, true, 2, Some((3200, 3200, 0)), None, None, None, None,
+            &scripts, &cheats, &navs, &world, false, false
+        ));
+        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
     }
 
     #[test]
