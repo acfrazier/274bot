@@ -870,6 +870,139 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Task 5 — a posted snapshot blob is what Game/Inventory/Skills/EventSignal
+// read: `Inventory.count` sums the inv rows by name (case-insensitive),
+// `EventSignal.pending()` is hold OR ours as posted, `Skills.xp`/`index`
+// scan the stats rows, and `Game.tile()`/`ingame()` read the posted
+// `here`/`ingame`. Only the JSON fields the host posts — no World clone.
+#[test]
+fn isolate_reads_posted_snapshot_blob() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+import { Inventory } from '../../api/inventory/Inventory.js';
+import { Skills } from '../../api/skills/Skills.js';
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            bones: Inventory.count('Bones'),
+            drag: Inventory.count('Dragon bones'),
+            pending: EventSignal.pending(),
+            ignored: EventSignal.ignoredRandoms(),
+            xp: Skills.xp('prayer'),
+            idx: Skills.index('prayer'),
+            tile: Game.tile(),
+            ingame: Game.ingame(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.post_snapshot(
+        &serde_json::json!({
+            "tick": 1,
+            "here": { "x": 3200, "z": 3200, "level": 0 },
+            "ingame": true,
+            "inv": [{ "name": "Bones", "count": 2 }],
+            "stats": [{ "index": 5, "name": "prayer", "xp": 1300 }],
+            "bank_open": false,
+            "bank_loaded": false,
+            "hold": true,
+            "ours": false,
+        })
+        .to_string(),
+    );
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").expect("posted snapshot reads back");
+    assert_eq!(value["bones"], 2, "Inventory.count('Bones') sums the posted inv row");
+    assert_eq!(value["drag"], 0, "a name never posted fails closed to 0");
+    assert_eq!(value["pending"], true, "EventSignal.pending() is hold as posted");
+    assert_eq!(
+        value["ignored"],
+        serde_json::json!([]),
+        "no posted ignore list defaults to []"
+    );
+    assert_eq!(value["xp"], 1300, "Skills.xp reads the posted stats row");
+    assert_eq!(value["idx"], 0, "Skills.index finds the posted stat by name");
+    assert_eq!(value["tile"]["x"], 3200, "Game.tile() reads the posted here tile");
+    assert_eq!(value["ingame"], true, "Game.ingame() reads the posted flag");
+    iso.join();
+}
+
+// Task 5 — EventSignal.pending() is hold OR ours, as the host posted them.
+#[test]
+fn isolate_event_signal_pending_tracks_hold_or_ours() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = EventSignal.pending();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.post_snapshot(
+        &serde_json::json!({
+            "tick": 1,
+            "here": null,
+            "ingame": true,
+            "inv": [],
+            "stats": [],
+            "bank_open": false,
+            "bank_loaded": false,
+            "hold": false,
+            "ours": true,
+        })
+        .to_string(),
+    );
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "ours alone makes pending() true");
+    iso.join();
+}
+
+// Task 5 — without a posted snapshot every read fails closed: count 0,
+// pending false, xp 0, index -1. Missing members throw `not v1` — never a
+// fake value.
+#[test]
+fn isolate_snapshot_reads_fail_closed_without_a_post() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+import { Skills } from '../../api/skills/Skills.js';
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            bones: Inventory.count('Bones'),
+            pending: EventSignal.pending(),
+            xp: Skills.xp('prayer'),
+            idx: Skills.index('prayer'),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["bones"], 0, "no posted snapshot: count 0");
+    assert_eq!(value["pending"], false, "no posted snapshot: not pending");
+    assert_eq!(value["xp"], 0, "no posted snapshot: xp 0");
+    assert_eq!(value["idx"], -1, "no posted snapshot: index -1");
+    iso.join();
+
+    let src = "import { Inventory } from '../../api/inventory/Inventory.js'; export default class T extends LoopingBot { loop() { Inventory.first('Bones'); } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot"); // round-trip: the tick finished first
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("Inventory.first")),
+        "missing Inventory member throws: {logs:?}"
+    );
+    iso.join();
+}
+
 // Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
 // host and readable; every other member read or set throws `not v1`.
 #[test]

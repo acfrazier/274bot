@@ -73,6 +73,18 @@ pub(crate) fn shim_modules() -> Vec<Module> {
     vec![
         Module::new("/rs2b0t/bot/api/game/Game.js", include_str!("game.js")),
         Module::new(
+            "/rs2b0t/bot/api/inventory/Inventory.js",
+            include_str!("inventory.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/skills/Skills.js",
+            include_str!("skills.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/execution/EventSignal.js",
+            include_str!("event_signal.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/execution/Execution.js",
             include_str!("execution.js"),
         ),

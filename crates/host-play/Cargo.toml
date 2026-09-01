@@ -10,5 +10,6 @@ client = { workspace = true }
 host = { path = "../host" }
 nav = { path = "../nav" }
 script = { path = "../script", features = ["load"] }
+serde_json = "=1.0.140"
 libc = "0.2"
 vault = { path = "../vault" }

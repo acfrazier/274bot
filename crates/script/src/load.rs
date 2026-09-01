@@ -333,6 +333,10 @@ mod isolate {
 
     enum IsolateCmd {
         Tick(u64),
+        /// The host's JSON snapshot blob, stored on the host handle before
+        /// the next dispatched tick (the Game/Inventory/Skills/EventSignal
+        /// shims read it).
+        Snapshot(String),
         Pause,
         Resume,
         Probe(String, Sender<Result<serde_json::Value, String>>),
@@ -394,6 +398,17 @@ mod isolate {
                 terminate,
                 in_flight: Mutex::new(None),
             })
+        }
+
+        /// Post the host's JSON snapshot blob into the isolate: the blob is
+        /// stored on the host handle (`__rs2b0t_host.snapshot`) before the
+        /// next dispatched tick, so the Game/Inventory/Skills/EventSignal
+        /// shims read the fields the host observed this PLAYER_INFO. Only
+        /// these JSON fields are copied — no World clone. Commands are
+        /// serialized on the isolate thread, so a post followed by
+        /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
+        pub fn post_snapshot(&self, json: &str) {
+            let _ = self.tx.send(IsolateCmd::Snapshot(json.to_string()));
         }
 
         /// Dispatch one observed game tick to the isolate. The previous
@@ -735,6 +750,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 },
             };
             match cmd {
+                IsolateCmd::Snapshot(json) => {
+                    // Store the posted blob on the host handle (a JSON
+                    // literal is a valid JS object expression). A malformed
+                    // blob is logged, never fatal.
+                    if let Err(e) = runtime
+                        .eval::<()>(&format!("globalThis.__rs2b0t_host.snapshot = {json};"))
+                    {
+                        let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                    }
+                }
                 IsolateCmd::Tick(n) => {
                     if paused {
                         continue;

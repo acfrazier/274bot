@@ -2276,6 +2276,7 @@ dependencies = [
  "libc",
  "nav",
  "script",
+ "serde_json",
  "vault",
 ]
 

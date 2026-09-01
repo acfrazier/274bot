@@ -358,7 +358,9 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// must not succeed when no route can arm). `hold` is the guardian's
 /// random-event freeze: while true the tick is not dispatched (follow is
 /// frozen by the pump too), so a script cannot walk through an in-flight
-/// dialog or a trapped maze/mime/box. Returns whether the driver's
+/// dialog or a trapped maze/mime/box. `ours` is the guardian's published
+/// detected-ours flag (posted into the isolate for `EventSignal.pending()`).
+/// Returns whether the driver's
 /// out buffer was written (the slot's own `Client` sends on its next
 /// mainloop pass). A slot whose script is Idle/Paused publishes nothing
 /// — no dispatch, no flush.
@@ -381,6 +383,7 @@ fn script_observe(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
+    ours: bool,
 ) -> bool {
     let mut wrote = false;
     {
@@ -424,6 +427,19 @@ fn script_observe(
                         arm.route(x, z, level, FindOptions::default())
                     }
                 };
+                // Task 5: post the JSON snapshot blob before the tick, so
+                // the isolate's Game/Inventory/Skills/EventSignal read what
+                // this observe saw (only these JSON fields — no World clone).
+                slot.post_snapshot(&script_snapshot_json(
+                    tick,
+                    here,
+                    up,
+                    inv,
+                    snapshot,
+                    obj_names,
+                    hold,
+                    ours,
+                ));
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
@@ -481,6 +497,64 @@ fn dispatch_wires(
             }
         }
     }
+}
+
+/// The JSON snapshot blob posted into a Load isolate each PLAYER_INFO:
+/// `{ tick, here, ingame, inv: [{name, count}], stats, bank_open,
+/// bank_loaded, hold, ours }` — the exact fields the shim
+/// Game/Inventory/Skills/EventSignal read, and nothing else (no World
+/// clone). `here` is the local player's tile `{x, z, level}` (null when
+/// the body decoded none); `inv` rows carry the obj's resolved name (null
+/// when the shared table has none — a name a script queries never
+/// matches); `stats` rows carry the snapshot's stat index/name/xp;
+/// `hold`/`ours` are the guardian's published status that
+/// `EventSignal.pending()` reads.
+fn script_snapshot_json(
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    ingame: bool,
+    inv: Option<&[(i32, i32)]>,
+    snapshot: Option<&GameSnapshot>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    hold: bool,
+    ours: bool,
+) -> String {
+    let here = here.map(|(x, z, level)| serde_json::json!({ "x": x, "z": z, "level": level }));
+    let inv = inv.map(|rows| {
+        serde_json::json!(
+            rows.iter()
+                .map(|(id, count)| {
+                    serde_json::json!({
+                        "name": obj_names.and_then(|names| names.name(*id)),
+                        "count": count,
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    });
+    let stats = snapshot.map(|s| {
+        serde_json::json!(
+            s.stats()
+                .iter()
+                .map(|st| {
+                    serde_json::json!({ "index": st.index, "name": st.name, "xp": st.xp })
+                })
+                .collect::<Vec<_>>()
+        )
+    });
+    serde_json::json!({
+        "tick": tick,
+        "here": here,
+        "ingame": ingame,
+        "inv": inv,
+        "stats": stats,
+        "bank_open": snapshot.is_some_and(|s| s.bank_component_id() != -1),
+        "bank_loaded": snapshot
+            .is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
+        "hold": hold,
+        "ours": ours,
+    })
+    .to_string()
 }
 
 /// True when `name`'s slot script is Running — the only state that builds
@@ -1545,6 +1619,7 @@ fn spawn_slot_thread(
                                 &slot_navs,
                                 &slot_world,
                                 status.hold,
+                                status.ours,
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
@@ -2985,26 +3060,26 @@ mod tests {
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
             &mut c, "alice", false, true, 1, None, None, None, None, None, &scripts, &cheats,
-            &navs, &world, false,
+            &navs, &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
         script_observe(
             &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false,
+            &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
         script_observe(
             &mut c, "alice", true, false, 2, None, None, None, None, None, &scripts, &cheats,
-            &navs, &world, false,
+            &navs, &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
         assert!(script_observe(
             &mut c, "alice", true, true, 3, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false
+            &world, false, false
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -3035,7 +3110,7 @@ mod tests {
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
             &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false
+            &world, false, false
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
@@ -3053,7 +3128,7 @@ mod tests {
         );
         assert!(!script_observe(
             &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false
+            &world, false, false
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
@@ -3087,7 +3162,7 @@ mod tests {
             .push_back("setvar tutorial 1000".into());
         let wrote = script_observe(
             &mut c, "alice", true, false, 0, None, None, None, None, None, &scripts, &cheats,
-            &navs, &world, false,
+            &navs, &world, false, false,
         );
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
@@ -3172,6 +3247,7 @@ mod tests {
             &navs,
             &world,
             false,
+            false,
         );
         assert_eq!(
             *seen.lock().unwrap(),
@@ -3252,12 +3328,85 @@ mod tests {
             &navs,
             &world,
             false,
+            false,
         );
         assert_eq!(
             *seen.lock().unwrap(),
             Some((true, Some(5))),
             "the observe snapshot reaches the ctx and the varp getter reads it"
         );
+    }
+
+    // Task 5 — the posted blob is exactly the fields the shim
+    // Game/Inventory/Skills/EventSignal read: inv rows carry resolved obj
+    // names (null when the table has none), stats rows the stat
+    // index/name/xp, bank flags from the snapshot, and hold/ours pass
+    // through for EventSignal.pending(). No World clone — only these JSON
+    // fields.
+    #[test]
+    fn script_snapshot_json_carries_observed_fields_only() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.runenergy = 42;
+        c.stat_effective_level[7] = 40;
+        c.stat_xp[7] = 1300;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let mut objs = vec![client::config::ObjType::default(); 2];
+        objs[1].id = 1;
+        objs[1].name = "Bones".into();
+        let names = api::obj_names::ObjNames::from_objs(&objs);
+        let inv = vec![(1, 2), (99, 5)];
+        let blob: serde_json::Value =
+            serde_json::from_str(&script_snapshot_json(
+                7,
+                Some((3200, 3200, 0)),
+                true,
+                Some(&inv),
+                Some(&snap),
+                Some(&names),
+                true,
+                false,
+            ))
+            .unwrap();
+        assert_eq!(blob["tick"], 7);
+        assert_eq!(blob["here"], serde_json::json!({ "x": 3200, "z": 3200, "level": 0 }));
+        assert_eq!(blob["ingame"], true);
+        assert_eq!(
+            blob["inv"],
+            serde_json::json!([
+                { "name": "Bones", "count": 2 },
+                { "name": null, "count": 5 },
+            ]),
+            "an obj the table does not know posts a null name, never invented"
+        );
+        assert_eq!(blob["stats"][7], serde_json::json!({ "index": 7, "name": "cooking", "xp": 1300 }));
+        assert_eq!(blob["bank_open"], false, "no bank component in the fixture");
+        assert_eq!(blob["bank_loaded"], false);
+        assert_eq!(blob["hold"], true);
+        assert_eq!(blob["ours"], false);
+
+        // No tile / no snapshot: fail-closed nulls and flags.
+        let bare: serde_json::Value =
+            serde_json::from_str(&script_snapshot_json(1, None, false, None, None, None, false, true))
+                .unwrap();
+        assert_eq!(bare["here"], serde_json::Value::Null);
+        assert_eq!(bare["inv"], serde_json::Value::Null);
+        assert_eq!(bare["stats"], serde_json::Value::Null);
+        assert_eq!(bare["bank_open"], false);
+        assert_eq!(bare["ours"], true, "ours rides the blob for EventSignal");
     }
 
     #[test]
@@ -3449,13 +3598,13 @@ mod tests {
         // Up + edge but held by the guardian: no dispatch.
         script_observe(
             &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, true,
+            &world, true, false,
         );
         assert_eq!(*count.lock().unwrap(), 0, "hold skips on_game_tick");
         // The same edge unheld dispatches.
         script_observe(
             &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false,
+            &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1, "an unheld edge dispatches");
     }
@@ -3487,6 +3636,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
             false,
         ));
         assert!(
@@ -3586,7 +3736,7 @@ mod tests {
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         script_observe(
             &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false,
+            &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1, "a Handle claim still ticks");
     }
@@ -3866,6 +4016,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
             false,
         ));
         assert_eq!(
@@ -4246,6 +4397,7 @@ mod tests {
             &navs,
             &world,
             false,
+            false,
         ));
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
@@ -4341,6 +4493,7 @@ mod tests {
             &navs,
             &world,
             false,
+            false,
         ));
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
@@ -4384,6 +4537,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
             false,
         ));
         assert_eq!(
@@ -4430,6 +4584,7 @@ mod tests {
             &navs,
             &world,
             false,
+            false,
         ));
         assert_eq!(*walk_ret.lock().unwrap(), Some(true), "request queued");
         thread::sleep(Duration::from_millis(20));
@@ -4457,7 +4612,7 @@ mod tests {
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
             &mut d, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world, false,
+            &world, false, false,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 
@@ -4477,6 +4632,7 @@ mod tests {
             &cheats,
             &navs,
             &no_world,
+            false,
             false,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no world → refuse");
@@ -4500,6 +4656,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
             false,
         );
         assert_eq!(
@@ -4527,6 +4684,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
             false,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
@@ -4558,6 +4716,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
             false,
         );
         assert_eq!(

@@ -159,6 +159,16 @@ impl SlotScript {
         };
     }
 
+    /// Post the host's JSON snapshot blob into a Load isolate (no-op for a
+    /// compiled script). Call it before [`SlotScript::on_game_tick`] so the
+    /// posted blob is what the tick's JS reads.
+    #[cfg(feature = "load")]
+    pub fn post_snapshot(&self, json: &str) {
+        if let Some(isolate) = &self.load {
+            isolate.post_snapshot(json);
+        }
+    }
+
     /// Call only on observed server tick. Dispatches the JS isolate's
     /// `on_game_tick` (compiled path) only while Running && want_run. A
     /// compiled panic is caught: the slot goes Error with the message, the
