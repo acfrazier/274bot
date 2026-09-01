@@ -1588,6 +1588,9 @@ mod tests {
                 auto_login: false,
                 tutorial_skipped: None,
                 raster: vault::RasterMode::Gpu,
+                random_events: true,
+                lamp_skill: "strength".into(),
+                lamp_auto: true,
             },
         };
         let loud = Profile {
@@ -1599,6 +1602,9 @@ mod tests {
                 auto_login: false,
                 tutorial_skipped: None,
                 raster: vault::RasterMode::Gpu,
+                random_events: true,
+                lamp_skill: "strength".into(),
+                lamp_auto: true,
             },
         };
         assert!(bot_client_config(&opt, &quiet).lowmem);
@@ -2242,6 +2248,9 @@ mod tests {
                 auto_login: false,
                 tutorial_skipped: None,
                 raster: vault::RasterMode::Gpu,
+                random_events: true,
+                lamp_skill: "strength".into(),
+                lamp_auto: true,
             },
         }
     }

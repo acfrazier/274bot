@@ -58,6 +58,28 @@ pub struct ProfileSettings {
     pub tutorial_skipped: Option<bool>,
     #[serde(default)]
     pub raster: RasterMode,
+    /// Incoming random events (sandwich lady, genie, …). On by default so
+    /// pre-0.1.2 vaults keep them flowing.
+    #[serde(default = "default_random_events")]
+    pub random_events: bool,
+    /// Lamp skill set from the lamp dialogue.
+    #[serde(default = "default_lamp_skill")]
+    pub lamp_skill: String,
+    /// Lamp auto-use: claim the reward without a confirmation click.
+    #[serde(default = "default_lamp_auto")]
+    pub lamp_auto: bool,
+}
+
+fn default_random_events() -> bool {
+    true
+}
+
+fn default_lamp_skill() -> String {
+    "strength".into()
+}
+
+fn default_lamp_auto() -> bool {
+    true
 }
 
 impl Default for ProfileSettings {
@@ -67,6 +89,9 @@ impl Default for ProfileSettings {
             auto_login: false,
             tutorial_skipped: None,
             raster: RasterMode::Gpu,
+            random_events: true,
+            lamp_skill: "strength".into(),
+            lamp_auto: true,
         }
     }
 }
@@ -317,6 +342,9 @@ mod tests {
                 auto_login: false,
                 tutorial_skipped: None,
                 raster: super::RasterMode::Gpu,
+                random_events: true,
+                lamp_skill: "strength".into(),
+                lamp_auto: true,
             },
         }
     }
@@ -335,6 +363,9 @@ mod tests {
                 auto_login: false,
                 tutorial_skipped: None,
                 raster: super::RasterMode::Gpu,
+                random_events: true,
+                lamp_skill: "strength".into(),
+                lamp_auto: true,
             },
         })
         .unwrap();
@@ -346,6 +377,20 @@ mod tests {
         assert!(!missing.auto_login);
         assert_eq!(missing.tutorial_skipped, None);
         assert_eq!(missing.raster, super::RasterMode::Gpu);
+    }
+
+    #[test]
+    fn pre_0_1_2_profile_defaults_random_events_and_lamp_on() {
+        // A pre-0.1.2 JSON profile carries none of the new keys; randoms and
+        // the lamp helper must stay on so old vaults behave as before.
+        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+        assert!(missing.random_events, "old vaults keep random events on");
+        assert_eq!(missing.lamp_skill, "strength");
+        assert!(missing.lamp_auto, "old vaults keep lamp auto on");
+        let d = ProfileSettings::default();
+        assert!(d.random_events);
+        assert_eq!(d.lamp_skill, "strength");
+        assert!(d.lamp_auto);
     }
 
     #[test]
