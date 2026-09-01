@@ -40,10 +40,10 @@ fn scenario_walk() {
     opts.mainland = mainland;
     let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
-        move |c, name| {
+        move |c, name, hold| {
             let mut r = runner.lock().unwrap();
             if r.drives(name) {
-                r.tick(c);
+                r.tick_with_hold(c, hold);
             }
         }
     });

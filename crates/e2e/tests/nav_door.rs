@@ -44,10 +44,10 @@ fn nav_door() {
     opts.mainland = mainland;
     let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
-        move |c, name| {
+        move |c, name, hold| {
             let mut r = runner.lock().unwrap();
             if r.drives(name) {
-                r.tick(c);
+                r.tick_with_hold(c, hold);
             } else if let Some(index) = r.companion_for(name) {
                 r.companion_tick(index, c);
             }

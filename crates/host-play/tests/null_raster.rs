@@ -52,7 +52,7 @@ fn live_draw_off_never_paints() {
         },
         {
             let frames = Arc::clone(&frames);
-            move |c, name| {
+            move |c, name, _hold| {
                 *frames
                     .lock()
                     .unwrap()

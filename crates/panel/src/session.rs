@@ -1100,7 +1100,7 @@ impl Session {
             &options,
             Vec::new(),
             |_| (None, None),
-            move |c, name| {
+            move |c, name, hold| {
                 // Flat model: every slot is a full Client; draw gates the
                 // slot's renderer per the wall policy (focused always,
                 // members when only-render-selected is off).
@@ -1239,12 +1239,11 @@ impl Session {
                 // Shared `--live script_*` runner: tick the scenario's
                 // driven slot and its companion slots, before the
                 // local-player gate (seeding must observe frames with no
-                // player decode yet). The slot thread drives sends through
-                // its own `Client`; the UI frame only reads the runner's
-                // status/evidence.
+                // player decode yet). Hold freezes scenario follow the
+                // same way `step_nav_bot` freezes (route stays latched).
                 if let Some(runner) = scenario.lock().unwrap().as_mut() {
                     if runner.drives(name) {
-                        runner.tick(c);
+                        runner.tick_with_hold(c, hold);
                     } else if let Some(index) = runner.companion_for(name) {
                         runner.companion_tick(index, c);
                     }
@@ -1273,6 +1272,11 @@ impl Session {
                     if slot.0.rebuild(c) {
                         slot.1 = WorldState::from_snapshot(&slot.0);
                     }
+                }
+                // Guardian hold freezes WalkArm follow; the armed route
+                // stays latched and resumes when hold lifts.
+                if !WalkArm::may_follow(hold) {
+                    return;
                 }
                 let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
                     return;
@@ -1790,11 +1794,14 @@ impl Session {
     }
 
     /// Control arm for a vault profile: `SlotArm::new(uid, auto_login)` with
-    /// `want_login` cleared when the wall logout latch blocks auto-login.
+    /// `want_login` cleared when the wall logout latch blocks auto-login,
+    /// and `random_events` seeded from the profile.
     fn arm_for_profile(&self, name: &str) -> Option<Arc<SlotArm>> {
         let profile = self.vault.as_ref().and_then(|v| v.get(name))?;
         let auto_login = profile.settings.auto_login;
         let arm = SlotArm::new(profile.uid, auto_login);
+        arm.random_events
+            .store(profile.settings.random_events, Ordering::Relaxed);
         if !self.wall.should_auto_login(name, auto_login) {
             arm.want_login.store(false, Ordering::Relaxed);
         }
@@ -1933,8 +1940,9 @@ impl Session {
 
     /// Persist the focused profile's guardian settings (`random_events`,
     /// `lamp_skill`, `lamp_auto`) to the vault — the same upsert path as
-    /// auto-login. Never spawns or stops a slot. A running slot picks the
-    /// toggle up at its next spawn (the slot loop reads the profile once).
+    /// auto-login — and mirror `random_events` onto a running slot's
+    /// `arm.random_events` so toggle-off never acts/holds without a
+    /// respawn. Never spawns or stops a slot.
     pub fn set_random_settings(
         &mut self,
         name: &str,
@@ -1959,6 +1967,9 @@ impl Session {
                 self.error = Some(format!("random: {e}"));
                 return false;
             }
+        }
+        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
+            arm.random_events.store(random_events, Ordering::Relaxed);
         }
         true
     }
@@ -2829,7 +2840,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         )
     }
 
@@ -5308,7 +5319,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         let arm = SlotArm::new(7, false);
         arm.latch.store(true, Ordering::Relaxed);
@@ -5621,6 +5632,41 @@ mod tests {
     }
 
     #[test]
+    fn set_random_settings_mirrors_running_arm() {
+        let path = tmp_vault("random-settings-arm.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+        let mut play = host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        let arm = SlotArm::new(42, false);
+        assert!(arm.random_events.load(Ordering::Relaxed), "default on");
+        play.attach_arm("alice", Arc::clone(&arm));
+        s.play = Some(play);
+        assert!(s.set_random_settings("alice", false, "attack", true));
+        assert!(
+            !arm.random_events.load(Ordering::Relaxed),
+            "toggle off must reach the live arm without respawn"
+        );
+        assert!(s.set_random_settings("alice", true, "attack", true));
+        assert!(arm.random_events.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn set_random_settings_rejects_unknown_or_locked_vault() {
         let path = tmp_vault("random-settings-unknown.vault");
         let mut s = Session::new();
@@ -5693,7 +5739,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         let arm = SlotArm::new(42, false);
         play.attach_arm("alice", Arc::clone(&arm));

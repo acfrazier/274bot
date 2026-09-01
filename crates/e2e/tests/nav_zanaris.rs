@@ -52,7 +52,7 @@ fn nav_zanaris() {
     let seed = [("test", "test")];
     let mut opts = options();
     opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _| {});
+    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {});
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_zanaris");
 
     let world = NavWorld::load_pack(&default_pack_path())

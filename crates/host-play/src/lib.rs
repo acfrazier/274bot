@@ -72,7 +72,10 @@ pub fn mint_live_names(n: usize) -> Vec<String> {
 }
 
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
-type SlotFrame = Arc<dyn Fn(&mut Client, &str) + Send + Sync>;
+/// Per-frame hook: `(client, username, hold)`. `hold` is the guardian's
+/// published hold from the previous frame (same lag as `step_nav_bot`) —
+/// panel/TUI skip scenario follow and WalkArm follow while it is set.
+type SlotFrame = Arc<dyn Fn(&mut Client, &str, bool) + Send + Sync>;
 use script::{ScriptCtx, SlotScript};
 use vault::{Profile, Vault, VaultError};
 
@@ -176,6 +179,12 @@ impl WalkArm {
             z: r.dest.z,
             level: r.dest.level,
         })
+    }
+
+    /// Whether a WalkArm / scenario follow may poll this frame. Guardian
+    /// hold freezes follow; the armed route stays latched.
+    pub fn may_follow(hold: bool) -> bool {
+        !hold
     }
 }
 
@@ -695,6 +704,10 @@ pub struct SlotArm {
     /// so an unexpected DC re-handshakes; a panel one-shot arm disarms
     /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
+    /// Live guardian toggle (`ProfileSettings.random_events`). Mirrored
+    /// from the vault on spawn and by panel/TUI settings writes so a
+    /// toggle-off never acts/holds without a respawn.
+    pub random_events: Arc<AtomicBool>,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
@@ -709,6 +722,7 @@ impl SlotArm {
             stop: Arc::new(AtomicBool::new(false)),
             latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
+            random_events: Arc::new(AtomicBool::new(true)),
             reconnect: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -828,7 +842,7 @@ impl Play {
             ifaces: Arc::new(ifaces),
             ifaces_mut_template: Arc::new(ifaces_mut_template),
             queue: Arc::new(Mutex::new(LoginQueue::default())),
-            per_frame: Arc::new(|_: &mut Client, _: &str| {}),
+            per_frame: Arc::new(|_: &mut Client, _: &str, _hold: bool| {}),
             spawned: HashSet::new(),
             arms: HashMap::new(),
             profiles: HashMap::new(),
@@ -1180,7 +1194,7 @@ impl Drop for Play {
 /// while mirroring its state into the shared status list. Slots run with no
 /// input and no frame mailbox; [`run_with_io`] adds per-slot channels.
 pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
-    run_with_io(options, profiles, |_| (None, None), |_, _| {})
+    run_with_io(options, profiles, |_| (None, None), |_, _, _| {})
 }
 
 /// Like [`run`], but each slot gets the `SlotInput`/`FrameBuf` mailbox
@@ -1196,7 +1210,7 @@ pub fn run_with_io<F, G>(
 ) -> Play
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
-    G: Fn(&mut Client, &str) + Send + Sync + 'static,
+    G: Fn(&mut Client, &str, bool) + Send + Sync + 'static,
 {
     let mut play = Play::new(options);
     play.per_frame = Arc::new(per_frame);
@@ -1409,10 +1423,16 @@ fn spawn_slot_thread(
                         .map(|slot| slot.on_random(ev))
                         .unwrap_or(RandomClaim::Host)
                 };
+                // Live toggle: spawn seeds from the vault profile; panel/TUI
+                // may flip `arm.random_events` without a respawn.
+                arm_obs
+                    .random_events
+                    .store(profile.settings.random_events, Ordering::Relaxed);
                 Host::run_client(
                     &mut client,
                     &username,
                     profile.settings.clone(),
+                    Arc::clone(&arm_obs.random_events),
                     slot_input.clone(),
                     slot_mailbox.clone(),
                     park.clone(),
@@ -1441,7 +1461,9 @@ fn spawn_slot_thread(
                         // hold freezes script tick and the nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus| {
                             let name = &obs_name;
-                            slot_frame(c, name);
+                            // Panel/TUI WalkArm + scenario follow gate on the
+                            // same hold as step_nav_bot (prev-frame status).
+                            slot_frame(c, name, status.hold);
                             if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
@@ -1881,7 +1903,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         assert!(play.statuses().is_empty());
     }
@@ -1903,7 +1925,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         assert!(play.obj_names().name(526).is_none());
         assert!(play.obj_names().by_name("Bones").is_none());
@@ -1937,7 +1959,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // No real client: fake arm (uid 7) and a handle that exits only
         // once `stop_slot` flags it.
@@ -1994,7 +2016,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // A fake parked slot: blocks on the control park fd with a long
         // poll (like the real idle scheduler) and only exits once `stop`
@@ -2052,7 +2074,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // The profile uid 42 sits queued behind a full address window;
         // stopping must drop 42 from the FIFO, not the arm's stale uid 0.
@@ -2345,7 +2367,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         play.statuses.lock().unwrap().push(SlotStatus {
             username: "alice".into(),
@@ -2379,7 +2401,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         assert_eq!(play.focused(), None, "no slot is focused before focus()");
         play.focus("b");
@@ -2404,7 +2426,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // No real client: fake arm + a handle that exits only once
         // `stop_slot` flags it.
@@ -2444,7 +2466,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         let arm = SlotArm::new(7, false);
         play.attach_arm("alice", Arc::clone(&arm));
@@ -2492,6 +2514,12 @@ mod tests {
             },
             graph: TransportGraph::default(),
         }
+    }
+
+    #[test]
+    fn walk_arm_may_follow_freezes_under_hold() {
+        assert!(WalkArm::may_follow(false), "unheld follow may poll");
+        assert!(!WalkArm::may_follow(true), "hold freezes WalkArm follow");
     }
 
     /// The shared walk arm (panel `Session::arm_walk_on` is a thin
@@ -2593,7 +2621,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // `auto_login = false` arms sit on the title (no TCP), so both
         // threads idle on a 20 ms sleep until `stop_slot` joins them.
@@ -2652,7 +2680,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // alice is a real (armed) slot, so the error is about the picker id.
         let mut play = run_with_io(
@@ -2665,7 +2693,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let err = play
@@ -2686,7 +2714,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
@@ -2725,7 +2753,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         let err = play
             .script_start("ghost", script::CompiledId("WalkTo"))
@@ -2750,7 +2778,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         assert_eq!(play.script_state("ghost"), script::RunState::Idle);
         assert_eq!(play.script_last_error("ghost"), None);
@@ -2790,7 +2818,7 @@ mod tests {
             },
             vec![],
             |_| (None, None),
-            |_, _| {},
+            |_, _, _| {},
         );
         // `auto_login = false` arm sits on the title (no TCP).
         play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));

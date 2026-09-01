@@ -88,7 +88,7 @@ fn live_rss_ladder_all_null() {
         &opts,
         ladder_profiles(n),
         |_| (None, None),
-        |c, _| c.set_draw(false),
+        |c, _, _hold| c.set_draw(false),
     );
     wait_all_scene2(&play, n);
     // Give the wall a beat to settle before sampling peak RSS.

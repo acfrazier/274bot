@@ -55,7 +55,7 @@ fn live_draw_area_and_capture_walk() {
         },
         // Mirrors the panel focus `set_draw` switch: the focused slot
         // renders every frame.
-        move |c, _| {
+        move |c, _, _hold| {
             c.set_draw(true);
             if c.shell.mouse_button == 1
                 && c.shell.mouse_x == VIEWPORT_CLICK_X

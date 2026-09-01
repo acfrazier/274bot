@@ -76,11 +76,12 @@ const FISHING_GEAR: &[&str] = &[
 
 /// Detect the first random event the snapshot shows, in rs2b0t
 /// `detectRaw` order: maze/mime by map square, then scene NPCs/locs,
-/// then lost-gear on the ground, then inv-held box/lamp, then lost-tool.
-/// Returns `None` when nothing applies. NPC kinds are owner-gated
-/// (except `pick`, which the TUI may show as not ours). The rs2b0t
-/// gear-loss 90 s window (the caller-state half of `lost-gear`) is not
-/// needed here: gear on the ground and out of the inventory detects.
+/// then inv-held box/lamp, then lost-gear / lost-tool. Returns `None`
+/// when nothing applies. NPC kinds are owner-gated (except `pick`, which
+/// the TUI may show as not ours). The rs2b0t gear-loss 90 s window (the
+/// caller-state half of `lost-gear`) is not needed here: gear on the
+/// ground and out of the inventory detects. Box/lamp must beat lost-gear
+/// so a trapped hold is not hidden by ground fishing gear.
 pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Option<DetectedRandom> {
     if let Some((x, z, level)) = snap.tile() {
         if level == 0 {
@@ -95,14 +96,14 @@ pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Optio
     if let Some(ev) = detect_scene(snap, now_ms, cooldown) {
         return Some(ev);
     }
-    if let Some(gear) = lost_gear(snap) {
-        return Some(no_npc_event(RandomKind::LostGear, &gear));
-    }
     if snap.inv().iter().any(|(id, _)| *id == STRANGE_BOX_OBJ) {
         return Some(no_npc_event(RandomKind::Box, "strange box"));
     }
     if snap.inv().iter().any(|(id, _)| *id == LAMP_OBJ) {
         return Some(no_npc_event(RandomKind::Lamp, "lamp"));
+    }
+    if let Some(gear) = lost_gear(snap) {
+        return Some(no_npc_event(RandomKind::LostGear, &gear));
     }
     if has_lost_tool(snap) {
         return Some(no_npc_event(RandomKind::LostTool, "lost tool"));
@@ -491,8 +492,22 @@ impl Guardian {
             } else {
                 ix.answer_choice(1)
             };
-            if let SendResult::Sent { .. } = result {
-                self.continues += 1;
+            match result {
+                SendResult::Sent { .. } => {
+                    self.continues += 1;
+                }
+                // Spec: stop when continue refuses. Keep one tick after
+                // Talk-to for chat to open; clear once chat is still
+                // closed and a continue/answer has refused.
+                SendResult::Refused { .. } => {
+                    if !chat_is_open(snap) {
+                        if self.continues == 0 {
+                            self.continues = 1;
+                        } else {
+                            self.clear_handle();
+                        }
+                    }
+                }
             }
             return;
         }
@@ -526,14 +541,13 @@ impl Guardian {
 
     /// The handle lifts when the chat is fully closed and the in-flight
     /// NPC has left the scene (the spec's "NPC gone and chat closed").
+    /// Continue/answer refuse clears via [`Guardian::act`] when chat is
+    /// closed (after a one-tick grace post Talk-to).
     fn dialog_done(&self, snap: &GameSnapshot) -> bool {
-        let chat_open = snap.chat_continue_component_id() != -1
-            || !snap.chat_options().is_empty()
-            || snap.modals().chat != -1;
         let npc_here = self
             .in_flight_index
             .is_some_and(|i| snap.npcs().iter().any(|v| v.index == i));
-        !chat_open && !npc_here
+        !chat_is_open(snap) && !npc_here
     }
 
     fn clear_handle(&mut self) {
@@ -541,6 +555,14 @@ impl Guardian {
         self.in_flight_index = None;
         self.continues = 0;
     }
+}
+
+/// Whether the NPC chat modal (continue button, choice buttons, or chat
+/// root) is up — the same open check dialog_done / refuse-clear share.
+fn chat_is_open(snap: &GameSnapshot) -> bool {
+    snap.chat_continue_component_id() != -1
+        || !snap.chat_options().is_empty()
+        || snap.modals().chat != -1
 }
 
 /// Whether NPC slot `index` is in the 45 s wrong-talk bin at `now_ms`
@@ -762,6 +784,18 @@ mod tests {
         assert_eq!(ev.npc_index, None);
     }
 
+    #[test]
+    fn inv_box_beats_ground_fishing_net() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_obj(&mut c, STRANGE_BOX_OBJ);
+        plant_ground_obj(&mut c, 0, 0, 502, Some("Small fishing net"));
+        let snap = snap_at(&mut c);
+        let ev = detect(&snap, 0, &no_cooldown()).expect("box must beat lost-gear");
+        assert_eq!(ev.kind, RandomKind::Box);
+        assert_eq!(ev.name, "strange box");
+    }
+
     // --- Guardian (Task 4): act + hold-while-handling, fake Driver ---
 
     /// No-op packet sink the recording driver hands out.
@@ -947,6 +981,44 @@ mod tests {
             "Talk-to must address the npc slot, not the dense vec position"
         );
         assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn talk_to_that_never_opens_chat_clears_on_continue_refuse() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: Talk-to arms the handle.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.handling, "Talk-to arms the in-flight handle");
+        assert!(status.hold);
+
+        // Tick 2: chat never opened → continue refuses; one-tick grace.
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(
+            status.handling,
+            "first refuse after Talk-to keeps the handle for chat to open"
+        );
+        assert!(drv.actions.is_empty(), "refuse does not press");
+
+        // Tick 3: still closed → clear (spec: continue refuses).
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(
+            !status.handling,
+            "second refuse with chat closed must lift the handle"
+        );
+        assert!(!status.hold, "no latch after continue refuse");
     }
 
     #[test]

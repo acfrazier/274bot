@@ -71,7 +71,7 @@ fn nav_seers_crabs() {
         &opts,
         profiles(&[("test", "test")]),
         |_| (None, None),
-        |_, _| {},
+        |_, _, _| {},
     );
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_seers_crabs");
 

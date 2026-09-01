@@ -68,7 +68,7 @@ fn nav_essence() {
     let seed = [("test", "test")];
     let mut opts = options();
     opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _| {});
+    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {});
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_essence");
 
     let world = NavWorld::load_pack(&default_pack_path())
@@ -256,10 +256,10 @@ fn nav_essence_follow() {
     opts.mainland = mainland;
     let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
         let runner = Arc::clone(&runner);
-        move |c, name| {
+        move |c, name, hold| {
             let mut r = runner.lock().unwrap();
             if r.drives(name) {
-                r.tick(c);
+                r.tick_with_hold(c, hold);
             } else if let Some(index) = r.companion_for(name) {
                 r.companion_tick(index, c);
             }

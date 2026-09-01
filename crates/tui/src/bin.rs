@@ -243,7 +243,7 @@ impl TuiSession {
             &options,
             Vec::new(),
             |_| (None, None),
-            move |c, name| {
+            move |c, name, hold| {
                 // Publish the slot's snapshot (chat ring / modal, inv /
                 // stats / locs) for the UI thread; the rebuild is
                 // incremental, so a quiet frame publishes nothing new.
@@ -254,9 +254,10 @@ impl TuiSession {
                 // The shared `--live script_*` runner: tick the driven
                 // slot and its companions before the local-player gate
                 // (seeding must observe frames with no player decode).
+                // Hold freezes scenario follow like `step_nav_bot`.
                 if let Some(runner) = scenario.lock().unwrap().as_mut() {
                     if runner.drives(name) {
-                        runner.tick(c);
+                        runner.tick_with_hold(c, hold);
                     } else if let Some(index) = runner.companion_for(name) {
                         runner.companion_tick(index, c);
                     }
@@ -267,6 +268,11 @@ impl TuiSession {
                     None => return,
                 };
                 let here = (c.map_build_base_x + rx, c.map_build_base_z + rz, 0);
+                // Guardian hold freezes WalkArm follow; the armed route
+                // stays latched and resumes when hold lifts.
+                if !WalkArm::may_follow(hold) {
+                    return;
+                }
                 // Step the armed walk route one leg per player-info tick
                 // (the panel's `tick_latch` pattern — a hop is sent once
                 // per server tick, not re-sent every 20 ms frame).
@@ -324,6 +330,8 @@ impl TuiSession {
         let auto_login = profile.settings.auto_login;
         let arm = SlotArm::new(profile.uid, true);
         arm.auto_login.store(auto_login, Ordering::Relaxed);
+        arm.random_events
+            .store(profile.settings.random_events, Ordering::Relaxed);
         if let Some(play) = self.play.as_mut() {
             play.spawn_slot(profile, None, None, Some(arm));
             true
@@ -464,7 +472,8 @@ impl TuiSession {
     }
 
     /// Persist the settings popup's changes onto the focused vault
-    /// profile (the operator vault; `--live`'s temp vault is ephemeral).
+    /// profile (the operator vault; `--live`'s temp vault is ephemeral)
+    /// and mirror `random_events` onto a running slot's arm.
     fn persist_settings(&mut self, app: &TuiApp) {
         let Some(vault) = self.vault.as_mut() else {
             return;
@@ -476,7 +485,12 @@ impl TuiSession {
             return;
         };
         profile.settings = app.settings.clone();
+        let random_events = profile.settings.random_events;
         let _ = vault.upsert(profile);
+        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
+            arm.random_events
+                .store(random_events, Ordering::Relaxed);
+        }
     }
 
     /// Copy the focused slot's views into the app and poll the runner.

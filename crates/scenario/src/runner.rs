@@ -304,6 +304,12 @@ impl ScenarioRunner {
     /// completion tick falls through into the run logic, so the send goes
     /// out the tick the seed completes.
     pub fn tick(&mut self, client: &mut Client) {
+        self.tick_with_hold(client, false);
+    }
+
+    /// Like [`ScenarioRunner::tick`], but skip `Traveller::follow` while
+    /// `hold` is set (guardian hold — the armed route stays latched).
+    pub fn tick_with_hold(&mut self, client: &mut Client, hold: bool) {
         if matches!(self.phase, Phase::Done) {
             return;
         }
@@ -348,7 +354,9 @@ impl ScenarioRunner {
                 self.engine_speed_sent = true;
             }
             self.fire_poll_sustains(client);
-            if dirty {
+            // Guardian hold freezes follow only; sends/arms still run so a
+            // route armed under hold resumes when it lifts.
+            if dirty && !hold {
                 self.step_route(client);
             }
             if !self.step_sent {
@@ -819,6 +827,58 @@ mod tests {
         let runner = ScenarioRunner::new(crate::get("nav_full").unwrap());
         assert_eq!(runner.deadline(), Duration::from_secs(360));
         assert_eq!(runner.terminal_shot(), Some("nav_full terminal"));
+    }
+
+    #[test]
+    fn hold_skips_follow_and_keeps_the_armed_route() {
+        use nav::router::Route;
+
+        let mut c = seeded_client();
+        let dest = WorldTile {
+            x: 4,
+            z: 0,
+            level: 0,
+        };
+        let mut runner = ScenarioRunner::new(Scenario {
+            name: "hold-follow",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "walk",
+                kind: StepKind::Walk { dest },
+                wait: wait(
+                    Proof::Arrived {
+                        x: 4,
+                        z: 0,
+                        level: 0,
+                    },
+                    100,
+                ),
+            }],
+            proof: Proof::Arrived {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        });
+        runner.set_scene_settle(Duration::ZERO);
+        // Skip seeding: force Running with an already-armed route.
+        runner.phase = Phase::Running;
+        runner.route = Some(Route {
+            dest,
+            legs: vec![],
+            ticks: 0.0,
+        });
+        runner.step_sent = true;
+        runner.tick_with_hold(&mut c, true);
+        assert!(
+            runner.route.is_some(),
+            "hold must not consume the latched scenario route"
+        );
     }
 
     #[test]

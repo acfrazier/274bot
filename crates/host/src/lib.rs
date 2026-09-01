@@ -112,6 +112,7 @@ impl Host {
                 &mut client,
                 &profile.username,
                 profile.settings,
+                Arc::new(AtomicBool::new(true)),
                 None,
                 None,
                 None,
@@ -163,6 +164,7 @@ impl Host {
         client: &mut Client,
         username: &str,
         settings: ProfileSettings,
+        random_events: Arc<AtomicBool>,
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
@@ -176,6 +178,7 @@ impl Host {
     {
         let mut slot = SlotLoop {
             settings,
+            random_events,
             ..SlotLoop::new()
         };
         let mut run_sends = 0u32;
@@ -418,10 +421,11 @@ impl Host {
         slot.log_n = slot.log_n.wrapping_add(1);
         let result = slot.after_drain(client);
         // Random-event guardian (spec pump placement): the snapshot is
-        // fresh after the drain. `slot.settings` is the slot's real
-        // `ProfileSettings` (wired by `run_client` from host-play); the
-        // returned `RandomStatus` rides the pump back into the next
-        // observe, which copies it onto the slot status row.
+        // fresh after the drain. Sync the live toggle from the shared
+        // atomic (panel/TUI may flip it mid-session) onto the cloned
+        // `ProfileSettings` the guardian reads; the returned
+        // `RandomStatus` rides the pump back into the next observe.
+        slot.settings.random_events = slot.random_events.load(Ordering::Relaxed);
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -621,8 +625,12 @@ struct SlotLoop {
     run_on: bool,
     run_sends: u32,
     /// The slot's real `ProfileSettings` (wired once by `run_client` from
-    /// the vault profile; the guardian's toggle reads it).
+    /// the vault profile; the guardian's toggle reads it). `random_events`
+    /// is refreshed each frame from [`SlotLoop::random_events`].
     settings: ProfileSettings,
+    /// Live guardian toggle (shared with `SlotArm::random_events`): a
+    /// panel/TUI flip reaches the running slot without a respawn.
+    random_events: Arc<AtomicBool>,
     /// Random-event guardian (act/hold; the trapped-kind hold and the
     /// `on_random` knock live here).
     guardian: Guardian,
@@ -662,6 +670,7 @@ impl SlotLoop {
             run_on: false,
             run_sends: 0,
             settings: ProfileSettings::default(),
+            random_events: Arc::new(AtomicBool::new(true)),
             guardian: Guardian::new(),
             renderer: None,
             renderer_prefer_cpu: None,
@@ -1755,6 +1764,7 @@ mod tests {
                 &mut c,
                 "idle",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 None,
                 None,
                 Some(Arc::new(park)),
@@ -1824,6 +1834,7 @@ mod tests {
                 &mut c,
                 "focused",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 Some(inp),
                 None,
                 None,
@@ -1881,6 +1892,7 @@ mod tests {
                 &mut c,
                 "scripted",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 None,
                 None,
                 None,
@@ -1934,6 +1946,7 @@ mod tests {
                 &mut c,
                 "sidecar",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 None,
                 Some(buf2),
                 Some(Arc::new(park)),
@@ -2014,6 +2027,7 @@ mod tests {
                 &mut c,
                 "parked",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 None,
                 None,
                 Some(Arc::new(park)),
@@ -2059,6 +2073,7 @@ mod tests {
                 &mut c,
                 "kicked",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 Some(Arc::clone(&inp)),
                 None,
                 Some(Arc::new(park)),
@@ -2129,6 +2144,7 @@ mod tests {
                 &mut c,
                 "kicked-idle",
                 ProfileSettings::default(),
+                Arc::new(AtomicBool::new(true)),
                 None,
                 None,
                 Some(Arc::new(park)),

@@ -60,7 +60,7 @@ fn capture_bank_sweep() {
                 (None, None)
             }
         },
-        |c, _| {
+        |c, _, _hold| {
             c.set_draw(true);
         },
     );
@@ -144,7 +144,7 @@ fn dump_bank_locs() {
         &options(),
         profiles(&[("test", "test")]),
         |_| (None, None),
-        move |c, _| {
+        move |c, _, _hold| {
             c.set_draw(true);
             if !(c.ingame && c.scene_state == 2) {
                 return;
