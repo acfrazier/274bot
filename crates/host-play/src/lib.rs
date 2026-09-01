@@ -28,6 +28,7 @@ mod rss;
 mod scatter;
 use api::snapshot::{GameSnapshot, WorldTile};
 use host::{should_emit_tick, wake_channel, FrameBuf, Pump, SlotInput, SlotPark, SlotWake};
+use host::{DetectedRandom, RandomClaim, RandomStatus};
 use nav::router::{find_with, FindOptions, Route};
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
@@ -121,6 +122,11 @@ pub struct SlotStatus {
     /// Newest `MESSAGE_GAME` / chat-ring head (`chat_text[0]`). Used to
     /// parse `getvar` replies (`get tutorial: 1000`).
     pub chat_head: String,
+    /// The random-event guardian's published status (kind/name/ours/
+    /// handling/hold/toggle/claim/cooldown), copied from `Host`'s
+    /// `client_frame` return each observe. The chrome contract both the
+    /// panel and the TUI bind.
+    pub random: RandomStatus,
 }
 
 impl SlotStatus {
@@ -179,6 +185,7 @@ impl Default for SlotStatus {
             bytes_in: 0,
             bytes_out: 0,
             chat_head: String::new(),
+            random: RandomStatus::default(),
         }
     }
 }
@@ -220,7 +227,10 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 /// no nav world, or a route already queued; `find_with` runs off-pump on
 /// a short-lived worker per request, storing the route in the uid's nav
 /// bot when one exists (a walk that would panic on the first follow step
-/// must not succeed when no route can arm). Returns whether the driver's
+/// must not succeed when no route can arm). `hold` is the guardian's
+/// random-event freeze: while true the tick is not dispatched (follow is
+/// frozen by the pump too), so a script cannot walk through an in-flight
+/// dialog or a trapped maze/mime/box. Returns whether the driver's
 /// out buffer was written (the slot's own `Client` sends on its next
 /// mainloop pass). A slot whose script is Idle/Paused publishes nothing
 /// — no dispatch, no flush.
@@ -242,14 +252,16 @@ fn script_observe(
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
+    hold: bool,
 ) -> bool {
     let mut wrote = false;
     {
         let mut all = scripts.lock().unwrap();
         if let Some(slot) = all.get_mut(name) {
             slot.on_is_up(up);
-            // skip script snapshot unless SlotScript is Running.
-            if tick_edge && slot.state() == script::RunState::Running {
+            // skip script snapshot unless SlotScript is Running, and skip
+            // the dispatch entirely while the guardian holds the slot.
+            if tick_edge && !hold && slot.state() == script::RunState::Running {
                 // One shared arm for both hooks: `walk_with` carries the
                 // script's options through to `find_with`; `walk` is the
                 // default-options adapter (rs2b0t `walk` semantics stay
@@ -433,6 +445,8 @@ impl WalkArm {
 /// armed route's dest into the status row's `walk_*` fields (`-1` when
 /// idle); any terminal outcome clears the route — arrival and stall alike
 /// — so the status flips back to idle and a script may arm a fresh walk.
+// Shared handles threaded like `script_observe`; the arg count is allowed.
+#[allow(clippy::too_many_arguments)]
 fn step_nav_bot<D: Driver>(
     driver: &mut D,
     name: &str,
@@ -441,8 +455,12 @@ fn step_nav_bot<D: Driver>(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     world: Option<&NavWorld>,
+    hold: bool,
 ) {
-    if here.is_none() {
+    // The random-event freeze: the follow is not stepped while the
+    // guardian holds the slot, and the armed route stays latched so it
+    // resumes when the hold lifts.
+    if here.is_none() || hold {
         return;
     }
     let mut options = TravelOptions {
@@ -1209,9 +1227,20 @@ fn spawn_slot_thread(
                 let mut mainland_sent = false;
                 let arm_obs = Arc::clone(&arm);
                 let obs_name = username.clone();
+                let knock_name = username.clone();
+                let knock_scripts = Arc::clone(&slot_scripts);
+                let knock = move |ev: &DetectedRandom| -> RandomClaim {
+                    knock_scripts
+                        .lock()
+                        .unwrap()
+                        .get_mut(&knock_name)
+                        .map(|slot| slot.on_random(ev))
+                        .unwrap_or(RandomClaim::Host)
+                };
                 Host::run_client(
                     &mut client,
                     &username,
+                    profile.settings.clone(),
                     slot_input.clone(),
                     slot_mailbox.clone(),
                     park.clone(),
@@ -1234,7 +1263,10 @@ fn spawn_slot_thread(
                         // gates on its facts; the follow surface reads the
                         // canonical base + route-head tile from it).
                         let mut nav_snapshot = GameSnapshot::new();
-                        move |c, _ignored, run_sends| {
+                        // The random status `client_frame` published last
+                        // frame: copied onto the slot status row, and its
+                        // hold freezes script tick and the nav follow.
+                        move |c, _ignored, run_sends, status: &RandomStatus| {
                             let name = &obs_name;
                             slot_frame(c, name);
                             if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
@@ -1266,6 +1298,7 @@ fn spawn_slot_thread(
                                         s.main_modal_id = c.main_modal_id;
                                         copy_stream_bytes(c, s);
                                         s.chat_head = c.chat_text[0].clone();
+                                        s.random = status.clone();
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,
@@ -1319,16 +1352,20 @@ fn spawn_slot_thread(
                                 &slot_cheats,
                                 &slot_navs,
                                 &slot_world,
+                                status.hold,
                             );
                             // Per-uid nav step on the pump, gated on the
                             // player-gen/tile latch like the panel's WalkTo
                             // hook so a hop is sent once per server tick,
                             // not re-sent every 20 ms frame. The snapshot
-                            // was already rebuilt above.
+                            // was already rebuilt above. The guardian's
+                            // hold freezes the follow — the armed route
+                            // stays latched and resumes when it lifts.
                             let nav_key = (c.gens.player, here);
                             if last_nav_step != Some(nav_key) {
                                 last_nav_step = Some(nav_key);
                                 if here.is_some()
+                                    && !status.hold
                                     && slot_navs
                                         .lock()
                                         .unwrap()
@@ -1343,6 +1380,7 @@ fn spawn_slot_thread(
                                         &slot_navs,
                                         &slot_statuses,
                                         slot_world.as_deref(),
+                                        status.hold,
                                     );
                                 }
                             }
@@ -1367,6 +1405,7 @@ fn spawn_slot_thread(
                         let ifaces_template = ifaces_template.clone();
                         move |c| tick_flags(c, &ifaces_template, &arm_obs) || !c.ingame
                     },
+                    knock,
                 );
                 if arm.stop.load(Ordering::Relaxed) {
                     slot_queue.lock().unwrap().leave(uid);
@@ -1500,6 +1539,7 @@ fn wait_for_permit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use host::Guardian;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
@@ -2529,26 +2569,26 @@ mod tests {
         // Not up: the edge must not dispatch (the is_up pause gate).
         script_observe(
             &mut c, "alice", false, true, 1, None, None, None, None, None, &scripts, &cheats,
-            &navs, &world,
+            &navs, &world, false,
         );
         assert_eq!(*count.lock().unwrap(), 0);
         // Up + edge: exactly one tick.
         script_observe(
             &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world,
+            &world, false,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // Up but no edge: nothing.
         script_observe(
             &mut c, "alice", true, false, 2, None, None, None, None, None, &scripts, &cheats,
-            &navs, &world,
+            &navs, &world, false,
         );
         assert_eq!(*count.lock().unwrap(), 1);
         // A dispatched tick wrote the driver's out buffer (the slot's own
         // `Client` sends it on the next mainloop pass).
         assert!(script_observe(
             &mut c, "alice", true, true, 3, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world
+            &world, false
         ));
         assert_eq!(*count.lock().unwrap(), 2);
     }
@@ -2579,7 +2619,7 @@ mod tests {
         // nothing — the driver's out buffer stays empty.
         assert!(!script_observe(
             &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world
+            &world, false
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
@@ -2597,7 +2637,7 @@ mod tests {
         );
         assert!(!script_observe(
             &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world
+            &world, false
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
     }
@@ -2631,7 +2671,7 @@ mod tests {
             .push_back("setvar tutorial 1000".into());
         let wrote = script_observe(
             &mut c, "alice", true, false, 0, None, None, None, None, None, &scripts, &cheats,
-            &navs, &world,
+            &navs, &world, false,
         );
         assert!(wrote, "the cheat wrote the driver's out buffer");
         assert_eq!(
@@ -2715,6 +2755,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         );
         assert_eq!(
             *seen.lock().unwrap(),
@@ -2794,6 +2835,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         );
         assert_eq!(
             *seen.lock().unwrap(),
@@ -2861,6 +2903,307 @@ mod tests {
         };
         assert!(ctx.has_item("Bones"));
         assert!(!ctx.has_item("Vial"));
+    }
+
+    // --- Task 5: guardian hold + knock plumbing over `host::Guardian` ---
+
+    /// Recording driver for the guardian tests: captures every
+    /// menu/action send (the host crate's fake driver shape).
+    #[derive(Default)]
+    struct GuardRec {
+        menus: Vec<(i32, i32, i32, i32, i32)>,
+        actions: Vec<i32>,
+        sink: Sink,
+    }
+
+    impl Driver for GuardRec {
+        fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
+            self.menus.push((slot, action, a, b, c));
+        }
+        fn do_action(&mut self, slot: i32) -> bool {
+            self.actions.push(slot);
+            true
+        }
+        fn try_move(
+            &mut self,
+            _src_x: i32,
+            _src_z: i32,
+            _dx: i32,
+            _dz: i32,
+            _try_nearest: bool,
+            _loc_width: i32,
+            _loc_length: i32,
+            _loc_angle: i32,
+            _loc_shape: i32,
+            _forceapproach: i32,
+            _t: i32,
+        ) -> bool {
+            false
+        }
+        fn local_route(&self) -> Option<(i32, i32)> {
+            None
+        }
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
+        }
+        fn out(&mut self) -> &mut dyn api::prot::Out {
+            &mut self.sink
+        }
+        fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+            false
+        }
+    }
+
+    /// An attached ingame scene-2 client with a named local player at
+    /// world (0,0) (base 0), ready for the guardian's detect to see.
+    fn guardian_client() -> Client {
+        let mut c = nav_client();
+        c.map_build_base_x = 0;
+        c.map_build_base_z = 0;
+        c.self_slot = 0;
+        let mut lp = client::dash3d::ClientPlayer::at(0, 0);
+        lp.name = Some("Test".to_string());
+        c.local_player = Some(lp);
+        c
+    }
+
+    /// Plant NPC `name` in client table slot `slot` with an overhead line
+    /// (the snapshot `NpcView` the guardian's detect reads).
+    fn plant_npc(c: &mut Client, slot: usize, name: &str, overhead: Option<&str>) {
+        let type_id = 500 + slot;
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.npcs.len() <= type_id {
+                cache.npcs.push(client::config::NpcType::default());
+            }
+            cache.npcs[type_id] = client::config::NpcType {
+                id: type_id as i32,
+                name: name.to_string(),
+                op: vec![Some("Talk-to".to_string())],
+                ..Default::default()
+            };
+        }
+        let mut npc = client::dash3d::ClientNpc::at(0, 0);
+        npc.r#type = Some(type_id);
+        npc.entity.chat_message = overhead.map(str::to_string);
+        while c.npc.len() <= slot {
+            c.npc.push(None);
+        }
+        c.npc[slot] = Some(Box::new(npc));
+        c.npc_ids[c.npc_count as usize] = slot as i32;
+        c.npc_count += 1;
+    }
+
+    /// Advance every packet family and rebuild the **persistent**
+    /// snapshot (one call per game tick, so `snap.tick()` climbs).
+    fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
+        c.gens.npc = c.gens.npc.wrapping_add(1);
+        c.gens.player = c.gens.player.wrapping_add(1);
+        c.gens.inv = c.gens.inv.wrapping_add(1);
+        c.gens.scene = c.gens.scene.wrapping_add(1);
+        c.gens.iface = c.gens.iface.wrapping_add(1);
+        c.gens.chat = c.gens.chat.wrapping_add(1);
+        snap.rebuild(c);
+    }
+
+    #[test]
+    fn script_observe_skips_the_tick_dispatch_while_hold() {
+        let ScriptWiring {
+            scripts,
+            cheats,
+            count,
+        } = script_wiring();
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        // Up + edge but held by the guardian: no dispatch.
+        script_observe(
+            &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
+            &world, true,
+        );
+        assert_eq!(*count.lock().unwrap(), 0, "hold skips on_game_tick");
+        // The same edge unheld dispatches.
+        script_observe(
+            &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
+            &world, false,
+        );
+        assert_eq!(*count.lock().unwrap(), 1, "an unheld edge dispatches");
+    }
+
+    #[test]
+    fn hold_freezes_follow_and_keeps_the_armed_route() {
+        let NavRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            statuses,
+            ..
+        } = nav_rig();
+        let mut d = NavRec::default();
+        let mut c = nav_client();
+        assert!(script_observe(
+            &mut d,
+            "alice",
+            true,
+            true,
+            1,
+            Some((0, 0, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+        ));
+        assert!(
+            wait_until(100, || queued(&navs).is_some()),
+            "the worker armed the route"
+        );
+
+        // Held: no follow step, and the armed route is not consumed.
+        let mut snap = GameSnapshot::new();
+        nav_snapshot_at(&mut c, &mut snap, 0, 0);
+        step_nav_bot(
+            &mut d,
+            "alice",
+            Some((0, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            world.as_deref(),
+            true,
+        );
+        assert_eq!(d.walked, None, "hold freezes the follow");
+        assert!(
+            queued(&navs).is_some(),
+            "the route stays latched under hold"
+        );
+
+        // Hold lifted: the next pump step resumes the latched route.
+        step_nav_bot(
+            &mut d,
+            "alice",
+            Some((0, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            world.as_deref(),
+            false,
+        );
+        assert_eq!(d.walked, Some((4, 0)), "the hop resumes after the hold");
+    }
+
+    /// A script that counts ticks and claims every detected event for
+    /// itself (the Task 5 `Handle` override).
+    struct ClaimHandle(Arc<Mutex<u32>>);
+
+    impl script::Script for ClaimHandle {
+        fn name(&self) -> &str {
+            "ClaimHandle"
+        }
+        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+            *self.0.lock().unwrap() += 1;
+        }
+        fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
+            RandomClaim::Handle
+        }
+    }
+
+    #[test]
+    fn handle_claim_keeps_ticks_and_blocks_host_talk() {
+        let count = Arc::new(Mutex::new(0u32));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_compiled(Box::new(ClaimHandle(Arc::clone(&count))))
+            .unwrap();
+        // The production knock arm: ask the running slot script.
+        let knock_scripts = Arc::clone(&scripts);
+        let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
+            knock_scripts
+                .lock()
+                .unwrap()
+                .get_mut("alice")
+                .map(|slot| slot.on_random(ev))
+                .unwrap_or(RandomClaim::Host)
+        };
+
+        // The guardian's rising edge knocks; the script claims the event,
+        // so no Talk-to goes out and the slot is not held.
+        let mut c = guardian_client();
+        plant_npc(&mut c, 0, "Genie", Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = GuardRec::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+        assert_eq!(status.claim, RandomClaim::Handle);
+        assert!(!status.hold, "a Handle claim never holds");
+        assert!(drv.menus.is_empty(), "no Talk-to under a Handle claim");
+        assert!(drv.actions.is_empty());
+
+        // And the unheld slot still gets its game tick (the script's
+        // `Handle` claim means the host leaves the random to it).
+        let (navs, world) = empty_nav();
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        script_observe(
+            &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
+            &world, false,
+        );
+        assert_eq!(*count.lock().unwrap(), 1, "a Handle claim still ticks");
+    }
+
+    #[test]
+    fn after_genie_gone_lamp_in_inv_detects_without_hold() {
+        let mut c = guardian_client();
+        plant_npc(&mut c, 0, "Genie", Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = GuardRec::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: the host talks to the genie and holds the slot.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.handling);
+        assert!(status.hold);
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 2: the genie is gone and the lamp sits in the inventory:
+        // the handle lifts and the lamp is inert XP — no hold.
+        drv.menus.clear();
+        drv.actions.clear();
+        c.npc[0] = None;
+        c.npc_count = 0;
+        plant_inv_item(&mut c, 2528); // Lamp (the genie lamp) obj id
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(api::random::RandomKind::Lamp));
+        assert_eq!(status.name.as_deref(), Some("lamp"));
+        assert!(!status.hold, "leftover lamp must not keep the slot held");
+        assert!(drv.menus.is_empty(), "a lamp is never talked to");
     }
 
     /// Test script that queues one walk to a (mutable) target each tick and
@@ -3107,6 +3450,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         ));
         assert_eq!(
             *walk_ret.lock().unwrap(),
@@ -3135,6 +3479,7 @@ mod tests {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
         );
         assert_eq!(d.walked, Some((4, 0)), "the hop targets the dest tile");
         {
@@ -3155,6 +3500,7 @@ mod tests {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
         );
         assert_eq!(queued(&navs), None, "arrival clears the armed route");
         {
@@ -3370,6 +3716,7 @@ mod tests {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
         );
         assert_eq!(d.held_ops, 1, "one OP_HELD4 rub sent");
         assert!(queued(&navs).is_some(), "the route stays armed");
@@ -3386,6 +3733,7 @@ mod tests {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
         );
         assert_eq!(
             d.if_button_components,
@@ -3481,6 +3829,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         ));
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
@@ -3575,6 +3924,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         ));
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
@@ -3618,6 +3968,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         ));
         assert_eq!(
             *walk_ret.lock().unwrap(),
@@ -3662,6 +4013,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         ));
         assert_eq!(*walk_ret.lock().unwrap(), Some(true), "request queued");
         thread::sleep(Duration::from_millis(20));
@@ -3689,7 +4041,7 @@ mod tests {
         // No observed tile: synchronous refusal before any world lookup.
         script_observe(
             &mut d, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
-            &world,
+            &world, false,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no here → refuse");
 
@@ -3709,6 +4061,7 @@ mod tests {
             &cheats,
             &navs,
             &no_world,
+            false,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(false), "no world → refuse");
 
@@ -3731,6 +4084,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         );
         assert_eq!(
             *walk_ret.lock().unwrap(),
@@ -3757,6 +4111,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         );
         assert_eq!(*walk_ret.lock().unwrap(), Some(true));
         assert!(
@@ -3787,6 +4142,7 @@ mod tests {
             &cheats,
             &navs,
             &world,
+            false,
         );
         assert_eq!(
             *walk_ret.lock().unwrap(),

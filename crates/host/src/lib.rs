@@ -111,11 +111,13 @@ impl Host {
             Self::run_client(
                 &mut client,
                 &profile.username,
+                profile.settings,
                 None,
                 None,
                 None,
-                |_, _, _| false,
+                |_, _, _, _| false,
                 |_| false,
+                |_| RandomClaim::Host,
             );
         })
     }
@@ -132,8 +134,14 @@ impl Host {
     /// drain); think (auto-run) reads
     /// energy from the snapshot stat view when it has been rebuilt. The
     /// third observe arg is the count of accepted auto-run `set_run(true)`
-    /// sends (from the previous tick); observe's return is whether the slot
-    /// has script/cheat/nav work, which keeps a busy slot on the frame loop.
+    /// sends (from the previous tick); the fourth is the [`RandomStatus`]
+    /// the previous frame's guardian published — the observe copies it
+    /// onto the slot status row and gates script tick / follow on its
+    /// hold. Observe's return is whether the slot has script/cheat/nav
+    /// work, which keeps a busy slot on the frame loop. `settings` is the
+    /// slot's vault profile settings (the guardian's toggle); `knock` is
+    /// the script's rising-edge `on_random` arm (`Host` when the slot has
+    /// no scripts).
     ///
     /// The scheduler is event-driven: a slot that captures input, is still
     /// loading (TV static), or runs full-rate TV keeps the fixed 20 ms
@@ -147,20 +155,34 @@ impl Host {
     /// is the first thing that drains it. A wake that consumed no bytes
     /// (EOF, partial packet) skips the socket on the next park so it cannot
     /// busy-spin.
-    pub fn run_client<F, P>(
+    // The pub surface threads the slot's shared handles plus the guardian
+    // status/knock; a context struct would churn every call site, so the
+    // arg count is allowed on purpose (same as host-play's observe).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_client<F, P, K>(
         client: &mut Client,
         username: &str,
+        settings: ProfileSettings,
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
         mut observe: F,
         mut probe: P,
+        mut knock: K,
     ) where
-        F: FnMut(&mut Client, &str, u32) -> bool,
+        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
         P: FnMut(&mut Client) -> bool,
+        K: FnMut(&DetectedRandom) -> RandomClaim,
     {
-        let mut slot = SlotLoop::new();
+        let mut slot = SlotLoop {
+            settings,
+            ..SlotLoop::new()
+        };
         let mut run_sends = 0u32;
+        // The last published random-event status: `client_frame` returns it
+        // and the next observe copies it onto the slot's status row and
+        // gates script tick / follow on its hold.
+        let mut status = RandomStatus::default();
         // Prime busy so the first pass runs one tick: the cadence decision
         // must see the observe hook's draw/capture/busy mirror, which only
         // exists after a tick has run.
@@ -176,7 +198,7 @@ impl Host {
             if frame_cadence(client, input.as_deref()) || busy {
                 socket_stalled = false;
                 let start = std::time::Instant::now();
-                busy = Self::client_tick(
+                let (new_busy, new_status) = Self::client_tick(
                     client,
                     &mut slot,
                     username,
@@ -184,7 +206,11 @@ impl Host {
                     mailbox.as_deref(),
                     &mut run_sends,
                     &mut observe,
+                    Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
+                    &status,
                 );
+                busy = new_busy;
+                status = new_status;
                 // Java GameShell sleeps the leftover of 20 ms *after* the work.
                 // A fixed sleep *before* the tick made the period 20 ms + Pix3D
                 // (slow picture, extra idle). If the tick overruns, skip sleep.
@@ -206,7 +232,7 @@ impl Host {
                 IDLE_PARK_MS
             };
             let reason = park(client, ctl.as_deref(), !socket_stalled, timeout);
-            busy = Self::client_tick(
+            let (new_busy, new_status) = Self::client_tick(
                 client,
                 &mut slot,
                 username,
@@ -214,7 +240,11 @@ impl Host {
                 mailbox.as_deref(),
                 &mut run_sends,
                 &mut observe,
+                Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
+                &status,
             );
+            busy = new_busy;
+            status = new_status;
             if stream_bytes(client) != before {
                 socket_stalled = false;
             } else if reason == ParkWake::Socket {
@@ -225,9 +255,13 @@ impl Host {
 
     /// One host tick: `observe` first (the panel latches slot state), then
     /// one [`Host::client_frame`]. Unfocused / renderer-off slots skip the
-    /// paint on this tick, not the next. Returns observe's busy flag (the
-    /// slot has script/cheat/nav work and must not be parked).
+    /// paint on this tick, not the next. The observe hook sees the random
+    /// status the previous frame's guardian published (`prev_status`) —
+    /// it copies it onto the slot status row and gates script tick /
+    /// follow on its hold. Returns observe's busy flag and the fresh
+    /// [`RandomStatus`] this frame's guardian published.
     #[allow(private_interfaces)]
+    #[allow(clippy::too_many_arguments)]
     pub fn client_tick<F>(
         client: &mut Client,
         slot: &mut SlotLoop,
@@ -236,13 +270,15 @@ impl Host {
         mailbox: Option<&FrameBuf>,
         run_sends: &mut u32,
         observe: &mut F,
-    ) -> bool
+        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        prev_status: &RandomStatus,
+    ) -> (bool, RandomStatus)
     where
-        F: FnMut(&mut Client, &str, u32) -> bool,
+        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
     {
-        let busy = observe(client, username, *run_sends);
-        Self::client_frame(client, slot, username, input, mailbox, run_sends);
-        busy
+        let busy = observe(client, username, *run_sends, prev_status);
+        let status = Self::client_frame(client, slot, username, input, mailbox, run_sends, knock);
+        (busy, status)
     }
 
     /// One 20 ms frame: drain optional input into the shell, latch the
@@ -256,7 +292,10 @@ impl Host {
     /// `Texture` binds / reads back at the panel, the `PixMap` packs via
     /// [`FrameBuf::snapshot`]). `run_sends` is
     /// overwritten with the slot's running count of accepted auto-run
-    /// sends.
+    /// sends. Returns the [`RandomStatus`] the guardian published this
+    /// frame (the pump threads it back into the next observe). `knock` is
+    /// the script's rising-edge `on_random` arm; `None` (no scripts on
+    /// the slot) keeps the claim Host.
     /// `SlotLoop` stays module-private (tests live in this module); the
     /// pub surface exists so `run_client` and the tests share the frame.
     #[allow(private_interfaces)]
@@ -267,7 +306,8 @@ impl Host {
         input: Option<&SlotInput>,
         mailbox: Option<&FrameBuf>,
         run_sends: &mut u32,
-    ) {
+        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+    ) -> RandomStatus {
         if let Some(inp) = input {
             inp.drain(&mut client.shell);
         }
@@ -378,16 +418,17 @@ impl Host {
         slot.log_n = slot.log_n.wrapping_add(1);
         let result = slot.after_drain(client);
         // Random-event guardian (spec pump placement): the snapshot is
-        // fresh after the drain. Task 4 runs default-on settings; Task 5
-        // passes the slot's real `ProfileSettings` from host-play and
-        // publishes the returned `RandomStatus` on the status row.
+        // fresh after the drain. `slot.settings` is the slot's real
+        // `ProfileSettings` (wired by `run_client` from host-play); the
+        // returned `RandomStatus` rides the pump back into the next
+        // observe, which copies it onto the slot status row.
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let _status =
-            slot.guardian
-                .tick(client, &slot.snapshot, &ProfileSettings::default(), now_ms);
+        let status = slot
+            .guardian
+            .tick(client, &slot.snapshot, &slot.settings, now_ms, knock);
         if should_emit_tick(result.player_info) {
             slot.tick_n = slot.tick_n.wrapping_add(1);
         }
@@ -412,6 +453,7 @@ impl Host {
             }
         }
         *run_sends = slot.run_sends;
+        status
     }
 }
 
@@ -578,8 +620,11 @@ struct SlotLoop {
     snapshot: GameSnapshot,
     run_on: bool,
     run_sends: u32,
-    /// Random-event guardian (Task 4 act/hold; Task 5 freezes follow and
-    /// passes the real `ProfileSettings` from host-play).
+    /// The slot's real `ProfileSettings` (wired once by `run_client` from
+    /// the vault profile; the guardian's toggle reads it).
+    settings: ProfileSettings,
+    /// Random-event guardian (act/hold; the trapped-kind hold and the
+    /// `on_random` knock live here).
     guardian: Guardian,
     renderer: Option<Renderer>,
     /// The `prefer_cpu` request the attached head was built with, so a
@@ -616,6 +661,7 @@ impl SlotLoop {
             snapshot: GameSnapshot::new(),
             run_on: false,
             run_sends: 0,
+            settings: ProfileSettings::default(),
             guardian: Guardian::new(),
             renderer: None,
             renderer_prefer_cpu: None,
@@ -1025,10 +1071,10 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         inp.set_enabled(false);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
         assert_eq!(c.shell.mouse_click_button, 0);
         inp.set_enabled(true);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
         assert_eq!(c.shell.mouse_click_button, 1);
     }
 
@@ -1047,14 +1093,14 @@ mod tests {
         let mut sends = 0u32;
         // Renderer off: no frame is rendered and nothing is stored.
         c.set_draw(false);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert!(buf.snapshot().is_empty(), "draw off must not store pixels");
         // Renderer on: the first (rising-edge) tick paints a full applet
         // into the buffer (with no title assets in this test the paint is
         // empty, but the frame still packs a full applet; the non-zero
         // paint is proven live by the panel_view e2e).
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(
             buf.snapshot().len(),
             (client::client::APPLET_W * client::client::APPLET_H) as usize
@@ -1076,7 +1122,7 @@ mod tests {
         // check is slot-local (not the global `Renderer::constructed()`
         // counter, which other tests' renderers bump concurrently).
         for _ in 0..3 {
-            Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+            Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         }
         assert!(
             slot.renderer.is_none(),
@@ -1100,15 +1146,15 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(slot.renderer.is_some());
         let loop_after_on = slot.loop_ns;
         c.set_draw(false);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(slot.renderer.is_none(), "unheaded must drop headed data");
         assert!(slot.loop_ns > loop_after_on, "sim still ticks");
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(slot.renderer.is_some(), "attach at any time");
     }
 
@@ -1128,13 +1174,13 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert!(buf.take().is_some(), "a paint tick stores a frame");
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert!(slot.renderer.is_some());
         c.set_draw(false);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert!(slot.renderer.is_none());
         assert!(
             buf.take().is_none(),
@@ -1185,7 +1231,7 @@ mod tests {
             0x99,
             0xaa,
         );
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(
             c.world
                 .square(0, 2, 2)
@@ -1197,7 +1243,7 @@ mod tests {
         // Draw off drops the head and the headed mesh; the stamp survives
         // and the next attach is re-armed.
         c.set_draw(false);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(slot.renderer.is_none());
         let sq = c.world.square(0, 2, 2).expect("stamped tile");
         assert!(sq.ground.is_none(), "draw off must drop the overlay mesh");
@@ -1224,7 +1270,7 @@ mod tests {
         c.ingame = true;
         c.scene_state = 2;
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(slot.renderer.is_some());
         assert!(
             c.world
@@ -1278,10 +1324,10 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
         let uid = c.login_uid;
         inp.set_prefer_cpu(true);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
         assert_eq!(c.login_uid, uid);
         assert!(slot.renderer.is_some());
         // Under `force_cpu_backend` both preferences land on
@@ -1314,11 +1360,11 @@ mod tests {
         let mut sends = 0u32;
         c.set_draw(true);
         assert!(c.config.lowmem, "cfg() spawns lowmem");
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert_eq!(slot.renderer_lowmem, Some(true));
         let uid = c.login_uid;
         c.set_lowmem(false);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert_eq!(c.login_uid, uid);
         assert!(slot.renderer.is_some());
         assert_eq!(
@@ -1340,7 +1386,7 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(false);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert_eq!(slot.skip_n, 1);
         assert_eq!(slot.paint_n, 0);
         assert!(slot.loop_ns > 0);
@@ -1359,7 +1405,7 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert_eq!(slot.paint_n, 1);
         assert_eq!(slot.skip_n, 0);
     }
@@ -1387,7 +1433,7 @@ mod tests {
         // pins the render dispatch to `mainredraw`.
         assert_eq!(c.minimap_level, -1);
         assert_ne!(c.minimap_level, c.minusedlevel);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(
             c.minimap_level, c.minusedlevel,
             "mainredraw must run the check_minimap render half"
@@ -1424,10 +1470,12 @@ mod tests {
             None,
             Some(&buf),
             &mut sends,
-            &mut |_, _, _| {
+            &mut |_, _, _, _| {
                 observed.store(true, Ordering::Relaxed);
                 false
             },
+            None,
+            &RandomStatus::default(),
         );
         assert!(observed.load(Ordering::Relaxed));
         assert_eq!(
@@ -1443,7 +1491,9 @@ mod tests {
             None,
             Some(&buf),
             &mut sends,
-            &mut |_, _, _| false,
+            &mut |_, _, _, _| false,
+            None,
+            &RandomStatus::default(),
         );
         assert!(!c.draw);
         assert_eq!(
@@ -1524,14 +1574,14 @@ mod tests {
         c.set_draw(true);
         c.ingame = true;
         c.scene_state = 2;
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(buf.generation(), 1);
         // A fast second tick (the parked slot draining a burst) must not
         // repaint before a wall-clock second elapses.
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(buf.generation(), 1);
         thread::sleep(Duration::from_secs(1) + Duration::from_millis(50));
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(buf.generation(), 2, "watch-only repaints after 1 s");
     }
 
@@ -1555,9 +1605,25 @@ mod tests {
         inp.set_full_rate(true);
         c.ingame = true;
         c.scene_state = 2;
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "t",
+            Some(&inp),
+            Some(&buf),
+            &mut sends,
+            None,
+        );
         assert_eq!(buf.generation(), 1);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "t",
+            Some(&inp),
+            Some(&buf),
+            &mut sends,
+            None,
+        );
         assert_eq!(
             buf.generation(),
             2,
@@ -1565,7 +1631,15 @@ mod tests {
         );
         // Clearing the latch drops back to the 1 fps watch cadence.
         inp.set_full_rate(false);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "t",
+            Some(&inp),
+            Some(&buf),
+            &mut sends,
+            None,
+        );
         assert_eq!(
             buf.generation(),
             2,
@@ -1589,9 +1663,9 @@ mod tests {
         c.set_draw(true);
         c.ingame = true;
         c.scene_state = 1;
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(buf.generation(), 1);
-        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
         assert_eq!(
             buf.generation(),
             2,
@@ -1615,8 +1689,24 @@ mod tests {
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
         c.set_draw(true);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
-        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), Some(&buf), &mut sends);
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "t",
+            Some(&inp),
+            Some(&buf),
+            &mut sends,
+            None,
+        );
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "t",
+            Some(&inp),
+            Some(&buf),
+            &mut sends,
+            None,
+        );
         assert_eq!(buf.generation(), 2);
     }
 
@@ -1664,16 +1754,18 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "idle",
+                ProfileSettings::default(),
                 None,
                 None,
                 Some(Arc::new(park)),
-                |c, _, _| {
+                |c, _, _, _| {
                     let mut v = mirror.lock().unwrap();
                     v.0 = c.loop_cycle;
                     v.1 = c.reboot_timer;
                     false
                 },
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
             done_tx.send(()).unwrap();
         });
@@ -1731,14 +1823,16 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "focused",
+                ProfileSettings::default(),
                 Some(inp),
                 None,
                 None,
-                |c, _, _| {
+                |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false
                 },
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
         });
         // Gate on the count, not a fixed sleep: a parked slot (600 ms
@@ -1786,14 +1880,16 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "scripted",
+                ProfileSettings::default(),
                 None,
                 None,
                 None,
-                |c, _, _| {
+                |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     true // script/cheat/nav work due: never park
                 },
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
         });
         // Same gate as the focused test: ≥12 ticks in 5 s is unreachable
@@ -1837,14 +1933,16 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "sidecar",
+                ProfileSettings::default(),
                 None,
                 Some(buf2),
                 Some(Arc::new(park)),
-                |c, _, _| {
+                |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false
                 },
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
         });
         // The rising edge paints the first frame, then the slot parks.
@@ -1915,11 +2013,13 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "parked",
+                ProfileSettings::default(),
                 None,
                 None,
                 Some(Arc::new(park)),
-                |_, _, _| false,
+                |_, _, _, _| false,
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
             done_tx.send(()).unwrap();
         });
@@ -1958,10 +2058,11 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "kicked",
+                ProfileSettings::default(),
                 Some(Arc::clone(&inp)),
                 None,
                 Some(Arc::new(park)),
-                |c, _, _| {
+                |c, _, _, _| {
                     let on = want2.load(Ordering::Relaxed);
                     c.set_draw(on);
                     inp.set_enabled(on);
@@ -1969,6 +2070,7 @@ mod tests {
                     false
                 },
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
         });
         // Opening tick, then parked (draw off): a quiet window must not
@@ -2026,14 +2128,16 @@ mod tests {
             Host::run_client(
                 &mut c,
                 "kicked-idle",
+                ProfileSettings::default(),
                 None,
                 None,
                 Some(Arc::new(park)),
-                |c, _, _| {
+                |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false // stays idle after the kick
                 },
                 |_| stop2.load(Ordering::Relaxed),
+                |_| RandomClaim::Host,
             );
             done_tx.send(()).unwrap();
         });
@@ -2113,7 +2217,7 @@ mod tests {
 
         let mut slot = SlotLoop::new();
         let mut sends = 0u32;
-        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends);
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(
             slot.guardian.in_flight,
             "client_frame must run the guardian on a dialog NPC"

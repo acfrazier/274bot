@@ -10,7 +10,7 @@ pub mod ported;
 pub mod registry;
 pub mod slot;
 
-pub use ctx::{FindOptions, Script, ScriptCtx};
+pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
 pub use load::{default_js_store, detect_shape, JsCard, JsLibrary, LoadShape, ScriptSel};
 pub use params::defaults;
 pub use registry::{compiled_ids, factory, is_whale, CompiledId};

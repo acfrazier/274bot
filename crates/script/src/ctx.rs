@@ -3,6 +3,7 @@
 //! touch `client` or the world.
 
 use api::interact::Driver;
+pub use api::random::{DetectedRandom, RandomClaim};
 
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
 /// off, mirroring `nav::router::FindOptions` — the `script` crate
@@ -23,6 +24,14 @@ pub trait Script: Send {
     /// Teardown hook, run once by the slot on `stop`, before the instance
     /// is dropped.
     fn on_stop(&mut self) {}
+    /// Random-event knock: whether this script claims a detected random
+    /// event for itself. Called at most once per rising edge of a detected
+    /// event, only while the slot is Running. Default `Host` — the host
+    /// guardian talks it through and holds the slot. `Handle` means ticks
+    /// and follow keep running and the host does not act.
+    fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
+        RandomClaim::Host
+    }
 }
 
 /// What one observed game-tick gives a script: the send-side driver, the

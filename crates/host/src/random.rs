@@ -1,8 +1,9 @@
 //! Random-event detection over one `GameSnapshot` (guardian spec
 //! `2026-09-01-random-event-guardian-design.md`, the Detect / Ours / Kinds
 //! locks). Detect is snapshot-only and stateless apart from the
-//! caller-owned [`CooldownMap`]; act / hold / dialog and the wrong-talk
-//! 45 s cooldown writes are Task 4.
+//! caller-owned [`CooldownMap`]; act / hold / dialog, the wrong-talk
+//! 45 s cooldown writes, the trapped-kind hold and the rising-edge
+//! `on_random` knock live in [`Guardian`].
 
 use std::collections::HashMap;
 
@@ -11,29 +12,10 @@ use api::query::npc_by_index;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, NpcView};
 use vault::ProfileSettings;
 
-/// The kind of random event one detection found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RandomKind {
-    Dialog,
-    Pick,
-    Evade,
-    Maze,
-    Mime,
-    Box,
-    Lamp,
-    Hazard,
-    LostTool,
-    LostGear,
-}
-
-/// One detected random event on the current snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DetectedRandom {
-    pub kind: RandomKind,
-    pub name: String,
-    pub ours: bool,
-    pub npc_index: Option<usize>,
-}
+// The detect/claim contracts live in `api::random` so `script` can answer
+// the `on_random` knock without depending on `host` (the same types are
+// `host::RandomClaim` / `host::DetectedRandom` / `host::RandomKind` here).
+pub use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
 /// NPC slot index → cooldown expiry `now_ms`: the slot is skipped while
 /// `now_ms < value`. Task 4 stores `now_ms + 45_000` on a wrong-talk.
@@ -298,8 +280,8 @@ fn item_named(name: Option<&str>, want: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Guardian (the act/hold-while-handling half; skip-tick/follow freeze and
-// the `on_random` knock are Task 5). One instance per slot.
+// Guardian (the act/hold-while-handling half; the trapped-kind hold and
+// the `on_random` knock fire here). One instance per slot.
 // ---------------------------------------------------------------------------
 
 /// The dialog-continue ceiling (rs2b0t `MAX_DIALOGUE_STEPS`).
@@ -311,12 +293,11 @@ const WRONG_TALK_COOLDOWN_MS: u64 = 45_000;
 /// Chat markers of a failed Talk-to: the NPC is not the event's owner.
 const WRONG_TALK_MARKERS: &[&str] = &["trying to talk to", "It's not here for you."];
 
-/// Who handles a detected random event. Task 5 wires `Script::on_random`;
-/// nothing overrides `Host` this tag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RandomClaim {
-    Host,
-    Handle,
+/// Trapped kinds: the player is stuck and the host must freeze the slot
+/// (maze / mime / strange box). **Not** `lamp`: Genie Talk-to is the
+/// solve, and a leftover lamp is inert XP until 0.1.5.
+fn is_trapped(kind: RandomKind) -> bool {
+    matches!(kind, RandomKind::Maze | RandomKind::Mime | RandomKind::Box)
 }
 
 /// The chrome contract both views bind (guardian spec `RandomStatus`):
@@ -329,13 +310,29 @@ pub struct RandomStatus {
     pub ours: bool,
     /// A dialog handle is in flight (the host is talking it through).
     pub handling: bool,
-    /// The slot must skip script tick / follow (Task 5 enforces the
-    /// freeze). Task 4 fills the dialog-in-flight arm only.
+    /// The slot must skip script tick / follow (host-play enforces the
+    /// freeze). A dialog handle in flight or a trapped kind holds, while
+    /// the claim is Host and the toggle is on.
     pub hold: bool,
     pub toggle: bool,
     pub claim: RandomClaim,
     /// The shown NPC slot is in the 45 s wrong-talk bin.
     pub cooldown: bool,
+}
+
+impl Default for RandomStatus {
+    fn default() -> Self {
+        Self {
+            kind: None,
+            name: None,
+            ours: false,
+            handling: false,
+            hold: false,
+            toggle: false,
+            claim: RandomClaim::Host,
+            cooldown: false,
+        }
+    }
 }
 
 /// Per-slot random-event guardian state.
@@ -346,10 +343,12 @@ pub struct Guardian {
     pub last_tick: u64,
     /// NPC slot → wrong-talk cooldown expiry `now_ms`.
     pub cooldown: CooldownMap,
-    /// Signature (kind+name) of the last handled event (the Task 5
-    /// rising-edge `on_random` key).
+    /// Signature (kind+name) of the last detected event: the rising-edge
+    /// key the `on_random` knock fires on once per new event.
     pub sig: Option<String>,
-    /// Who handles the current event (always `Host` until Task 5).
+    /// Who handles the current event. Filled by the rising-edge knock
+    /// (host-play's script); `Host` when no event, no script, or the
+    /// script did not claim it.
     pub claim: RandomClaim,
     /// The NPC slot the in-flight dialog targets (the cooldown key).
     in_flight_index: Option<usize>,
@@ -388,13 +387,18 @@ impl Guardian {
     /// [`MAX_CONTINUES`] — the continue is keyed to the in-flight handle,
     /// not to a fresh detect, so a despawned genie cannot stall the chat.
     /// A wrong-talk chat line bins that NPC slot for 45 s. Toggle off:
-    /// never act, never hold, still detect+publish.
+    /// never act, never hold, still detect+publish. `knock` is the
+    /// rising-edge `on_random` arm: once per detected event (kind+name
+    /// signature), when the caller supplies it, the script's claim is
+    /// recorded and gates act + hold (`Host` claims act and hold; a
+    /// `Handle` claim lets the script run untouched).
     pub fn tick<D: Driver>(
         &mut self,
         driver: &mut D,
         snap: &GameSnapshot,
         settings: &ProfileSettings,
         now_ms: u64,
+        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
@@ -426,6 +430,17 @@ impl Guardian {
             if self.in_flight && self.dialog_done(snap) {
                 self.clear_handle();
             }
+            // Rising-edge knock: ask the running script once per detected
+            // event. A vanished event resets the claim to Host (the host
+            // owns whatever appears next). No knock supplied → Host.
+            let sig = ev.as_ref().map(|e| format!("{:?}:{}", e.kind, e.name));
+            if sig != self.sig {
+                self.sig = sig;
+                self.claim = match (&ev, knock) {
+                    (Some(ev), Some(knock)) => knock(ev),
+                    _ => RandomClaim::Host,
+                };
+            }
         }
 
         if fresh && active && settings.random_events && self.claim == RandomClaim::Host {
@@ -442,7 +457,9 @@ impl Guardian {
             name: ev.as_ref().map(|e| e.name.clone()),
             ours: ev.as_ref().map(|e| e.ours).unwrap_or(false),
             handling: self.in_flight,
-            hold: self.in_flight && settings.random_events && self.claim == RandomClaim::Host,
+            hold: settings.random_events
+                && self.claim == RandomClaim::Host
+                && (self.in_flight || ev.as_ref().is_some_and(|e| is_trapped(e.kind))),
             toggle: settings.random_events,
             claim: self.claim,
             cooldown,
@@ -502,7 +519,6 @@ impl Guardian {
                 self.in_flight = true;
                 self.in_flight_index = Some(index);
                 self.continues = 0;
-                self.sig = Some(format!("{:?}:{}", ev.kind, ev.name));
             }
             SendResult::Refused { .. } => {}
         }
@@ -877,7 +893,7 @@ mod tests {
 
         // Tick 1: our old man is a dialog event → Talk-to.
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 1_000);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000, None);
         assert_eq!(status.kind, Some(RandomKind::Dialog));
         assert_eq!(status.name.as_deref(), Some("mysterious old man"));
         assert!(status.ours);
@@ -897,7 +913,7 @@ mod tests {
         drv.actions.clear();
         open_chat(&mut c);
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 1_000);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000, None);
         assert!(status.handling);
         assert!(status.hold);
         assert_eq!(
@@ -923,7 +939,7 @@ mod tests {
         let mut snap = GameSnapshot::new();
 
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 0);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert!(status.handling);
         assert_eq!(
             drv.menus,
@@ -946,7 +962,7 @@ mod tests {
 
         // Tick 1: talk-to the genie.
         tick_at(&mut c, &mut snap);
-        g.tick(&mut drv, &snap, &settings, 0);
+        g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(drv.actions, vec![0]);
 
         // Tick 2: the chat opens → continue.
@@ -954,7 +970,7 @@ mod tests {
         drv.actions.clear();
         open_chat(&mut c);
         tick_at(&mut c, &mut snap);
-        g.tick(&mut drv, &snap, &settings, 0);
+        g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(drv.actions, vec![0]);
 
         // Tick 3: the genie despawns while the chat is still open. detect
@@ -964,7 +980,7 @@ mod tests {
         c.npc[0] = None;
         c.npc_count = 0;
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 0);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert!(status.handling, "the open dialog keeps the handle");
         assert_eq!(
             drv.menus,
@@ -989,7 +1005,7 @@ mod tests {
         let mut snap = GameSnapshot::new();
 
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 0);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert!(drv.menus.is_empty(), "toggle off: no Talk-to");
         assert!(drv.actions.is_empty());
         assert_eq!(status.kind, Some(RandomKind::Dialog), "detect still fills");
@@ -1013,7 +1029,7 @@ mod tests {
 
         // Tick 1: talk-to the genie.
         tick_at(&mut c, &mut snap);
-        g.tick(&mut drv, &snap, &settings, 0);
+        g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(drv.actions, vec![0]);
 
         // Tick 2: the chat rejects the talk → the slot is binned, and the
@@ -1022,25 +1038,197 @@ mod tests {
         drv.actions.clear();
         c.add_chat(0, "It's not here for you.", "");
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 1_000);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000, None);
         assert!(drv.actions.is_empty(), "wrong talk must not keep handling");
         assert!(status.cooldown, "the rejected slot is in the 45s bin");
 
         // Tick 3: the binned slot is skipped by detect — no send.
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 2_000);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
         assert!(drv.actions.is_empty());
         assert_eq!(status.kind, None);
 
         // A second genie on another slot is still talk-to-able.
         plant_npc(&mut c, 1, "Genie", -1, Some("Greetings Test!"));
         tick_at(&mut c, &mut snap);
-        g.tick(&mut drv, &snap, &settings, 3_000);
+        g.tick(&mut drv, &snap, &settings, 3_000, None);
         assert_eq!(
             drv.menus,
             vec![(0, MiniMenuAction::OP_NPC1, 1, 0, 0)],
             "an un-binned slot still gets Talk-to"
         );
         assert_eq!(drv.actions, vec![0]);
+    }
+
+    // --- Task 5: trapped-kind hold, lamp, and the on_random knock ---
+
+    #[test]
+    fn maze_square_holds_without_any_send() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 45 * 64, 71 * 64);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Maze));
+        assert!(status.hold, "a trapped kind holds the slot");
+        assert!(drv.menus.is_empty(), "trapped kinds get no act");
+        assert!(drv.actions.is_empty());
+
+        // Toggle off: still detected, but never held.
+        let settings = ProfileSettings {
+            random_events: false,
+            ..ProfileSettings::default()
+        };
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Maze));
+        assert!(!status.hold, "toggle off never holds");
+    }
+
+    #[test]
+    fn lamp_in_inv_detects_but_does_not_hold() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_obj(&mut c, LAMP_OBJ);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Lamp));
+        assert_eq!(status.name.as_deref(), Some("lamp"));
+        assert!(!status.hold, "lamp is inert XP, not a trap");
+    }
+
+    /// Plant obj `obj_id` into the inventory TYPE_INV iface (the shape
+    /// `detect` reads the inv view from).
+    fn plant_inv_obj(c: &mut Client, obj_id: i32) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= obj_id as usize {
+                cache.objs.push(client::config::ObjType::default());
+            }
+        }
+        c.side_icon[3] = 300;
+        c.set_iface(
+            300,
+            IfType {
+                id: 300,
+                layer_id: 300,
+                children: Some(vec![301]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            301,
+            IfType {
+                id: 301,
+                layer_id: 300,
+                r#type: ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![obj_id + 1]),
+                link_obj_number: Some(vec![1]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    }
+
+    #[test]
+    fn on_random_knocks_once_per_event_edge() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        let knocks = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+
+        // Tick 1: the rising edge knocks the script.
+        tick_at(&mut c, &mut snap);
+        {
+            let mut knock = |_: &DetectedRandom| {
+                *knocks.lock().unwrap() += 1;
+                RandomClaim::Handle
+            };
+            let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+            assert_eq!(*knocks.lock().unwrap(), 1, "one knock on the edge");
+            assert_eq!(status.claim, RandomClaim::Handle);
+            assert!(!status.hold, "a Handle claim never holds");
+            assert!(drv.menus.is_empty(), "a Handle claim blocks Talk-to");
+            assert!(drv.actions.is_empty());
+        }
+
+        // Tick 2: the same event persists → no second knock, the claim
+        // sticks.
+        tick_at(&mut c, &mut snap);
+        {
+            let mut knock = |_: &DetectedRandom| {
+                *knocks.lock().unwrap() += 1;
+                RandomClaim::Handle
+            };
+            let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+            assert_eq!(
+                *knocks.lock().unwrap(),
+                1,
+                "a persisting event must not re-knock"
+            );
+            assert_eq!(status.claim, RandomClaim::Handle);
+        }
+
+        // Tick 3: the event vanishes → the claim resets to Host.
+        c.npc[0] = None;
+        c.npc_count = 0;
+        tick_at(&mut c, &mut snap);
+        {
+            let mut knock = |_: &DetectedRandom| {
+                *knocks.lock().unwrap() += 1;
+                RandomClaim::Handle
+            };
+            let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+            assert_eq!(status.kind, None);
+            assert_eq!(
+                status.claim,
+                RandomClaim::Host,
+                "a vanished event hands the claim back to the host"
+            );
+            assert_eq!(*knocks.lock().unwrap(), 1, "no event → no knock");
+        }
+    }
+
+    #[test]
+    fn no_knock_source_keeps_host_claim_and_talks() {
+        // No knock supplied (host-owned slot): the claim stays Host and a
+        // dialog event still talks.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(drv.menus, vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)]);
+        assert_eq!(drv.actions, vec![0]);
+        assert!(status.handling);
+        assert!(status.hold);
     }
 }

@@ -8,6 +8,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use crate::ctx::{Script, ScriptCtx};
 #[cfg(feature = "load")]
 use crate::load::{LoadIsolate, LoadShape};
+use api::random::{DetectedRandom, RandomClaim};
 
 /// Lifecycle of the script slot. `paused` covers both operator Pause and
 /// the not-`is_up` gate; `stopping` is the Load-join window (later task).
@@ -188,6 +189,22 @@ impl SlotScript {
         self.state
     }
 
+    /// The random-event knock: ask the running compiled script whether it
+    /// handles the detected event. Rising edge only (the guardian owns the
+    /// per-event signature); JS isolates always answer `Host` — no isolate
+    /// hook this tag. Idle / Paused / not-want-run slots answer `Host`
+    /// without touching the script.
+    pub fn on_random(&mut self, ev: &DetectedRandom) -> RandomClaim {
+        if self.state != RunState::Running || !self.want_run {
+            return RandomClaim::Host;
+        }
+        match &mut self.compiled {
+            Some(script) => script.on_random(ev),
+            // JS Load isolate: the knock has no JS arm this tag.
+            None => RandomClaim::Host,
+        }
+    }
+
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
@@ -237,6 +254,47 @@ mod tests {
             "noop"
         }
         fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
+    }
+
+    #[test]
+    fn on_random_defaults_to_host_and_override_claims_handle() {
+        use api::random::{DetectedRandom, RandomClaim, RandomKind};
+
+        struct ClaimHandle;
+        impl Script for ClaimHandle {
+            fn name(&self) -> &str {
+                "claim-handle"
+            }
+            fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
+            fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
+                RandomClaim::Handle
+            }
+        }
+
+        let ev = DetectedRandom {
+            kind: RandomKind::Dialog,
+            name: "genie".to_string(),
+            ours: true,
+            npc_index: Some(0),
+        };
+
+        // Default: Host.
+        let mut s = SlotScript::new();
+        s.start_compiled(Box::new(Noop)).unwrap();
+        assert_eq!(s.on_random(&ev), RandomClaim::Host);
+
+        // Override: Handle.
+        s.stop();
+        s.start_compiled(Box::new(ClaimHandle)).unwrap();
+        assert_eq!(s.on_random(&ev), RandomClaim::Handle);
+
+        // Paused: Host — the knock only fires while Running.
+        s.pause();
+        assert_eq!(s.on_random(&ev), RandomClaim::Host);
+
+        // Idle (stopped): Host.
+        s.stop();
+        assert_eq!(s.on_random(&ev), RandomClaim::Host);
     }
 
     #[test]
