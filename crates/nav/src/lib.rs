@@ -3,6 +3,7 @@
 //! arrival detection. Pack magic `274V`, version byte 7.
 
 pub mod arrival;
+pub mod camera;
 pub mod collision;
 pub mod essence;
 pub mod grid;
