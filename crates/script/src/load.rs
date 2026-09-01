@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
 
-use crate::registry::compiled_ids;
+use crate::rs2b0t_registry::{parse_registry, persist_rs2b0t_root_at, script_file_path};
 
 /// Which loader a JS source belongs to.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -108,8 +108,9 @@ struct StoreEntry {
 }
 
 /// The out-of-tree JS library: the picker cards for loaded files, persisted
-/// to `store`. Same `name` (file stem) overwrites; compiled picker ids are
-/// reserved; non-bot shapes are rejected at Load.
+/// to `store`, plus cards filled from the `$RS2B0T` registry. Same `name`
+/// (file stem or register name) overwrites; only WalkTo is reserved;
+/// non-bot shapes are rejected at Load.
 pub struct JsLibrary {
     store: PathBuf,
     cards: Vec<JsCard>,
@@ -158,9 +159,9 @@ impl JsLibrary {
 
     /// Register a JS bot from a filesystem path. Reads the source, derives
     /// the picker name from the file stem, classifies, rejects reserved
-    /// compiled ids, validates the source compiles in a throwaway Runtime
-    /// (dropped before this returns), then registers and persists. A second
-    /// load with the same name replaces the previous card.
+    /// ids (WalkTo only), validates the source compiles in a throwaway
+    /// Runtime (dropped before this returns), then registers and persists.
+    /// A second load with the same name replaces the previous card.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
         let source =
             std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
@@ -218,6 +219,46 @@ impl JsLibrary {
         &self.cards
     }
 
+    /// Fill the library from the `$RS2B0T` catalog: statically parse
+    /// `root/src/bot/scripts/index.ts` and register each script as a card
+    /// under its register name (which may differ from the folder). Sources
+    /// are read and classified only — no transpile, no V8 Runtime, no
+    /// isolate. Reserved names (WalkTo) and non-bot shapes are skipped.
+    /// The first successful parse persists `root` to `path_file` so later
+    /// boots find the catalog without `$RS2B0T` set. Returns the number of
+    /// cards registered.
+    pub fn register_rs2b0t(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
+        let index = crate::rs2b0t_registry::registry_index_path(root);
+        let index_ts = std::fs::read_to_string(&index)
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let cards = parse_registry(&index_ts)
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let mut n = 0;
+        for card in &cards {
+            if is_reserved(&card.name) {
+                continue;
+            }
+            let path = script_file_path(root, &card.rel_path);
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let shape = detect_shape(&source);
+            if shape == LoadShape::Reject {
+                continue;
+            }
+            self.cards.retain(|c| c.name != card.name);
+            self.cards.push(JsCard {
+                name: card.name.clone(),
+                path,
+                shape,
+                source,
+            });
+            n += 1;
+        }
+        let _ = persist_rs2b0t_root_at(root, path_file); // first successful parse records the path
+        Ok(n)
+    }
+
     /// The card registered under `name`, if any.
     pub fn get(&self, name: &str) -> Option<&JsCard> {
         self.cards.iter().find(|c| c.name == name)
@@ -249,9 +290,11 @@ impl JsLibrary {
     }
 }
 
-/// True when `name` collides with a compiled picker id (reserved at Load).
-fn is_reserved(name: &str) -> bool {
-    compiled_ids().iter().any(|id| id.0 == name) || name == "WalkTo"
+/// True when `name` collides with a reserved picker id. Only WalkTo is
+/// reserved: it is host nav, never a JS card. The abandoned rust-first
+/// smokes (`BoneBurier` …) are free again — the shim catalog Loads them.
+pub fn is_reserved(name: &str) -> bool {
+    name == "WalkTo"
 }
 
 /// A picker selection: a compiled id or a loaded JS card (by name).

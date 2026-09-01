@@ -155,16 +155,37 @@ fn js_library_same_name_replaces_path_and_source() {
     assert_eq!(stored[0]["path"], b.to_string_lossy().to_string());
 }
 
-// (3) A file named after a compiled picker id is reserved.
+// (3) WalkTo is the only reserved picker id: it is host nav, never a JS
+// card.
 #[test]
 fn js_library_reserved_walk_to_errors() {
     let dir = scratch("reserved");
     let path = write_file(&dir, "WalkTo.js", NATIVE_TICK);
     let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
 
-    let err = lib.load(&path).expect_err("WalkTo is a compiled picker id");
+    let err = lib.load(&path).expect_err("WalkTo is reserved at Load");
     assert!(err.contains("reserved"), "{err}");
     assert!(lib.cards().is_empty());
+}
+
+// (3b) Abandoned compiled smoke names are no longer reserved: a file named
+// BoneBurier.ts loads Ok under its stem.
+#[test]
+fn js_library_load_bone_burier_named_file_is_ok() {
+    let dir = scratch("bone_burier");
+    let path = write_file(&dir, "BoneBurier.ts", CLASS_TS_FIXTURE);
+    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+
+    let card = lib.load(&path).expect("BoneBurier.ts is not reserved");
+    assert_eq!(card.name, "BoneBurier");
+    assert_eq!(card.shape, LoadShape::CompatClass);
+    assert_eq!(lib.cards().len(), 1);
+
+    let native = write_file(&dir, "BoneBurier.js", NATIVE_TICK);
+    let card = lib.load(&native).expect("BoneBurier.js is not reserved");
+    assert_eq!(card.name, "BoneBurier");
+    assert_eq!(card.shape, LoadShape::NativeTick);
+    assert_eq!(lib.cards().len(), 1, "same name replaces the card");
 }
 
 // (4) Non-bot shapes and unreadable files are rejected at Load.

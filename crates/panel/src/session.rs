@@ -751,7 +751,7 @@ impl Session {
     /// Empty session: no vault, no slots, default `PlayOptions` (same engine
     /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
     pub fn new() -> Self {
-        Self {
+        let mut s = Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
                 renderer: true,
@@ -823,6 +823,25 @@ impl Session {
                 // spawn-time PlayOptions.mainland stays false.
                 mainland: false,
             },
+        };
+        s.fill_rs2b0t_cards();
+        s
+    }
+
+    /// First Load/Browse: when `$RS2B0T` (or a previously persisted root)
+    /// is available, parse the catalog registry and register its JS cards.
+    /// No V8 here — sources are read and classified only; the isolate is
+    /// spawned on Start.
+    fn fill_rs2b0t_cards(&mut self) {
+        if let Some(root) = script::rs2b0t_root() {
+            if let Err(e) = self
+                .js
+                .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
+            {
+                if host::debug_enabled() {
+                    eprintln!("[panel] $RS2B0T registry: {e}");
+                }
+            }
         }
     }
 
@@ -6214,5 +6233,59 @@ mod tests {
         let err = s.error.clone().expect("no-play banner");
         assert!(err.contains("play"), "{err}");
         assert_eq!(s.focused_script_state(), script::RunState::Idle);
+    }
+
+    #[test]
+    fn session_new_registers_rs2b0t_cards_when_env_set() {
+        // `$RS2B0T` + HOME point at a fake catalog so the fill never
+        // touches the operator's home. Env is restored right after
+        // `Session::new()`; a concurrent `Session::new()` in another test
+        // that observes the window only gains the same in-memory card,
+        // which no test asserts against.
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-rs2b0t-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import BoneBurier from './BoneBurier/BoneBurier.js';
+ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("BoneBurier/BoneBurier.ts"),
+            "export default class BoneBurier extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+        let s = Session::new();
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+
+        let card = s
+            .js
+            .get("BoneBurier")
+            .expect("BoneBurier card filled from $RS2B0T");
+        assert_eq!(card.shape, script::LoadShape::CompatClass);
+        assert!(
+            home.join(".274bot/rs2b0t-path").is_file(),
+            "the first successful parse persists the root path"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

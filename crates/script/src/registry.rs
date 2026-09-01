@@ -1,7 +1,9 @@
-//! Compiled registry: rust-first rewrite cards on 274bot `api`.
-//! WalkTo is **host nav** (panel picker + traveller), not a script card.
-//! `factory` is `None` until a rewrite is wired. Whales are recognized but
-//! never listed; `Counter` is a test fixture, never listed.
+//! Registry: rust-first rewrite cards on 274bot `api` were **abandoned**.
+//! `compiled_ids()` is empty; `factory` is `None` until a rewrite is
+//! wired. WalkTo is **host nav** (panel picker + traveller), reserved at
+//! Load but never a compiled card. Whales are recognized but never listed;
+//! `Counter` is a test fixture, never listed. The shim catalog is loaded
+//! JS (`JsLibrary` cards), not compiled rows.
 
 use crate::ctx::Script;
 
@@ -12,23 +14,9 @@ use crate::ctx::ScriptCtx;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompiledId(pub &'static str);
 
-/// v1 smoke names in picker order. Whales and the `Counter` fixture are
-/// deliberately absent.
-const COMPILED_IDS: &[CompiledId] = &[
-    CompiledId("BoneBurier"),
-    CompiledId("HerbCleaner"),
-    CompiledId("FlaxPicker"),
-    CompiledId("Firemaker"),
-    CompiledId("GemCutter"),
-    CompiledId("BankFletcher"),
-    CompiledId("CookBot"),
-    CompiledId("DartFletcher"),
-    CompiledId("VialFiller"),
-    CompiledId("Barcrawl"),
-    CompiledId("FlaxSpinner"),
-    CompiledId("SmelterBot"),
-    CompiledId("SmithingBot"),
-];
+/// Abandoned: the rust-first smoke list is empty. Start of the shim
+/// catalog is Load (a `JsLibrary` card), never a compiled id.
+const COMPILED_IDS: &[CompiledId] = &[];
 
 /// Whale names: real 274 scripts out of scope this campaign. Recognized so
 /// the panel can explain why a name is not listed.
@@ -57,7 +45,8 @@ const WHALE_IDS: &[&str] = &[
     "ShopRunner",
 ];
 
-/// The names the picker shows, in order. This task: v1 smoke names only.
+/// The names the picker shows, in order. Empty: the rust-first smokes were
+/// abandoned and the shim catalog is loaded JS cards.
 pub fn compiled_ids() -> &'static [CompiledId] {
     COMPILED_IDS
 }

@@ -1811,7 +1811,7 @@ fn browse_window(ui: &Ui, session: &mut Session) {
 }
 
 /// Load modal: a filesystem path to an out-of-tree JS bot. Load registers
-/// the card (same name overwrites; compiled ids reserved), persists the
+/// the card (same name overwrites; only WalkTo reserved), persists the
 /// store, and selects the card for Start. The isolate is spawned only on
 /// Start, never here.
 fn load_window(ui: &Ui, session: &mut Session) {
