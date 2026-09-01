@@ -2,6 +2,7 @@
 
 mod auto_run;
 pub mod login_queue;
+mod random;
 mod slot;
 mod slot_io;
 
@@ -19,6 +20,7 @@ use client::render::backend::FrameOutput;
 use client::render::Renderer;
 use vault::Profile;
 
+pub use random::{detect, CooldownMap, DetectedRandom, RandomKind};
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
     map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake,
