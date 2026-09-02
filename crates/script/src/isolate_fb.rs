@@ -2,9 +2,10 @@
 //! schema/isolate.fbs`. The builder and reader are hand-written against
 //! that schema (operators never need `flatc` at `cargo test` time); keep
 //! the two in sync. The PLAYER_INFO snapshot posted into each JS isolate
-//! and the shim interact batch forwarded back are FlatBuffers, not JSON:
-//! a 50+ isolate wall never stringifies or parses a JSON document per
-//! tick.
+//! and the shim interact / paint frames forwarded back are FlatBuffers,
+//! not JSON: a 50+ isolate wall never stringifies or parses a JSON
+//! document per tick. Each slot's host encode path and each V8 isolate
+//! thread reuse one [`IsolateBuf`] (`reset`, not a fresh builder).
 //!
 //! The wire format is produced and consumed only by 274bot code, so the
 //! decoder trusts the buffer (root offset bounds-checked) like
@@ -75,6 +76,11 @@ const VT_IN_ACTION: VOffsetT = 20;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
+
+// Paint: { title: string, accent: string, lines: [string] }
+const VT_PAINT_TITLE: VOffsetT = 4;
+const VT_PAINT_ACCENT: VOffsetT = 6;
+const VT_PAINT_LINES: VOffsetT = 8;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -553,10 +559,79 @@ impl DeltaMask {
     }
 }
 
+/// One reusable FlatBuffer builder for isolate IPC. Each started JS slot
+/// holds one on the host encode path and one on the V8 isolate thread:
+/// `reset` keeps the backing allocation so a 50+ isolate wall does not
+/// construct a new builder (or a JSON document) per PLAYER_INFO.
+pub struct IsolateBuf {
+    builder: FlatBufferBuilder<'static>,
+}
+
+impl Default for IsolateBuf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IsolateBuf {
+    pub fn new() -> Self {
+        Self {
+            builder: FlatBufferBuilder::new(),
+        }
+    }
+
+    fn copy_finished(&self) -> Vec<u8> {
+        self.builder.finished_data().to_vec()
+    }
+
+    /// Encode `input` as a root-`Snapshot` FlatBuffer carrying every field
+    /// — the keyframe posted on Start / isolate spawn.
+    pub fn encode_snapshot(&mut self, input: &SnapshotInput<'_>) -> Vec<u8> {
+        self.builder.reset();
+        encode_snapshot_masked_into(&mut self.builder, input, &DeltaMask::all());
+        self.copy_finished()
+    }
+
+    /// Encode a delta snapshot: `tick` always; every other field only when
+    /// it differs from `last` (all fields when `last` is `None` — the
+    /// keyframe). Returns the encoded buffer and the fingerprint of what
+    /// was just posted.
+    pub fn encode_snapshot_delta(
+        &mut self,
+        last: Option<&SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        force_banks: bool,
+    ) -> (Vec<u8>, SnapshotFingerprint) {
+        let fp = SnapshotFingerprint::from_input(input);
+        let mask = match last {
+            None => DeltaMask::all(),
+            Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
+        };
+        self.builder.reset();
+        encode_snapshot_masked_into(&mut self.builder, input, &mask);
+        (self.copy_finished(), fp)
+    }
+
+    /// Encode the tick's shim interact queue as a root-`InteractBatch`.
+    pub fn encode_interact_batch(&mut self, reqs: &[crate::shim::InteractReq]) -> Vec<u8> {
+        self.builder.reset();
+        encode_interact_batch_into(&mut self.builder, reqs);
+        self.copy_finished()
+    }
+
+    /// Encode one recorded paint frame as a root-`Paint` FlatBuffer.
+    pub fn encode_paint(&mut self, paint: &crate::shim::ScriptPaint) -> Vec<u8> {
+        self.builder.reset();
+        encode_paint_into(&mut self.builder, paint);
+        self.copy_finished()
+    }
+}
+
 /// Encode `input` as a root-`Snapshot` FlatBuffer carrying every field —
-/// the keyframe posted on Start / isolate spawn.
+/// the keyframe posted on Start / isolate spawn. Tests and one-shot
+/// callers; the live path uses [`IsolateBuf`].
 pub fn encode_snapshot(input: &SnapshotInput<'_>) -> Vec<u8> {
-    encode_snapshot_masked(input, &DeltaMask::all())
+    IsolateBuf::new().encode_snapshot(input)
 }
 
 /// Encode a delta snapshot: `tick` always; every other field only when it
@@ -566,28 +641,27 @@ pub fn encode_snapshot(input: &SnapshotInput<'_>) -> Vec<u8> {
 /// keyframe and when `force_banks` even if the stand list is unchanged
 /// (a `NavWorld` identity change). Returns the encoded buffer and the
 /// fingerprint of what was just posted — the caller stores it as the new
-/// `last` (per-slot, reset on Start).
+/// `last` (per-slot, reset on Start). Tests and one-shot callers; the
+/// live path uses [`IsolateBuf`].
 pub fn encode_snapshot_delta(
     last: Option<&SnapshotFingerprint>,
     input: &SnapshotInput<'_>,
     force_banks: bool,
 ) -> (Vec<u8>, SnapshotFingerprint) {
-    let fp = SnapshotFingerprint::from_input(input);
-    let mask = match last {
-        None => DeltaMask::all(),
-        Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
-    };
-    (encode_snapshot_masked(input, &mask), fp)
+    IsolateBuf::new().encode_snapshot_delta(last, input, force_banks)
 }
 
 /// Encode `input` carrying exactly the masked fields (`tick` is always
 /// carried).
-fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8> {
-    let mut b = FlatBufferBuilder::new();
+fn encode_snapshot_masked_into(
+    b: &mut FlatBufferBuilder<'_>,
+    input: &SnapshotInput<'_>,
+    mask: &DeltaMask,
+) {
     // Children (strings, sub-tables, vectors) are written before the root
     // table's own start — masked-in fields only.
     let here_off = if mask.here {
-        input.here.map(|h| tile_off(&mut b, h))
+        input.here.map(|h| tile_off(b, h))
     } else {
         None
     };
@@ -595,7 +669,7 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         let offs = input
             .inv
             .iter()
-            .map(|(name, count)| row_off(&mut b, *name, *count))
+            .map(|(name, count)| row_off(b, *name, *count))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -605,7 +679,7 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         let offs = input
             .stats
             .iter()
-            .map(|s| stat_off(&mut b, s))
+            .map(|s| stat_off(b, s))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -615,7 +689,7 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         let offs = input
             .booths
             .iter()
-            .map(|t| tile_off(&mut b, *t))
+            .map(|t| tile_off(b, *t))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -625,7 +699,7 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         let offs = input
             .banks
             .iter()
-            .map(|s| bank_stand_off(&mut b, s))
+            .map(|s| bank_stand_off(b, s))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -635,7 +709,7 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         let offs = input
             .bank
             .iter()
-            .map(|(name, count)| row_off(&mut b, *name, *count))
+            .map(|(name, count)| row_off(b, *name, *count))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -645,7 +719,7 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         let offs = input
             .bank_side
             .iter()
-            .map(|(name, count)| row_off(&mut b, *name, *count))
+            .map(|(name, count)| row_off(b, *name, *count))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -696,7 +770,6 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
     }
     let root = b.end_table(tab);
     b.finish(root, None);
-    b.finished_data().to_vec()
 }
 
 fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileReader<'b>> {
@@ -823,19 +896,67 @@ impl InteractBatchReader<'_> {
 }
 
 /// Encode the tick's shim interact queue as a root-`InteractBatch`
-/// FlatBuffer.
+/// FlatBuffer. Tests and one-shot callers; the live path uses
+/// [`IsolateBuf`].
 pub fn encode_interact_batch(reqs: &[crate::shim::InteractReq]) -> Vec<u8> {
-    let mut b = FlatBufferBuilder::new();
+    IsolateBuf::new().encode_interact_batch(reqs)
+}
+
+fn encode_interact_batch_into(b: &mut FlatBufferBuilder<'_>, reqs: &[crate::shim::InteractReq]) {
     let offs = reqs
         .iter()
-        .map(|req| interact_off(&mut b, req))
+        .map(|req| interact_off(b, req))
         .collect::<Vec<_>>();
     let reqs_off = b.create_vector(&offs);
     let tab = b.start_table();
     b.push_slot_always(VT_REQS, reqs_off);
     let root = b.end_table(tab);
     b.finish(root, None);
-    b.finished_data().to_vec()
+}
+
+fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptPaint) {
+    let title_off = paint.title.as_deref().map(|s| b.create_string(s));
+    let accent_off = paint.accent.as_deref().map(|s| b.create_string(s));
+    let line_offs: Vec<_> = paint.lines.iter().map(|s| b.create_string(s)).collect();
+    let lines_off = b.create_vector(&line_offs);
+    let tab = b.start_table();
+    if let Some(off) = title_off {
+        b.push_slot_always(VT_PAINT_TITLE, off);
+    }
+    if let Some(off) = accent_off {
+        b.push_slot_always(VT_PAINT_ACCENT, off);
+    }
+    b.push_slot_always(VT_PAINT_LINES, lines_off);
+    let root = b.end_table(tab);
+    b.finish(root, None);
+}
+
+/// Decode a root-`Paint` FlatBuffer into the shim's recorded frame.
+pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
+    if buf.len() < 4 {
+        return Err(format!("paint buffer too short: {} bytes", buf.len()));
+    }
+    let loc = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    if loc + 4 > buf.len() {
+        return Err(format!("paint root out of range: {loc} > {}", buf.len()));
+    }
+    // Safety: `loc` was bounds-checked against `buf`.
+    let tab = unsafe { Table::new(buf, loc) };
+    let title =
+        unsafe { tab.get::<ForwardsUOffset<&str>>(VT_PAINT_TITLE, None) }.map(str::to_string);
+    let accent =
+        unsafe { tab.get::<ForwardsUOffset<&str>>(VT_PAINT_ACCENT, None) }.map(str::to_string);
+    let lines = match unsafe {
+        tab.get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_PAINT_LINES, None)
+    } {
+        Some(v) => v.iter().map(str::to_string).collect(),
+        None => Vec::new(),
+    };
+    Ok(crate::shim::ScriptPaint {
+        title,
+        accent,
+        lines,
+    })
 }
 
 /// Decode a root-`InteractBatch` into the shim's request type. A row with
@@ -988,4 +1109,68 @@ fn interact_off<'b>(
         InteractReq::Close => {}
     }
     WIPOffset::new(b.end_table(tab).value())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shim::{InteractReq, ScriptPaint};
+
+    fn empty_input(tick: u64) -> SnapshotInput<'static> {
+        SnapshotInput {
+            tick,
+            here: None,
+            ingame: true,
+            inv: &[],
+            inv_size: 28,
+            stats: &[],
+            booths: &[],
+            banks: &[],
+            bank: &[],
+            bank_side: &[],
+            bank_open: false,
+            bank_loaded: false,
+            hold: false,
+            ours: false,
+        }
+    }
+
+    /// One reusable builder encodes snapshot, then paint, then interact —
+    /// the per-slot / per-V8 buffer, reset between messages, never a
+    /// JSON document and never `FlatBufferBuilder::new()` per tick.
+    #[test]
+    fn one_isolate_buf_encodes_snapshot_then_paint_then_interact() {
+        let mut buf = IsolateBuf::new();
+        let bytes = buf.encode_snapshot(&empty_input(1));
+        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        assert_eq!(snap.tick(), 1);
+
+        let paint = ScriptPaint {
+            title: Some("BoneBurier".into()),
+            accent: Some("#f3e6a2".into()),
+            lines: vec!["Runtime: 1.2m".into(), "".into()],
+        };
+        let pbytes = buf.encode_paint(&paint);
+        let decoded = decode_paint(&pbytes).expect("paint");
+        assert_eq!(decoded, paint);
+
+        let reqs = vec![InteractReq::Held {
+            name: "Bones".into(),
+            action: "Bury".into(),
+        }];
+        let ibytes = buf.encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&ibytes).expect("interact");
+        assert_eq!(got, reqs);
+    }
+
+    /// Resetting the same builder must not leave the previous root's tick
+    /// in the finished bytes.
+    #[test]
+    fn reused_isolate_buf_second_snapshot_does_not_keep_first_tick() {
+        let mut buf = IsolateBuf::new();
+        let _ = buf.encode_snapshot(&empty_input(1));
+        let bytes = buf.encode_snapshot(&empty_input(2));
+        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        assert_eq!(snap.tick(), 2);
+    }
 }

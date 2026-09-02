@@ -65,6 +65,7 @@ table Snapshot {
   here: Tile;
   ingame: bool;
   inv: [Row];
+  inv_size: int;   // inv-tab slot count (28 bound, 0 tutorial-locked)
   stats: [Stat];
   booths: [Booth];
   banks: [BankStand];
@@ -94,6 +95,14 @@ table Interact {
 // The tick's shim interact queue, forwarded to the host.
 table InteractBatch {
   reqs: [Interact];
+}
+
+// One recorded paint frame (`Paint.begin` … `end()`), isolate→host.
+// Same channel as InteractBatch: a typed buffer, never a JSON value.
+table Paint {
+  title: string;
+  accent: string;
+  lines: [string];
 }
 
 root_type Snapshot;

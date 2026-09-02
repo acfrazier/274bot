@@ -428,12 +428,9 @@ fn script_observe(
                 // packed banks are re-posted when the NavWorld identity
                 // changed (identity = the shared Arc's pointer), not when
                 // the stand list merely rebuilds identical.
-                let last = slot.last_snapshot();
                 let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
                 let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
-                let (bytes, fp) = script_snapshot_fb(
-                    last,
-                    force_banks,
+                let bytes = with_script_snapshot_input(
                     tick,
                     here,
                     up,
@@ -443,9 +440,9 @@ fn script_observe(
                     world.as_deref(),
                     hold,
                     ours,
+                    |input| slot.encode_snapshot_delta(input, force_banks),
                 );
                 slot.post_snapshot(bytes);
-                slot.store_last_snapshot(fp);
                 slot.store_last_world_id(world_id);
                 if !hold {
                     // One shared arm for both hooks: `walk_with` carries the
@@ -767,6 +764,9 @@ fn dispatch_wires(
 /// (the `NavWorld` identity changed) even though the stand list is
 /// byte-identical. Returns the blob and the fingerprint to store as the
 /// new last-post baseline.
+/// Tests encode through a one-shot builder; the live observe path uses
+/// [`with_script_snapshot_input`] + the slot's [`script::isolate_fb::IsolateBuf`].
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn script_snapshot_fb(
     last: Option<&script::isolate_fb::SnapshotFingerprint>,
@@ -781,6 +781,36 @@ fn script_snapshot_fb(
     hold: bool,
     ours: bool,
 ) -> (Vec<u8>, script::isolate_fb::SnapshotFingerprint) {
+    with_script_snapshot_input(
+        tick,
+        here,
+        ingame,
+        inv,
+        snapshot,
+        obj_names,
+        world,
+        hold,
+        ours,
+        |input| script::isolate_fb::encode_snapshot_delta(last, input, force_banks),
+    )
+}
+
+/// Build the observed snapshot input and hand it to `f`. The live observe
+/// path encodes through the slot's reusable [`script::isolate_fb::IsolateBuf`];
+/// tests encode through a one-shot builder via [`script_snapshot_fb`].
+#[allow(clippy::too_many_arguments)]
+fn with_script_snapshot_input<R>(
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    ingame: bool,
+    inv: Option<&[(i32, i32)]>,
+    snapshot: Option<&GameSnapshot>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    world: Option<&NavWorld>,
+    hold: bool,
+    ours: bool,
+    f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
+) -> R {
     use script::isolate_fb::{BankStandInput, SnapshotInput, StatInput, TileInput};
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
@@ -867,10 +897,8 @@ fn script_snapshot_fb(
         hold,
         ours,
     };
-    script::isolate_fb::encode_snapshot_delta(last, &input, force_banks)
+    f(&input)
 }
-
-/// True when `name`'s slot script is Running — the only state that builds
 /// the per-observe inventory view (the observe re-checks the gate inside).
 fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str) -> bool {
     scripts

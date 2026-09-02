@@ -351,11 +351,12 @@ mod isolate {
         /// forwarded after the tick's JS finished (parked or not).
         Interact(Vec<u8>),
         /// The tick's recorded paint frame (`Paint.begin` … `end()` on the
-        /// host handle), forwarded for the script paint views. The host
-        /// reads the latest frame off the handle without a probe
-        /// round-trip. Null frames are not forwarded — a script that
-        /// stops painting keeps its last frame.
-        Paint(serde_json::Value),
+        /// host handle), a FlatBuffer `Paint` forwarded for the script
+        /// paint views. The host reads the latest frame off the handle
+        /// without a probe round-trip. Null frames are not forwarded — a
+        /// script that stops painting keeps its last frame. Never a JSON
+        /// value on this channel.
+        Paint(Vec<u8>),
         /// The highest tick the thread has fully processed (ran or skipped).
         Completed(u64),
     }
@@ -584,11 +585,11 @@ mod isolate {
                             Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
                         }
                     }
-                    ThreadMsg::Paint(value) => {
-                        // The latest frame wins; a malformed record is
-                        // dropped silently (our own shim writes it).
-                        if let Ok(paint) = serde_json::from_value(value) {
-                            *self.paint.lock().unwrap() = Some(paint);
+                    ThreadMsg::Paint(bytes) => {
+                        // Decode the FlatBuffer paint frame (no JSON).
+                        match crate::isolate_fb::decode_paint(&bytes) {
+                            Ok(paint) => *self.paint.lock().unwrap() = Some(paint),
+                            Err(e) => self.logs.lock().unwrap().push(format!("paint: {e}")),
                         }
                     }
                     ThreadMsg::Completed(up_to) => {
@@ -1094,6 +1095,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>) {
         let mut paused = false;
         let mut pending: Option<IsolateCmd> = None;
+        // One reusable encode buffer for this V8 isolate: interact batch
+        // and paint frames share it (`reset` between messages).
+        let mut ipc = crate::isolate_fb::IsolateBuf::new();
         loop {
             let cmd = match pending.take() {
                 Some(cmd) => cmd,
@@ -1146,7 +1150,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)",
                         )
                         .unwrap_or(false);
-                    let result: Result<serde_json::Value, rustyscript::Error> = if parked {
+                    let result: Result<(), rustyscript::Error> = if parked {
                         runtime.call_function(None, "__rs2b0t_pump", json_args!(n))
                     } else {
                         // `__rs_tick` is a synchronous entry that returns
@@ -1198,9 +1202,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         runtime.eval("globalThis.__rs2b0t_host.interact || []");
                     if let Ok(reqs) = interact {
                         if !reqs.is_empty() {
-                            let _ = out.send(ThreadMsg::Interact(
-                                crate::isolate_fb::encode_interact_batch(&reqs),
-                            ));
+                            let _ = out.send(ThreadMsg::Interact(ipc.encode_interact_batch(&reqs)));
                         }
                     }
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
@@ -1209,13 +1211,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // host, so the script paint views read it without a
                     // probe round-trip. Only non-empty frames are sent —
                     // a tick that painted nothing leaves the last frame
-                    // in place (Stop drops the whole isolate).
-                    let paint: Result<serde_json::Value, rustyscript::Error> =
+                    // in place (Stop drops the whole isolate). serde_v8
+                    // walks the v8 object into `ScriptPaint`; the channel
+                    // carries a FlatBuffer, never a `serde_json::Value`.
+                    let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
                         runtime.eval("globalThis.__rs2b0t_host.paint || null");
-                    if let Ok(value) = paint {
-                        if !value.is_null() {
-                            let _ = out.send(ThreadMsg::Paint(value));
-                        }
+                    if let Ok(Some(frame)) = paint {
+                        let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
                     }
                     // ScriptRunner.stop signal: the script flags the host
                     // handle. The isolate treats it like `IsolateCmd::Stop`

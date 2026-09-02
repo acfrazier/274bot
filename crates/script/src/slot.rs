@@ -7,7 +7,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::ctx::{Script, ScriptCtx};
 #[cfg(feature = "load")]
-use crate::isolate_fb::SnapshotFingerprint;
+use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
 #[cfg(feature = "load")]
 use crate::load::{LoadIsolate, LoadShape};
 use api::random::{DetectedRandom, RandomClaim};
@@ -39,6 +39,11 @@ pub struct SlotScript {
     last_snapshot: Option<SnapshotFingerprint>,
     #[cfg(feature = "load")]
     last_world_id: Option<usize>,
+    /// Reusable FlatBuffer builder for this slot's host→isolate snapshot
+    /// posts. One per slot; the V8 isolate thread holds its own for
+    /// interact/paint. Never a JSON document on either path.
+    #[cfg(feature = "load")]
+    ipc: IsolateBuf,
     last_error: Option<String>,
     /// Dispatched game ticks since the last Start.
     ticks: u64,
@@ -62,6 +67,8 @@ impl SlotScript {
             last_snapshot: None,
             #[cfg(feature = "load")]
             last_world_id: None,
+            #[cfg(feature = "load")]
+            ipc: IsolateBuf::new(),
             last_error: None,
             ticks: 0,
         }
@@ -186,19 +193,21 @@ impl SlotScript {
         }
     }
 
-    /// The per-slot last-post fingerprint the host compares the next
-    /// snapshot against (delta posts), `None` right after Start — the
-    /// first post is then the full keyframe.
+    /// Encode `input` into this slot's reusable isolate buffer and return
+    /// the finished bytes. Stores the new last-post fingerprint so the
+    /// next observe is a delta. Disjoint-field borrow of `ipc` and
+    /// `last_snapshot` — no extra fingerprint clone.
     #[cfg(feature = "load")]
-    pub fn last_snapshot(&self) -> Option<&SnapshotFingerprint> {
-        self.last_snapshot.as_ref()
-    }
-
-    /// Store the fingerprint of the snapshot just posted as the new
-    /// last-post baseline.
-    #[cfg(feature = "load")]
-    pub fn store_last_snapshot(&mut self, fp: SnapshotFingerprint) {
+    pub fn encode_snapshot_delta(
+        &mut self,
+        input: &crate::isolate_fb::SnapshotInput<'_>,
+        force_banks: bool,
+    ) -> Vec<u8> {
+        let (bytes, fp) =
+            self.ipc
+                .encode_snapshot_delta(self.last_snapshot.as_ref(), input, force_banks);
         self.last_snapshot = Some(fp);
+        bytes
     }
 
     /// The `NavWorld` identity the packed banks were posted against
