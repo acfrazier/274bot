@@ -1310,7 +1310,7 @@ impl Session {
                 let here = Tile {
                     x: c.map_build_base_x + rx,
                     z: c.map_build_base_z + rz,
-                    level: 0,
+                    level: c.minusedlevel,
                 };
                 // Publish the slot's gating facts (inv/equipment/stats/
                 // varps/quests) for the UI thread's WalkTo routing: a
@@ -2517,11 +2517,11 @@ impl Session {
             return false;
         };
         match self.focused_tile() {
-            Some((fx, fz)) => {
+            Some((fx, fz, fl)) => {
                 let from = Tile {
                     x: fx,
                     z: fz,
-                    level: tile.level,
+                    level: fl,
                 };
                 self.arm_walk_on(world, from, tile);
             }
@@ -2530,15 +2530,16 @@ impl Session {
         true
     }
 
-    /// The focused slot's observed tile, `None` when nothing is focused or
-    /// the slot has not reported a position yet (both coordinates zero).
-    pub fn focused_tile(&self) -> Option<(i32, i32)> {
+    /// The focused slot's observed tile `(x, z, level)`, `None` when
+    /// nothing is focused or the slot has not reported a position yet
+    /// (both coordinates zero).
+    pub fn focused_tile(&self) -> Option<(i32, i32, i32)> {
         let name = self.focused_name()?;
         self.statuses()
             .iter()
             .find(|s| s.username == name)
             .filter(|s| s.tile_x != 0 || s.tile_z != 0)
-            .map(|s| (s.tile_x, s.tile_z))
+            .map(|s| (s.tile_x, s.tile_z, s.tile_level))
     }
 
     /// The focused slot's login-FIFO place `(position, total)` while it
@@ -3886,6 +3887,61 @@ mod tests {
     fn walk_status_is_dash_when_no_route() {
         let s = Session::new();
         assert_eq!(s.walk_status_text(), "—");
+    }
+
+    #[test]
+    fn confirm_picker_walk_uses_player_plane_not_dest_level() {
+        let mut s = Session::new();
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.statuses.push(SlotStatus {
+            username: "alice".into(),
+            tile_x: 5,
+            tile_z: 5,
+            tile_level: 1,
+            ..SlotStatus::default()
+        });
+        assert_eq!(s.focused_tile(), Some((5, 5, 1)));
+        let world = open_world_four_planes(10, 10);
+        s.picker_sel = Some(Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        });
+        assert!(s.confirm_picker_walk(&world));
+        assert!(
+            s.error.is_some(),
+            "upstairs origin must not masquerade as the dest plane"
+        );
+        assert!(
+            s.travellers
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_none_or(|a| a.lock().unwrap().route.is_none()),
+            "a wrong-plane route must not arm"
+        );
+    }
+
+    /// Like [`open_world`] but allocates all four level planes so routing
+    /// from an upstairs origin does not index past the walk bake.
+    fn open_world_four_planes(w: usize, h: usize) -> NavWorld {
+        let cells = w * h * 4;
+        NavWorld::from_parts(
+            WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: w,
+                height: h,
+                walk: vec![0u8; cells],
+                blocked: vec![0u64; cells.div_ceil(64)],
+                flags: None,
+            },
+            TransportGraph::default(),
+            Vec::new(),
+        )
     }
 
     #[test]

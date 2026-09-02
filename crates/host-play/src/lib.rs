@@ -178,6 +178,8 @@ pub struct SlotStatus {
     /// Local-player tile (filled from `local_player` in observe).
     pub tile_x: i32,
     pub tile_z: i32,
+    /// Local-player plane (`Client::minusedlevel` in observe).
+    pub tile_level: i32,
     /// Local-player name, empty until `PLAYER_INFO` lands.
     pub player: String,
     /// `Client.main_modal_id` (open modal interface, -1 when none).
@@ -230,6 +232,21 @@ pub fn player_world_tile(
     route_z: i32,
 ) -> (i32, i32) {
     (map_build_base_x + route_x, map_build_base_z + route_z)
+}
+
+/// The local player's world tile `(x, z, level)` from the scene origin,
+/// route head, and [`Client::minusedlevel`] — the same level
+/// [`GameSnapshot::tile`] and [`nav::traveller::Traveller::follow`] use.
+pub fn player_here_tile(c: &Client) -> Option<(i32, i32, i32)> {
+    c.local_player.as_ref().map(|lp| {
+        let (tx, tz) = player_world_tile(
+            c.map_build_base_x,
+            c.map_build_base_z,
+            lp.route_x[0],
+            lp.route_z[0],
+        );
+        (tx, tz, c.minusedlevel)
+    })
 }
 
 /// A latched BankBudget session: remaining [`BankStep`]s plus the dest
@@ -487,6 +504,7 @@ impl Default for SlotStatus {
             run_sends: 0,
             tile_x: 0,
             tile_z: 0,
+            tile_level: 0,
             player: String::new(),
             main_modal_id: 0,
             walk_x: -1,
@@ -2458,9 +2476,8 @@ fn spawn_slot_thread(
                                             );
                                             s.tile_x = tx;
                                             s.tile_z = tz;
-                                            // Tile level is not decoded on
-                                            // the body yet (see gaps.md).
-                                            here = Some((tx, tz, 0));
+                                            s.tile_level = c.minusedlevel;
+                                            here = Some((tx, tz, c.minusedlevel));
                                             s.player = lp.name.clone().unwrap_or_default();
                                         }
                                         up = s.is_up();
@@ -4368,6 +4385,95 @@ mod tests {
         c.bump_gens(ServerProt::IF_OPENMAIN);
         c.bump_gens(ServerProt::UPDATE_INV_FULL);
         c
+    }
+
+    #[test]
+    fn player_here_tile_uses_minusedlevel_not_hardcoded_zero() {
+        let mut c = bank_fetch_client();
+        c.minusedlevel = 1;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(7, 8));
+        c.map_build_base_x = 100;
+        c.map_build_base_z = 200;
+        assert_eq!(player_here_tile(&c), Some((107, 208, 1)));
+    }
+
+    #[test]
+    fn step_bank_fetch_walk_stand_matches_player_plane() {
+        use nav::bank_fetch::BankStep;
+        use nav::router::{Leg, Route};
+        use std::collections::VecDeque;
+
+        let final_route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![WorldTile {
+                    x: 99,
+                    z: 99,
+                    level: 0,
+                }],
+            }],
+            dest: WorldTile {
+                x: 99,
+                z: 99,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let mut bot = NavBot::default();
+        bot.bank_fetch = Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Walk {
+                x: 10,
+                z: 20,
+                level: 1,
+            }]),
+            dest: WorldTile {
+                x: 99,
+                z: 99,
+                level: 0,
+            },
+            opts: FindOptions::default(),
+            final_route: final_route.clone(),
+        });
+        let snap = GameSnapshot::new();
+        let mut driver = bank_fetch_client();
+        step_bank_fetch_on_bot(
+            &mut driver,
+            &snap,
+            &mut bot,
+            None,
+            Some((10, 20, 1)),
+        );
+        assert_eq!(
+            bot.route,
+            Some(final_route.clone()),
+            "stand Walk completes when here matches the stand plane"
+        );
+
+        bot.bank_fetch = Some(PendingBankFetch {
+            steps: VecDeque::from([BankStep::Walk {
+                x: 10,
+                z: 20,
+                level: 1,
+            }]),
+            dest: WorldTile {
+                x: 99,
+                z: 99,
+                level: 0,
+            },
+            opts: FindOptions::default(),
+            final_route: final_route.clone(),
+        });
+        bot.route = None;
+        step_bank_fetch_on_bot(
+            &mut driver,
+            &snap,
+            &mut bot,
+            None,
+            Some((10, 20, 0)),
+        );
+        assert!(
+            bot.route.is_none(),
+            "ground-plane here must not complete an upstairs stand Walk"
+        );
     }
 
     /// A 5×5 world walled between x=1 and x=2, crossed only by a door

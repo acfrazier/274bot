@@ -649,7 +649,9 @@ fn picker_map_window(ui: &Ui, session: &mut Session, world: &NavWorld, open: &mu
 fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
     // Reset the view when the picker opens fresh.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
-        let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
+        let (cx, cz, _) = session
+            .focused_tile()
+            .unwrap_or((DEFAULT_CENTRE.0, DEFAULT_CENTRE.1, 0));
         CENTRE_X.store(cx, Ordering::Relaxed);
         CENTRE_Z.store(cz, Ordering::Relaxed);
         PAN_REM_X.store(0, Ordering::Relaxed);
@@ -692,7 +694,9 @@ fn picker_map_body(ui: &Ui, session: &mut Session, world: &NavWorld) {
     let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
     ui.same_line_with_pos(x);
     if ui.button("recentre") {
-        let (cx, cz) = session.focused_tile().unwrap_or(DEFAULT_CENTRE);
+        let (cx, cz, _) = session
+            .focused_tile()
+            .unwrap_or((DEFAULT_CENTRE.0, DEFAULT_CENTRE.1, 0));
         CENTRE_X.store(cx, Ordering::Relaxed);
         CENTRE_Z.store(cz, Ordering::Relaxed);
         PAN_REM_X.store(0, Ordering::Relaxed);
@@ -769,7 +773,7 @@ fn draw_canvas(ui: &Ui, session: &mut Session, world: &NavWorld, height: f32) {
             let level = LEVEL.load(Ordering::Relaxed);
             let here = session
                 .focused_tile()
-                .map(|(x, z)| WorldTile { x, z, level });
+                .map(|(x, z, level)| WorldTile { x, z, level });
             let dest = session.walk_dest.map(|t| WorldTile {
                 x: t.x,
                 z: t.z,
