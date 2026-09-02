@@ -1335,8 +1335,9 @@ impl Session {
                     let mut snapshot = GameSnapshot::new();
                     snapshot.rebuild(c);
                     let world = crate::picker::pack();
-                    // BankBudget session first: Wear / deposit / withdraw
-                    // freeze follow until the steps clear.
+                    // BankBudget session first. Walk follows the stand
+                    // sub-route; Open / Deposit / Withdraw / Wear / Close
+                    // freeze follow (never mid-session final_route).
                     if arm.bank_fetch.is_some() {
                         host_play::step_walk_arm_bank_fetch(
                             c,
@@ -1345,13 +1346,22 @@ impl Session {
                             world.as_deref(),
                             Some((here.x, here.z, here.level)),
                         );
-                        if arm.bank_fetch.is_some() {
+                        if host_play::walk_arm_bank_fetch_freezes_follow(&arm) {
                             return;
                         }
                     }
                     let Some(route) = arm.route.clone() else {
                         return;
                     };
+                    let walking_stand = arm.bank_fetch.as_ref().is_some_and(|p| {
+                        matches!(
+                            p.steps.front(),
+                            Some(nav::bank_fetch::BankStep::Walk { x, z, level })
+                                if route.dest.x == *x
+                                    && route.dest.z == *z
+                                    && route.dest.level == *level
+                        )
+                    });
                     // The follow surface reads the canonical base + route-head
                     // tile from a snapshot rebuilt off the same client; the
                     // run is polled one step per player-info tick. The packed
@@ -1367,6 +1377,17 @@ impl Session {
                         ..TravelOptions::default()
                     };
                     let outcome = arm.traveller.follow(c, &snapshot, route, &mut options);
+                    if walking_stand
+                        && matches!(
+                            &outcome,
+                            Some(o) if !matches!(o, nav::traveller::TravelOutcome::Arrived { .. })
+                        )
+                    {
+                        // Stand Walk stalled / refused → NoPath.
+                        arm.bank_fetch = None;
+                        arm.route = None;
+                        return;
+                    }
                     if outcome.is_some() {
                         arm.route = None;
                         true

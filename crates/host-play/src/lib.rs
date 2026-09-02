@@ -164,8 +164,9 @@ pub fn player_world_tile(
 }
 
 /// A latched BankBudget session: remaining [`BankStep`]s plus the dest
-/// the arm re-finds after the session lands. Follow stays frozen while
-/// `steps` is non-empty; Wear-from-inv and bank-trip deposit/withdraw
+/// the arm re-finds after the session lands. Follow freezes only for
+/// Open / Deposit / Withdraw / Wear / Close; [`BankStep::Walk`] follows
+/// the stand sub-route. Wear-from-inv and bank-trip deposit/withdraw
 /// both pump through the same path. `final_route` is the post-session
 /// route (status row + follow once steps clear); a Walk-to-stand may
 /// temporarily replace `WalkArm::route` / `NavBot::route`.
@@ -183,10 +184,11 @@ pub struct PendingBankFetch {
 /// [`Traveller::follow`] with a clone of it one step per player-info
 /// tick. `route` being set is the "armed" gate the status row and the
 /// overlay read; any terminal outcome clears it (arrival and stall
-/// alike). A pending [`PendingBankFetch`] freezes follow until its
-/// steps finish (Wear-in-place or bank deposit/withdraw). Shared by the
-/// panel and the TUI so a walk armed from either view drives the same
-/// follow path.
+/// alike). A pending [`PendingBankFetch`] freezes follow for non-Walk
+/// steps (Open / deposit / withdraw / Wear / Close); Walk follows the
+/// stand sub-route only (never `final_route` until the session clears).
+/// Shared by the panel and the TUI so a walk armed from either view
+/// drives the same follow path.
 #[derive(Default)]
 pub struct WalkArm {
     pub traveller: Traveller,
@@ -1182,8 +1184,10 @@ fn step_nav_bot<D: Driver>(
         if let Some(bot) = all.get_mut(name) {
             if bot.bank_fetch.is_some() {
                 step_bank_fetch_on_bot(driver, snapshot, bot, world, here);
-                // Session still in flight: do not follow yet.
-                if bot.bank_fetch.is_some() {
+                // Freeze follow for Open / Deposit / Withdraw / Wear /
+                // Close. Walk with a stand sub-route armed falls through
+                // to Traveller::follow — never final_route mid-session.
+                if bank_fetch_freezes_follow(bot) {
                     let queued = bot.route.as_ref().map(|r| r.dest);
                     drop(all);
                     let mut rows = statuses.lock().unwrap();
@@ -1222,12 +1226,28 @@ fn step_nav_bot<D: Driver>(
         let Some(route) = bot.route.clone() else {
             return;
         };
-        if bot
+        let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
+            matches!(
+                p.steps.front(),
+                Some(BankStep::Walk { x, z, level })
+                    if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
+            )
+        });
+        match bot
             .traveller
             .follow(driver, snapshot, route, &mut options)
-            .is_some()
         {
-            bot.route = None;
+            Some(nav::traveller::TravelOutcome::Arrived { .. }) => {
+                bot.route = None;
+            }
+            Some(_) => {
+                // Stall / refuse / block / give-up during stand Walk → NoPath.
+                bot.route = None;
+                if walking_stand {
+                    bot.bank_fetch = None;
+                }
+            }
+            None => {}
         }
         bot.route.as_ref().map(|r| r.dest)
     };
@@ -1250,10 +1270,11 @@ fn step_nav_bot<D: Driver>(
 
 /// Advance one BankBudget session step on a [`NavBot`]. Walk completes
 /// when the player is already on the stand tile (or a sub-route is
-/// armed); Open is a no-op while the bank is already open+loaded;
-/// DepositAll / Withdraw / Wear / Close dispatch through
+/// armed for follow); Open is a no-op while the bank is already
+/// open+loaded; DepositAll / Withdraw / Wear / Close dispatch through
 /// [`api::interact::Interactions`]. Clears the pending session when
-/// steps are exhausted. Returns whether the driver was written.
+/// steps are exhausted, or on walk/open/withdraw failure (NoPath).
+/// Returns whether the driver was written.
 fn step_bank_fetch_on_bot<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -1268,6 +1289,7 @@ fn step_bank_fetch_on_bot<D: Driver>(
         bot.bank_fetch = None;
         return false;
     };
+    let mut abort = false;
     let wrote = match step {
         BankStep::Walk { x, z, level } => {
             if here == Some((x, z, level)) {
@@ -1278,7 +1300,7 @@ fn step_bank_fetch_on_bot<D: Driver>(
             } else if bot.route.as_ref().is_some_and(|r| {
                 r.dest.x == x && r.dest.z == z && r.dest.level == level
             }) {
-                // Sub-route to the stand already armed; wait for arrival.
+                // Stand sub-route armed; follow polls it outside this step.
                 false
             } else if let Some(w) = world {
                 let from = match here {
@@ -1290,18 +1312,25 @@ fn step_bank_fetch_on_bot<D: Driver>(
                     None => return false,
                 };
                 let to = WorldTile { x, z, level };
-                if let Ok(route) = find_with(
-                    &w.collision,
-                    &w.graph,
-                    from,
-                    to,
-                    FindOptions::default(),
-                    &WorldState::empty(),
-                ) {
-                    bot.route = Some(route);
+                // Live snapshot facts (same fail-closed gates as execute),
+                // not an empty WorldState that would refuse gated walks.
+                let state = WorldState::from_snapshot(snapshot);
+                let opts = FindOptions {
+                    allow_bank_fetch: false,
+                    ..pending.opts
+                };
+                match find_with(&w.collision, &w.graph, from, to, opts, &state) {
+                    Ok(route) => {
+                        bot.route = Some(route);
+                        false
+                    }
+                    Err(_) => {
+                        abort = true;
+                        false
+                    }
                 }
-                false
             } else {
+                abort = true;
                 false
             }
         }
@@ -1324,7 +1353,11 @@ fn step_bank_fetch_on_bot<D: Driver>(
         }
         BankStep::Withdraw { id, count } => {
             let wrote = withdraw_id(driver, snapshot, id, count);
-            pending.steps.pop_front();
+            if wrote {
+                pending.steps.pop_front();
+            } else {
+                abort = true;
+            }
             wrote
         }
         BankStep::Wear { id } => {
@@ -1340,10 +1373,41 @@ fn step_bank_fetch_on_bot<D: Driver>(
             wrote
         }
     };
-    if pending.steps.is_empty() {
+    if abort {
+        bot.bank_fetch = None;
+        bot.route = None;
+        return wrote;
+    }
+    if bot
+        .bank_fetch
+        .as_ref()
+        .is_some_and(|p| p.steps.is_empty())
+    {
         bot.bank_fetch = None;
     }
     wrote
+}
+
+/// Whether a latched BankBudget session must freeze [`Traveller::follow`].
+/// Walk with the stand sub-route armed does **not** freeze; Open /
+/// Deposit / Withdraw / Wear / Close do. Mid-session `final_route` is
+/// never followed.
+fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
+    let Some(pending) = bot.bank_fetch.as_ref() else {
+        return false;
+    };
+    match pending.steps.front() {
+        Some(BankStep::Walk { x, z, level }) => {
+            // Freeze only until the stand sub-route is armed; once armed,
+            // follow that route. If route still points at final_route,
+            // stay frozen this tick (Walk arms next pump / this pump).
+            !bot.route.as_ref().is_some_and(|r| {
+                r.dest.x == *x && r.dest.z == *z && r.dest.level == *level
+            })
+        }
+        Some(_) => true,
+        None => false,
+    }
 }
 
 /// Public WalkArm BankBudget pump (panel / TUI follow path). Same step
@@ -1364,13 +1428,24 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
     };
     let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here);
     arm.bank_fetch = bot.bank_fetch;
-    // Walk-to-stand may have armed a temporary route on the bot.
-    if arm.bank_fetch.is_some() {
-        if let Some(r) = bot.route {
-            arm.route = Some(r);
-        }
+    // Walk-to-stand may have armed a temporary route on the bot; abort
+    // clears both session and route.
+    if arm.bank_fetch.is_none() && bot.route.is_none() {
+        arm.route = None;
+    } else if let Some(r) = bot.route {
+        arm.route = Some(r);
     }
     wrote
+}
+
+/// Whether a WalkArm BankBudget session freezes follow this frame
+/// (panel / TUI). Same rule as the script [`NavBot`] pump.
+pub fn walk_arm_bank_fetch_freezes_follow(arm: &WalkArm) -> bool {
+    bank_fetch_freezes_follow(&NavBot {
+        traveller: Traveller::default(),
+        route: arm.route.clone(),
+        bank_fetch: arm.bank_fetch.clone(),
+    })
 }
 
 fn open_bank_at_here<D: Driver>(
@@ -4378,6 +4453,103 @@ mod tests {
             "BankBudget execute must drive deposit/withdraw on the Driver (pos {} → {})",
             out_before,
             c.out.pos
+        );
+    }
+
+    /// Fix round 2 — BankBudget Walk from off the stand must poll
+    /// [`Traveller::follow`] on the stand sub-route. Freeze-all-follow
+    /// while `bank_fetch` is Some stalls Walk forever; following
+    /// `final_route` would skip the booth. Start at (0,0), stand at
+    /// (0,4), final dest (4,4).
+    #[test]
+    fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
+        let mut c = bank_fetch_client();
+        c.local_player = Some(client::dash3d::ClientPlayer::at(0, 0));
+        c.bump_gens(client::io::ServerProt::PLAYER_INFO);
+        c.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let world = Arc::new(knife_nav_world(2));
+        let state = WorldState::from_snapshot(&snap);
+        let bank_rows: Vec<(i32, i32)> =
+            snap.bank().iter().map(|it| (it.def.id, it.count)).collect();
+        assert!(
+            bank_rows.iter().any(|&(id, n)| id == 2 && n >= 1),
+            "knife is in the open bank"
+        );
+        let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+        let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        }]));
+        // Off the packed booth: Walk must arm a stand sub-route and follow
+        // it — not stall, not jump to the knife-gated final dest.
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::clone(&world)),
+            navs: Arc::clone(&navs),
+            name: "alice".into(),
+            state: Some(state),
+            bank: bank_rows,
+        };
+        assert!(
+            arm.route(
+                4,
+                4,
+                0,
+                FindOptions {
+                    allow_bank_fetch: true,
+                    ..FindOptions::default()
+                },
+            ),
+            "the walk arm must accept the bank-fetch route"
+        );
+        let mut latched = false;
+        for _ in 0..200 {
+            if navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|b| b.bank_fetch.is_some())
+            {
+                latched = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(latched, "allow_bank_fetch must latch a BankFetch session");
+        // Live pump: session Walk + follow (not step_bank_fetch alone).
+        step_nav_bot(
+            &mut c,
+            "alice",
+            Some((0, 0, 0)),
+            &snap,
+            &navs,
+            &statuses,
+            Some(world.as_ref()),
+            false,
+        );
+        let all = navs.lock().unwrap();
+        let bot = all.get("alice").expect("nav bot");
+        assert!(
+            bot.bank_fetch
+                .as_ref()
+                .is_some_and(|p| matches!(p.steps.front(), Some(BankStep::Walk { .. }))),
+            "Walk must still be the front step (not skipped to Open/final)"
+        );
+        let dest = bot.route.as_ref().map(|r| r.dest);
+        assert_eq!(
+            dest,
+            Some(WorldTile {
+                x: 0,
+                z: 4,
+                level: 0
+            }),
+            "armed route must be the stand sub-route, not final (4,4)"
+        );
+        assert!(
+            bot.traveller.current_aim().is_some(),
+            "Walk must poll Traveller::follow on the stand sub-route (freeze-all-follow stalls)"
         );
     }
 
