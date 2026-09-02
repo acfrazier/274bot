@@ -1694,6 +1694,10 @@ pub struct SlotArm {
     /// from the vault on spawn and by panel/TUI settings writes so a
     /// toggle-off never acts/holds without a respawn.
     pub random_events: Arc<AtomicBool>,
+    /// Live lamp auto-use toggle (`ProfileSettings.lamp_auto`).
+    pub lamp_auto: Arc<AtomicBool>,
+    /// Live lamp skill choice (`ProfileSettings.lamp_skill`).
+    pub lamp_skill: Arc<Mutex<String>>,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
@@ -1709,6 +1713,8 @@ impl SlotArm {
             latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
             random_events: Arc::new(AtomicBool::new(true)),
+            lamp_auto: Arc::new(AtomicBool::new(true)),
+            lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             reconnect: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -2126,6 +2132,9 @@ impl Play {
         arm.uid.store(profile.uid, Ordering::Relaxed);
         arm.random_events
             .store(profile.settings.random_events, Ordering::Relaxed);
+        arm.lamp_auto
+            .store(profile.settings.lamp_auto, Ordering::Relaxed);
+        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         // The control wake: `Play::wake` kicks the parked slot thread on
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
@@ -2401,6 +2410,8 @@ fn spawn_slot_thread(
                     &username,
                     profile.settings.clone(),
                     Arc::clone(&arm_obs.random_events),
+                    Arc::clone(&arm_obs.lamp_auto),
+                    Arc::clone(&arm_obs.lamp_skill),
                     slot_input.clone(),
                     slot_mailbox.clone(),
                     park.clone(),

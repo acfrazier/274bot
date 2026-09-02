@@ -1913,6 +1913,9 @@ impl Session {
         let arm = SlotArm::new(profile.uid, auto_login);
         arm.random_events
             .store(profile.settings.random_events, Ordering::Relaxed);
+        arm.lamp_auto
+            .store(profile.settings.lamp_auto, Ordering::Relaxed);
+        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         if !self.wall.should_auto_login(name, auto_login) {
             arm.want_login.store(false, Ordering::Relaxed);
         }
@@ -2051,9 +2054,9 @@ impl Session {
 
     /// Persist the focused profile's guardian settings (`random_events`,
     /// `lamp_skill`, `lamp_auto`) to the vault — the same upsert path as
-    /// auto-login — and mirror `random_events` onto a running slot's
-    /// `arm.random_events` so toggle-off never acts/holds without a
-    /// respawn. Never spawns or stops a slot.
+    /// auto-login — and mirror `random_events`, `lamp_auto`, and
+    /// `lamp_skill` onto a running slot's arm so toggle-off never
+    /// acts/holds without a respawn. Never spawns or stops a slot.
     pub fn set_random_settings(
         &mut self,
         name: &str,
@@ -2081,6 +2084,8 @@ impl Session {
         }
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
             arm.random_events.store(random_events, Ordering::Relaxed);
+            arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
+            *arm.lamp_skill.lock().unwrap() = lamp_skill.to_string();
         }
         true
     }
@@ -6058,6 +6063,12 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         );
         let arm = SlotArm::new(42, false);
         assert!(arm.random_events.load(Ordering::Relaxed), "default on");
+        assert!(arm.lamp_auto.load(Ordering::Relaxed), "default lamp auto on");
+        assert_eq!(
+            arm.lamp_skill.lock().unwrap().as_str(),
+            "strength",
+            "default lamp skill"
+        );
         play.attach_arm("alice", Arc::clone(&arm));
         s.play = Some(play);
         assert!(s.set_random_settings("alice", false, "attack", true));
@@ -6065,8 +6076,19 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             !arm.random_events.load(Ordering::Relaxed),
             "toggle off must reach the live arm without respawn"
         );
-        assert!(s.set_random_settings("alice", true, "attack", true));
+        assert!(
+            arm.lamp_auto.load(Ordering::Relaxed),
+            "lamp auto must reach the live arm without respawn"
+        );
+        assert_eq!(
+            arm.lamp_skill.lock().unwrap().as_str(),
+            "attack",
+            "lamp skill must reach the live arm without respawn"
+        );
+        assert!(s.set_random_settings("alice", true, "strength", true));
         assert!(arm.random_events.load(Ordering::Relaxed));
+        assert!(arm.lamp_auto.load(Ordering::Relaxed));
+        assert_eq!(arm.lamp_skill.lock().unwrap().as_str(), "strength");
     }
 
     #[test]

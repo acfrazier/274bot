@@ -7,7 +7,7 @@ mod slot;
 mod slot_io;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -108,11 +108,16 @@ impl Host {
                 eprintln!("[host] slot {}: thread up", profile.username);
             }
 
+            let settings = profile.settings;
+            let lamp_auto = settings.lamp_auto;
+            let lamp_skill = settings.lamp_skill.clone();
             Self::run_client(
                 &mut client,
                 &profile.username,
-                profile.settings,
+                settings,
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(lamp_auto)),
+                Arc::new(Mutex::new(lamp_skill)),
                 None,
                 None,
                 None,
@@ -165,6 +170,8 @@ impl Host {
         username: &str,
         settings: ProfileSettings,
         random_events: Arc<AtomicBool>,
+        lamp_auto: Arc<AtomicBool>,
+        lamp_skill: Arc<Mutex<String>>,
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
@@ -179,6 +186,8 @@ impl Host {
         let mut slot = SlotLoop {
             settings,
             random_events,
+            lamp_auto,
+            lamp_skill,
             ..SlotLoop::new()
         };
         let mut run_sends = 0u32;
@@ -426,6 +435,10 @@ impl Host {
         // `ProfileSettings` the guardian reads; the returned
         // `RandomStatus` rides the pump back into the next observe.
         slot.settings.random_events = slot.random_events.load(Ordering::Relaxed);
+        slot.settings.lamp_auto = slot.lamp_auto.load(Ordering::Relaxed);
+        if let Ok(skill) = slot.lamp_skill.lock() {
+            slot.settings.lamp_skill = skill.clone();
+        }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -625,12 +638,17 @@ struct SlotLoop {
     run_on: bool,
     run_sends: u32,
     /// The slot's real `ProfileSettings` (wired once by `run_client` from
-    /// the vault profile; the guardian's toggle reads it). `random_events`
-    /// is refreshed each frame from [`SlotLoop::random_events`].
+    /// the vault profile; the guardian's toggle reads it). `random_events`,
+    /// `lamp_auto`, and `lamp_skill` are refreshed each frame from the
+    /// live atomics below.
     settings: ProfileSettings,
     /// Live guardian toggle (shared with `SlotArm::random_events`): a
     /// panel/TUI flip reaches the running slot without a respawn.
     random_events: Arc<AtomicBool>,
+    /// Live lamp auto-use toggle (shared with `SlotArm::lamp_auto`).
+    lamp_auto: Arc<AtomicBool>,
+    /// Live lamp skill choice (shared with `SlotArm::lamp_skill`).
+    lamp_skill: Arc<Mutex<String>>,
     /// Random-event guardian (act/hold; the trapped-kind hold and the
     /// `on_random` knock live here).
     guardian: Guardian,
@@ -671,6 +689,8 @@ impl SlotLoop {
             run_sends: 0,
             settings: ProfileSettings::default(),
             random_events: Arc::new(AtomicBool::new(true)),
+            lamp_auto: Arc::new(AtomicBool::new(true)),
+            lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             guardian: Guardian::new(),
             renderer: None,
             renderer_prefer_cpu: None,
@@ -1765,6 +1785,8 @@ mod tests {
                 "idle",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 None,
                 None,
                 Some(Arc::new(park)),
@@ -1835,6 +1857,8 @@ mod tests {
                 "focused",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 Some(inp),
                 None,
                 None,
@@ -1893,6 +1917,8 @@ mod tests {
                 "scripted",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 None,
                 None,
                 None,
@@ -1947,6 +1973,8 @@ mod tests {
                 "sidecar",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 None,
                 Some(buf2),
                 Some(Arc::new(park)),
@@ -2028,6 +2056,8 @@ mod tests {
                 "parked",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 None,
                 None,
                 Some(Arc::new(park)),
@@ -2074,6 +2104,8 @@ mod tests {
                 "kicked",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 Some(Arc::clone(&inp)),
                 None,
                 Some(Arc::new(park)),
@@ -2145,6 +2177,8 @@ mod tests {
                 "kicked-idle",
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicBool::new(true)),
+                Arc::new(Mutex::new("strength".to_string())),
                 None,
                 None,
                 Some(Arc::new(park)),
@@ -2241,6 +2275,101 @@ mod tests {
         assert!(
             c.out.pos > 0,
             "the Talk-to went out on the real client driver"
+        );
+    }
+
+    /// Lamp auto is live-mirrored like `random_events`: spawn with auto
+    /// off, flip the shared atomic mid-session, and the next guardian
+    /// tick rubs without a respawn.
+    #[test]
+    fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
+        const LAMP_OBJ: i32 = 2528;
+
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let stream = client::io::ClientStream::connect(&addr.ip().to_string(), addr.port())
+            .expect("connect");
+        std::mem::forget(listener);
+        c.stream = Some(stream);
+        ingame_scene2(&mut c);
+        c.map_build_base_x = 0;
+        c.map_build_base_z = 0;
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= LAMP_OBJ as usize {
+                cache.objs.push(client::config::ObjType::default());
+            }
+            cache.objs[LAMP_OBJ as usize] = client::config::ObjType {
+                id: LAMP_OBJ,
+                iop: [None, None, None, Some("Rub".into()), None],
+                ..Default::default()
+            };
+        }
+        c.side_icon[3] = 300;
+        c.set_iface(
+            300,
+            IfType {
+                id: 300,
+                layer_id: 300,
+                children: Some(vec![301]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            301,
+            IfType {
+                id: 301,
+                layer_id: 300,
+                r#type: client::config::if_type::ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![LAMP_OBJ + 1, 0]),
+                link_obj_number: Some(vec![1, 0]),
+                ..Default::default()
+            },
+        );
+        c.gens.inv = 1;
+        c.gens.iface = 1;
+        c.gens.scene = 1;
+        c.gens.player = 1;
+
+        let lamp_auto = Arc::new(AtomicBool::new(false));
+        let lamp_skill = Arc::new(Mutex::new("strength".to_string()));
+        let mut slot = SlotLoop {
+            settings: ProfileSettings {
+                lamp_auto: false,
+                ..ProfileSettings::default()
+            },
+            random_events: Arc::new(AtomicBool::new(true)),
+            lamp_auto: Arc::clone(&lamp_auto),
+            lamp_skill: Arc::clone(&lamp_skill),
+            ..SlotLoop::new()
+        };
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
+        assert!(
+            c.out.pos == 0,
+            "lamp_auto off at spawn: guardian must not rub"
+        );
+
+        lamp_auto.store(true, Ordering::Relaxed);
+        c.gens.player = 2;
+        Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
+        assert!(
+            c.out.pos > 0,
+            "lamp_auto flipped live: next guardian tick must rub"
         );
     }
 }

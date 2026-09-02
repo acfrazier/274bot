@@ -396,6 +396,9 @@ impl TuiSession {
         arm.auto_login.store(auto_login, Ordering::Relaxed);
         arm.random_events
             .store(profile.settings.random_events, Ordering::Relaxed);
+        arm.lamp_auto
+            .store(profile.settings.lamp_auto, Ordering::Relaxed);
+        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         if let Some(play) = self.play.as_mut() {
             play.spawn_slot(profile, None, None, Some(arm));
             true
@@ -639,7 +642,7 @@ impl TuiSession {
 
     /// Persist the settings popup's changes onto the focused vault
     /// profile (the operator vault; `--live`'s temp vault is ephemeral)
-    /// and mirror `random_events` onto a running slot's arm.
+    /// and mirror guardian settings onto a running slot's arm.
     fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(vault) = self.vault.as_mut() else {
             return;
@@ -652,11 +655,15 @@ impl TuiSession {
         };
         profile.settings = app.settings.clone();
         let random_events = profile.settings.random_events;
+        let lamp_auto = profile.settings.lamp_auto;
+        let lamp_skill = profile.settings.lamp_skill.clone();
         if let Err(e) = vault.upsert(profile) {
             app.error = Some(format!("settings: {e}"));
         }
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
             arm.random_events.store(random_events, Ordering::Relaxed);
+            arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
+            *arm.lamp_skill.lock().unwrap() = lamp_skill;
         }
     }
 
