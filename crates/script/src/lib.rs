@@ -19,7 +19,7 @@ pub mod slot;
 
 pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
 #[cfg(feature = "load")]
-pub use js_cache::{default_js_cache_root, CachedJs, JsCache};
+pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 pub use load::{
     default_js_store, detect_shape, is_reserved, JsCard, JsLibrary, LoadShape, ScriptSel,
 };

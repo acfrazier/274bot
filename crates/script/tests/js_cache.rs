@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use script::load::JsLibrary;
-use script::{JsCache, ScriptKind, ScriptSource};
+use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
 
 fn temp_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-js-cache-{}", std::process::id()));
@@ -55,7 +55,15 @@ fn first_import_writes_cache_object() {
     let origin = write_file(&dir, "bot.ts", CLASS_TS);
 
     let cached = cache
-        .get_or_transpile(&origin, CLASS_TS.as_bytes())
+        .get_or_transpile(
+            &origin,
+            CLASS_TS.as_bytes(),
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::File,
+                shape: Some("CompatClass".into()),
+            },
+        )
         .expect("first import caches");
     assert!(!cached.sha256.is_empty());
     assert!(cache.object_path(&cached.sha256).is_file());
@@ -73,14 +81,19 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
     let cache = JsCache::new(cache_root);
     let origin = write_file(&dir, "bot.ts", CLASS_TS);
 
+    let meta = CacheMeta {
+        kind: ScriptKind::Compat,
+        source: ScriptSource::File,
+        shape: None,
+    };
     let first = cache
-        .get_or_transpile(&origin, CLASS_TS.as_bytes())
+        .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta.clone())
         .unwrap();
     let mtime = object_mtime(&cache, &first.sha256);
     thread::sleep(Duration::from_millis(20));
 
     let second = cache
-        .get_or_transpile(&origin, CLASS_TS.as_bytes())
+        .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta)
         .unwrap();
     assert_eq!(first.sha256, second.sha256);
     assert_eq!(first.js, second.js);
@@ -210,9 +223,152 @@ fn js_origin_is_hashed_not_transpiled() {
     let cache = JsCache::new(dir.join("js-cache"));
     let path = write_file(&dir, "bot.js", NATIVE_TICK);
     let cached = cache
-        .get_or_transpile(&path, NATIVE_TICK.as_bytes())
+        .get_or_transpile(
+            &path,
+            NATIVE_TICK.as_bytes(),
+            CacheMeta {
+                kind: ScriptKind::NativeTick,
+                source: ScriptSource::File,
+                shape: Some("NativeTick".into()),
+            },
+        )
         .expect("js origin caches verbatim");
     assert_eq!(cached.js, NATIVE_TICK);
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_dirs_are_private_on_unix() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch("dir_mode");
+    let cache_root = dir.join("js-cache");
+    let cache = JsCache::new(cache_root.clone());
+    let origin = write_file(&dir, "bot.ts", CLASS_TS);
+    cache
+        .get_or_transpile(
+            &origin,
+            CLASS_TS.as_bytes(),
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::File,
+                shape: None,
+            },
+        )
+        .expect("cache write creates layout");
+
+    let root_mode = std::fs::metadata(&cache_root)
+        .expect("cache root")
+        .permissions()
+        .mode()
+        & 0o777;
+    let objects_mode = std::fs::metadata(cache_root.join("objects"))
+        .expect("objects dir")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(root_mode, 0o700, "js-cache root must be owner-only");
+    assert_eq!(objects_mode, 0o700, "objects/ must be owner-only");
+}
+
+#[test]
+fn manifest_records_script_kind_source_and_media() {
+    let dir = scratch("manifest_meta");
+    let cache_root = dir.join("js-cache");
+    let cache = JsCache::new(cache_root.clone());
+    let origin = write_file(&dir, "tickbot.js", NATIVE_TICK);
+    cache
+        .get_or_transpile(
+            &origin,
+            NATIVE_TICK.as_bytes(),
+            CacheMeta {
+                kind: ScriptKind::NativeTick,
+                source: ScriptSource::File,
+                shape: Some("NativeTick".into()),
+            },
+        )
+        .expect("cache miss writes manifest");
+
+    let raw = std::fs::read_to_string(cache_root.join("manifest.json")).expect("manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest json");
+    let entry = manifest["objects"]
+        .as_object()
+        .and_then(|o| o.values().next())
+        .expect("one manifest entry");
+    assert_eq!(entry["kind"], "NativeTick");
+    assert_eq!(entry["source"], "File");
+    assert_eq!(entry["media"], "js");
+    assert_eq!(entry["shape"], "NativeTick");
+    assert!(entry["origin"].as_str().unwrap().ends_with("tickbot.js"));
+}
+
+#[test]
+fn persist_and_restore_keeps_catalog_vs_file_provenance() {
+    let dir = scratch("persist_provenance");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import BoneBurier from './BoneBurier/BoneBurier.js';
+ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("BoneBurier/BoneBurier.ts"),
+        "export default class BoneBurier extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
+
+    let file_copy = write_file(
+        &dir,
+        "local/BoneBurier.ts",
+        "export default class BoneBurier extends LoopingBot { override loop() { this.x = 1 } }",
+    );
+
+    let store = dir.join("js-scripts.json");
+    let cache_root = dir.join("js-cache");
+    let mut lib = JsLibrary::with_cache(store.clone(), cache_root.clone());
+    lib.load(&file_copy).expect("file BoneBurier loads");
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog registers");
+
+    let store_raw = std::fs::read_to_string(&store).expect("persisted store");
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(&store_raw).expect("store is a json array");
+    assert_eq!(
+        entries.len(),
+        1,
+        "js-scripts.json must list File cards only, not catalog paths"
+    );
+    assert!(
+        entries[0]["path"]
+            .as_str()
+            .unwrap()
+            .contains("local/BoneBurier.ts"),
+        "persisted path is the operator file copy"
+    );
+
+    let mut lib2 = JsLibrary::with_cache(store, cache_root);
+    lib2.restore().expect("restore file cards");
+    lib2.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog re-register after restart");
+
+    assert_eq!(lib2.cards().len(), 2);
+    assert_eq!(
+        lib2.get(ScriptSource::File, "BoneBurier")
+            .expect("file card")
+            .source,
+        ScriptSource::File
+    );
+    assert_eq!(
+        lib2.get(ScriptSource::Catalog, "BoneBurier")
+            .expect("catalog card")
+            .source,
+        ScriptSource::Catalog
+    );
 }
 
 #[test]

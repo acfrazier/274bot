@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::load::transpile_ts;
+use crate::rs2b0t_registry::{ScriptKind, ScriptSource};
 
 /// One cached transpile result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,12 +18,24 @@ pub struct CachedJs {
     pub js: String,
 }
 
+/// Provenance written into `manifest.json` on cache miss.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheMeta {
+    pub kind: ScriptKind,
+    pub source: ScriptSource,
+    pub shape: Option<String>,
+}
+
 /// On-disk manifest entry for one cached object.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 struct ManifestEntry {
     sha256: String,
     origin: String,
     kind: String,
+    source: String,
+    media: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shape: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -63,7 +76,12 @@ impl JsCache {
     /// Return cached JS for `bytes` keyed by SHA-256. On miss, transpile
     /// `.ts` origins (or store `.js` verbatim), write the object file, and
     /// update `manifest.json`. Never writes beside `origin` on disk.
-    pub fn get_or_transpile(&self, origin: &Path, bytes: &[u8]) -> Result<CachedJs, String> {
+    pub fn get_or_transpile(
+        &self,
+        origin: &Path,
+        bytes: &[u8],
+        meta: CacheMeta,
+    ) -> Result<CachedJs, String> {
         self.ensure_layout()?;
         let sha256 = hex_sha256(bytes);
         let object = self.object_path(&sha256);
@@ -75,8 +93,8 @@ impl JsCache {
 
         let text = std::str::from_utf8(bytes)
             .map_err(|_| format!("origin {} is not UTF-8", origin.display()))?;
-        let kind = origin_kind(origin);
-        let js = match kind.as_str() {
+        let media = origin_media(origin);
+        let js = match media.as_str() {
             "js" => text.to_string(),
             _ => transpile_ts(text)?,
         };
@@ -90,7 +108,10 @@ impl JsCache {
             ManifestEntry {
                 sha256: sha256.clone(),
                 origin: origin.to_string_lossy().into_owned(),
-                kind,
+                kind: script_kind_label(meta.kind),
+                source: script_source_label(meta.source),
+                media,
+                shape: meta.shape,
             },
         );
         self.write_manifest(&manifest)?;
@@ -100,8 +121,8 @@ impl JsCache {
 
     fn ensure_layout(&self) -> Result<(), String> {
         let marker = self.root.join("objects").join(".keep");
-        if marker.parent().is_some_and(|p| !p.exists()) {
-            std::fs::create_dir_all(marker.parent().unwrap())
+        if !marker.exists() {
+            vault::write_private_file(&marker, b"")
                 .map_err(|e| format!("cache layout {}: {e}", self.root.display()))?;
         }
         Ok(())
@@ -128,9 +149,25 @@ fn hex_sha256(bytes: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn origin_kind(origin: &Path) -> String {
+fn origin_media(origin: &Path) -> String {
     match origin.extension().and_then(|s| s.to_str()) {
         Some("js") | Some("mjs") | Some("cjs") => "js".to_string(),
         _ => "ts".to_string(),
+    }
+}
+
+fn script_kind_label(kind: ScriptKind) -> String {
+    match kind {
+        ScriptKind::Compat => "Compat".into(),
+        ScriptKind::NativeTick => "NativeTick".into(),
+        ScriptKind::Compiled => "Compiled".into(),
+    }
+}
+
+fn script_source_label(source: ScriptSource) -> String {
+    match source {
+        ScriptSource::Catalog => "Catalog".into(),
+        ScriptSource::File => "File".into(),
+        ScriptSource::Builtin => "Builtin".into(),
     }
 }

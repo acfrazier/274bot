@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::js_cache::{default_js_cache_root, JsCache};
+use crate::js_cache::{default_js_cache_root, CacheMeta, JsCache};
 use crate::rs2b0t_registry::{
     parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path, ScriptKind,
     ScriptSource,
@@ -165,10 +165,15 @@ impl JsLibrary {
                 continue;
             }
             let shape = detect_shape(&origin);
-            let cached = match self
-                .cache
-                .get_or_transpile(&path, origin.as_bytes())
-            {
+            let cached = match self.cache.get_or_transpile(
+                &path,
+                origin.as_bytes(),
+                CacheMeta {
+                    kind: shape_to_kind(shape),
+                    source: ScriptSource::File,
+                    shape: Some(shape_label(shape).into()),
+                },
+            ) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
@@ -208,7 +213,15 @@ impl JsLibrary {
         }
         let cached = self
             .cache
-            .get_or_transpile(path, origin.as_bytes())
+            .get_or_transpile(
+                path,
+                origin.as_bytes(),
+                CacheMeta {
+                    kind: shape_to_kind(shape),
+                    source: ScriptSource::File,
+                    shape: Some(shape_label(shape).into()),
+                },
+            )
             .map_err(|e| format!("{name}: {e}"))?;
         #[cfg(feature = "load")]
         {
@@ -232,15 +245,7 @@ impl JsLibrary {
             .cloned()
             .chain(std::iter::once(card.clone()))
             .collect();
-        self.persist_entries(
-            &new_cards
-                .iter()
-                .map(|c| StoreEntry {
-                    name: c.name.clone(),
-                    path: c.path.to_string_lossy().to_string(),
-                })
-                .collect::<Vec<_>>(),
-        )?;
+        self.persist_file_cards(&new_cards)?;
         self.cards = new_cards;
         Ok(card)
     }
@@ -293,7 +298,15 @@ impl JsLibrary {
             }
             let cached = self
                 .cache
-                .get_or_transpile(&path, origin.as_bytes())
+                .get_or_transpile(
+                    &path,
+                    origin.as_bytes(),
+                    CacheMeta {
+                        kind: card.kind,
+                        source: ScriptSource::Catalog,
+                        shape: Some(shape_label(shape).into()),
+                    },
+                )
                 .map_err(|e| format!("{}: {e}", card.name))?;
             self.cards
                 .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
@@ -332,7 +345,15 @@ impl JsLibrary {
         }
         let cached = self
             .cache
-            .get_or_transpile(&path, origin.as_bytes())
+            .get_or_transpile(
+                &path,
+                origin.as_bytes(),
+                CacheMeta {
+                    kind: shape_to_kind(shape),
+                    source,
+                    shape: Some(shape_label(shape).into()),
+                },
+            )
             .map_err(|e| format!("{name}: {e}"))?;
         let card = &mut self.cards[idx];
         card.path = path;
@@ -361,16 +382,19 @@ impl JsLibrary {
     /// parent directory. Errors propagate so a load that cannot persist is
     /// reported instead of silently lost.
     pub fn persist(&self) -> Result<(), String> {
-        self.persist_entries(
-            &self
-                .cards
-                .iter()
-                .map(|c| StoreEntry {
-                    name: c.name.clone(),
-                    path: c.path.to_string_lossy().to_string(),
-                })
-                .collect::<Vec<_>>(),
-        )
+        self.persist_file_cards(&self.cards)
+    }
+
+    fn persist_file_cards(&self, cards: &[JsCard]) -> Result<(), String> {
+        let entries: Vec<StoreEntry> = cards
+            .iter()
+            .filter(|c| c.source == ScriptSource::File)
+            .map(|c| StoreEntry {
+                name: c.name.clone(),
+                path: c.path.to_string_lossy().to_string(),
+            })
+            .collect();
+        self.persist_entries(&entries)
     }
 
     fn persist_entries(&self, entries: &[StoreEntry]) -> Result<(), String> {
@@ -410,6 +434,15 @@ fn shape_to_kind(shape: LoadShape) -> ScriptKind {
         LoadShape::NativeTick => ScriptKind::NativeTick,
         LoadShape::CompatDefineBot | LoadShape::CompatClass => ScriptKind::Compat,
         LoadShape::Reject => ScriptKind::Compat,
+    }
+}
+
+fn shape_label(shape: LoadShape) -> &'static str {
+    match shape {
+        LoadShape::CompatDefineBot => "CompatDefineBot",
+        LoadShape::CompatClass => "CompatClass",
+        LoadShape::NativeTick => "NativeTick",
+        LoadShape::Reject => "Reject",
     }
 }
 
