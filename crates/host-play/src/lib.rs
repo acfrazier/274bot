@@ -643,30 +643,29 @@ fn dispatch_script_interact(
                 }
             }
             InteractReq::Held { name, action } => {
-                // rs2b0t `Item.interact`: resolve the held item by name and
-                // dispatch its menu op by label (Bones → `Bury`). A name the
-                // table does not know or an item that is no longer held
-                // fails closed — nothing is sent.
+                // rs2b0t `Item.interact` / `Inventory.first`: one name → one
+                // held row (same as Withdraw's `.find`). A name the table
+                // does not know or an item that is no longer held fails
+                // closed — nothing is sent.
                 let wanted = name.to_lowercase();
-                for item in snapshot.inventory() {
-                    if obj_names
-                        .and_then(|n| n.name(item.def.id))
+                if let Some(item) = snapshot.inventory().iter().find(|it| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
                         .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                    {
-                        let res =
-                            ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
-                        if host::debug_enabled() {
-                            let outcome = match &res {
-                                SendResult::Sent { .. } => "sent".to_string(),
-                                SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
-                            };
-                            eprintln!(
-                                "[shim-held] {name} {action} slot={} -> {outcome}",
-                                item.slot
-                            );
-                        }
-                        wrote |= matches!(res, SendResult::Sent { .. });
+                }) {
+                    let res =
+                        ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
+                    if host::debug_enabled() {
+                        let outcome = match &res {
+                            SendResult::Sent { .. } => "sent".to_string(),
+                            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+                        };
+                        eprintln!(
+                            "[shim-held] {name} {action} slot={} -> {outcome}",
+                            item.slot
+                        );
                     }
+                    wrote |= matches!(res, SendResult::Sent { .. });
                 }
             }
             InteractReq::Close => {
@@ -3656,6 +3655,89 @@ mod tests {
         assert_eq!(
             c.out.pos, before,
             "a label no held op resolves and an unknown name send nothing"
+        );
+    }
+
+    /// `Inventory.first` / one `{op:'held',...}` queue entry target a single
+    /// inv row. Two Bones slots must still write one bury op, not one per
+    /// name match (Withdraw already `.find`s; Held must match).
+    #[test]
+    fn dispatch_script_interact_held_first_match_only() {
+        let mut one = bank_fetch_client();
+        {
+            let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
+            cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
+        }
+        let mut snap_one = GameSnapshot::new();
+        snap_one.rebuild(&one);
+        let names = api::obj_names::ObjNames::from_objs(&{
+            let cache = Arc::get_mut(&mut one.cache).expect("sole cache owner");
+            cache.objs.clone()
+        });
+        let (navs, world) = empty_nav();
+        let before_one = one.out.pos;
+        assert!(dispatch_script_interact(
+            &mut one,
+            &snap_one,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Held {
+                name: "Bones".into(),
+                action: "Bury".into()
+            }],
+        ));
+        let one_op = one.out.pos - before_one;
+        assert!(one_op > 0, "control bury must write");
+
+        let mut two = bank_fetch_client();
+        {
+            let cache = Arc::get_mut(&mut two.cache).expect("sole cache owner");
+            cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
+        }
+        // Two separate Bones rows (stored 2 = obj 1), matching live multi-slot
+        // inv the shim's Inventory.first would pick from once.
+        two.set_iface_mut(
+            500,
+            IfTypeMut {
+                link_obj_type: Some(vec![2, 2]),
+                link_obj_number: Some(vec![1, 1]),
+                ..Default::default()
+            },
+        );
+        let mut snap_two = GameSnapshot::new();
+        snap_two.rebuild(&two);
+        assert_eq!(
+            snap_two
+                .inventory()
+                .iter()
+                .filter(|it| it.def.id == 1)
+                .count(),
+            2,
+            "fixture must expose two Bones slots"
+        );
+        let before_two = two.out.pos;
+        assert!(dispatch_script_interact(
+            &mut two,
+            &snap_two,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Held {
+                name: "Bones".into(),
+                action: "Bury".into()
+            }],
+        ));
+        assert_eq!(
+            two.out.pos - before_two,
+            one_op,
+            "one Held request must bury Inventory.first only, not every Bones slot"
         );
     }
 
