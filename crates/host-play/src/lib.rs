@@ -2362,19 +2362,6 @@ fn spawn_slot_thread(
                     let Some(slot) = all.get_mut(&knock_name) else {
                         return RandomClaim::Host;
                     };
-                    // Task 12: the bot instance's ignore list. An ignored
-                    // name is a host-declined claim — no flee / Talk-to /
-                    // etc. — while detect still publishes the event. The
-                    // eval rides the rising edge (once per event), never
-                    // the frame path. The claim knock itself stays Host
-                    // for JS isolates: no Handle comes from V8.
-                    if slot
-                        .ignored_randoms()
-                        .iter()
-                        .any(|n| n.eq_ignore_ascii_case(&ev.name))
-                    {
-                        return RandomClaim::Handle;
-                    }
                     slot.on_random(ev)
                 };
                 Host::run_client(
@@ -5744,11 +5731,9 @@ mod tests {
 
     #[test]
     fn ignored_randoms_skips_flee_but_detect_still_publishes() {
-        // Task 12: the bot instance's `ignoredRandoms()` list makes the
-        // host's knock path decline the event — no flee / Talk-to / etc.
-        // — while detect still publishes the kind (chrome can show it).
-        // The claim knock itself stays Host for JS isolates (no Handle
-        // from V8); the Handle here is the host-play path's own decision.
+        // SEC-003: `ignoredRandoms()` remains readable from JS (EventSignal)
+        // but the host knock must not honor it — Load isolates cannot
+        // decline the guardian. Detect still publishes the kind.
         let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let src = "export default class T extends LoopingBot { ignoredRandoms() { return ['swarm']; } loop() {} }";
         scripts
@@ -5758,22 +5743,14 @@ mod tests {
             .or_default()
             .start_load(src.to_string(), script::LoadShape::CompatClass)
             .expect("load isolate starts");
-        // The production knock arm (see the slot thread): an ignored name
-        // is a host-declined claim; everything else asks the running slot
-        // script.
+        // The production knock arm (see the slot thread): always ask the
+        // running slot script; ignore-list is not consulted here.
         let knock_scripts = Arc::clone(&scripts);
         let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
             let mut all = knock_scripts.lock().unwrap();
             let Some(slot) = all.get_mut("alice") else {
                 return RandomClaim::Host;
             };
-            if slot
-                .ignored_randoms()
-                .iter()
-                .any(|n| n.eq_ignore_ascii_case(&ev.name))
-            {
-                return RandomClaim::Handle;
-            }
             slot.on_random(ev)
         };
 
@@ -5788,26 +5765,14 @@ mod tests {
         assert_eq!(status.kind, Some(api::random::RandomKind::Evade));
         assert_eq!(status.name.as_deref(), Some("swarm"));
         assert!(status.ours, "detect still publishes the event");
-        assert_eq!(status.claim, RandomClaim::Handle);
-        assert!(!status.hold);
-        assert!(drv.walks.is_empty(), "an ignored swarm is not fled");
-        assert!(drv.actions.is_empty());
-
-        // Control: a host-owned slot (no ignore list) flees the same
-        // swarm — the ignore list is what suppressed the act.
-        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
-        let mut c2 = guardian_client();
-        plant_attacking_npc(&mut c2, 0, "Swarm");
-        let mut g2 = Guardian::new();
-        let mut drv2 = GuardRec::default();
-        let mut snap2 = GameSnapshot::new();
-        tick_at(&mut c2, &mut snap2);
-        let status2 = g2.tick(&mut drv2, &snap2, &settings, 0, None);
-        assert_eq!(status2.kind, Some(api::random::RandomKind::Evade));
-        assert_eq!(status2.claim, RandomClaim::Host);
+        assert_eq!(
+            status.claim,
+            RandomClaim::Host,
+            "ignoredRandoms cannot decline the guardian"
+        );
         assert!(
-            !drv2.walks.is_empty(),
-            "an unignored swarm is fled (the ignore list suppressed it)"
+            !drv.walks.is_empty(),
+            "the guardian flees even when the script lists swarm as ignored"
         );
     }
 
