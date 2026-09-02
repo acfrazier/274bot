@@ -229,4 +229,77 @@ pub enum InteractReq {
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,
+    /// Interact with an NPC by name using an action label (`Pick`, …).
+    #[serde(rename = "npc")]
+    Npc {
+        name: String,
+        action: String,
+        index: Option<i32>,
+    },
+    /// Interact with a loc at `(x, z, level)` using an action label.
+    #[serde(rename = "loc")]
+    Loc {
+        x: i32,
+        z: i32,
+        level: i32,
+        action: String,
+    },
+    /// Interact with a ground item at `(x, z, level)` using an action label.
+    #[serde(rename = "obj")]
+    Obj {
+        x: i32,
+        z: i32,
+        level: i32,
+        name: Option<String>,
+        action: String,
+    },
+    /// Interact with a player by name using an action label.
+    #[serde(rename = "player")]
+    Player { name: String, action: String },
+    /// Use a held inventory item on a scene target (`Game.castOnItem`).
+    #[serde(rename = "use-on")]
+    UseOn {
+        name: String,
+        kind: String,
+        target_name: Option<String>,
+        x: i32,
+        z: i32,
+        level: i32,
+        index: Option<i32>,
+    },
+    /// Use a widget (spell / interface button) on a scene target.
+    #[serde(rename = "use-widget-on")]
+    UseWidgetOn {
+        component_id: i32,
+        kind: String,
+        target_name: Option<String>,
+        x: i32,
+        z: i32,
+        level: i32,
+        index: Option<i32>,
+    },
+    /// Continue the open chat dialog.
+    #[serde(rename = "continue")]
+    ContinueDialog,
+    /// Answer the chat modal's `option`-th choice (1-based).
+    #[serde(rename = "answer")]
+    Answer { option: i32 },
+    /// Press an interface button by component id.
+    #[serde(rename = "if-button")]
+    IfButton { component_id: i32 },
+    /// Close the open main/side/chat modal (not the bank).
+    #[serde(rename = "close-modal")]
+    CloseModal,
+    /// Switch the active side tab.
+    #[serde(rename = "side-tab")]
+    SideTab { tab: i32 },
+    /// Wear/wield an inventory item by resolved name.
+    #[serde(rename = "wear")]
+    Wear { name: String },
+    /// Toggle run on/off.
+    #[serde(rename = "set-run")]
+    SetRun { on: bool },
+    /// Toggle auto-retaliate on/off.
+    #[serde(rename = "set-retaliate")]
+    SetRetaliate { on: bool },
 }

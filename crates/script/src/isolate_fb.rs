@@ -56,10 +56,11 @@ const VT_TILE_LEVEL: VOffsetT = 8;
 const VT_ROW_NAME: VOffsetT = 4;
 const VT_ROW_COUNT: VOffsetT = 6;
 
-// Stat: { index: int, name: string, xp: int }
+// Stat: { index, name, xp, level }
 const VT_STAT_INDEX: VOffsetT = 4;
 const VT_STAT_NAME: VOffsetT = 6;
 const VT_STAT_XP: VOffsetT = 8;
+const VT_STAT_LEVEL: VOffsetT = 10;
 
 // BankStand: { name, x, z, level, kind, op, choose }
 const VT_BANK_NAME: VOffsetT = 4;
@@ -86,8 +87,56 @@ const VT_SNAP_BANK_OPEN: VOffsetT = 24;
 const VT_SNAP_BANK_LOADED: VOffsetT = 26;
 const VT_SNAP_HOLD: VOffsetT = 28;
 const VT_SNAP_OURS: VOffsetT = 30;
+const VT_SNAP_NPCS: VOffsetT = 32;
+const VT_SNAP_LOCS: VOffsetT = 34;
+const VT_SNAP_PLAYERS: VOffsetT = 36;
+const VT_SNAP_GROUND: VOffsetT = 38;
+const VT_SNAP_EQUIPMENT: VOffsetT = 40;
+const VT_SNAP_CHAT_OPEN: VOffsetT = 42;
+const VT_SNAP_CHAT_CONTINUE: VOffsetT = 44;
+const VT_SNAP_CHAT_TEXT: VOffsetT = 46;
+const VT_SNAP_CHAT_OPTIONS: VOffsetT = 48;
+const VT_SNAP_SIDE_TAB: VOffsetT = 50;
+const VT_SNAP_VARPS: VOffsetT = 52;
+const VT_SNAP_COMBAT_STYLES: VOffsetT = 54;
+const VT_SNAP_RUN_ENERGY: VOffsetT = 56;
+const VT_SNAP_RUN_ENABLED: VOffsetT = 58;
+const VT_SNAP_RETALIATE: VOffsetT = 60;
+const VT_SNAP_MY_NAME: VOffsetT = 62;
+const VT_SNAP_IN_COMBAT: VOffsetT = 64;
+const VT_SNAP_ANIMATING: VOffsetT = 66;
+const VT_SNAP_MAIN_MODAL: VOffsetT = 68;
+const VT_SNAP_CHAT_MODAL: VOffsetT = 70;
 
-// Interact: { op, x, z, level, kind, name, stand_op, choose, action }
+// SceneEntity: { index, id, name, x, z, level, distance, health,
+//               max_health, in_combat, animating, actions }
+const VT_ENT_INDEX: VOffsetT = 4;
+const VT_ENT_ID: VOffsetT = 6;
+const VT_ENT_NAME: VOffsetT = 8;
+const VT_ENT_X: VOffsetT = 10;
+const VT_ENT_Z: VOffsetT = 12;
+const VT_ENT_LEVEL: VOffsetT = 14;
+const VT_ENT_DISTANCE: VOffsetT = 16;
+const VT_ENT_HEALTH: VOffsetT = 18;
+const VT_ENT_MAX_HEALTH: VOffsetT = 20;
+const VT_ENT_IN_COMBAT: VOffsetT = 22;
+const VT_ENT_ANIMATING: VOffsetT = 24;
+const VT_ENT_ACTIONS: VOffsetT = 26;
+
+// ChatOption: { text }
+const VT_CHAT_OPT_TEXT: VOffsetT = 4;
+
+// CombatStyle: { mode, label, component_id }
+const VT_CS_MODE: VOffsetT = 4;
+const VT_CS_LABEL: VOffsetT = 6;
+const VT_CS_COMPONENT: VOffsetT = 8;
+
+// Varp: { index, value }
+const VT_VARP_INDEX: VOffsetT = 4;
+const VT_VARP_VALUE: VOffsetT = 6;
+
+// Interact: { op, x, z, level, kind, name, stand_op, choose, action,
+//             index, component_id }
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -97,6 +146,8 @@ const VT_IN_NAME: VOffsetT = 14;
 const VT_IN_STAND_OP: VOffsetT = 16;
 const VT_IN_CHOOSE: VOffsetT = 18;
 const VT_IN_ACTION: VOffsetT = 20;
+const VT_IN_INDEX: VOffsetT = 22;
+const VT_IN_COMPONENT_ID: VOffsetT = 24;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -114,12 +165,51 @@ pub struct TileInput {
     pub level: i32,
 }
 
-/// One skill row: the snapshot's stat index, name, and xp.
+/// One skill row: the snapshot's stat index, name, xp, and effective level.
 #[derive(Clone, Copy)]
 pub struct StatInput<'a> {
     pub index: i32,
     pub name: &'a str,
     pub xp: i32,
+    pub level: i32,
+}
+
+/// A scene entity view posted into the isolate (npc/loc/player/ground).
+#[derive(Clone, Copy)]
+pub struct SceneEntityInput<'a> {
+    pub index: i32,
+    pub id: i32,
+    pub name: Option<&'a str>,
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub distance: i32,
+    pub health: i32,
+    pub max_health: i32,
+    pub in_combat: bool,
+    pub animating: bool,
+    pub actions: &'a [String],
+}
+
+/// One chat modal BUTTON_OK choice.
+#[derive(Clone, Copy)]
+pub struct ChatOptionInput<'a> {
+    pub text: &'a str,
+}
+
+/// One combat-style varp-select button with its label.
+#[derive(Clone, Copy)]
+pub struct CombatStyleInput<'a> {
+    pub mode: i32,
+    pub label: &'a str,
+    pub component_id: i32,
+}
+
+/// One varp index/value pair.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct VarpInput {
+    pub index: i32,
+    pub value: i32,
 }
 
 /// A packed bank stand the shim walks to / opens. `kind` is `"booth"` or
@@ -160,6 +250,26 @@ pub struct SnapshotInput<'a> {
     pub bank_loaded: bool,
     pub hold: bool,
     pub ours: bool,
+    pub npcs: &'a [SceneEntityInput<'a>],
+    pub locs: &'a [SceneEntityInput<'a>],
+    pub players: &'a [SceneEntityInput<'a>],
+    pub ground: &'a [SceneEntityInput<'a>],
+    pub equipment: &'a [(Option<&'a str>, i32)],
+    pub chat_open: bool,
+    pub chat_continue: bool,
+    pub chat_text: Option<&'a str>,
+    pub chat_options: &'a [ChatOptionInput<'a>],
+    pub side_tab: i32,
+    pub varps: &'a [VarpInput],
+    pub combat_styles: &'a [CombatStyleInput<'a>],
+    pub run_energy: i32,
+    pub run_enabled: bool,
+    pub retaliate_enabled: bool,
+    pub my_name: Option<&'a str>,
+    pub in_combat: bool,
+    pub animating: bool,
+    pub main_modal_id: i32,
+    pub chat_modal_id: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -261,6 +371,9 @@ impl StatReader<'_> {
     pub fn xp(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_STAT_XP, None) }.unwrap_or(0)
     }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_STAT_LEVEL, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for StatReader<'_> {
@@ -269,6 +382,7 @@ impl Verifiable for StatReader<'_> {
             .visit_field::<i32>("index", VT_STAT_INDEX, false)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_STAT_NAME, false)?
             .visit_field::<i32>("xp", VT_STAT_XP, false)?
+            .visit_field::<i32>("level", VT_STAT_LEVEL, false)?
             .finish();
         Ok(())
     }
@@ -372,6 +486,42 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<bool>("bank_loaded", VT_SNAP_BANK_LOADED, false)?
             .visit_field::<bool>("hold", VT_SNAP_HOLD, false)?
             .visit_field::<bool>("ours", VT_SNAP_OURS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
+                "npcs", VT_SNAP_NPCS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
+                "locs", VT_SNAP_LOCS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
+                "players", VT_SNAP_PLAYERS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
+                "ground", VT_SNAP_GROUND, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "equipment", VT_SNAP_EQUIPMENT, false,
+            )?
+            .visit_field::<bool>("chat_open", VT_SNAP_CHAT_OPEN, false)?
+            .visit_field::<bool>("chat_continue", VT_SNAP_CHAT_CONTINUE, false)?
+            .visit_field::<ForwardsUOffset<&str>>("chat_text", VT_SNAP_CHAT_TEXT, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatOptionReader>>>>(
+                "chat_options", VT_SNAP_CHAT_OPTIONS, false,
+            )?
+            .visit_field::<i32>("side_tab", VT_SNAP_SIDE_TAB, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<VarpReader>>>>(
+                "varps", VT_SNAP_VARPS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CombatStyleReader>>>>(
+                "combat_styles", VT_SNAP_COMBAT_STYLES, false,
+            )?
+            .visit_field::<i32>("run_energy", VT_SNAP_RUN_ENERGY, false)?
+            .visit_field::<bool>("run_enabled", VT_SNAP_RUN_ENABLED, false)?
+            .visit_field::<bool>("retaliate_enabled", VT_SNAP_RETALIATE, false)?
+            .visit_field::<ForwardsUOffset<&str>>("my_name", VT_SNAP_MY_NAME, false)?
+            .visit_field::<bool>("in_combat", VT_SNAP_IN_COMBAT, false)?
+            .visit_field::<bool>("animating", VT_SNAP_ANIMATING, false)?
+            .visit_field::<i32>("main_modal_id", VT_SNAP_MAIN_MODAL, false)?
+            .visit_field::<i32>("chat_modal_id", VT_SNAP_CHAT_MODAL, false)?
             .finish();
         Ok(())
     }
@@ -475,6 +625,134 @@ impl SnapshotReader<'_> {
     pub fn ours(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_OURS, None) }.unwrap_or(false)
     }
+    pub fn has_npcs(&self) -> bool {
+        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_NPCS)
+    }
+    pub fn npcs(&self) -> Vec<SceneEntityReader<'_>> {
+        rows::<SceneEntityReader>(&self.tab, VT_SNAP_NPCS)
+    }
+    pub fn has_locs(&self) -> bool {
+        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_LOCS)
+    }
+    pub fn locs(&self) -> Vec<SceneEntityReader<'_>> {
+        rows::<SceneEntityReader>(&self.tab, VT_SNAP_LOCS)
+    }
+    pub fn has_players(&self) -> bool {
+        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_PLAYERS)
+    }
+    pub fn players(&self) -> Vec<SceneEntityReader<'_>> {
+        rows::<SceneEntityReader>(&self.tab, VT_SNAP_PLAYERS)
+    }
+    pub fn has_ground(&self) -> bool {
+        rows_present::<SceneEntityReader>(&self.tab, VT_SNAP_GROUND)
+    }
+    pub fn ground(&self) -> Vec<SceneEntityReader<'_>> {
+        rows::<SceneEntityReader>(&self.tab, VT_SNAP_GROUND)
+    }
+    pub fn has_equipment(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_EQUIPMENT)
+    }
+    pub fn equipment(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_EQUIPMENT)
+    }
+    pub fn has_chat_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_OPEN, None).is_some() }
+    }
+    pub fn chat_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_OPEN, None) }.unwrap_or(false)
+    }
+    pub fn has_chat_continue(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_CONTINUE, None).is_some() }
+    }
+    pub fn chat_continue(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_CHAT_CONTINUE, None) }.unwrap_or(false)
+    }
+    pub fn has_chat_text(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_CHAT_TEXT, None)
+                .is_some()
+        }
+    }
+    pub fn chat_text(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_CHAT_TEXT, None) }
+    }
+    pub fn has_chat_options(&self) -> bool {
+        rows_present::<ChatOptionReader>(&self.tab, VT_SNAP_CHAT_OPTIONS)
+    }
+    pub fn chat_options(&self) -> Vec<ChatOptionReader<'_>> {
+        rows::<ChatOptionReader>(&self.tab, VT_SNAP_CHAT_OPTIONS)
+    }
+    pub fn has_side_tab(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SIDE_TAB, None).is_some() }
+    }
+    pub fn side_tab(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SIDE_TAB, None) }.unwrap_or(-1)
+    }
+    pub fn has_varps(&self) -> bool {
+        rows_present::<VarpReader>(&self.tab, VT_SNAP_VARPS)
+    }
+    pub fn varps(&self) -> Vec<VarpReader<'_>> {
+        rows::<VarpReader>(&self.tab, VT_SNAP_VARPS)
+    }
+    pub fn has_combat_styles(&self) -> bool {
+        rows_present::<CombatStyleReader>(&self.tab, VT_SNAP_COMBAT_STYLES)
+    }
+    pub fn combat_styles(&self) -> Vec<CombatStyleReader<'_>> {
+        rows::<CombatStyleReader>(&self.tab, VT_SNAP_COMBAT_STYLES)
+    }
+    pub fn has_run_energy(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_RUN_ENERGY, None).is_some() }
+    }
+    pub fn run_energy(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_RUN_ENERGY, None) }.unwrap_or(0)
+    }
+    pub fn has_run_enabled(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_RUN_ENABLED, None).is_some() }
+    }
+    pub fn run_enabled(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_RUN_ENABLED, None) }.unwrap_or(false)
+    }
+    pub fn has_retaliate_enabled(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_RETALIATE, None).is_some() }
+    }
+    pub fn retaliate_enabled(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_RETALIATE, None) }.unwrap_or(false)
+    }
+    pub fn has_my_name(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_MY_NAME, None)
+                .is_some()
+        }
+    }
+    pub fn my_name(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_MY_NAME, None) }
+    }
+    pub fn has_in_combat(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_IN_COMBAT, None).is_some() }
+    }
+    pub fn in_combat(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_IN_COMBAT, None) }.unwrap_or(false)
+    }
+    pub fn has_animating(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ANIMATING, None).is_some() }
+    }
+    pub fn animating(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ANIMATING, None) }.unwrap_or(false)
+    }
+    pub fn has_main_modal_id(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_MAIN_MODAL, None).is_some() }
+    }
+    pub fn main_modal_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_MAIN_MODAL, None) }.unwrap_or(-1)
+    }
+    pub fn has_chat_modal_id(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None).is_some() }
+    }
+    pub fn chat_modal_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None) }.unwrap_or(-1)
+    }
 }
 
 /// Decode `buf` as a root-`Snapshot` FlatBuffer (produced by our own
@@ -540,6 +818,29 @@ pub struct BankStandFp {
     pub choose: Option<String>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SceneEntityFp {
+    pub index: i32,
+    pub id: i32,
+    pub name: Option<String>,
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub distance: i32,
+    pub health: i32,
+    pub max_health: i32,
+    pub in_combat: bool,
+    pub animating: bool,
+    pub actions: Vec<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CombatStyleFp {
+    pub mode: i32,
+    pub label: String,
+    pub component_id: i32,
+}
+
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
@@ -550,7 +851,7 @@ pub struct SnapshotFingerprint {
     pub ingame: bool,
     pub inv: Vec<(Option<String>, i32)>,
     pub inv_size: i32,
-    pub stats: Vec<(i32, String, i32)>,
+    pub stats: Vec<(i32, String, i32, i32)>,
     pub booths: Vec<TileInput>,
     pub banks: Vec<BankStandFp>,
     pub bank: Vec<(Option<String>, i32)>,
@@ -559,11 +860,47 @@ pub struct SnapshotFingerprint {
     pub bank_loaded: bool,
     pub hold: bool,
     pub ours: bool,
+    pub npcs: Vec<SceneEntityFp>,
+    pub locs: Vec<SceneEntityFp>,
+    pub players: Vec<SceneEntityFp>,
+    pub ground: Vec<SceneEntityFp>,
+    pub equipment: Vec<(Option<String>, i32)>,
+    pub chat_open: bool,
+    pub chat_continue: bool,
+    pub chat_text: Option<String>,
+    pub chat_options: Vec<String>,
+    pub side_tab: i32,
+    pub varps: Vec<VarpInput>,
+    pub combat_styles: Vec<CombatStyleFp>,
+    pub run_energy: i32,
+    pub run_enabled: bool,
+    pub retaliate_enabled: bool,
+    pub my_name: Option<String>,
+    pub in_combat: bool,
+    pub animating: bool,
+    pub main_modal_id: i32,
+    pub chat_modal_id: i32,
 }
 
 impl SnapshotFingerprint {
     /// Own the input's field values (names cloned) for later comparison.
     pub fn from_input(input: &SnapshotInput<'_>) -> SnapshotFingerprint {
+        fn entity_fp(e: &SceneEntityInput<'_>) -> SceneEntityFp {
+            SceneEntityFp {
+                index: e.index,
+                id: e.id,
+                name: e.name.map(str::to_string),
+                x: e.x,
+                z: e.z,
+                level: e.level,
+                distance: e.distance,
+                health: e.health,
+                max_health: e.max_health,
+                in_combat: e.in_combat,
+                animating: e.animating,
+                actions: e.actions.iter().map(|a| a.to_string()).collect(),
+            }
+        }
         SnapshotFingerprint {
             here: input.here,
             ingame: input.ingame,
@@ -576,7 +913,7 @@ impl SnapshotFingerprint {
             stats: input
                 .stats
                 .iter()
-                .map(|s| (s.index, s.name.to_string(), s.xp))
+                .map(|s| (s.index, s.name.to_string(), s.xp, s.level))
                 .collect(),
             booths: input.booths.to_vec(),
             banks: input
@@ -606,6 +943,42 @@ impl SnapshotFingerprint {
             bank_loaded: input.bank_loaded,
             hold: input.hold,
             ours: input.ours,
+            npcs: input.npcs.iter().map(entity_fp).collect(),
+            locs: input.locs.iter().map(entity_fp).collect(),
+            players: input.players.iter().map(entity_fp).collect(),
+            ground: input.ground.iter().map(entity_fp).collect(),
+            equipment: input
+                .equipment
+                .iter()
+                .map(|(name, count)| (name.map(str::to_string), *count))
+                .collect(),
+            chat_open: input.chat_open,
+            chat_continue: input.chat_continue,
+            chat_text: input.chat_text.map(str::to_string),
+            chat_options: input
+                .chat_options
+                .iter()
+                .map(|o| o.text.to_string())
+                .collect(),
+            side_tab: input.side_tab,
+            varps: input.varps.to_vec(),
+            combat_styles: input
+                .combat_styles
+                .iter()
+                .map(|c| CombatStyleFp {
+                    mode: c.mode,
+                    label: c.label.to_string(),
+                    component_id: c.component_id,
+                })
+                .collect(),
+            run_energy: input.run_energy,
+            run_enabled: input.run_enabled,
+            retaliate_enabled: input.retaliate_enabled,
+            my_name: input.my_name.map(str::to_string),
+            in_combat: input.in_combat,
+            animating: input.animating,
+            main_modal_id: input.main_modal_id,
+            chat_modal_id: input.chat_modal_id,
         }
     }
 }
@@ -630,6 +1003,26 @@ pub struct DeltaMask {
     pub bank_loaded: bool,
     pub hold: bool,
     pub ours: bool,
+    pub npcs: bool,
+    pub locs: bool,
+    pub players: bool,
+    pub ground: bool,
+    pub equipment: bool,
+    pub chat_open: bool,
+    pub chat_continue: bool,
+    pub chat_text: bool,
+    pub chat_options: bool,
+    pub side_tab: bool,
+    pub varps: bool,
+    pub combat_styles: bool,
+    pub run_energy: bool,
+    pub run_enabled: bool,
+    pub retaliate_enabled: bool,
+    pub my_name: bool,
+    pub in_combat: bool,
+    pub animating: bool,
+    pub main_modal_id: bool,
+    pub chat_modal_id: bool,
 }
 
 impl DeltaMask {
@@ -649,6 +1042,26 @@ impl DeltaMask {
             bank_loaded: true,
             hold: true,
             ours: true,
+            npcs: true,
+            locs: true,
+            players: true,
+            ground: true,
+            equipment: true,
+            chat_open: true,
+            chat_continue: true,
+            chat_text: true,
+            chat_options: true,
+            side_tab: true,
+            varps: true,
+            combat_styles: true,
+            run_energy: true,
+            run_enabled: true,
+            retaliate_enabled: true,
+            my_name: true,
+            in_combat: true,
+            animating: true,
+            main_modal_id: true,
+            chat_modal_id: true,
         }
     }
 
@@ -677,6 +1090,26 @@ impl DeltaMask {
             // `__rs2b0t_host.hold` in onPaint and unfreeze loop().
             hold: true,
             ours: next.ours != last.ours,
+            npcs: next.npcs != last.npcs,
+            locs: next.locs != last.locs,
+            players: next.players != last.players,
+            ground: next.ground != last.ground,
+            equipment: next.equipment != last.equipment,
+            chat_open: next.chat_open != last.chat_open,
+            chat_continue: next.chat_continue != last.chat_continue,
+            chat_text: next.chat_text != last.chat_text,
+            chat_options: next.chat_options != last.chat_options,
+            side_tab: next.side_tab != last.side_tab,
+            varps: next.varps != last.varps,
+            combat_styles: next.combat_styles != last.combat_styles,
+            run_energy: next.run_energy != last.run_energy,
+            run_enabled: next.run_enabled != last.run_enabled,
+            retaliate_enabled: next.retaliate_enabled != last.retaliate_enabled,
+            my_name: next.my_name != last.my_name,
+            in_combat: next.in_combat != last.in_combat,
+            animating: next.animating != last.animating,
+            main_modal_id: next.main_modal_id != last.main_modal_id,
+            chat_modal_id: next.chat_modal_id != last.chat_modal_id,
         }
     }
 }
@@ -847,6 +1280,83 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let mut entities_off = |entities: &[SceneEntityInput<'_>]| {
+        let offs = entities
+            .iter()
+            .map(|e| scene_entity_off(b, e))
+            .collect::<Vec<_>>();
+        b.create_vector(&offs)
+    };
+    let npcs_off = if mask.npcs {
+        Some(entities_off(input.npcs))
+    } else {
+        None
+    };
+    let locs_off = if mask.locs {
+        Some(entities_off(input.locs))
+    } else {
+        None
+    };
+    let players_off = if mask.players {
+        Some(entities_off(input.players))
+    } else {
+        None
+    };
+    let ground_off = if mask.ground {
+        Some(entities_off(input.ground))
+    } else {
+        None
+    };
+    let equipment_off = if mask.equipment {
+        let offs = input
+            .equipment
+            .iter()
+            .map(|(name, count)| row_off(b, *name, *count))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let chat_text_off = if mask.chat_text {
+        input.chat_text.map(|t| b.create_string(t))
+    } else {
+        None
+    };
+    let chat_options_off = if mask.chat_options {
+        let offs = input
+            .chat_options
+            .iter()
+            .map(|o| chat_option_off(b, o))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let varps_off = if mask.varps {
+        let offs = input
+            .varps
+            .iter()
+            .map(|v| varp_off(b, v))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let combat_styles_off = if mask.combat_styles {
+        let offs = input
+            .combat_styles
+            .iter()
+            .map(|c| combat_style_off(b, c))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let my_name_off = if mask.my_name {
+        input.my_name.map(|n| b.create_string(n))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -890,6 +1400,70 @@ fn encode_snapshot_masked_into(
     if mask.ours {
         b.push_slot_always(VT_SNAP_OURS, input.ours);
     }
+    if mask.npcs {
+        b.push_slot_always(VT_SNAP_NPCS, npcs_off.expect("mask checked"));
+    }
+    if mask.locs {
+        b.push_slot_always(VT_SNAP_LOCS, locs_off.expect("mask checked"));
+    }
+    if mask.players {
+        b.push_slot_always(VT_SNAP_PLAYERS, players_off.expect("mask checked"));
+    }
+    if mask.ground {
+        b.push_slot_always(VT_SNAP_GROUND, ground_off.expect("mask checked"));
+    }
+    if mask.equipment {
+        b.push_slot_always(VT_SNAP_EQUIPMENT, equipment_off.expect("mask checked"));
+    }
+    if mask.chat_open {
+        b.push_slot_always(VT_SNAP_CHAT_OPEN, input.chat_open);
+    }
+    if mask.chat_continue {
+        b.push_slot_always(VT_SNAP_CHAT_CONTINUE, input.chat_continue);
+    }
+    if mask.chat_text {
+        if let Some(off) = chat_text_off {
+            b.push_slot_always(VT_SNAP_CHAT_TEXT, off);
+        }
+    }
+    if mask.chat_options {
+        b.push_slot_always(VT_SNAP_CHAT_OPTIONS, chat_options_off.expect("mask checked"));
+    }
+    if mask.side_tab {
+        b.push_slot_always(VT_SNAP_SIDE_TAB, input.side_tab);
+    }
+    if mask.varps {
+        b.push_slot_always(VT_SNAP_VARPS, varps_off.expect("mask checked"));
+    }
+    if mask.combat_styles {
+        b.push_slot_always(VT_SNAP_COMBAT_STYLES, combat_styles_off.expect("mask checked"));
+    }
+    if mask.run_energy {
+        b.push_slot_always(VT_SNAP_RUN_ENERGY, input.run_energy);
+    }
+    if mask.run_enabled {
+        b.push_slot_always(VT_SNAP_RUN_ENABLED, input.run_enabled);
+    }
+    if mask.retaliate_enabled {
+        b.push_slot_always(VT_SNAP_RETALIATE, input.retaliate_enabled);
+    }
+    if mask.my_name {
+        if let Some(off) = my_name_off {
+            b.push_slot_always(VT_SNAP_MY_NAME, off);
+        }
+    }
+    if mask.in_combat {
+        b.push_slot_always(VT_SNAP_IN_COMBAT, input.in_combat);
+    }
+    if mask.animating {
+        b.push_slot_always(VT_SNAP_ANIMATING, input.animating);
+    }
+    if mask.main_modal_id {
+        b.push_slot_always(VT_SNAP_MAIN_MODAL, input.main_modal_id);
+    }
+    if mask.chat_modal_id {
+        b.push_slot_always(VT_SNAP_CHAT_MODAL, input.chat_modal_id);
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -922,6 +1496,61 @@ fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<S
     b.push_slot_always(VT_STAT_INDEX, s.index);
     b.push_slot_always(VT_STAT_NAME, name_off);
     b.push_slot_always(VT_STAT_XP, s.xp);
+    b.push_slot_always(VT_STAT_LEVEL, s.level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn scene_entity_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    e: &SceneEntityInput<'_>,
+) -> WIPOffset<SceneEntityReader<'b>> {
+    let name_off = e.name.map(|n| b.create_string(n));
+    let action_offs: Vec<_> = e.actions.iter().map(|a| b.create_string(a)).collect();
+    let actions_off = b.create_vector(&action_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_ENT_INDEX, e.index);
+    b.push_slot_always(VT_ENT_ID, e.id);
+    if let Some(off) = name_off {
+        b.push_slot_always(VT_ENT_NAME, off);
+    }
+    b.push_slot_always(VT_ENT_X, e.x);
+    b.push_slot_always(VT_ENT_Z, e.z);
+    b.push_slot_always(VT_ENT_LEVEL, e.level);
+    b.push_slot_always(VT_ENT_DISTANCE, e.distance);
+    b.push_slot_always(VT_ENT_HEALTH, e.health);
+    b.push_slot_always(VT_ENT_MAX_HEALTH, e.max_health);
+    b.push_slot_always(VT_ENT_IN_COMBAT, e.in_combat);
+    b.push_slot_always(VT_ENT_ANIMATING, e.animating);
+    b.push_slot_always(VT_ENT_ACTIONS, actions_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn chat_option_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    o: &ChatOptionInput<'_>,
+) -> WIPOffset<ChatOptionReader<'b>> {
+    let text_off = b.create_string(o.text);
+    let tab = b.start_table();
+    b.push_slot_always(VT_CHAT_OPT_TEXT, text_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn combat_style_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    c: &CombatStyleInput<'_>,
+) -> WIPOffset<CombatStyleReader<'b>> {
+    let label_off = b.create_string(c.label);
+    let tab = b.start_table();
+    b.push_slot_always(VT_CS_MODE, c.mode);
+    b.push_slot_always(VT_CS_LABEL, label_off);
+    b.push_slot_always(VT_CS_COMPONENT, c.component_id);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn varp_off<'b>(b: &mut FlatBufferBuilder<'b>, v: &VarpInput) -> WIPOffset<VarpReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_VARP_INDEX, v.index);
+    b.push_slot_always(VT_VARP_VALUE, v.value);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -943,6 +1572,187 @@ fn bank_stand_off<'b>(
         b.push_slot_always(VT_BANK_CHOOSE, off);
     }
     WIPOffset::new(b.end_table(tab).value())
+}
+
+/// One scene entity view as decoded.
+#[derive(Clone, Copy)]
+pub struct SceneEntityReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for SceneEntityReader<'a> {
+    type Inner = SceneEntityReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl SceneEntityReader<'_> {
+    pub fn index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_INDEX, None) }.unwrap_or(0)
+    }
+    pub fn id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_ID, None) }.unwrap_or(0)
+    }
+    pub fn name(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_ENT_NAME, None) }
+    }
+    pub fn x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_X, None) }.unwrap_or(0)
+    }
+    pub fn z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn distance(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_DISTANCE, None) }.unwrap_or(0)
+    }
+    pub fn health(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_HEALTH, None) }.unwrap_or(-1)
+    }
+    pub fn max_health(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_MAX_HEALTH, None) }.unwrap_or(-1)
+    }
+    pub fn in_combat(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_ENT_IN_COMBAT, None) }.unwrap_or(false)
+    }
+    pub fn animating(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_ENT_ANIMATING, None) }.unwrap_or(false)
+    }
+    pub fn actions(&self) -> Vec<&str> {
+        match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_ENT_ACTIONS, None)
+        } {
+            Some(v) => v.iter().collect(),
+            None => Vec::new(),
+        }
+    }
+}
+
+impl Verifiable for SceneEntityReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("index", VT_ENT_INDEX, false)?
+            .visit_field::<i32>("id", VT_ENT_ID, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_ENT_NAME, false)?
+            .visit_field::<i32>("x", VT_ENT_X, false)?
+            .visit_field::<i32>("z", VT_ENT_Z, false)?
+            .visit_field::<i32>("level", VT_ENT_LEVEL, false)?
+            .visit_field::<i32>("distance", VT_ENT_DISTANCE, false)?
+            .visit_field::<i32>("health", VT_ENT_HEALTH, false)?
+            .visit_field::<i32>("max_health", VT_ENT_MAX_HEALTH, false)?
+            .visit_field::<bool>("in_combat", VT_ENT_IN_COMBAT, false)?
+            .visit_field::<bool>("animating", VT_ENT_ANIMATING, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "actions", VT_ENT_ACTIONS, false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ChatOptionReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for ChatOptionReader<'a> {
+    type Inner = ChatOptionReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl ChatOptionReader<'_> {
+    pub fn text(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CHAT_OPT_TEXT, None) }.unwrap_or("")
+    }
+}
+
+impl Verifiable for ChatOptionReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("text", VT_CHAT_OPT_TEXT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct CombatStyleReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for CombatStyleReader<'a> {
+    type Inner = CombatStyleReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl CombatStyleReader<'_> {
+    pub fn mode(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CS_MODE, None) }.unwrap_or(0)
+    }
+    pub fn label(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CS_LABEL, None) }.unwrap_or("")
+    }
+    pub fn component_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CS_COMPONENT, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for CombatStyleReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("mode", VT_CS_MODE, false)?
+            .visit_field::<ForwardsUOffset<&str>>("label", VT_CS_LABEL, false)?
+            .visit_field::<i32>("component_id", VT_CS_COMPONENT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct VarpReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for VarpReader<'a> {
+    type Inner = VarpReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl VarpReader<'_> {
+    pub fn index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_VARP_INDEX, None) }.unwrap_or(0)
+    }
+    pub fn value(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_VARP_VALUE, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for VarpReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("index", VT_VARP_INDEX, false)?
+            .visit_field::<i32>("value", VT_VARP_VALUE, false)?
+            .finish();
+        Ok(())
+    }
 }
 
 /// One shim interact request as decoded: the tagged `op` string plus the
@@ -988,6 +1798,12 @@ impl InteractReader<'_> {
     pub fn action(&self) -> Option<&str> {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_ACTION, None) }
     }
+    pub fn index(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_INDEX, None) }
+    }
+    pub fn component_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_COMPONENT_ID, None) }
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -1002,6 +1818,8 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<i32>("stand_op", VT_IN_STAND_OP, false)?
             .visit_field::<ForwardsUOffset<&str>>("choose", VT_IN_CHOOSE, false)?
             .visit_field::<ForwardsUOffset<&str>>("action", VT_IN_ACTION, false)?
+            .visit_field::<i32>("index", VT_IN_INDEX, false)?
+            .visit_field::<i32>("component_id", VT_IN_COMPONENT_ID, false)?
             .finish();
         Ok(())
     }
@@ -1203,6 +2021,94 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .to_string(),
             }),
             "close" => out.push(crate::shim::InteractReq::Close),
+            "npc" => out.push(crate::shim::InteractReq::Npc {
+                name: row
+                    .name()
+                    .ok_or_else(|| "npc has no name".to_string())?
+                    .to_string(),
+                action: row
+                    .action()
+                    .ok_or_else(|| "npc has no action".to_string())?
+                    .to_string(),
+                index: row.index(),
+            }),
+            "loc" => out.push(crate::shim::InteractReq::Loc {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                action: row
+                    .action()
+                    .ok_or_else(|| "loc has no action".to_string())?
+                    .to_string(),
+            }),
+            "obj" => out.push(crate::shim::InteractReq::Obj {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                name: row.name().map(str::to_string),
+                action: row
+                    .action()
+                    .ok_or_else(|| "obj has no action".to_string())?
+                    .to_string(),
+            }),
+            "player" => out.push(crate::shim::InteractReq::Player {
+                name: row
+                    .name()
+                    .ok_or_else(|| "player has no name".to_string())?
+                    .to_string(),
+                action: row
+                    .action()
+                    .ok_or_else(|| "player has no action".to_string())?
+                    .to_string(),
+            }),
+            "use-on" => out.push(crate::shim::InteractReq::UseOn {
+                name: row
+                    .name()
+                    .ok_or_else(|| "use-on has no name".to_string())?
+                    .to_string(),
+                kind: row.kind().unwrap_or("").to_string(),
+                target_name: row.choose().map(str::to_string),
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                index: row.index(),
+            }),
+            "use-widget-on" => out.push(crate::shim::InteractReq::UseWidgetOn {
+                component_id: row.component_id().ok_or_else(|| {
+                    "use-widget-on has no component_id".to_string()
+                })?,
+                kind: row.kind().unwrap_or("").to_string(),
+                target_name: row.choose().map(str::to_string),
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                index: row.index(),
+            }),
+            "continue" => out.push(crate::shim::InteractReq::ContinueDialog),
+            "answer" => out.push(crate::shim::InteractReq::Answer {
+                option: row.stand_op().ok_or_else(|| "answer has no option".to_string())?,
+            }),
+            "if-button" => out.push(crate::shim::InteractReq::IfButton {
+                component_id: row.component_id().ok_or_else(|| {
+                    "if-button has no component_id".to_string()
+                })?,
+            }),
+            "close-modal" => out.push(crate::shim::InteractReq::CloseModal),
+            "side-tab" => out.push(crate::shim::InteractReq::SideTab {
+                tab: row.stand_op().ok_or_else(|| "side-tab has no tab".to_string())?,
+            }),
+            "wear" => out.push(crate::shim::InteractReq::Wear {
+                name: row
+                    .name()
+                    .ok_or_else(|| "wear has no name".to_string())?
+                    .to_string(),
+            }),
+            "set-run" => out.push(crate::shim::InteractReq::SetRun {
+                on: row.action().is_some_and(|a| a == "on" || a == "true"),
+            }),
+            "set-retaliate" => out.push(crate::shim::InteractReq::SetRetaliate {
+                on: row.action().is_some_and(|a| a == "on" || a == "true"),
+            }),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -1214,8 +2120,6 @@ fn interact_off<'b>(
     req: &crate::shim::InteractReq,
 ) -> WIPOffset<InteractReader<'b>> {
     use crate::shim::InteractReq;
-    // All strings are created before the table starts (create_string is
-    // illegal while a table is open).
     let op_off = b.create_string(match req {
         InteractReq::OpenBooth { .. } => "open-booth",
         InteractReq::OpenStand { .. } => "open-stand",
@@ -1224,26 +2128,56 @@ fn interact_off<'b>(
         InteractReq::Withdraw { .. } => "withdraw",
         InteractReq::Held { .. } => "held",
         InteractReq::Close => "close",
+        InteractReq::Npc { .. } => "npc",
+        InteractReq::Loc { .. } => "loc",
+        InteractReq::Obj { .. } => "obj",
+        InteractReq::Player { .. } => "player",
+        InteractReq::UseOn { .. } => "use-on",
+        InteractReq::UseWidgetOn { .. } => "use-widget-on",
+        InteractReq::ContinueDialog => "continue",
+        InteractReq::Answer { .. } => "answer",
+        InteractReq::IfButton { .. } => "if-button",
+        InteractReq::CloseModal => "close-modal",
+        InteractReq::SideTab { .. } => "side-tab",
+        InteractReq::Wear { .. } => "wear",
+        InteractReq::SetRun { .. } => "set-run",
+        InteractReq::SetRetaliate { .. } => "set-retaliate",
     });
     let kind_off = match req {
-        InteractReq::OpenStand { kind, .. } => Some(b.create_string(kind)),
+        InteractReq::OpenStand { kind, .. }
+        | InteractReq::UseOn { kind, .. }
+        | InteractReq::UseWidgetOn { kind, .. } => Some(b.create_string(kind)),
         _ => None,
     };
     let name_off = match req {
         InteractReq::OpenStand { name, .. } => name.as_deref().map(|n| b.create_string(n)),
-        InteractReq::Deposit { name } | InteractReq::Withdraw { name, .. } => {
-            Some(b.create_string(name))
-        }
-        InteractReq::Held { name, .. } => Some(b.create_string(name)),
+        InteractReq::Deposit { name }
+        | InteractReq::Withdraw { name, .. }
+        | InteractReq::Held { name, .. }
+        | InteractReq::Npc { name, .. }
+        | InteractReq::Player { name, .. }
+        | InteractReq::UseOn { name, .. }
+        | InteractReq::Wear { name } => Some(b.create_string(name)),
+        InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
     let choose_off = match req {
         InteractReq::OpenStand { choose, .. } => choose.as_deref().map(|c| b.create_string(c)),
+        InteractReq::UseOn { target_name, .. } | InteractReq::UseWidgetOn { target_name, .. } => {
+            target_name.as_deref().map(|n| b.create_string(n))
+        }
         _ => None,
     };
     let action_off = match req {
         InteractReq::Withdraw { action, .. } | InteractReq::Held { action, .. } => {
             Some(b.create_string(action))
+        }
+        InteractReq::Npc { action, .. }
+        | InteractReq::Loc { action, .. }
+        | InteractReq::Obj { action, .. }
+        | InteractReq::Player { action, .. } => Some(b.create_string(action)),
+        InteractReq::SetRun { on } | InteractReq::SetRetaliate { on } => {
+            Some(b.create_string(if *on { "on" } else { "off" }))
         }
         _ => None,
     };
@@ -1293,6 +2227,87 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }
         InteractReq::Close => {}
+        InteractReq::Npc { index, .. } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            if let Some(idx) = index {
+                b.push_slot_always(VT_IN_INDEX, *idx);
+            }
+        }
+        InteractReq::Loc { x, z, level, .. } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::Obj { x, z, level, .. } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            if let Some(off) = name_off {
+                b.push_slot_always(VT_IN_NAME, off);
+            }
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::Player { .. } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::UseOn {
+            x,
+            z,
+            level,
+            index,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            if let Some(off) = choose_off {
+                b.push_slot_always(VT_IN_CHOOSE, off);
+            }
+            if let Some(idx) = index {
+                b.push_slot_always(VT_IN_INDEX, *idx);
+            }
+        }
+        InteractReq::UseWidgetOn {
+            component_id,
+            x,
+            z,
+            level,
+            index,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component_id);
+            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            if let Some(off) = choose_off {
+                b.push_slot_always(VT_IN_CHOOSE, off);
+            }
+            if let Some(idx) = index {
+                b.push_slot_always(VT_IN_INDEX, *idx);
+            }
+        }
+        InteractReq::ContinueDialog | InteractReq::CloseModal => {}
+        InteractReq::Answer { option } => {
+            b.push_slot_always(VT_IN_STAND_OP, *option);
+        }
+        InteractReq::IfButton { component_id } => {
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component_id);
+        }
+        InteractReq::SideTab { tab } => {
+            b.push_slot_always(VT_IN_STAND_OP, *tab);
+        }
+        InteractReq::Wear { .. } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+        }
+        InteractReq::SetRun { .. } | InteractReq::SetRetaliate { .. } => {
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
     }
     WIPOffset::new(b.end_table(tab).value())
 }
@@ -1318,7 +2333,103 @@ mod tests {
             bank_loaded: false,
             hold: false,
             ours: false,
+            npcs: &[],
+            locs: &[],
+            players: &[],
+            ground: &[],
+            equipment: &[],
+            chat_open: false,
+            chat_continue: false,
+            chat_text: None,
+            chat_options: &[],
+            side_tab: -1,
+            varps: &[],
+            combat_styles: &[],
+            run_energy: 0,
+            run_enabled: false,
+            retaliate_enabled: false,
+            my_name: None,
+            in_combat: false,
+            animating: false,
+            main_modal_id: -1,
+            chat_modal_id: -1,
         }
+    }
+
+    /// Task 8 — an npc SceneEntity view round-trips through encode/decode.
+    #[test]
+    fn encode_decode_npc_view_round_trips() {
+        let actions = ["Attack".to_string(), "Pick-up".to_string()];
+        let npc = SceneEntityInput {
+            index: 7,
+            id: 41,
+            name: Some("Chicken"),
+            x: 3222,
+            z: 3295,
+            level: 0,
+            distance: 3,
+            health: 3,
+            max_health: 3,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+        };
+        let mut input = empty_input(9);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot decodes");
+        assert!(view.has_npcs(), "keyframe carries npcs");
+        let got = view.npcs();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].index(), 7);
+        assert_eq!(got[0].id(), 41);
+        assert_eq!(got[0].name(), Some("Chicken"));
+        assert_eq!((got[0].x(), got[0].z(), got[0].level()), (3222, 3295, 0));
+        assert_eq!(got[0].actions(), vec!["Attack", "Pick-up"]);
+    }
+
+    /// Task 8 — an omitted npc table is absent, not an empty vector.
+    #[test]
+    fn omitted_npc_table_is_absent_not_empty() {
+        let actions = ["Attack".to_string()];
+        let npc = SceneEntityInput {
+            index: 1,
+            id: 2,
+            name: Some("Goblin"),
+            x: 100,
+            z: 100,
+            level: 0,
+            distance: 1,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+        };
+        let mut input = empty_input(1);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert!(kf.has_npcs());
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_npcs(), "unchanged npcs omitted from delta");
+        assert!(view.npcs().is_empty(), "absent reads as empty vec");
+    }
+
+    /// Task 8 — interact `npc` + label round-trips through the batch codec.
+    #[test]
+    fn encode_decode_interact_npc_pick_round_trips() {
+        let reqs = vec![InteractReq::Npc {
+            name: "Chicken".into(),
+            action: "Pick".into(),
+            index: None,
+        }];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
     }
 
     /// One reusable builder encodes snapshot, then paint, then interact —

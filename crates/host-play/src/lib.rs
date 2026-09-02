@@ -898,9 +898,217 @@ fn dispatch_script_interact(
             InteractReq::Close => {
                 wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
             }
+            InteractReq::Npc { name, action, index } => {
+                let wanted = name.to_lowercase();
+                let npc = snapshot.npcs().iter().find(|n| {
+                    index.is_some_and(|i| n.index as i32 == i)
+                        || n.name
+                            .as_deref()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                });
+                if let Some(npc) = npc {
+                    wrote |= matches!(
+                        ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.clone())),
+                        SendResult::Sent { .. }
+                    );
+                }
+            }
+            InteractReq::Loc { x, z, level, action } => {
+                let loc = snapshot.locs().iter().find(|l| {
+                    l.tile.x == x && l.tile.z == z && l.tile.level == level
+                });
+                if let Some(loc) = loc {
+                    wrote |= matches!(
+                        ix.interact(OpTarget::Loc(loc), ActionSpec::Label(action.clone())),
+                        SendResult::Sent { .. }
+                    );
+                }
+            }
+            InteractReq::Obj { x, z, level, name, action } => {
+                let obj = snapshot.ground_items().iter().find(|it| {
+                    it.tile.x == x
+                        && it.tile.z == z
+                        && it.tile.level == level
+                        && name.as_deref().is_none_or(|wanted| {
+                            obj_names
+                                .and_then(|n| n.name(it.def.id))
+                                .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                        })
+                });
+                if let Some(obj) = obj {
+                    wrote |= matches!(
+                        ix.interact(OpTarget::GroundItem(obj), ActionSpec::Label(action.clone())),
+                        SendResult::Sent { .. }
+                    );
+                }
+            }
+            InteractReq::Player { name, action } => {
+                let wanted = name.to_lowercase();
+                let player = snapshot.players().iter().find(|p| {
+                    p.actor
+                        .name
+                        .as_deref()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                });
+                if let Some(player) = player {
+                    wrote |= matches!(
+                        ix.interact(OpTarget::Player(player), ActionSpec::Label(action.clone())),
+                        SendResult::Sent { .. }
+                    );
+                }
+            }
+            InteractReq::UseOn {
+                name,
+                kind,
+                target_name,
+                x,
+                z,
+                level,
+                index,
+            } => {
+                let wanted = name.to_lowercase();
+                let item = snapshot.inventory().iter().find(|it| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                });
+                if let Some(item) = item {
+                    if let Some(target) = resolve_op_target(
+                        snapshot,
+                        obj_names,
+                        &kind,
+                        target_name.as_deref(),
+                        x,
+                        z,
+                        level,
+                        index,
+                    ) {
+                        wrote |= matches!(
+                            ix.use_item_on(item, target),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
+            InteractReq::UseWidgetOn {
+                component_id,
+                kind,
+                target_name,
+                x,
+                z,
+                level,
+                index,
+            } => {
+                let ctx = api::snapshot::ReadContext::new(snapshot);
+                if let Some(widget) = ctx.component(component_id) {
+                    if let Some(target) = resolve_op_target(
+                        snapshot,
+                        obj_names,
+                        &kind,
+                        target_name.as_deref(),
+                        x,
+                        z,
+                        level,
+                        index,
+                    ) {
+                        wrote |= matches!(
+                            ix.use_widget_on(widget, target),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
+            InteractReq::ContinueDialog => {
+                wrote |= matches!(ix.continue_dialog(), SendResult::Sent { .. });
+            }
+            InteractReq::Answer { option } => {
+                wrote |= matches!(ix.answer_choice(option), SendResult::Sent { .. });
+            }
+            InteractReq::IfButton { component_id } => {
+                let ctx = api::snapshot::ReadContext::new(snapshot);
+                if let Some(widget) = ctx.component(component_id) {
+                    wrote |= matches!(ix.press(widget), SendResult::Sent { .. });
+                }
+            }
+            InteractReq::CloseModal => {
+                wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
+            }
+            InteractReq::SideTab { tab } => {
+                wrote |= matches!(ix.click_side_tab(tab), SendResult::Sent { .. });
+            }
+            InteractReq::Wear { name } => {
+                let wanted = name.to_lowercase();
+                if let Some(id) = snapshot.inventory().iter().find_map(|it| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .filter(|n| n.eq_ignore_ascii_case(&wanted))
+                        .map(|_| it.def.id)
+                }) {
+                    wrote |= matches!(ix.wear(id), SendResult::Sent { .. });
+                }
+            }
+            InteractReq::SetRun { on } => {
+                wrote |= matches!(ix.set_run(on), SendResult::Sent { .. });
+            }
+            InteractReq::SetRetaliate { on } => {
+                wrote |= matches!(ix.set_retaliate(on), SendResult::Sent { .. });
+            }
         }
     }
     wrote
+}
+
+fn resolve_op_target<'a>(
+    snapshot: &'a GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    kind: &str,
+    target_name: Option<&str>,
+    x: i32,
+    z: i32,
+    level: i32,
+    index: Option<i32>,
+) -> Option<api::interact::OpTarget<'a>> {
+    use api::interact::OpTarget;
+    match kind {
+        "npc" => {
+            let wanted = target_name.map(|n| n.to_lowercase());
+            snapshot.npcs().iter().find(|n| {
+                index.is_some_and(|i| n.index as i32 == i)
+                    || wanted.as_ref().is_some_and(|w| {
+                        n.name
+                            .as_deref()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(w))
+                    })
+            }).map(OpTarget::Npc)
+        }
+        "loc" => snapshot
+            .locs()
+            .iter()
+            .find(|l| l.tile.x == x && l.tile.z == z && l.tile.level == level)
+            .map(OpTarget::Loc),
+        "obj" => snapshot.ground_items().iter().find(|it| {
+            it.tile.x == x
+                && it.tile.z == z
+                && it.tile.level == level
+                && target_name.is_none_or(|wanted| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                })
+        }).map(OpTarget::GroundItem),
+        "player" => {
+            let wanted = target_name.map(|n| n.to_lowercase());
+            snapshot.players().iter().find(|p| {
+                wanted.as_ref().is_some_and(|w| {
+                    p.actor
+                        .name
+                        .as_deref()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(w))
+                })
+            }).map(OpTarget::Player)
+        }
+        _ => None,
+    }
 }
 
 /// Action-label lookup matching rs2b0t's `norm` (lowercase, whitespace and
@@ -1037,7 +1245,10 @@ fn with_script_snapshot_input<R>(
     ours: bool,
     f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
 ) -> R {
-    use script::isolate_fb::{BankStandInput, SnapshotInput, StatInput, TileInput};
+    use script::isolate_fb::{
+        BankStandInput, ChatOptionInput, CombatStyleInput, SceneEntityInput, SnapshotInput,
+        StatInput, TileInput, VarpInput,
+    };
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let inv = inv.map(|rows| {
@@ -1052,9 +1263,201 @@ fn with_script_snapshot_input<R>(
                 index: st.index,
                 name: &st.name,
                 xp: st.xp,
+                level: st.effective,
             })
             .collect::<Vec<_>>()
     });
+    let bank_rows = |items: &[api::snapshot::ItemView]| {
+        items
+            .iter()
+            .map(|it| (obj_names.and_then(|names| names.name(it.def.id)), it.count))
+            .collect::<Vec<_>>()
+    };
+    let npc_action_store: Vec<Vec<String>>;
+    let npcs: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
+        npc_action_store = s
+            .npcs()
+            .iter()
+            .map(|npc| {
+                npc.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect::<Vec<String>>()
+            })
+            .collect();
+        s.npcs()
+            .iter()
+            .enumerate()
+            .map(|(i, npc)| SceneEntityInput {
+                index: npc.index as i32,
+                id: npc.r#type.map(|t| t as i32).unwrap_or(-1),
+                name: npc.name.as_deref(),
+                x: npc.tile.x,
+                z: npc.tile.z,
+                level: npc.tile.level,
+                distance: npc.distance,
+                health: npc.health,
+                max_health: npc.total_health,
+                in_combat: npc.in_combat,
+                animating: npc.moving || npc.animation != -1,
+                actions: &npc_action_store[i],
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let loc_action_store: Vec<Vec<String>>;
+    let locs: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
+        loc_action_store = s
+            .locs()
+            .iter()
+            .map(|loc| {
+                loc.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect::<Vec<String>>()
+            })
+            .collect();
+        s.locs()
+            .iter()
+            .enumerate()
+            .map(|(i, loc)| SceneEntityInput {
+                index: loc.id,
+                id: loc.id,
+                name: loc.name.as_deref(),
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                distance: loc.distance,
+                health: -1,
+                max_health: -1,
+                in_combat: false,
+                animating: loc.animation != -1,
+                actions: &loc_action_store[i],
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let player_action_store: Vec<Vec<String>>;
+    let players: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
+        player_action_store = s
+            .players()
+            .iter()
+            .map(|player| {
+                player
+                    .actor
+                    .actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect::<Vec<String>>()
+            })
+            .collect();
+        s.players()
+            .iter()
+            .enumerate()
+            .map(|(i, player)| SceneEntityInput {
+                index: player.index as i32,
+                id: player.index as i32,
+                name: player.actor.name.as_deref(),
+                x: player.actor.tile.x,
+                z: player.actor.tile.z,
+                level: player.actor.tile.level,
+                distance: player.actor.distance,
+                health: player.actor.health,
+                max_health: player.actor.total_health,
+                in_combat: player.actor.in_combat,
+                animating: player.actor.moving || player.actor.animation != -1,
+                actions: &player_action_store[i],
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let ground_action_store: Vec<Vec<String>>;
+    let ground: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
+        ground_action_store = s
+            .ground_items()
+            .iter()
+            .map(|item| {
+                item.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect::<Vec<String>>()
+            })
+            .collect();
+        s.ground_items()
+            .iter()
+            .enumerate()
+            .map(|(i, item)| SceneEntityInput {
+                index: item.def.id,
+                id: item.def.id,
+                name: obj_names.and_then(|names| names.name(item.def.id)),
+                x: item.tile.x,
+                z: item.tile.z,
+                level: item.tile.level,
+                distance: item.distance,
+                health: -1,
+                max_health: -1,
+                in_combat: false,
+                animating: false,
+                actions: &ground_action_store[i],
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let equipment = snapshot.map(|s| bank_rows(s.equipment()));
+    let chat_options = snapshot.map(|s| {
+        s.chat_options()
+            .iter()
+            .map(|o| ChatOptionInput { text: &o.text })
+            .collect::<Vec<_>>()
+    });
+    let varps = snapshot.map(|s| {
+        s.varps()
+            .iter()
+            .filter(|v| v.value != 0)
+            .take(32)
+            .map(|v| VarpInput {
+                index: v.index,
+                value: v.value,
+            })
+            .collect::<Vec<_>>()
+    });
+    let combat_style_store = snapshot.map(|s| {
+        let root = s
+            .side_tabs()
+            .iter()
+            .find(|t| t.index == 0)
+            .map(|t| t.root_component_id)
+            .unwrap_or(-1);
+        if root == -1 {
+            Vec::new()
+        } else {
+            api::query::widget_search::combat_style_labels(s, root, 43)
+        }
+    });
+    let combat_styles: Vec<CombatStyleInput<'_>> = combat_style_store
+        .as_ref()
+        .map(|labels| {
+            labels
+                .iter()
+                .map(|l| CombatStyleInput {
+                    mode: l.mode,
+                    label: &l.label,
+                    component_id: l.component_id,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let local = snapshot.and_then(|s| s.local_player());
+    let my_name = local.and_then(|lp| lp.player.actor.name.as_deref());
+    let in_combat = local.is_some_and(|lp| lp.player.actor.in_combat);
+    let animating = local.is_some_and(|lp| {
+        lp.player.actor.moving || lp.player.actor.animation != -1
+    });
+    let modals = snapshot.map(|s| s.modals());
     // The scene bank booths: the openable locs (`Use-quickly` is the
     // bankbooth op the pack bakes from `scripts/interface_bank/configs/
     // bank_booth.loc`). Only the tile is posted — the shim never reads a
@@ -1096,12 +1499,6 @@ fn with_script_snapshot_input<R>(
             })
             .collect::<Vec<_>>()
     });
-    let bank_rows = |items: &[api::snapshot::ItemView]| {
-        items
-            .iter()
-            .map(|it| (obj_names.and_then(|names| names.name(it.def.id)), it.count))
-            .collect::<Vec<_>>()
-    };
     let bank = snapshot.map(|s| bank_rows(s.bank()));
     let bank_side = snapshot.map(|s| bank_rows(s.bank_side()));
     let input = SnapshotInput {
@@ -1122,6 +1519,28 @@ fn with_script_snapshot_input<R>(
         bank_loaded: snapshot.is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
         hold,
         ours,
+        npcs: &npcs,
+        locs: &locs,
+        players: &players,
+        ground: &ground,
+        equipment: equipment.as_deref().unwrap_or(&[]),
+        chat_open: modals.is_some_and(|m| m.chat != -1),
+        chat_continue: snapshot.is_some_and(|s| s.chat_continue_component_id() != -1),
+        chat_text: snapshot.and_then(|s| s.chat()),
+        chat_options: chat_options.as_deref().unwrap_or(&[]),
+        side_tab: snapshot.map(|s| s.active_side_tab()).unwrap_or(-1),
+        varps: varps.as_deref().unwrap_or(&[]),
+        combat_styles: &combat_styles,
+        run_energy: snapshot.map(|s| s.runenergy()).unwrap_or(0),
+        run_enabled: snapshot
+            .is_some_and(|s| api::snapshot::ReadContext::new(s).varp(173) != 0),
+        retaliate_enabled: snapshot
+            .is_some_and(|s| api::snapshot::ReadContext::new(s).varp(172) != 0),
+        my_name,
+        in_combat,
+        animating,
+        main_modal_id: modals.map(|m| m.main).unwrap_or(-1),
+        chat_modal_id: modals.map(|m| m.chat).unwrap_or(-1),
     };
     f(&input)
 }
@@ -4367,6 +4786,71 @@ mod tests {
             two.out.pos - before_two,
             one_op,
             "one Held request must bury Inventory.first only, not every Bones slot"
+        );
+    }
+
+    /// Task 8 — the shim's `Npc` interact request resolves by name and
+    /// records the matching menu op on the driver (`Pick` → OP_NPC1).
+    #[test]
+    fn dispatch_script_interact_sends_npc_pick() {
+        use client::client::MiniMenuAction;
+        use client::config::NpcType;
+        use client::dash3d::ClientNpc;
+
+        let mut c = nav_client();
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(5, 5));
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.npcs.len() <= 9 {
+                cache.npcs.push(NpcType::default());
+            }
+            cache.npcs[9] = NpcType {
+                id: 9,
+                name: "Goblin".into(),
+                op: vec![Some("Pick".into()), Some("Examine".into())],
+                ..Default::default()
+            };
+        }
+        let mut npc = ClientNpc::at(6, 6);
+        npc.r#type = Some(9);
+        c.npc[7] = Some(Box::new(npc));
+        c.npc_ids = vec![7];
+        c.npc_count = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        assert!(
+            snap.npcs()
+                .iter()
+                .any(|n| n.name.as_deref() == Some("Goblin")),
+            "seeded npc must appear in snapshot"
+        );
+
+        let (navs, world) = empty_nav();
+        let mut rec = GuardRec::default();
+        assert!(dispatch_script_interact(
+            &mut rec,
+            &snap,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Npc {
+                name: "Goblin".into(),
+                action: "Pick".into(),
+                index: None,
+            }],
+        ));
+        assert_eq!(rec.actions, vec![0]);
+        assert_eq!(
+            rec.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 7, 0, 0)],
+            "Pick is the first npc op"
         );
     }
 

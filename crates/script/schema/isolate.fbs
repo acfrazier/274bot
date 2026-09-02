@@ -1,4 +1,4 @@
-// Isolate IPC wire format (v0.1.5): the PLAYER_INFO snapshot posted into
+// Isolate IPC wire format (v0.1.6): the PLAYER_INFO snapshot posted into
 // each JS isolate before its tick, and the shim interact batch forwarded
 // back after the tick. FlatBuffers, not JSON: a 50+ isolate wall must not
 // pay a stringify/parse per tick.
@@ -23,11 +23,47 @@ table Row {
   count: int;
 }
 
-// One skill row: the snapshot's stat index, name, and xp.
+// One skill row: the snapshot's stat index, name, xp, and effective level.
 table Stat {
   index: int;
   name: string;
   xp: int;
+  level: int;
+}
+
+// A scene entity view (npc / loc / player / ground item): name, tile,
+// id, actions, hp-ish flags — not a full entity clone.
+table SceneEntity {
+  index: int;
+  id: int;
+  name: string;
+  x: int;
+  z: int;
+  level: int;
+  distance: int;
+  health: int;
+  max_health: int;
+  in_combat: bool;
+  animating: bool;
+  actions: [string];
+}
+
+// One chat modal BUTTON_OK choice.
+table ChatOption {
+  text: string;
+}
+
+// One combat-style varp-select button with its label.
+table CombatStyle {
+  mode: int;
+  label: string;
+  component_id: int;
+}
+
+// One varp index/value pair (gold, uses, …).
+table Varp {
+  index: int;
+  value: int;
 }
 
 // A scene bank booth (a loc with a Use-quickly action).
@@ -75,11 +111,33 @@ table Snapshot {
   bank_loaded: bool;
   hold: bool;
   ours: bool;
+  npcs: [SceneEntity];
+  locs: [SceneEntity];
+  players: [SceneEntity];
+  ground: [SceneEntity];
+  equipment: [Row];
+  chat_open: bool;
+  chat_continue: bool;
+  chat_text: string;
+  chat_options: [ChatOption];
+  side_tab: int;
+  varps: [Varp];
+  combat_styles: [CombatStyle];
+  run_energy: int;
+  run_enabled: bool;
+  retaliate_enabled: bool;
+  my_name: string;
+  in_combat: bool;
+  animating: bool;
+  main_modal_id: int;
+  chat_modal_id: int;
 }
 
-// One shim interact request (Bank/Banking + held-item ops), tagged by `op`:
+// One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "deposit" | "withdraw" | "close"
-// | "held".
+// | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
+// | "continue" | "answer" | "if-button" | "close-modal" | "side-tab"
+// | "wear" | "set-run" | "set-retaliate".
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;
@@ -91,6 +149,8 @@ table Interact {
   stand_op: int;
   choose: string;
   action: string;
+  index: int;
+  component_id: int;
 }
 
 // The tick's shim interact queue, forwarded to the host.

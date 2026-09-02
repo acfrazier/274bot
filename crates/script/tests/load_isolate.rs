@@ -146,6 +146,26 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         bank_loaded: false,
         hold: false,
         ours: false,
+        npcs: &[],
+        locs: &[],
+        players: &[],
+        ground: &[],
+        equipment: &[],
+        chat_open: false,
+        chat_continue: false,
+        chat_text: None,
+        chat_options: &[],
+        side_tab: -1,
+        varps: &[],
+        combat_styles: &[],
+        run_energy: 0,
+        run_enabled: false,
+        retaliate_enabled: false,
+        my_name: None,
+        in_combat: false,
+        animating: false,
+        main_modal_id: -1,
+        chat_modal_id: -1,
     }
 }
 
@@ -1084,6 +1104,7 @@ export default class T extends LoopingBot {
         index: 5,
         name: "prayer",
         xp: 1300,
+        level: 10,
     }];
     snap.hold = true;
     post_snapshot_input(&iso, &snap);
@@ -1428,6 +1449,10 @@ fn real_bone_burier_queues_bury_when_seeded() {
         eprintln!("skip: no BoneBurier.ts at {path:?}");
         return;
     };
+    if !source.contains("Bury") {
+        eprintln!("skip: BoneBurier.ts is not a burier implementation");
+        return;
+    }
     let shape = script::detect_shape(&source);
     assert_eq!(
         shape,
@@ -1450,6 +1475,7 @@ fn real_bone_burier_queues_bury_when_seeded() {
         index: 5,
         name: "Prayer",
         xp: 31,
+        level: 1,
     }];
     snap.stats = &stats;
     post_snapshot_input(&iso, &snap);
