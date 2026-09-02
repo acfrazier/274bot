@@ -598,20 +598,22 @@ fn script_observe(
                 // the stand list merely rebuilds identical.
                 let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
                 let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
-                let bytes = with_script_snapshot_input(
-                    tick,
-                    here,
-                    up,
-                    inv,
-                    snapshot,
-                    obj_names,
-                    world.as_deref(),
-                    hold,
-                    ours,
-                    |input| slot.encode_snapshot_delta(input, force_banks),
-                );
-                slot.post_snapshot(bytes);
-                slot.store_last_world_id(world_id);
+                if slot.load_active() {
+                    let bytes = with_script_snapshot_input(
+                        tick,
+                        here,
+                        up,
+                        inv,
+                        snapshot,
+                        obj_names,
+                        world.as_deref(),
+                        hold,
+                        ours,
+                        |input| slot.encode_snapshot_delta(input, force_banks),
+                    );
+                    slot.post_snapshot(bytes);
+                    slot.store_last_world_id(world_id);
+                }
                 if hold {
                     // Isolate: tick for onPaint only (hold gate inside V8).
                     // Compiled: skip — keep tick/nav follow frozen.
@@ -1089,6 +1091,22 @@ fn with_script_snapshot_input<R>(
     };
     f(&input)
 }
+/// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
+/// Built only for a Running script (walk arm) or an armed nav bot (route /
+/// BankBudget session — interact dispatch may walk with gating facts).
+fn nav_world_state_for_observe(
+    here: Option<(i32, i32, i32)>,
+    snapshot: &GameSnapshot,
+    script_running: bool,
+    nav_armed: bool,
+) -> Option<WorldState> {
+    if here.is_some() && (script_running || nav_armed) {
+        Some(WorldState::from_snapshot(snapshot))
+    } else {
+        None
+    }
+}
+
 /// the per-observe inventory view (the observe re-checks the gate inside).
 fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str) -> bool {
     scripts
@@ -2454,10 +2472,11 @@ fn spawn_slot_thread(
                                 }
                                 (up, here)
                             };
+                            let running = script_running(&slot_scripts, name);
                             // Inventory view: zip the TYPE_INV iface's obj
                             // ids/counts, rebuilt each observe while the
                             // script is Running (the idle-skip gate).
-                            let inv = if script_running(&slot_scripts, name) {
+                            let inv = if running {
                                 inventory_from_ifaces(c)
                             } else {
                                 None
@@ -2470,9 +2489,15 @@ fn spawn_slot_thread(
                             // player can cross a toll, a player without
                             // them cannot.
                             nav_snapshot.rebuild(c);
-                            let nav_state = here
-                                .is_some()
-                                .then(|| WorldState::from_snapshot(&nav_snapshot));
+                            let nav_armed = slot_navs.lock().unwrap().get(name).is_some_and(|b| {
+                                b.route.is_some() || b.bank_fetch.is_some()
+                            });
+                            let nav_state = nav_world_state_for_observe(
+                                here,
+                                &nav_snapshot,
+                                running,
+                                nav_armed,
+                            );
                             script_observe(
                                 c,
                                 name,
@@ -2541,7 +2566,7 @@ fn spawn_slot_thread(
                             // a running script, queued cheats, or an armed
                             // nav bot must keep ticking (never parked), so
                             // the observe hook reports it every frame.
-                            script_running(&slot_scripts, name)
+                            running
                                 || slot_cheats
                                     .lock()
                                     .unwrap()
@@ -4833,6 +4858,155 @@ mod tests {
             &world, false, false
         ));
         assert_eq!(*count.lock().unwrap(), 0, "Idle must not dispatch tick");
+    }
+
+    #[test]
+    fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
+        let c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let here = Some((3200, 3200, 0));
+        assert!(
+            nav_world_state_for_observe(here, &snap, false, false).is_none(),
+            "idle slot with no armed nav must not build WorldState"
+        );
+        assert!(
+            nav_world_state_for_observe(here, &snap, true, false).is_some(),
+            "Running script must get WorldState for the walk arm"
+        );
+        assert!(
+            nav_world_state_for_observe(here, &snap, false, true).is_some(),
+            "armed nav bot must get WorldState for interact walks"
+        );
+    }
+
+    #[test]
+    fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
+        let ScriptWiring {
+            scripts,
+            cheats,
+            count: _,
+        } = script_wiring();
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let state = WorldState::from_snapshot(&snap);
+        assert!(!scripts.lock().unwrap().get("alice").unwrap().load_active());
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3200, 3200, 0)),
+            None,
+            Some(state),
+            Some(&snap),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert!(
+            !scripts
+                .lock()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .has_snapshot_fingerprint(),
+            "compiled-only Running must not encode isolate snapshot delta"
+        );
+    }
+
+    #[test]
+    fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let src = "export default class T extends LoopingBot { loop() {} }";
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .expect("load isolate starts");
+        assert!(scripts.lock().unwrap().get("alice").unwrap().load_active());
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3200, 3200, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert!(
+            scripts
+                .lock()
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .has_snapshot_fingerprint(),
+            "Load isolate must still encode snapshot delta on tick edge"
+        );
+        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
     }
 
     #[test]

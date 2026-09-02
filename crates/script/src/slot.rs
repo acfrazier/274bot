@@ -334,6 +334,20 @@ impl SlotScript {
     pub fn load_active(&self) -> bool {
         false
     }
+
+    /// Whether a Load-isolate delta fingerprint was stored (always false for
+    /// compiled-only slots). Used by host-play tests for OPT-004.
+    #[doc(hidden)]
+    pub fn has_snapshot_fingerprint(&self) -> bool {
+        #[cfg(feature = "load")]
+        {
+            self.last_snapshot.is_some()
+        }
+        #[cfg(not(feature = "load"))]
+        {
+            false
+        }
+    }
 }
 
 /// Best-effort panic payload to string. Downcasts the usual `&str` and
