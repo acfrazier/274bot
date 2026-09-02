@@ -959,6 +959,57 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Task 12 — `EventSignal.ignoredRandoms()` reads the bot instance (the
+// rs2b0t `setIgnoredRandoms` source): the class shape's `__rs_bot` and
+// the defineBot shape's created instance. The host reads the same list
+// through the knock path to skip act on those names.
+#[test]
+fn event_signal_ignored_randoms_reads_the_bot_instance() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    ignoredRandoms() { return ['swarm', 'rock golem']; }
+    loop() {
+        globalThis.__probe = EventSignal.ignoredRandoms();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").expect("instance ignore list reads back");
+    assert_eq!(
+        value,
+        serde_json::json!(["swarm", "rock golem"]),
+        "EventSignal.ignoredRandoms() is the bot instance's method"
+    );
+    iso.join();
+}
+
+#[test]
+fn event_signal_ignored_randoms_reads_a_definebot_instance() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default defineBot({
+    name: 'ignorer',
+    create() {
+        return {
+            ignoredRandoms: () => ['maze'],
+            loop() { globalThis.__probe = EventSignal.ignoredRandoms(); },
+        };
+    },
+});
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatDefineBot).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").expect("defineBot instance reads back");
+    assert_eq!(
+        value,
+        serde_json::json!(["maze"]),
+        "the defineBot-created instance is the ignoredRandoms source"
+    );
+    iso.join();
+}
+
 // Task 9c — snapshot deltas: host-play posts `tick` every post and only
 // the fields that changed vs the last post (keyframe on Start). The
 // isolate merges the delta onto the last JS snapshot object — an omitted

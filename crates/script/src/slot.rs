@@ -227,6 +227,34 @@ impl SlotScript {
         }
     }
 
+    /// The bot instance's random-ignore list (a Load isolate's
+    /// `inst.ignoredRandoms?.()`, default `[]`; empty for a compiled
+    /// script — there is no instance). The host's knock path reads it
+    /// once per detected event to skip act on those names. Gated like
+    /// [`SlotScript::on_random`]: a Paused / Idle slot does not influence
+    /// the host.
+    #[cfg(feature = "load")]
+    pub fn ignored_randoms(&self) -> Vec<String> {
+        if self.state != RunState::Running || !self.want_run {
+            return Vec::new();
+        }
+        match &self.load {
+            Some(isolate) => isolate.ignored_randoms(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Evaluate `expr` in the Load isolate's global scope (test/status
+    /// read-back; e.g. the host asserting a posted snapshot field). Errors
+    /// when the slot has no Load isolate.
+    #[cfg(feature = "load")]
+    pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
+        match &self.load {
+            Some(isolate) => isolate.probe(expr),
+            None => Err("no load isolate".to_string()),
+        }
+    }
+
     /// Call only on observed server tick. Dispatches the JS isolate's
     /// `on_game_tick` (compiled path) only while Running && want_run. A
     /// compiled panic is caught: the slot goes Error with the message, the

@@ -487,6 +487,22 @@ mod isolate {
                 .map_err(|e| format!("probe: {e}"))?
         }
 
+        /// The bot instance's random-ignore list (`inst.ignoredRandoms?.()`
+        /// on `__rs_bot`, default `[]`): the host's knock path reads it
+        /// once per detected event so it can skip act for those names. A
+        /// throwing / non-array method and a native `tick`-shaped card
+        /// (no instance) fail closed to `[]`.
+        pub fn ignored_randoms(&self) -> Vec<String> {
+            const EXPR: &str = "(() => { const b = globalThis.__rs_bot; if (!b || typeof b.ignoredRandoms !== 'function') return []; const l = b.ignoredRandoms(); return Array.isArray(l) ? l : []; })()";
+            match self.probe(EXPR) {
+                Ok(serde_json::Value::Array(items)) => items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }
+
         /// Drain the isolate's log lines (tick errors, slow/interrupted
         /// ticks).
         pub fn drain_logs(&self) -> Vec<String> {
@@ -719,10 +735,14 @@ globalThis.__rs_tick = (n) => { api.tick = n; return tick(api); };
 "#;
 
     /// Compat wrapper: `create()` the bot instance, then the shared compat
-    /// runner (onStart once, awaited, then loop/onPaint every tick).
+    /// runner (onStart once, awaited, then loop/onPaint every tick). The
+    /// instance is exposed as `__rs_bot` for probe read-back and the
+    /// EventSignal/ignoredRandoms host read (same global the class shape
+    /// uses).
     const COMPAT_MAIN: &str = r#"
 import bot from './bot.js';
 const inst = (bot && typeof bot.create === 'function') ? bot.create() : (bot || null);
+globalThis.__rs_bot = inst;
 "#;
 
     /// Compat class wrapper: instantiate the default-export

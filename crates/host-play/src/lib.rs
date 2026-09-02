@@ -1758,12 +1758,24 @@ fn spawn_slot_thread(
                 let knock_name = username.clone();
                 let knock_scripts = Arc::clone(&slot_scripts);
                 let knock = move |ev: &DetectedRandom| -> RandomClaim {
-                    knock_scripts
-                        .lock()
-                        .unwrap()
-                        .get_mut(&knock_name)
-                        .map(|slot| slot.on_random(ev))
-                        .unwrap_or(RandomClaim::Host)
+                    let mut all = knock_scripts.lock().unwrap();
+                    let Some(slot) = all.get_mut(&knock_name) else {
+                        return RandomClaim::Host;
+                    };
+                    // Task 12: the bot instance's ignore list. An ignored
+                    // name is a host-declined claim — no flee / Talk-to /
+                    // etc. — while detect still publishes the event. The
+                    // eval rides the rising edge (once per event), never
+                    // the frame path. The claim knock itself stays Host
+                    // for JS isolates: no Handle comes from V8.
+                    if slot
+                        .ignored_randoms()
+                        .iter()
+                        .any(|n| n.eq_ignore_ascii_case(&ev.name))
+                    {
+                        return RandomClaim::Handle;
+                    }
+                    slot.on_random(ev)
                 };
                 Host::run_client(
                     &mut client,
@@ -4328,11 +4340,13 @@ mod tests {
     // --- Task 5: guardian hold + knock plumbing over `host::Guardian` ---
 
     /// Recording driver for the guardian tests: captures every
-    /// menu/action send (the host crate's fake driver shape).
+    /// menu/action/try_move send (the host crate's fake driver shape;
+    /// `walks` is the flee/ground-walk trace).
     #[derive(Default)]
     struct GuardRec {
         menus: Vec<(i32, i32, i32, i32, i32)>,
         actions: Vec<i32>,
+        walks: Vec<(i32, i32)>,
         sink: Sink,
     }
 
@@ -4348,8 +4362,8 @@ mod tests {
             &mut self,
             _src_x: i32,
             _src_z: i32,
-            _dx: i32,
-            _dz: i32,
+            dx: i32,
+            dz: i32,
             _try_nearest: bool,
             _loc_width: i32,
             _loc_length: i32,
@@ -4358,10 +4372,13 @@ mod tests {
             _forceapproach: i32,
             _t: i32,
         ) -> bool {
-            false
+            self.walks.push((dx, dz));
+            true
         }
         fn local_route(&self) -> Option<(i32, i32)> {
-            None
+            // (0,0) with build_base (0,0): absolute world tiles equal the
+            // recorded `try_move` targets (the flee/ground walks land).
+            Some((0, 0))
         }
         fn build_base(&self) -> (i32, i32) {
             (0, 0)
@@ -4393,6 +4410,23 @@ mod tests {
     /// Plant NPC `name` in client table slot `slot` with an overhead line
     /// (the snapshot `NpcView` the guardian's detect reads).
     fn plant_npc(c: &mut Client, slot: usize, name: &str, overhead: Option<&str>) {
+        plant_npc_with_face(c, slot, name, -1, overhead);
+    }
+
+    /// Plant NPC `name` in client table slot `slot` facing the local
+    /// player (`face_entity` >= 32768 decodes as Player kind; + self_slot
+    /// 0 targets us — the host-owned evade shape).
+    fn plant_attacking_npc(c: &mut Client, slot: usize, name: &str) {
+        plant_npc_with_face(c, slot, name, 32768, None);
+    }
+
+    fn plant_npc_with_face(
+        c: &mut Client,
+        slot: usize,
+        name: &str,
+        face_entity: i32,
+        overhead: Option<&str>,
+    ) {
         let type_id = 500 + slot;
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -4408,6 +4442,7 @@ mod tests {
         }
         let mut npc = client::dash3d::ClientNpc::at(0, 0);
         npc.r#type = Some(type_id);
+        npc.entity.face_entity = face_entity;
         npc.entity.chat_message = overhead.map(str::to_string);
         while c.npc.len() <= slot {
             c.npc.push(None);
@@ -4643,6 +4678,122 @@ mod tests {
             &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1, "a Handle claim still ticks");
+    }
+
+    #[test]
+    fn ignored_randoms_skips_flee_but_detect_still_publishes() {
+        // Task 12: the bot instance's `ignoredRandoms()` list makes the
+        // host's knock path decline the event — no flee / Talk-to / etc.
+        // — while detect still publishes the kind (chrome can show it).
+        // The claim knock itself stays Host for JS isolates (no Handle
+        // from V8); the Handle here is the host-play path's own decision.
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let src = "export default class T extends LoopingBot { ignoredRandoms() { return ['swarm']; } loop() {} }";
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .expect("load isolate starts");
+        // The production knock arm (see the slot thread): an ignored name
+        // is a host-declined claim; everything else asks the running slot
+        // script.
+        let knock_scripts = Arc::clone(&scripts);
+        let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
+            let mut all = knock_scripts.lock().unwrap();
+            let Some(slot) = all.get_mut("alice") else {
+                return RandomClaim::Host;
+            };
+            if slot.ignored_randoms().iter().any(|n| n.eq_ignore_ascii_case(&ev.name)) {
+                return RandomClaim::Handle;
+            }
+            slot.on_random(ev)
+        };
+
+        let mut c = guardian_client();
+        plant_attacking_npc(&mut c, 0, "Swarm");
+        let mut g = Guardian::new();
+        let mut drv = GuardRec::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
+        assert_eq!(status.kind, Some(api::random::RandomKind::Evade));
+        assert_eq!(status.name.as_deref(), Some("swarm"));
+        assert!(status.ours, "detect still publishes the event");
+        assert_eq!(status.claim, RandomClaim::Handle);
+        assert!(!status.hold);
+        assert!(drv.walks.is_empty(), "an ignored swarm is not fled");
+        assert!(drv.actions.is_empty());
+
+        // Control: a host-owned slot (no ignore list) flees the same
+        // swarm — the ignore list is what suppressed the act.
+        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
+        let mut c2 = guardian_client();
+        plant_attacking_npc(&mut c2, 0, "Swarm");
+        let mut g2 = Guardian::new();
+        let mut drv2 = GuardRec::default();
+        let mut snap2 = GameSnapshot::new();
+        tick_at(&mut c2, &mut snap2);
+        let status2 = g2.tick(&mut drv2, &snap2, &settings, 0, None);
+        assert_eq!(status2.kind, Some(api::random::RandomKind::Evade));
+        assert_eq!(status2.claim, RandomClaim::Host);
+        assert!(
+            !drv2.walks.is_empty(),
+            "an unignored swarm is fled (the ignore list suppressed it)"
+        );
+    }
+
+    #[test]
+    fn event_signal_pending_reads_true_during_dialog_hold() {
+        // Task 12: the guardian's dialog hold is posted into the isolate
+        // (`hold: true` on the blob), so `EventSignal.pending()` reads
+        // true while the slot is frozen by the in-flight dialog. The
+        // shim's `pending()` mapping is pinned by the script crate's
+        // load_isolate tests; here the held edge drives the full
+        // guardian -> observe -> isolate chain.
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let src = "export default class T extends LoopingBot { loop() {} }";
+        scripts
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .expect("load isolate starts");
+
+        // The guardian talks to the old man and holds the slot.
+        let mut c = guardian_client();
+        plant_npc(&mut c, 0, "Mysterious old man", Some("Greetings Test!"));
+        let mut g = Guardian::new();
+        let mut drv = GuardRec::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.handling);
+        assert!(status.hold, "the in-flight dialog holds the slot");
+
+        // The held edge posts the blob (no dispatch); the isolate's
+        // EventSignal snapshot carries the freeze.
+        let (navs, world) = empty_nav();
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        assert!(!script_observe(
+            &mut c, "alice", true, true, 1, Some((3200, 3200, 0)), None, None, None, None,
+            &scripts, &cheats, &navs, &world, status.hold, status.ours
+        ));
+        let hold = scripts
+            .lock()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .probe("globalThis.__rs2b0t_host.snapshot.hold")
+            .expect("posted snapshot reads back");
+        assert_eq!(hold, true, "the dialog hold is what pending() reads");
+        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
     }
 
     #[test]
