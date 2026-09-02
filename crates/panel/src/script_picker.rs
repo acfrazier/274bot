@@ -7,14 +7,6 @@ use script::{ScriptKind, ScriptSource};
 /// Browse uses a non-modal [`dear_imgui_rs::Ui::window`], not a popup modal.
 pub const BROWSE_WINDOW_TITLE: &str = "Scripts";
 
-pub fn browse_uses_window() -> bool {
-    true
-}
-
-pub fn browse_uses_modal_popup() -> bool {
-    false
-}
-
 /// Merge persisted category order with categories present on cards. Unknown
 /// categories from cards append after the saved order.
 pub fn resolve_category_order(saved: &[String], present: &[String]) -> Vec<String> {
@@ -78,15 +70,26 @@ pub fn rs2b0t_root_has_index(root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        browse_uses_modal_popup, browse_uses_window, move_category, needs_rs2b0t_catalog_prompt,
-        resolve_category_order, rs2b0t_root_has_index,
+        move_category, needs_rs2b0t_catalog_prompt, resolve_category_order,
+        rs2b0t_root_has_index, BROWSE_WINDOW_TITLE,
     };
     use std::path::Path;
 
     #[test]
     fn browse_picker_uses_window_not_modal() {
-        assert!(browse_uses_window());
-        assert!(!browse_uses_modal_popup());
+        const APP: &str = include_str!("app.rs");
+        assert!(
+            APP.contains("ui.window(BROWSE_WINDOW_TITLE)"),
+            "Browse must use ui.window(BROWSE_WINDOW_TITLE), not a modal popup"
+        );
+        assert!(
+            !APP.contains("begin_modal_popup_config(BROWSE_WINDOW_TITLE)"),
+            "Browse must not use begin_modal_popup_config with BROWSE_WINDOW_TITLE"
+        );
+        assert!(
+            !APP.contains(&format!("begin_modal_popup_config(\"{BROWSE_WINDOW_TITLE}\")")),
+            "Browse must not use begin_modal_popup_config with the Scripts title"
+        );
     }
 
     #[test]

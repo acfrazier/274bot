@@ -865,15 +865,16 @@ impl Session {
         if self.rs2b0t_filled {
             return;
         }
+        let Some(root) = script::rs2b0t_root() else {
+            return;
+        };
         self.rs2b0t_filled = true;
-        if let Some(root) = script::rs2b0t_root() {
-            if let Err(e) = self
-                .js
-                .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
-            {
-                if host::debug_enabled() {
-                    eprintln!("[panel] $RS2B0T registry: {e}");
-                }
+        if let Err(e) = self
+            .js
+            .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
+        {
+            if host::debug_enabled() {
+                eprintln!("[panel] $RS2B0T registry: {e}");
             }
         }
     }
@@ -6814,6 +6815,41 @@ ScriptRegistry.register({
         )
         .unwrap();
         root
+    }
+
+    #[test]
+    fn load_then_browse_still_prompts_without_rs2b0t_root() {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-load-browse-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("RS2B0T");
+
+        let mut s = Session::new();
+        s.fill_rs2b0t_cards_once();
+        s.on_script_browse_open();
+        assert!(
+            s.rs2b0t_catalog_open,
+            "Load with no root must not skip the first Browse catalog prompt"
+        );
+        assert!(
+            !home.join(".274bot/rs2b0t-path").exists(),
+            "Load with no root must not write rs2b0t-path"
+        );
+
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
