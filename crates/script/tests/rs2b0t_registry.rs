@@ -55,6 +55,10 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+fn test_library(dir: &Path) -> JsLibrary {
+    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+}
+
 #[test]
 fn parse_registry_yields_register_name_and_import_path() {
     let cards = script::parse_registry(FAKE_INDEX).expect("fake index parses");
@@ -171,22 +175,26 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     .unwrap();
 
     let path_file = dir.join("rs2b0t-path");
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
     let n = lib
         .register_rs2b0t(&root, &path_file)
         .expect("registry fills");
     assert_eq!(n, 2);
 
-    let bone = lib.get("BoneBurier").expect("BoneBurier card");
+    let bone = lib
+        .get(ScriptSource::Catalog, "BoneBurier")
+        .expect("BoneBurier card");
     assert_eq!(bone.shape, LoadShape::CompatClass);
-    assert!(bone.source.contains("extends LoopingBot"));
+    assert!(bone.origin.contains("extends LoopingBot"));
     assert!(
         bone.path.ends_with("BoneBurier.ts"),
         "the .js import path resolves to the .ts file on disk: {}",
         bone.path.display()
     );
 
-    let aio = lib.get("AIOQuester").expect("AIOQuester card");
+    let aio = lib
+        .get(ScriptSource::Catalog, "AIOQuester")
+        .expect("AIOQuester card");
     assert_eq!(aio.shape, LoadShape::NativeTick);
 
     // The first successful parse persisted the root path.
@@ -225,18 +233,18 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
     )
     .unwrap();
 
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
     let n = lib
         .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .expect("registry fills");
     assert_eq!(n, 1, "WalkTo is host nav, never a JS card");
 
     let card = lib
-        .get("AIO Teleport")
+        .get(ScriptSource::Catalog, "AIO Teleport")
         .expect("register name is the picker name");
     assert_eq!(card.shape, LoadShape::CompatClass);
-    assert!(card.source.contains("class T"));
-    assert!(lib.get("WalkTo").is_none());
+    assert!(card.origin.contains("class T"));
+    assert!(lib.get(ScriptSource::Catalog, "WalkTo").is_none());
 }
 
 #[test]
@@ -444,11 +452,11 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     )
     .unwrap();
 
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
     let n = lib
         .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .expect("registry fills");
     assert_eq!(n, 1, "escaped path must not register as a card");
-    assert!(lib.get("Outside").is_none());
-    assert!(lib.get("BoneBurier").is_some());
+    assert!(lib.get(ScriptSource::Catalog, "Outside").is_none());
+    assert!(lib.get(ScriptSource::Catalog, "BoneBurier").is_some());
 }

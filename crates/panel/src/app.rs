@@ -1807,7 +1807,8 @@ fn browse_window(ui: &Ui, session: &mut Session) {
             }
         }
         for card in cards {
-            let selected = session.script_sel == Some(script::ScriptSel::Loaded(card.name.clone()));
+            let selected = session.script_sel
+                == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
             if ui
                 .selectable_config(format!("{}  (JS)", card.name))
                 .selected(selected)
@@ -1815,7 +1816,8 @@ fn browse_window(ui: &Ui, session: &mut Session) {
                 .size([w, 0.0])
                 .build()
             {
-                session.script_sel = Some(script::ScriptSel::Loaded(card.name.clone()));
+                session.script_sel =
+                    Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
             }
         }
         ui.spacing();

@@ -6,6 +6,8 @@
 pub mod ctx;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
+#[cfg(feature = "load")]
+pub mod js_cache;
 pub mod load;
 pub mod params;
 pub mod ported;
@@ -16,6 +18,8 @@ pub mod shim;
 pub mod slot;
 
 pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
+#[cfg(feature = "load")]
+pub use js_cache::{default_js_cache_root, CachedJs, JsCache};
 pub use load::{
     default_js_store, detect_shape, is_reserved, JsCard, JsLibrary, LoadShape, ScriptSel,
 };

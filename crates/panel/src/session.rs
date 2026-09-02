@@ -1120,11 +1120,15 @@ impl Session {
         // is what the isolate spawns on Start.
         if let Some(card_name) = view.start_script {
             self.fill_rs2b0t_cards_once();
-            let card = self.js.get(card_name).cloned().ok_or_else(|| {
+            let card = self
+                .js
+                .get(script::ScriptSource::Catalog, card_name)
+                .cloned()
+                .ok_or_else(|| {
                 format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
             })?;
             let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.source, card.shape)
+            play.script_start_load(&names[0], card.js, card.shape)
                 .map_err(|e| format!("start {card_name}: {e}"))?;
         }
         self.login_all();
@@ -2644,10 +2648,12 @@ impl Session {
         }
         let result = match (self.play.as_ref(), sel) {
             (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
-            (Some(play), script::ScriptSel::Loaded(card_name)) => match self.js.get(&card_name) {
-                Some(card) => play.script_start_load(&name, card.source.clone(), card.shape),
-                None => Err(format!("no loaded script: {card_name}")),
-            },
+            (Some(play), script::ScriptSel::Loaded(source, card_name)) => {
+                match self.js.get(source, &card_name) {
+                    Some(card) => play.script_start_load(&name, card.js.clone(), card.shape),
+                    None => Err(format!("no loaded script: {card_name}")),
+                }
+            }
             (None, _) => Err("no play".to_string()),
         };
         match result {
@@ -2668,7 +2674,7 @@ impl Session {
         match self.js.load(std::path::Path::new(trimmed)) {
             Ok(card) => {
                 self.error = None;
-                self.script_sel = Some(script::ScriptSel::Loaded(card.name));
+                self.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
                 self.load_scratch.clear();
             }
             Err(e) => self.error = Some(format!("load: {e}")),
@@ -6607,7 +6613,10 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
         assert_eq!(
             s.script_sel,
-            Some(script::ScriptSel::Loaded("tickbot".to_string()))
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::File,
+                "tickbot".to_string(),
+            ))
         );
         assert_eq!(s.js.cards().len(), 1);
         assert_eq!(s.load_scratch, "", "success clears the modal scratch");
@@ -6675,7 +6684,9 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         let mut s = Session::new();
         // Construction alone must stay catalog-free (hermetic unit tests).
         assert!(
-            s.js.get("BoneBurier").is_none(),
+            s.js
+                .get(script::ScriptSource::Catalog, "BoneBurier")
+                .is_none(),
             "Session::new must not parse $RS2B0T"
         );
         assert!(
@@ -6684,9 +6695,10 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         );
         // First Browse fills once.
         s.fill_rs2b0t_cards_once();
-        let card =
-            s.js.get("BoneBurier")
-                .expect("BoneBurier card filled on first Browse");
+        let card = s
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .expect("BoneBurier card filled on first Browse");
         assert_eq!(card.shape, script::LoadShape::CompatClass);
         assert!(
             home.join(".274bot/rs2b0t-path").is_file(),

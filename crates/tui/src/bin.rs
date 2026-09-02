@@ -458,11 +458,15 @@ impl TuiSession {
         // catalog from `$RS2B0T`, then spawn the isolate on Start.
         if let Some(card_name) = start_script {
             self.fill_rs2b0t_cards_once();
-            let card = self.js.get(card_name).cloned().ok_or_else(|| {
+            let card = self
+                .js
+                .get(script::ScriptSource::Catalog, card_name)
+                .cloned()
+                .ok_or_else(|| {
                 format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
             })?;
             let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.source, card.shape)
+            play.script_start_load(&names[0], card.js, card.shape)
                 .map_err(|e| format!("start {card_name}: {e}"))?;
         }
         Ok(())
@@ -591,8 +595,8 @@ impl TuiSession {
             return;
         };
         let result = match &self.play {
-            Some(play) => match self.js.get(card) {
-                Some(card) => play.script_start_load(&name, card.source.clone(), card.shape),
+            Some(play) => match self.js.find_name(card) {
+                Some(card) => play.script_start_load(&name, card.js.clone(), card.shape),
                 None => Err(format!("no loaded script: {card}")),
             },
             None => Err("no play".to_string()),

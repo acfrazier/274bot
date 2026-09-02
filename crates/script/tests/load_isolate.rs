@@ -16,7 +16,7 @@ use api::interact::Driver;
 use api::prot::Out;
 use script::ctx::ScriptCtx;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
-use script::{CompiledId, SlotScript};
+use script::{CompiledId, ScriptSource, SlotScript};
 
 // The brief's native fixture: exported `tick` that counts on its own
 // global (the `api` object is host-owned: `api.tick` is the only member,
@@ -115,6 +115,12 @@ fn write_file(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     path
 }
 
+/// Hermetic library: store + cache under the same scratch dir (never
+/// the operator's `~/.274bot`).
+fn test_library(dir: &std::path::Path) -> JsLibrary {
+    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+}
+
 // Task 9b: the snapshot posted into an isolate is a FlatBuffers blob, not
 // a JSON string — a test posting JSON would smuggle the forbidden parse
 // path back in. These helpers build the blob through the same encoder the
@@ -148,13 +154,13 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
 fn js_library_load_native_tick_file_adds_card() {
     let dir = scratch("adds_card");
     let path = write_file(&dir, "tickbot.js", NATIVE_TICK);
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
 
     let card = lib.load(&path).expect("native tick file loads");
     assert_eq!(card.name, "tickbot");
     assert_eq!(card.path, path);
     assert_eq!(card.shape, LoadShape::NativeTick);
-    assert_eq!(card.source, NATIVE_TICK);
+    assert_eq!(card.origin, NATIVE_TICK);
 
     assert_eq!(lib.cards().len(), 1);
     assert_eq!(lib.cards()[0].name, "tickbot");
@@ -173,7 +179,7 @@ fn js_library_same_name_replaces_path_and_source() {
         "t.js",
         "export function tick(api) { globalThis.__rs_n = 99 }",
     );
-    let mut lib = JsLibrary::new(store.clone());
+    let mut lib = test_library(&dir);
 
     lib.load(&a).unwrap();
     assert_eq!(lib.cards().len(), 1);
@@ -182,7 +188,7 @@ fn js_library_same_name_replaces_path_and_source() {
     let card = lib.load(&b).unwrap();
     assert_eq!(card.name, "t"); // same stem keeps the picker name
     assert_eq!(card.path, b);
-    assert_ne!(card.source, NATIVE_TICK);
+    assert_ne!(card.origin, NATIVE_TICK);
     assert_eq!(lib.cards().len(), 1, "same name overwrites, never appends");
 
     let stored: serde_json::Value =
@@ -198,7 +204,7 @@ fn js_library_same_name_replaces_path_and_source() {
 fn js_library_reserved_walk_to_errors() {
     let dir = scratch("reserved");
     let path = write_file(&dir, "WalkTo.js", NATIVE_TICK);
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
 
     let err = lib.load(&path).expect_err("WalkTo is reserved at Load");
     assert!(err.contains("reserved"), "{err}");
@@ -211,7 +217,7 @@ fn js_library_reserved_walk_to_errors() {
 fn js_library_load_bone_burier_named_file_is_ok() {
     let dir = scratch("bone_burier");
     let path = write_file(&dir, "BoneBurier.ts", CLASS_TS_FIXTURE);
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
 
     let card = lib.load(&path).expect("BoneBurier.ts is not reserved");
     assert_eq!(card.name, "BoneBurier");
@@ -230,7 +236,7 @@ fn js_library_load_bone_burier_named_file_is_ok() {
 fn js_library_rejects_non_bot_shape_and_missing_file() {
     let dir = scratch("rejects");
     let plain = write_file(&dir, "plain.js", "const x = 1 + 1;");
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
 
     let err = lib.load(&plain).expect_err("not a bot shape");
     assert!(err.contains("shape") || err.contains("bot"), "{err}");
@@ -247,15 +253,16 @@ fn js_library_restore_reads_persisted_paths() {
     let store = dir.join("js-scripts.json");
     let path = write_file(&dir, "tickbot.js", NATIVE_TICK);
     {
-        let mut lib = JsLibrary::new(store.clone());
+        let mut lib = test_library(&dir);
         lib.load(&path).unwrap();
     }
-    let mut lib = JsLibrary::new(store.clone());
+    let mut lib = test_library(&dir);
     lib.restore().unwrap();
     assert_eq!(lib.cards().len(), 1);
     assert_eq!(lib.cards()[0].name, "tickbot");
     assert_eq!(lib.cards()[0].shape, LoadShape::NativeTick);
-    assert_eq!(lib.cards()[0].source, NATIVE_TICK);
+    assert_eq!(lib.cards()[0].source, ScriptSource::File);
+    assert_eq!(lib.cards()[0].origin, NATIVE_TICK);
 }
 
 // (5) The brief's native fixture: spawn ticks the JS through the `api`
@@ -491,7 +498,7 @@ fn isolate_spawn_returns_immediately_with_handle() {
 fn slot_start_load_reserved_name_via_compiled_ids_is_checked_at_load() {
     let dir = scratch("reserved_at_load");
     let path = write_file(&dir, "WalkTo.js", NATIVE_TICK);
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
     assert!(lib.load(&path).is_err());
     assert!(CompiledId("WalkTo").0 == "WalkTo");
 }
@@ -511,7 +518,7 @@ fn default_js_store_is_dot_274bot_json() {
 fn js_library_loads_compat_class_ts() {
     let dir = scratch("compat_class");
     let path = write_file(&dir, "Burier.ts", CLASS_TS_FIXTURE);
-    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let mut lib = test_library(&dir);
 
     let card = lib.load(&path).expect("compat class TS loads");
     assert_eq!(card.shape, LoadShape::CompatClass);
@@ -534,8 +541,8 @@ fn transpile_ts_strips_types_and_v8_can_parse_it() {
 // export and `loop()` runs on ticks (the instance is probed back).
 #[test]
 fn isolate_spawn_compat_class_ticks_and_joins() {
-    let iso = LoadIsolate::spawn(CLASS_TS_FIXTURE.to_string(), LoadShape::CompatClass)
-        .expect("spawn compat class isolate");
+    let js = script::transpile_ts(CLASS_TS_FIXTURE).expect("transpile class fixture");
+    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass).expect("spawn compat class isolate");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let n = iso.probe("__rs_bot.n").expect("instance readable");
@@ -1430,7 +1437,8 @@ fn real_bone_burier_queues_bury_when_seeded() {
         script::LoadShape::CompatClass,
         "BoneBurier is a class card"
     );
-    let iso = LoadIsolate::spawn(source, shape).unwrap();
+    let js = script::transpile_ts(&source).expect("transpile BoneBurier.ts");
+    let iso = LoadIsolate::spawn(js, shape).unwrap();
     let mut snap = base_snapshot();
     snap.ingame = true;
     snap.here = Some(script::isolate_fb::TileInput {

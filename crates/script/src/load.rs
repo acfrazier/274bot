@@ -7,12 +7,17 @@
 //! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::rs2b0t_registry::{parse_registry, persist_rs2b0t_root_at, script_file_path};
+use crate::js_cache::{default_js_cache_root, JsCache};
+use crate::rs2b0t_registry::{
+    parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path, ScriptKind,
+    ScriptSource,
+};
 
 /// Which loader a JS source belongs to.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -81,14 +86,18 @@ pub fn transpile_ts(source: &str) -> Result<String, String> {
     Ok(emitted.text)
 }
 
-/// A loaded JS bot: the picker name (file stem), its source path, the
-/// loader shape, and the source text captured at Load.
+/// A loaded JS bot: picker name, origin path, loader shape, origin text,
+/// cached JS (SHA object), execution kind, provenance, and content hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsCard {
     pub name: String,
     pub path: PathBuf,
     pub shape: LoadShape,
-    pub source: String,
+    pub origin: String,
+    pub js: String,
+    pub kind: ScriptKind,
+    pub source: ScriptSource,
+    pub sha256: String,
 }
 
 /// Default persisted library path (`~/.274bot/js-scripts.json`).
@@ -107,19 +116,27 @@ struct StoreEntry {
     path: String,
 }
 
-/// The out-of-tree JS library: the picker cards for loaded files, persisted
-/// to `store`, plus cards filled from the `$RS2B0T` registry. Same `name`
-/// (file stem or register name) overwrites; only WalkTo is reserved;
-/// non-bot shapes are rejected at Load.
+/// The out-of-tree JS library: picker cards for loaded files and the
+/// `$RS2B0T` catalog, persisted to `store`, with origin bytes cached
+/// under `cache`. Same `(source, name)` overwrites; only WalkTo is
+/// reserved; non-bot shapes are rejected at Load.
 pub struct JsLibrary {
     store: PathBuf,
+    cache: JsCache,
     cards: Vec<JsCard>,
 }
 
 impl JsLibrary {
     pub fn new(store: PathBuf) -> Self {
+        Self::with_cache(store, default_js_cache_root())
+    }
+
+    /// Like [`JsLibrary::new`] but with an explicit JS cache root (tests
+    /// must use a temp dir, never the operator's `~/.274bot`).
+    pub fn with_cache(store: PathBuf, cache_root: PathBuf) -> Self {
         JsLibrary {
             store,
+            cache: JsCache::new(cache_root),
             cards: Vec::new(),
         }
     }
@@ -138,32 +155,43 @@ impl JsLibrary {
         self.cards.clear();
         for entry in entries {
             let path = PathBuf::from(&entry.path);
-            let Ok(source) = std::fs::read_to_string(&path) else {
+            let Ok(origin) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if detect_shape(&source) == LoadShape::Reject {
+            if detect_shape(&origin) == LoadShape::Reject {
                 continue;
             }
             if is_reserved(&entry.name) {
                 continue;
             }
+            let shape = detect_shape(&origin);
+            let cached = match self
+                .cache
+                .get_or_transpile(&path, origin.as_bytes())
+            {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
             self.cards.push(JsCard {
                 name: entry.name,
                 path,
-                shape: detect_shape(&source),
-                source,
+                shape,
+                origin,
+                js: cached.js,
+                kind: shape_to_kind(shape),
+                source: ScriptSource::File,
+                sha256: cached.sha256,
             });
         }
         Ok(())
     }
 
-    /// Register a JS bot from a filesystem path. Reads the source, derives
-    /// the picker name from the file stem, classifies, rejects reserved
-    /// ids (WalkTo only), validates the source compiles in a throwaway
-    /// Runtime (dropped before this returns), then registers and persists.
-    /// A second load with the same name replaces the previous card.
+    /// Register a JS bot from a filesystem path. Reads the origin, caches
+    /// transpiled JS under `~/.274bot/js-cache`, validates in a throwaway
+    /// Runtime, then registers and persists. A second load with the same
+    /// `(ScriptSource::File, name)` replaces the previous card.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
-        let source =
+        let origin =
             std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
         let name = path
             .file_stem()
@@ -174,29 +202,33 @@ impl JsLibrary {
         if is_reserved(&name) {
             return Err(format!("reserved: {name}"));
         }
-        let shape = detect_shape(&source);
+        let shape = detect_shape(&origin);
         if shape == LoadShape::Reject {
             return Err(format!("not a bot shape: {name}"));
         }
+        let cached = self
+            .cache
+            .get_or_transpile(path, origin.as_bytes())
+            .map_err(|e| format!("{name}: {e}"))?;
         #[cfg(feature = "load")]
         {
-            // Transpile at Load (types gone) so the throwaway Runtime
-            // validates the JS V8 will actually parse.
-            let js = transpile_ts(&source).map_err(|e| format!("{name}: {e}"))?;
-            isolate::validate_compiles(&js, shape).map_err(|e| format!("{name}: {e}"))?;
+            isolate::validate_compiles(&cached.js, shape)
+                .map_err(|e| format!("{name}: {e}"))?;
         }
         let card = JsCard {
             name,
             path: path.to_path_buf(),
             shape,
-            source,
+            origin,
+            js: cached.js,
+            kind: shape_to_kind(shape),
+            source: ScriptSource::File,
+            sha256: cached.sha256,
         };
-        // Transactional register: build the would-be list, persist it, and
-        // only then commit, so a failed write leaves the library untouched.
         let new_cards: Vec<JsCard> = self
             .cards
             .iter()
-            .filter(|c| c.name != card.name)
+            .filter(|c| !(c.source == card.source && c.name == card.name))
             .cloned()
             .chain(std::iter::once(card.clone()))
             .collect();
@@ -231,7 +263,18 @@ impl JsLibrary {
         let index = crate::rs2b0t_registry::registry_index_path(root);
         let index_ts = std::fs::read_to_string(&index)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
-        let cards = parse_registry(&index_ts)
+        let registry_cards = parse_registry_with_sources(&index_ts, &HashMap::new())
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let mut sources = HashMap::new();
+        for reg in &registry_cards {
+            let Some(path) = script_file_path(root, &reg.rel_path) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                sources.insert(reg.rel_path.clone(), text);
+            }
+        }
+        let cards = parse_registry_with_sources(&index_ts, &sources)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut n = 0;
         for card in &cards {
@@ -241,28 +284,76 @@ impl JsLibrary {
             let Some(path) = script_file_path(root, &card.rel_path) else {
                 continue;
             };
-            let Ok(source) = std::fs::read_to_string(&path) else {
+            let Ok(origin) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let shape = detect_shape(&source);
+            let shape = detect_shape(&origin);
             if shape == LoadShape::Reject {
                 continue;
             }
-            self.cards.retain(|c| c.name != card.name);
+            let cached = self
+                .cache
+                .get_or_transpile(&path, origin.as_bytes())
+                .map_err(|e| format!("{}: {e}", card.name))?;
+            self.cards
+                .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
             self.cards.push(JsCard {
                 name: card.name.clone(),
                 path,
                 shape,
-                source,
+                origin,
+                js: cached.js,
+                kind: card.kind,
+                source: ScriptSource::Catalog,
+                sha256: cached.sha256,
             });
             n += 1;
         }
-        let _ = persist_rs2b0t_root_at(root, path_file); // first successful parse records the path
+        let _ = persist_rs2b0t_root_at(root, path_file);
         Ok(n)
     }
 
-    /// The card registered under `name`, if any.
-    pub fn get(&self, name: &str) -> Option<&JsCard> {
+    /// Re-read `card`'s origin from disk; when the SHA differs, fetch a new
+    /// cached object and update that `(source, name)` card in place. Isolate
+    /// respawn is the caller's job — the updated `js`/`sha256` are on the
+    /// card when they do.
+    pub fn refresh(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
+        let idx = self
+            .cards
+            .iter()
+            .position(|c| c.source == source && c.name == name)
+            .ok_or_else(|| format!("no card ({source:?}, {name})"))?;
+        let path = self.cards[idx].path.clone();
+        let origin = std::fs::read_to_string(&path)
+            .map_err(|e| format!("refresh {}: {e}", path.display()))?;
+        let shape = detect_shape(&origin);
+        if shape == LoadShape::Reject {
+            return Err(format!("not a bot shape: {name}"));
+        }
+        let cached = self
+            .cache
+            .get_or_transpile(&path, origin.as_bytes())
+            .map_err(|e| format!("{name}: {e}"))?;
+        let card = &mut self.cards[idx];
+        card.path = path;
+        card.shape = shape;
+        card.origin = origin;
+        card.js = cached.js;
+        card.kind = shape_to_kind(shape);
+        card.sha256 = cached.sha256;
+        Ok(())
+    }
+
+    /// The card registered under `(source, name)`, if any.
+    pub fn get(&self, source: ScriptSource, name: &str) -> Option<&JsCard> {
+        self.cards
+            .iter()
+            .find(|c| c.source == source && c.name == name)
+    }
+
+    /// First card with `name`. Prefer [`JsLibrary::get`] when `(source, name)`
+    /// is known — the same stem may exist as both catalog and file cards.
+    pub fn find_name(&self, name: &str) -> Option<&JsCard> {
         self.cards.iter().find(|c| c.name == name)
     }
 
@@ -297,11 +388,11 @@ pub fn is_reserved(name: &str) -> bool {
     name == "WalkTo"
 }
 
-/// A picker selection: a compiled id or a loaded JS card (by name).
+/// A picker selection: a compiled id or a loaded JS card by `(source, name)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptSel {
     Compiled(crate::registry::CompiledId),
-    Loaded(String),
+    Loaded(ScriptSource, String),
 }
 
 impl ScriptSel {
@@ -309,8 +400,16 @@ impl ScriptSel {
     pub fn label(&self) -> String {
         match self {
             ScriptSel::Compiled(id) => id.0.to_string(),
-            ScriptSel::Loaded(name) => name.clone(),
+            ScriptSel::Loaded(_, name) => name.clone(),
         }
+    }
+}
+
+fn shape_to_kind(shape: LoadShape) -> ScriptKind {
+    match shape {
+        LoadShape::NativeTick => ScriptKind::NativeTick,
+        LoadShape::CompatDefineBot | LoadShape::CompatClass => ScriptKind::Compat,
+        LoadShape::Reject => ScriptKind::Compat,
     }
 }
 
@@ -394,15 +493,10 @@ mod isolate {
     }
 
     impl LoadIsolate {
-        /// Spawn the isolate thread: init V8, create the Runtime (heap
-        /// capped, per-op timeout), wire the module, then return a handle.
-        /// The source is transpiled first (types gone) — plain JS passes
-        /// through unchanged in behaviour — so both JS and TS cards run
-        /// the same V8-parseable text. Fails with a message when the
-        /// source cannot be wired.
-        pub fn spawn(source: String, shape: LoadShape) -> Result<Self, String> {
+        /// Spawn the isolate thread with already-cached JS (no transpile).
+        /// Fails with a message when the source cannot be wired.
+        pub fn spawn(js: String, shape: LoadShape) -> Result<Self, String> {
             ensure_platform();
-            let js = transpile_ts(&source)?;
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
             let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
             let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();

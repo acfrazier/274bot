@@ -4398,6 +4398,7 @@ dependencies = [
  "rustyscript",
  "serde",
  "serde_json",
+ "sha2",
  "v8",
  "vault",
 ]
