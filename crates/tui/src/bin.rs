@@ -848,13 +848,13 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             if !vault_exists {
                 // First run: create the default `test`/`test` profile so
                 // unlock is not a dead end (host-play CLI convention).
-                session.create_profile("test");
+                session.create_profile("test")?;
             }
             // `--user` names may not exist: create them like host-play
             // does (`password = username`, fresh uid).
             for u in &args.users {
                 if session.vault.as_ref().is_none_or(|v| v.get(u).is_none()) {
-                    session.create_profile(u);
+                    session.create_profile(u)?;
                 }
             }
             session.names = session
@@ -883,7 +883,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
 impl TuiSession {
     /// Create a missing profile (host-play CLI convention: password =
     /// username, uid one past the vault's max, from the 274M base).
-    fn create_profile(&mut self, username: &str) {
+    fn create_profile(&mut self, username: &str) -> Result<(), String> {
         let uid = self
             .vault
             .as_ref()
@@ -895,11 +895,12 @@ impl TuiSession {
             uid,
             settings: vault::ProfileSettings::default(),
         };
-        if let Some(vault) = self.vault.as_mut() {
-            if let Err(e) = vault.upsert(profile) {
-                self.error = Some(format!("profile: {e}"));
-            }
-        }
+        let Some(vault) = self.vault.as_mut() else {
+            return Ok(());
+        };
+        vault
+            .upsert(profile)
+            .map_err(|e| format!("profile: {e}"))
     }
 }
 
@@ -1064,6 +1065,27 @@ mod tests {
         assert_eq!(
             validate_startup_host("127.0.0.1").is_ok(),
             host_play::validate_play_host("127.0.0.1", client::bot_target()).is_ok(),
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn create_profile_upsert_error_returns_err() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-tui-create-profile-err-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vault.vault");
+        let mut session = TuiSession::new(dummy_options());
+        session.start_play(Vault::create(&path, "bot").unwrap());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let err = session.create_profile("alice").unwrap_err();
+        assert!(
+            err.starts_with("profile:"),
+            "upsert failure must return Err, got {err:?}"
         );
     }
 
