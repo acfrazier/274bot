@@ -7,10 +7,10 @@
 //! document per tick. Each slot's host encode path and each V8 isolate
 //! thread reuse one [`IsolateBuf`] (`reset`, not a fresh builder).
 //!
-//! The wire format is produced and consumed only by 274bot code, so the
-//! decoder trusts the buffer (root offset bounds-checked) like
-//! `flatbuffers::root_unchecked`; accessors default missing fields to the
-//! same fail-closed values the old JSON blob carried.
+//! The wire format is produced and consumed only by 274bot code. Host-encoded
+//! snapshots are trusted; isolate→host interact/paint bytes are verified on
+//! decode (`flatbuffers::root_with_opts`) so truncated or malicious buffers
+//! fail closed instead of panicking or reading out of bounds.
 //!
 //! Posts are deltas (schema: `Snapshot`): `tick` is always carried, other
 //! fields only when they changed vs the last post — an omitted vector is
@@ -18,7 +18,31 @@
 //! The per-slot last-post [`SnapshotFingerprint`] is compared by value
 //! (equality, not a hash) once per slot per tick.
 
-use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, Table, VOffsetT, Vector, WIPOffset};
+use flatbuffers::{
+    FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT, Vector,
+    Verifiable, Verifier, VerifierOptions, WIPOffset, root_with_opts,
+};
+
+/// Max shim interact rows per tick (isolate→host).
+const MAX_INTERACT_REQS: usize = 256;
+/// Max paint lines per frame (isolate→host).
+const MAX_PAINT_LINES: usize = 512;
+
+fn isolate_verify_opts() -> VerifierOptions {
+    VerifierOptions {
+        max_depth: 64,
+        max_tables: 10_000,
+        max_apparent_size: 16 * 1024 * 1024,
+        ignore_missing_null_terminator: false,
+    }
+}
+
+fn verified_root<'buf, T>(buf: &'buf [u8]) -> Result<T::Inner, String>
+where
+    T: 'buf + Follow<'buf> + Verifiable,
+{
+    root_with_opts::<T>(&isolate_verify_opts(), buf).map_err(|e: InvalidFlatbuffer| e.to_string())
+}
 
 // Field slot offsets are vtable byte offsets: field id N sits at
 // `(N + 2) * SIZE_VOFFSET` (`SIZE_VOFFSET = 2`), so id 0 -> 4, 1 -> 6, ...
@@ -166,6 +190,17 @@ impl TileReader<'_> {
     }
 }
 
+impl Verifiable for TileReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("x", VT_TILE_X, false)?
+            .visit_field::<i32>("z", VT_TILE_Z, false)?
+            .visit_field::<i32>("level", VT_TILE_LEVEL, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// One inventory/bank row as decoded: the resolved obj name (`None` =
 /// unknown id) and a count.
 #[derive(Clone, Copy)]
@@ -188,6 +223,16 @@ impl RowReader<'_> {
     }
     pub fn count(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ROW_COUNT, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for RowReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_ROW_NAME, false)?
+            .visit_field::<i32>("count", VT_ROW_COUNT, false)?
+            .finish();
+        Ok(())
     }
 }
 
@@ -215,6 +260,17 @@ impl StatReader<'_> {
     }
     pub fn xp(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_STAT_XP, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for StatReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("index", VT_STAT_INDEX, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_STAT_NAME, false)?
+            .visit_field::<i32>("xp", VT_STAT_XP, false)?
+            .finish();
+        Ok(())
     }
 }
 
@@ -257,28 +313,74 @@ impl BankStandReader<'_> {
     }
 }
 
+impl Verifiable for BankStandReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_BANK_NAME, false)?
+            .visit_field::<i32>("x", VT_BANK_X, false)?
+            .visit_field::<i32>("z", VT_BANK_Z, false)?
+            .visit_field::<i32>("level", VT_BANK_LEVEL, false)?
+            .visit_field::<ForwardsUOffset<&str>>("kind", VT_BANK_KIND, false)?
+            .visit_field::<i32>("op", VT_BANK_OP, false)?
+            .visit_field::<ForwardsUOffset<&str>>("choose", VT_BANK_CHOOSE, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// The PLAYER_INFO snapshot as decoded: read-only access to the same
 /// fields `script_snapshot_fb` encodes.
 pub struct SnapshotReader<'a> {
     tab: Table<'a>,
 }
 
+impl<'a> Follow<'a> for SnapshotReader<'a> {
+    type Inner = SnapshotReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for SnapshotReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<u64>("tick", VT_SNAP_TICK, false)?
+            .visit_field::<ForwardsUOffset<TileReader>>("here", VT_SNAP_HERE, false)?
+            .visit_field::<bool>("ingame", VT_SNAP_INGAME, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "inv", VT_SNAP_INV, false,
+            )?
+            .visit_field::<i32>("inv_size", VT_SNAP_INV_SIZE, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<StatReader>>>>(
+                "stats", VT_SNAP_STATS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<TileReader>>>>(
+                "booths", VT_SNAP_BOOTHS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BankStandReader>>>>(
+                "banks", VT_SNAP_BANKS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "bank", VT_SNAP_BANK, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "bank_side", VT_SNAP_BANK_SIDE, false,
+            )?
+            .visit_field::<bool>("bank_open", VT_SNAP_BANK_OPEN, false)?
+            .visit_field::<bool>("bank_loaded", VT_SNAP_BANK_LOADED, false)?
+            .visit_field::<bool>("hold", VT_SNAP_HOLD, false)?
+            .visit_field::<bool>("ours", VT_SNAP_OURS, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 impl SnapshotReader<'_> {
-    /// Interpret `buf` as a root-`Snapshot` FlatBuffer. Only the root
-    /// offset is bounds-checked: the buffer is produced by our own encoder
-    /// (the same trust `flatbuffers::root_unchecked` asks for).
+    /// Interpret `buf` as a root-`Snapshot` FlatBuffer after verification.
     pub fn from_bytes(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
-        if buf.len() < 4 {
-            return Err(format!("snapshot buffer too short: {} bytes", buf.len()));
-        }
-        let loc = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-        if loc + 4 > buf.len() {
-            return Err(format!("snapshot root out of range: {loc} > {}", buf.len()));
-        }
-        Ok(SnapshotReader {
-            // Safety: `loc` was bounds-checked against `buf`.
-            tab: unsafe { Table::new(buf, loc) },
-        })
+        verified_root::<SnapshotReader>(buf)
     }
 
     pub fn tick(&self) -> u64 {
@@ -400,10 +502,28 @@ fn rows_present<'a, T>(tab: &Table<'a>, slot: VOffsetT) -> bool
 where
     T: flatbuffers::Follow<'a> + 'a,
 {
-    // Safety: the buffer was produced by our encoder (root checked).
+    // Safety: verified before any accessor use.
     unsafe {
         tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None)
             .is_some()
+    }
+}
+
+/// Like [`rows`], but rejects vectors longer than `max_len`.
+fn rows_capped<'a, T>(tab: &Table<'a>, slot: VOffsetT, max_len: usize) -> Result<Vec<T::Inner>, String>
+where
+    T: flatbuffers::Follow<'a> + 'a,
+{
+    // Safety: verified before any accessor use.
+    match unsafe { tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None) } {
+        Some(v) => {
+            let len = v.len();
+            if len > max_len {
+                return Err(format!("vector length {len} exceeds cap {max_len}"));
+            }
+            Ok(v.iter().collect())
+        }
+        None => Ok(Vec::new()),
     }
 }
 
@@ -870,30 +990,56 @@ impl InteractReader<'_> {
     }
 }
 
+impl Verifiable for InteractReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("op", VT_IN_OP, false)?
+            .visit_field::<i32>("x", VT_IN_X, false)?
+            .visit_field::<i32>("z", VT_IN_Z, false)?
+            .visit_field::<i32>("level", VT_IN_LEVEL, false)?
+            .visit_field::<ForwardsUOffset<&str>>("kind", VT_IN_KIND, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_IN_NAME, false)?
+            .visit_field::<i32>("stand_op", VT_IN_STAND_OP, false)?
+            .visit_field::<ForwardsUOffset<&str>>("choose", VT_IN_CHOOSE, false)?
+            .visit_field::<ForwardsUOffset<&str>>("action", VT_IN_ACTION, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// A batch of shim interact requests as decoded.
 pub struct InteractBatchReader<'a> {
     tab: Table<'a>,
 }
 
+impl<'a> Follow<'a> for InteractBatchReader<'a> {
+    type Inner = InteractBatchReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for InteractBatchReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InteractReader>>>>(
+                "reqs", VT_REQS, false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
 impl InteractBatchReader<'_> {
-    /// Interpret `buf` as a root-`InteractBatch` FlatBuffer (produced by
-    /// our own encoder; only the root offset is bounds-checked).
+    /// Interpret `buf` as a root-`InteractBatch` FlatBuffer after verification.
     pub fn from_bytes(buf: &[u8]) -> Result<InteractBatchReader<'_>, String> {
-        if buf.len() < 4 {
-            return Err(format!("interact buffer too short: {} bytes", buf.len()));
-        }
-        let loc = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-        if loc + 4 > buf.len() {
-            return Err(format!("interact root out of range: {loc} > {}", buf.len()));
-        }
-        Ok(InteractBatchReader {
-            // Safety: `loc` was bounds-checked against `buf`.
-            tab: unsafe { Table::new(buf, loc) },
-        })
+        verified_root::<InteractBatchReader>(buf)
     }
 
-    pub fn reqs(&self) -> Vec<InteractReader<'_>> {
-        rows::<InteractReader>(&self.tab, VT_REQS)
+    pub fn reqs(&self) -> Result<Vec<InteractReader<'_>>, String> {
+        rows_capped::<InteractReader>(&self.tab, VT_REQS, MAX_INTERACT_REQS)
     }
 }
 
@@ -933,31 +1079,68 @@ fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptP
     b.finish(root, None);
 }
 
+/// One recorded paint frame as decoded.
+pub struct PaintReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for PaintReader<'a> {
+    type Inner = PaintReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for PaintReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("title", VT_PAINT_TITLE, false)?
+            .visit_field::<ForwardsUOffset<&str>>("accent", VT_PAINT_ACCENT, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "lines", VT_PAINT_LINES, false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+impl PaintReader<'_> {
+    pub fn title(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_TITLE, None) }
+    }
+    pub fn accent(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_ACCENT, None) }
+    }
+    pub fn lines(&self) -> Result<Vec<String>, String> {
+        // Safety: verified before any accessor use.
+        let lines = match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_PAINT_LINES, None)
+        } {
+            Some(v) => {
+                let len = v.len();
+                if len > MAX_PAINT_LINES {
+                    return Err(format!(
+                        "vector length {len} exceeds cap {MAX_PAINT_LINES}"
+                    ));
+                }
+                v.iter().map(str::to_string).collect()
+            }
+            None => Vec::new(),
+        };
+        Ok(lines)
+    }
+}
+
 /// Decode a root-`Paint` FlatBuffer into the shim's recorded frame.
 pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
-    if buf.len() < 4 {
-        return Err(format!("paint buffer too short: {} bytes", buf.len()));
-    }
-    let loc = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-    if loc + 4 > buf.len() {
-        return Err(format!("paint root out of range: {loc} > {}", buf.len()));
-    }
-    // Safety: `loc` was bounds-checked against `buf`.
-    let tab = unsafe { Table::new(buf, loc) };
-    let title =
-        unsafe { tab.get::<ForwardsUOffset<&str>>(VT_PAINT_TITLE, None) }.map(str::to_string);
-    let accent =
-        unsafe { tab.get::<ForwardsUOffset<&str>>(VT_PAINT_ACCENT, None) }.map(str::to_string);
-    let lines = match unsafe {
-        tab.get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_PAINT_LINES, None)
-    } {
-        Some(v) => v.iter().map(str::to_string).collect(),
-        None => Vec::new(),
-    };
+    let paint = verified_root::<PaintReader>(buf)?;
     Ok(crate::shim::ScriptPaint {
-        title,
-        accent,
-        lines,
+        title: paint.title().map(str::to_string),
+        accent: paint.accent().map(str::to_string),
+        lines: paint.lines()?,
     })
 }
 
@@ -967,8 +1150,9 @@ pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
 /// exactly like the old JSON parse.
 pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>, String> {
     let batch = InteractBatchReader::from_bytes(buf)?;
-    let mut out = Vec::with_capacity(batch.reqs().len());
-    for row in batch.reqs() {
+    let rows = batch.reqs()?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
         let op = row
             .op()
             .ok_or_else(|| "interact row has no op".to_string())?;
@@ -1163,6 +1347,45 @@ mod tests {
         let ibytes = buf.encode_interact_batch(&reqs);
         let got = decode_interact_batch(&ibytes).expect("interact");
         assert_eq!(got, reqs);
+    }
+
+    /// Truncated isolate→host buffers must not panic; invalid roots err.
+    #[test]
+    fn truncated_paint_and_interact_buffers_return_err() {
+        let paint = ScriptPaint {
+            title: Some("t".into()),
+            accent: None,
+            lines: vec!["line".into()],
+        };
+        let full = IsolateBuf::new().encode_paint(&paint);
+        for cut in 1..full.len() {
+            let _ = decode_paint(&full[..cut]);
+        }
+        let mid = full.len().saturating_sub(8);
+        assert!(
+            decode_paint(&full[..mid]).is_err(),
+            "paint truncated mid-payload should err"
+        );
+        let mut bad_root = full.clone();
+        bad_root[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode_paint(&bad_root).is_err(), "huge paint root offset should err");
+
+        let reqs = vec![InteractReq::Close];
+        let ibytes = IsolateBuf::new().encode_interact_batch(&reqs);
+        for cut in 1..ibytes.len() {
+            let _ = decode_interact_batch(&ibytes[..cut]);
+        }
+        let mid = ibytes.len().saturating_sub(4);
+        assert!(
+            decode_interact_batch(&ibytes[..mid]).is_err(),
+            "interact truncated mid-payload should err"
+        );
+        let mut bad_root = ibytes.clone();
+        bad_root[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            decode_interact_batch(&bad_root).is_err(),
+            "huge interact root offset should err"
+        );
     }
 
     /// Resetting the same builder must not leave the previous root's tick
