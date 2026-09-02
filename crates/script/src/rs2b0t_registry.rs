@@ -23,20 +23,66 @@ pub fn registry_index_path(root: &Path) -> PathBuf {
 
 /// The on-disk file for a card's `./…` import path. rs2b0t imports end in
 /// `.js` while the files on disk are `.ts`, so the `.ts` twin wins when
-/// the verbatim path is absent.
-pub fn script_file_path(root: &Path, rel_path: &str) -> PathBuf {
+/// the verbatim path is absent. Returns `None` when `rel_path` is absolute,
+/// contains `..`, or would resolve outside `root/src/bot/scripts`.
+pub fn script_file_path(root: &Path, rel_path: &str) -> Option<PathBuf> {
     let base = root.join("src/bot/scripts");
-    let verbatim = base.join(rel_path);
-    if verbatim.is_file() {
-        return verbatim;
-    }
-    if let Some(stem) = rel_path.strip_suffix(".js") {
-        let ts = base.join(format!("{stem}.ts"));
+    let resolved = resolve_under_catalog(&base, rel_path)?;
+
+    let verbatim = base.join(strip_leading_dot_slash(rel_path));
+    let candidate = if verbatim.is_file() {
+        verbatim
+    } else if let Some(stem) = rel_path.strip_suffix(".js") {
+        let ts = base.join(format!("{}.ts", strip_leading_dot_slash(stem)));
         if ts.is_file() {
-            return ts;
+            ts
+        } else {
+            resolved
+        }
+    } else {
+        resolved
+    };
+
+    canonical_under(&base, &candidate)
+}
+
+/// Join `rel_path` under `catalog` without touching the filesystem. Rejects
+/// absolute paths, `..`, and anything not starting with `./`.
+fn resolve_under_catalog(catalog: &Path, rel_path: &str) -> Option<PathBuf> {
+    if rel_path.starts_with('/') || rel_path.starts_with('\\') {
+        return None;
+    }
+    let rel = rel_path.strip_prefix("./")?;
+    let mut out = catalog.to_path_buf();
+    for component in Path::new(rel).components() {
+        match component {
+            std::path::Component::Normal(part) => out.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return None,
         }
     }
-    verbatim
+    Some(out)
+}
+
+fn strip_leading_dot_slash(rel_path: &str) -> &str {
+    rel_path.strip_prefix("./").unwrap_or(rel_path)
+}
+
+/// Canonicalize `path` when possible and require it stay under `catalog`.
+fn canonical_under(catalog: &Path, path: &Path) -> Option<PathBuf> {
+    if !path.starts_with(catalog) {
+        return None;
+    }
+    if let Ok(canon_catalog) = catalog.canonicalize() {
+        if let Ok(canon_path) = path.canonicalize() {
+            if !canon_path.starts_with(&canon_catalog) {
+                return None;
+            }
+            return Some(canon_path);
+        }
+    }
+    Some(path.to_path_buf())
 }
 
 /// Default persisted rs2b0t root file (`~/.274bot/rs2b0t-path`).
@@ -113,8 +159,7 @@ pub fn parse_registry(index_ts: &str) -> Result<Vec<RegistryCard>, String> {
 }
 
 /// `ident -> rel path` for every default and named import of a relative
-/// module. `../` imports are kept too — a `new X()` lookup only ever hits
-/// catalog script classes.
+/// module under `./`. Parent-dir and absolute imports are ignored.
 fn scan_imports(src: &str) -> HashMap<String, String> {
     let mut imports = HashMap::new();
     let mut pos = 0;
@@ -150,7 +195,7 @@ fn parse_import_stmt(stmt: &str) -> Option<(Vec<String>, String)> {
     let fi = stmt.rfind("from ")?;
     let after = stmt[fi + "from ".len()..].trim_start();
     let path = quoted_after(after)?;
-    if !path.starts_with("./") && !path.starts_with("../") {
+    if !path.starts_with("./") {
         return None;
     }
     let spec = stmt[..fi].trim();

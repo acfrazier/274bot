@@ -238,7 +238,9 @@ impl JsLibrary {
             if is_reserved(&card.name) {
                 continue;
             }
-            let path = script_file_path(root, &card.rel_path);
+            let Some(path) = script_file_path(root, &card.rel_path) else {
+                continue;
+            };
             let Ok(source) = std::fs::read_to_string(&path) else {
                 continue;
             };

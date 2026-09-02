@@ -232,6 +232,94 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
 fn parse_registry_is_relative_path_to_catalog_dir() {
     let cards = script::parse_registry(FAKE_INDEX).unwrap();
     let root = Path::new("/tmp/rs2b0t");
-    let p = script::script_file_path(root, &cards[0].rel_path);
+    let p = script::script_file_path(root, &cards[0].rel_path).expect("valid catalog path");
     assert_eq!(p, root.join("src/bot/scripts/BoneBurier/BoneBurier.js"));
+}
+
+#[test]
+fn script_file_path_rejects_escape_and_absolute() {
+    let root = Path::new("/tmp/rs2b0t");
+    assert!(
+        script::script_file_path(root, "../../etc/passwd").is_none(),
+        "../../etc/passwd must not resolve outside the catalog"
+    );
+    assert!(
+        script::script_file_path(root, "../evil.ts").is_none(),
+        "../evil.ts must not resolve outside the catalog"
+    );
+    assert!(
+        script::script_file_path(root, "./../../etc/passwd").is_none(),
+        "./../../etc/passwd must not escape via a ./ prefix"
+    );
+    assert!(
+        script::script_file_path(root, "/etc/passwd").is_none(),
+        "absolute imports must be rejected"
+    );
+}
+
+#[test]
+fn script_file_path_resolves_js_import_to_ts_twin() {
+    let dir = scratch("script_path_ts_twin");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+    std::fs::write(scripts.join("BoneBurier/BoneBurier.ts"), "export default class {}").unwrap();
+
+    let p = script::script_file_path(&root, "./BoneBurier/BoneBurier.js")
+        .expect("valid ./ import resolves");
+    let expected = scripts.join("BoneBurier/BoneBurier.ts");
+    assert_eq!(
+        p.canonicalize().expect("resolved path exists"),
+        expected.canonicalize().expect("expected path exists"),
+        ".js import path resolves to the .ts twin on disk"
+    );
+}
+
+#[test]
+fn parse_registry_skips_parent_dir_imports() {
+    let index = r#"
+import Evil from '../evil/Evil.js';
+import BoneBurier from './BoneBurier/BoneBurier.js';
+
+ScriptRegistry.register({ name: 'Evil', create: () => new Evil() });
+ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
+"#;
+    let cards = script::parse_registry(index).expect("BoneBurier still registers");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].name, "BoneBurier");
+    assert_eq!(cards[0].rel_path, "./BoneBurier/BoneBurier.js");
+}
+
+#[test]
+fn register_rs2b0t_skips_cards_whose_path_escapes_catalog() {
+    let dir = scratch("rs2b0t_escape");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+    // Place a readable file outside the catalog that a tampered import could target.
+    std::fs::write(dir.join("outside.ts"), "export default class Outside {}").unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import Outside from '../outside.ts';
+import BoneBurier from './BoneBurier/BoneBurier.js';
+
+ScriptRegistry.register({ name: 'Outside', create: () => new Outside() });
+ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("BoneBurier/BoneBurier.ts"),
+        "export default class BoneBurier extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
+
+    let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
+    let n = lib
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("registry fills");
+    assert_eq!(n, 1, "escaped path must not register as a card");
+    assert!(lib.get("Outside").is_none());
+    assert!(lib.get("BoneBurier").is_some());
 }
