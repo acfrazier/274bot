@@ -123,6 +123,8 @@ const VT_SNAP_SIDE_TAB_IFACES: VOffsetT = 74;
 const VT_SNAP_SPELL_BUTTONS: VOffsetT = 76;
 const VT_SNAP_CHAT_LINES: VOffsetT = 78;
 const VT_SNAP_NEAREST_BOOTH: VOffsetT = 80;
+const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
+const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -372,6 +374,10 @@ pub struct SnapshotInput<'a> {
     pub side_tab_ifaces: &'a [SideTabIfaceInput],
     pub spell_buttons: &'a [CombatStyleInput<'a>],
     pub chat_lines: &'a [ChatLineInput<'a>],
+    /// The bank Note toggle component id (-1 when absent).
+    pub bank_note_on: i32,
+    /// The bank Item toggle component id (-1 when absent).
+    pub bank_note_off: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -709,6 +715,8 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<ForwardsUOffset<NearestBoothReader>>(
                 "nearest_booth", VT_SNAP_NEAREST_BOOTH, false,
             )?
+            .visit_field::<i32>("bank_note_on", VT_SNAP_BANK_NOTE_ON, false)?
+            .visit_field::<i32>("bank_note_off", VT_SNAP_BANK_NOTE_OFF, false)?
             .finish();
         Ok(())
     }
@@ -799,6 +807,18 @@ impl SnapshotReader<'_> {
     }
     pub fn bank_loaded(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_BANK_LOADED, None) }.unwrap_or(false)
+    }
+    pub fn has_bank_note_on(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None).is_some() }
+    }
+    pub fn bank_note_on(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None) }.unwrap_or(-1)
+    }
+    pub fn has_bank_note_off(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_OFF, None).is_some() }
+    }
+    pub fn bank_note_off(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_OFF, None) }.unwrap_or(-1)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1143,6 +1163,8 @@ pub struct SnapshotFingerprint {
     pub side_tab_ifaces: Vec<SideTabIfaceInput>,
     pub spell_buttons: Vec<CombatStyleFp>,
     pub chat_lines: Vec<(i32, String)>,
+    pub bank_note_on: i32,
+    pub bank_note_off: i32,
 }
 
 impl SnapshotFingerprint {
@@ -1276,6 +1298,8 @@ impl SnapshotFingerprint {
                 .iter()
                 .map(|l| (l.seq, l.text.to_string()))
                 .collect(),
+            bank_note_on: input.bank_note_on,
+            bank_note_off: input.bank_note_off,
         }
     }
 }
@@ -1325,6 +1349,8 @@ pub struct DeltaMask {
     pub side_tab_ifaces: bool,
     pub spell_buttons: bool,
     pub chat_lines: bool,
+    pub bank_note_on: bool,
+    pub bank_note_off: bool,
 }
 
 impl DeltaMask {
@@ -1369,6 +1395,8 @@ impl DeltaMask {
             side_tab_ifaces: true,
             spell_buttons: true,
             chat_lines: true,
+            bank_note_on: true,
+            bank_note_off: true,
         }
     }
 
@@ -1422,6 +1450,8 @@ impl DeltaMask {
             side_tab_ifaces: next.side_tab_ifaces != last.side_tab_ifaces,
             spell_buttons: next.spell_buttons != last.spell_buttons,
             chat_lines: next.chat_lines != last.chat_lines,
+            bank_note_on: next.bank_note_on != last.bank_note_on,
+            bank_note_off: next.bank_note_off != last.bank_note_off,
         }
     }
 }
@@ -1845,6 +1875,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.chat_lines {
         b.push_slot_always(VT_SNAP_CHAT_LINES, chat_lines_off.expect("mask checked"));
+    }
+    if mask.bank_note_on {
+        b.push_slot_always(VT_SNAP_BANK_NOTE_ON, input.bank_note_on);
+    }
+    if mask.bank_note_off {
+        b.push_slot_always(VT_SNAP_BANK_NOTE_OFF, input.bank_note_off);
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -2708,6 +2744,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             "set-retaliate" => out.push(crate::shim::InteractReq::SetRetaliate {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
+            "set-note-mode" => out.push(crate::shim::InteractReq::SetNoteMode {
+                on: row.action().is_some_and(|a| a == "on" || a == "true"),
+            }),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -2741,6 +2780,7 @@ fn interact_off<'b>(
         InteractReq::Wear { .. } => "wear",
         InteractReq::SetRun { .. } => "set-run",
         InteractReq::SetRetaliate { .. } => "set-retaliate",
+        InteractReq::SetNoteMode { .. } => "set-note-mode",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -2775,7 +2815,7 @@ fn interact_off<'b>(
         | InteractReq::Loc { action, .. }
         | InteractReq::Obj { action, .. }
         | InteractReq::Player { action, .. } => Some(b.create_string(action)),
-        InteractReq::SetRun { on } | InteractReq::SetRetaliate { on } => {
+        InteractReq::SetRun { on } | InteractReq::SetRetaliate { on } | InteractReq::SetNoteMode { on } => {
             Some(b.create_string(if *on { "on" } else { "off" }))
         }
         _ => None,
@@ -2904,7 +2944,7 @@ fn interact_off<'b>(
         InteractReq::Wear { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
         }
-        InteractReq::SetRun { .. } | InteractReq::SetRetaliate { .. } => {
+        InteractReq::SetRun { .. } | InteractReq::SetRetaliate { .. } | InteractReq::SetNoteMode { .. } => {
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }
     }
@@ -2957,6 +2997,8 @@ mod tests {
             side_tab_ifaces: &[],
             spell_buttons: &[],
             chat_lines: &[],
+            bank_note_on: -1,
+            bank_note_off: -1,
         }
     }
 

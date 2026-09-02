@@ -1030,6 +1030,12 @@ impl<'a> Interactions<'a> {
         self.set_toggle(self.snapshot.retaliate_controls().copied(), on)
     }
 
+    /// Press the bank Note (on) / Item (off) toggle on the open main
+    /// modal. Refuses when the bank is shut or the toggle pair is absent.
+    pub fn set_note_mode<'t>(&mut self, on: bool) -> SendResult<'t> {
+        self.set_toggle(self.snapshot.bank_note_controls().copied(), on)
+    }
+
     /// The shared `set_run`/`set_retaliate` arm: precondition, the
     /// toggle pair, the on/off component, then the button press.
     fn set_toggle<'t>(&mut self, controls: Option<ToggleControlsView>, on: bool) -> SendResult<'t> {

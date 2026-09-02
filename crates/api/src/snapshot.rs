@@ -587,6 +587,9 @@ pub struct GameSnapshot {
     quest_statuses: Vec<QuestStatusView>,
     run_controls: Option<ToggleControlsView>,
     retaliate_controls: Option<ToggleControlsView>,
+    /// The Note/Item toggle pair on the open bank main modal; None while
+    /// no bank is open or the buttons are absent.
+    bank_note_controls: Option<ToggleControlsView>,
     modals: ModalView,
     menu_entries: Vec<String>,
     main_modal_texts: Vec<String>,
@@ -671,6 +674,7 @@ impl Default for GameSnapshot {
             quest_statuses: Vec::new(),
             run_controls: None,
             retaliate_controls: None,
+            bank_note_controls: None,
             modals: ModalView {
                 main: -1,
                 side: -1,
@@ -1010,6 +1014,12 @@ impl GameSnapshot {
         self.retaliate_controls.as_ref()
     }
 
+    /// The open bank's Note (on) / Item (off) toggle pair; None when the
+    /// bank is shut or the buttons are not on the main modal tree.
+    pub fn bank_note_controls(&self) -> Option<&ToggleControlsView> {
+        self.bank_note_controls.as_ref()
+    }
+
     /// The four open modal roots from the last modals rebuild.
     pub fn modals(&self) -> &ModalView {
         &self.modals
@@ -1306,6 +1316,11 @@ impl GameSnapshot {
             Vec::new()
         } else {
             inv_items(client, self.bank_component_id, ItemContainer::Bank).unwrap_or_default()
+        };
+        self.bank_note_controls = if client.main_modal_id == -1 {
+            None
+        } else {
+            bank_note_controls(client, client.main_modal_id)
         };
         true
     }
@@ -2089,6 +2104,10 @@ impl<'a> ReadContext<'a> {
         self.0.retaliate_controls()
     }
 
+    pub fn bank_note_controls(&self) -> Option<&ToggleControlsView> {
+        self.0.bank_note_controls()
+    }
+
     /// The local player's world tile — the canonical route-based tile
     /// (`base + route head`) with the scene level; `None` before the
     /// first `PLAYER_INFO`.
@@ -2738,6 +2757,46 @@ fn modal_texts(client: &Client, root: i32) -> Vec<String> {
         queue.extend(children_of(&com));
     }
     out
+}
+
+/// The Note/Item toggle pair on the open bank main modal: pressable
+/// TYPE_TEXT descendants labeled "Note" (on) and "Item" (off).
+fn bank_note_controls(client: &Client, main_root: i32) -> Option<ToggleControlsView> {
+    if main_root == -1 {
+        return None;
+    }
+    let mut note_id = -1;
+    let mut item_id = -1;
+    let mut queue = vec![main_root];
+    let mut head = 0;
+    while head < queue.len() {
+        let id = queue[head];
+        head += 1;
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        if com.button_type != 0 {
+            let label = if !com.text.trim().is_empty() {
+                com.text.trim()
+            } else {
+                com.button_text.trim()
+            };
+            if label.eq_ignore_ascii_case("note") {
+                note_id = id;
+            } else if label.eq_ignore_ascii_case("item") {
+                item_id = id;
+            }
+        }
+        queue.extend(children_of(&com));
+    }
+    if note_id >= 0 && item_id >= 0 {
+        Some(ToggleControlsView {
+            on_component_id: note_id,
+            off_component_id: item_id,
+        })
+    } else {
+        None
+    }
 }
 
 /// The toggle pair of the player-controls overlay: the root with an

@@ -2374,6 +2374,116 @@ fn still_present_matches_identity_per_kind() {
     );
 }
 
+/// `set_note_mode` presses the bank Note (on) / Item (off) toggle buttons
+/// discovered on the open main modal; missing controls refuse closed.
+#[test]
+fn set_note_mode_presses_bank_note_toggle_and_refuses_without_controls() {
+    let mut s = scene();
+    plant_npc_type(&mut s.client, 9, "Goblin", &["Attack"]);
+    // Bank main modal 600: withdraw 601 + Note 602 + Item 603.
+    set_iface(
+        &mut s.client,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601, 602, 603]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut s.client,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Withdraw 1".into()),
+                Some("Withdraw 5".into()),
+                Some("Withdraw 10".into()),
+                Some("Withdraw All".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut s.client,
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
+        },
+    );
+    for (id, text) in [(602, "Note"), (603, "Item")] {
+        set_iface(
+            &mut s.client,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut s.client,
+            id,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_TOGGLE,
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    s.client.main_modal_id = 600;
+    let snap = rebuild(&mut s.client);
+    assert!(snap.bank_note_controls().is_some());
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.set_note_mode(true) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(
+                    command,
+                    WireCommand::Button {
+                        component_id: 602,
+                        button_type: ButtonType::BUTTON_TOGGLE
+                    }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        assert!(matches!(ix.set_note_mode(false), SendResult::Sent { .. }));
+    }
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::TOGGLE_BUTTON, 0, 0, 602),
+            (0, MiniMenuAction::TOGGLE_BUTTON, 0, 0, 603),
+        ]
+    );
+
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.set_note_mode(true),
+            SendResult::Refused {
+                reason: SendReason::ComponentNotVisible,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty());
+}
+
 /// `create_interactions` wires the same snapshot + driver pair.
 #[test]
 fn create_interactions_wires_snapshot_and_driver() {

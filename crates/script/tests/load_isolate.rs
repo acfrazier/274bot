@@ -202,6 +202,8 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         spell_buttons: &[],
         chat_lines: &[],
         nearest_booth: None,
+        bank_note_on: -1,
+        bank_note_off: -1,
     }
 }
 
@@ -2282,6 +2284,126 @@ export default class T extends LoopingBot {
             "must not invent a booth object: {value:?}"
         );
     }
+    iso.join();
+}
+
+// Hop 4 — Bank.setNoteMode queues set-note-mode when bank open + Note button posted.
+#[test]
+fn isolate_bank_set_note_mode_queues_op_when_bank_open_with_note_button() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_ok = await Bank.setNoteMode(true);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_note_on = 602;
+    snap.bank_note_off = 603;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    let ok = iso.probe("__rs_ok").unwrap();
+    assert_eq!(ok, true, "setNoteMode resolves after the tick");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::SetNoteMode { on: true }],
+        "setNoteMode(true) queues set-note-mode, not a silent success"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_set_note_mode_throws_when_bank_closed_or_no_note_button() {
+    let closed_src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        try {
+            await Bank.setNoteMode(true);
+            globalThis.__probe = 'ok';
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(closed_src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = false;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert!(
+        value.as_str().is_some_and(|s| s.contains("not v1")),
+        "bank closed must throw not v1, not queue: {value:?}"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "bank closed must not queue set-note-mode"
+    );
+    iso.join();
+
+    let no_btn_src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        try {
+            await Bank.setNoteMode(true);
+            globalThis.__probe = 'ok';
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(no_btn_src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_note_on = -1;
+    snap.bank_note_off = -1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert!(
+        value.as_str().is_some_and(|s| s.contains("not v1")),
+        "no Note button must throw not v1: {value:?}"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no Note button must not queue set-note-mode"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_live_catalog_noted_of_from_posted_cert() {
+    let src = r#"
+import { liveCatalog } from '../../api/market/catalog.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = liveCatalog().notedOf.get(10);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Withdraw-1".to_string()];
+    let bank = [item_row(10, Some("Adamant platebody"), 1, &ops, false, 1234)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value, 1234,
+        "posted cert on id 10 maps notedOf.get(10) to the cert id"
+    );
     iso.join();
 }
 

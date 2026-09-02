@@ -1074,6 +1074,9 @@ fn dispatch_script_interact(
             InteractReq::SetRetaliate { on } => {
                 wrote |= matches!(ix.set_retaliate(on), SendResult::Sent { .. });
             }
+            InteractReq::SetNoteMode { on } => {
+                wrote |= matches!(ix.set_note_mode(on), SendResult::Sent { .. });
+            }
         }
     }
     wrote
@@ -1843,6 +1846,14 @@ fn with_script_snapshot_input<R>(
         side_tab_ifaces: &side_tab_ifaces,
         spell_buttons: &spell_buttons,
         chat_lines: &chat_lines,
+        bank_note_on: snapshot
+            .and_then(|s| s.bank_note_controls())
+            .map(|c| c.on_component_id)
+            .unwrap_or(-1),
+        bank_note_off: snapshot
+            .and_then(|s| s.bank_note_controls())
+            .map(|c| c.off_component_id)
+            .unwrap_or(-1),
     };
     f(&input)
 }

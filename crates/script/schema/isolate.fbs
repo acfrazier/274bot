@@ -174,13 +174,15 @@ table Snapshot {
   side_tab_ifaces: [SideTabIface];
   spell_buttons: [CombatStyle];
   chat_lines: [ChatLine];
+  bank_note_on: int;
+  bank_note_off: int;
 }
 
 // One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "deposit" | "withdraw" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "if-button" | "close-modal" | "side-tab"
-// | "wear" | "set-run" | "set-retaliate".
+// | "wear" | "set-run" | "set-retaliate" | "set-note-mode".
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;

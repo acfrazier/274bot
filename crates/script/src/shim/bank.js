@@ -1,13 +1,3 @@
-// Our Bank module: deposit / withdraw helpers over the host-posted
-// snapshot blob. `bank_side` rows are the open bank's deposit window
-// (one `{name, count}` per item); `bank` rows are the withdraw list.
-// Every act queues a request on `__rs2b0t_host.interact`
-// (`{op:'deposit', name}` / `{op:'withdraw', name, action}` /
-// `{op:'close'}`); the isolate thread forwards the queue to the host and
-// host-play resolves names through the 274 ObjNames table and dispatches
-// the op through the Driver. A name the table does not know never matches
-// a posted row (the host posts `name: null` for it), so a request for it
-// is never queued. Missing members throw `not v1` — never a fake value.
 import { Execution } from '../execution/Execution.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notV1 = (name) => new Error('not v1: ' + name);
@@ -107,9 +97,17 @@ export const Bank = new Proxy(
             }
             queue({ op: 'withdraw', name: String(name), action });
         },
-        // Note state is server-side per bank; the posted rows are plain
-        // items. Return true (rs2b0t's awaited call shape) with no send.
-        setNoteMode() {
+        async setNoteMode(on) {
+            if (!Bank.isOpen()) {
+                throw notV1('Bank.setNoteMode');
+            }
+            const wantOn = !!on;
+            const btnId = wantOn ? snap().bank_note_on ?? -1 : snap().bank_note_off ?? -1;
+            if (typeof btnId !== 'number' || btnId < 0) {
+                throw notV1('Bank.setNoteMode');
+            }
+            queue({ op: 'set-note-mode', on: wantOn });
+            await Execution.delayTicks(1);
             return true;
         },
         close() {

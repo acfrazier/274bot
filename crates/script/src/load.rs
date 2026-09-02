@@ -1238,6 +1238,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "bank_loaded", falsy)?;
         }
+        if snap.has_bank_note_on() {
+            let bank_note_on = num(&mut scope, snap.bank_note_on() as f64);
+            set(&mut scope, obj, "bank_note_on", bank_note_on)?;
+        } else if !had {
+            let bank_note_on = num(&mut scope, -1.0);
+            set(&mut scope, obj, "bank_note_on", bank_note_on)?;
+        }
+        if snap.has_bank_note_off() {
+            let bank_note_off = num(&mut scope, snap.bank_note_off() as f64);
+            set(&mut scope, obj, "bank_note_off", bank_note_off)?;
+        } else if !had {
+            let bank_note_off = num(&mut scope, -1.0);
+            set(&mut scope, obj, "bank_note_off", bank_note_off)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;

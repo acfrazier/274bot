@@ -464,4 +464,7 @@ pub enum InteractReq {
     /// Toggle auto-retaliate on/off.
     #[serde(rename = "set-retaliate")]
     SetRetaliate { on: bool },
+    /// Toggle bank withdraw-as-note on/off.
+    #[serde(rename = "set-note-mode")]
+    SetNoteMode { on: bool },
 }
