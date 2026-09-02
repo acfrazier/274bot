@@ -76,10 +76,7 @@ pub fn persist_rs2b0t_root_at(root: &Path, path_file: &Path) -> Result<(), Strin
             return Ok(());
         }
     }
-    if let Some(parent) = path_file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("rs2b0t-path: {e}"))?;
-    }
-    std::fs::write(path_file, root.to_string_lossy().as_bytes())
+    vault::write_private_file(path_file, root.to_string_lossy().as_bytes())
         .map_err(|e| format!("rs2b0t-path: {e}"))
 }
 

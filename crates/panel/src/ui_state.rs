@@ -96,11 +96,8 @@ pub fn load_at(p: &Path) -> PanelUiState {
 }
 
 pub fn save_at(p: &Path, state: &PanelUiState) {
-    if let Some(parent) = p.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
     if let Ok(data) = serde_json::to_vec_pretty(state) {
-        let _ = std::fs::write(p, data);
+        let _ = vault::write_private_file(p, &data);
     }
 }
 

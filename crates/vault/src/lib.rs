@@ -9,6 +9,8 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
 
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -303,17 +305,71 @@ fn decrypt(key: &[u8; KEY_LEN], nonce_and_payload: &[u8]) -> Result<Vec<u8>, aes
     )
 }
 
-/// Writes `blob` to `path` via a same-directory temp file + rename so a
-/// crash mid-write can never leave a truncated vault at `path`.
-fn atomic_write(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
+/// Writes `data` to `path` via a same-directory `.tmp` file + rename. On Unix
+/// the parent directory is created `0o700` and the final file is `0o600`
+/// (explicit on the temp file before rename so umask cannot widen it).
+pub fn write_private_file(path: &Path, data: &[u8]) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        ensure_private_dir(parent)?;
+    }
     let tmp = path.with_extension("tmp");
     {
+        #[cfg(unix)]
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        #[cfg(not(unix))]
         let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(blob)?;
+        f.write_all(data)?;
         f.sync_all()?;
+        #[cfg(unix)]
+        set_mode(&tmp, 0o600)?;
     }
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_private_dir(dir: &Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    if dir.as_os_str().is_empty() {
+        return Ok(());
+    }
+    if !dir.exists() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_private_dir(dir: &Path) -> Result<(), std::io::Error> {
+    if dir.as_os_str().is_empty() {
+        return Ok(());
+    }
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
+/// Writes `blob` to `path` via a same-directory temp file + rename so a
+/// crash mid-write can never leave a truncated vault at `path`.
+fn atomic_write(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
+    write_private_file(path, blob).map_err(VaultError::Io)
 }
 
 #[cfg(test)]
@@ -511,7 +567,13 @@ mod tests {
         let mut v = Vault::create(&file, "bot").unwrap();
         v.upsert(profile("alice", "pw1")).unwrap();
 
-        // Remove the directory so the next write cannot succeed.
+        // Drop write permission so the next atomic write cannot succeed.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        }
+        #[cfg(not(unix))]
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(v.upsert(profile("bob", "pw2")).is_err());
         assert!(
@@ -559,6 +621,17 @@ mod tests {
         let rounds_off = b"274VAULT".len() + 1;
         let stored = u32::from_le_bytes(bytes[rounds_off..rounds_off + 4].try_into().unwrap());
         assert_eq!(stored, 50_000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_file_mode_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = tmp_path("mode.vault");
+        Vault::create(&path, "bot").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "vault file must be owner-read/write only");
     }
 
     #[test]

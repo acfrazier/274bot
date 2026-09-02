@@ -4399,6 +4399,7 @@ dependencies = [
  "serde",
  "serde_json",
  "v8",
+ "vault",
 ]
 
 [[package]]

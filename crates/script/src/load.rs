@@ -281,12 +281,10 @@ impl JsLibrary {
     }
 
     fn persist_entries(&self, entries: &[StoreEntry]) -> Result<(), String> {
-        if let Some(parent) = self.store.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("js-scripts.json: {e}"))?;
-        }
         let json =
             serde_json::to_string_pretty(entries).map_err(|e| format!("js-scripts.json: {e}"))?;
-        std::fs::write(&self.store, json).map_err(|e| format!("js-scripts.json: {e}"))
+        vault::write_private_file(&self.store, json.as_bytes())
+            .map_err(|e| format!("js-scripts.json: {e}"))
     }
 }
 
