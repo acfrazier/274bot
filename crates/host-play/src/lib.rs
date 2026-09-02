@@ -5233,7 +5233,8 @@ mod tests {
         assert!(!view.has_banks(), "unchanged packed banks omitted");
         assert!(!view.has_bank());
         assert!(!view.has_bank_side());
-        assert!(!view.hold(), "unchanged hold omitted");
+        assert!(view.has_hold(), "hold is re-posted every tick (SEC-004)");
+        assert!(view.hold(), "unchanged hold still true");
 
         // inv changed -> the inv table comes back; banks stay omitted even
         // when force_banks is false.

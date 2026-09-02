@@ -832,13 +832,18 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop parked");
-    iso.probe("__rs2b0t_host.hold = true").unwrap();
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     iso.on_game_tick(3);
     iso.on_game_tick(4);
     let loops = iso.probe("__rs_loops").unwrap();
     assert_eq!(loops, 1, "hold freezes loop: count does not increase");
-    let _ = iso.probe("__rs2b0t_host.hold = false");
+    snap.hold = false;
+    snap.tick = 5;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(5); // cond true now (tick 5 >= 3): loop 1 finishes
     iso.on_game_tick(6); // loop 2 runs
     let loops = iso.probe("__rs_loops").unwrap();
@@ -888,6 +893,55 @@ export default class T extends LoopingBot {
     let frame = iso.paint().expect("paint forwarded while held");
     assert_eq!(frame.title.as_deref(), Some("held"));
     assert!(frame.lines.iter().any(|l| l == "status"));
+    iso.join();
+}
+
+// SEC-004 — while the posted blob has hold:true, JS cannot unfreeze by
+// writing __rs2b0t_host.hold = false: loop() stays frozen; onPaint may run.
+#[test]
+fn isolate_js_cannot_clear_host_hold() {
+    let src = r#"
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+    }
+    onPaint() {
+        globalThis.__rs_paints = (globalThis.__rs_paints || 0) + 1;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    snap.tick = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("globalThis.__rs_loops || 0").unwrap(),
+        0,
+        "held first tick must not run loop()"
+    );
+    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
+    assert_eq!(paints, 1, "onPaint runs while held");
+    // JS tries to clear hold; the blob still has hold:true (unchanged delta).
+    iso.probe("__rs2b0t_host.hold = false").unwrap();
+    assert_eq!(
+        iso.probe("__rs2b0t_host.hold").unwrap(),
+        false,
+        "JS assignment landed (the exploit under test)"
+    );
+    iso.on_game_tick(2);
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("globalThis.__rs_loops || 0").unwrap(),
+        0,
+        "loop() must not run after JS cleared hold while blob holds"
+    );
+    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
+    assert!(
+        paints >= 3,
+        "onPaint still runs while blob hold is true (paints={paints})"
+    );
     iso.join();
 }
 

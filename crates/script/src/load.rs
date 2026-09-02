@@ -817,6 +817,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     fn materialize_snapshot(
         runtime: &mut Runtime,
         snap: &crate::isolate_fb::SnapshotReader<'_>,
+        host_hold: bool,
     ) -> Result<(), String> {
         let context = runtime.deno_runtime().main_context();
         let mut scope = runtime.deno_runtime().handle_scope();
@@ -925,17 +926,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, obj, "bank_loaded", falsy)?;
         }
         if snap.has_hold() {
-            let hold_flag = snap.hold();
-            let hold = v8::Boolean::new(&mut scope, hold_flag);
+            let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;
-            // Mirror onto `__rs2b0t_host.hold` so the tick_loop gate freezes
-            // without a probe poke (EventSignal still reads snapshot.hold).
-            let hold2 = v8::Boolean::new(&mut scope, hold_flag);
-            set(&mut scope, host, "hold", hold2.into())?;
         } else if !had {
             set(&mut scope, obj, "hold", falsy)?;
-            set(&mut scope, host, "hold", falsy)?;
         }
+        // Mirror the host-owned gate onto `__rs2b0t_host.hold` every post
+        // (hold is re-posted every tick — SEC-004). JS writes cannot
+        // unfreeze; tick_loop gates on `host_hold`, not this property.
+        let hold_host = v8::Boolean::new(&mut scope, host_hold);
+        set(&mut scope, host, "hold", hold_host.into())?;
         if snap.has_ours() {
             let ours = v8::Boolean::new(&mut scope, snap.ours());
             set(&mut scope, obj, "ours", ours.into())?;
@@ -1101,6 +1101,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>) {
         let mut paused = false;
         let mut pending: Option<IsolateCmd> = None;
+        // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
+        // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
+        let mut host_hold = false;
         // One reusable encode buffer for this V8 isolate: interact batch
         // and paint frames share it (`reset` between messages).
         let mut ipc = crate::isolate_fb::IsolateBuf::new();
@@ -1119,7 +1122,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // malformed blob is logged, never fatal.
                     match crate::isolate_fb::SnapshotReader::from_bytes(&bytes) {
                         Ok(snap) => {
-                            if let Err(e) = materialize_snapshot(&mut runtime, &snap) {
+                            if snap.has_hold() {
+                                host_hold = snap.hold();
+                            }
+                            if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold)
+                            {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
                             }
                         }
@@ -1137,12 +1144,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // parked conds (time waits too) — the wait stays parked
                     // until the hold lifts. Still call `onPaint` so status
                     // rows keep updating. Pause already freezes above.
-                    let held = runtime
-                        .eval::<bool>(
-                            "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.hold)",
-                        )
-                        .unwrap_or(false);
-                    if held {
+                    if host_hold {
                         // Paint-only tick: no loop, no pump. Use `__rs_bot`
                         // (global); module-local `inst` is not visible here.
                         let _ = runtime.eval::<()>(&format!(

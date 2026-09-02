@@ -553,7 +553,9 @@ impl DeltaMask {
             bank_side: next.bank_side != last.bank_side,
             bank_open: next.bank_open != last.bank_open,
             bank_loaded: next.bank_loaded != last.bank_loaded,
-            hold: next.hold != last.hold,
+            // SEC-004: re-post hold every tick so JS cannot clear
+            // `__rs2b0t_host.hold` in onPaint and unfreeze loop().
+            hold: true,
             ours: next.ours != last.ours,
         }
     }
