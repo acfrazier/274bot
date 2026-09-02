@@ -88,6 +88,9 @@ pub struct ScenarioRunner {
     engine_speed_ms: Option<u32>,
     engine_speed_sent: bool,
     evidence: Option<Evidence>,
+    /// Skill XP baselines captured when a watch step with [`Proof::StatXpGain`]
+    /// begins — `(skill id, xp at step start)`.
+    xp_baselines: Vec<(i32, i32)>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -145,6 +148,7 @@ impl ScenarioRunner {
             engine_speed_ms,
             engine_speed_sent: false,
             evidence: None,
+            xp_baselines: Vec::new(),
             shot_sink: None,
         }
     }
@@ -390,7 +394,11 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            if arm.check(&self.snapshot, self.obj_names.as_deref()) {
+            if arm.check_with_xp_baselines(
+                &self.snapshot,
+                self.obj_names.as_deref(),
+                Some(&self.xp_baselines),
+            ) {
                 // A nav step only advances once its follow has
                 // terminated: the arm can hold on a snapshot the
                 // traveller has not polled yet — the essence-mine entry
@@ -430,7 +438,11 @@ impl ScenarioRunner {
             && self
                 .scenario
                 .proof
-                .check(&self.snapshot, self.obj_names.as_deref())
+                .check_with_xp_baselines(
+                    &self.snapshot,
+                    self.obj_names.as_deref(),
+                    Some(&self.xp_baselines),
+                )
         {
             self.finish_pass();
         }
@@ -487,6 +499,22 @@ impl ScenarioRunner {
         self.ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
+        self.capture_xp_baseline(self.current_step().wait.arm);
+    }
+
+    fn capture_xp_baseline(&mut self, proof: Proof) {
+        if let Proof::StatXpGain { id, .. } = proof {
+            if !self.xp_baselines.iter().any(|(i, _)| *i == id) {
+                let xp = self
+                    .snapshot
+                    .stats()
+                    .iter()
+                    .find(|s| s.index == id)
+                    .map(|s| s.xp)
+                    .unwrap_or(0);
+                self.xp_baselines.push((id, xp));
+            }
+        }
     }
 
     fn fire_poll_sustains(&self, client: &mut Client) {
@@ -523,6 +551,7 @@ impl ScenarioRunner {
     fn advance_step(&mut self) {
         self.step += 1;
         if self.step >= self.scenario.steps.len() {
+            self.capture_xp_baseline(self.scenario.proof);
             self.phase = Phase::Proving;
         } else {
             self.begin_step();

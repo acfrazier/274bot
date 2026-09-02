@@ -27,6 +27,7 @@ use std::time::Duration;
 use api::interact::{cheat, op_loc, tele_args, Driver, MAXME_SETSTATS};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
+use serde_json::{Map, Value};
 
 pub use evidence::{Evidence, InvRow, StatRow};
 pub use proof::Proof;
@@ -47,7 +48,7 @@ pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(180);
 /// terminal shot / mainland-base gate are consumed by `ScenarioRunner`.
 /// `nav` is the session-only nav overlay (paints, camera, tickrate, find
 /// flags) — applied for `--live` without writing panel prefs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScenarioSettings {
     pub renderer: bool,
     pub only_render_selected: bool,
@@ -67,6 +68,47 @@ pub struct ScenarioSettings {
     /// (register/Load) and dispatches `script_start_load`. `None` for
     /// host-driven scenarios.
     pub start_script: Option<&'static str>,
+    /// Scenario-only parameter overrides merged last at script Start (never
+    /// written to operator `script-settings.json`).
+    pub script_settings_inject: Option<&'static [ScriptSettingInject]>,
+}
+
+/// One injected script setting for live gold scenarios.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScriptSettingInject {
+    pub id: &'static str,
+    pub value: ScriptInjectValue,
+}
+
+/// Typed values for [`ScenarioSettings::script_settings_inject`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScriptInjectValue {
+    Str(&'static str),
+    Num(f64),
+    Bool(bool),
+    StrList(&'static [&'static str]),
+}
+
+/// Build the JSON bag panel/TUI merge last when starting a live script card.
+pub fn settings_inject_map(
+    inject: Option<&'static [ScriptSettingInject]>,
+) -> Option<Map<String, Value>> {
+    let rows = inject?;
+    let mut map = Map::new();
+    for row in rows {
+        let value = match row.value {
+            ScriptInjectValue::Str(v) => Value::String(v.to_string()),
+            ScriptInjectValue::Num(v) => Value::Number(
+                serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()),
+            ),
+            ScriptInjectValue::Bool(v) => Value::Bool(v),
+            ScriptInjectValue::StrList(v) => {
+                Value::Array(v.iter().map(|s| Value::String((*s).to_string())).collect())
+            }
+        };
+        map.insert(row.id.to_string(), value);
+    }
+    Some(map)
 }
 
 /// Session-only nav overlay a scenario applies (never persisted prefs).
@@ -185,6 +227,7 @@ impl Default for ScenarioSettings {
             require_mainland_base: false,
             sustains: Vec::new(),
             start_script: None,
+            script_settings_inject: None,
         }
     }
 }
@@ -313,6 +356,10 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         "bone_burier" => Some(bone_burier_scenario()),
+        "chicken_killer" => Some(chicken_killer_scenario()),
+        "thiever" => Some(thiever_scenario()),
+        "alcher" => Some(alcher_scenario()),
+        "bank_fletcher" => Some(bank_fletcher_scenario()),
         _ => None,
     }
 }
@@ -332,6 +379,10 @@ pub fn names() -> Vec<&'static str> {
         "nav_routes",
         "nav_paint_path",
         "bone_burier",
+        "chicken_killer",
+        "thiever",
+        "alcher",
+        "bank_fletcher",
     ]
 }
 
@@ -1588,6 +1639,322 @@ fn bone_burier_scenario() -> Scenario {
         },
     }
 }
+
+/// Shared live-script seed: stick `tutorial=1000`, relog so side tab 3 binds.
+fn script_live_seed_steps() -> Vec<Step> {
+    vec![
+        Step {
+            name: "stick tutorial skip",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, "setvar tutorial 1000");
+                    cheat(c, "getvar tutorial");
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Chat {
+                    needle: "get tutorial: 1000",
+                },
+                budget_ticks: 200,
+            },
+        },
+        Step {
+            name: "relog so the inv tab binds",
+            kind: StepKind::Relog,
+            wait: Wait {
+                arm: Proof::SideTabAvailable { index: 3 },
+                budget_ticks: 600,
+            },
+        },
+    ]
+}
+
+/// Lumbridge chicken pen (east of the castle): the ChickenKiller leash
+/// anchor when started here.
+const LUMBRIDGE_CHICKENS: WorldTile = WorldTile {
+    x: 3235,
+    z: 3295,
+    level: 0,
+};
+
+/// The `chicken_killer` scenario: live ChickenKiller gold — melee defaults,
+/// DeathRecovery no-op stub, script does the fighting. Seed tele lands
+/// among Lumbridge chickens; proof is strength XP from the kill loop.
+fn chicken_killer_scenario() -> Scenario {
+    let xp = Proof::StatXpGain { id: 2, min: 1 };
+    let tele = LUMBRIDGE_CHICKENS;
+    Scenario {
+        name: "chicken_killer",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: {
+            let mut steps = script_live_seed_steps();
+            steps.push(Step {
+                name: "tele to Lumbridge chickens",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: tele.x,
+                        z: tele.z,
+                        level: tele.level,
+                        radius: 8,
+                    },
+                    budget_ticks: 120,
+                },
+            });
+            steps.push(Step {
+                name: "watch the script fight chickens",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: xp,
+                    budget_ticks: 600,
+                },
+            });
+            steps
+        },
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(300),
+            start_script: Some("ChickenKiller"),
+            ..Default::default()
+        },
+    }
+}
+
+/// East Ardougne market guard tile (rs2b0t Thiever live gold).
+const ARDOUGNE_GUARD: WorldTile = WorldTile {
+    x: 2661,
+    z: 3306,
+    level: 0,
+};
+
+const THIEVER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::Str(""),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("None"),
+    },
+];
+
+/// The `thiever` scenario: live Thiever gold — Guard pickpocket at the
+/// Ardougne tile, food via `give`, loot off. Proof is thieving XP delta.
+fn thiever_scenario() -> Scenario {
+    let xp = Proof::StatXpGain { id: 17, min: 1 };
+    let tele = ARDOUGNE_GUARD;
+    Scenario {
+        name: "thiever",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: {
+            let mut steps = script_live_seed_steps();
+            steps.push(Step {
+                name: "seed stats, food, and tele to the guard stand",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, "advancestat thieving 50");
+                        cheat(c, "advancestat hitpoints 50");
+                        cheat(c, "give lobster 10");
+                        cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: tele.x,
+                        z: tele.z,
+                        level: tele.level,
+                        radius: 10,
+                    },
+                    budget_ticks: 200,
+                },
+            });
+            steps.push(Step {
+                name: "watch the script pickpocket guards",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: xp,
+                    budget_ticks: 600,
+                },
+            });
+            steps
+        },
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(300),
+            start_script: Some("Thiever"),
+            script_settings_inject: Some(THIEVER_INJECT),
+            ..Default::default()
+        },
+    }
+}
+
+/// Varrock West bank stand (Alcher / BankFletcher gold).
+const VARROCK_WEST_BANK: WorldTile = WorldTile {
+    x: 3185,
+    z: 3440,
+    level: 0,
+};
+
+const ALCHER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "items",
+    value: ScriptInjectValue::StrList(&["rune_chainbody"]),
+}];
+
+/// The `alcher` scenario: live Alcher gold — Varrock West, noted fodder +
+/// natures + fire staff in bank, magic 55+. Proof is magic XP or coin gain
+/// from alchs (magic XP delta here).
+fn alcher_scenario() -> Scenario {
+    let xp = Proof::StatXpGain { id: 6, min: 1 };
+    let bank = VARROCK_WEST_BANK;
+    Scenario {
+        name: "alcher",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: {
+            let mut steps = script_live_seed_steps();
+            steps.push(Step {
+                name: "seed magic, bank stock, and tele to Varrock West",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, "setstat magic 55");
+                        cheat(c, "givebank rune_chainbody 30");
+                        cheat(c, "givebank naturerune 200");
+                        cheat(c, "givebank staff_of_fire 1");
+                        cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: bank.x,
+                        z: bank.z,
+                        level: bank.level,
+                        radius: 6,
+                    },
+                    budget_ticks: 200,
+                },
+            });
+            steps.push(Step {
+                name: "watch the script alch noted stock",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: xp,
+                    budget_ticks: 600,
+                },
+            });
+            steps
+        },
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(360),
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(ALCHER_INJECT),
+            ..Default::default()
+        },
+    }
+}
+
+const BANK_FLETCHER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "material",
+        value: ScriptInjectValue::Str("Willow logs"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Arrow shafts"),
+    },
+];
+
+/// The `bank_fletcher` scenario: live BankFletcher gold — West bank stand,
+/// knife + willow logs, arrow-shaft product. Proof is fletching XP delta.
+fn bank_fletcher_scenario() -> Scenario {
+    let xp = Proof::StatXpGain { id: 9, min: 1 };
+    let bank = VARROCK_WEST_BANK;
+    Scenario {
+        name: "bank_fletcher",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: {
+            let mut steps = script_live_seed_steps();
+            steps.push(Step {
+                name: "seed knife, logs, and tele to Varrock West",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, "give knife 1");
+                        cheat(c, "give willow_logs 27");
+                        cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Item {
+                        name: "Knife",
+                        count: 1,
+                    },
+                    budget_ticks: 120,
+                },
+            });
+            steps.push(Step {
+                name: "watch the script fletch willow logs",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: xp,
+                    budget_ticks: 600,
+                },
+            });
+            steps
+        },
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(360),
+            start_script: Some("BankFletcher"),
+            script_settings_inject: Some(BANK_FLETCHER_INJECT),
+            ..Default::default()
+        },
+    }
+}
+
 /// Journal colour is login-time `~update_questlist`; the Relog step after
 /// these cheats is what actually opens packed quest-gated edges.
 const TRANSPORT_QUEST_SETVARS: &[&str] = &[
@@ -1878,8 +2245,54 @@ mod tests {
                 "nav_routes",
                 "nav_paint_path",
                 "bone_burier",
+                "chicken_killer",
+                "thiever",
+                "alcher",
+                "bank_fletcher",
             ]
         );
+    }
+
+    #[test]
+    fn gold_script_scenarios_register_start_script_names() {
+        let cases = [
+            ("chicken_killer", "ChickenKiller"),
+            ("thiever", "Thiever"),
+            ("alcher", "Alcher"),
+            ("bank_fletcher", "BankFletcher"),
+        ];
+        for (name, card) in cases {
+            let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(
+                s.settings.start_script,
+                Some(card),
+                "{name} must start the {card} catalog card"
+            );
+            assert!(
+                s.settings.require_mainland_base,
+                "{name} waits for mainland scene 2"
+            );
+        }
+        let alcher = get("alcher").expect("alcher");
+        assert_eq!(
+            alcher.settings.start_script,
+            Some("Alcher"),
+            "get(\"alcher\") has start_script: Some(\"Alcher\")"
+        );
+        assert!(
+            alcher.settings.script_settings_inject.is_some(),
+            "Alcher injects the items bag"
+        );
+        let thiever = get("thiever").expect("thiever");
+        assert!(
+            thiever
+                .settings
+                .script_settings_inject
+                .is_some_and(|rows| rows.iter().any(|r| r.id == "loot")),
+            "Thiever injects loot off"
+        );
+        assert!(names().contains(&"chicken_killer"));
+        assert!(names().contains(&"bank_fletcher"));
     }
 
     #[test]
@@ -2293,6 +2706,8 @@ mod tests {
             "gate is opt-in for brand-new tutorial accounts"
         );
         assert!(d.sustains.is_empty());
+        assert_eq!(d.start_script, None);
+        assert_eq!(d.script_settings_inject, None);
     }
 
     #[test]

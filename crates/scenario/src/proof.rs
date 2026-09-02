@@ -59,6 +59,9 @@ pub enum Proof {
     StatAtMost { id: i32, max: i32 },
     /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
     Chat { needle: &'static str },
+    /// Skill `id`'s XP rose by at least `min` since the runner captured a
+    /// baseline at step start (live gold: thieving / combat / alch / fletch).
+    StatXpGain { id: i32, min: i32 },
     /// An NPC of `r#type` stands on the tile.
     NpcAt { r#type: usize, x: i32, z: i32 },
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
@@ -88,6 +91,7 @@ impl Proof {
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
+            Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
         }
@@ -97,6 +101,17 @@ impl Proof {
     /// predicates (name → obj id); `None` when the runner has no obj
     /// table, which makes every `Item` predicate fail.
     pub fn check(&self, snap: &GameSnapshot, names: Option<&ObjNames>) -> bool {
+        self.check_with_xp_baselines(snap, names, None)
+    }
+
+    /// Like [`Proof::check`], but `StatXpGain` reads baselines captured
+    /// when the watch step began (`None` makes every `StatXpGain` fail).
+    pub fn check_with_xp_baselines(
+        &self,
+        snap: &GameSnapshot,
+        names: Option<&ObjNames>,
+        xp_baselines: Option<&[(i32, i32)]>,
+    ) -> bool {
         match self {
             Proof::Item { name, count } => {
                 // Sum every inv stack whose def name matches. `by_name`
@@ -188,6 +203,16 @@ impl Proof {
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
+            Proof::StatXpGain { id, min } => {
+                let Some(baselines) = xp_baselines else {
+                    return false;
+                };
+                let Some(baseline) = baselines.iter().find(|(i, _)| *i == *id).map(|(_, x)| *x)
+                else {
+                    return false;
+                };
+                stat_xp(snap, *id).is_some_and(|cur| cur - baseline >= *min)
+            }
             Proof::NpcAt { r#type, x, z } => snap
                 .npcs()
                 .iter()
@@ -212,6 +237,14 @@ impl Proof {
             }),
         }
     }
+}
+
+/// XP for skill `id` from the snapshot stat table (`None` when absent).
+fn stat_xp(snap: &GameSnapshot, id: i32) -> Option<i32> {
+    snap.stats()
+        .iter()
+        .find(|s| s.index == id)
+        .map(|s| s.xp)
 }
 
 /// A decoded stat-family value: run energy (id 16) from the run energy
@@ -727,6 +760,31 @@ mod tests {
             .name(),
             "npc_near(708,2)"
         );
+    }
+
+    #[test]
+    fn stat_xp_gain_reads_baselines_not_absolute_xp() {
+        let mut c = seeded();
+        c.stat_xp[17] = 100;
+        let s = snap(&mut c);
+        let baselines = [(17, 100)];
+        assert!(!Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+            &s,
+            None,
+            Some(&baselines)
+        ));
+        c.stat_xp[17] = 146;
+        let s = snap(&mut c);
+        assert!(Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+            &s,
+            None,
+            Some(&baselines)
+        ));
+        assert!(!Proof::StatXpGain { id: 17, min: 50 }.check_with_xp_baselines(
+            &s,
+            None,
+            Some(&baselines)
+        ));
     }
 
     #[test]

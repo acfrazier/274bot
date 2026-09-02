@@ -477,6 +477,7 @@ impl TuiSession {
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
+        let settings_inject = scenario.settings.script_settings_inject;
         let names = mint_live_names(scenario.seed.profiles.len());
         let entries = mint_live_entries(&names);
         let pass = live_vault_passphrase();
@@ -489,6 +490,7 @@ impl TuiSession {
             runner.set_obj_names(play.obj_names());
         }
         *self.scenario.lock().unwrap() = Some(runner);
+        self.script_settings_inject = scenario::settings_inject_map(settings_inject);
         self.names = names.clone();
         for n in &names {
             self.spawn(n);

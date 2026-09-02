@@ -1168,6 +1168,7 @@ impl Session {
         self.persist_ui = false;
         // Copy the view knobs before `scenario` moves into the runner.
         let view = scenario.settings.clone();
+        self.set_script_settings_inject(scenario::settings_inject_map(view.script_settings_inject));
         // Mint one name per seed slot (fleet included): both slots get a
         // fresh account for this invocation.
         let names = host_play::mint_live_names(scenario.seed.profiles.len());
