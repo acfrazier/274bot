@@ -4,9 +4,11 @@
 // file to read on Start. `register_rs2b0t` fills the JS library from a
 // root and persists the root path on the first successful parse.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use script::load::{JsLibrary, LoadShape};
+use script::{ScriptKind, ScriptSource};
 
 /// The brief's fake `index.ts`: a default import, a display name that
 /// differs from the folder (`AIO Teleport` vs `AIOTeleport`), a
@@ -59,16 +61,25 @@ fn parse_registry_yields_register_name_and_import_path() {
     assert_eq!(cards.len(), 3);
     assert_eq!(cards[0].name, "BoneBurier");
     assert_eq!(cards[0].rel_path, "./BoneBurier/BoneBurier.js");
+    assert_eq!(cards[0].description, "Buries bones from the bank");
+    assert_eq!(cards[0].category, "Prayer");
+    assert!(cards[0].tags.is_empty());
+    assert_eq!(cards[0].version, "");
+    assert!(cards[0].settings_schema.is_empty());
+    assert_eq!(cards[0].kind, ScriptKind::Compat);
+    assert_eq!(cards[0].source, ScriptSource::Catalog);
     assert_eq!(
         cards[1].name, "AIO Teleport",
         "picker name is the register name, not the folder"
     );
     assert_eq!(cards[1].rel_path, "./AIOTeleport/AIOTeleport.js");
+    assert_eq!(cards[1].description, "Automated teleportation");
     assert_eq!(
         cards[2].name, "ShopRunner",
         "named import matches the create"
     );
     assert_eq!(cards[2].rel_path, "./ShopRunner/ShopRunner.js");
+    assert_eq!(cards[2].description, "Runs the shops");
 }
 
 #[test]
@@ -288,6 +299,124 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].name, "BoneBurier");
     assert_eq!(cards[0].rel_path, "./BoneBurier/BoneBurier.js");
+}
+
+const CHICKEN_INDEX: &str = r#"
+import ChickenKiller, { SETTINGS as CHICKEN_SETTINGS } from './ChickenKiller/ChickenKiller.js';
+
+ScriptRegistry.register({
+    name: 'ChickenKiller',
+    description: 'Kills chickens for combat XP',
+    category: 'Combat',
+    tags: ['combat', 'money'],
+    version: '1.2.0',
+    settingsSchema: CHICKEN_SETTINGS,
+    create: () => new ChickenKiller()
+});
+"#;
+
+const CHICKEN_KILLER_TS: &str = r#"
+export const SETTINGS = {
+    leashRadius: {
+        type: 'number',
+        default: 12,
+        label: 'Leash radius',
+        min: 1,
+        max: 50,
+        step: 1,
+        group: 'Combat',
+        help: 'Max tiles from start tile',
+    },
+    buryBones: {
+        type: 'boolean',
+        default: true,
+        label: 'Bury bones',
+    },
+    combatStyle: {
+        type: 'string',
+        default: 'melee',
+        label: 'Combat style',
+        options: ['melee', 'ranged', 'magic'],
+    },
+};
+"#;
+
+#[test]
+fn parse_registry_resolves_settings_schema_via_import_alias() {
+    let mut sources = HashMap::new();
+    sources.insert(
+        "./ChickenKiller/ChickenKiller.js".to_string(),
+        CHICKEN_KILLER_TS.to_string(),
+    );
+    let cards =
+        script::parse_registry_with_sources(CHICKEN_INDEX, &sources).expect("chicken index parses");
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0];
+    assert_eq!(card.name, "ChickenKiller");
+    assert_eq!(card.description, "Kills chickens for combat XP");
+    assert_eq!(card.category, "Combat");
+    assert_eq!(card.tags, vec!["combat", "money"]);
+    assert_eq!(card.version, "1.2.0");
+    assert_eq!(card.kind, ScriptKind::Compat);
+    assert_eq!(card.source, ScriptSource::Catalog);
+    assert_eq!(card.settings_schema.len(), 3);
+
+    let leash = &card.settings_schema[0];
+    assert_eq!(leash.id, "leashRadius");
+    assert_eq!(leash.ty, "number");
+    assert_eq!(leash.default.as_deref(), Some("12"));
+    assert_eq!(leash.label.as_deref(), Some("Leash radius"));
+    assert_eq!(leash.min.as_deref(), Some("1"));
+    assert_eq!(leash.max.as_deref(), Some("50"));
+    assert_eq!(leash.step.as_deref(), Some("1"));
+    assert_eq!(leash.group.as_deref(), Some("Combat"));
+    assert_eq!(leash.help.as_deref(), Some("Max tiles from start tile"));
+
+    let bury = &card.settings_schema[1];
+    assert_eq!(bury.id, "buryBones");
+    assert_eq!(bury.ty, "boolean");
+    assert_eq!(bury.default.as_deref(), Some("true"));
+    assert_eq!(bury.label.as_deref(), Some("Bury bones"));
+
+    let style = &card.settings_schema[2];
+    assert_eq!(style.id, "combatStyle");
+    assert_eq!(style.ty, "string");
+    assert_eq!(style.default.as_deref(), Some("melee"));
+    assert_eq!(style.label.as_deref(), Some("Combat style"));
+    assert_eq!(
+        style.options,
+        vec!["melee".to_string(), "ranged".to_string(), "magic".to_string()]
+    );
+}
+
+#[test]
+fn parse_registry_identifier_options_does_not_execute_ts() {
+    let index = r#"
+import Alcher, { ALCHER_SETTINGS } from './Alcher/Alcher.js';
+
+ScriptRegistry.register({
+    name: 'Alcher',
+    settingsSchema: ALCHER_SETTINGS,
+    create: () => new Alcher()
+});
+"#;
+    let alcher_ts = r#"
+export const ALCHER_SETTINGS = {
+    combatStyle: {
+        type: 'string',
+        default: 'melee',
+        options: COMBAT_STYLE_OPTIONS,
+    },
+};
+"#;
+    let mut sources = HashMap::new();
+    sources.insert("./Alcher/Alcher.js".to_string(), alcher_ts.to_string());
+    let cards = script::parse_registry_with_sources(index, &sources).expect("alcher parses");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].settings_schema.len(), 1);
+    let setting = &cards[0].settings_schema[0];
+    assert_eq!(setting.id, "combatStyle");
+    assert!(setting.options.is_empty(), "identifier options are not evaluated");
 }
 
 #[test]

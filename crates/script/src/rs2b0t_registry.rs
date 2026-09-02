@@ -8,12 +8,73 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// One catalog card: the register `name` (picker label) and the `./…`
-/// import path of the script file to read on Start.
+/// How a script card is executed in the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptKind {
+    Compat,
+    NativeTick,
+    Compiled,
+}
+
+/// Where a script card's metadata came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptSource {
+    Catalog,
+    File,
+    Builtin,
+}
+
+/// One setting field from a script's `settingsSchema` export.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingDef {
+    pub id: String,
+    pub ty: String,
+    pub default: Option<String>,
+    pub label: Option<String>,
+    pub min: Option<String>,
+    pub max: Option<String>,
+    pub step: Option<String>,
+    pub options: Vec<String>,
+    pub option_labels: Vec<String>,
+    pub group: Option<String>,
+    pub show_if: Option<String>,
+    pub options_from: Option<String>,
+    pub csv_toggle: Option<String>,
+    pub help: Option<String>,
+}
+
+/// One catalog card: register metadata plus the `./…` import path of the
+/// script file to read on Start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistryCard {
     pub name: String,
     pub rel_path: String,
+    pub description: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub version: String,
+    pub settings_schema: Vec<SettingDef>,
+    pub kind: ScriptKind,
+    pub source: ScriptSource,
+}
+
+/// Named import binding: local alias maps to module path and exported const name.
+#[derive(Debug, Clone)]
+struct ImportBinding {
+    rel_path: String,
+    export_name: String,
+}
+
+/// Parsed register block fields from `ScriptRegistry.register({…})`.
+#[derive(Debug, Clone)]
+struct RegisterInfo {
+    name: String,
+    ctor: String,
+    description: String,
+    category: String,
+    tags: Vec<String>,
+    version: String,
+    settings_schema_ident: Option<String>,
 }
 
 /// The registry entry file below a root: `src/bot/scripts/index.ts`.
@@ -131,25 +192,49 @@ pub fn persist_rs2b0t_root(root: &Path) -> Result<(), String> {
     persist_rs2b0t_root_at(root, &default_rs2b0t_path_file())
 }
 
-/// Static parse of the catalog `index.ts`: each
-/// `ScriptRegistry.register({…name: '…'…})` matched to its
-/// `import … from './…'` by the `create: () => new X()` constructor
-/// ident. No JS runs. Errors when the file carries no `register` call or
-/// when no register matched an import.
+/// Static parse of the catalog `index.ts` without reading sibling script files.
 pub fn parse_registry(index_ts: &str) -> Result<Vec<RegistryCard>, String> {
+    parse_registry_with_sources(index_ts, &HashMap::new())
+}
+
+/// Static parse of the catalog `index.ts`. Each
+/// `ScriptRegistry.register({…name: '…'…})` is matched to its
+/// `import … from './…'` by the `create: () => new X()` constructor
+/// ident. When `sources` maps a `./…` import path to file text, `settingsSchema`
+/// is resolved through named imports (including `as` aliases). No JS runs.
+pub fn parse_registry_with_sources(
+    index_ts: &str,
+    sources: &HashMap<String, String>,
+) -> Result<Vec<RegistryCard>, String> {
     let imports = scan_imports(index_ts);
     let registers = scan_registers(index_ts);
     if registers.is_empty() {
         return Err("no ScriptRegistry.register calls".to_string());
     }
     let mut cards = Vec::new();
-    for (name, ctor) in registers {
-        let Some(path) = imports.get(&ctor) else {
+    for reg in registers {
+        let Some(path) = imports.get(&reg.ctor).map(|b| b.rel_path.clone()) else {
             continue;
         };
+        let settings_schema = reg
+            .settings_schema_ident
+            .as_ref()
+            .and_then(|ident| {
+                let binding = imports.get(ident)?;
+                let src = lookup_source(sources, &binding.rel_path)?;
+                Some(parse_settings_export(&src, &binding.export_name))
+            })
+            .unwrap_or_default();
         cards.push(RegistryCard {
-            name,
-            rel_path: path.clone(),
+            name: reg.name,
+            rel_path: path,
+            description: reg.description,
+            category: reg.category,
+            tags: reg.tags,
+            version: reg.version,
+            settings_schema,
+            kind: ScriptKind::Compat,
+            source: ScriptSource::Catalog,
         });
     }
     if cards.is_empty() {
@@ -158,9 +243,22 @@ pub fn parse_registry(index_ts: &str) -> Result<Vec<RegistryCard>, String> {
     Ok(cards)
 }
 
-/// `ident -> rel path` for every default and named import of a relative
+fn lookup_source(sources: &HashMap<String, String>, rel_path: &str) -> Option<String> {
+    if let Some(src) = sources.get(rel_path) {
+        return Some(src.clone());
+    }
+    if let Some(stem) = rel_path.strip_suffix(".js") {
+        let ts_path = format!("{stem}.ts");
+        if let Some(src) = sources.get(&ts_path) {
+            return Some(src.clone());
+        }
+    }
+    None
+}
+
+/// `ident -> import binding` for every default and named import of a relative
 /// module under `./`. Parent-dir and absolute imports are ignored.
-fn scan_imports(src: &str) -> HashMap<String, String> {
+fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
     let mut imports = HashMap::new();
     let mut pos = 0;
     while let Some(rel) = src[pos..].find("import") {
@@ -170,15 +268,19 @@ fn scan_imports(src: &str) -> HashMap<String, String> {
             before,
             None | Some('\n') | Some('\r') | Some(' ') | Some('\t') | Some(';') | Some('}')
         ) {
-            // "import" inside another token or a comment; skip it.
             pos = start + 1;
             continue;
         }
         let tail = &src[start + "import".len()..];
         let stmt_len = tail.find(';').unwrap_or(tail.len());
-        if let Some((idents, path)) = parse_import_stmt(&tail[..stmt_len]) {
-            for ident in idents {
-                imports.entry(ident).or_insert_with(|| path.clone());
+        if let Some((bindings, path)) = parse_import_stmt(&tail[..stmt_len]) {
+            for (local, export_name) in bindings {
+                imports
+                    .entry(local)
+                    .or_insert_with(|| ImportBinding {
+                        rel_path: path.clone(),
+                        export_name,
+                    });
             }
         }
         pos = start + "import".len() + stmt_len;
@@ -187,9 +289,8 @@ fn scan_imports(src: &str) -> HashMap<String, String> {
 }
 
 /// Parse one import statement body (the text after `import`, before `;`).
-/// Returns the (ident, rel path) pairs: the default ident when present and
-/// every named ident in braces, all mapping to the statement's path.
-fn parse_import_stmt(stmt: &str) -> Option<(Vec<String>, String)> {
+/// Returns local-name/export-name pairs and the module path.
+fn parse_import_stmt(stmt: &str) -> Option<(Vec<(String, String)>, String)> {
     let stmt = stmt.trim_start();
     let stmt = stmt.strip_prefix("type ").unwrap_or(stmt);
     let fi = stmt.rfind("from ")?;
@@ -199,16 +300,11 @@ fn parse_import_stmt(stmt: &str) -> Option<(Vec<String>, String)> {
         return None;
     }
     let spec = stmt[..fi].trim();
-    let mut idents = Vec::new();
+    let mut bindings = Vec::new();
     if let Some(rest) = spec.strip_prefix('{') {
         let inner = rest.strip_suffix('}').unwrap_or(rest);
         for part in inner.split(',') {
-            let part = part.trim();
-            if part.is_empty() {
-                continue;
-            }
-            let ident = part.split_whitespace().next().unwrap_or(part);
-            idents.push(ident.to_string());
+            parse_named_import_part(part, &mut bindings);
         }
     } else {
         let group = spec.find('{');
@@ -217,25 +313,48 @@ fn parse_import_stmt(stmt: &str) -> Option<(Vec<String>, String)> {
             .split(|c: char| c.is_whitespace() || c == ',')
             .find(|t| !t.is_empty())
         {
-            idents.push(ident.to_string());
+            bindings.push((ident.to_string(), ident.to_string()));
         }
         if let Some(i) = group {
             if let Some(j) = spec.rfind('}') {
                 for part in spec[i + 1..j].split(',') {
-                    let part = part.trim();
-                    if part.is_empty() {
-                        continue;
-                    }
-                    let ident = part.split_whitespace().next().unwrap_or(part);
-                    idents.push(ident.to_string());
+                    parse_named_import_part(part, &mut bindings);
                 }
             }
         }
     }
-    if idents.is_empty() {
+    if bindings.is_empty() {
         return None;
     }
-    Some((idents, path))
+    Some((bindings, path))
+}
+
+fn parse_named_import_part(part: &str, bindings: &mut Vec<(String, String)>) {
+    let part = part.trim();
+    if part.is_empty() {
+        return;
+    }
+    if let Some((export_name, local)) = part.split_once(" as ") {
+        let export_name = export_name.trim();
+        let local = local.trim();
+        if !local.is_empty() {
+            bindings.push((
+                local.to_string(),
+                if export_name.is_empty() {
+                    local.to_string()
+                } else {
+                    export_name.to_string()
+                },
+            ));
+        }
+    } else {
+        let ident = part
+            .split_whitespace()
+            .next()
+            .unwrap_or(part)
+            .to_string();
+        bindings.push((ident.clone(), ident));
+    }
 }
 
 /// The first `'…'` or `"…"` string in `s`.
@@ -253,56 +372,68 @@ fn quoted_after(s: &str) -> Option<String> {
     None
 }
 
-/// Every register block as `(name, constructor ident)`, in file order.
-fn scan_registers(src: &str) -> Vec<(String, String)> {
+/// Every register block in file order.
+fn scan_registers(src: &str) -> Vec<RegisterInfo> {
     let mut out = Vec::new();
     let mut pos = 0;
     while let Some(rel) = src[pos..].find("ScriptRegistry.register(") {
         let open = pos + rel + "ScriptRegistry.register(".len();
-        let mut i = open;
-        while i < src.len() && src[i..].chars().next().unwrap().is_whitespace() {
-            i += src[i..].chars().next().unwrap().len_utf8();
-        }
-        if i >= src.len() || !src[i..].starts_with('{') {
+        let Some(block) = extract_braced_block(src, open) else {
             pos = open;
             continue;
-        }
-        // Balanced braces, honoring quoted strings and escapes.
-        let mut depth = 0u32;
-        let mut j = i;
-        let mut in_str: Option<char> = None;
-        while j < src.len() {
-            let c = src[j..].chars().next().unwrap();
-            if let Some(q) = in_str {
-                if c == '\\' {
-                    j += c.len_utf8();
-                    if j < src.len() {
-                        j += src[j..].chars().next().unwrap().len_utf8();
-                    }
-                    continue;
-                }
-                if c == q {
-                    in_str = None;
-                }
-            } else if c == '\'' || c == '"' {
-                in_str = Some(c);
-            } else if c == '{' {
-                depth += 1;
-            } else if c == '}' {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            j += c.len_utf8();
-        }
-        let block = &src[i..=j];
-        let name = scan_key_quoted(block, "name").unwrap_or_default();
-        let ctor = scan_new_after(block, "create").unwrap_or_default();
-        out.push((name, ctor));
-        pos = j + 1;
+        };
+        let block_end = open + block.len();
+        out.push(RegisterInfo {
+            name: scan_key_quoted(&block, "name").unwrap_or_default(),
+            ctor: scan_new_after(&block, "create").unwrap_or_default(),
+            description: scan_key_quoted(&block, "description").unwrap_or_default(),
+            category: scan_key_quoted(&block, "category").unwrap_or_default(),
+            tags: scan_key_string_array(&block, "tags").unwrap_or_default(),
+            version: scan_key_quoted(&block, "version").unwrap_or_default(),
+            settings_schema_ident: scan_key_ident(&block, "settingsSchema"),
+        });
+        pos = block_end + 1;
     }
     out
+}
+
+fn extract_braced_block(src: &str, open: usize) -> Option<String> {
+    let mut i = open;
+    while i < src.len() && src[i..].chars().next().unwrap().is_whitespace() {
+        i += src[i..].chars().next().unwrap().len_utf8();
+    }
+    if i >= src.len() || !src[i..].starts_with('{') {
+        return None;
+    }
+    let mut depth = 0u32;
+    let mut j = i;
+    let mut in_str: Option<char> = None;
+    while j < src.len() {
+        let c = src[j..].chars().next().unwrap();
+        if let Some(q) = in_str {
+            if c == '\\' {
+                j += c.len_utf8();
+                if j < src.len() {
+                    j += src[j..].chars().next().unwrap().len_utf8();
+                }
+                continue;
+            }
+            if c == q {
+                in_str = None;
+            }
+        } else if c == '\'' || c == '"' {
+            in_str = Some(c);
+        } else if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(src[i..=j].to_string());
+            }
+        }
+        j += c.len_utf8();
+    }
+    None
 }
 
 /// The quoted string following the first `key:` in `block`.
@@ -326,6 +457,113 @@ fn scan_key_quoted(block: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Identifier following `key:` (e.g. `settingsSchema: CHICKEN_SETTINGS`).
+fn scan_key_ident(block: &str, key: &str) -> Option<String> {
+    let mut rest = block;
+    while let Some(idx) = rest.find(key) {
+        let after = &rest[idx + key.len()..];
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(a) => a.trim_start(),
+            None => {
+                rest = after;
+                continue;
+            }
+        };
+        let ident = after
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect::<String>();
+        if !ident.is_empty() {
+            return Some(ident);
+        }
+        rest = after;
+    }
+    None
+}
+
+/// String array following `key:` (e.g. `tags: ['combat', 'money']`).
+fn scan_key_string_array(block: &str, key: &str) -> Option<Vec<String>> {
+    let mut rest = block;
+    while let Some(idx) = rest.find(key) {
+        let after = &rest[idx + key.len()..];
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(a) => a.trim_start(),
+            None => {
+                rest = after;
+                continue;
+            }
+        };
+        if let Some(arr) = parse_string_array(after) {
+            return Some(arr);
+        }
+        rest = after;
+    }
+    None
+}
+
+fn parse_string_array(s: &str) -> Option<Vec<String>> {
+    let s = s.trim_start();
+    if !s.starts_with('[') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '[', ']')?;
+    let inner = &s[1..end];
+    let mut out = Vec::new();
+    let mut rest = inner;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        let q = rest.chars().next()?;
+        if q != '\'' && q != '"' {
+            break;
+        }
+        let Some(value) = quoted_after(rest) else {
+            break;
+        };
+        out.push(value);
+        let close_idx = rest[1..].find(q)?;
+        rest = &rest[1 + close_idx + 1..];
+        rest = rest.trim_start();
+        if rest.starts_with(',') {
+            rest = &rest[1..];
+        } else {
+            break;
+        }
+    }
+    Some(out)
+}
+
+fn find_matching_bracket(s: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_str: Option<char> = None;
+    for (i, c) in s.char_indices() {
+        if let Some(q) = in_str {
+            if c == '\\' {
+                continue;
+            }
+            if c == q {
+                in_str = None;
+            }
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            in_str = Some(c);
+        } else if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
 /// The constructor ident in `create: () => new X()`.
 fn scan_new_after(block: &str, key: &str) -> Option<String> {
     let mut rest = block;
@@ -344,6 +582,173 @@ fn scan_new_after(block: &str, key: &str) -> Option<String> {
             }
         };
         let ident = after_new
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect::<String>();
+        if !ident.is_empty() {
+            return Some(ident);
+        }
+        rest = after;
+    }
+    None
+}
+
+/// Parse `export const NAME = { … }` into setting definitions.
+fn parse_settings_export(file_src: &str, export_name: &str) -> Vec<SettingDef> {
+    let needle = format!("export const {export_name}");
+    let Some(idx) = file_src.find(&needle) else {
+        return Vec::new();
+    };
+    let after = &file_src[idx + needle.len()..];
+    let after = after.trim_start();
+    let after = match after.strip_prefix('=') {
+        Some(a) => a.trim_start(),
+        None => return Vec::new(),
+    };
+    let Some(obj_end) = find_matching_bracket(after, '{', '}') else {
+        return Vec::new();
+    };
+    parse_settings_object(&after[..=obj_end])
+}
+
+fn parse_settings_object(obj: &str) -> Vec<SettingDef> {
+    let inner = obj.trim();
+    let inner = inner.strip_prefix('{').unwrap_or(inner);
+    let inner = inner.strip_suffix('}').unwrap_or(inner);
+    let mut out = Vec::new();
+    let mut rest = inner;
+    while !rest.trim().is_empty() {
+        rest = rest.trim_start();
+        if rest.starts_with('}') || rest.is_empty() {
+            break;
+        }
+        let Some(colon) = rest.find(':') else {
+            break;
+        };
+        let id = rest[..colon]
+            .trim()
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+            .to_string();
+        if id.is_empty() {
+            break;
+        }
+        let after_colon = rest[colon + 1..].trim_start();
+        let Some(end) = find_matching_bracket(after_colon, '{', '}') else {
+            break;
+        };
+        out.push(parse_setting_def(&id, &after_colon[..=end]));
+        rest = &after_colon[end + 1..];
+        rest = rest.trim_start();
+        if rest.starts_with(',') {
+            rest = &rest[1..];
+        }
+    }
+    out
+}
+
+fn parse_setting_def(id: &str, obj: &str) -> SettingDef {
+    SettingDef {
+        id: id.to_string(),
+        ty: scan_key_quoted(obj, "type").unwrap_or_default(),
+        default: scan_key_literal(obj, "default"),
+        label: scan_key_quoted(obj, "label"),
+        min: scan_key_number(obj, "min"),
+        max: scan_key_number(obj, "max"),
+        step: scan_key_number(obj, "step"),
+        options: scan_key_options(obj, "options"),
+        option_labels: scan_key_string_array(obj, "optionLabels").unwrap_or_default(),
+        group: scan_key_quoted(obj, "group"),
+        show_if: scan_key_raw_value(obj, "showIf"),
+        options_from: scan_key_ident(obj, "optionsFrom"),
+        csv_toggle: scan_key_raw_value(obj, "csvToggle"),
+        help: scan_key_quoted(obj, "help"),
+    }
+}
+
+fn scan_key_literal(block: &str, key: &str) -> Option<String> {
+    let mut rest = block;
+    while let Some(idx) = rest.find(key) {
+        let after = &rest[idx + key.len()..];
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(a) => a.trim_start(),
+            None => {
+                rest = after;
+                continue;
+            }
+        };
+        if let Some(v) = quoted_after(after) {
+            return Some(v);
+        }
+        if after.starts_with("true") {
+            return Some("true".to_string());
+        }
+        if after.starts_with("false") {
+            return Some("false".to_string());
+        }
+        let num: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+            .collect();
+        if !num.is_empty() {
+            return Some(num);
+        }
+        rest = after;
+    }
+    None
+}
+
+fn scan_key_number(block: &str, key: &str) -> Option<String> {
+    scan_key_literal(block, key)
+}
+
+fn scan_key_options(block: &str, key: &str) -> Vec<String> {
+    let mut rest = block;
+    while let Some(idx) = rest.find(key) {
+        let after = &rest[idx + key.len()..];
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(a) => a.trim_start(),
+            None => {
+                rest = after;
+                continue;
+            }
+        };
+        if let Some(arr) = parse_string_array(after) {
+            return arr;
+        }
+        // Identifier reference — do not evaluate TypeScript.
+        return Vec::new();
+    }
+    Vec::new()
+}
+
+fn scan_key_raw_value(block: &str, key: &str) -> Option<String> {
+    let mut rest = block;
+    while let Some(idx) = rest.find(key) {
+        let after = &rest[idx + key.len()..];
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(a) => a.trim_start(),
+            None => {
+                rest = after;
+                continue;
+            }
+        };
+        if let Some(v) = quoted_after(after) {
+            return Some(v);
+        }
+        if after.starts_with('{') {
+            if let Some(end) = find_matching_bracket(after, '{', '}') {
+                return Some(after[..=end].to_string());
+            }
+        }
+        if after.starts_with('[') {
+            if let Some(end) = find_matching_bracket(after, '[', ']') {
+                return Some(after[..=end].to_string());
+            }
+        }
+        let ident = after
             .chars()
             .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
             .collect::<String>();
