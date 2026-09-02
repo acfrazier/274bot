@@ -49,7 +49,8 @@ pub enum AppAction {
     /// `tui-play` dispatches `Play::script_start_load` with the card's
     /// source and shape.
     ScriptStart(String),
-    /// Pause the focused slot's script (`Play::script_pause`).
+    /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
+    /// / `Play::script_resume`, like the panel's `script_toggle_pause`).
     ScriptPause,
     /// Stop the focused slot's script (`Play::script_stop`).
     ScriptStop,
@@ -475,7 +476,7 @@ impl TuiApp {
                     AppAction::None
                 }
             },
-            ScriptClick::Button("Pause") => AppAction::ScriptPause,
+            ScriptClick::Button("Pause") | ScriptClick::Button("Resume") => AppAction::ScriptPause,
             ScriptClick::Button("Stop") => AppAction::ScriptStop,
             ScriptClick::Button("Load") => {
                 self.script_load_open = true;
@@ -997,6 +998,33 @@ mod tests {
         assert!(
             text.contains("welcome to 274"),
             "chat ring paints: {text:?}"
+        );
+    }
+
+    /// TR-TUI-001: when the focused script is Paused the pane shows
+    /// `[Resume]` and clicking it dispatches the pause/resume toggle.
+    #[test]
+    fn paused_script_shows_resume_and_click_dispatches_toggle() {
+        let mut app = TuiApp::new("274bot headless");
+        app.script_state = RunState::Paused;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("[Resume]"),
+            "paused script paints Resume: {text:?}"
+        );
+        assert!(
+            !text.contains("[Pause]"),
+            "paused script must not paint Pause: {text:?}"
+        );
+        let area = app.script_area;
+        // `[Browse] ` + `[Start] ` → `[Resume] ` at inner.x + 17 = area.x + 18.
+        assert_eq!(
+            app.on_click(area.x + 18, area.y + 2),
+            AppAction::ScriptPause,
+            "Resume click dispatches the pause/resume toggle"
         );
     }
 

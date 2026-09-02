@@ -12,8 +12,18 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use script::{RunState, SlotScript};
 
-/// The script button labels, left to right.
+/// The script button labels, left to right (Pause slot is dynamic — see
+/// [`pause_button_label`]).
 pub const SCRIPT_BUTTONS: [&str; 5] = ["Browse", "Start", "Pause", "Stop", "Load"];
+
+/// Pause/Resume label for the third button (matches panel `script_section`).
+pub fn pause_button_label(state: RunState) -> &'static str {
+    if state == RunState::Paused {
+        "Resume"
+    } else {
+        "Pause"
+    }
+}
 
 /// The lifecycle text for a [`RunState`].
 pub fn run_state_text(state: RunState) -> &'static str {
@@ -89,7 +99,12 @@ impl<'a> ScriptPane<'a> {
         // Buttons live on the second inner line.
         if row == inner.y + 1 {
             let mut cursor = inner.x;
-            for label in SCRIPT_BUTTONS {
+            for slot in SCRIPT_BUTTONS {
+                let label = if slot == "Pause" {
+                    pause_button_label(self.state)
+                } else {
+                    slot
+                };
                 // `[label] ` is label.len() + 3 cells.
                 if col >= cursor && col < cursor + label.len() as u16 + 3 {
                     return ScriptClick::Button(label);
@@ -127,7 +142,14 @@ impl Widget for ScriptPane<'_> {
         let sel = self.sel.unwrap_or("—");
         let buttons = SCRIPT_BUTTONS
             .iter()
-            .map(|b| format!("[{b}]"))
+            .map(|b| {
+                let label = if *b == "Pause" {
+                    pause_button_label(self.state)
+                } else {
+                    b
+                };
+                format!("[{label}]")
+            })
             .collect::<Vec<_>>()
             .join(" ");
         let mut lines = vec![
@@ -263,6 +285,52 @@ mod tests {
         );
         assert!(text.contains("BoneBurier"), "card rows paint: {text:?}");
         assert!(text.contains('>'), "the selected card is marked: {text:?}");
+    }
+
+    #[test]
+    fn paused_state_shows_resume_not_pause() {
+        let text = render(
+            ScriptPane::new(script::RunState::Paused, None, &[], false, false, "", None),
+            60,
+            4,
+        );
+        assert!(
+            text.contains("[Resume]"),
+            "paused script paints Resume: {text:?}"
+        );
+        assert!(
+            !text.contains("[Pause]"),
+            "paused script must not paint Pause: {text:?}"
+        );
+    }
+
+    #[test]
+    fn running_state_shows_pause_not_resume() {
+        let text = render(
+            ScriptPane::new(script::RunState::Running, None, &[], false, false, "", None),
+            60,
+            4,
+        );
+        assert!(
+            text.contains("[Pause]"),
+            "running script paints Pause: {text:?}"
+        );
+        assert!(
+            !text.contains("[Resume]"),
+            "running script must not paint Resume: {text:?}"
+        );
+    }
+
+    #[test]
+    fn clicking_resume_when_paused_returns_resume_button() {
+        let area = Rect::new(0, 0, 60, 4);
+        let pane = ScriptPane::new(script::RunState::Paused, None, &[], false, false, "", None);
+        // `[Browse] ` (9) + `[Start] ` (8) → `[Resume] ` starts at inner.x + 17 = col 18.
+        assert_eq!(
+            pane.on_click(area, 18, 2),
+            ScriptClick::Button("Resume"),
+            "Resume is clickable when paused"
+        );
     }
 
     #[test]

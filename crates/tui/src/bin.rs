@@ -215,6 +215,14 @@ pub struct TuiSession {
     rs2b0t_filled: bool,
 }
 
+#[cfg(test)]
+impl TuiSession {
+    /// Inject a `Play` for unit tests (no vault / slot threads).
+    fn inject_play(&mut self, play: Play) {
+        self.play = Some(play);
+    }
+}
+
 impl TuiSession {
     /// Empty session over the default engine options.
     fn new(options: PlayOptions) -> Self {
@@ -554,13 +562,17 @@ impl TuiSession {
         };
     }
 
-    /// Pause the focused slot's script (no-op without a focused slot).
-    fn script_pause(&mut self, app: &mut TuiApp) {
+    /// Pause or resume the focused slot's script (toggle like the panel).
+    fn script_toggle_pause(&mut self, app: &mut TuiApp) {
         let Some(name) = app.focused_name() else {
             return;
         };
         if let Some(play) = &self.play {
-            play.script_pause(&name);
+            if play.script_state(&name) == script::RunState::Paused {
+                play.script_resume(&name);
+            } else {
+                play.script_pause(&name);
+            }
         }
     }
 
@@ -923,7 +935,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::ScriptStart(card) => session.script_start(app, &card),
-        AppAction::ScriptPause => session.script_pause(app),
+        AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
         AppAction::ScriptBrowse => session.fill_rs2b0t_cards_once(),
         AppAction::ScriptLoad(path) => session.script_load(app, &path.to_string_lossy()),
@@ -1035,6 +1047,43 @@ mod tests {
     /// Stop → new Start. A slot whose script has no paint (stopped, or
     /// not painted yet) resets the toggle, so the fresh paint is visible
     /// by default instead of hidden behind the game-chat toggle.
+    /// TR-TUI-001: dispatching ScriptPause toggles pause/resume like the
+    /// panel's `script_toggle_pause` (Resume when Paused, Pause when Running).
+    #[test]
+    fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
+        let mut play = run_with_io(
+            &dummy_options(),
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        play.attach_arm("alice", SlotArm::new(7, false));
+        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        play.script_start_load("alice", src, script::LoadShape::NativeTick)
+            .unwrap();
+        assert_eq!(play.script_state("alice"), script::RunState::Running);
+
+        let mut session = TuiSession::new(dummy_options());
+        session.inject_play(play);
+        let mut app = TuiApp::new("274bot headless");
+        app.names = vec!["alice".into()];
+        app.focused = Some(0);
+
+        dispatch(&mut session, &mut app, AppAction::ScriptPause);
+        assert_eq!(
+            session.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Paused,
+            "Pause while Running"
+        );
+
+        dispatch(&mut session, &mut app, AppAction::ScriptPause);
+        assert_eq!(
+            session.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running,
+            "Resume while Paused"
+        );
+    }
+
     #[test]
     fn pump_resets_the_paint_toggle_when_the_paint_is_gone() {
         let mut session = TuiSession::new(dummy_options());
