@@ -1584,7 +1584,9 @@ impl Session {
             return;
         }
         profile.settings.tutorial_skipped = Some(skipped);
-        let _ = vault.upsert(profile);
+        if let Err(e) = vault.upsert(profile) {
+            self.error = Some(format!("tutorial: {e}"));
+        }
     }
 
     fn ingest_tutorial_chat(&mut self, statuses: &[SlotStatus]) {
@@ -1859,9 +1861,16 @@ impl Session {
             self.error = Some("credentials: username required".into());
             return false;
         }
+        let rename_from = self.chooser_edit.as_deref().filter(|old| {
+            !old.is_empty() && old.trim() != username
+        });
         let profile = {
             let vault = self.vault.as_mut().expect("vault checked");
-            let existing = vault.get(&username).cloned();
+            let existing = if let Some(old) = rename_from {
+                vault.get(old).cloned()
+            } else {
+                vault.get(&username).cloned()
+            };
             Profile {
                 uid: existing
                     .as_ref()
@@ -1873,13 +1882,24 @@ impl Session {
             }
         };
         match self.vault.as_mut().expect("vault checked").upsert(profile) {
-            Ok(()) => self.error = None,
+            Ok(()) => {}
             Err(e) => {
                 self.error = Some(format!("credentials: {e}"));
                 return false;
             }
         }
+        if let Some(old) = rename_from {
+            match self.vault.as_mut().expect("vault checked").remove(old) {
+                Ok(_) => {}
+                Err(e) => {
+                    self.error = Some(format!("credentials: {e}"));
+                    return false;
+                }
+            }
+        }
+        self.chooser_edit = None;
         // `select` builds the arm from the vault auto-login setting.
+        self.error = None;
         self.select(&username);
         true
     }
@@ -2097,7 +2117,9 @@ impl Session {
         if let Some(mut p) = vault.get(&name).cloned() {
             p.settings.raster = self.ui.raster;
             p.settings.lowmem = self.ui.lowmem;
-            let _ = vault.upsert(p);
+            if let Err(e) = vault.upsert(p) {
+                self.error = Some(format!("render prefs: {e}"));
+            }
         }
     }
 
@@ -5796,6 +5818,55 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         assert!(s.save_credentials());
         assert_eq!(s.slots.len(), 1);
         assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn save_credentials_rename_editing_profile_replaces_old_key() {
+        let path = tmp_vault("rename-creds.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.vault
+            .as_mut()
+            .unwrap()
+            .upsert(profile("alice", "pw", 42))
+            .unwrap();
+
+        s.begin_edit_profile(Some("alice"));
+        s.cred_user = "bob".into();
+        s.cred_pass = "bobpass".into();
+        assert!(s.save_credentials());
+
+        let vault = s.vault.as_ref().unwrap();
+        assert!(vault.get("bob").is_some(), "rename must upsert the new key");
+        assert!(vault.get("alice").is_none(), "rename must remove the old key");
+        assert_eq!(vault.get("bob").unwrap().uid, 42, "rename keeps the old uid");
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn save_credentials_upsert_error_surfaces_on_session_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-save-err-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vault.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        s.cred_user = "alice".into();
+        s.cred_pass = "pw".into();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(!s.save_credentials());
+        assert!(
+            s.error
+                .as_ref()
+                .is_some_and(|e| e.starts_with("credentials:")),
+            "upsert failure must land on session.error, got {:?}",
+            s.error
+        );
     }
 
     #[test]

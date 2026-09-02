@@ -640,7 +640,7 @@ impl TuiSession {
     /// Persist the settings popup's changes onto the focused vault
     /// profile (the operator vault; `--live`'s temp vault is ephemeral)
     /// and mirror `random_events` onto a running slot's arm.
-    fn persist_settings(&mut self, app: &TuiApp) {
+    fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(vault) = self.vault.as_mut() else {
             return;
         };
@@ -652,7 +652,9 @@ impl TuiSession {
         };
         profile.settings = app.settings.clone();
         let random_events = profile.settings.random_events;
-        let _ = vault.upsert(profile);
+        if let Err(e) = vault.upsert(profile) {
+            app.error = Some(format!("settings: {e}"));
+        }
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
             arm.random_events.store(random_events, Ordering::Relaxed);
         }
@@ -894,7 +896,9 @@ impl TuiSession {
             settings: vault::ProfileSettings::default(),
         };
         if let Some(vault) = self.vault.as_mut() {
-            let _ = vault.upsert(profile);
+            if let Err(e) = vault.upsert(profile) {
+                self.error = Some(format!("profile: {e}"));
+            }
         }
     }
 }
