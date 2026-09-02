@@ -3793,7 +3793,7 @@ mod tests {
         assert_eq!(play.script_state("alice"), script::RunState::Running);
 
         let err = play
-            .script_start_load("alice", src.clone(), script::LoadShape::NativeTick, None)
+            .script_start_load("alice", src.clone(), script::LoadShape::NativeTick, None, vec![])
             .unwrap_err();
         assert!(err.contains("active"), "err was {err}");
 

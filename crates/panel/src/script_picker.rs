@@ -116,13 +116,37 @@ pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
     out
 }
 
+/// Apply a Load browser row click (Up → parent, Subdir → descend, File → select).
+pub fn apply_load_browse_select(
+    dir: &mut PathBuf,
+    sel: &mut usize,
+    entry: &LoadBrowseEntry,
+    index: usize,
+) {
+    match entry {
+        LoadBrowseEntry::Up => {
+            if let Some(parent) = dir.parent() {
+                *dir = parent.to_path_buf();
+                *sel = 0;
+            }
+        }
+        LoadBrowseEntry::Subdir(name) => {
+            dir.push(name);
+            *sel = 0;
+        }
+        LoadBrowseEntry::File(_) => {
+            *sel = index;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        move_category, needs_rs2b0t_catalog_prompt, resolve_category_order,
-        rs2b0t_root_has_index, BROWSE_WINDOW_TITLE,
+        apply_load_browse_select, move_category, needs_rs2b0t_catalog_prompt,
+        resolve_category_order, rs2b0t_root_has_index, BROWSE_WINDOW_TITLE, LoadBrowseEntry,
     };
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn browse_picker_uses_window_not_modal() {
@@ -165,6 +189,15 @@ mod tests {
         assert!(needs_rs2b0t_catalog_prompt(None, false));
         assert!(!needs_rs2b0t_catalog_prompt(Some(Path::new("/tmp/x")), false));
         assert!(!needs_rs2b0t_catalog_prompt(None, true));
+    }
+
+    #[test]
+    fn load_browse_up_navigates_to_parent() {
+        let mut dir = PathBuf::from("/tmp/274bot-load-up-child");
+        let mut sel = 2;
+        apply_load_browse_select(&mut dir, &mut sel, &LoadBrowseEntry::Up, 0);
+        assert_eq!(dir, PathBuf::from("/tmp"));
+        assert_eq!(sel, 0);
     }
 
     #[test]

@@ -2052,13 +2052,12 @@ fn load_window(ui: &Ui, session: &mut Session) {
                 };
                 let selected = i == session.script_load_sel;
                 if ui.selectable_config(&label).selected(selected).build() {
-                    match entry {
-                        script_picker::LoadBrowseEntry::Subdir(name) => {
-                            session.script_load_dir.push(name);
-                            session.script_load_sel = 0;
-                        }
-                        _ => session.script_load_sel = i,
-                    }
+                    script_picker::apply_load_browse_select(
+                        &mut session.script_load_dir,
+                        &mut session.script_load_sel,
+                        entry,
+                        i,
+                    );
                 }
             }
             ui.spacing();
