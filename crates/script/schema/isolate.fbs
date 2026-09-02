@@ -1,0 +1,91 @@
+// Isolate IPC wire format (v0.1.5): the PLAYER_INFO snapshot posted into
+// each JS isolate before its tick, and the shim interact batch forwarded
+// back after the tick. FlatBuffers, not JSON: a 50+ isolate wall must not
+// pay a stringify/parse per tick.
+//
+// The Rust side is hand-written against this schema
+// (crates/script/src/isolate_fb.rs) so operators never need `flatc` at
+// `cargo test` time. Keep the two in sync.
+namespace rs2b0t.isolate;
+
+// A game tile {x, z, level}.
+table Tile {
+  x: int;
+  z: int;
+  level: int;
+}
+
+// One inventory/bank row: the resolved obj name (absent = the host obj
+// table has no name for this id — a script query never matches) and a
+// count.
+table Row {
+  name: string;
+  count: int;
+}
+
+// One skill row: the snapshot's stat index, name, and xp.
+table Stat {
+  index: int;
+  name: string;
+  xp: int;
+}
+
+// A scene bank booth (a loc with a Use-quickly action).
+table Booth {
+  x: int;
+  z: int;
+  level: int;
+}
+
+// A packed bank stand the shim walks to / opens.
+table BankStand {
+  name: string;
+  x: int;
+  z: int;
+  level: int;
+  kind: string;    // "booth" | "npc"
+  op: int;         // the stand's 1-based access op slot
+  choose: string;  // the teller dialog option, deferred
+}
+
+// The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
+// fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
+// nothing else (no World clone). `hold`/`ours` are the guardian's status
+// that EventSignal.pending() reads.
+table Snapshot {
+  tick: ulong;
+  here: Tile;
+  ingame: bool;
+  inv: [Row];
+  stats: [Stat];
+  booths: [Booth];
+  banks: [BankStand];
+  bank: [Row];
+  bank_side: [Row];
+  bank_open: bool;
+  bank_loaded: bool;
+  hold: bool;
+  ours: bool;
+}
+
+// One shim interact request (the Bank/Banking queue), tagged by `op`:
+// "open-booth" | "open-stand" | "walk" | "deposit" | "withdraw" | "close".
+// Optional fields are absent (not written) when the request has none.
+table Interact {
+  op: string;
+  x: int;
+  z: int;
+  level: int;
+  kind: string;
+  name: string;
+  stand_op: int;
+  choose: string;
+  action: string;
+}
+
+// The tick's shim interact queue, forwarded to the host.
+table InteractBatch {
+  reqs: [Interact];
+}
+
+root_type Snapshot;

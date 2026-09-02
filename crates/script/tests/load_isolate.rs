@@ -113,6 +113,33 @@ fn write_file(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     path
 }
 
+// Task 9b: the snapshot posted into an isolate is a FlatBuffers blob, not
+// a JSON string — a test posting JSON would smuggle the forbidden parse
+// path back in. These helpers build the blob through the same encoder the
+// host uses (`script::isolate_fb::encode_snapshot`).
+fn post_snapshot_input(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotInput<'_>) {
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
+}
+
+/// The empty fail-closed snapshot; tests override the fields they post.
+fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
+    script::isolate_fb::SnapshotInput {
+        tick: 1,
+        here: None,
+        ingame: true,
+        inv: &[],
+        stats: &[],
+        booths: &[],
+        banks: &[],
+        bank: &[],
+        bank_side: &[],
+        bank_open: false,
+        bank_loaded: false,
+        hold: false,
+        ours: false,
+    }
+}
+
 // (1) Loading a native `tick` noop file adds a JS card under the file stem.
 #[test]
 fn js_library_load_native_tick_file_adds_card() {
@@ -870,13 +897,14 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 5 — a posted snapshot blob is what Game/Inventory/Skills/EventSignal
-// read: `Inventory.count` sums the inv rows by name (case-insensitive),
-// `EventSignal.pending()` is hold OR ours as posted, `Skills.xp`/`index`
-// scan the stats rows, and `Game.tile()`/`ingame()` read the posted
-// `here`/`ingame`. Only the JSON fields the host posts — no World clone.
+// Task 9b — a posted FlatBuffer snapshot is what Game/Inventory/Skills/
+// EventSignal read: `Inventory.count` sums the inv rows by name
+// (case-insensitive), `EventSignal.pending()` is hold OR ours as posted,
+// `Skills.xp`/`index` scan the stats rows, and `Game.tile()`/`ingame()`
+// read the posted `here`/`ingame`. Only the fields the host posts — no
+// World clone. The blob is FlatBuffers (never a JSON string).
 #[test]
-fn isolate_reads_posted_snapshot_blob() {
+fn isolate_reads_posted_fb_snapshot_blob() {
     let src = r#"
 import { Game } from '../../api/game/Game.js';
 import { Inventory } from '../../api/inventory/Inventory.js';
@@ -898,20 +926,22 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
-    iso.post_snapshot(
-        &serde_json::json!({
-            "tick": 1,
-            "here": { "x": 3200, "z": 3200, "level": 0 },
-            "ingame": true,
-            "inv": [{ "name": "Bones", "count": 2 }],
-            "stats": [{ "index": 5, "name": "prayer", "xp": 1300 }],
-            "bank_open": false,
-            "bank_loaded": false,
-            "hold": true,
-            "ours": false,
-        })
-        .to_string(),
-    );
+    let mut snap = base_snapshot();
+    snap.tick = 1;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    });
+    snap.ingame = true;
+    snap.inv = &[(Some("Bones"), 2)];
+    snap.stats = &[script::isolate_fb::StatInput {
+        index: 5,
+        name: "prayer",
+        xp: 1300,
+    }];
+    snap.hold = true;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("posted snapshot reads back");
     assert_eq!(value["bones"], 2, "Inventory.count('Bones') sums the posted inv row");
@@ -929,7 +959,8 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 5 — EventSignal.pending() is hold OR ours, as the host posted them.
+// Task 9b — EventSignal.pending() is hold OR ours, as the host posted them
+// (the FlatBuffer blob carries both flags).
 #[test]
 fn isolate_event_signal_pending_tracks_hold_or_ours() {
     let src = r#"
@@ -941,20 +972,9 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
-    iso.post_snapshot(
-        &serde_json::json!({
-            "tick": 1,
-            "here": null,
-            "ingame": true,
-            "inv": [],
-            "stats": [],
-            "bank_open": false,
-            "bank_loaded": false,
-            "hold": false,
-            "ours": true,
-        })
-        .to_string(),
-    );
+    let mut snap = base_snapshot();
+    snap.ours = true;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(value, true, "ours alone makes pending() true");
@@ -1043,24 +1063,27 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
-    iso.post_snapshot(
-        &serde_json::json!({
-            "tick": 1,
-            "here": { "x": 100, "z": 100, "level": 0 },
-            "ingame": true,
-            "inv": [],
-            "stats": [],
-            "booths": [{ "x": 101, "z": 100, "level": 0 }],
-            "banks": [{ "name": "Bank booth", "x": 101, "z": 100, "level": 0, "kind": "booth", "op": 2 }],
-            "bank": [],
-            "bank_side": [],
-            "bank_open": false,
-            "bank_loaded": false,
-            "hold": false,
-            "ours": false,
-        })
-        .to_string(),
-    );
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.booths = &[script::isolate_fb::TileInput {
+        x: 101,
+        z: 100,
+        level: 0,
+    }];
+    snap.banks = &[script::isolate_fb::BankStandInput {
+        name: "Bank booth",
+        x: 101,
+        z: 100,
+        level: 0,
+        kind: "booth",
+        op: 2,
+        choose: None,
+    }];
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
@@ -1086,24 +1109,22 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
-    iso.post_snapshot(
-        &serde_json::json!({
-            "tick": 1,
-            "here": { "x": 100, "z": 100, "level": 0 },
-            "ingame": true,
-            "inv": [],
-            "stats": [],
-            "booths": [],
-            "banks": [{ "name": "Bank booth", "x": 200, "z": 100, "level": 0, "kind": "booth", "op": 2 }],
-            "bank": [],
-            "bank_side": [],
-            "bank_open": false,
-            "bank_loaded": false,
-            "hold": false,
-            "ours": false,
-        })
-        .to_string(),
-    );
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.banks = &[script::isolate_fb::BankStandInput {
+        name: "Bank booth",
+        x: 200,
+        z: 100,
+        level: 0,
+        kind: "booth",
+        op: 2,
+        choose: None,
+    }];
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
@@ -1128,31 +1149,21 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
-    iso.post_snapshot(
-        &serde_json::json!({
-            "tick": 1,
-            "here": { "x": 100, "z": 100, "level": 0 },
-            "ingame": true,
-            "inv": [],
-            "stats": [],
-            "booths": [],
-            "banks": [],
-            "bank": [
-                { "name": "Bones", "count": 20 },
-                { "name": "Lobster", "count": 30 },
-                { "name": "Vial", "count": 1 }
-            ],
-            "bank_side": [
-                { "name": "Bones", "count": 3 },
-                { "name": "Big bones", "count": 1 }
-            ],
-            "bank_open": true,
-            "bank_loaded": true,
-            "hold": false,
-            "ours": false,
-        })
-        .to_string(),
-    );
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.bank = &[
+        (Some("Bones"), 20),
+        (Some("Lobster"), 30),
+        (Some("Vial"), 1),
+    ];
+    snap.bank_side = &[(Some("Bones"), 3), (Some("Big bones"), 1)];
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
@@ -1196,24 +1207,16 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
-    iso.post_snapshot(
-        &serde_json::json!({
-            "tick": 1,
-            "here": { "x": 100, "z": 100, "level": 0 },
-            "ingame": true,
-            "inv": [],
-            "stats": [],
-            "booths": [],
-            "banks": [],
-            "bank": [],
-            "bank_side": [{ "name": null, "count": 3 }],
-            "bank_open": true,
-            "bank_loaded": true,
-            "hold": false,
-            "ours": false,
-        })
-        .to_string(),
-    );
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.bank_side = &[(None, 3)];
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(

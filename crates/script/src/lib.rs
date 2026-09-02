@@ -4,6 +4,8 @@
 //! isolate spawned only on Start.
 
 pub mod ctx;
+#[cfg(feature = "load")]
+pub mod isolate_fb;
 pub mod load;
 pub mod params;
 pub mod ported;

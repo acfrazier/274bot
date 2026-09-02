@@ -159,13 +159,13 @@ impl SlotScript {
         };
     }
 
-    /// Post the host's JSON snapshot blob into a Load isolate (no-op for a
-    /// compiled script). Call it before [`SlotScript::on_game_tick`] so the
-    /// posted blob is what the tick's JS reads.
+    /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
+    /// for a compiled script). Call it before [`SlotScript::on_game_tick`]
+    /// so the posted blob is what the tick's JS reads.
     #[cfg(feature = "load")]
-    pub fn post_snapshot(&self, json: &str) {
+    pub fn post_snapshot(&self, bytes: Vec<u8>) {
         if let Some(isolate) = &self.load {
-            isolate.post_snapshot(json);
+            isolate.post_snapshot(bytes);
         }
     }
 

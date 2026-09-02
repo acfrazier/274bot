@@ -398,15 +398,15 @@ fn script_observe(
             // slot (the blob still posts while held, so EventSignal reads
             // the freeze the script is frozen by).
             if tick_edge && slot.state() == script::RunState::Running {
-                // Task 5: post the JSON snapshot blob on every tick edge —
-                // held or not — so the isolate's
+                // Task 9b: post the FlatBuffer snapshot blob on every tick
+                // edge — held or not — so the isolate's
                 // Game/Inventory/Skills/Bank/Banking/EventSignal read what
-                // this observe saw (only these JSON fields — no World
-                // clone). The blob's `hold` mirrors the guardian's freeze
-                // onto the host handle; while it is set the tick is still
-                // not dispatched below (a held script is frozen, never
+                // this observe saw (only these fields — no World clone).
+                // The blob's `hold` mirrors the guardian's freeze onto the
+                // host handle; while it is set the tick is still not
+                // dispatched below (a held script is frozen, never
                 // looped).
-                slot.post_snapshot(&script_snapshot_json(
+                slot.post_snapshot(script_snapshot_fb(
                     tick,
                     here,
                     up,
@@ -684,24 +684,25 @@ fn dispatch_wires(
     }
 }
 
-/// The JSON snapshot blob posted into a Load isolate each PLAYER_INFO:
-/// `{ tick, here, ingame, inv: [{name, count}], stats, booths, banks,
-/// bank, bank_side, bank_open, bank_loaded, hold, ours }` — the exact
-/// fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read,
-/// and nothing else (no World clone). `here` is the local player's tile
-/// `{x, z, level}` (null when the body decoded none); `inv` rows carry
-/// the obj's resolved name (null when the shared table has none — a name
-/// a script queries never matches); `stats` rows carry the snapshot's
-/// stat index/name/xp; `booths` are the scene locs whose actions include
+/// The FlatBuffer snapshot blob posted into a Load isolate each
+/// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`): `tick, here,
+/// ingame, inv, stats, booths, banks, bank, bank_side, bank_open,
+/// bank_loaded, hold, ours` — the exact fields the shim
+/// Game/Inventory/Skills/Bank/Banking/EventSignal read, and nothing else
+/// (no World clone). `here` is the local player's tile `{x, z, level}`
+/// (absent when the body decoded none); `inv` rows carry the obj's
+/// resolved name (`None` when the shared table has none — a name a script
+/// queries never matches); `stats` rows carry the snapshot's stat
+/// index/name/xp; `booths` are the scene locs whose actions include
 /// `Use-quickly` (a name/action a script interacts with never appears
 /// otherwise); `banks` are the packed bank stands (`{name, x, z, level,
 /// kind: booth|npc, op, choose}`) the shim walks to; `bank`/`bank_side`
 /// are the open bank's withdraw/deposit rows with the obj's resolved
-/// name (null when the table has none — a deposit/withdraw by that name
+/// name (`None` when the table has none — a deposit/withdraw by that name
 /// never matches); `hold`/`ours` are the guardian's published status that
 /// `EventSignal.pending()` reads.
 #[allow(clippy::too_many_arguments)]
-fn script_snapshot_json(
+fn script_snapshot_fb(
     tick: u64,
     here: Option<(i32, i32, i32)>,
     ingame: bool,
@@ -711,108 +712,90 @@ fn script_snapshot_json(
     world: Option<&NavWorld>,
     hold: bool,
     ours: bool,
-) -> String {
-    let here = here.map(|(x, z, level)| serde_json::json!({ "x": x, "z": z, "level": level }));
+) -> Vec<u8> {
+    use script::isolate_fb::{BankStandInput, SnapshotInput, StatInput, TileInput};
+
+    let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let inv = inv.map(|rows| {
-        serde_json::json!(
-            rows.iter()
-                .map(|(id, count)| {
-                    serde_json::json!({
-                        "name": obj_names.and_then(|names| names.name(*id)),
-                        "count": count,
-                    })
-                })
-                .collect::<Vec<_>>()
-        )
+        rows.iter()
+            .map(|(id, count)| (obj_names.and_then(|names| names.name(*id)), *count))
+            .collect::<Vec<_>>()
     });
     let stats = snapshot.map(|s| {
-        serde_json::json!(
-            s.stats()
-                .iter()
-                .map(|st| {
-                    serde_json::json!({ "index": st.index, "name": st.name, "xp": st.xp })
-                })
-                .collect::<Vec<_>>()
-        )
+        s.stats()
+            .iter()
+            .map(|st| StatInput {
+                index: st.index,
+                name: &st.name,
+                xp: st.xp,
+            })
+            .collect::<Vec<_>>()
     });
     // The scene bank booths: the openable locs (`Use-quickly` is the
     // bankbooth op the pack bakes from `scripts/interface_bank/configs/
     // bank_booth.loc`). Only the tile is posted — the shim never reads a
     // loc definition.
     let booths = snapshot.map(|s| {
-        serde_json::json!(
-            s.locs()
-                .iter()
-                .filter(|l| {
-                    l.actions
-                        .iter()
-                        .any(|a| a.as_deref().is_some_and(|a| a.eq_ignore_ascii_case("Use-quickly")))
-                })
-                .map(|l| {
-                    serde_json::json!({
-                        "x": l.tile.x,
-                        "z": l.tile.z,
-                        "level": l.tile.level,
-                    })
-                })
-                .collect::<Vec<_>>()
-        )
+        s.locs()
+            .iter()
+            .filter(|l| {
+                l.actions
+                    .iter()
+                    .any(|a| a.as_deref().is_some_and(|a| a.eq_ignore_ascii_case("Use-quickly")))
+            })
+            .map(|l| TileInput {
+                x: l.tile.x,
+                z: l.tile.z,
+                level: l.tile.level,
+            })
+            .collect::<Vec<_>>()
     });
     let banks = world.map(|w| {
         use nav::pack::BankAccess;
-        serde_json::json!(
-            w.banks()
-                .iter()
-                .map(|b| {
-                    let (kind, op, choose) = match &b.access {
-                        BankAccess::Booth { op } => ("booth", Some(*op), None),
-                        BankAccess::Npc { op, choose, .. } => {
-                            ("npc", Some(*op), choose.clone())
-                        }
-                    };
-                    serde_json::json!({
-                        "name": b.name,
-                        "x": b.tile.x,
-                        "z": b.tile.z,
-                        "level": b.tile.level,
-                        "kind": kind,
-                        "op": op,
-                        "choose": choose,
-                    })
-                })
-                .collect::<Vec<_>>()
-        )
+        w.banks()
+            .iter()
+            .map(|b| {
+                let (kind, op, choose) = match &b.access {
+                    BankAccess::Booth { op } => ("booth", *op, None),
+                    BankAccess::Npc { op, choose, .. } => ("npc", *op, choose.as_deref()),
+                };
+                BankStandInput {
+                    name: &b.name,
+                    x: b.tile.x,
+                    z: b.tile.z,
+                    level: b.tile.level,
+                    kind,
+                    op,
+                    choose,
+                }
+            })
+            .collect::<Vec<_>>()
     });
     let bank_rows = |items: &[api::snapshot::ItemView]| {
-        serde_json::json!(
-            items
-                .iter()
-                .map(|it| {
-                    serde_json::json!({
-                        "name": obj_names.and_then(|names| names.name(it.def.id)),
-                        "count": it.count,
-                    })
-                })
-                .collect::<Vec<_>>()
-        )
+        items
+            .iter()
+            .map(|it| (obj_names.and_then(|names| names.name(it.def.id)), it.count))
+            .collect::<Vec<_>>()
     };
-    serde_json::json!({
-        "tick": tick,
-        "here": here,
-        "ingame": ingame,
-        "inv": inv,
-        "stats": stats,
-        "booths": booths,
-        "banks": banks,
-        "bank": snapshot.map(|s| bank_rows(s.bank())),
-        "bank_side": snapshot.map(|s| bank_rows(s.bank_side())),
-        "bank_open": snapshot.is_some_and(|s| s.bank_component_id() != -1),
-        "bank_loaded": snapshot
+    let bank = snapshot.map(|s| bank_rows(s.bank()));
+    let bank_side = snapshot.map(|s| bank_rows(s.bank_side()));
+    let input = SnapshotInput {
+        tick,
+        here,
+        ingame,
+        inv: inv.as_deref().unwrap_or(&[]),
+        stats: stats.as_deref().unwrap_or(&[]),
+        booths: booths.as_deref().unwrap_or(&[]),
+        banks: banks.as_deref().unwrap_or(&[]),
+        bank: bank.as_deref().unwrap_or(&[]),
+        bank_side: bank_side.as_deref().unwrap_or(&[]),
+        bank_open: snapshot.is_some_and(|s| s.bank_component_id() != -1),
+        bank_loaded: snapshot
             .is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
-        "hold": hold,
-        "ours": ours,
-    })
-    .to_string()
+        hold,
+        ours,
+    };
+    script::isolate_fb::encode_snapshot(&input)
 }
 
 /// True when `name`'s slot script is Running — the only state that builds
@@ -4028,14 +4011,15 @@ mod tests {
         );
     }
 
-    // Task 5 — the posted blob is exactly the fields the shim
-    // Game/Inventory/Skills/EventSignal read: inv rows carry resolved obj
-    // names (null when the table has none), stats rows the stat
+    // Task 9b — the posted blob is FlatBuffers (schema:
+    // crates/script/schema/isolate.fbs) and carries exactly the fields the
+    // shim Game/Inventory/Skills/EventSignal read: inv rows carry resolved
+    // obj names (None when the table has none), stats rows the stat
     // index/name/xp, bank flags from the snapshot, and hold/ours pass
-    // through for EventSignal.pending(). No World clone — only these JSON
-    // fields.
+    // through for EventSignal.pending(). No World clone — only these
+    // fields. Round-trips through the script crate's decoder.
     #[test]
-    fn script_snapshot_json_carries_observed_fields_only() {
+    fn script_snapshot_fb_carries_observed_fields_only() {
         let mut c = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
@@ -4060,57 +4044,59 @@ mod tests {
         objs[1].name = "Bones".into();
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let inv = vec![(1, 2), (99, 5)];
-        let blob: serde_json::Value =
-            serde_json::from_str(&script_snapshot_json(
-                7,
-                Some((3200, 3200, 0)),
-                true,
-                Some(&inv),
-                Some(&snap),
-                Some(&names),
-                None,
-                true,
-                false,
-            ))
-            .unwrap();
-        assert_eq!(blob["tick"], 7);
-        assert_eq!(blob["here"], serde_json::json!({ "x": 3200, "z": 3200, "level": 0 }));
-        assert_eq!(blob["ingame"], true);
+        let bytes = script_snapshot_fb(
+            7,
+            Some((3200, 3200, 0)),
+            true,
+            Some(&inv),
+            Some(&snap),
+            Some(&names),
+            None,
+            true,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        assert_eq!(view.tick(), 7);
+        let here = view.here().expect("here posted");
+        assert_eq!((here.x(), here.z(), here.level()), (3200, 3200, 0));
+        assert!(view.ingame());
+        let inv = view.inv();
+        assert_eq!(inv.len(), 2);
+        assert_eq!((inv[0].name(), inv[0].count()), (Some("Bones"), 2));
         assert_eq!(
-            blob["inv"],
-            serde_json::json!([
-                { "name": "Bones", "count": 2 },
-                { "name": null, "count": 5 },
-            ]),
+            (inv[1].name(), inv[1].count()),
+            (None, 5),
             "an obj the table does not know posts a null name, never invented"
         );
-        assert_eq!(blob["stats"][7], serde_json::json!({ "index": 7, "name": "cooking", "xp": 1300 }));
-        assert_eq!(blob["bank_open"], false, "no bank component in the fixture");
-        assert_eq!(blob["bank_loaded"], false);
+        let stats = view.stats();
         assert_eq!(
-            blob["booths"],
-            serde_json::json!([]),
+            (stats[7].index(), stats[7].name(), stats[7].xp()),
+            (7, "cooking", 1300)
+        );
+        assert!(!view.bank_open(), "no bank component in the fixture");
+        assert!(!view.bank_loaded());
+        assert!(
+            view.booths().is_empty(),
             "no Use-quickly scene locs in the fixture"
         );
-        assert_eq!(
-            blob["banks"],
-            serde_json::Value::Null,
+        assert!(
+            view.banks().is_empty(),
             "no nav world: no packed stands posted"
         );
-        assert_eq!(blob["bank"], serde_json::json!([]));
-        assert_eq!(blob["bank_side"], serde_json::json!([]));
-        assert_eq!(blob["hold"], true);
-        assert_eq!(blob["ours"], false);
+        assert!(view.bank().is_empty());
+        assert!(view.bank_side().is_empty());
+        assert!(view.hold());
+        assert!(!view.ours());
 
         // No tile / no snapshot: fail-closed nulls and flags.
-        let bare: serde_json::Value =
-            serde_json::from_str(&script_snapshot_json(1, None, false, None, None, None, None, false, true))
-                .unwrap();
-        assert_eq!(bare["here"], serde_json::Value::Null);
-        assert_eq!(bare["inv"], serde_json::Value::Null);
-        assert_eq!(bare["stats"], serde_json::Value::Null);
-        assert_eq!(bare["bank_open"], false);
-        assert_eq!(bare["ours"], true, "ours rides the blob for EventSignal");
+        let bare_bytes = script_snapshot_fb(1, None, false, None, None, None, None, false, true);
+        let bare =
+            script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
+        assert!(bare.here().is_none());
+        assert!(bare.inv().is_empty());
+        assert!(bare.stats().is_empty());
+        assert!(!bare.bank_open());
+        assert!(bare.ours(), "ours rides the blob for EventSignal");
     }
 
     #[test]

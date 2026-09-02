@@ -333,10 +333,11 @@ mod isolate {
 
     enum IsolateCmd {
         Tick(u64),
-        /// The host's JSON snapshot blob, stored on the host handle before
-        /// the next dispatched tick (the Game/Inventory/Skills/EventSignal
-        /// shims read it).
-        Snapshot(String),
+        /// The host's FlatBuffer snapshot blob (schema: `crates/script/
+        /// schema/isolate.fbs`), decoded on the isolate thread into the
+        /// JS object the Game/Inventory/Skills/EventSignal shims read
+        /// before the next dispatched tick. Never a JSON string.
+        Snapshot(Vec<u8>),
         Pause,
         Resume,
         Probe(String, Sender<Result<serde_json::Value, String>>),
@@ -346,9 +347,9 @@ mod isolate {
     enum ThreadMsg {
         Log(String),
         /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
-        /// JSON array of [`crate::shim::InteractReq`]s forwarded after the
-        /// tick's JS finished (parked or not).
-        Interact(String),
+        /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
+        /// forwarded after the tick's JS finished (parked or not).
+        Interact(Vec<u8>),
         /// The highest tick the thread has fully processed (ran or skipped).
         Completed(u64),
     }
@@ -408,15 +409,16 @@ mod isolate {
             })
         }
 
-        /// Post the host's JSON snapshot blob into the isolate: the blob is
-        /// stored on the host handle (`__rs2b0t_host.snapshot`) before the
-        /// next dispatched tick, so the Game/Inventory/Skills/EventSignal
-        /// shims read the fields the host observed this PLAYER_INFO. Only
-        /// these JSON fields are copied — no World clone. Commands are
-        /// serialized on the isolate thread, so a post followed by
+        /// Post the host's FlatBuffer snapshot blob into the isolate: the
+        /// buffer is decoded on the isolate thread into the JS object on
+        /// the host handle (`__rs2b0t_host.snapshot`) before the next
+        /// dispatched tick, so the Game/Inventory/Skills/EventSignal shims
+        /// read the fields the host observed this PLAYER_INFO. Only these
+        /// fields are copied — no World clone. Commands are serialized on
+        /// the isolate thread, so a post followed by
         /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
-        pub fn post_snapshot(&self, json: &str) {
-            let _ = self.tx.send(IsolateCmd::Snapshot(json.to_string()));
+        pub fn post_snapshot(&self, bytes: Vec<u8>) {
+            let _ = self.tx.send(IsolateCmd::Snapshot(bytes));
         }
 
         /// Dispatch one observed game tick to the isolate. The previous
@@ -539,8 +541,9 @@ mod isolate {
             for msg in msgs {
                 match msg {
                     ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
-                    ThreadMsg::Interact(json) => {
-                        match serde_json::from_str::<Vec<crate::shim::InteractReq>>(&json) {
+                    ThreadMsg::Interact(bytes) => {
+                        // Decode the FlatBuffer interact batch (no JSON).
+                        match crate::isolate_fb::decode_interact_batch(&bytes) {
                             Ok(reqs) => self.interacts.lock().unwrap().extend(reqs),
                             Err(e) => {
                                 self.logs
@@ -757,6 +760,204 @@ globalThis.__rs2b0t_tick_async = async (n) => {
 };
 "#;
 
+    /// Materialise the decoded FlatBuffer snapshot as the JS object the
+    /// shim reads (`__rs2b0t_host.snapshot`). The object is built on the
+    /// isolate thread directly from the buffer (v8 object construction —
+    /// not `JSON.parse`): a wall of 50+ isolates never parses a JSON
+    /// document per tick. Missing fields materialise to the same
+    /// fail-closed values the old JSON blob carried (absent `here`, empty
+    /// row vectors, null names for ids the host table does not know).
+    fn materialize_snapshot(
+        runtime: &mut Runtime,
+        snap: &crate::isolate_fb::SnapshotReader<'_>,
+    ) -> Result<(), String> {
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let host_key = js_string(&mut scope, "__rs2b0t_host")?;
+        let host = global
+            .get(&mut scope, host_key)
+            .ok_or_else(|| "no __rs2b0t_host global".to_string())?
+            .to_object(&mut scope)
+            .ok_or_else(|| "__rs2b0t_host is not an object".to_string())?;
+
+        let obj = v8::Object::new(&mut scope);
+        let tick = num(&mut scope, snap.tick() as f64);
+        set(&mut scope, obj, "tick", tick)?;
+        let here = match snap.here() {
+            Some(tile) => tile_object(&mut scope, &tile)?,
+            None => v8::null(&mut scope).into(),
+        };
+        set(&mut scope, obj, "here", here)?;
+        let ingame = v8::Boolean::new(&mut scope, snap.ingame());
+        set(&mut scope, obj, "ingame", ingame.into())?;
+        let inv = row_array(&mut scope, &snap.inv())?;
+        set(&mut scope, obj, "inv", inv)?;
+        let stats = stat_array(&mut scope, &snap.stats())?;
+        set(&mut scope, obj, "stats", stats)?;
+        let booths = tile_array(&mut scope, &snap.booths())?;
+        set(&mut scope, obj, "booths", booths)?;
+        let banks = bank_stand_array(&mut scope, &snap.banks())?;
+        set(&mut scope, obj, "banks", banks)?;
+        let bank = row_array(&mut scope, &snap.bank())?;
+        set(&mut scope, obj, "bank", bank)?;
+        let bank_side = row_array(&mut scope, &snap.bank_side())?;
+        set(&mut scope, obj, "bank_side", bank_side)?;
+        let bank_open = v8::Boolean::new(&mut scope, snap.bank_open());
+        set(&mut scope, obj, "bank_open", bank_open.into())?;
+        let bank_loaded = v8::Boolean::new(&mut scope, snap.bank_loaded());
+        set(&mut scope, obj, "bank_loaded", bank_loaded.into())?;
+        let hold = v8::Boolean::new(&mut scope, snap.hold());
+        set(&mut scope, obj, "hold", hold.into())?;
+        let ours = v8::Boolean::new(&mut scope, snap.ours());
+        set(&mut scope, obj, "ours", ours.into())?;
+        let snapshot = obj.into();
+        set(&mut scope, host, "snapshot", snapshot)
+    }
+
+    fn js_string<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        s: &str,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        v8::String::new(scope, s)
+            .map(|v| v.into())
+            .ok_or_else(|| "v8 string alloc failed".to_string())
+    }
+
+    fn num<'s>(scope: &mut v8::HandleScope<'s>, n: f64) -> v8::Local<'s, v8::Value> {
+        v8::Number::new(scope, n).into()
+    }
+
+    fn set<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        obj: v8::Local<'s, v8::Object>,
+        key: &str,
+        value: v8::Local<'s, v8::Value>,
+    ) -> Result<(), String> {
+        let key = js_string(scope, key)?;
+        obj.set(scope, key, value)
+            .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
+        Ok(())
+    }
+
+    /// One `{name, count}` row; a row the host table has no name for is a
+    /// null name (a script query never matches).
+    fn row_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        row: &crate::isolate_fb::RowReader<'_>,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let o = v8::Object::new(scope);
+        match row.name() {
+            Some(name) => {
+                let name = js_string(scope, name)?;
+                set(scope, o, "name", name)?;
+            }
+            None => {
+                let none = v8::null(scope);
+                set(scope, o, "name", none.into())?;
+            }
+        }
+        let count = num(scope, row.count() as f64);
+        set(scope, o, "count", count)?;
+        Ok(o.into())
+    }
+
+    fn row_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        rows: &[crate::isolate_fb::RowReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, rows.len() as i32);
+        for (i, row) in rows.iter().enumerate() {
+            let row = row_object(scope, row)?;
+            arr.set_index(scope, i as u32, row)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn stat_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        stats: &[crate::isolate_fb::StatReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, stats.len() as i32);
+        for (i, st) in stats.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let index = num(scope, st.index() as f64);
+            set(scope, o, "index", index)?;
+            let name = js_string(scope, st.name())?;
+            set(scope, o, "name", name)?;
+            let xp = num(scope, st.xp() as f64);
+            set(scope, o, "xp", xp)?;
+            let obj = o.into();
+            arr.set_index(scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn tile_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        t: &crate::isolate_fb::TileReader<'_>,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let o = v8::Object::new(scope);
+        let x = num(scope, t.x() as f64);
+        set(scope, o, "x", x)?;
+        let z = num(scope, t.z() as f64);
+        set(scope, o, "z", z)?;
+        let level = num(scope, t.level() as f64);
+        set(scope, o, "level", level)?;
+        Ok(o.into())
+    }
+
+    fn tile_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        tiles: &[crate::isolate_fb::TileReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, tiles.len() as i32);
+        for (i, t) in tiles.iter().enumerate() {
+            let t = tile_object(scope, t)?;
+            arr.set_index(scope, i as u32, t)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn bank_stand_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        stands: &[crate::isolate_fb::BankStandReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, stands.len() as i32);
+        for (i, s) in stands.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let name = js_string(scope, s.name())?;
+            set(scope, o, "name", name)?;
+            let x = num(scope, s.x() as f64);
+            set(scope, o, "x", x)?;
+            let z = num(scope, s.z() as f64);
+            set(scope, o, "z", z)?;
+            let level = num(scope, s.level() as f64);
+            set(scope, o, "level", level)?;
+            let kind = js_string(scope, s.kind())?;
+            set(scope, o, "kind", kind)?;
+            let op = num(scope, s.op() as f64);
+            set(scope, o, "op", op)?;
+            match s.choose() {
+                Some(choose) => {
+                    let choose = js_string(scope, choose)?;
+                    set(scope, o, "choose", choose)?;
+                }
+                None => {
+                    let none = v8::null(scope);
+                    set(scope, o, "choose", none.into())?;
+                }
+            }
+            let obj = o.into();
+            arr.set_index(scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
     /// The tick loop: commands are serialized on this thread; ticks run
     /// with a time budget, slow ticks are logged and stale queued ticks are
     /// skipped, and errors never kill the isolate.
@@ -778,14 +979,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 },
             };
             match cmd {
-                IsolateCmd::Snapshot(json) => {
-                    // Store the posted blob on the host handle (a JSON
-                    // literal is a valid JS object expression). A malformed
-                    // blob is logged, never fatal.
-                    if let Err(e) = runtime
-                        .eval::<()>(&format!("globalThis.__rs2b0t_host.snapshot = {json};"))
-                    {
-                        let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                IsolateCmd::Snapshot(bytes) => {
+                    // Decode the posted FlatBuffer and materialise the JS
+                    // object the shim reads on the host handle. A
+                    // malformed blob is logged, never fatal.
+                    match crate::isolate_fb::SnapshotReader::from_bytes(&bytes) {
+                        Ok(snap) => {
+                            if let Err(e) = materialize_snapshot(&mut runtime, &snap) {
+                                let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                        }
                     }
                 }
                 IsolateCmd::Tick(n) => {
@@ -856,13 +1062,17 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // host, then clear it for the next tick. The queue is
                     // evaluated only now, after the tick's JS (and any
                     // parked continuation) has fully run, so a request
-                    // reaches the host exactly once.
-                    let interact: Result<String, rustyscript::Error> = runtime.eval(
-                        "JSON.stringify(globalThis.__rs2b0t_host.interact || [])",
-                    );
-                    if let Ok(json) = interact {
-                        if json != "[]" {
-                            let _ = out.send(ThreadMsg::Interact(json));
+                    // reaches the host exactly once. The queue is read
+                    // through the runtime's value bridge (v8 object walk,
+                    // not `JSON.parse`) and forwarded as a FlatBuffer
+                    // batch, not a stringified JSON document.
+                    let interact: Result<Vec<crate::shim::InteractReq>, rustyscript::Error> =
+                        runtime.eval("globalThis.__rs2b0t_host.interact || []");
+                    if let Ok(reqs) = interact {
+                        if !reqs.is_empty() {
+                            let _ = out.send(ThreadMsg::Interact(
+                                crate::isolate_fb::encode_interact_batch(&reqs),
+                            ));
                         }
                     }
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
