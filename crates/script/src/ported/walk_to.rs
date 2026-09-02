@@ -1,7 +1,8 @@
 //! Walk-hook fixture: when `here` is within `radius` the tick is a noop,
 //! otherwise it queues one walk toward the target through `ctx.walk`.
-//! The host wires that hook to the slot's traveller; until then the tick
-//! errors — never fake arrival. Not a script card (WalkTo is host nav).
+//! UI WalkTo (panel picker + host nav traveller) ≠ compiled `WalkToBot`:
+//! the port is a test fixture, not a registry card. Without a wired
+//! `ctx.walk` hook the tick errors — never fake arrival.
 
 use crate::ctx::{Script, ScriptCtx};
 
@@ -41,12 +42,10 @@ impl WalkToBot {
     }
 }
 
-/// Registry constructor for the picker's `WalkTo` card: start toward the
-/// default destination. **Not registered in `registry::factory` yet** —
-/// the host does not wire `ctx.walk` to a traveller, so a Start through
-/// the registry would succeed and then panic on the first tick. The
-/// constructor is public for the port tests; Start stays "not ported"
-/// until the traveller hook exists.
+/// Port constructor for compiled `WalkToBot` (not the panel's WalkTo
+/// card). **Not registered in `registry::factory`**: UI WalkTo is host
+/// nav, reserved at Load but never a compiled card. The constructor is
+/// public for the port tests only.
 pub fn factory() -> Box<dyn Script> {
     Box::new(WalkToBot::new(DEFAULT_TARGET, DEFAULT_RADIUS))
 }

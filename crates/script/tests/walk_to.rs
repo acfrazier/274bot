@@ -1,5 +1,6 @@
 // Walk-hook fixture: wraps `ctx.walk` so `script` keeps no `nav`
-// dependency. If the host has no traveller wired, `tick` errors instead
+// dependency. UI WalkTo (host nav) ≠ compiled WalkToBot. Without a wired
+// `ctx.walk` hook, `tick` errors instead
 // of faking arrival.
 
 use api::interact::Driver;
@@ -212,14 +213,13 @@ fn walk_rejected_retries_the_request_next_tick() {
 }
 
 #[test]
-fn factory_walk_to_is_not_registered_until_the_traveller_hook_exists() {
+fn factory_walk_to_is_not_a_compiled_card_ui_walk_to_is_host_nav() {
     // The port itself is real, but `registry::factory` must not expose it:
-    // Start would succeed and then panic on the first tick because the host
-    // sets `ctx.walk = None`. A "not ported" Start is the honest surface
-    // until host-play/panel wire a traveller into the ctx.
+    // UI WalkTo is host nav (panel picker + traveller), not compiled
+    // WalkToBot. Start through the registry must stay None.
     assert!(
         script::factory(CompiledId("WalkTo")).is_none(),
-        "WalkTo must not be startable while ctx.walk is always None"
+        "WalkTo must not be a compiled registry card (host nav only)"
     );
     // The constructor is still directly usable by the port's own tests.
     let bot = script::ported::walk_to::factory();

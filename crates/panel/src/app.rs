@@ -2826,7 +2826,7 @@ fn settings_window(ui: &Ui, session: &mut Session) {
 /// random: the guardian's per-profile toggles + lamp reward settings
 /// (guardian spec `ProfileSettings`). Checkboxes and the skill combo write
 /// straight through the vault upsert (`Session::set_random_settings`); the
-/// lamp itself stays inert until 0.1.5.
+/// lamp auto rubs through the guardian when enabled (`lamp_auto`).
 fn slot_random_section(ui: &Ui, session: &mut Session) {
     let Some(name) = session.focused_name() else {
         ui.text_wrapped("focus a profile to edit its random-event and lamp settings");
@@ -2847,7 +2847,7 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
     if ui.checkbox("lamp auto", &mut auto) {
         session.set_random_settings(&name, settings.random_events, &settings.lamp_skill, auto);
     }
-    ui.text_wrapped("claim a lamp reward without a confirmation click (the rub lands in 0.1.5).");
+    ui.text_wrapped("claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).");
     let mut skill = settings.lamp_skill.clone();
     if lamp_skill_combo(ui, &mut skill) {
         session.set_random_settings(&name, settings.random_events, &skill, settings.lamp_auto);

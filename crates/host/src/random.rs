@@ -487,7 +487,7 @@ const WRONG_TALK_MARKERS: &[&str] = &["trying to talk to", "It's not here for yo
 
 /// Trapped kinds: the player is stuck and the host must freeze the slot
 /// (maze / mime / strange box). **Not** `lamp`: Genie Talk-to is the
-/// solve, and a leftover lamp is inert XP until 0.1.5.
+/// solve; a leftover lamp is inert XP when `lamp_auto` is off.
 fn is_trapped(kind: RandomKind) -> bool {
     matches!(kind, RandomKind::Maze | RandomKind::Mime | RandomKind::Box)
 }

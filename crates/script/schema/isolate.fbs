@@ -77,8 +77,9 @@ table Snapshot {
   ours: bool;
 }
 
-// One shim interact request (the Bank/Banking queue), tagged by `op`:
-// "open-booth" | "open-stand" | "walk" | "deposit" | "withdraw" | "close".
+// One shim interact request (Bank/Banking + held-item ops), tagged by `op`:
+// "open-booth" | "open-stand" | "walk" | "deposit" | "withdraw" | "close"
+// | "held".
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;

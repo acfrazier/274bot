@@ -8,8 +8,9 @@ pub use api::random::{DetectedRandom, RandomClaim};
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
 /// off, mirroring `nav::router::FindOptions` — the `script` crate
 /// deliberately takes no `nav` dependency, so the host converts between
-/// the two at the hook boundary. `allow_bank_fetch` is a stub: the host
-/// passes it through, but nothing inserts a bank leg yet.
+/// the two at the hook boundary. `allow_bank_fetch` latches a host
+/// BankBudget session when true; JS `Banking.walk` still uses defaults
+/// (flag off).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FindOptions {
     pub allow_teleports: bool,
@@ -55,7 +56,8 @@ pub struct ScriptCtx<'a> {
     /// queued.
     pub walk: Option<&'a mut dyn FnMut(i32, i32, i32) -> bool>,
     /// Queue one walk with explicit [`FindOptions`] (teleports/wilderness
-    /// opt-in; `allow_bank_fetch` is a pass-through stub). Same contract
+    /// opt-in; `allow_bank_fetch` latches a host BankBudget session when
+    /// true). Same contract
     /// and return value as `walk`; the host shares one arm between the two
     /// hooks and converts the options.
     pub walk_with: Option<&'a mut dyn FnMut(i32, i32, i32, FindOptions) -> bool>,
@@ -453,7 +455,7 @@ mod tests {
         let o = FindOptions::default();
         assert!(!o.allow_teleports);
         assert!(!o.allow_wilderness);
-        assert!(!o.allow_bank_fetch, "the bank-fetch stub defaults off");
+        assert!(!o.allow_bank_fetch, "BankBudget defaults off");
     }
 
     #[test]
