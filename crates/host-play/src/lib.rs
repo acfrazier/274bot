@@ -135,6 +135,12 @@ pub struct SlotStatus {
     /// `client_frame` return each observe. The chrome contract both the
     /// panel and the TUI bind.
     pub random: RandomStatus,
+    /// The slot script's latest recorded paint frame (the Load isolate
+    /// forwards it after every tick that painted); `None` when the slot
+    /// has no script or the script has not painted. Copied from the
+    /// isolate each observe — the TUI shows it in the chat pane in place
+    /// of the game chat.
+    pub script_paint: Option<script::shim::ScriptPaint>,
 }
 
 impl SlotStatus {
@@ -314,6 +320,7 @@ impl Default for SlotStatus {
             bytes_out: 0,
             chat_head: String::new(),
             random: RandomStatus::default(),
+            script_paint: None,
         }
     }
 }
@@ -831,6 +838,17 @@ fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str)
         .unwrap()
         .get(name)
         .is_some_and(|s| s.state() == script::RunState::Running)
+}
+
+/// `name`'s slot script's latest paint frame, `None` for a slot with no
+/// script or a script that has not painted. Copied onto the status row
+/// each observe so the TUI can show paint-as-chat without a probe
+/// round-trip (the isolate forwards the frame after each tick).
+fn script_paint_of(
+    scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
+    name: &str,
+) -> Option<script::shim::ScriptPaint> {
+    scripts.lock().unwrap().get(name).and_then(|s| s.paint())
 }
 
 /// Per-uid nav state: the whole-world traveller plus the route it is
@@ -1829,6 +1847,10 @@ fn spawn_slot_thread(
                             if tick_edge {
                                 script_tick = script_tick.wrapping_add(1);
                             }
+                            // The slot's paint frame is read before the
+                            // status lock (scripts -> statuses is the only
+                            // order the two mutexes may nest).
+                            let paint = script_paint_of(&slot_scripts, name);
                             let (up, here) = {
                                 let mut all = slot_statuses.lock().unwrap();
                                 let mut up = false;
@@ -1843,6 +1865,7 @@ fn spawn_slot_thread(
                                         copy_stream_bytes(c, s);
                                         s.chat_head = c.chat_text[0].clone();
                                         s.random = status.clone();
+                                        s.script_paint = paint.clone();
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,

@@ -22,9 +22,13 @@ use script::RunState;
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::map::{Map, MapAction, MapView};
-use crate::script_shape::ScriptPane;
+use crate::script_shape::{ScriptClick, ScriptPane};
 use crate::settings::{SettingsKey, SettingsPane, SettingsState};
 use crate::status::StatusPane;
+
+/// How many Browse picker rows the script pane shows at once (the pane
+/// grows by this much; more names are reachable with j/k).
+const MAX_BROWSE_ROWS: usize = 4;
 
 /// One operator action the binary dispatches onto `host_play::Play`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +45,18 @@ pub enum AppAction {
     Chat(ChatAction),
     /// MultiBox: spawn every vault profile that is not running yet.
     SpawnAll,
+    /// Start the Browse-selected JS card `name` on the focused slot:
+    /// `tui-play` dispatches `Play::script_start_load` with the card's
+    /// source and shape.
+    ScriptStart(String),
+    /// Pause the focused slot's script (`Play::script_pause`).
+    ScriptPause,
+    /// Stop the focused slot's script (`Play::script_stop`).
+    ScriptStop,
+    /// Open the script Browse picker (registry card names).
+    ScriptBrowse,
+    /// Load the JS bot at `path` into the library and select it.
+    ScriptLoad(std::path::PathBuf),
     /// Nothing to dispatch.
     None,
 }
@@ -71,6 +87,14 @@ pub struct ChatData {
     pub options: Vec<ChatOptionView>,
     /// A BUTTON_CONTINUE component is up.
     pub has_continue: bool,
+    /// The focused slot's script paint frame (copied from the status row
+    /// each pump); the pane shows it instead of the ring while it is
+    /// non-empty.
+    pub script_paint: Option<script::shim::ScriptPaint>,
+    /// Operator toggle (`p`): show the game chat even while the script
+    /// paints. Preserved across pumps (it is operator state, not a
+    /// snapshot view).
+    pub show_game_chat: bool,
 }
 
 impl ChatData {
@@ -86,6 +110,8 @@ impl ChatData {
             modal_texts: &self.modal_texts,
             options: &self.options,
             has_continue: self.has_continue,
+            script_paint: self.script_paint.as_ref(),
+            show_game_chat: self.show_game_chat,
         }
     }
 }
@@ -128,6 +154,16 @@ pub struct TuiApp {
     pub settings_dirty: bool,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
+    /// The Browse-selected script card name (Start keys on it).
+    pub script_sel: Option<String>,
+    /// The registry card names the Browse picker lists (copied from the
+    /// session's JS library each pump).
+    pub script_names: Vec<String>,
+    /// The Browse picker is open.
+    pub script_browse_open: bool,
+    /// The Load path input is open (`script_load_path` is the typed path).
+    pub script_load_open: bool,
+    pub script_load_path: String,
     pub quit: bool,
     /// The last walk/settings error shown in the strip.
     pub error: Option<String>,
@@ -158,6 +194,11 @@ impl TuiApp {
             settings_state: SettingsState::default(),
             settings_dirty: false,
             script_state: RunState::Idle,
+            script_sel: None,
+            script_names: Vec::new(),
+            script_browse_open: false,
+            script_load_open: false,
+            script_load_path: String::new(),
             quit: false,
             error: None,
             chat_area: Rect::default(),
@@ -266,11 +307,20 @@ impl TuiApp {
         None
     }
 
-    /// One key event. Priority: global keys, the settings popup, the chat
-    /// modal (when open), then WASD + map keys.
+    /// One key event. Priority: script load input / browse picker,
+    /// global keys, the settings popup, the chat modal (when open), then
+    /// WASD + map keys.
     pub fn on_key(&mut self, key: KeyEvent) -> AppAction {
         if self.quit {
             return AppAction::None;
+        }
+        // The script pane's text inputs capture keys before the global
+        // shortcuts (typing a load path must not quit on `q`).
+        if self.script_load_open {
+            return self.script_load_on_key(key);
+        }
+        if self.script_browse_open {
+            return self.script_browse_on_key(key);
         }
         match key.code {
             KeyCode::Char('q') => {
@@ -282,6 +332,15 @@ impl TuiApp {
                 return AppAction::None;
             }
             KeyCode::Char('m') => return AppAction::SpawnAll,
+            KeyCode::Char('p') => {
+                // Paint-as-chat toggle: `p` shows the game chat while the
+                // focused script paints (a second press brings the paint
+                // back). No-op when nothing is painted.
+                if self.chat_data.script_paint.is_some() {
+                    self.chat_data.show_game_chat = !self.chat_data.show_game_chat;
+                }
+                return AppAction::None;
+            }
             KeyCode::Tab => {
                 return self
                     .cycle_focus()
@@ -308,9 +367,61 @@ impl TuiApp {
         self.map_on_key(key)
     }
 
+    /// The Load path input's keys: printable chars append, Backspace
+    /// deletes, Enter submits [`AppAction::ScriptLoad`], Esc cancels.
+    fn script_load_on_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.script_load_open = false;
+                self.script_load_path.clear();
+            }
+            KeyCode::Enter => {
+                let path = std::mem::take(&mut self.script_load_path);
+                self.script_load_open = false;
+                let trimmed = path.trim().to_string();
+                if !trimmed.is_empty() {
+                    return AppAction::ScriptLoad(std::path::PathBuf::from(trimmed));
+                }
+            }
+            KeyCode::Backspace => {
+                self.script_load_path.pop();
+            }
+            KeyCode::Char(c) => self.script_load_path.push(c),
+            _ => {}
+        }
+        AppAction::None
+    }
+
+    /// The Browse picker's keys: Up/Down (j/k) cycle the card selection,
+    /// Enter/Esc close the picker (the selection stays for Start).
+    fn script_browse_on_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_script_sel(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_script_sel(1),
+            KeyCode::Enter | KeyCode::Esc => self.script_browse_open = false,
+            _ => {}
+        }
+        AppAction::None
+    }
+
+    /// Move the Browse selection `step` cards through the registry names
+    /// (wrapping).
+    fn move_script_sel(&mut self, step: i32) {
+        if self.script_names.is_empty() {
+            return;
+        }
+        let pos = self
+            .script_sel
+            .as_deref()
+            .and_then(|s| self.script_names.iter().position(|n| n == s))
+            .unwrap_or(0);
+        let next = (pos as i32 + step).rem_euclid(self.script_names.len() as i32) as usize;
+        self.script_sel = Some(self.script_names[next].clone());
+    }
+
     /// One mouse click (crossterm col/row). The strip selects a slot; the
-    /// chat pane answers options / continues; the script pane answers
-    /// button labels the binary ignores (not wired this tag).
+    /// chat pane answers options / continues; the script pane answers its
+    /// buttons and the Browse picker rows.
     pub fn on_click(&mut self, col: u16, row: u16) -> AppAction {
         if self.settings_state.open {
             return AppAction::None;
@@ -333,22 +444,72 @@ impl TuiApp {
             }
         }
         if self.script_area.contains(Position::new(col, row)) {
-            // Shape only: the label is ignored until wired scripts land.
-            return AppAction::None;
+            return self.script_click(col, row);
         }
         AppAction::None
+    }
+
+    /// The script pane's clicks: Browse toggles the picker, Start emits
+    /// [`AppAction::ScriptStart`] with the selected card (an error when
+    /// nothing is selected), Pause/Stop emit their actions, Load opens
+    /// the path input, and picker rows store the selection.
+    fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+        let pane = ScriptPane::new(
+            self.script_state,
+            self.script_sel.as_deref(),
+            &self.script_names,
+            self.script_browse_open,
+            self.script_load_open,
+            &self.script_load_path,
+            None,
+        );
+        match pane.on_click(self.script_area, col, row) {
+            ScriptClick::Button("Browse") => {
+                self.script_browse_open = !self.script_browse_open;
+                AppAction::ScriptBrowse
+            }
+            ScriptClick::Button("Start") => match self.script_sel.clone() {
+                Some(name) => AppAction::ScriptStart(name),
+                None => {
+                    self.error = Some("script: browse to pick one first".into());
+                    AppAction::None
+                }
+            },
+            ScriptClick::Button("Pause") => AppAction::ScriptPause,
+            ScriptClick::Button("Stop") => AppAction::ScriptStop,
+            ScriptClick::Button("Load") => {
+                self.script_load_open = true;
+                AppAction::None
+            }
+            ScriptClick::Button(_) => AppAction::None,
+            ScriptClick::Pick(idx) => {
+                if let Some(name) = self.script_names.get(idx).cloned() {
+                    self.script_sel = Some(name);
+                }
+                AppAction::None
+            }
+            ScriptClick::None => AppAction::None,
+        }
     }
 
     /// Render the full layout (spec): slot strip, map, chat, status |
     /// inv/stats/locs, script shape, then the settings popup overlay.
     pub fn draw(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
+        // The script pane grows for the Browse picker rows and the Load
+        // path line (capped so a small terminal keeps map/status room).
+        let browse_rows = if self.script_browse_open {
+            self.script_names.len().min(MAX_BROWSE_ROWS)
+        } else {
+            0
+        };
+        let script_h = 4 + browse_rows as u16 + u16::from(self.script_load_open);
         let chunks = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(8),
             Constraint::Length(6),
             Constraint::Min(6),
-            Constraint::Length(4),
+            Constraint::Length(script_h),
         ])
         .split(area);
 
@@ -482,7 +643,15 @@ impl TuiApp {
     }
 
     fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let pane = ScriptPane::new(self.script_state, None);
+        let pane = ScriptPane::new(
+            self.script_state,
+            self.script_sel.as_deref(),
+            &self.script_names,
+            self.script_browse_open,
+            self.script_load_open,
+            &self.script_load_path,
+            None,
+        );
         frame.render_widget(pane, area);
     }
 }
@@ -828,6 +997,135 @@ mod tests {
         assert!(
             text.contains("welcome to 274"),
             "chat ring paints: {text:?}"
+        );
+    }
+
+    /// Task 13: with a Browse-selected JS card, clicking Start returns
+    /// `AppAction::ScriptStart` carrying the card name (tui-play starts the
+    /// load isolate on the focused slot).
+    #[test]
+    fn click_start_with_a_selected_card_returns_script_start() {
+        let mut app = TuiApp::new("274bot headless");
+        app.script_sel = Some("BoneBurier".into());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let area = app.script_area;
+        // Buttons are the second inner line; `[Start]` starts after
+        // `[Browse] ` (9 cells): inner.x + 9 = area.x + 10.
+        assert_eq!(
+            app.on_click(area.x + 10, area.y + 2),
+            AppAction::ScriptStart("BoneBurier".into()),
+            "Start with a selected card starts that card"
+        );
+    }
+
+    /// Task 13: the script pane's Browse button opens the picker and a
+    /// click on a card row stores the selection (Start then carries it).
+    #[test]
+    fn browse_rows_select_a_card_for_start() {
+        let mut app = TuiApp::new("274bot headless");
+        app.script_names = vec!["BoneBurier".into(), "MineRobber".into()];
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let area = app.script_area;
+        // The buttons row is the second inner line; `[Browse]` is first.
+        assert_eq!(
+            app.on_click(area.x + 1, area.y + 2),
+            AppAction::ScriptBrowse,
+            "Browse opens the picker"
+        );
+        assert!(app.script_browse_open);
+        // Re-draw: the picker grows the pane and the card rows start at
+        // the third inner line (area.y + 3).
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let area = app.script_area;
+        assert_eq!(app.on_click(area.x + 2, area.y + 3), AppAction::None);
+        assert_eq!(
+            app.script_sel.as_deref(),
+            Some("BoneBurier"),
+            "clicking the first card row selects it"
+        );
+        assert_eq!(
+            app.on_click(area.x + 10, area.y + 2),
+            AppAction::ScriptStart("BoneBurier".into()),
+            "Start starts the card picked in Browse"
+        );
+    }
+
+    /// Task 13: the Load button opens the path input; typed path + Enter
+    /// produces `AppAction::ScriptLoad` with that path.
+    #[test]
+    fn load_path_typed_and_enter_returns_script_load() {
+        let mut app = TuiApp::new("274bot headless");
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let area = app.script_area;
+        // `[Load]` starts after Browse(9) + Start(8) + Pause(8) + Stop(7):
+        // inner.x + 32 = area.x + 33.
+        assert_eq!(
+            app.on_click(area.x + 33, area.y + 2),
+            AppAction::None,
+            "Load opens the path input (no action until Enter)"
+        );
+        assert!(app.script_load_open);
+        for c in "/tmp/digbot.js".chars() {
+            app.on_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::ScriptLoad(std::path::PathBuf::from("/tmp/digbot.js")),
+            "Enter on the typed path loads that file"
+        );
+        assert!(!app.script_load_open, "load input closes after Enter");
+        // Esc cancels the input without an action.
+        app.on_click(area.x + 33, area.y + 2);
+        app.on_key(key(KeyCode::Char('x')));
+        assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+        assert!(!app.script_load_open);
+        assert!(app.script_load_path.is_empty(), "Esc clears the path");
+    }
+
+    /// Task 13: while the focused slot's script paints, the chat pane
+    /// shows the paint title and rows instead of the game chat; the `p`
+    /// key toggles back to the game chat.
+    #[test]
+    fn chat_pane_shows_script_paint_instead_of_the_game_chat() {
+        let mut app = TuiApp::new("274bot headless");
+        app.chat_data.lines = vec![line("last game chat line")];
+        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+            title: Some("BoneBurier — digging".into()),
+            accent: Some("#f3e6a2".into()),
+            lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
+        });
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("BoneBurier — digging"),
+            "the paint title paints: {text:?}"
+        );
+        assert!(
+            text.contains("Runtime: 1.2m | Buried: 3"),
+            "paint rows paint: {text:?}"
+        );
+        assert!(
+            !text.contains("last game chat line"),
+            "the game chat is replaced by the paint: {text:?}"
+        );
+        // The toggle key brings the game chat back.
+        assert_eq!(app.on_key(key(KeyCode::Char('p'))), AppAction::None);
+        assert!(app.chat_data.show_game_chat);
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("last game chat line"),
+            "p toggles back to the game chat: {text:?}"
+        );
+        assert!(
+            !text.contains("BoneBurier — digging"),
+            "the paint is hidden while toggled off: {text:?}"
         );
     }
 }

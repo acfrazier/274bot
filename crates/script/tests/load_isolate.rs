@@ -623,6 +623,33 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Task 13 — the host-side paint accessor returns the forwarded frame
+// without a probe round-trip (the isolate thread sends it after the tick).
+#[test]
+fn isolate_paint_accessor_returns_the_recorded_frame() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    loop() {
+        const p = Paint.begin(null, { accent: '#f3e6a2' });
+        p.title('BoneBurier — digging');
+        p.row('Runtime: 1.2m', 'Buried: 3');
+        p.end();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("paint bot loads");
+    iso.on_game_tick(1);
+    // The probe round-trips after the tick, so the forwarded Paint
+    // message is in the channel by the time it returns.
+    let _ = iso.probe("0");
+    let paint = iso.paint().expect("paint forwarded");
+    assert_eq!(paint.title.as_deref(), Some("BoneBurier — digging"));
+    assert_eq!(paint.accent.as_deref(), Some("#f3e6a2"));
+    assert_eq!(paint.lines, vec!["Runtime: 1.2m | Buried: 3"]);
+    iso.join();
+}
+
 // Task 3 — reader.worldTile / inventorySize and actions.closeModal are
 // thin stubs (no snapshot this tag: null / 0 / false); missing members
 // throw `not v1`.

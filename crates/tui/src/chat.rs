@@ -46,6 +46,12 @@ pub struct ChatView<'a> {
     pub options: &'a [ChatOptionView],
     /// A BUTTON_CONTINUE component is up.
     pub has_continue: bool,
+    /// The focused slot's script paint frame; the pane shows it instead
+    /// of the ring while it is non-empty (see [`ChatView::paint_showing`]).
+    pub script_paint: Option<&'a script::shim::ScriptPaint>,
+    /// Operator toggle: show the game chat even while the script paints
+    /// (the `p` key flips it).
+    pub show_game_chat: bool,
 }
 
 /// A chat modal is open when the snapshot shows dialog text, choices, or
@@ -53,6 +59,18 @@ pub struct ChatView<'a> {
 /// public ring to the dialogue.
 pub fn chat_modal_open(view: &ChatView<'_>) -> bool {
     !view.modal_texts.is_empty() || !view.options.is_empty() || view.has_continue
+}
+
+impl<'a> ChatView<'a> {
+    /// A recorded script paint is showing when the pane has one and the
+    /// operator has not toggled back to the game chat. A modal always
+    /// wins (the operator must answer the dialogue).
+    fn paint_showing(&self) -> bool {
+        !self.show_game_chat
+            && self
+                .script_paint
+                .is_some_and(|p| p.title.is_some() || !p.lines.is_empty())
+    }
 }
 
 /// The chat pane widget. Cheap to rebuild each frame (borrows only); the
@@ -152,6 +170,8 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let title = if chat_modal_open(&self.view) {
             "dialogue"
+        } else if self.view.paint_showing() {
+            "script paint"
         } else {
             "chat"
         };
@@ -177,6 +197,19 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
             } else if self.view.has_continue {
                 lines.push(Line::from(""));
                 lines.push(Line::from("— Space/Enter to continue —"));
+            }
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .render(inner, buf);
+        } else if let Some(paint) = self.view.script_paint.filter(|_| self.view.paint_showing()) {
+            // Paint-as-chat: the script's frame replaces the game ring
+            // (title + rows, rs2b0t paint shape). `p` toggles back.
+            let mut lines: Vec<Line> = Vec::new();
+            if let Some(t) = &paint.title {
+                lines.push(Line::from(t.clone()));
+            }
+            for row in &paint.lines {
+                lines.push(Line::from(row.clone()));
             }
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
@@ -256,6 +289,8 @@ mod tests {
             modal_texts: &[],
             options: &[],
             has_continue: false,
+            script_paint: None,
+            show_game_chat: false,
         };
         let text = render(view, 60, 5);
         assert!(text.contains("welcome to 274"), "ring text: {text:?}");
@@ -275,6 +310,8 @@ mod tests {
             modal_texts: &texts,
             options: &[],
             has_continue: true,
+            script_paint: None,
+            show_game_chat: false,
         };
         assert!(chat_modal_open(&view));
         let text = render(view, 60, 6);
@@ -300,6 +337,8 @@ mod tests {
             modal_texts: &texts,
             options: &[],
             has_continue: true,
+            script_paint: None,
+            show_game_chat: false,
         };
         let mut state = ChatState::default();
         let mut sent: Vec<ChatAction> = Vec::new();
@@ -319,6 +358,8 @@ mod tests {
             modal_texts: &["Which way?".into()],
             options: &opts,
             has_continue: false,
+            script_paint: None,
+            show_game_chat: false,
         };
         let mut state = ChatState::default();
         let mut sent: Vec<ChatAction> = Vec::new();
@@ -341,6 +382,8 @@ mod tests {
             modal_texts: &["Which way?".into()],
             options: &opts,
             has_continue: false,
+            script_paint: None,
+            show_game_chat: false,
         };
         let mut state = ChatState::default();
         let mut sent: Vec<ChatAction> = Vec::new();
@@ -372,6 +415,8 @@ mod tests {
             modal_texts: &["Which way?".into()],
             options: &opts,
             has_continue: true,
+            script_paint: None,
+            show_game_chat: false,
         };
         let mut state = ChatState::default();
         let mut sent: Vec<ChatAction> = Vec::new();
@@ -394,9 +439,54 @@ mod tests {
             modal_texts: &["Which way?".into()],
             options: &opts,
             has_continue: false,
+            script_paint: None,
+            show_game_chat: false,
         };
         let text = render(view, 60, 8);
         assert!(text.contains("Which way?"), "dialogue text: {text:?}");
         assert!(text.contains("No thanks"), "options paint: {text:?}");
+    }
+
+    /// Task 13: a recorded script paint replaces the chat ring (title +
+    /// rows), and the toggle re-shows the ring.
+    #[test]
+    fn script_paint_replaces_the_ring_until_toggled() {
+        let lines = vec![line("a game chat line")];
+        let paint = script::shim::ScriptPaint {
+            title: Some("BoneBurier — digging".into()),
+            accent: None,
+            lines: vec!["Runtime: 1.2m | Buried: 3".into()],
+        };
+        let view = ChatView {
+            lines: &lines,
+            modal_texts: &[],
+            options: &[],
+            has_continue: false,
+            script_paint: Some(&paint),
+            show_game_chat: false,
+        };
+        let text = render(view, 60, 5);
+        assert!(
+            text.contains("BoneBurier — digging"),
+            "paint title paints: {text:?}"
+        );
+        assert!(
+            text.contains("Runtime: 1.2m | Buried: 3"),
+            "paint rows paint: {text:?}"
+        );
+        assert!(
+            !text.contains("a game chat line"),
+            "the ring is replaced: {text:?}"
+        );
+        let toggled = ChatView {
+            script_paint: Some(&paint),
+            show_game_chat: true,
+            ..view
+        };
+        let text = render(toggled, 60, 5);
+        assert!(
+            text.contains("a game chat line"),
+            "the toggle shows the game chat: {text:?}"
+        );
     }
 }

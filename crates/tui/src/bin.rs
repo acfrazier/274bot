@@ -200,11 +200,20 @@ pub struct TuiSession {
     scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    /// The out-of-tree JS library: the Browse picker's cards and the
+    /// Load/Start source for the focused slot (same store the panel
+    /// persists to).
+    js: script::JsLibrary,
+    /// The `$RS2B0T` registry cards were filled into `js` once (first
+    /// Browse/Load, like the panel).
+    rs2b0t_filled: bool,
 }
 
 impl TuiSession {
     /// Empty session over the default engine options.
     fn new(options: PlayOptions) -> Self {
+        let mut js = script::JsLibrary::new(script::default_js_store());
+        let _ = js.restore(); // missing/broken store is not fatal here
         Self {
             play: None,
             vault: None,
@@ -219,6 +228,8 @@ impl TuiSession {
             nav_world: Arc::new(Mutex::new(None)),
             scenario: Arc::new(Mutex::new(None)),
             live_name: None,
+            js,
+            rs2b0t_filled: false,
         }
     }
 
@@ -471,6 +482,78 @@ impl TuiSession {
         }
     }
 
+    /// Fill the JS library's cards from the `$RS2B0T` registry once
+    /// (first Browse/Load, like the panel). Errors are debug-only.
+    fn fill_rs2b0t_cards_once(&mut self) {
+        if self.rs2b0t_filled {
+            return;
+        }
+        self.rs2b0t_filled = true;
+        if let Some(root) = script::rs2b0t_root() {
+            if let Err(e) = self
+                .js
+                .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
+            {
+                if std::env::var("BOT_DEBUG").is_ok() {
+                    eprintln!("[tui-play] $RS2B0T registry: {e}");
+                }
+            }
+        }
+    }
+
+    /// Start the Browse-selected card (a loaded JS bot) on the focused
+    /// slot: `Play::script_start_load` with the card's source and shape
+    /// (the same dispatch the panel uses). Errors land on the strip.
+    fn script_start(&mut self, app: &mut TuiApp, card: &str) {
+        let Some(name) = app.focused_name() else {
+            app.error = Some("script: no focused profile".into());
+            return;
+        };
+        let result = match &self.play {
+            Some(play) => match self.js.get(card) {
+                Some(card) => play.script_start_load(&name, card.source.clone(), card.shape),
+                None => Err(format!("no loaded script: {card}")),
+            },
+            None => Err("no play".to_string()),
+        };
+        app.error = match result {
+            Ok(()) => None,
+            Err(e) => Some(format!("script: {e}")),
+        };
+    }
+
+    /// Pause the focused slot's script (no-op without a focused slot).
+    fn script_pause(&mut self, app: &mut TuiApp) {
+        let Some(name) = app.focused_name() else {
+            return;
+        };
+        if let Some(play) = &self.play {
+            play.script_pause(&name);
+        }
+    }
+
+    /// Stop the focused slot's script.
+    fn script_stop(&mut self, app: &mut TuiApp) {
+        let Some(name) = app.focused_name() else {
+            return;
+        };
+        if let Some(play) = &self.play {
+            play.script_stop(&name);
+        }
+    }
+
+    /// Load a local JS bot file into the library, select it for Start,
+    /// and persist the store. Errors land on the strip.
+    fn script_load(&mut self, app: &mut TuiApp, path: &str) {
+        match self.js.load(Path::new(path)) {
+            Ok(card) => {
+                app.script_sel = Some(card.name);
+                app.error = None;
+            }
+            Err(e) => app.error = Some(format!("script: {e}")),
+        }
+    }
+
     /// Persist the settings popup's changes onto the focused vault
     /// profile (the operator vault; `--live`'s temp vault is ephemeral)
     /// and mirror `random_events` onto a running slot's arm.
@@ -505,6 +588,9 @@ impl TuiSession {
         }
         app.names = names;
         app.statuses = statuses;
+        // The script pane's Browse picker lists the library cards
+        // (persisted store + filled $RS2B0T registry cards).
+        app.script_names = self.js.cards().iter().map(|c| c.name.clone()).collect();
         // The map paints `Play`'s packed collision, not the live loc
         // snapshot. Copy the session world each pump (an `Arc` clone)
         // so a loaded pack is not stuck behind the empty-state title.
@@ -526,12 +612,16 @@ impl TuiSession {
         }
 
         if let Some(name) = &focused {
+            // The paint-as-chat toggle is operator state: rebuild the
+            // pane data without losing it across pumps.
+            let show_game_chat = app.chat_data.show_game_chat;
             // Borrow the focused slot's snapshot under the lock and copy
             // the small views the panes need (GameSnapshot is not Clone).
             let snap = self.snapshots.lock().unwrap();
             match snap.get(name) {
                 Some(s) => {
                     app.chat_data = chat_data_from(s);
+                    app.chat_data.show_game_chat = show_game_chat;
                     app.inv_items = s
                         .inventory()
                         .iter()
@@ -562,12 +652,19 @@ impl TuiSession {
                     // A slot with no published snapshot must not show the
                     // previous focused slot's chat / inventory.
                     app.chat_data = ChatData::default();
+                    app.chat_data.show_game_chat = show_game_chat;
                     app.inv_items.clear();
                     app.stats_rows.clear();
                     app.locs_near.clear();
                 }
             }
             drop(snap);
+            // The script's paint frame rides the status row (copied from
+            // the isolate each observe); the chat pane shows it in place
+            // of the game chat while it is non-empty.
+            app.chat_data.script_paint = app
+                .focused_status()
+                .and_then(|st| st.script_paint.clone());
             app.route = self
                 .travellers
                 .lock()
@@ -622,6 +719,10 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
         modal_texts: s.chat_modal_texts().to_vec(),
         options: s.chat_options().to_vec(),
         has_continue: s.chat_continue_component_id() != -1,
+        // The paint rides the status row, not the snapshot; the pump
+        // patches it in, and the toggle is operator state.
+        script_paint: None,
+        show_game_chat: false,
     }
 }
 
@@ -743,23 +844,14 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             .map_err(|e| e.to_string())?;
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
-                Event::Key(k) if k.kind == KeyEventKind::Press => match app.on_key(k) {
-                    AppAction::Quit => app.quit = true,
-                    AppAction::Focus(name) => session.focus(&name),
-                    AppAction::ArmWalk(tile) => session.arm_walk_on(&mut app, tile),
-                    AppAction::WalkTile(tile) => session.wasd_walk(&app, tile),
-                    AppAction::Chat(action) => session.chat_send(&app, action),
-                    AppAction::SpawnAll => multibox_key(&mut session, &mut app),
-                    AppAction::None => {}
-                },
+                Event::Key(k) if k.kind == KeyEventKind::Press => {
+                    let action = app.on_key(k);
+                    dispatch(&mut session, &mut app, action);
+                }
                 Event::Mouse(m) => {
                     if let MouseEventKind::Down(_) = m.kind {
-                        match app.on_click(m.column, m.row) {
-                            AppAction::Chat(action) => session.chat_send(&app, action),
-                            AppAction::Focus(name) => session.focus(&name),
-                            AppAction::Quit => app.quit = true,
-                            _ => {}
-                        }
+                        let action = app.on_click(m.column, m.row);
+                        dispatch(&mut session, &mut app, action);
                     }
                 }
                 _ => {}
@@ -778,6 +870,27 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     )
     .ok();
     result
+}
+
+/// Route one [`AppAction`] onto the session: map walks arm through
+/// `host_play::arm_walk_on`, chat and WASD go through [`WireCmd`], the
+/// script actions dispatch `Play::script_start_load` / pause / stop /
+/// the JS library, and the settings popup persists on the next pump.
+fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
+    match action {
+        AppAction::Quit => app.quit = true,
+        AppAction::Focus(name) => session.focus(&name),
+        AppAction::ArmWalk(tile) => session.arm_walk_on(app, tile),
+        AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
+        AppAction::Chat(action) => session.chat_send(app, action),
+        AppAction::SpawnAll => multibox_key(session, app),
+        AppAction::ScriptStart(card) => session.script_start(app, &card),
+        AppAction::ScriptPause => session.script_pause(app),
+        AppAction::ScriptStop => session.script_stop(app),
+        AppAction::ScriptBrowse => session.fill_rs2b0t_cards_once(),
+        AppAction::ScriptLoad(path) => session.script_load(app, &path.to_string_lossy()),
+        AppAction::None => {}
+    }
 }
 
 /// The `m` key spawns the rest of the MultiBox wall.

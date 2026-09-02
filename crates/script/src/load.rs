@@ -350,6 +350,12 @@ mod isolate {
         /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
         /// forwarded after the tick's JS finished (parked or not).
         Interact(Vec<u8>),
+        /// The tick's recorded paint frame (`Paint.begin` … `end()` on the
+        /// host handle), forwarded for the script paint views. The host
+        /// reads the latest frame off the handle without a probe
+        /// round-trip. Null frames are not forwarded — a script that
+        /// stops painting keeps its last frame.
+        Paint(serde_json::Value),
         /// The highest tick the thread has fully processed (ran or skipped).
         Completed(u64),
     }
@@ -365,6 +371,10 @@ mod isolate {
         /// Interact requests forwarded by the tick thread (the shim
         /// `Bank`/`Banking` queue), drained by the host like logs.
         interacts: Mutex<Vec<crate::shim::InteractReq>>,
+        /// The latest paint frame the tick thread forwarded (a
+        /// [`crate::shim::ScriptPaint`] decoded off the host handle after
+        /// each tick), read by the script paint views.
+        paint: Mutex<Option<crate::shim::ScriptPaint>>,
         handle: Option<JoinHandle<()>>,
         /// Thread-safe handle used to terminate a runaway tick from this
         /// side of the channel. The terminate stays armed until the isolate
@@ -403,6 +413,7 @@ mod isolate {
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
                 interacts: Mutex::new(Vec::new()),
+                paint: Mutex::new(None),
                 handle: Some(handle),
                 terminate,
                 in_flight: Mutex::new(None),
@@ -519,6 +530,15 @@ mod isolate {
             std::mem::take(&mut *self.interacts.lock().unwrap())
         }
 
+        /// The latest recorded paint frame (the tick thread forwards the
+        /// host handle's `paint` record after every tick that painted).
+        /// `None` when the script has not painted yet. No probe
+        /// round-trip — the host reads this every frame.
+        pub fn paint(&self) -> Option<crate::shim::ScriptPaint> {
+            self.pump_logs();
+            self.paint.lock().unwrap().clone()
+        }
+
         /// Stop the isolate: tell the thread to exit, interrupt any running
         /// JS so the join cannot hang, and wait for the thread (the Runtime
         /// is dropped there). The wait is bounded by [`Self::JOIN_TIMEOUT`]:
@@ -567,6 +587,13 @@ mod isolate {
                                     .unwrap()
                                     .push(format!("interact: {e}"))
                             }
+                        }
+                    }
+                    ThreadMsg::Paint(value) => {
+                        // The latest frame wins; a malformed record is
+                        // dropped silently (our own shim writes it).
+                        if let Ok(paint) = serde_json::from_value(value) {
+                            *self.paint.lock().unwrap() = Some(paint);
                         }
                     }
                     ThreadMsg::Completed(up_to) => {
@@ -1168,6 +1195,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         }
                     }
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
+                    // Forward the tick's recorded paint frame
+                    // (`Paint.begin` … `end()` on the host handle) to the
+                    // host, so the script paint views read it without a
+                    // probe round-trip. Only non-empty frames are sent —
+                    // a tick that painted nothing leaves the last frame
+                    // in place (Stop drops the whole isolate).
+                    let paint: Result<serde_json::Value, rustyscript::Error> =
+                        runtime.eval("globalThis.__rs2b0t_host.paint || null");
+                    if let Ok(value) = paint {
+                        if !value.is_null() {
+                            let _ = out.send(ThreadMsg::Paint(value));
+                        }
+                    }
                     // ScriptRunner.stop signal: the script flags the host
                     // handle. The isolate treats it like `IsolateCmd::Stop`
                     // — fold the completed tick, log the stop, and break the

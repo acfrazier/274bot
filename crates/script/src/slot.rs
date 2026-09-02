@@ -227,6 +227,16 @@ impl SlotScript {
         }
     }
 
+    /// The slot script's latest recorded paint frame (a Load isolate's
+    /// host handle forwards it after every tick that painted); `None` for
+    /// a compiled script or a slot that has not painted. The host copies
+    /// it onto the status row so the TUI/panel views can show it in the
+    /// chat pane in place of the game chat.
+    #[cfg(feature = "load")]
+    pub fn paint(&self) -> Option<crate::shim::ScriptPaint> {
+        self.load.as_ref().and_then(|iso| iso.paint())
+    }
+
     /// The bot instance's random-ignore list (a Load isolate's
     /// `inst.ignoredRandoms?.()`, default `[]`; empty for a compiled
     /// script — there is no instance). The host's knock path reads it
