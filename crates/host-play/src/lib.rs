@@ -120,6 +120,26 @@ pub fn mint_live_entries(names: &[String]) -> Vec<(String, String)> {
     mint_live_entries_for_target(names, client::bot_target())
 }
 
+/// Whether `host` is loopback (local engine RSA is safe).
+pub fn is_loopback_host(host: &str) -> bool {
+    matches!(
+        host.trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
+}
+
+/// Refuse a non-loopback play host while local (well-known Java) RSA is active.
+pub fn validate_play_host(host: &str, target: BotTarget) -> Result<(), &'static str> {
+    if target == BotTarget::Local && !is_loopback_host(host) {
+        Err("host-play: non-loopback --host requires --prod (local RSA is loopback-only)")
+    } else {
+        Ok(())
+    }
+}
+
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
 /// Per-frame hook: `(client, username, hold)`. `hold` is the guardian's
 /// published hold from the previous frame (same lag as `step_nav_bot`) —
@@ -2799,6 +2819,25 @@ mod tests {
         let pass = live_vault_passphrase_for(client::BotTarget::Prod);
         assert_ne!(pass, "bot");
         assert!(pass.len() >= 16, "prod temp vault passphrase: {pass}");
+    }
+
+    #[test]
+    fn validate_play_host_loopback_ok_with_local_rsa() {
+        assert!(validate_play_host("127.0.0.1", BotTarget::Local).is_ok());
+        assert!(validate_play_host("localhost", BotTarget::Local).is_ok());
+        assert!(validate_play_host("::1", BotTarget::Local).is_ok());
+    }
+
+    #[test]
+    fn validate_play_host_non_loopback_err_with_local_rsa() {
+        assert!(validate_play_host("attacker.example", BotTarget::Local).is_err());
+        assert!(validate_play_host("w1.rs2b2t.com", BotTarget::Local).is_err());
+    }
+
+    #[test]
+    fn validate_play_host_non_loopback_ok_with_prod_rsa() {
+        assert!(validate_play_host("attacker.example", BotTarget::Prod).is_ok());
+        assert!(validate_play_host("w1.rs2b2t.com", BotTarget::Prod).is_ok());
     }
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {

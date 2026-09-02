@@ -88,6 +88,10 @@ fn parse_args() -> Args {
 
 fn main() -> ExitCode {
     let args = parse_args();
+    if let Err(msg) = host_play::validate_play_host(&args.host, client::bot_target()) {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
     let Some(pass) = args.pass else {
         eprintln!("host-play: no vault passphrase (set BOT_VAULT_PASS or --vault-pass)");
         return ExitCode::FAILURE;
