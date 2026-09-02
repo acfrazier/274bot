@@ -1318,7 +1318,7 @@ fn encode_snapshot_masked_into(
         None
     };
     let chat_text_off = if mask.chat_text {
-        input.chat_text.map(|t| b.create_string(t))
+        Some(b.create_string(input.chat_text.unwrap_or("")))
     } else {
         None
     };
@@ -1353,7 +1353,7 @@ fn encode_snapshot_masked_into(
         None
     };
     let my_name_off = if mask.my_name {
-        input.my_name.map(|n| b.create_string(n))
+        Some(b.create_string(input.my_name.unwrap_or("")))
     } else {
         None
     };
@@ -1422,9 +1422,7 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_CHAT_CONTINUE, input.chat_continue);
     }
     if mask.chat_text {
-        if let Some(off) = chat_text_off {
-            b.push_slot_always(VT_SNAP_CHAT_TEXT, off);
-        }
+        b.push_slot_always(VT_SNAP_CHAT_TEXT, chat_text_off.expect("mask checked"));
     }
     if mask.chat_options {
         b.push_slot_always(VT_SNAP_CHAT_OPTIONS, chat_options_off.expect("mask checked"));
@@ -1448,9 +1446,7 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_RETALIATE, input.retaliate_enabled);
     }
     if mask.my_name {
-        if let Some(off) = my_name_off {
-            b.push_slot_always(VT_SNAP_MY_NAME, off);
-        }
+        b.push_slot_always(VT_SNAP_MY_NAME, my_name_off.expect("mask checked"));
     }
     if mask.in_combat {
         b.push_slot_always(VT_SNAP_IN_COMBAT, input.in_combat);
@@ -2430,6 +2426,38 @@ mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    /// Task 8 fix — delta with mask set clears optional `chat_text`.
+    #[test]
+    fn optional_string_delta_clears_chat_text() {
+        let mut input = empty_input(1);
+        input.chat_text = Some("hi");
+        let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert_eq!(kf.chat_text(), Some("hi"));
+
+        input.chat_text = None;
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_chat_text(), "cleared chat_text is present in delta");
+        assert_eq!(view.chat_text(), Some(""), "None encodes as empty string");
+    }
+
+    /// Task 8 fix — delta with mask set clears optional `my_name`.
+    #[test]
+    fn optional_string_delta_clears_my_name() {
+        let mut input = empty_input(1);
+        input.my_name = Some("Alice");
+        let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert_eq!(kf.my_name(), Some("Alice"));
+
+        input.my_name = None;
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_my_name(), "cleared my_name is present in delta");
+        assert_eq!(view.my_name(), Some(""), "None encodes as empty string");
     }
 
     /// One reusable builder encodes snapshot, then paint, then interact —

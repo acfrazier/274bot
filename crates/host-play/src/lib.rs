@@ -901,10 +901,13 @@ fn dispatch_script_interact(
             InteractReq::Npc { name, action, index } => {
                 let wanted = name.to_lowercase();
                 let npc = snapshot.npcs().iter().find(|n| {
-                    index.is_some_and(|i| n.index as i32 == i)
-                        || n.name
+                    if let Some(i) = index {
+                        n.index as i32 == i
+                    } else {
+                        n.name
                             .as_deref()
                             .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                    }
                 });
                 if let Some(npc) = npc {
                     wrote |= matches!(
@@ -1073,12 +1076,15 @@ fn resolve_op_target<'a>(
         "npc" => {
             let wanted = target_name.map(|n| n.to_lowercase());
             snapshot.npcs().iter().find(|n| {
-                index.is_some_and(|i| n.index as i32 == i)
-                    || wanted.as_ref().is_some_and(|w| {
+                if let Some(i) = index {
+                    n.index as i32 == i
+                } else {
+                    wanted.as_ref().is_some_and(|w| {
                         n.name
                             .as_deref()
                             .is_some_and(|n| n.eq_ignore_ascii_case(w))
                     })
+                }
             }).map(OpTarget::Npc)
         }
         "loc" => snapshot
@@ -4851,6 +4857,73 @@ mod tests {
             rec.menus,
             vec![(0, MiniMenuAction::OP_NPC1, 7, 0, 0)],
             "Pick is the first npc op"
+        );
+    }
+
+    /// Task 8 fix — when `index` is supplied, match that slot only even if
+    /// an earlier same-named NPC would win by name.
+    #[test]
+    fn dispatch_script_interact_npc_index_beats_same_name() {
+        use client::client::MiniMenuAction;
+        use client::config::NpcType;
+        use client::dash3d::ClientNpc;
+
+        let mut c = nav_client();
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(5, 5));
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.npcs.len() <= 9 {
+                cache.npcs.push(NpcType::default());
+            }
+            cache.npcs[9] = NpcType {
+                id: 9,
+                name: "Goblin".into(),
+                op: vec![Some("Pick".into()), Some("Examine".into())],
+                ..Default::default()
+            };
+        }
+        let mut first = ClientNpc::at(6, 6);
+        first.r#type = Some(9);
+        c.npc[3] = Some(Box::new(first));
+        let mut second = ClientNpc::at(7, 7);
+        second.r#type = Some(9);
+        c.npc[7] = Some(Box::new(second));
+        c.npc_ids = vec![3, 7];
+        c.npc_count = 2;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let goblins: Vec<_> = snap
+            .npcs()
+            .iter()
+            .filter(|n| n.name.as_deref() == Some("Goblin"))
+            .collect();
+        assert_eq!(goblins.len(), 2, "two same-named npcs seeded");
+
+        let (navs, world) = empty_nav();
+        let mut rec = GuardRec::default();
+        assert!(dispatch_script_interact(
+            &mut rec,
+            &snap,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Npc {
+                name: "Goblin".into(),
+                action: "Pick".into(),
+                index: Some(7),
+            }],
+        ));
+        assert_eq!(
+            rec.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 7, 0, 0)],
+            "indexed npc wins over earlier same name"
         );
     }
 
