@@ -24,6 +24,7 @@ use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
 use crate::overlay::{draw_focused_queue_card, PathOverlay};
+use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
 use crate::rail::{
@@ -109,6 +110,8 @@ struct PanelState {
     last_upload: Option<(String, u64)>,
     /// Cached queue-card overlay for the focused slot (see `overlay`).
     overlay: PathOverlay,
+    /// Cached script-paint overlay over the Game chatbox (see `paint`).
+    paint: PaintOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
     /// Last 1 Hz process sample `(instant, cpu secs)`; `None` before the
@@ -447,6 +450,7 @@ impl Default for PanelState {
             docked_game_title: String::new(),
             last_upload: None,
             overlay: PathOverlay::new(),
+            paint: PaintOverlay::new(),
             views: HashMap::new(),
             last_proc: None,
             res_cpu: Metric::Measuring,
@@ -1009,12 +1013,17 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
+        let min = ui.item_rect_min();
         // Queue-card overlay: the armed route's remaining tiles are
         // painted by the client's 3D renderer and on the pack map, so the
         // Image only carries the focused slot's queue card.
-        state
-            .overlay
-            .frame(ui, &state.session, ui.item_rect_min(), size);
+        state.overlay.frame(ui, &state.session, min, size);
+        // Script-paint overlay: the focused slot's paint renders in an
+        // ImGui window over the chatbox rect — never on the game texture.
+        let statuses = state.session.statuses();
+        if let Some(slot) = focused_slot(&state.session, &statuses) {
+            state.paint.frame(ui, slot.script_paint.as_ref(), min, size);
+        }
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
         // also None).
@@ -1116,6 +1125,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             }
             if is_focused {
                 draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
+                if let Some(slot) = statuses.iter().find(|s| s.username == *name) {
+                    state.paint.frame(ui, slot.script_paint.as_ref(), ui.item_rect_min(), size);
+                }
             }
         }
         if cap_fold {

@@ -6,6 +6,7 @@ pub mod game_view;
 pub mod grid;
 pub mod nav_settings;
 pub mod overlay;
+pub mod paint;
 pub mod picker;
 pub mod queue_card;
 pub mod rail;
