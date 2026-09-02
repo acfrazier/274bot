@@ -7,7 +7,9 @@
 
 use std::collections::HashMap;
 
-use api::interact::{press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
+pub mod maze;
+
+use api::interact::{op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
 use api::query::npc_by_index;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext};
 use vault::ProfileSettings;
@@ -565,6 +567,8 @@ pub struct Guardian {
     /// waits for it to drop (the answer consumed a box) before handling
     /// the next held box (rs2b0t waits on the count drop the same way).
     box_answer_count: Option<i32>,
+    /// Maze: the active solve state, None while trapped without a route.
+    maze: Option<maze::MazeSolve>,
 }
 
 impl Default for Guardian {
@@ -592,6 +596,7 @@ impl Guardian {
             mime_last_seen: None,
             mime_answered: false,
             box_answer_count: None,
+            maze: None,
         }
     }
 
@@ -768,10 +773,6 @@ impl Guardian {
             }
             return;
         }
-        if matches!(ev.kind, RandomKind::Maze) {
-            // The maze solver is a later task; the square keeps holding.
-            return;
-        }
         self.acting = true;
         self.acting_kind = ev.kind;
         match ev.kind {
@@ -825,7 +826,7 @@ impl Guardian {
             RandomKind::LostTool => self.step_lost_tool(driver, snap),
             RandomKind::Mime => self.step_mime(driver, snap),
             RandomKind::Box => self.step_box(driver, snap),
-            _ => self.acting = false,
+            RandomKind::Maze => self.step_maze(driver, snap),
         }
     }
 
@@ -861,6 +862,7 @@ impl Guardian {
         self.mime_last_seen = None;
         self.mime_answered = false;
         self.box_answer_count = None;
+        self.maze = None;
     }
 
     /// Talk-to, gated on range: an NPC further than Chebyshev 1 gets a
@@ -1054,6 +1056,60 @@ impl Guardian {
         }
     }
 
+    /// One maze solver step per tick (rs2b0t `solveMaze`): solve the
+    /// route from the observed tile, then drive the door / shrine phase
+    /// machine. No route → log and keep the trapped hold (never replay a
+    /// different spawn's route). The hold lifts on its own once the
+    /// player is no longer on the maze square.
+    fn step_maze<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
+        let Some((px, pz, _)) = snap.tile() else {
+            self.acting = false;
+            return;
+        };
+        if (px >> 6, pz >> 6) != maze::MAZE_SQUARE {
+            self.acting = false;
+            return;
+        }
+        if self.maze.is_none() {
+            let me = (px, pz);
+            match maze::select_route(maze::graph(), me) {
+                Some(doors) => {
+                    if crate::debug_enabled() {
+                        eprintln!(
+                            "[host] maze: spawn ({px},{pz}) -> {} doors, first ({},{})",
+                            doors.len(),
+                            doors[0].0,
+                            doors[0].1
+                        );
+                    }
+                    self.maze = Some(maze::MazeSolve::new(doors));
+                }
+                None => {
+                    if crate::debug_enabled() {
+                        eprintln!(
+                            "[host] maze: no route solvable from ({px},{pz}); the layout does not reach the shrine from here"
+                        );
+                    }
+                }
+            }
+            return;
+        }
+        let keep = step_maze_phase(
+            self.maze.as_mut().expect("checked above"),
+            driver,
+            snap,
+            (px, pz),
+        );
+        if !keep {
+            if crate::debug_enabled() {
+                eprintln!(
+                    "[host] maze: pass gave up; restarting the route from ({px},{pz})"
+                );
+            }
+            self.maze = None;
+        }
+    }
+
     /// Lamp auto-use: Rub the held lamp, then answer the skill dialog
     /// with the vault `lamp_skill` button. `lamp_auto` off keeps the
     /// 0.1.2 behavior (detect, no op, no hold).
@@ -1206,6 +1262,226 @@ impl Guardian {
         self.in_flight = false;
         self.in_flight_index = None;
         self.continues = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Maze act machine (rs2b0t `solveMaze` loop body, tick-driven).
+// ---------------------------------------------------------------------------
+
+/// One `try_move` toward `target`; false when the walk is stuck
+/// ([`maze::WALK_LIMIT`] sends without a tile change — the door is
+/// walled off).
+fn maze_walk_step<D: Driver>(
+    st: &mut maze::MazeSolve,
+    driver: &mut D,
+    me: (i32, i32),
+    target: (i32, i32),
+) -> bool {
+    if st.walk_from != Some(me) {
+        st.walk_from = Some(me);
+        st.walk_sends = 0;
+    }
+    st.walk_sends += 1;
+    if st.walk_sends > maze::WALK_LIMIT {
+        return false;
+    }
+    walk(driver, target.0, target.1);
+    true
+}
+
+/// `oploc` Open on a route door (ids 3628–3632 at that tile).
+fn maze_send_open<D: Driver>(driver: &mut D, tile: (i32, i32)) {
+    let loc_id = maze::graph()
+        .door_id
+        .get(&tile)
+        .copied()
+        .unwrap_or(maze::MAZE_DOOR_IDS[0]);
+    op_loc(driver, tile.0, tile.1, loc_id);
+}
+
+/// `oploc` Touch on the shrine (loc 3634) and wait to leave the square.
+fn maze_send_touch<D: Driver>(st: &mut maze::MazeSolve, driver: &mut D, pass: u32) {
+    op_loc(
+        driver,
+        maze::MAZE_SHRINE.0,
+        maze::MAZE_SHRINE.1,
+        maze::MAZE_SHRINE_LOC,
+    );
+    st.phase = maze::MazePhase::TouchWait;
+    st.touch_pass = pass;
+    st.wait_ticks = 0;
+}
+
+/// One maze phase step (rs2b0t `solveMaze` loop body). Returns false
+/// when the pass gives up and the route restarts.
+fn step_maze_phase<D: Driver>(
+    st: &mut maze::MazeSolve,
+    driver: &mut D,
+    snap: &GameSnapshot,
+    me: (i32, i32),
+) -> bool {
+    // A mesbox/briefing chat is drained first; while it is up nothing
+    // else happens. A chat during an in-flight open is the wrong-door
+    // refusal mesbox (rs2b0t clears it, then continues the route).
+    if chat_is_open(snap) {
+        if matches!(
+            st.phase,
+            maze::MazePhase::OpenDoor { .. }
+                | maze::MazePhase::OpenResync { .. }
+                | maze::MazePhase::OpenShrine { .. }
+        ) {
+            st.refused = true;
+        }
+        if st.continues < maze::MESBOX_LIMIT {
+            st.continues += 1;
+            let mut ix = Interactions::new(snap, driver);
+            let _ = ix.continue_dialog();
+        }
+        return true;
+    }
+    st.continues = 0;
+
+    match st.phase {
+        maze::MazePhase::WalkDoor => {
+            let Some(door) = st.target() else {
+                // Route exhausted: the chamber door is next.
+                st.phase = maze::MazePhase::ShrineDoor;
+                st.touch_pass = 0;
+                return true;
+            };
+            if cheb(me, door) <= 1 {
+                maze_send_open(driver, door);
+                st.phase = maze::MazePhase::OpenDoor { from: me };
+                return true;
+            }
+            if !maze_walk_step(st, driver, me, door) {
+                // Walled off: step back through the previous door.
+                if st.next == 0 || st.resyncs >= maze::MAX_RESYNCS {
+                    return false;
+                }
+                st.resyncs += 1;
+                st.walk_from = None;
+                st.walk_sends = 0;
+                st.wait_ticks = 0;
+                st.phase = maze::MazePhase::Resync;
+            }
+            true
+        }
+        maze::MazePhase::OpenDoor { from } => {
+            if cheb(me, from) >= 2 || st.refused || st.wait_ticks >= maze::OPEN_WAIT {
+                st.refused = false;
+                st.next += 1;
+                st.phase = maze::MazePhase::WalkDoor;
+                st.walk_from = None;
+                st.walk_sends = 0;
+                st.wait_ticks = 0;
+                return true;
+            }
+            st.wait_ticks += 1;
+            true
+        }
+        maze::MazePhase::Resync => {
+            let Some(prev_door) = st.target() else {
+                return false;
+            };
+            if cheb(me, prev_door) <= 1 {
+                maze_send_open(driver, prev_door);
+                st.phase = maze::MazePhase::OpenResync { from: me };
+                return true;
+            }
+            if !maze_walk_step(st, driver, me, prev_door) {
+                // The previous door is walled off too: retry the route
+                // door, which re-counts a resync (rs2b0t the same way).
+                st.phase = maze::MazePhase::WalkDoor;
+                st.walk_from = None;
+                st.walk_sends = 0;
+                st.wait_ticks = 0;
+            }
+            true
+        }
+        maze::MazePhase::OpenResync { from } => {
+            if cheb(me, from) >= 2 || st.refused || st.wait_ticks >= maze::OPEN_WAIT {
+                st.refused = false;
+                // Back on the route: retry the walled-off door.
+                st.phase = maze::MazePhase::WalkDoor;
+                st.walk_from = None;
+                st.walk_sends = 0;
+                st.wait_ticks = 0;
+                return true;
+            }
+            st.wait_ticks += 1;
+            true
+        }
+        maze::MazePhase::ShrineDoor => {
+            if cheb(me, maze::MAZE_SHRINE_DOOR) <= 1 {
+                maze_send_open(driver, maze::MAZE_SHRINE_DOOR);
+                st.phase = maze::MazePhase::OpenShrine { from: me };
+                return true;
+            }
+            if !maze_walk_step(st, driver, me, maze::MAZE_SHRINE_DOOR) {
+                // The chamber door is unreachable: give up this pass.
+                return false;
+            }
+            true
+        }
+        maze::MazePhase::OpenShrine { from } => {
+            if cheb(me, from) >= 2 || st.refused || st.wait_ticks >= maze::OPEN_WAIT {
+                st.refused = false;
+                st.phase = maze::MazePhase::Touch { pass: st.touch_pass };
+                st.walk_from = None;
+                st.walk_sends = 0;
+                st.wait_ticks = 0;
+                return true;
+            }
+            st.wait_ticks += 1;
+            true
+        }
+        maze::MazePhase::Touch { pass } => {
+            if pass >= maze::TOUCH_LIMIT {
+                // Still inside after all passes: restart the route.
+                return false;
+            }
+            // Pass 0 near the shrine (the post-door tile): touch now.
+            if pass == 0 && cheb(me, maze::MAZE_SHRINE) <= 2 {
+                maze_send_touch(st, driver, pass);
+                return true;
+            }
+            let stand = maze::TOUCH_STANDS[pass as usize % maze::TOUCH_STANDS.len()];
+            let onto = pass % 2 == 0;
+            let reached = if onto {
+                me == stand
+            } else {
+                cheb(me, stand) <= 1
+            };
+            if reached {
+                maze_send_touch(st, driver, pass);
+                return true;
+            }
+            if !maze_walk_step(st, driver, me, stand) {
+                // A walled-off stand: the next pass.
+                st.phase = maze::MazePhase::Touch { pass: pass + 1 };
+                st.walk_from = None;
+                st.walk_sends = 0;
+                st.wait_ticks = 0;
+            }
+            true
+        }
+        maze::MazePhase::TouchWait => {
+            st.wait_ticks += 1;
+            if st.wait_ticks >= maze::TOUCH_WAIT {
+                st.wait_ticks = 0;
+                let pass = st.touch_pass;
+                st.touch_pass = pass + 1;
+                // rs2b0t re-opens the chamber door on odd passes.
+                if pass % 2 == 1 {
+                    st.phase = maze::MazePhase::ShrineDoor;
+                } else {
+                    st.phase = maze::MazePhase::Touch { pass: pass + 1 };
+                }
+            }
+            true
+        }
     }
 }
 
@@ -2677,5 +2953,173 @@ mod tests {
         assert!(status.hold, "an unsolvable cube keeps the trapped hold");
         assert!(drv.menus.is_empty(), "unknown question: no click");
         assert!(drv.actions.is_empty());
+    }
+
+    // --- Task 11: maze behavioural port ---
+
+    /// The NW spawn's route (door 0 (2890,4592), door 1 (2888,4587)).
+    fn nw_route() -> Vec<(i32, i32)> {
+        maze::select_route(maze::graph(), maze::MAZE_SPAWNS[0])
+            .expect("the NW spawn solves")
+    }
+
+    #[test]
+    fn maze_spawn_walks_opens_and_advances_door_to_door() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 2891, 4597); // NW spawn
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: the route solves from the observed tile (no send yet).
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Maze));
+        assert!(status.hold, "on the maze square the slot holds");
+        assert!(drv.menus.is_empty() && drv.walks.is_empty());
+
+        // Tick 2: walk to door 0.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(drv.walks, vec![(2890, 4592)], "walk toward door 0");
+
+        // Adjacent to the door: oploc Open with the door's loc id.
+        drv.walks.clear();
+        plant_player(&mut c, "Test", 2890, 4593);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_LOC1, 3628, 2890, 4592)],
+            "oploc Open is the door's OP_LOC1"
+        );
+        assert!(drv.walks.is_empty());
+
+        // The open pushes the player through (>= 2 tiles): advance.
+        drv.menus.clear();
+        plant_player(&mut c, "Test", 2887, 4592);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(drv.menus.is_empty(), "the through tick just advances");
+        assert!(drv.walks.is_empty());
+
+        // Next tick: walk to door 1.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(drv.walks, vec![(2888, 4587)], "walk toward door 1");
+    }
+
+    #[test]
+    fn maze_wrong_door_mesbox_is_continued_then_the_route_advances() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 2891, 4597);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Solve, walk to door 0, open it.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        plant_player(&mut c, "Test", 2890, 4593);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(drv.menus, vec![(0, MiniMenuAction::OP_LOC1, 3628, 2890, 4592)]);
+
+        // The door refuses: the wrong-door mesbox opens → continue drains
+        // it (rs2b0t clearMesbox).
+        drv.menus.clear();
+        drv.walks.clear();
+        open_chat(&mut c);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
+            "the wrong-door mesbox is continued through"
+        );
+
+        // Chat closed: the refused door advances the route → walk to door 1.
+        drv.menus.clear();
+        c.chat_modal_id = -1;
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(drv.menus.is_empty(), "the refusal tick just advances");
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(drv.walks, vec![(2888, 4587)], "advance after the refusal");
+    }
+
+    #[test]
+    fn maze_walled_off_door_resyncs_then_gives_up_after_three() {
+        let mut solve = maze::MazeSolve::new(nw_route());
+        solve.next = 1; // door 0 already behind us
+        let mut drv = FakeDriver::default();
+        let snap = GameSnapshot::new(); // no chat
+
+        // Door 1 never gets closer: WALK_LIMIT sends, then the walk is
+        // stuck → one resync back through door 0.
+        for _ in 0..maze::WALK_LIMIT {
+            assert!(step_maze_phase(&mut solve, &mut drv, &snap, (2891, 4597)));
+        }
+        drv.walks.clear();
+        assert!(step_maze_phase(&mut solve, &mut drv, &snap, (2891, 4597)));
+        assert_eq!(solve.phase, maze::MazePhase::Resync);
+        assert_eq!(solve.resyncs, 1);
+        drv.walks.clear();
+        assert!(step_maze_phase(&mut solve, &mut drv, &snap, (2891, 4597)));
+        assert_eq!(drv.walks, vec![(2890, 4592)], "resync walks to door 0");
+
+        // Three resyncs are the ceiling: a fourth walled-off door gives
+        // up the pass instead of stepping back again.
+        solve.resyncs = maze::MAX_RESYNCS;
+        solve.phase = maze::MazePhase::WalkDoor;
+        solve.walk_from = None;
+        solve.walk_sends = 0;
+        drv.walks.clear();
+        for _ in 0..maze::WALK_LIMIT {
+            assert!(step_maze_phase(&mut solve, &mut drv, &snap, (2891, 4597)));
+        }
+        assert!(
+            !step_maze_phase(&mut solve, &mut drv, &snap, (2891, 4597)),
+            "resyncs capped: the pass gives up"
+        );
+    }
+
+    #[test]
+    fn maze_touches_the_shrine_and_the_hold_lifts_off_square() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 2911, 4576); // post-chamber-door tile
+        let mut g = Guardian::new();
+        let mut solve = maze::MazeSolve::new(vec![]);
+        solve.phase = maze::MazePhase::Touch { pass: 0 };
+        g.maze = Some(solve);
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Near the shrine on pass 0: Touch from where we stand.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Maze));
+        assert!(status.hold, "the trapped hold stays while touching");
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_LOC1, maze::MAZE_SHRINE_LOC, 2911, 4575)],
+            "Touch is the shrine's OP_LOC1"
+        );
+        assert!(drv.walks.is_empty(), "near the shrine: no stand walk");
+
+        // The shrine teleports the player off the square → the hold lifts.
+        drv.menus.clear();
+        plant_player(&mut c, "Test", 0, 0);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold, "off the maze square the hold lifts");
     }
 }
