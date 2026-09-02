@@ -2614,7 +2614,9 @@ fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
 
 /// The TYPE_INV component of side tab `tab` (m8aq `findTabInvComponent`):
 /// tab 4 (worn items) accepts any TYPE_INV, the other tabs need `obj_ops`.
-fn tab_inv_component(client: &Client, tab: usize) -> Option<i32> {
+/// Public so the script shim's inventory post reads the same component
+/// the snapshot's inv view reads.
+pub fn tab_inv_component(client: &Client, tab: usize) -> Option<i32> {
     let root = client.side_icon.get(tab).copied().unwrap_or(-1);
     if root == -1 {
         return None;

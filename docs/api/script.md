@@ -37,6 +37,14 @@ pickers). Script paint (`ScriptPaint`, the rs2b0t dock shape) draws over
 the Game chatbox in the panel and replaces the chat pane in the TUI
 (`p` toggles back to the game ring).
 
+**Live gold:** `panel-play --live script_bone_burier` (and its TUI twin)
+starts the **real `$RS2B0T` BoneBurier card** on a unique minted account
+and PASSes on the server's "You bury the bones." chat line — the shim's
+`Inventory.first`/held-item `interact` and the `reader.inventorySize()`
+gate are exercised against the live engine. `scenario::ScenarioSettings
+.start_script` names the card; the host fills the catalog (register/Load)
+and dispatches `script_start_load` at live boot.
+
 ## ScriptCtx read surface
 
 ```rust

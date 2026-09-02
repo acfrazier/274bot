@@ -17,6 +17,14 @@ const queue = (req) => {
     h.interact.push(req);
 };
 
+// Pick the withdraw op for a requested amount (rs2b0t `withdrawOp`).
+// The posted bank rows carry no op labels; the shim maps the requested
+// amount straight to the `Withdraw …` action label the host dispatches.
+export function withdrawOp(ops, which) {
+    const labels = { all: 'Withdraw All', '10': 'Withdraw 10', '1': 'Withdraw 1' };
+    return labels[String(which)] || null;
+}
+
 export const Bank = new Proxy(
     {
         isOpen() {
@@ -88,6 +96,11 @@ export const Bank = new Proxy(
                 action = n >= 10 && n >= count ? 'Withdraw All' : n >= 10 ? 'Withdraw 10' : 'Withdraw 1';
             }
             queue({ op: 'withdraw', name: String(name), action });
+        },
+        // Note state is server-side per bank; the posted rows are plain
+        // items. Return true (rs2b0t's awaited call shape) with no send.
+        setNoteMode() {
+            return true;
         },
         close() {
             queue({ op: 'close' });

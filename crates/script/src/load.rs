@@ -856,8 +856,18 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 None => v8::null(&mut scope).into(),
             };
             set(&mut scope, obj, "here", here)?;
+            // The reader adapter's `worldTile` reads the host handle
+            // directly (not the snapshot blob): mirror `here` there.
+            set(&mut scope, host, "tile", here)?;
         } else if !had {
             set(&mut scope, obj, "here", none)?;
+        }
+        // The reader adapter's `inventorySize` reads the host handle too:
+        // mirror the inv tab slot count (0 while the inv tab is
+        // tutorial-locked — the gate an onStart waits on).
+        if snap.has_inv_size() {
+            let inv_size = num(&mut scope, snap.inv_size() as f64);
+            set(&mut scope, host, "invSize", inv_size)?;
         }
         if snap.has_ingame() {
             let ingame = v8::Boolean::new(&mut scope, snap.ingame());

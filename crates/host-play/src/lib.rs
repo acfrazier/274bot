@@ -16,7 +16,6 @@ use api::interact::Driver;
 use client::client::Client;
 use client::client::ClientConfig;
 use client::client::LoginError;
-use client::config::if_type::ComponentType;
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
 pub use host::debug_enabled;
@@ -646,6 +645,33 @@ fn dispatch_script_interact(
                     }
                 }
             }
+            InteractReq::Held { name, action } => {
+                // rs2b0t `Item.interact`: resolve the held item by name and
+                // dispatch its menu op by label (Bones → `Bury`). A name the
+                // table does not know or an item that is no longer held
+                // fails closed — nothing is sent.
+                let wanted = name.to_lowercase();
+                for item in snapshot.inventory() {
+                    if obj_names
+                        .and_then(|n| n.name(item.def.id))
+                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                    {
+                        let res =
+                            ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
+                        if host::debug_enabled() {
+                            let outcome = match &res {
+                                SendResult::Sent { .. } => "sent".to_string(),
+                                SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+                            };
+                            eprintln!(
+                                "[shim-held] {name} {action} slot={} -> {outcome}",
+                                item.slot
+                            );
+                        }
+                        wrote |= matches!(res, SendResult::Sent { .. });
+                    }
+                }
+            }
             InteractReq::Close => {
                 wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
             }
@@ -827,6 +853,10 @@ fn script_snapshot_fb(
         here,
         ingame,
         inv: inv.as_deref().unwrap_or(&[]),
+        // The inv tab's slot count (28 when bound, 0 while the side icons
+        // stay tutorial-locked): the `reader.inventorySize()` gate a
+        // script's onStart parks on.
+        inv_size: snapshot.map_or(0, |s| s.inventory_size()),
         stats: stats.as_deref().unwrap_or(&[]),
         booths: booths.as_deref().unwrap_or(&[]),
         banks: banks.as_deref().unwrap_or(&[]),
@@ -1036,13 +1066,12 @@ fn step_nav_bot<D: Driver>(
 /// the view carries the real 0-based ids scripts resolve `has_item`
 /// against — the same convention as `api::snapshot`'s inv view.
 /// Short-lived: rebuilt per observe while the slot script is Running;
-/// `None` when no TYPE_INV iface is loaded yet. Reads the client's
-/// combined iface view (per-client overlay first) so server-written slots
-/// show, not the shared decode.
+/// `None` when the inv tab is not bound yet. Reads the **side-tab-3**
+/// inventory (the same lookup the snapshot's inv view uses) — a bare
+/// first-TYPE_INV scan grabs whatever inventory component sorts first
+/// (a bank/trade widget), which stays empty while the backpack is full.
 fn inventory_from_ifaces(client: &Client) -> Option<Vec<(i32, i32)>> {
-    let inv = client
-        .ifaces_merged()
-        .find(|f| f.r#type == ComponentType::TYPE_INV)?;
+    let inv = api::snapshot::tab_inv_component(client, 3).and_then(|id| client.if_(id as usize))?;
     let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
         return None;
     };
@@ -2140,6 +2169,7 @@ fn wait_for_permit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client::config::if_type::ComponentType;
     use host::Guardian;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -3526,6 +3556,81 @@ mod tests {
         );
     }
 
+    /// The shim `Item.interact` arm: a `Held { name, action }` request
+    /// resolves the held item through ObjNames and dispatches its menu op
+    /// by label (Bones → Bury). The `bank_fetch_client` inv tab holds
+    /// Bones (obj 1) × 3.
+    #[test]
+    fn dispatch_script_interact_sends_held_item_bury() {
+        let mut c = bank_fetch_client();
+        // Bones (obj 1) has the `Bury` held op (`[opheld1,_bones]`).
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs[1].iop = [Some("Bury".into()), None, None, None, None];
+        }
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let names = api::obj_names::ObjNames::from_objs(&{
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs.clone()
+        });
+        let (navs, world) = empty_nav();
+        assert_eq!(
+            snap.inventory()
+                .iter()
+                .find(|it| it.def.id == 1)
+                .map(|it| (it.def.id, it.count)),
+            Some((1, 3)),
+            "the inv tab holds Bones"
+        );
+        let before = c.out.pos;
+        assert!(
+            dispatch_script_interact(
+                &mut c,
+                &snap,
+                Some(&names),
+                Some((3205, 3205, 0)),
+                &navs,
+                &world,
+                None,
+                "alice",
+                vec![script::shim::InteractReq::Held {
+                    name: "Bones".into(),
+                    action: "Bury".into()
+                }],
+            ),
+            "held Bury must dispatch"
+        );
+        assert!(c.out.pos > before, "held Bury must write the driver");
+        // An action the item has no op for sends nothing (Bones has no
+        // "Wear"), and an unknown name matches no held item.
+        let before = c.out.pos;
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![
+                script::shim::InteractReq::Held {
+                    name: "Bones".into(),
+                    action: "Wear".into()
+                },
+                script::shim::InteractReq::Held {
+                    name: "Lobster".into(),
+                    action: "Bury".into()
+                },
+            ],
+        ));
+        assert_eq!(
+            c.out.pos, before,
+            "a label no held op resolves and an unknown name send nothing"
+        );
+    }
+
     /// The BankBudget session fixture: [`bank_client`] plus a junk
     /// inventory (Bones × 3 on side tab 3), the bank's obj 2 renamed
     /// "Knife", and the bank's withdraw component holding the knife
@@ -4330,6 +4435,7 @@ mod tests {
         let mut ifaces = vec![None; 3];
         ifaces[1] = Some(Box::new(IfType {
             r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
             ..Default::default()
         }));
         let mut ifaces_mut = vec![None; 3];
@@ -4338,7 +4444,7 @@ mod tests {
             link_obj_number: Some(vec![3, 0, 1]),
             ..Default::default()
         }));
-        let client = prepare_client(
+        let mut client = prepare_client(
             ClientConfig {
                 host: "127.0.0.1".into(),
                 port: 1,
@@ -4351,6 +4457,10 @@ mod tests {
             Arc::new(ifaces),
             ifaces_mut,
         );
+        // The inv tab (side 3) binds this root; a TYPE_INV that is not the
+        // backpack (no `obj_ops`, or under another side tab) must not
+        // satisfy the read.
+        client.side_icon[3] = 1;
         let inv = inventory_from_ifaces(&client).expect("TYPE_INV iface present");
         assert_eq!(
             inv,

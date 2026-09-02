@@ -15,6 +15,12 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 - Shim Game / Inventory / EventSignal from the posted snapshot;
   `Execution.delayUntil` parks the isolate on PLAYER_INFO; Banking.open
   and bank deposit / withdraw on the BankSide container.
+- Live-script gaps closed: `Inventory.first` + held-item `interact`
+  (`{op:'held', name, action}`), `reader.inventorySize()` mirroring the
+  posted inv-tab slot count, `LoopingBot.log` / `settings`, the
+  `paintLogic` `fmtDuration` module, and `Bank.setNoteMode` /
+  `withdrawOp`. The live shim inventory read now targets the side-tab-3
+  backpack exactly (a first-TYPE_INV scan grabbed a bank/trade widget).
 - FlatBuffers isolate IPC: delta snapshots omit unchanged tables, and a
   hold tick re-posts so `EventSignal.pending` sees the held state.
 - `EventSignal.pending` and `ignoredRandoms` surface from the bot
@@ -43,11 +49,15 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 
 ### Live BoneBurier
 
-- `script_bone_burier` live scenario: unique minted account, mainland
-  hop, seed five Bones, bury until at most three remain — PASS on the
-  server's "You bury the bones." chat line. Headed `panel-play --live
-  script_bone_burier` and headless `tui-play --live script_bone_burier`
-  pass the same runner.
+- `script_bone_burier` live gold: the **real rs2b0t TS BoneBurier** runs
+  through the shim on the driven slot. The host starts the `$RS2B0T`
+  catalog card at live boot (`scenario.start_script`); the runner seeds
+  the account (tutorial skip, five Bones given before the clean relog so
+  the script's `onStart` gate opens once the inv tab binds) and then only
+  watches for the server's "You bury the bones." chat line. PASS with a
+  unique minted account; headed `panel-play --live script_bone_burier`
+  and headless `tui-play --live script_bone_burier` pass the same
+  runner.
 
 ### Public world docs
 

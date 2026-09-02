@@ -1101,6 +1101,20 @@ impl Session {
             runner.set_obj_names(play.obj_names());
         }
         *self.scenario.lock().unwrap() = Some(runner);
+        // A scenario that names a script card (`start_script`) runs the
+        // real `$RS2B0T` catalog script on the driven slot — the scenario
+        // steps then observe its evidence. The catalog is filled from
+        // `$RS2B0T` (or the persisted root) here, and the card's source
+        // is what the isolate spawns on Start.
+        if let Some(card_name) = view.start_script {
+            self.fill_rs2b0t_cards_once();
+            let card = self.js.get(card_name).cloned().ok_or_else(|| {
+                format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+            })?;
+            let play = self.play.as_ref().ok_or("no play")?;
+            play.script_start_load(&names[0], card.source, card.shape)
+                .map_err(|e| format!("start {card_name}: {e}"))?;
+        }
         self.login_all();
         Ok(())
     }
@@ -4936,6 +4950,74 @@ mod tests {
             "the runner ticks only its minted profile's slot"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    /// A scenario that names a script card (`start_script`) boots the
+    /// real `$RS2B0T` catalog script on the driven slot — the steps then
+    /// observe its evidence. `$RS2B0T` is read here, and the card's
+    /// source is what the isolate spawns on Start.
+    #[test]
+    fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-bone-live-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import BoneBurier from './BoneBurier/BoneBurier.js';
+ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("BoneBurier/BoneBurier.ts"),
+            "export default class BoneBurier extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+        let mut s = Session::new();
+        let result = s.live_prepare_script(scenario::get("bone_burier").expect("registered"));
+        let name = s
+            .vault
+            .as_ref()
+            .expect("live vault open")
+            .profiles()
+            .next()
+            .expect("minted profile")
+            .username
+            .clone();
+        assert_ne!(name, "test", "live must not log in `test`");
+        match result {
+            Ok(()) => {}
+            Err(e) => panic!("live_prepare must start the card: {e}"),
+        }
+        let play = s.play.as_ref().expect("play started");
+        assert_eq!(
+            play.script_state(&name),
+            script::RunState::Running,
+            "the BoneBurier card is started on the driven slot"
+        );
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

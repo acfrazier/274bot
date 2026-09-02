@@ -37,6 +37,20 @@ globalThis.LoopingBot = class LoopingBot {
     loopDelay = 600;
     onStart() {}
     loop() {}
+    log(message) {
+        const h = globalThis.__rs2b0t_host;
+        h.log = h.log || [];
+        h.log.push(String(message));
+    }
+    get settings() {
+        // The shim serves the script's own defaults; per-run settings
+        // panes are not v1.
+        return {
+            str(name, fallback = '') {
+                return fallback;
+            },
+        };
+    }
 };
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
@@ -99,6 +113,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         ),
         Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
         Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),
+        Module::new(
+            "/rs2b0t/bot/paint/paintLogic.js",
+            include_str!("paintLogic.js"),
+        ),
         Module::new(
             "/rs2b0t/bot/runtime/ScriptRunner.js",
             include_str!("script_runner.js"),
@@ -181,6 +199,11 @@ pub enum InteractReq {
     /// (`Withdraw All` / `Withdraw 10` / `Withdraw 1`).
     #[serde(rename = "withdraw")]
     Withdraw { name: String, action: String },
+    /// Interact with the held item named `name` using the action label
+    /// (`Bury`, `Wear`, …). The host resolves the name through ObjNames
+    /// and dispatches the item's menu op (rs2b0t `Item.interact`).
+    #[serde(rename = "held")]
+    Held { name: String, action: String },
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,

@@ -45,21 +45,22 @@ const VT_BANK_KIND: VOffsetT = 12;
 const VT_BANK_OP: VOffsetT = 14;
 const VT_BANK_CHOOSE: VOffsetT = 16;
 
-// Snapshot: { tick, here, ingame, inv, stats, booths, banks, bank,
-//             bank_side, bank_open, bank_loaded, hold, ours }
+// Snapshot: { tick, here, ingame, inv, inv_size, stats, booths, banks,
+//             bank, bank_side, bank_open, bank_loaded, hold, ours }
 const VT_SNAP_TICK: VOffsetT = 4;
 const VT_SNAP_HERE: VOffsetT = 6;
 const VT_SNAP_INGAME: VOffsetT = 8;
 const VT_SNAP_INV: VOffsetT = 10;
-const VT_SNAP_STATS: VOffsetT = 12;
-const VT_SNAP_BOOTHS: VOffsetT = 14;
-const VT_SNAP_BANKS: VOffsetT = 16;
-const VT_SNAP_BANK: VOffsetT = 18;
-const VT_SNAP_BANK_SIDE: VOffsetT = 20;
-const VT_SNAP_BANK_OPEN: VOffsetT = 22;
-const VT_SNAP_BANK_LOADED: VOffsetT = 24;
-const VT_SNAP_HOLD: VOffsetT = 26;
-const VT_SNAP_OURS: VOffsetT = 28;
+const VT_SNAP_INV_SIZE: VOffsetT = 12;
+const VT_SNAP_STATS: VOffsetT = 14;
+const VT_SNAP_BOOTHS: VOffsetT = 16;
+const VT_SNAP_BANKS: VOffsetT = 18;
+const VT_SNAP_BANK: VOffsetT = 20;
+const VT_SNAP_BANK_SIDE: VOffsetT = 22;
+const VT_SNAP_BANK_OPEN: VOffsetT = 24;
+const VT_SNAP_BANK_LOADED: VOffsetT = 26;
+const VT_SNAP_HOLD: VOffsetT = 28;
+const VT_SNAP_OURS: VOffsetT = 30;
 
 // Interact: { op, x, z, level, kind, name, stand_op, choose, action }
 const VT_IN_OP: VOffsetT = 4;
@@ -117,6 +118,9 @@ pub struct SnapshotInput<'a> {
     pub here: Option<TileInput>,
     pub ingame: bool,
     pub inv: &'a [(Option<&'a str>, i32)],
+    /// The inv tab's slot count (28 bound, 0 while tutorial-locked) — the
+    /// `reader.inventorySize()` read a script's onStart gates on.
+    pub inv_size: i32,
     pub stats: &'a [StatInput<'a>],
     pub booths: &'a [TileInput],
     pub banks: &'a [BankStandInput<'a>],
@@ -303,6 +307,12 @@ impl SnapshotReader<'_> {
     pub fn inv(&self) -> Vec<RowReader<'_>> {
         rows::<RowReader>(&self.tab, VT_SNAP_INV)
     }
+    pub fn has_inv_size(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_INV_SIZE, None).is_some() }
+    }
+    pub fn inv_size(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_INV_SIZE, None) }.unwrap_or(0)
+    }
     pub fn has_stats(&self) -> bool {
         rows_present::<StatReader>(&self.tab, VT_SNAP_STATS)
     }
@@ -413,6 +423,7 @@ pub struct SnapshotFingerprint {
     pub here: Option<TileInput>,
     pub ingame: bool,
     pub inv: Vec<(Option<String>, i32)>,
+    pub inv_size: i32,
     pub stats: Vec<(i32, String, i32)>,
     pub booths: Vec<TileInput>,
     pub banks: Vec<BankStandFp>,
@@ -435,6 +446,7 @@ impl SnapshotFingerprint {
                 .iter()
                 .map(|(name, count)| (name.map(str::to_string), *count))
                 .collect(),
+            inv_size: input.inv_size,
             stats: input
                 .stats
                 .iter()
@@ -482,6 +494,7 @@ pub struct DeltaMask {
     pub here: bool,
     pub ingame: bool,
     pub inv: bool,
+    pub inv_size: bool,
     pub stats: bool,
     pub booths: bool,
     pub banks: bool,
@@ -500,6 +513,7 @@ impl DeltaMask {
             here: true,
             ingame: true,
             inv: true,
+            inv_size: true,
             stats: true,
             booths: true,
             banks: true,
@@ -525,6 +539,7 @@ impl DeltaMask {
             here: next.here != last.here,
             ingame: next.ingame != last.ingame,
             inv: next.inv != last.inv,
+            inv_size: next.inv_size != last.inv_size,
             stats: next.stats != last.stats,
             booths: next.booths != last.booths,
             banks: force_banks || next.banks != last.banks,
@@ -648,6 +663,9 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
     }
     if mask.inv {
         b.push_slot_always(VT_SNAP_INV, inv_off.expect("mask checked"));
+    }
+    if mask.inv_size {
+        b.push_slot_always(VT_SNAP_INV_SIZE, input.inv_size);
     }
     if mask.stats {
         b.push_slot_always(VT_SNAP_STATS, stats_off.expect("mask checked"));
@@ -867,6 +885,16 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "withdraw has no action".to_string())?
                     .to_string(),
             }),
+            "held" => out.push(crate::shim::InteractReq::Held {
+                name: row
+                    .name()
+                    .ok_or_else(|| "held has no name".to_string())?
+                    .to_string(),
+                action: row
+                    .action()
+                    .ok_or_else(|| "held has no action".to_string())?
+                    .to_string(),
+            }),
             "close" => out.push(crate::shim::InteractReq::Close),
             other => return Err(format!("unknown interact op: {other}")),
         }
@@ -887,6 +915,7 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
+        InteractReq::Held { .. } => "held",
         InteractReq::Close => "close",
     });
     let kind_off = match req {
@@ -898,6 +927,7 @@ fn interact_off<'b>(
         InteractReq::Deposit { name } | InteractReq::Withdraw { name, .. } => {
             Some(b.create_string(name))
         }
+        InteractReq::Held { name, .. } => Some(b.create_string(name)),
         _ => None,
     };
     let choose_off = match req {
@@ -905,7 +935,9 @@ fn interact_off<'b>(
         _ => None,
     };
     let action_off = match req {
-        InteractReq::Withdraw { action, .. } => Some(b.create_string(action)),
+        InteractReq::Withdraw { action, .. } | InteractReq::Held { action, .. } => {
+            Some(b.create_string(action))
+        }
         _ => None,
     };
     let tab = b.start_table();
@@ -946,6 +978,10 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
         }
         InteractReq::Withdraw { .. } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::Held { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }

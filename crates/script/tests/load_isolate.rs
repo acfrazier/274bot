@@ -128,6 +128,7 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         here: None,
         ingame: true,
         inv: &[],
+        inv_size: 0,
         stats: &[],
         booths: &[],
         banks: &[],
@@ -1183,15 +1184,134 @@ export default class T extends LoopingBot {
     assert_eq!(value["idx"], -1, "no posted snapshot: index -1");
     iso.join();
 
-    let src = "import { Inventory } from '../../api/inventory/Inventory.js'; export default class T extends LoopingBot { loop() { Inventory.first('Bones'); } }";
+    let src = "import { Inventory } from '../../api/inventory/Inventory.js'; export default class T extends LoopingBot { loop() { globalThis.__probe = Inventory.first('Bones'); } }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
     iso.on_game_tick(1);
-    let _ = iso.probe("__rs_bot"); // round-trip: the tick finished first
+    let value = iso.probe("__probe").unwrap();
+    assert!(
+        value.is_null(),
+        "no posted snapshot: first fails closed to null"
+    );
+    iso.join();
+}
+
+// The live BoneBurier path: `Inventory.first` returns the held item and
+// its `interact('Bury')` queues a held-item request for the host to
+// dispatch — never a throw.
+#[test]
+fn isolate_inventory_first_queues_a_held_interact() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        const bones = Inventory.first('Bones');
+        globalThis.__probe = bones ? bones.interact('Bury') : 'none';
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let mut snap = base_snapshot();
+    snap.inv = &[(Some("Bones"), 5)];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "interact accepts the queue");
+    let reqs = iso.drain_interacts();
+    assert_eq!(
+        reqs,
+        vec![script::shim::InteractReq::Held {
+            name: "Bones".into(),
+            action: "Bury".into()
+        }],
+        "first().interact('Bury') queues the held op"
+    );
+    iso.join();
+}
+
+// The BoneBurier onStart gate: `reader.inventorySize()` mirrors the inv
+// tab slot count the host posts (0 while tutorial-locked, 28 once bound).
+#[test]
+fn isolate_reader_inventory_size_mirrors_the_posted_tab_slot_count() {
+    let src = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = reader.inventorySize();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let mut snap = base_snapshot();
+    snap.inv_size = 28;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value, 28,
+        "reader.inventorySize() reads the posted slot count"
+    );
+    iso.join();
+}
+
+// The live BoneBurier gold probe: when `$RS2B0T` points at a real rs2b0t
+// checkout, load the actual BoneBurier card and drive it against a
+// seeded snapshot (Bones in the inv, inv tab bound, Prayer stats). The
+// script's onStart must settle and its loop must queue a held Bury —
+// the exact shim path the live `script_bone_burier` scenario runs.
+#[test]
+fn real_bone_burier_queues_bury_when_seeded() {
+    let Some(root) = script::rs2b0t_root() else {
+        eprintln!("skip: $RS2B0T not set");
+        return;
+    };
+    let path = root.join("src/bot/scripts/BoneBurier/BoneBurier.ts");
+    let Ok(source) = std::fs::read_to_string(&path) else {
+        eprintln!("skip: no BoneBurier.ts at {path:?}");
+        return;
+    };
+    let shape = script::detect_shape(&source);
+    assert_eq!(
+        shape,
+        script::LoadShape::CompatClass,
+        "BoneBurier is a class card"
+    );
+    let iso = LoadIsolate::spawn(source, shape).unwrap();
+    let mut snap = base_snapshot();
+    snap.ingame = true;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    });
+    let inv = [(Some("Bones"), 5)];
+    snap.inv = &inv;
+    snap.inv_size = 28;
+    let stats = [script::isolate_fb::StatInput {
+        index: 5,
+        name: "Prayer",
+        xp: 31,
+    }];
+    snap.stats = &stats;
+    post_snapshot_input(&iso, &snap);
+    for n in 1..=8 {
+        iso.on_game_tick(n);
+    }
+    // Sync barrier: the tick commands are fire-and-forget; the probe
+    // round-trips so the thread has processed them before the drains.
+    let _ = iso.probe("1 + 1");
     let logs = iso.drain_logs();
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("Inventory.first")),
-        "missing Inventory member throws: {logs:?}"
+        logs.is_empty(),
+        "the real BoneBurier must not throw on a seeded snapshot: {logs:?}"
+    );
+    let reqs = iso.drain_interacts();
+    assert!(
+        reqs.iter().any(|r| matches!(
+            r,
+            script::shim::InteractReq::Held { name, action }
+                if name == "Bones" && action == "Bury"
+        )),
+        "the script must queue a held Bury, got {reqs:?}"
     );
     iso.join();
 }

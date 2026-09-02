@@ -380,6 +380,7 @@ impl TuiSession {
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner.
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         let name = scenario.name.to_string();
+        let start_script = scenario.settings.start_script;
         let names = mint_live_names(scenario.seed.profiles.len());
         let entries: Vec<(String, String)> = names.iter().map(|u| (u.clone(), u.clone())).collect();
         let path = temp_live_vault(&entries);
@@ -396,6 +397,18 @@ impl TuiSession {
             self.spawn(n);
         }
         self.focus(&names[0]);
+        // A scenario that names a script card runs the real `$RS2B0T`
+        // catalog script on the driven slot (same as the panel): fill the
+        // catalog from `$RS2B0T`, then spawn the isolate on Start.
+        if let Some(card_name) = start_script {
+            self.fill_rs2b0t_cards_once();
+            let card = self.js.get(card_name).cloned().ok_or_else(|| {
+                format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+            })?;
+            let play = self.play.as_ref().ok_or("no play")?;
+            play.script_start_load(&names[0], card.source, card.shape)
+                .map_err(|e| format!("start {card_name}: {e}"))?;
+        }
         Ok(())
     }
 
