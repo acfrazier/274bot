@@ -31,8 +31,7 @@ use crossterm::terminal::{
 use host_play::{
     arm_walk_on, live_vault_passphrase, mint_live_entries, mint_live_names, open_vault,
     player_here_tile, profile_password, run_with_io, step_walk_arm_bank_fetch,
-    walk_arm_bank_fetch_freezes_follow,
-    Play, PlayOptions, SlotArm, WalkArm, WireCmd,
+    walk_arm_bank_fetch_freezes_follow, Play, PlayOptions, SlotArm, WalkArm, WireCmd,
 };
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, TravelOutcome};
@@ -43,7 +42,9 @@ use vault::{Profile, Vault};
 
 use crate::app::{AppAction, ChatData, TuiApp};
 use crate::chat::ChatAction;
-use crate::script_shape::{categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard};
+use crate::script_shape::{
+    categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
+};
 
 /// The default engine port (same as host-play / panel).
 const DEFAULT_PORT: u16 = 43594;
@@ -226,6 +227,51 @@ fn step_walk_arm_follow<D: api::interact::Driver>(
     }
 }
 
+/// Catalog card live_prepare stashes so the StartScript pump can
+/// `script_start_load` once after seed waits.
+struct PendingCatalogStart {
+    slot: String,
+    js: String,
+    shape: script::LoadShape,
+    bag: Option<serde_json::Map<String, serde_json::Value>>,
+    siblings: Vec<(String, String)>,
+}
+
+/// When the runner is on [`scenario::StepKind::StartScript`], start the
+/// stashed catalog isolate once. Returns false when Start was attempted
+/// and failed, so the pump must not consume the one-tick wait.
+fn fire_pending_catalog_start(
+    pending: &Mutex<Option<PendingCatalogStart>>,
+    handle: &Mutex<Option<host_play::ScriptStartHandle>>,
+    runner: &scenario::ScenarioRunner,
+) -> bool {
+    if !runner.on_start_script() {
+        return true;
+    }
+    let mut pending = pending.lock().unwrap();
+    let Some(card) = pending.as_ref() else {
+        return true;
+    };
+    let handle = handle.lock().unwrap();
+    let Some(h) = handle.as_ref() else {
+        return false;
+    };
+    if h.start_load(
+        &card.slot,
+        card.js.clone(),
+        card.shape,
+        card.bag.clone(),
+        card.siblings.clone(),
+    )
+    .is_ok()
+    {
+        pending.take();
+        true
+    } else {
+        false
+    }
+}
+
 /// The TUI session: the running play, the vault, the per-slot snapshot
 /// publication, and the per-username walk arms (the same `WalkArm` map
 /// `host_play::arm_walk_on` latches and the panel drives).
@@ -256,8 +302,15 @@ pub struct TuiSession {
     /// The shared `--live script_*` runner (slot threads tick it from the
     /// per-frame hook; the UI loop reads its status/evidence).
     scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
+    /// Catalog card `live_prepare_script` stashes; the live pump Starts
+    /// it once on [`scenario::StepKind::StartScript`].
+    pending_script: Arc<Mutex<Option<PendingCatalogStart>>>,
+    /// Isolate-start handle the per-frame hook uses (filled after Play).
+    script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    /// The Browse-selected card (catalog Start after seed, or operator Start).
+    script_sel: Option<script::ScriptSel>,
     /// The out-of-tree JS library: the Browse picker's cards and the
     /// Load/Start source for the focused slot (same store the panel
     /// persists to).
@@ -306,7 +359,10 @@ impl TuiSession {
             walk_clear: Arc::new(AtomicBool::new(false)),
             nav_world: Arc::new(Mutex::new(None)),
             scenario: Arc::new(Mutex::new(None)),
+            pending_script: Arc::new(Mutex::new(None)),
+            script_start_handle: Arc::new(Mutex::new(None)),
             live_name: None,
+            script_sel: None,
             js,
             rs2b0t_filled: false,
             rs2b0t_catalog_open: false,
@@ -325,12 +381,8 @@ impl TuiSession {
         name: &str,
         schema: &[script::SettingDef],
     ) -> serde_json::Map<String, serde_json::Value> {
-        self.script_settings.merged_bag(
-            source,
-            name,
-            schema,
-            self.script_settings_inject.as_ref(),
-        )
+        self.script_settings
+            .merged_bag(source, name, schema, self.script_settings_inject.as_ref())
     }
 
     fn default_catalog_browse_dir() -> PathBuf {
@@ -355,6 +407,8 @@ impl TuiSession {
         let walk_clear = Arc::clone(&self.walk_clear);
         let nav_world = Arc::clone(&self.nav_world);
         let scenario = Arc::clone(&self.scenario);
+        let pending_script = Arc::clone(&self.pending_script);
+        let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
         let play = run_with_io(
             &options,
@@ -374,7 +428,10 @@ impl TuiSession {
                 // Hold freezes scenario follow like `step_nav_bot`.
                 if let Some(runner) = scenario.lock().unwrap().as_mut() {
                     if runner.drives(name) {
-                        runner.tick_with_hold(c, hold);
+                        if fire_pending_catalog_start(&pending_script, &script_start_handle, runner)
+                        {
+                            runner.tick_with_hold(c, hold);
+                        }
                     } else if let Some(index) = runner.companion_for(name) {
                         runner.companion_tick(index, c);
                     }
@@ -404,13 +461,7 @@ impl TuiSession {
                 let finished = {
                     let mut arm = arm.lock().unwrap();
                     let world = nav_world.lock().unwrap().clone();
-                    step_walk_arm_follow(
-                        c,
-                        snap,
-                        &mut arm,
-                        world.as_deref(),
-                        here,
-                    )
+                    step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here)
                 };
                 if finished {
                     walk_clear.store(true, Ordering::Relaxed);
@@ -418,6 +469,7 @@ impl TuiSession {
             },
         );
         self.nav_world.lock().unwrap().clone_from(&play.world());
+        *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         self.play = Some(play);
         self.vault = Some(vault);
     }
@@ -496,9 +548,9 @@ impl TuiSession {
             self.spawn(n);
         }
         self.focus(&names[0]);
-        // A scenario that names a script card runs the real `$RS2B0T`
+        // A scenario that names a script card selects the real `$RS2B0T`
         // catalog script on the driven slot (same as the panel): fill the
-        // catalog from `$RS2B0T`, then spawn the isolate on Start.
+        // catalog from `$RS2B0T`, then Start on StartScript after seed.
         if let Some(card_name) = start_script {
             self.fill_rs2b0t_cards_once();
             let card = self
@@ -506,8 +558,8 @@ impl TuiSession {
                 .get(script::ScriptSource::Catalog, card_name)
                 .cloned()
                 .ok_or_else(|| {
-                format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-            })?;
+                    format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+                })?;
             self.script_sel = Some(script::ScriptSel::Loaded(
                 script::ScriptSource::Catalog,
                 card_name.to_string(),
@@ -531,9 +583,13 @@ impl TuiSession {
                     shape: None,
                 },
             )?;
-            let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.js.clone(), card.shape, bag, siblings)
-                .map_err(|e| format!("start {card_name}: {e}"))?;
+            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                slot: names[0].clone(),
+                js: card.js.clone(),
+                shape: card.shape,
+                bag,
+                siblings,
+            });
         }
         Ok(())
     }
@@ -686,11 +742,7 @@ impl TuiSession {
         app.rs2b0t_catalog_open = false;
     }
 
-    fn import_rs2b0t_catalog(
-        &mut self,
-        app: &mut TuiApp,
-        root: &Path,
-    ) -> Result<usize, String> {
+    fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<usize, String> {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
@@ -1087,9 +1139,7 @@ impl TuiSession {
         let Some(vault) = self.vault.as_mut() else {
             return Ok(());
         };
-        vault
-            .upsert(profile)
-            .map_err(|e| format!("profile: {e}"))
+        vault.upsert(profile).map_err(|e| format!("profile: {e}"))
     }
 }
 
@@ -1126,22 +1176,14 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             .draw(|frame| {
                 app.draw(frame);
                 app.draw_loadouts_overlay(frame, &mut session.loadouts);
-                app.draw_params_overlay(
-                    frame,
-                    &mut session.script_settings,
-                    &session.loadouts,
-                );
+                app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
             })
             .map_err(|e| e.to_string())?;
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
                     if app.params_state.open {
-                        app.params_on_key(
-                            &mut session.script_settings,
-                            &session.loadouts,
-                            k,
-                        );
+                        app.params_on_key(&mut session.script_settings, &session.loadouts, k);
                     } else if app.loadouts_on_key(&mut session.loadouts, k) {
                     } else {
                         let action = app.on_key(k);
@@ -1244,10 +1286,10 @@ pub fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use nav::grid::StepGrid;
     use nav::router::FindOptions;
     use nav::world::NavWorld;
+    use std::sync::Arc;
 
     fn dummy_options() -> PlayOptions {
         PlayOptions {
@@ -1342,9 +1384,49 @@ ScriptRegistry.register({
     }
 
     #[test]
+    fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
+        let dir = std::env::temp_dir().join(format!("274bot-tui-bone-live-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = fake_rs2b0t_tree(&dir);
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+        let mut session = TuiSession::new(dummy_options());
+        session
+            .live_prepare_script(scenario::get("bone_burier").expect("registered"))
+            .expect("prepare");
+        let name = session.names.first().expect("minted name").clone();
+        assert_ne!(name, "test", "live must not log in `test`");
+        assert_eq!(
+            session.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                "BoneBurier".into()
+            )),
+            "prepare sets script_sel to the catalog card"
+        );
+        let play = session.play.as_ref().expect("play started");
+        assert_ne!(
+            play.script_state(&name),
+            script::RunState::Running,
+            "isolate is not Running yet — Start waits for the StartScript step"
+        );
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn first_browse_without_rs2b0t_opens_catalog_prompt() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-tui-browse-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("274bot-tui-browse-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let home = dir.join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -1486,12 +1568,7 @@ ScriptRegistry.register({
     /// panel's `script_toggle_pause` (Resume when Paused, Pause when Running).
     #[test]
     fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
-        let mut play = run_with_io(
-            &dummy_options(),
-            vec![],
-            |_| (None, None),
-            |_, _, _| {},
-        );
+        let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
         play.attach_arm("alice", SlotArm::new(7, false));
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
         play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
@@ -1538,12 +1615,12 @@ ScriptRegistry.register({
         use std::sync::Arc;
 
         use api::snapshot::GameSnapshot;
+        use api::snapshot::WorldTile;
         use client::client::{Client, ClientConfig, ClientPlayer};
         use client::config::if_type::ComponentType;
         use client::config::{Cache, IfType, IfTypeMut, LocType, ObjType};
         use client::io::ServerProt;
         use nav::pack::BankAccess;
-        use api::snapshot::WorldTile;
         use nav::transport::{TransportEdge, TransportGraph, TransportKind};
         use nav::world::NavWorld;
 
@@ -1816,11 +1893,11 @@ ScriptRegistry.register({
     /// Whole-branch fix: follow hook must pass minusedlevel, not plane 0.
     #[test]
     fn player_at_plane_one_follow_uses_level() {
+        use api::snapshot::WorldTile;
         use bank_fetch_fixtures::bank_client;
-        use host_play::{PendingBankFetch, player_here_tile, step_walk_arm_bank_fetch};
+        use host_play::{player_here_tile, step_walk_arm_bank_fetch, PendingBankFetch};
         use nav::bank_fetch::BankStep;
         use nav::router::Route;
-        use api::snapshot::WorldTile;
         use std::collections::VecDeque;
 
         let mut c = bank_client();
@@ -1880,11 +1957,11 @@ ScriptRegistry.register({
     /// OPT-012: the follow tick must pump BankBudget before route follow.
     #[test]
     fn follow_tick_pumps_bank_budget_step() {
+        use api::snapshot::WorldTile;
         use bank_fetch_fixtures::{bank_client, knife_nav_world};
         use host_play::PendingBankFetch;
         use nav::bank_fetch::BankStep;
         use nav::router::Route;
-        use api::snapshot::WorldTile;
         use std::collections::VecDeque;
 
         let mut c = bank_client();

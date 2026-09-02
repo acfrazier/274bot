@@ -61,12 +61,12 @@ pub struct ScenarioSettings {
     /// Background cheats the runner fires while the scenario is running
     /// (377 sustain: energy, HP, stats). Empty for most scenarios.
     pub sustains: Vec<Sustain>,
-    /// A JS/TS card (a `$RS2B0T` catalog name) the host **starts on the
-    /// driven slot** when the live runner is installed — the scenario's
-    /// steps then observe the running script's evidence instead of doing
-    /// the work themselves. The host fills the catalog from `$RS2B0T`
-    /// (register/Load) and dispatches `script_start_load`. `None` for
-    /// host-driven scenarios.
+    /// A JS/TS card (a `$RS2B0T` catalog name) the host **selects** when
+    /// the live runner is installed, then Starts on [`StepKind::StartScript`]
+    /// after the last seed wait — the scenario's later steps observe the
+    /// running script's evidence. The host fills the catalog from `$RS2B0T`
+    /// (register/Load) and dispatches `script_start_load` on that step.
+    /// `None` for host-driven scenarios.
     pub start_script: Option<&'static str>,
     /// Scenario-only parameter overrides merged last at script Start (never
     /// written to operator `script-settings.json`).
@@ -98,9 +98,9 @@ pub fn settings_inject_map(
     for row in rows {
         let value = match row.value {
             ScriptInjectValue::Str(v) => Value::String(v.to_string()),
-            ScriptInjectValue::Num(v) => Value::Number(
-                serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()),
-            ),
+            ScriptInjectValue::Num(v) => {
+                Value::Number(serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()))
+            }
             ScriptInjectValue::Bool(v) => Value::Bool(v),
             ScriptInjectValue::StrList(v) => {
                 Value::Array(v.iter().map(|s| Value::String((*s).to_string())).collect())
@@ -304,6 +304,10 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
+    /// Host starts the catalog isolate (`script_start_load`) once when
+    /// the live pump sees this step. No-op on the client. The wait is an
+    /// immediate / one-tick arm that does not require XP.
+    StartScript,
 }
 
 /// Evidence wait for a step: a named predicate and a tick budget.
@@ -1563,17 +1567,19 @@ fn nav_paint_path_scenario() -> Scenario {
 
 /// The `bone_burier` scenario: the **live BoneBurier gold** — the real
 /// rs2b0t TS `BoneBurier` (a `$RS2B0T` catalog card) runs through the
-/// shim on the driven slot, not a host re-implementation. The host starts
-/// the card (`settings.start_script`) at live boot; the runner only seeds
-/// the slot and then **observes** the script's burials. Steps: log in a
-/// unique minted account, mainland-hop into the Lumbridge courtyard,
-/// stick `tutorial=1000` and `give bones 5` **before** the clean relog
-/// (the engine persists the give across logout; a bare setvar leaves the
+/// shim on the driven slot, not a host re-implementation. The host
+/// selects the card (`settings.start_script`) at live boot and Starts
+/// it on [`StepKind::StartScript`] after the last seed wait; the runner
+/// then **observes** the script's burials. Steps: log in a unique minted
+/// account, mainland-hop into the Lumbridge courtyard, stick
+/// `tutorial=1000` and `give bones 5` **before** the clean relog (the
+/// engine persists the give across logout; a bare setvar leaves the
 /// side icons tutorial-locked, so the inv tab's TYPE_INV widget — and the
-/// script's `inventorySize()` gate — only binds after the relog), then
-/// wait for the script's bury evidence: the server's `bury_bone.rs2`
-/// deletes the slot, advances prayer, and prints "You bury the bones."
-/// Proof is the bury message in the chat ring — burials happened.
+/// script's `inventorySize()` gate — only binds after the relog), Start
+/// the card, then wait for the script's bury evidence: the server's
+/// `bury_bone.rs2` deletes the slot, advances prayer, and prints "You
+/// bury the bones." Proof is the bury message in the chat ring —
+/// burials happened.
 fn bone_burier_scenario() -> Scenario {
     Scenario {
         name: "bone_burier",
@@ -1609,13 +1615,12 @@ fn bone_burier_scenario() -> Scenario {
                     budget_ticks: 600,
                 },
             },
+            start_catalog_step(),
             Step {
-                // The BoneBurier card (started by the host at live boot,
-                // parked in onStart until ingame + inv tab + prayer
-                // stats) wakes once the relog binds the inv tab, finds
-                // the five Bones, and buries them one at a time. This
-                // step only watches the chat ring for the server's bury
-                // message.
+                // The BoneBurier card (started by the host on StartScript
+                // after the relog binds the inv tab) finds the five Bones
+                // and buries them one at a time. This step only watches
+                // the chat ring for the server's bury message.
                 name: "watch the script bury bones",
                 kind: StepKind::Perform {
                     send: Box::new(|_, _| true),
@@ -1690,6 +1695,19 @@ fn drain_advancestat() -> Step {
     }
 }
 
+/// Catalog Start after the last seed wait: live pumps call `script_start_load`
+/// once, then this one-tick arm (run energy, not XP) succeeds.
+fn start_catalog_step() -> Step {
+    Step {
+        name: "start the catalog card",
+        kind: StepKind::StartScript,
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 1,
+        },
+    }
+}
+
 /// Lumbridge chicken pen (east of the castle): the ChickenKiller leash
 /// anchor when started here.
 const LUMBRIDGE_CHICKENS: WorldTile = WorldTile {
@@ -1730,6 +1748,7 @@ fn chicken_killer_scenario() -> Scenario {
                     budget_ticks: 120,
                 },
             });
+            steps.push(start_catalog_step());
             steps.push(Step {
                 name: "watch the script fight chickens",
                 kind: StepKind::Perform {
@@ -1812,6 +1831,7 @@ fn thiever_scenario() -> Scenario {
                 },
             });
             steps.push(drain_advancestat());
+            steps.push(start_catalog_step());
             steps.push(Step {
                 name: "watch the script pickpocket guards",
                 kind: StepKind::Perform {
@@ -1898,6 +1918,7 @@ fn alcher_scenario() -> Scenario {
                     budget_ticks: 200,
                 },
             });
+            steps.push(start_catalog_step());
             steps.push(Step {
                 name: "watch the script alch noted stock",
                 kind: StepKind::Perform {
@@ -1968,6 +1989,7 @@ fn bank_fletcher_scenario() -> Scenario {
                 },
             });
             steps.push(drain_advancestat());
+            steps.push(start_catalog_step());
             steps.push(Step {
                 name: "watch the script fletch willow logs",
                 kind: StepKind::Perform {
@@ -2338,10 +2360,10 @@ mod tests {
             "Alcher injects the items bag"
         );
         assert!(
-            alcher.steps.iter().any(|st| matches!(
-                st.wait.arm,
-                Proof::Stat { id: 6, min: 55 }
-            )),
+            alcher
+                .steps
+                .iter()
+                .any(|st| matches!(st.wait.arm, Proof::Stat { id: 6, min: 55 })),
             "alcher seed waits for Magic ≥ 55 before Start/watch, not arrival alone"
         );
         let thiever = get("thiever").expect("thiever");
@@ -2357,12 +2379,107 @@ mod tests {
     }
 
     #[test]
+    fn gold_scripts_start_the_catalog_after_the_last_seed_wait() {
+        fn start_idx(name: &str) -> usize {
+            let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            s.steps
+                .iter()
+                .position(|st| matches!(st.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name} has a StartScript step after the last seed wait"))
+        }
+
+        // bone_burier: after relog SideTabAvailable, before watch bury chat
+        let bone = get("bone_burier").unwrap();
+        let i = start_idx("bone_burier");
+        assert!(
+            matches!(bone.steps[i - 1].kind, StepKind::Relog),
+            "bone_burier StartScript follows the relog"
+        );
+        assert_eq!(
+            bone.steps[i - 1].wait.arm,
+            Proof::SideTabAvailable { index: 3 }
+        );
+        assert_eq!(
+            bone.steps[i + 1].wait.arm,
+            Proof::Chat {
+                needle: "bury the bones"
+            }
+        );
+        assert_eq!(bone.steps[i].wait.arm, Proof::Stat { id: 16, min: 0 });
+        assert_eq!(bone.steps[i].wait.budget_ticks, 1);
+
+        // chicken_killer: after tele ArrivedNear chickens, before watch XP
+        let chickens = get("chicken_killer").unwrap();
+        let i = start_idx("chicken_killer");
+        assert_eq!(
+            chickens.steps[i - 1].wait.arm,
+            Proof::ArrivedNear {
+                x: 3235,
+                z: 3295,
+                level: 0,
+                radius: 8,
+            }
+        );
+        assert_eq!(
+            chickens.steps[i + 1].wait.arm,
+            Proof::StatXpGain { id: 2, min: 1 }
+        );
+
+        // thiever: after tele + DrainDialogs, before watch XP
+        let thiever = get("thiever").unwrap();
+        let i = start_idx("thiever");
+        assert!(
+            matches!(thiever.steps[i - 1].kind, StepKind::DrainDialogs { .. }),
+            "thiever StartScript follows DrainDialogs"
+        );
+        assert_eq!(
+            thiever.steps[i + 1].wait.arm,
+            Proof::StatXpGain { id: 17, min: 1 }
+        );
+
+        // alcher: after Magic ≥55 and tele ArrivedNear West bank, before watch XP
+        let alcher = get("alcher").unwrap();
+        let i = start_idx("alcher");
+        assert!(
+            alcher.steps[..i]
+                .iter()
+                .any(|st| matches!(st.wait.arm, Proof::Stat { id: 6, min: 55 })),
+            "alcher StartScript is after Magic ≥55"
+        );
+        assert_eq!(
+            alcher.steps[i - 1].wait.arm,
+            Proof::ArrivedNear {
+                x: 3185,
+                z: 3440,
+                level: 0,
+                radius: 6,
+            }
+        );
+        assert_eq!(
+            alcher.steps[i + 1].wait.arm,
+            Proof::StatXpGain { id: 6, min: 1 }
+        );
+
+        // bank_fletcher: after last seed wait (tele + drain), before watch XP
+        let fletcher = get("bank_fletcher").unwrap();
+        let i = start_idx("bank_fletcher");
+        assert!(
+            matches!(fletcher.steps[i - 1].kind, StepKind::DrainDialogs { .. }),
+            "bank_fletcher StartScript follows the last seed wait"
+        );
+        assert_eq!(
+            fletcher.steps[i + 1].wait.arm,
+            Proof::StatXpGain { id: 9, min: 1 }
+        );
+    }
+
+    #[test]
     fn bone_burier_seeds_bones_relogs_and_watches_the_script_bury() {
         let s = get("bone_burier").expect("bone_burier is registered");
         assert_eq!(s.name, "bone_burier");
         assert_eq!(s.seed.profiles, [("test", "test")]);
         assert!(s.seed.mainland, "unique live accounts spawn on tutorial");
-        assert_eq!(s.steps.len(), 3, "seed, relog, watch");
+        assert_eq!(s.steps.len(), 4, "seed, relog, StartScript, watch");
         // Step 1 sticks the tutorial skip and cheats five Bones in
         // BEFORE the relog (the engine persists the give across logout;
         // the bones must be in the pack when the script's onStart wakes).
@@ -2371,10 +2488,12 @@ mod tests {
         // side icons tutorial-locked).
         assert!(matches!(s.steps[1].kind, StepKind::Relog));
         assert_eq!(s.steps[1].wait.arm, Proof::SideTabAvailable { index: 3 });
-        // Step 3 sends nothing; it watches the chat ring for the running
+        // Step 3 starts the catalog card after the last seed wait.
+        assert!(matches!(s.steps[2].kind, StepKind::StartScript));
+        // Step 4 sends nothing; it watches the chat ring for the running
         // script's burial evidence.
         assert_eq!(
-            s.steps[2].wait.arm,
+            s.steps[3].wait.arm,
             Proof::Chat {
                 needle: "bury the bones"
             }

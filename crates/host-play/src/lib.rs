@@ -2487,6 +2487,39 @@ pub struct Play {
     wakes: HashMap<String, SlotWake>,
 }
 
+/// Cloneable isolate-start handle for slot-thread live pumps that cannot
+/// hold `&Play` (the per-frame hook is built before `Play` is stored).
+#[derive(Clone)]
+pub struct ScriptStartHandle {
+    scripts: ScriptWall,
+}
+
+impl ScriptStartHandle {
+    /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
+    /// [`Play::script_start_load`], without the control-thread wake
+    /// (the slot thread is already pumping).
+    pub fn start_load(
+        &self,
+        name: &str,
+        source: String,
+        shape: script::LoadShape,
+        settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+    ) -> Result<(), String> {
+        if debug_enabled() {
+            eprintln!("[script {name}] start load");
+        }
+        let result = script_slot_or_insert(&self.scripts, name)
+            .lock()
+            .unwrap()
+            .start_load_with_settings(source, shape, settings_bag.as_ref(), siblings);
+        if let Err(e) = &result {
+            eprintln!("[script {name}] start failed: {e}");
+        }
+        result
+    }
+}
+
 impl Play {
     /// Shared construction for the public `run*` entry points: one login
     /// FIFO, one shared cache/iface template, and the per-slot script/cheat
@@ -2667,6 +2700,14 @@ impl Play {
         result?;
         self.wake(name);
         Ok(())
+    }
+
+    /// Cloneable isolate-start handle for slot-thread live pumps that
+    /// cannot hold `&Play`.
+    pub fn script_start_handle(&self) -> ScriptStartHandle {
+        ScriptStartHandle {
+            scripts: Arc::clone(&self.scripts),
+        }
     }
 
     /// Pause `name`'s script (operator Pause; survives login until

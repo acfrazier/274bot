@@ -273,6 +273,14 @@ impl ScenarioRunner {
         (self.scenario.companions[index].per_frame)(client);
     }
 
+    /// True while the runner is on [`StepKind::StartScript`]: panel/TUI
+    /// live pumps call `script_start_load` once, then the step wait.
+    pub fn on_start_script(&self) -> bool {
+        matches!(self.phase, Phase::Running)
+            && self.step < self.scenario.steps.len()
+            && matches!(self.current_step().kind, StepKind::StartScript)
+    }
+
     /// The terminal evidence record, `None` until PASS/FAIL.
     pub fn evidence(&self) -> Option<&Evidence> {
         self.evidence.as_ref()
@@ -436,14 +444,11 @@ impl ScenarioRunner {
             }
         }
         if matches!(self.phase, Phase::Proving)
-            && self
-                .scenario
-                .proof
-                .check_with_xp_baselines(
-                    &self.snapshot,
-                    self.obj_names.as_deref(),
-                    Some(&self.xp_baselines),
-                )
+            && self.scenario.proof.check_with_xp_baselines(
+                &self.snapshot,
+                self.obj_names.as_deref(),
+                Some(&self.xp_baselines),
+            )
         {
             self.finish_pass();
         }
@@ -606,7 +611,7 @@ impl ScenarioRunner {
                     }
                 }
             }
-            StepKind::Shot { .. } => Ok(()),
+            StepKind::Shot { .. } | StepKind::StartScript => Ok(()),
             StepKind::Relog => {
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);
@@ -1675,6 +1680,54 @@ mod tests {
             fired[0].1,
             Some((3220, 3220, 0)),
             "the sink sees the terminal snapshot's player tile"
+        );
+    }
+
+    fn start_script_scenario() -> Scenario {
+        Scenario {
+            name: "start-script",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![
+                Step {
+                    name: "last seed wait",
+                    kind: StepKind::Shot { label: "seed" },
+                    wait: wait(Proof::Stat { id: 16, min: 0 }, 1),
+                },
+                Step {
+                    name: "start the catalog card",
+                    kind: StepKind::StartScript,
+                    wait: wait(Proof::Stat { id: 16, min: 0 }, 1),
+                },
+            ],
+            proof: Proof::Stat { id: 16, min: 0 },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        }
+    }
+
+    #[test]
+    fn start_script_step_is_a_client_noop_and_the_arm_holds_immediately() {
+        let mut c = seeded_client();
+        let energy = c.runenergy;
+        let mut runner = ScenarioRunner::new(start_script_scenario());
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick(&mut c);
+        assert!(
+            runner.on_start_script(),
+            "after the last seed wait, the live pumps see StartScript"
+        );
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(
+            c.runenergy, energy,
+            "StartScript is a no-op on the client (no cheat, no packet)"
+        );
+        assert!(
+            !runner.on_start_script(),
+            "the step has advanced; pumps must not Start again"
         );
     }
 

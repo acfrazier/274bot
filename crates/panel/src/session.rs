@@ -45,6 +45,51 @@ use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 
+/// Catalog card live_prepare stashes so the StartScript pump can
+/// `script_start_load` once after seed waits.
+struct PendingCatalogStart {
+    slot: String,
+    js: String,
+    shape: script::LoadShape,
+    bag: Option<serde_json::Map<String, serde_json::Value>>,
+    siblings: Vec<(String, String)>,
+}
+
+/// When the runner is on [`scenario::StepKind::StartScript`], start the
+/// stashed catalog isolate once. Returns false when Start was attempted
+/// and failed, so the pump must not consume the one-tick wait.
+fn fire_pending_catalog_start(
+    pending: &Mutex<Option<PendingCatalogStart>>,
+    handle: &Mutex<Option<host_play::ScriptStartHandle>>,
+    runner: &scenario::ScenarioRunner,
+) -> bool {
+    if !runner.on_start_script() {
+        return true;
+    }
+    let mut pending = pending.lock().unwrap();
+    let Some(card) = pending.as_ref() else {
+        return true;
+    };
+    let handle = handle.lock().unwrap();
+    let Some(h) = handle.as_ref() else {
+        return false;
+    };
+    if h.start_load(
+        &card.slot,
+        card.js.clone(),
+        card.shape,
+        card.bag.clone(),
+        card.siblings.clone(),
+    )
+    .is_ok()
+    {
+        pending.take();
+        true
+    } else {
+        false
+    }
+}
+
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
@@ -741,6 +786,11 @@ pub struct Session {
     /// `Client`), the UI frame reads its status/evidence. `None` when no
     /// scenario is live.
     pub scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
+    /// Catalog card `live_prepare_script` stashes; the live pump Starts
+    /// it once on [`scenario::StepKind::StartScript`].
+    pending_script: Arc<Mutex<Option<PendingCatalogStart>>>,
+    /// Isolate-start handle the per-frame hook uses (filled after Play).
+    script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
     /// Focused-slot speaker gate: at most one cpal speaker, owned by the
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
@@ -869,6 +919,8 @@ impl Session {
             },
             rs2b0t_filled: false,
             scenario: Arc::new(Mutex::new(None)),
+            pending_script: Arc::new(Mutex::new(None)),
+            script_start_handle: Arc::new(Mutex::new(None)),
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
             options: PlayOptions {
@@ -923,10 +975,7 @@ impl Session {
         }
         self.rs2b0t_filled = true;
         if let Some(root) = script::rs2b0t_root() {
-            if let Err(e) = self
-                .js
-                .register_rs2b0t(&root, &self.rs2b0t_path_file())
-            {
+            if let Err(e) = self.js.register_rs2b0t(&root, &self.rs2b0t_path_file()) {
                 if host::debug_enabled() {
                     eprintln!("[panel] $RS2B0T registry: {e}");
                 }
@@ -955,9 +1004,7 @@ impl Session {
                 script::registry_index_path(root).display()
             ));
         }
-        let n = self
-            .js
-            .register_rs2b0t(root, &self.rs2b0t_path_file())?;
+        let n = self.js.register_rs2b0t(root, &self.rs2b0t_path_file())?;
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
         self.rs2b0t_catalog_open = false;
         Ok(n)
@@ -1214,11 +1261,10 @@ impl Session {
             runner.set_obj_names(play.obj_names());
         }
         *self.scenario.lock().unwrap() = Some(runner);
-        // A scenario that names a script card (`start_script`) runs the
-        // real `$RS2B0T` catalog script on the driven slot — the scenario
-        // steps then observe its evidence. The catalog is filled from
-        // `$RS2B0T` (or the persisted root) here, and the card's source
-        // is what the isolate spawns on Start.
+        // A scenario that names a script card (`start_script`) selects
+        // the real `$RS2B0T` catalog script on the driven slot — Start
+        // waits for [`scenario::StepKind::StartScript`] after seed. The
+        // catalog is filled from `$RS2B0T` (or the persisted root) here.
         if let Some(card_name) = view.start_script {
             self.fill_rs2b0t_cards_once();
             let card = self
@@ -1226,8 +1272,8 @@ impl Session {
                 .get(script::ScriptSource::Catalog, card_name)
                 .cloned()
                 .ok_or_else(|| {
-                format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-            })?;
+                    format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+                })?;
             self.script_sel = Some(script::ScriptSel::Loaded(
                 script::ScriptSource::Catalog,
                 card_name.to_string(),
@@ -1241,10 +1287,14 @@ impl Session {
                     &card.settings_schema,
                 ))
             };
-            let play = self.play.as_ref().ok_or("no play")?;
             let siblings = self.sibling_modules_for_card(&card)?;
-            play.script_start_load(&names[0], card.js.clone(), card.shape, bag, siblings)
-                .map_err(|e| format!("start {card_name}: {e}"))?;
+            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                slot: names[0].clone(),
+                js: card.js.clone(),
+                shape: card.shape,
+                bag,
+                siblings,
+            });
         }
         self.login_all();
         Ok(())
@@ -1263,6 +1313,8 @@ impl Session {
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
         let scenario = Arc::clone(&self.scenario);
+        let pending_script = Arc::clone(&self.pending_script);
+        let script_start_handle = Arc::clone(&self.script_start_handle);
         let audio = Arc::clone(&self.audio);
         let nav_publish = Arc::clone(&self.nav_publish);
         // Last failed device-open `(slot, when)`; a machine without an
@@ -1416,7 +1468,10 @@ impl Session {
                 // same way `step_nav_bot` freezes (route stays latched).
                 if let Some(runner) = scenario.lock().unwrap().as_mut() {
                     if runner.drives(name) {
-                        runner.tick_with_hold(c, hold);
+                        if fire_pending_catalog_start(&pending_script, &script_start_handle, runner)
+                        {
+                            runner.tick_with_hold(c, hold);
+                        }
                     } else if let Some(index) = runner.companion_for(name) {
                         runner.companion_tick(index, c);
                     }
@@ -1533,6 +1588,7 @@ impl Session {
                 }
             },
         );
+        *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         self.play = Some(play);
         crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
@@ -1988,9 +2044,10 @@ impl Session {
             self.error = Some("credentials: username required".into());
             return false;
         }
-        let rename_from = self.chooser_edit.as_deref().filter(|old| {
-            !old.is_empty() && old.trim() != username
-        });
+        let rename_from = self
+            .chooser_edit
+            .as_deref()
+            .filter(|old| !old.is_empty() && old.trim() != username);
         let profile = {
             let vault = self.vault.as_mut().expect("vault checked");
             let existing = if let Some(old) = rename_from {
@@ -2600,12 +2657,11 @@ impl Session {
     fn focused_walk_bank(&self) -> Vec<(i32, i32)> {
         self.focused_name()
             .and_then(|name| {
-                self.nav_states.lock().unwrap().get(&name).map(|(snap, _)| {
-                    snap.bank()
-                        .iter()
-                        .map(|it| (it.def.id, it.count))
-                        .collect()
-                })
+                self.nav_states
+                    .lock()
+                    .unwrap()
+                    .get(&name)
+                    .map(|(snap, _)| snap.bank().iter().map(|it| (it.def.id, it.count)).collect())
             })
             .unwrap_or_default()
     }
@@ -2761,12 +2817,8 @@ impl Session {
         name: &str,
         schema: &[script::SettingDef],
     ) -> serde_json::Map<String, serde_json::Value> {
-        self.script_settings.merged_bag(
-            source,
-            name,
-            schema,
-            self.script_settings_inject.as_ref(),
-        )
+        self.script_settings
+            .merged_bag(source, name, schema, self.script_settings_inject.as_ref())
     }
 
     /// Inject overrides merged last when the selected script Starts (live gold).
@@ -2801,7 +2853,11 @@ impl Session {
                         let bag = if card.settings_schema.is_empty() {
                             None
                         } else {
-                            Some(self.merged_settings_bag(source, &card_name, &card.settings_schema))
+                            Some(self.merged_settings_bag(
+                                source,
+                                &card_name,
+                                &card.settings_schema,
+                            ))
                         };
                         match self.sibling_modules_for_card(card) {
                             Ok(siblings) => play.script_start_load(
@@ -2941,7 +2997,11 @@ fn stress_live_entries_for_target(n: usize, target: client::BotTarget) -> Vec<(S
 /// Null raster keeps base uid `274_000_001`. Accepts `&str` or `String`
 /// entries (live scripts mint per-run usernames).
 /// Same as a single-base [`temp_live_vault_from`] (`274_000_001`).
-fn temp_live_vault_from<S: AsRef<str>>(entries: &[(S, S)], uid_base: i32, vault_pass: &str) -> PathBuf {
+fn temp_live_vault_from<S: AsRef<str>>(
+    entries: &[(S, S)],
+    uid_base: i32,
+    vault_pass: &str,
+) -> PathBuf {
     // Unique per call: parallel tests boot several scenarios and must not
     // race on one temp vault path.
     static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -3035,12 +3095,11 @@ mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
         is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
-        parse_getvar_line, publish_nav_debug, script_active, script_pause_enabled,
-        script_status_text, null_raster_live_entries_for_target, script_stop_enabled,
-        seed_on_first_world, stream_capture, stress_live_entries_for_target,
-        temp_live_vault_from, walkto_tele_cmd, Session, SlotIo, WalkArm,
+        null_raster_live_entries_for_target, parse_getvar_line, publish_nav_debug, script_active,
+        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
+        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+        Session, SlotIo, WalkArm,
     };
-    use std::path::{Path, PathBuf};
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
     use client::client::{Client, ClientConfig};
@@ -3058,6 +3117,7 @@ mod tests {
     use nav::traveller::Traveller;
     use nav::world::NavWorld;
     use nav::WorldState;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -4140,11 +4200,11 @@ mod tests {
             "upstairs origin must not masquerade as the dest plane"
         );
         assert!(
-            s.travellers
+            s.travellers.lock().unwrap().get("alice").is_none_or(|a| a
                 .lock()
                 .unwrap()
-                .get("alice")
-                .is_none_or(|a| a.lock().unwrap().route.is_none()),
+                .route
+                .is_none()),
             "a wrong-plane route must not arm"
         );
     }
@@ -5338,10 +5398,10 @@ mod tests {
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
     }
 
-    /// A scenario that names a script card (`start_script`) boots the
-    /// real `$RS2B0T` catalog script on the driven slot — the steps then
-    /// observe its evidence. `$RS2B0T` is read here, and the card's
-    /// source is what the isolate spawns on Start.
+    /// A scenario that names a script card (`start_script`) fills the
+    /// catalog and selects it on the driven slot — Start waits for the
+    /// `StartScript` step after seed. `$RS2B0T` is read here, and the
+    /// card's source is what the isolate will spawn on that step.
     #[test]
     fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
         crate::ui_state::save(&crate::ui_state::PanelUiState {
@@ -5387,13 +5447,21 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         assert_ne!(name, "test", "live must not log in `test`");
         match result {
             Ok(()) => {}
-            Err(e) => panic!("live_prepare must start the card: {e}"),
+            Err(e) => panic!("live_prepare must select the card: {e}"),
         }
-        let play = s.play.as_ref().expect("play started");
         assert_eq!(
+            s.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                "BoneBurier".into()
+            )),
+            "prepare sets script_sel to the catalog card"
+        );
+        let play = s.play.as_ref().expect("play started");
+        assert_ne!(
             play.script_state(&name),
             script::RunState::Running,
-            "the BoneBurier card is started on the driven slot"
+            "isolate is not Running yet — Start waits for the StartScript step"
         );
         match orig_rs2b0t {
             Some(v) => std::env::set_var("RS2B0T", v),
@@ -5412,10 +5480,8 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             last_focus: None,
             ..Default::default()
         });
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-alcher-sel-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-alcher-sel-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let home = dir.join("home");
         let root = dir.join("rs2b0t");
@@ -5559,8 +5625,7 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
     #[test]
     fn temp_live_vault_prod_mint_does_not_persist_username_as_password() {
         let names = host_play::mint_live_names(2);
-        let entries =
-            host_play::mint_live_entries_for_target(&names, client::BotTarget::Prod);
+        let entries = host_play::mint_live_entries_for_target(&names, client::BotTarget::Prod);
         let pass = host_play::live_vault_passphrase_for(client::BotTarget::Prod);
         let path = temp_live_vault_from(&entries, 274_000_001, &pass);
         let vault = Vault::unlock(&path, &pass).unwrap();
@@ -6099,8 +6164,15 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
 
         let vault = s.vault.as_ref().unwrap();
         assert!(vault.get("bob").is_some(), "rename must upsert the new key");
-        assert!(vault.get("alice").is_none(), "rename must remove the old key");
-        assert_eq!(vault.get("bob").unwrap().uid, 42, "rename keeps the old uid");
+        assert!(
+            vault.get("alice").is_none(),
+            "rename must remove the old key"
+        );
+        assert_eq!(
+            vault.get("bob").unwrap().uid,
+            42,
+            "rename keeps the old uid"
+        );
         assert_eq!(s.focused_name().as_deref(), Some("bob"));
     }
 
@@ -6109,10 +6181,8 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
     fn save_credentials_upsert_error_surfaces_on_session_error() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-save-err-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-save-err-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vault.vault");
         let mut s = Session::new();
@@ -6319,7 +6389,10 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
         );
         let arm = SlotArm::new(42, false);
         assert!(arm.random_events.load(Ordering::Relaxed), "default on");
-        assert!(arm.lamp_auto.load(Ordering::Relaxed), "default lamp auto on");
+        assert!(
+            arm.lamp_auto.load(Ordering::Relaxed),
+            "default lamp auto on"
+        );
         assert_eq!(
             arm.lamp_skill.lock().unwrap().as_str(),
             "strength",
@@ -6934,8 +7007,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         let mut s = Session::new();
         // Construction alone must stay catalog-free (hermetic unit tests).
         assert!(
-            s.js
-                .get(script::ScriptSource::Catalog, "BoneBurier")
+            s.js.get(script::ScriptSource::Catalog, "BoneBurier")
                 .is_none(),
             "Session::new must not parse $RS2B0T"
         );
@@ -6945,10 +7017,9 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         );
         // First Browse fills once.
         s.fill_rs2b0t_cards_once();
-        let card = s
-            .js
-            .get(script::ScriptSource::Catalog, "BoneBurier")
-            .expect("BoneBurier card filled on first Browse");
+        let card =
+            s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+                .expect("BoneBurier card filled on first Browse");
         assert_eq!(card.shape, script::LoadShape::CompatClass);
         assert!(
             home.join(".274bot/rs2b0t-path").is_file(),
@@ -7053,8 +7124,7 @@ ScriptRegistry.register({
             "defer must not write rs2b0t-path"
         );
         assert!(
-            s.js
-                .cards()
+            s.js.cards()
                 .iter()
                 .all(|c| c.source != script::ScriptSource::Catalog),
             "zero Catalog cards after defer"
@@ -7087,10 +7157,9 @@ ScriptRegistry.register({
         let n = s.import_rs2b0t_catalog(&root).expect("import");
         assert_eq!(n, 1);
         assert!(home.join(".274bot/rs2b0t-path").is_file());
-        let card = s
-            .js
-            .get(script::ScriptSource::Catalog, "BoneBurier")
-            .expect("catalog card");
+        let card =
+            s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+                .expect("catalog card");
         assert_eq!(card.category, "Prayer");
         assert_eq!(card.description, "Buries bones");
         assert_eq!(card.tags, vec!["bones"]);
@@ -7108,10 +7177,8 @@ ScriptRegistry.register({
 
     #[test]
     fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-browse-env-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-browse-env-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let home = dir.join("home");
         let root = fake_rs2b0t_tree(&dir);
@@ -7123,8 +7190,7 @@ ScriptRegistry.register({
         let mut s = Session::new();
         s.on_script_browse_open();
         assert!(
-            s.js
-                .get(script::ScriptSource::Catalog, "BoneBurier")
+            s.js.get(script::ScriptSource::Catalog, "BoneBurier")
                 .is_some(),
             "RS2B0T env still fills catalog on first browse"
         );
