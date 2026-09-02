@@ -934,7 +934,12 @@ impl Session {
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
         self.persist_ui = false;
         let pass = host_play::live_vault_passphrase();
-        let path = temp_live_vault_from(&[("test", "test"), ("test2", "test2")], 274_000_001, &pass);
+        let entries = null_raster_live_entries_for_target(client::bot_target());
+        let entry_refs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|(u, p)| (u.as_str(), p.as_str()))
+            .collect();
+        let path = temp_live_vault_from(&entry_refs, 274_000_001, &pass);
         if !self.unlock_at(&path, &pass) {
             return Err(self
                 .error
@@ -981,12 +986,7 @@ impl Session {
     fn live_prepare_stress(&mut self, n: usize, full_rate: bool) -> Result<(), String> {
         self.persist_ui = false;
         let n = n.max(1);
-        let names: Vec<(String, String)> = (0..n)
-            .map(|i| {
-                let name = format!("s{i:02}");
-                (name.clone(), name)
-            })
-            .collect();
+        let names = stress_live_entries_for_target(n, client::bot_target());
         let entries: Vec<(&str, &str)> = names
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
@@ -2677,6 +2677,27 @@ impl Session {
     }
 }
 
+/// `(username, password)` pairs for live `null_raster` (`test`/`test2`).
+fn null_raster_live_entries_for_target(target: client::BotTarget) -> Vec<(String, String)> {
+    ["test", "test2"]
+        .iter()
+        .map(|user| {
+            let user = user.to_string();
+            (user.clone(), host_play::profile_password_for(&user, target))
+        })
+        .collect()
+}
+
+/// `(username, password)` pairs for live stress walls (`s00`…`s{n-1}`).
+fn stress_live_entries_for_target(n: usize, target: client::BotTarget) -> Vec<(String, String)> {
+    (0..n.max(1))
+        .map(|i| {
+            let name = format!("s{i:02}");
+            (name.clone(), host_play::profile_password_for(&name, target))
+        })
+        .collect()
+}
+
 /// Throwaway encrypted vault for live prepare (e2e `temp_vault` pattern,
 /// kept panel-private so panel does not depend on the e2e crate).
 /// Null raster keeps base uid `274_000_001`. Accepts `&str` or `String`
@@ -2777,8 +2798,9 @@ mod tests {
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
         is_local_engine, live_or_walk_paint, maybe_send_click, parse_getvar_line,
         publish_nav_debug, script_active, script_pause_enabled, script_status_text,
-        script_stop_enabled, seed_on_first_world, stream_capture, temp_live_vault_from,
-        walkto_tele_cmd, Session, SlotIo, WalkArm,
+        null_raster_live_entries_for_target, script_stop_enabled, seed_on_first_world,
+        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+        Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -5127,6 +5149,44 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             "no wall members, no extra rasters"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn null_raster_live_entries_prod_refuses_username_as_password() {
+        let entries = null_raster_live_entries_for_target(client::BotTarget::Prod);
+        for (user, pass) in &entries {
+            assert_ne!(
+                user, pass,
+                "prod null_raster must not store username-as-password"
+            );
+        }
+    }
+
+    #[test]
+    fn null_raster_live_entries_local_allows_username_as_password() {
+        let entries = null_raster_live_entries_for_target(client::BotTarget::Local);
+        for (user, pass) in &entries {
+            assert_eq!(user, pass, "local null_raster keeps username-as-password");
+        }
+    }
+
+    #[test]
+    fn stress_live_entries_prod_refuses_username_as_password() {
+        let entries = stress_live_entries_for_target(3, client::BotTarget::Prod);
+        for (user, pass) in &entries {
+            assert_ne!(
+                user, pass,
+                "prod stress must not store username-as-password"
+            );
+        }
+    }
+
+    #[test]
+    fn stress_live_entries_local_allows_username_as_password() {
+        let entries = stress_live_entries_for_target(3, client::BotTarget::Local);
+        for (user, pass) in &entries {
+            assert_eq!(user, pass, "local stress keeps username-as-password");
+        }
     }
 
     #[test]
