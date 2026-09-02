@@ -813,8 +813,8 @@ fn dispatch_script_interact(
     };
     for req in reqs {
         match req {
-            InteractReq::OpenBooth { x, z, level } => {
-                wrote |= open_booth(&mut ix, x, z, level);
+            InteractReq::OpenBooth { .. } => {
+                wrote |= matches!(ix.open_nearest_booth(), SendResult::Sent { .. });
             }
             InteractReq::OpenStand {
                 x,
@@ -4687,11 +4687,6 @@ mod tests {
             None,
             "alice",
             vec![
-                script::shim::InteractReq::OpenBooth {
-                    x: 3299,
-                    z: 3299,
-                    level: 0
-                },
                 script::shim::InteractReq::Deposit {
                     name: "Lobster".into()
                 },

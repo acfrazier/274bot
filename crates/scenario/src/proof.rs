@@ -43,6 +43,9 @@ pub enum Proof {
     QuestDone { name: &'static str },
     /// Tutorial overlay is closed (`tut_com_id == -1`).
     TutorialClosed,
+    /// Chat modal is closed (`modals.chat == -1`) — DrainDialogs after
+    /// `advancestat` waits here once the level-up IF is gone.
+    ChatClosed,
     /// Side tab `index` is bound (`side_icon[i] != -1`). rs2b0t
     /// `mainlandAccount` checks tab 3 after relog — the tutorial UI lock
     /// refresh. The overlay can stay up even when the skip varp stuck.
@@ -86,6 +89,7 @@ impl Proof {
             Proof::ChatChoice => "chat_choice".to_string(),
             Proof::QuestDone { name } => format!("quest_done({name})"),
             Proof::TutorialClosed => "tutorial_closed".to_string(),
+            Proof::ChatClosed => "chat_closed".to_string(),
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
@@ -190,6 +194,7 @@ impl Proof {
                 nav::WorldState::from_snapshot(snap).quests.contains(*name)
             }
             Proof::TutorialClosed => snap.modals().tutorial == -1,
+            Proof::ChatClosed => snap.modals().chat == -1,
             Proof::SideTabAvailable { index } => snap
                 .side_tabs()
                 .iter()
@@ -463,6 +468,20 @@ mod tests {
         c.tut_com_id = -1;
         let s = snap(&mut c);
         assert!(Proof::TutorialClosed.check(&s, None));
+    }
+
+    #[test]
+    fn chat_closed_holds_only_when_the_chat_modal_is_gone() {
+        let mut c = seeded();
+        let s = snap(&mut c);
+        assert!(Proof::ChatClosed.check(&s, None), "seed has no chat modal");
+        c.chat_modal_id = 4882;
+        let s = snap(&mut c);
+        assert!(!Proof::ChatClosed.check(&s, None));
+        c.chat_modal_id = -1;
+        let s = snap(&mut c);
+        assert!(Proof::ChatClosed.check(&s, None));
+        assert_eq!(Proof::ChatClosed.name(), "chat_closed");
     }
 
     #[test]

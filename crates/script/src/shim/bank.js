@@ -138,6 +138,18 @@ export const Bank = new Proxy(
             }
             return Bank.withdrawX(row.name, count);
         },
+        // Thin names onto the host's nearest Use-quickly loc (same plane).
+        // Extra rs2b0t args (stand / boothName / op / log) are ignored.
+        async openBooth() {
+            if (Bank.isOpen()) {
+                return Execution.delayUntil(() => snap().bank_loaded === true, 5000);
+            }
+            queue({ op: 'open-booth' });
+            return Execution.delayUntil(() => snap().bank_loaded === true, 5000);
+        },
+        async openNearest() {
+            return Bank.openBooth();
+        },
     },
     {
         get(target, prop) {

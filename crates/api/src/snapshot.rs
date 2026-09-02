@@ -1411,21 +1411,8 @@ impl GameSnapshot {
             return true;
         }
         let root = client.chat_modal_id;
-        // The continue button is a direct child of the chat modal.
-        if let Some(children) = client.if_(root as usize).and_then(|m| m.children.clone()) {
-            for child_id in children {
-                if client
-                    .if_(child_id as usize)
-                    .is_some_and(|c| c.button_type == ButtonType::BUTTON_CONTINUE)
-                {
-                    self.chat_continue_component_id = child_id;
-                    break;
-                }
-            }
-        }
-        if client.resumed_pause_button {
-            self.chat_continue_component_id = -1;
-        }
+        // Walk the chat tree: level-up IFs nest `buttontype=pause` under a
+        // layer, so a direct-child scan misses `advancestat`'s continue.
         let mut queue = vec![root];
         let mut head = 0;
         while head < queue.len() {
@@ -1434,6 +1421,11 @@ impl GameSnapshot {
             let Some(com) = client.if_(id as usize) else {
                 continue;
             };
+            if com.button_type == ButtonType::BUTTON_CONTINUE
+                && self.chat_continue_component_id == -1
+            {
+                self.chat_continue_component_id = id;
+            }
             if com.button_type == ButtonType::BUTTON_OK {
                 let label = if !com.text.is_empty() {
                     Some(com.text.to_string())
@@ -1448,6 +1440,9 @@ impl GameSnapshot {
                 }
             }
             queue.extend(children_of(&com));
+        }
+        if client.resumed_pause_button {
+            self.chat_continue_component_id = -1;
         }
         true
     }

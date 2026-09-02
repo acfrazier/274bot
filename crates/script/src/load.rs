@@ -1092,6 +1092,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         globalThis.__rs2b0t_started = true;
         if (typeof inst.onStart === 'function') { await inst.onStart(); }
     }
+    // IPC bus: posted chat_text changed → chat.message { text }.
+    const text = (globalThis.__rs2b0t_host.snapshot || {}).chat_text;
+    const t = (text == null || text === '') ? '' : String(text);
+    if (t !== globalThis.__rs2b0t_last_chat) {
+        globalThis.__rs2b0t_last_chat = t;
+        const cbs = inst && inst._subs && inst._subs['chat.message'];
+        if (t && cbs) {
+            const ev = { text: t };
+            for (let i = 0; i < cbs.length; i++) {
+                try { cbs[i](ev); } catch (_) {}
+            }
+        }
+    }
     if (typeof inst.loop === 'function') { await inst.loop(); }
     if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
 };

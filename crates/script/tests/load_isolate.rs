@@ -129,6 +129,15 @@ fn post_snapshot_input(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotIn
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
 
+/// Throw-shaped isolate lines: tick errors, not-v1, Error. Ordinary
+/// `this.log` (BoneBurier status) is allowed.
+fn is_throw_shaped_log(line: &str) -> bool {
+    line.contains("not v1")
+        || line.contains("Error")
+        || line.contains("interrupted slow tick")
+        || (line.starts_with("tick ") && line.contains(':'))
+}
+
 /// The empty fail-closed snapshot; tests override the fields they post.
 fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
     script::isolate_fb::SnapshotInput {
@@ -360,6 +369,60 @@ fn isolate_forwards_this_log() {
     assert!(
         logs.iter().any(|l| l.contains("bury ok")),
         "this.log must reach drain_logs: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 12 fix 3 — `LoopingBot.on` stores IPC subscriptions; `chat.message`
+// fires when posted `chat_text` changes. Unknown names subscribe and never
+// fire; `on` itself does not throw (Thiever/ChickenKiller add ContinueDialog
+// after `this.on`).
+#[test]
+fn isolate_looping_bot_on_does_not_throw_and_taskbot_still_adds() {
+    let src = r#"
+export default class T extends TaskBot {
+    onStart() {
+        this.on('chat.message', () => {});
+        this.on('skill.xp', () => {});
+        this.add({ validate() { return false; }, execute() {} });
+        globalThis.__added = this._tasks.length;
+    }
+    loop() {}
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let added = iso.probe("__added").unwrap();
+    assert_eq!(added, 1, "this.on must not throw before this.add");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !is_throw_shaped_log(l)),
+        "this.on must not throw: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_looping_bot_on_fires_chat_message_when_chat_text_changes() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('chat.message', (e) => { globalThis.__chat = e.text; });
+    }
+    loop() {}
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.chat_text = Some("You have been stunned.");
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    let text = iso.probe("__chat").unwrap();
+    assert_eq!(
+        text.as_str(),
+        Some("You have been stunned."),
+        "chat.message fires with posted chat_text"
     );
     iso.join();
 }
@@ -1504,7 +1567,7 @@ fn real_bone_burier_queues_bury_when_seeded() {
     let _ = iso.probe("1 + 1");
     let logs = iso.drain_logs();
     assert!(
-        logs.is_empty(),
+        logs.iter().all(|l| !is_throw_shaped_log(l)),
         "the real BoneBurier must not throw on a seeded snapshot: {logs:?}"
     );
     let reqs = iso.drain_interacts();
@@ -1542,14 +1605,11 @@ fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     iso.join();
 }
 
-// Task 7 — Banking shim: `Banking.open()` with a scene booth at Chebyshev
-// 1 queues the open-booth request (no walk); a far packed stand queues a
-// walk; `Bank.depositAllMatching` records a BankSide Deposit-All request
-// per matching row; `Bank.withdraw` records the Withdraw-All/10/1 op. The
-// requests land on `__rs2b0t_host.interact` and the tick thread forwards
-// them to the host (`drain_interacts`), like logs.
+// Task 7 — Banking shim: `Banking.open()` / `Bank.openNearest` /
+// `Bank.openBooth` are thin names onto the host's nearest Use-quickly
+// interact. No radius-1 JS router, no packed-stand walk.
 #[test]
-fn isolate_banking_open_booth_in_range_queues_open_op_no_walk() {
+fn isolate_banking_open_queues_open_booth_without_walk() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -1566,18 +1626,9 @@ export default class T extends LoopingBot {
         level: 0,
     });
     snap.booths = &[script::isolate_fb::TileInput {
-        x: 101,
+        x: 200,
         z: 100,
         level: 0,
-    }];
-    snap.banks = &[script::isolate_fb::BankStandInput {
-        name: "Bank booth",
-        x: 101,
-        z: 100,
-        level: 0,
-        kind: "booth",
-        op: 2,
-        choose: None,
     }];
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -1585,22 +1636,23 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![script::shim::InteractReq::OpenBooth {
-            x: 101,
-            z: 100,
+            x: 0,
+            z: 0,
             level: 0
         }],
-        "booth at Chebyshev 1 queues the open op and no walk"
+        "Banking.open queues open-booth; the host finds the nearest Use-quickly loc"
     );
     iso.join();
 }
 
 #[test]
-fn isolate_banking_open_far_stand_queues_a_walk() {
+fn isolate_bank_open_nearest_and_open_booth_queue_open_booth() {
     let src = r#"
-import { Banking } from '../../api/bank/Banking.js';
+import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        globalThis.__rs_ok = await Banking.open();
+    loop() {
+        Bank.openNearest('Bank booth', 'Use-quickly');
+        Bank.openBooth({ x: 1, z: 1, level: 0 }, 'Bank booth', 'Use-quickly');
     }
 }
 "#;
@@ -1611,26 +1663,24 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
-    snap.banks = &[script::isolate_fb::BankStandInput {
-        name: "Bank booth",
-        x: 200,
-        z: 100,
-        level: 0,
-        kind: "booth",
-        op: 2,
-        choose: None,
-    }];
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
+    let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Walk {
-            x: 200,
-            z: 100,
-            level: 0
-        }],
-        "no booth in range: the nearest packed stand gets a walk"
+        vec![
+            script::shim::InteractReq::OpenBooth {
+                x: 0,
+                z: 0,
+                level: 0
+            },
+            script::shim::InteractReq::OpenBooth {
+                x: 0,
+                z: 0,
+                level: 0
+            },
+        ],
+        "openNearest / openBooth are thin names onto open-booth"
     );
     iso.join();
 }

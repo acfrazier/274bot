@@ -1320,6 +1320,91 @@ fn interact_dispatches_loc_op_through_scene_coords() {
     );
 }
 
+/// Nearest scene loc with `Use-quickly` on the player's plane. A closer
+/// loc with `Bank`, a Banker NPC Talk-to, and a Use-quickly on another
+/// plane are never chosen. None on the plane refuses closed.
+#[test]
+fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
+    let mut s = scene();
+    s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let near_id = 2213;
+    let far_id = 2214;
+    let bank_id = 2215;
+    let near_tc = 0x4000_0000 + (near_id << 14) + 1 + (2 << 7);
+    let far_tc = 0x4000_0000 + (far_id << 14) + 1 + (2 << 7);
+    let bank_tc = 0x4000_0000 + (bank_id << 14) + 1 + (2 << 7);
+    s.client
+        .world
+        .set_wall(0, 6, 5, 0, 0, 0, near_tc, 1 << 6, 0, 0, 0, 0);
+    s.client
+        .world
+        .set_wall(0, 20, 5, 0, 0, 0, far_tc, 1 << 6, 0, 0, 0, 0);
+    s.client
+        .world
+        .set_wall(0, 5, 6, 0, 0, 0, bank_tc, 1 << 6, 0, 0, 0, 0);
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        while cache.locs.len() <= bank_id as usize {
+            cache.locs.push(LocType::default());
+        }
+        cache.locs[near_id as usize] = LocType {
+            id: near_id,
+            name: "Bank booth".into(),
+            op: vec![None, Some("Use-quickly".into()), None, None, None],
+            ..Default::default()
+        };
+        cache.locs[far_id as usize] = LocType {
+            id: far_id,
+            name: "Bank booth".into(),
+            op: vec![None, Some("Use-quickly".into()), None, None, None],
+            ..Default::default()
+        };
+        cache.locs[bank_id as usize] = LocType {
+            id: bank_id,
+            name: "Bank booth".into(),
+            op: vec![Some("Bank".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    plant_npc_type(&mut s.client, 494, "Banker", &["Talk-to", "Bank"]);
+    plant_npc(&mut s.client, 2, 494);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder {
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.open_nearest_booth() {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(command, WireCommand::Op { operation: 2, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::OP_LOC2, near_tc, 6, 5)],
+        "nearest Use-quickly on the same plane, never Bank / Talk-to"
+    );
+
+    let mut s = scene();
+    s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.open_nearest_booth(),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty(), "none on the plane fails closed");
+}
+
 /// A ground-item target dispatches through the scene coords with the obj
 /// id as menu param `a`.
 #[test]

@@ -34,9 +34,15 @@ globalThis.defineBot = (manifest) => {
     return { __rs2b0tManifest: 1, ...manifest };
 };
 globalThis.LoopingBot = class LoopingBot {
-    loopDelay = 600;
-    onStart() {}
-    loop() {}
+            loopDelay = 600;
+            onStart() {}
+            loop() {}
+            on(event, cb) {
+                if (typeof cb !== 'function') return;
+                this._subs = this._subs || Object.create(null);
+                const key = String(event);
+                (this._subs[key] || (this._subs[key] = [])).push(cb);
+            }
     log(message) {
         const h = globalThis.__rs2b0t_host;
         h.log = h.log || [];
@@ -340,9 +346,17 @@ pub struct ScriptPaint {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(tag = "op")]
 pub enum InteractReq {
-    /// Open the bank booth loc at `(x, z, level)` with its Use-quickly op.
+    /// Open the nearest Use-quickly loc on the player's plane. Tile
+    /// fields are unused (host finds the loc); JS may omit them.
     #[serde(rename = "open-booth")]
-    OpenBooth { x: i32, z: i32, level: i32 },
+    OpenBooth {
+        #[serde(default)]
+        x: i32,
+        #[serde(default)]
+        z: i32,
+        #[serde(default)]
+        level: i32,
+    },
     /// Use a packed stand the player is adjacent to: a booth loc
     /// (Use-quickly) or a teller NPC (its 1-based op slot from the pack;
     /// `choose` is the dialog option the op's dialogue needs, deferred).

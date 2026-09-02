@@ -859,6 +859,36 @@ impl<'a> Interactions<'a> {
         )
     }
 
+    /// Open the nearest scene loc whose actions include `Use-quickly` on
+    /// the player's plane. None → fail closed. Never a Banker Talk-to/Bank.
+    pub fn open_nearest_booth(&mut self) -> SendResult<'a> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let Some((px, pz, level)) = snapshot.tile() else {
+            return refuse(snapshot, SendReason::OffScene);
+        };
+        let loc = snapshot
+            .locs()
+            .iter()
+            .filter(|l| {
+                l.tile.level == level
+                    && l.actions.iter().any(|a| {
+                        a.as_deref()
+                            .is_some_and(|s| s.eq_ignore_ascii_case("Use-quickly"))
+                    })
+            })
+            .min_by_key(|l| (l.tile.x - px).abs().max((l.tile.z - pz).abs()));
+        let Some(loc) = loc else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        let Some(op) = operation_of(&OpTarget::Loc(loc), "Use-quickly") else {
+            return refuse(snapshot, SendReason::InvalidAction);
+        };
+        self.interact(OpTarget::Loc(loc), ActionSpec::Operation(op))
+    }
+
     /// Answer the chat modal's `option`-th choice button (1-based, the
     /// `p_choiceN` option an edge's `option` names — e.g. the cart
     /// driver's "Yes please…" fare choice). Refuses with `NoChoice` when

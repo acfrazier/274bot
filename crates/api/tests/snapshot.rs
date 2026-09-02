@@ -2166,6 +2166,62 @@ fn chat_options_and_continue_read_the_chat_modal() {
     );
 }
 
+/// Level-up IFs nest `buttontype=pause` under a layer; walk the chat tree
+/// so `continue_dialog` can click `advancestat`'s IF.
+#[test]
+fn chat_continue_walks_nested_pause_button() {
+    let mut c = client_with_npc();
+    set_iface(
+        &mut c,
+        3000,
+        IfType {
+            id: 3000,
+            layer_id: 3000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![3001]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3001,
+        IfType {
+            id: 3001,
+            layer_id: 3000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![3002]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3002,
+        IfType {
+            id: 3002,
+            layer_id: 3000,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3002,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
+        },
+    );
+    c.chat_modal_id = 3000;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::IF_OPENCHAT);
+    assert!(snap.rebuild_family(&c, Family::ChatOptions));
+    assert_eq!(
+        snap.chat_continue_component_id(),
+        3002,
+        "nested BUTTON_CONTINUE under the chat modal is continue-able"
+    );
+}
+
 /// Make products come from the chat (or main) modal's obj-model
 /// components; the make/smelt buttons are grouped four per product.
 #[test]

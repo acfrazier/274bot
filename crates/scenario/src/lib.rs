@@ -283,12 +283,14 @@ pub enum StepKind {
     /// `<stamp>_<safeLabel>.png` + a `.json` sidecar.
     Shot { label: &'static str },
     /// Dialog janitor: drain the seed's dialogs **every tick** until
-    /// `wait.arm` holds — answer the chat modal's `choice`-th button
-    /// (1-based) when a `p_choiceN` dialog is up (the `~completequests`
-    /// debugproc's Arrav-gang and Ikov-side prompts), else close the
-    /// modal when one is up (the quest-completion quest scrolls, whose
-    /// open main modal stalls the engine's script queue). A no-op send is
-    /// harmless, so the re-send drains each dialog as it appears.
+    /// `wait.arm` holds — continue a `BUTTON_CONTINUE` chat IF first
+    /// (`advancestat` level-up), else answer the chat modal's `choice`-th
+    /// button (1-based) when a `p_choiceN` dialog is up (the
+    /// `~completequests` debugproc's Arrav-gang and Ikov-side prompts),
+    /// else close the modal when one is up (the quest-completion quest
+    /// scrolls, whose open main modal stalls the engine's script queue).
+    /// A no-op send is harmless, so the re-send drains each dialog as it
+    /// appears.
     DrainDialogs { choice: i32 },
     /// Clean IF_BUTTON logout (CC_LOGOUT), pressed once. The slot thread
     /// leaves `run_client` when `!ingame` and the host-play login FIFO
@@ -1635,6 +1637,7 @@ fn bone_burier_scenario() -> Scenario {
             require_mainland_base: true,
             deadline: Duration::from_secs(300),
             start_script: Some("BoneBurier"),
+            nav: gold_script_nav(),
             ..Default::default()
         },
     }
@@ -1668,6 +1671,23 @@ fn script_live_seed_steps() -> Vec<Step> {
             },
         },
     ]
+}
+
+/// Explicit `speed 600` so a leftover nav `speed 300` is not inherited.
+fn gold_script_nav() -> ScenarioNav {
+    ScenarioNav::default().with_tick_ms(600)
+}
+
+/// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
+fn drain_advancestat() -> Step {
+    Step {
+        name: "drain advancestat level-up dialogs",
+        kind: StepKind::DrainDialogs { choice: 1 },
+        wait: Wait {
+            arm: Proof::ChatClosed,
+            budget_ticks: 60,
+        },
+    }
 }
 
 /// Lumbridge chicken pen (east of the castle): the ChickenKiller leash
@@ -1729,6 +1749,7 @@ fn chicken_killer_scenario() -> Scenario {
             require_mainland_base: true,
             deadline: Duration::from_secs(300),
             start_script: Some("ChickenKiller"),
+            nav: gold_script_nav(),
             ..Default::default()
         },
     }
@@ -1790,6 +1811,7 @@ fn thiever_scenario() -> Scenario {
                     budget_ticks: 200,
                 },
             });
+            steps.push(drain_advancestat());
             steps.push(Step {
                 name: "watch the script pickpocket guards",
                 kind: StepKind::Perform {
@@ -1810,6 +1832,7 @@ fn thiever_scenario() -> Scenario {
             deadline: Duration::from_secs(300),
             start_script: Some("Thiever"),
             script_settings_inject: Some(THIEVER_INJECT),
+            nav: gold_script_nav(),
             ..Default::default()
         },
     }
@@ -1883,6 +1906,7 @@ fn alcher_scenario() -> Scenario {
             deadline: Duration::from_secs(360),
             start_script: Some("Alcher"),
             script_settings_inject: Some(ALCHER_INJECT),
+            nav: gold_script_nav(),
             ..Default::default()
         },
     }
@@ -1931,6 +1955,7 @@ fn bank_fletcher_scenario() -> Scenario {
                     budget_ticks: 120,
                 },
             });
+            steps.push(drain_advancestat());
             steps.push(Step {
                 name: "watch the script fletch willow logs",
                 kind: StepKind::Perform {
@@ -1951,6 +1976,7 @@ fn bank_fletcher_scenario() -> Scenario {
             deadline: Duration::from_secs(360),
             start_script: Some("BankFletcher"),
             script_settings_inject: Some(BANK_FLETCHER_INJECT),
+            nav: gold_script_nav(),
             ..Default::default()
         },
     }
@@ -2257,6 +2283,7 @@ mod tests {
     #[test]
     fn gold_script_scenarios_register_start_script_names() {
         let cases = [
+            ("bone_burier", "BoneBurier"),
             ("chicken_killer", "ChickenKiller"),
             ("thiever", "Thiever"),
             ("alcher", "Alcher"),
@@ -2272,6 +2299,20 @@ mod tests {
             assert!(
                 s.settings.require_mainland_base,
                 "{name} waits for mainland scene 2"
+            );
+            assert_eq!(
+                s.settings.nav.engine_speed_ms,
+                Some(600),
+                "{name} cheats speed 600 so a leftover nav speed 300 is not inherited"
+            );
+        }
+        for name in ["thiever", "bank_fletcher"] {
+            let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert!(
+                s.steps
+                    .iter()
+                    .any(|st| matches!(st.kind, StepKind::DrainDialogs { .. })),
+                "{name} drains advancestat level-up IFs with DrainDialogs"
             );
         }
         let alcher = get("alcher").expect("alcher");
