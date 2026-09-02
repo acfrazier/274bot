@@ -166,6 +166,7 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         animating: false,
         main_modal_id: -1,
         chat_modal_id: -1,
+        make_products: &[],
     }
 }
 
@@ -344,6 +345,22 @@ fn isolate_join_returns_and_isolates_are_reusable() {
     iso.on_game_tick(2);
     let n = iso.probe("__rs_n").unwrap();
     assert_eq!(n, 1, "fresh isolate, fresh api");
+    iso.join();
+}
+
+// `this.log` lands on the isolate log (host handle `log[]` forwarded
+// after the tick) so BOT_DEBUG / the panel can see script-side lines.
+#[test]
+fn isolate_forwards_this_log() {
+    let src = "export default class T extends LoopingBot { loop() { this.log('bury ok'); } }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("bury ok")),
+        "this.log must reach drain_logs: {logs:?}"
+    );
     iso.join();
 }
 

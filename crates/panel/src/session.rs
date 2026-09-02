@@ -1228,6 +1228,10 @@ impl Session {
                 .ok_or_else(|| {
                 format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
             })?;
+            self.script_sel = Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                card_name.to_string(),
+            ));
             let bag = if card.settings_schema.is_empty() {
                 None
             } else {
@@ -1564,6 +1568,14 @@ impl Session {
         };
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
+        if let Some(play) = &self.play {
+            let mut log_by = self.log_by.lock().unwrap();
+            for s in &current {
+                for line in play.script_take_pending_logs(&s.username) {
+                    push_log(&mut log_by, &s.username, format!("script: {line}"));
+                }
+            }
+        }
         {
             let mut log_by = self.log_by.lock().unwrap();
             for s in &current {
@@ -5382,6 +5394,62 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             play.script_state(&name),
             script::RunState::Running,
             "the BoneBurier card is started on the driven slot"
+        );
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-alcher-sel-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("Alcher")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import Alcher from './Alcher/Alcher.js';
+ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("Alcher/Alcher.ts"),
+            "export default class Alcher extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+        let mut s = Session::new();
+        let mut scenario = scenario::get("alcher").expect("registered");
+        scenario.settings.start_script = Some("Alcher");
+        s.live_prepare_script(scenario).expect("prepare");
+        assert_eq!(
+            s.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                "Alcher".into()
+            )),
+            "live_prepare_script must set script_sel to the catalog card"
         );
         match orig_rs2b0t {
             Some(v) => std::env::set_var("RS2B0T", v),

@@ -27,7 +27,15 @@ instance; `want_run` distinguishes operator Pause from offline.
 
 Load registers a picker card tagged **JS** (`~/.274bot/js-scripts.json`
 `{name, path}`). Same JS name overwrites. Compiled names are **reserved**.
-Isolate is its own OS thread; ~50 ms budget; 64 MB heap cap. A `while(true)`
+Isolate is its own OS thread; ~50 ms budget; **64 MB V8 heap cap**. That
+number is a ceiling (`heap_limits(0, 64 MiB)`): the isolate starts small
+and grows with the live set; it is **not** 64 MB reserved per card, and
+50 Started scripts are not 3.2 GiB unless every heap is actually at the
+cap. Over the cap, the isolate is terminated (not given more). Extra RSS
+(OS thread, deno/rustyscript, code space) is on top of JS heap and is
+**unmeasured** at the 50-slot wall — `rss_ladder` is Null/draw-off
+clients, not Started JS. Alpha: scripts that work first; isolate RSS is
+TASK-028 later. A `while(true)`
 tick is interrupted via `terminate_execution`; Stop join is bounded.
 
 Browse/Start/Pause/Stop are wired in **both** operator panels: the native

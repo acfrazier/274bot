@@ -209,7 +209,10 @@ Measure-then-cut: N=1, then 2, then 4 headless Clients, **every** slot
 (180s), hold 10s, print Darwin/Linux peak RSS plus `ondemand=` worker
 count and unique ESTABLISHED TCP to the engine port. Does **not** fail
 on RSS size. FAIL if `rss=0`, if OnDemand workers ≠ 1, or if TCP exceeds
-n+1 (game + one update socket).
+n+1 (game + one update socket). This ladder is **Null / draw-off**
+clients. It does **not** measure Started JS isolates (64 MB heap **cap**,
+grows from small; wall isolate RSS is unmeasured alpha — see
+[`script.md`](script.md)).
 
 ```bash
 LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture

@@ -190,6 +190,58 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("data/spelldb.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/data/itemdb.js",
+            include_str!("data/itemdb.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/pickpocketTargets.js",
+            include_str!("data/pickpocket_targets.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/CombatStyleLogic.js",
+            include_str!("combat_style_logic.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/food.js",
+            include_str!("food.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/magic/Autocast.js",
+            include_str!("autocast.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/chatbox/gameMessages.js",
+            include_str!("game_messages.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/runtime/RecoveryHints.js",
+            include_str!("recovery_hints.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/bank/BankLocations.js",
+            include_str!("bank_locations.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/thieving/targets.js",
+            include_str!("thieving_targets.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/thieving/stealRules.js",
+            include_str!("steal_rules.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/loadout/loadoutSetting.js",
+            include_str!("loadout_setting.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/loadout/loadoutPlan.js",
+            include_str!("loadout_plan.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/paint/levelProgress.js",
+            include_str!("level_progress.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/market/catalog.js",
             include_str!("catalog.js"),
         ),
@@ -224,6 +276,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/event/webwalk/walkOpening.js",
             include_str!("walk_opening.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/tasks/Anchor.js",
+            include_str!("anchor.js"),
         ),
         Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
         Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),

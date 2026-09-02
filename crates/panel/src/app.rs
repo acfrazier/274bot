@@ -2606,6 +2606,12 @@ fn status_section(ui: &Ui, session: &mut Session) {
     );
 }
 
+/// Stick to the bottom of the log when the last frame was already there
+/// (1 px slack for float layout). Scrolling up to read history stays put.
+fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
+    scroll_y >= scroll_max_y - 1.0
+}
+
 /// log: focused slot's status-transition lines (or PROCESS when none).
 fn log_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "log") {
@@ -2620,9 +2626,13 @@ fn log_section(ui: &Ui, session: &mut Session) {
     ui.child_window("panel-log")
         .size([0.0, 80.0])
         .build(ui, || {
+            let follow = log_follow_bottom(ui.scroll_y(), ui.scroll_max_y());
             let _wrap = ui.push_text_wrap_pos(0.0);
             for line in lines.iter() {
                 ui.text_wrapped(line);
+            }
+            if follow {
+                ui.set_scroll_here_y(1.0);
             }
         });
 }
@@ -3615,7 +3625,7 @@ mod tests {
         apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_for,
         capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
         edit_parameters_enabled, game_window_flags, live_null_tick, live_script_tick,
-        live_smoke_tick, live_stress_tick, manual_shot_label, parse_live_args, random_status_text,
+        live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label, parse_live_args, random_status_text,
         runner_config, smoke_settled, smoke_should_fire, sync_loadouts_scratch, Boot, LiveBoot,
         LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W,
         LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
@@ -3664,6 +3674,14 @@ mod tests {
             boot_for(&RunMode::Interactive, None).is_none(),
             "no boot with no live arg and no pass"
         );
+    }
+
+    #[test]
+    fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
+        assert!(log_follow_bottom(0.0, 0.0), "empty / first frame follows");
+        assert!(log_follow_bottom(99.0, 100.0), "within 1 px of the bottom");
+        assert!(log_follow_bottom(100.0, 100.0));
+        assert!(!log_follow_bottom(50.0, 100.0), "scrolled up stays put");
     }
 
     #[test]

@@ -62,6 +62,7 @@ cargo run --release -p panel --bin panel-play -- --live null_raster
 # or BOT_LIVE=null_raster; headless twin: LIVE=1 cargo test -p host-play --test null_raster -- --ignored --test-threads=1
 
 # Headless RSS ladder (all slots Null / set_draw=false). One N per process.
+# Prints rss=…; does not fail on size. Not a Started-JS isolate ladder.
 LIVE=1 RSS_N=1 cargo test -p host-play --test rss_ladder -- --ignored --test-threads=1 --nocapture
 
 # 50-bot RAM watch (cap-only; Game 50 fps; rail skip-paint; 10 min; local engine)

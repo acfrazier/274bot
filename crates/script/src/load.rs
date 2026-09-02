@@ -1366,6 +1366,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             let neg = num(&mut scope, -1.0);
             set(&mut scope, obj, "chat_modal_id", neg)?;
         }
+        if snap.has_make_products() {
+            let make_products = make_product_array(&mut scope, &snap.make_products())?;
+            set(&mut scope, obj, "make_products", make_products)?;
+        } else if !had {
+            set(&mut scope, obj, "make_products", empty_rows)?;
+        }
         let snapshot = obj.into();
         set(&mut scope, host, "snapshot", snapshot)
     }
@@ -1559,6 +1565,35 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "text", text)?;
             let obj = o.into();
             arr.set_index(scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn make_product_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        products: &[crate::isolate_fb::MakeProductReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, products.len() as i32);
+        for (i, product) in products.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let name = js_string(scope, product.name())?;
+            set(scope, o, "name", name)?;
+            let oid = num(scope, product.object_id() as f64);
+            set(scope, o, "object_id", oid)?;
+            let buttons = v8::Array::new(scope, product.buttons().len() as i32);
+            for (j, btn) in product.buttons().iter().enumerate() {
+                let b = v8::Object::new(scope);
+                let qty = num(scope, btn.qty() as f64);
+                set(scope, b, "qty", qty)?;
+                let com_id = num(scope, btn.com_id() as f64);
+                set(scope, b, "comId", com_id)?;
+                buttons
+                    .set_index(scope, j as u32, b.into())
+                    .ok_or_else(|| "v8 array set failed".to_string())?;
+            }
+            set(scope, o, "buttons", buttons.into())?;
+            arr.set_index(scope, i as u32, o.into())
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }
         Ok(arr.into())
@@ -1793,6 +1828,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         .unwrap_or(None);
                     if let Some(e) = async_err {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                    }
+                    // `LoopingBot.log` / `this.log` push onto the host
+                    // handle; fold them into the isolate log so BOT_DEBUG
+                    // and the panel can see script-side lines.
+                    let bot_log: Result<Vec<String>, rustyscript::Error> =
+                        runtime.eval("(() => { const h = globalThis.__rs2b0t_host; const rows = h && h.log; if (!Array.isArray(rows) || rows.length === 0) return []; h.log = []; return rows.map(String); })()");
+                    if let Ok(rows) = bot_log {
+                        for line in rows {
+                            let _ = out.send(ThreadMsg::Log(line));
+                        }
                     }
                     // Forward the tick's shim interact queue (Bank/Banking
                     // requests written to `__rs2b0t_host.interact`) to the

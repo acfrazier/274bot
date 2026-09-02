@@ -1895,7 +1895,7 @@ const BANK_FLETCHER_INJECT: &[ScriptSettingInject] = &[
     },
     ScriptSettingInject {
         id: "product",
-        value: ScriptInjectValue::Str("Arrow shafts"),
+        value: ScriptInjectValue::Str("Short bow"),
     },
 ];
 
@@ -1916,6 +1916,7 @@ fn bank_fletcher_scenario() -> Scenario {
                 name: "seed knife, logs, and tele to Varrock West",
                 kind: StepKind::Perform {
                     send: Box::new(move |c, _| {
+                        cheat(c, "advancestat fletching 35");
                         cheat(c, "give knife 1");
                         cheat(c, "give willow_logs 27");
                         cheat(c, &tele_args(bank.level, bank.x, bank.z));

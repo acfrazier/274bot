@@ -8,6 +8,7 @@
 // the op through the Driver. A name the table does not know never matches
 // a posted row (the host posts `name: null` for it), so a request for it
 // is never queued. Missing members throw `not v1` — never a fake value.
+import { Execution } from '../execution/Execution.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notV1 = (name) => new Error('not v1: ' + name);
 const snap = () => host().snapshot || {};
@@ -39,7 +40,12 @@ export const Bank = new Proxy(
             return Bank.isOpen() && Bank.loaded();
         },
         items() {
-            return snap().bank || [];
+            return (snap().bank || []).map((row) => ({
+                name: row?.name ?? null,
+                count: row?.count ?? 0,
+                id: row?.id ?? 0,
+                ops: ['Withdraw-1', 'Withdraw-5', 'Withdraw-10', 'Withdraw All'],
+            }));
         },
         count(name) {
             const wanted = String(name).toLowerCase();
@@ -104,6 +110,33 @@ export const Bank = new Proxy(
         },
         close() {
             queue({ op: 'close' });
+            return Promise.resolve(true);
+        },
+        async withdrawById(id, op = 'Withdraw-1') {
+            const row = (snap().bank || []).find((r) => r && r.id === id);
+            if (!row?.name) {
+                return false;
+            }
+            const action =
+                op.toLowerCase() === 'withdraw-all' || op.toLowerCase() === 'all'
+                    ? 'Withdraw All'
+                    : op.replace(/-/g, ' ');
+            queue({ op: 'withdraw', name: row.name, action });
+            return true;
+        },
+        async withdrawX(name, count) {
+            if (count <= 0) {
+                return true;
+            }
+            Bank.withdraw(name, count >= 10 ? 10 : 1);
+            return Execution.delayUntil(() => Bank.count(name) >= count, 3000);
+        },
+        async withdrawXById(id, count, _landsAsId = id) {
+            const row = (snap().bank || []).find((r) => r && r.id === id);
+            if (!row?.name) {
+                return false;
+            }
+            return Bank.withdrawX(row.name, count);
         },
     },
     {

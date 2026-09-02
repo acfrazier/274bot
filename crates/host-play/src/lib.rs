@@ -558,6 +558,18 @@ fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot {
         .clone()
 }
 
+/// Drain isolate `this.log` / tick-error lines onto stderr when
+/// `BOT_DEBUG=1`. Tick errors also become [`SlotScript::last_error`].
+fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
+    let logs = slot.drain_logs();
+    if !debug_enabled() {
+        return;
+    }
+    for line in logs {
+        eprintln!("[script {name}] {line}");
+    }
+}
+
 /// One observe of a slot's script wiring: gate [`SlotScript::on_is_up`],
 /// dispatch [`SlotScript::on_game_tick`] on the PLAYER_INFO edge, then run
 /// any cheats the panel queued. `driver` is the slot body's own `Client`
@@ -717,6 +729,7 @@ fn script_observe(
                     wrote = true;
                 }
             }
+            emit_script_debug_logs(&mut *slot, name);
             // Fold the isolate's forwarded shim interact requests (queued
             // by the tick's Bank/Banking calls) on every frame — they land
             // a frame after the tick that produced them, tick edge or not —
@@ -778,6 +791,11 @@ fn dispatch_script_interact(
     use script::shim::InteractReq;
     let mut wrote = false;
     let mut ix = api::interact::Interactions::new(snapshot, driver);
+    if debug_enabled() {
+        for req in &reqs {
+            eprintln!("[script {name}] interact {req:?}");
+        }
+    }
     let open_booth = |ix: &mut api::interact::Interactions<'_>, x: i32, z: i32, level: i32| {
         let loc = snapshot
             .locs()
@@ -1113,6 +1131,16 @@ fn resolve_op_target<'a>(
                 })
             }).map(OpTarget::Player)
         }
+        "inv" | "held" => {
+            let wanted = target_name.map(|n| n.to_lowercase());
+            snapshot.inventory().iter().find(|it| {
+                wanted.as_ref().is_some_and(|w| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .is_some_and(|n| n.eq_ignore_ascii_case(w))
+                })
+            }).map(OpTarget::Item)
+        }
         _ => None,
     }
 }
@@ -1252,8 +1280,8 @@ fn with_script_snapshot_input<R>(
     f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
 ) -> R {
     use script::isolate_fb::{
-        BankStandInput, ChatOptionInput, CombatStyleInput, SceneEntityInput, SnapshotInput,
-        StatInput, TileInput, VarpInput,
+        BankStandInput, ChatOptionInput, CombatStyleInput, MakeButtonInput, MakeProductInput,
+        SceneEntityInput, SnapshotInput, StatInput, TileInput, VarpInput,
     };
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
@@ -1507,6 +1535,33 @@ fn with_script_snapshot_input<R>(
     });
     let bank = snapshot.map(|s| bank_rows(s.bank()));
     let bank_side = snapshot.map(|s| bank_rows(s.bank_side()));
+    let mut make_button_store: Vec<Vec<MakeButtonInput>> = Vec::new();
+    let make_products: Vec<MakeProductInput<'_>> = snapshot
+        .map(|s| {
+            make_button_store = s
+                .make_products()
+                .iter()
+                .map(|p| {
+                    p.buttons
+                        .iter()
+                        .map(|b| MakeButtonInput {
+                            qty: b.quantity,
+                            com_id: b.component_id,
+                        })
+                        .collect()
+                })
+                .collect();
+            s.make_products()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| MakeProductInput {
+                    object_id: p.object_id,
+                    name: p.name.as_str(),
+                    buttons: &make_button_store[i],
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let input = SnapshotInput {
         tick,
         here,
@@ -1547,6 +1602,7 @@ fn with_script_snapshot_input<R>(
         animating,
         main_modal_id: modals.map(|m| m.main).unwrap_or(-1),
         chat_modal_id: modals.map(|m| m.chat).unwrap_or(-1),
+        make_products: &make_products,
     };
     f(&input)
 }
@@ -2420,10 +2476,17 @@ impl Play {
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
-        script_slot_or_insert(&self.scripts, name)
+        if debug_enabled() {
+            eprintln!("[script {name}] start load");
+        }
+        let result = script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_load_with_settings(source, shape, settings_bag.as_ref(), siblings)?;
+            .start_load_with_settings(source, shape, settings_bag.as_ref(), siblings);
+        if let Err(e) = &result {
+            eprintln!("[script {name}] start failed: {e}");
+        }
+        result?;
         self.wake(name);
         Ok(())
     }
@@ -2464,6 +2527,13 @@ impl Play {
     pub fn script_last_error(&self, name: &str) -> Option<String> {
         script_slot(&self.scripts, name)
             .and_then(|slot| slot.lock().unwrap().last_error().map(str::to_string))
+    }
+
+    /// Isolate log lines staged since the last take (panel log pane).
+    pub fn script_take_pending_logs(&self, name: &str) -> Vec<String> {
+        script_slot(&self.scripts, name)
+            .map(|slot| slot.lock().unwrap().take_pending_logs())
+            .unwrap_or_default()
     }
 
     /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread

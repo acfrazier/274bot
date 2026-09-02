@@ -17,3 +17,20 @@ export const SPELL_DB = {
     'Earth Wave': { ssb: 14, level: 70, runes: [{ rune: 'Blood rune', count: 1 }, { rune: 'Earth rune', count: 7 }, { rune: 'Air rune', count: 5 }] },
     'Fire Wave': { ssb: 15, level: 75, runes: [{ rune: 'Blood rune', count: 1 }, { rune: 'Fire rune', count: 7 }, { rune: 'Air rune', count: 5 }] },
 };
+
+export const STAFF_RUNES = {
+    'Air battlestaff': ['Air rune'],
+    'Earth battlestaff': ['Earth rune'],
+    'Fire battlestaff': ['Fire rune'],
+    'Lava battlestaff': ['Earth rune', 'Fire rune'],
+    'Mystic air staff': ['Air rune'],
+    'Mystic earth staff': ['Earth rune'],
+    'Mystic fire staff': ['Fire rune'],
+    'Mystic lava staff': ['Earth rune', 'Fire rune'],
+    'Mystic water staff': ['Water rune'],
+    'Staff of air': ['Air rune'],
+    'Staff of earth': ['Earth rune'],
+    'Staff of fire': ['Fire rune'],
+    'Staff of water': ['Water rune'],
+    'Water battlestaff': ['Water rune'],
+};

@@ -107,6 +107,7 @@ const VT_SNAP_IN_COMBAT: VOffsetT = 64;
 const VT_SNAP_ANIMATING: VOffsetT = 66;
 const VT_SNAP_MAIN_MODAL: VOffsetT = 68;
 const VT_SNAP_CHAT_MODAL: VOffsetT = 70;
+const VT_SNAP_MAKE_PRODUCTS: VOffsetT = 72;
 
 // SceneEntity: { index, id, name, x, z, level, distance, health,
 //               max_health, in_combat, animating, actions }
@@ -125,6 +126,15 @@ const VT_ENT_ACTIONS: VOffsetT = 26;
 
 // ChatOption: { text }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
+
+// MakeButton: { qty, com_id }
+const VT_MAKE_BTN_QTY: VOffsetT = 4;
+const VT_MAKE_BTN_COM: VOffsetT = 6;
+
+// MakeProduct: { object_id, name, buttons }
+const VT_MAKE_PROD_OID: VOffsetT = 4;
+const VT_MAKE_PROD_NAME: VOffsetT = 6;
+const VT_MAKE_PROD_BTNS: VOffsetT = 8;
 
 // CombatStyle: { mode, label, component_id }
 const VT_CS_MODE: VOffsetT = 4;
@@ -195,6 +205,19 @@ pub struct SceneEntityInput<'a> {
 #[derive(Clone, Copy)]
 pub struct ChatOptionInput<'a> {
     pub text: &'a str,
+}
+
+#[derive(Clone, Copy)]
+pub struct MakeButtonInput {
+    pub qty: i32,
+    pub com_id: i32,
+}
+
+#[derive(Clone, Copy)]
+pub struct MakeProductInput<'a> {
+    pub object_id: i32,
+    pub name: &'a str,
+    pub buttons: &'a [MakeButtonInput],
 }
 
 /// One combat-style varp-select button with its label.
@@ -270,6 +293,7 @@ pub struct SnapshotInput<'a> {
     pub animating: bool,
     pub main_modal_id: i32,
     pub chat_modal_id: i32,
+    pub make_products: &'a [MakeProductInput<'a>],
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -522,6 +546,9 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<bool>("animating", VT_SNAP_ANIMATING, false)?
             .visit_field::<i32>("main_modal_id", VT_SNAP_MAIN_MODAL, false)?
             .visit_field::<i32>("chat_modal_id", VT_SNAP_CHAT_MODAL, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeProductReader>>>>(
+                "make_products", VT_SNAP_MAKE_PRODUCTS, false,
+            )?
             .finish();
         Ok(())
     }
@@ -753,6 +780,12 @@ impl SnapshotReader<'_> {
     pub fn chat_modal_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None) }.unwrap_or(-1)
     }
+    pub fn has_make_products(&self) -> bool {
+        rows_present::<MakeProductReader>(&self.tab, VT_SNAP_MAKE_PRODUCTS)
+    }
+    pub fn make_products(&self) -> Vec<MakeProductReader<'_>> {
+        rows::<MakeProductReader>(&self.tab, VT_SNAP_MAKE_PRODUCTS)
+    }
 }
 
 /// Decode `buf` as a root-`Snapshot` FlatBuffer (produced by our own
@@ -841,6 +874,19 @@ pub struct CombatStyleFp {
     pub component_id: i32,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MakeButtonFp {
+    pub qty: i32,
+    pub com_id: i32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MakeProductFp {
+    pub object_id: i32,
+    pub name: String,
+    pub buttons: Vec<MakeButtonFp>,
+}
+
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
@@ -880,6 +926,7 @@ pub struct SnapshotFingerprint {
     pub animating: bool,
     pub main_modal_id: i32,
     pub chat_modal_id: i32,
+    pub make_products: Vec<MakeProductFp>,
 }
 
 impl SnapshotFingerprint {
@@ -979,6 +1026,22 @@ impl SnapshotFingerprint {
             animating: input.animating,
             main_modal_id: input.main_modal_id,
             chat_modal_id: input.chat_modal_id,
+            make_products: input
+                .make_products
+                .iter()
+                .map(|p| MakeProductFp {
+                    object_id: p.object_id,
+                    name: p.name.to_string(),
+                    buttons: p
+                        .buttons
+                        .iter()
+                        .map(|b| MakeButtonFp {
+                            qty: b.qty,
+                            com_id: b.com_id,
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     }
 }
@@ -1023,6 +1086,7 @@ pub struct DeltaMask {
     pub animating: bool,
     pub main_modal_id: bool,
     pub chat_modal_id: bool,
+    pub make_products: bool,
 }
 
 impl DeltaMask {
@@ -1062,6 +1126,7 @@ impl DeltaMask {
             animating: true,
             main_modal_id: true,
             chat_modal_id: true,
+            make_products: true,
         }
     }
 
@@ -1110,6 +1175,7 @@ impl DeltaMask {
             animating: next.animating != last.animating,
             main_modal_id: next.main_modal_id != last.main_modal_id,
             chat_modal_id: next.chat_modal_id != last.chat_modal_id,
+            make_products: next.make_products != last.make_products,
         }
     }
 }
@@ -1332,6 +1398,16 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let make_products_off = if mask.make_products {
+        let offs = input
+            .make_products
+            .iter()
+            .map(|p| make_product_off(b, p))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
     let varps_off = if mask.varps {
         let offs = input
             .varps
@@ -1460,6 +1536,12 @@ fn encode_snapshot_masked_into(
     if mask.chat_modal_id {
         b.push_slot_always(VT_SNAP_CHAT_MODAL, input.chat_modal_id);
     }
+    if mask.make_products {
+        b.push_slot_always(
+            VT_SNAP_MAKE_PRODUCTS,
+            make_products_off.expect("mask checked"),
+        );
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -1528,6 +1610,34 @@ fn chat_option_off<'b>(
     let text_off = b.create_string(o.text);
     let tab = b.start_table();
     b.push_slot_always(VT_CHAT_OPT_TEXT, text_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn make_button_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    btn: &MakeButtonInput,
+) -> WIPOffset<MakeButtonReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_MAKE_BTN_QTY, btn.qty);
+    b.push_slot_always(VT_MAKE_BTN_COM, btn.com_id);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn make_product_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    p: &MakeProductInput<'_>,
+) -> WIPOffset<MakeProductReader<'b>> {
+    let name_off = b.create_string(p.name);
+    let btn_offs = p
+        .buttons
+        .iter()
+        .map(|btn| make_button_off(b, btn))
+        .collect::<Vec<_>>();
+    let buttons_off = b.create_vector(&btn_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_MAKE_PROD_OID, p.object_id);
+    b.push_slot_always(VT_MAKE_PROD_NAME, name_off);
+    b.push_slot_always(VT_MAKE_PROD_BTNS, buttons_off);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -1676,6 +1786,78 @@ impl Verifiable for ChatOptionReader<'_> {
     fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CHAT_OPT_TEXT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct MakeButtonReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for MakeButtonReader<'a> {
+    type Inner = MakeButtonReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl MakeButtonReader<'_> {
+    pub fn qty(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_MAKE_BTN_QTY, None) }.unwrap_or(0)
+    }
+    pub fn com_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_MAKE_BTN_COM, None) }.unwrap_or(-1)
+    }
+}
+
+impl Verifiable for MakeButtonReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("qty", VT_MAKE_BTN_QTY, false)?
+            .visit_field::<i32>("com_id", VT_MAKE_BTN_COM, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct MakeProductReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for MakeProductReader<'a> {
+    type Inner = MakeProductReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl MakeProductReader<'_> {
+    pub fn object_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_MAKE_PROD_OID, None) }.unwrap_or(-1)
+    }
+    pub fn name(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_MAKE_PROD_NAME, None) }.unwrap_or("")
+    }
+    pub fn buttons(&self) -> Vec<MakeButtonReader<'_>> {
+        rows::<MakeButtonReader>(&self.tab, VT_MAKE_PROD_BTNS)
+    }
+}
+
+impl Verifiable for MakeProductReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("object_id", VT_MAKE_PROD_OID, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_MAKE_PROD_NAME, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeButtonReader>>>>(
+                "buttons", VT_MAKE_PROD_BTNS, false,
+            )?
             .finish();
         Ok(())
     }
@@ -2349,6 +2531,7 @@ mod tests {
             animating: false,
             main_modal_id: -1,
             chat_modal_id: -1,
+            make_products: &[],
         }
     }
 

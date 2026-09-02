@@ -763,6 +763,26 @@ mod tests {
     }
 
     #[test]
+    fn stat_xp_gain_fails_without_baseline_when_skill_row_was_missing() {
+        let mut c = seeded();
+        c.stat_xp[17] = 100;
+        let s = snap(&mut c);
+        let baselines: &[(i32, i32)] = &[];
+        assert!(!Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+            &s,
+            None,
+            Some(baselines)
+        ));
+        c.stat_xp[17] = 146;
+        let s = snap(&mut c);
+        assert!(!Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+            &s,
+            None,
+            Some(baselines)
+        ));
+    }
+
+    #[test]
     fn stat_xp_gain_reads_baselines_not_absolute_xp() {
         let mut c = seeded();
         c.stat_xp[17] = 100;

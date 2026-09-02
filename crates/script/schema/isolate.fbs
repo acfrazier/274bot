@@ -84,6 +84,19 @@ table BankStand {
   choose: string;  // the teller dialog option, deferred
 }
 
+// One make/smelt button of a make product (`quantity` -1 = "Make X").
+table MakeButton {
+  qty: int;
+  com_id: int;
+}
+
+// One make-X product row from the chat make menu.
+table MakeProduct {
+  object_id: int;
+  name: string;
+  buttons: [MakeButton];
+}
+
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
@@ -131,6 +144,7 @@ table Snapshot {
   animating: bool;
   main_modal_id: int;
   chat_modal_id: int;
+  make_products: [MakeProduct];
 }
 
 // One shim interact request, tagged by `op`:

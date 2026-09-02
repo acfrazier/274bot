@@ -45,6 +45,8 @@ pub struct SlotScript {
     #[cfg(feature = "load")]
     ipc: IsolateBuf,
     last_error: Option<String>,
+    /// Isolate log lines not yet taken by the panel (`take_pending_logs`).
+    pending_logs: Vec<String>,
     /// Dispatched game ticks since the last Start.
     ticks: u64,
 }
@@ -70,6 +72,7 @@ impl SlotScript {
             #[cfg(feature = "load")]
             ipc: IsolateBuf::new(),
             last_error: None,
+            pending_logs: Vec::new(),
             ticks: 0,
         }
     }
@@ -349,6 +352,28 @@ impl SlotScript {
 
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
+    }
+
+    /// Drain isolate tick / `this.log` lines. Tick errors update
+    /// [`Self::last_error`]. Copies are kept for [`Self::take_pending_logs`].
+    #[cfg(feature = "load")]
+    pub fn drain_logs(&mut self) -> Vec<String> {
+        let logs = match &self.load {
+            Some(isolate) => isolate.drain_logs(),
+            None => Vec::new(),
+        };
+        if let Some(err) = logs.iter().rev().find(|l| {
+            l.starts_with("tick ") || l.contains("script requested stop")
+        }) {
+            self.last_error = Some(err.clone());
+        }
+        self.pending_logs.extend(logs.iter().cloned());
+        logs
+    }
+
+    /// Take log lines staged by [`Self::drain_logs`] (panel log pane).
+    pub fn take_pending_logs(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_logs)
     }
 
     /// Whether a JS Load isolate is installed (feature-gated; always false

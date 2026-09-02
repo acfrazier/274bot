@@ -50,6 +50,63 @@ export default class ChickenShaped extends TaskBot {
 "#;
 
 #[test]
+fn gold_catalog_import_paths_resolve_for_live_scripts() {
+    let probes = [
+        (
+            "Autocast",
+            r#"
+import { Autocast } from '../../api/magic/Autocast.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = typeof Autocast.armed; }
+}
+"#,
+        ),
+        (
+            "food",
+            r#"
+import { foodHealAmount } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = foodHealAmount('Lobster'); }
+}
+"#,
+        ),
+        (
+            "itemdb",
+            r#"
+import { ITEM_DB } from '../../data/itemdb.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = ITEM_DB.length; }
+}
+"#,
+        ),
+        (
+            "CombatStyleLogic",
+            r#"
+import { castsAvailable } from '../../api/combat/CombatStyleLogic.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = typeof castsAvailable; }
+}
+"#,
+        ),
+    ];
+    for (name, src) in probes {
+        let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+        iso.on_game_tick(1);
+        let value = iso.probe("__probe").unwrap();
+        assert!(
+            value != serde_json::Value::Null,
+            "{name} import probe must resolve, got {value:?}"
+        );
+        let logs = iso.drain_logs();
+        assert!(
+            logs.iter().all(|l| !l.contains("404") && !l.contains("Module not found")),
+            "{name} import must not 404: {logs:?}"
+        );
+        iso.join();
+    }
+}
+
+#[test]
 fn chicken_killer_shaped_settings_validate_compiles() {
     let dir = temp_dir("chicken-shaped");
     let path = dir.join("ChickenShaped.ts");

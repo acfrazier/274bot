@@ -106,6 +106,12 @@ export const reader = proxy('reader', {
     bankComId() {
         return snap().bank_open === true ? 1 : -1;
     },
+    makeProducts() {
+        return (snap().make_products || []).map((p) => ({
+            name: p.name,
+            buttons: (p.buttons || []).map((b) => ({ qty: b.qty, comId: b.comId })),
+        }));
+    },
 });
 
 export const actions = proxy('actions', {

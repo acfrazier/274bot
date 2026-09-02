@@ -318,6 +318,7 @@ impl ScenarioRunner {
             return;
         }
         let dirty = self.snapshot.rebuild(client);
+        self.retry_xp_baselines();
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
         // resets it.
@@ -504,16 +505,27 @@ impl ScenarioRunner {
 
     fn capture_xp_baseline(&mut self, proof: Proof) {
         if let Proof::StatXpGain { id, .. } = proof {
-            if !self.xp_baselines.iter().any(|(i, _)| *i == id) {
-                let xp = self
-                    .snapshot
-                    .stats()
-                    .iter()
-                    .find(|s| s.index == id)
-                    .map(|s| s.xp)
-                    .unwrap_or(0);
-                self.xp_baselines.push((id, xp));
+            if self.xp_baselines.iter().any(|(i, _)| *i == id) {
+                return;
             }
+            let Some(xp) = self
+                .snapshot
+                .stats()
+                .iter()
+                .find(|s| s.index == id)
+                .map(|s| s.xp)
+            else {
+                return;
+            };
+            self.xp_baselines.push((id, xp));
+        }
+    }
+
+    fn retry_xp_baselines(&mut self) {
+        match self.phase {
+            Phase::Running => self.capture_xp_baseline(self.current_step().wait.arm),
+            Phase::Proving => self.capture_xp_baseline(self.scenario.proof),
+            _ => {}
         }
     }
 

@@ -37,6 +37,19 @@ function held(row) {
         },
         useOn(target) {
             if (!target) return false;
+            if (target.name && !target.snap) {
+                queue({
+                    op: 'use-on',
+                    name: row.name,
+                    kind: 'inv',
+                    target_name: target.name,
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                    index: null,
+                });
+                return true;
+            }
             if (target.name && target.snap) {
                 const kind = useOnKind(target);
                 queue({

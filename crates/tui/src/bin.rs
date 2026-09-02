@@ -508,6 +508,10 @@ impl TuiSession {
                 .ok_or_else(|| {
                 format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
             })?;
+            self.script_sel = Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                card_name.to_string(),
+            ));
             let bag = if card.settings_schema.is_empty() {
                 None
             } else {
