@@ -107,3 +107,67 @@ fn settings_store_round_trips_overrides_at_private_mode() {
         "file:BoneBurier"
     );
 }
+
+const TILE_LIST_PROBE: &str = r#"
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            tile: this.settings.tile('startTile'),
+            list: this.settings.list('targets'),
+        };
+    }
+}
+"#;
+
+#[test]
+fn tile_and_list_schema_defaults_round_trip_through_prelude() {
+    let schema = vec![
+        SettingDef {
+            id: "startTile".into(),
+            ty: "tile".into(),
+            default: Some("3200,3200,0".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+        },
+        SettingDef {
+            id: "targets".into(),
+            ty: "list".into(),
+            default: Some("bones,shells".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+        },
+    ];
+    let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+    let iso = LoadIsolate::spawn(TILE_LIST_PROBE.to_string(), LoadShape::CompatClass)
+        .expect("spawn tile/list probe");
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").expect("tile/list probe readable");
+    assert_eq!(value["tile"]["x"], 3200, "settings.tile must not fall back");
+    assert_eq!(value["tile"]["z"], 3200);
+    assert_eq!(value["tile"]["level"], 0);
+    assert_eq!(
+        value["list"],
+        serde_json::json!(["bones", "shells"]),
+        "settings.list must not fall back"
+    );
+    iso.join();
+}

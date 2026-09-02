@@ -26,6 +26,7 @@ use crate::script_shape::{
     browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
     ScriptPane,
 };
+use crate::script_params::{ParamsKey, ParamsPane, ParamsState};
 use crate::settings::{SettingsKey, SettingsPane, SettingsState};
 use crate::status::StatusPane;
 
@@ -63,6 +64,8 @@ pub enum AppAction {
     ScriptStop,
     /// Open the script Browse picker (registry cards).
     ScriptBrowse,
+    /// Open the script params popup for the selected card.
+    ScriptParams,
     /// Open the first-run rs2b0t catalog folder browser.
     ScriptImportCatalog,
     /// Defer the rs2b0t catalog import (Not now).
@@ -213,6 +216,11 @@ pub struct TuiApp {
     /// The Load path input is open (`script_load_path` is the typed path).
     pub script_load_open: bool,
     pub script_load_path: String,
+    /// Selected card's settings schema (refreshed each pump from the library).
+    pub params_schema: Vec<script::SettingDef>,
+    /// Working bag while the params popup is open.
+    pub params_bag: serde_json::Map<String, serde_json::Value>,
+    pub params_state: ParamsState,
     pub quit: bool,
     /// The last walk/settings error shown in the strip.
     pub error: Option<String>,
@@ -253,6 +261,9 @@ impl TuiApp {
             catalog_sel: 0,
             script_load_open: false,
             script_load_path: String::new(),
+            params_schema: Vec::new(),
+            params_bag: serde_json::Map::new(),
+            params_state: ParamsState::default(),
             quit: false,
             error: None,
             chat_area: Rect::default(),
@@ -425,7 +436,66 @@ impl TuiApp {
         self.map_on_key(key)
     }
 
-    /// The Load path input's keys: printable chars append, Backspace
+    /// Route keys to the params popup when it is open; returns whether the
+    /// key was consumed.
+    pub fn params_on_key(
+        &mut self,
+        store: &mut script::ScriptSettingsStore,
+        key: KeyEvent,
+    ) -> bool {
+        if !self.params_state.open {
+            return false;
+        }
+        let Some((source, name)) = self.params_script_sel() else {
+            self.params_state.open = false;
+            return true;
+        };
+        let schema = self.params_schema.clone();
+        let mut pane = ParamsPane {
+            schema: &schema,
+            bag: &mut self.params_bag,
+            store,
+            source,
+            name: &name,
+            state: &mut self.params_state,
+        };
+        if pane.on_key(key.code) == ParamsKey::Close {
+            self.params_state.open = false;
+        }
+        true
+    }
+
+    fn params_script_sel(&self) -> Option<(script::ScriptSource, String)> {
+        match self.script_sel.as_ref()? {
+            script::ScriptSel::Loaded(source, name) => Some((*source, name.clone())),
+            _ => None,
+        }
+    }
+
+    /// Open the params popup for the Browse-selected card.
+    pub fn open_script_params(&mut self, store: &script::ScriptSettingsStore) {
+        let Some((source, name)) = self.params_script_sel() else {
+            return;
+        };
+        if self.params_schema.is_empty() {
+            return;
+        }
+        self.params_bag = store.merged_bag(source, &name, &self.params_schema, None);
+        self.params_state.open = true;
+        self.params_state.cursor = 0;
+    }
+
+    /// The merged settings bag Start would post for the selected card.
+    pub fn merged_script_settings_bag(
+        &self,
+        store: &script::ScriptSettingsStore,
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let (source, name) = self.params_script_sel()?;
+        if self.params_schema.is_empty() {
+            return None;
+        }
+        Some(store.merged_bag(source, &name, &self.params_schema, None))
+    }
     /// deletes, Enter submits [`AppAction::ScriptLoad`], Esc cancels.
     fn script_load_on_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
@@ -565,6 +635,9 @@ impl TuiApp {
     /// chat pane answers options / continues; the script pane answers its
     /// buttons and the Browse picker rows.
     pub fn on_click(&mut self, col: u16, row: u16) -> AppAction {
+        if self.params_state.open {
+            return AppAction::None;
+        }
         if self.settings_state.open {
             return AppAction::None;
         }
@@ -609,6 +682,7 @@ impl TuiApp {
             self.script_browse_open,
             self.script_load_open,
             &self.script_load_path,
+            !self.params_schema.is_empty(),
             None,
         );
         match pane.on_click(self.script_area, col, row) {
@@ -634,6 +708,7 @@ impl TuiApp {
                 self.script_load_open = true;
                 AppAction::None
             }
+            ScriptClick::Params => AppAction::ScriptParams,
             ScriptClick::Button(_) => AppAction::None,
             ScriptClick::ImportCatalog => AppAction::ScriptImportCatalog,
             ScriptClick::Pick(idx) => {
@@ -693,7 +768,11 @@ impl TuiApp {
         } else {
             0
         };
-        let script_h = 4 + browse_h + catalog_h + u16::from(self.script_load_open);
+        let script_h = 4
+            + browse_h
+            + catalog_h
+            + u16::from(self.script_load_open)
+            + u16::from(!self.params_schema.is_empty() && !self.script_browse_open && !self.rs2b0t_catalog_open && !self.script_load_open);
         let chunks = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(8),
@@ -719,6 +798,30 @@ impl TuiApp {
                 SettingsPane::new(&mut self.settings, &mut self.nav, &mut self.settings_state);
             frame.render_widget(pane, area);
         }
+    }
+
+    /// Render the params popup overlay (call after [`Self::draw`]).
+    pub fn draw_params_overlay(
+        &mut self,
+        frame: &mut Frame<'_>,
+        store: &mut script::ScriptSettingsStore,
+    ) {
+        if !self.params_state.open {
+            return;
+        }
+        let Some((source, name)) = self.params_script_sel() else {
+            return;
+        };
+        let schema = self.params_schema.clone();
+        let pane = ParamsPane {
+            schema: &schema,
+            bag: &mut self.params_bag,
+            store,
+            source,
+            name: &name,
+            state: &mut self.params_state,
+        };
+        frame.render_widget(&pane, frame.area());
     }
 
     fn draw_strip(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -873,6 +976,7 @@ impl TuiApp {
             self.script_browse_open,
             self.script_load_open,
             &self.script_load_path,
+            !self.params_schema.is_empty(),
             None,
         );
         frame.render_widget(pane, area);
@@ -1426,6 +1530,74 @@ mod tests {
         assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
         assert!(!app.script_load_open);
         assert!(app.script_load_path.is_empty(), "Esc clears the path");
+    }
+
+    /// Task 5 fix: clicking `[Params]` opens the popup; Space toggles a
+    /// bool into the bag Start would post.
+    #[test]
+    fn script_params_click_and_space_toggle_persist_bool() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-tui-app-params-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("script-settings.json");
+        let mut store = script::ScriptSettingsStore::at(path);
+        let schema = vec![script::SettingDef {
+            id: "buryBones".into(),
+            ty: "boolean".into(),
+            default: Some("true".into()),
+            label: Some("Bury bones".into()),
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+        }];
+        let mut app = TuiApp::new("274bot headless");
+        app.script_sel = Some(ScriptSel::Loaded(
+            ScriptSource::Catalog,
+            "ChickenKiller".into(),
+        ));
+        app.params_schema = schema;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let area = app.script_area;
+        assert_eq!(
+            app.on_click(area.x + 1, area.y + 3),
+            AppAction::ScriptParams,
+            "[Params] opens the popup"
+        );
+        app.open_script_params(&store);
+        assert!(app.params_state.open);
+        app.params_on_key(&mut store, key(KeyCode::Char(' ')));
+        assert_eq!(
+            app.params_bag.get("buryBones"),
+            Some(&serde_json::json!(false))
+        );
+        let start_bag = app.merged_script_settings_bag(&store).expect("merged bag");
+        assert_eq!(
+            start_bag.get("buryBones"),
+            Some(&serde_json::json!(false)),
+            "Start would post the toggled bool"
+        );
+        terminal
+            .draw(|frame| {
+                app.draw(frame);
+                app.draw_params_overlay(frame, &mut store);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("parameters"),
+            "params overlay paints: {text:?}"
+        );
     }
 
     /// Task 13: while the focused slot's script paints, the chat pane

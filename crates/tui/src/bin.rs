@@ -803,6 +803,17 @@ impl TuiSession {
             self.script_category_order = order.clone();
         }
         app.script_category_order = self.script_category_order.clone();
+        app.params_schema = match &app.script_sel {
+            Some(script::ScriptSel::Loaded(source, name)) => self
+                .js
+                .get(*source, name)
+                .map(|c| c.settings_schema.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        if app.params_state.open && app.params_schema.is_empty() {
+            app.params_state.open = false;
+        }
         app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
         if !app.rs2b0t_catalog_open {
             app.rs2b0t_catalog_dir = self.rs2b0t_catalog_dir.clone();
@@ -1067,13 +1078,20 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             return Ok(code);
         }
         terminal
-            .draw(|frame| app.draw(frame))
+            .draw(|frame| {
+                app.draw(frame);
+                app.draw_params_overlay(frame, &mut session.script_settings);
+            })
             .map_err(|e| e.to_string())?;
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
-                    let action = app.on_key(k);
-                    dispatch(&mut session, &mut app, action);
+                    if app.params_state.open {
+                        app.params_on_key(&mut session.script_settings, k);
+                    } else {
+                        let action = app.on_key(k);
+                        dispatch(&mut session, &mut app, action);
+                    }
                 }
                 Event::Mouse(m) => {
                     if let MouseEventKind::Down(_) = m.kind {
@@ -1135,6 +1153,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             };
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path.to_string_lossy()),
+        AppAction::ScriptParams => app.open_script_params(&session.script_settings),
         AppAction::None => {}
     }
 }

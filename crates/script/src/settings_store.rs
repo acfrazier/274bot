@@ -146,7 +146,82 @@ pub fn merge_bag(
             bag.insert(k.clone(), v.clone());
         }
     }
+    for def in schema {
+        if let Some(v) = bag.get_mut(&def.id) {
+            *v = coerce_setting_value(&def.ty, v);
+        }
+    }
     bag
+}
+
+/// Normalize a stored setting value to the JSON shape the prelude expects.
+pub fn coerce_setting_value(ty: &str, value: &Value) -> Value {
+    match ty {
+        "tile" => coerce_tile(value),
+        "list" => coerce_list(value),
+        _ => value.clone(),
+    }
+}
+
+fn coerce_tile(value: &Value) -> Value {
+    if let Value::Object(obj) = value {
+        if obj.get("x").and_then(|v| v.as_i64()).is_some()
+            && obj.get("z").and_then(|v| v.as_i64()).is_some()
+        {
+            let level = obj
+                .get("level")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            return serde_json::json!({
+                "x": obj.get("x").and_then(|v| v.as_i64()).unwrap(),
+                "z": obj.get("z").and_then(|v| v.as_i64()).unwrap(),
+                "level": level,
+            });
+        }
+    }
+    if let Value::String(s) = value {
+        if let Ok(v) = serde_json::from_str::<Value>(s) {
+            return coerce_tile(&v);
+        }
+        let parts: Vec<&str> = s.split(',').map(str::trim).collect();
+        if parts.len() >= 2 {
+            if let (Ok(x), Ok(z)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
+                let level = parts.get(2).and_then(|p| p.parse::<i64>().ok()).unwrap_or(0);
+                return serde_json::json!({ "x": x, "z": z, "level": level });
+            }
+        }
+    }
+    value.clone()
+}
+
+fn coerce_list(value: &Value) -> Value {
+    if let Value::Array(items) = value {
+        return Value::Array(
+            items
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => Value::String(s.clone()),
+                    other => Value::String(other.to_string()),
+                })
+                .collect(),
+        );
+    }
+    if let Value::String(s) = value {
+        if let Ok(v) = serde_json::from_str::<Value>(s) {
+            return coerce_list(&v);
+        }
+        if s.is_empty() {
+            return Value::Array(vec![]);
+        }
+        return Value::Array(
+            s.split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(|part| Value::String(part.to_string()))
+                .collect(),
+        );
+    }
+    value.clone()
 }
 
 fn default_for_type(ty: &str, default: &str) -> Value {
@@ -158,7 +233,15 @@ fn default_for_type(ty: &str, default: &str) -> Value {
             .and_then(serde_json::Number::from_f64)
             .map(Value::Number)
             .unwrap_or_else(|| Value::Number(0.into())),
-        "string" | "tile" | "list" => Value::String(default.to_string()),
+        "string" => Value::String(default.to_string()),
+        "tile" | "list" => {
+            let raw = if default.starts_with('{') || default.starts_with('[') {
+                serde_json::from_str(default).unwrap_or_else(|_| Value::String(default.to_string()))
+            } else {
+                Value::String(default.to_string())
+            };
+            coerce_setting_value(ty, &raw)
+        }
         _ => Value::String(default.to_string()),
     }
 }
@@ -246,7 +329,8 @@ pub fn parameter_rows(schema: &[SettingDef], bag: &Map<String, Value>) -> Vec<(S
     rows
 }
 
-fn format_setting_value(v: &Value) -> String {
+/// Format a bag value for display in typed editors.
+pub fn format_setting_value(v: &Value) -> String {
     match v {
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),

@@ -26,8 +26,8 @@ pub use load::{
 };
 pub use params::defaults;
 pub use settings_store::{
-    card_key, default_script_settings_path, merge_bag, parameter_rows, setting_visible,
-    ScriptSettingsStore,
+    card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
+    parameter_rows, setting_visible, ScriptSettingsStore,
 };
 pub use registry::{compiled_ids, factory, is_whale, CompiledId};
 pub use rs2b0t_registry::{

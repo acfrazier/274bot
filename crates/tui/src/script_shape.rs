@@ -227,6 +227,8 @@ pub enum ScriptClick {
     Pick(usize),
     /// Import catalog… row while deferred.
     ImportCatalog,
+    /// `[Params]` row when the selected card has a settings schema.
+    Params,
     /// A miss.
     None,
 }
@@ -243,6 +245,7 @@ pub struct ScriptPane<'a> {
     pub browse_open: bool,
     pub load_open: bool,
     pub load_path: &'a str,
+    pub params_available: bool,
     pub slot: Option<&'a SlotScript>,
 }
 
@@ -257,6 +260,7 @@ impl<'a> ScriptPane<'a> {
         browse_open: bool,
         load_open: bool,
         load_path: &'a str,
+        params_available: bool,
         slot: Option<&'a SlotScript>,
     ) -> Self {
         Self {
@@ -268,6 +272,7 @@ impl<'a> ScriptPane<'a> {
             browse_open,
             load_open,
             load_path,
+            params_available,
             slot,
         }
     }
@@ -301,6 +306,11 @@ impl<'a> ScriptPane<'a> {
                     return ScriptClick::Button(label);
                 }
                 cursor += label.len() as u16 + 3;
+            }
+        }
+        if self.params_available && !self.browse_open && !self.load_open && row == inner.y + 2 {
+            if col >= inner.x && col < inner.x + 8 {
+                return ScriptClick::Params;
             }
         }
         if self.browse_open {
@@ -368,6 +378,9 @@ impl Widget for ScriptPane<'_> {
             Line::from(format!("script: {state}   sel: {sel}")),
             Line::from(buttons),
         ];
+        if self.params_available && !self.browse_open && !self.load_open {
+            lines.push(Line::from("[Params]"));
+        }
         if self.load_open {
             lines.push(Line::from(format!("path: {}_", self.load_path)));
         }
@@ -453,6 +466,7 @@ mod tests {
                 false,
                 false,
                 "",
+                false,
                 None,
             ),
             60,
@@ -480,6 +494,7 @@ mod tests {
             false,
             false,
             "",
+            false,
             Some(&slot),
         );
         let start = pane.on_click(area, 10, 2);
@@ -504,6 +519,7 @@ mod tests {
             false,
             false,
             "",
+            false,
             None,
         );
         let area = Rect::new(0, 0, 60, 4);
@@ -523,6 +539,7 @@ mod tests {
                 true,
                 false,
                 "",
+                false,
                 None,
             ),
             80,
@@ -621,6 +638,7 @@ mod tests {
             true,
             false,
             "",
+            false,
             None,
         );
         let area = Rect::new(0, 0, 80, 16);
@@ -643,6 +661,7 @@ mod tests {
                 true,
                 false,
                 "",
+                false,
                 None,
             ),
             80,
@@ -663,6 +682,7 @@ mod tests {
                 true,
                 false,
                 "",
+                false,
                 None,
             ),
             80,
@@ -686,6 +706,7 @@ mod tests {
                 false,
                 false,
                 "",
+                false,
                 None,
             ),
             60,
@@ -707,6 +728,7 @@ mod tests {
                 false,
                 false,
                 "",
+                false,
                 None,
             ),
             60,
@@ -731,6 +753,7 @@ mod tests {
             false,
             false,
             "",
+            false,
             None,
         );
         assert_eq!(
@@ -752,6 +775,7 @@ mod tests {
                 false,
                 true,
                 "/tmp/digbot.js",
+                false,
                 None,
             ),
             60,

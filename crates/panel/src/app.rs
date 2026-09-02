@@ -2304,16 +2304,17 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
                 "string" | "tile" | "list" => {
                     let mut text = bag
                         .get(&def.id)
-                        .and_then(|v| v.as_str())
-                        .or(def.default.as_deref())
-                        .unwrap_or("")
-                        .to_string();
+                        .map(script::format_setting_value)
+                        .or(def.default.as_deref().map(String::from))
+                        .unwrap_or_default();
                     if ui.input_text(&label, &mut text).build() {
+                        let coerced =
+                            script::coerce_setting_value(&def.ty, &serde_json::json!(text));
                         session
                             .script_settings
-                            .set_str(source, &name, &def.id, &text);
+                            .set_value(source, &name, &def.id, coerced.clone());
                         let _ = session.script_settings.save();
-                        bag.insert(def.id.clone(), serde_json::json!(text));
+                        bag.insert(def.id.clone(), coerced);
                     }
                 }
                 _ => {
