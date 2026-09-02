@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use crate::js_cache::{default_js_cache_root, CacheMeta, JsCache};
 use crate::rs2b0t_registry::{
     parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path, ScriptKind,
-    ScriptSource,
+    ScriptSource, SettingDef,
 };
 
 /// Which loader a JS source belongs to.
@@ -101,6 +101,7 @@ pub struct JsCard {
     pub description: String,
     pub category: String,
     pub tags: Vec<String>,
+    pub settings_schema: Vec<SettingDef>,
 }
 
 /// Default persisted library path (`~/.274bot/js-scripts.json`).
@@ -192,6 +193,7 @@ impl JsLibrary {
                 description: String::new(),
                 category: String::new(),
                 tags: Vec::new(),
+                settings_schema: Vec::new(),
             });
         }
         Ok(())
@@ -246,6 +248,7 @@ impl JsLibrary {
             description: String::new(),
             category: String::new(),
             tags: Vec::new(),
+            settings_schema: Vec::new(),
         };
         let new_cards: Vec<JsCard> = self
             .cards
@@ -331,6 +334,7 @@ impl JsLibrary {
                 description: card.description.clone(),
                 category: card.category.clone(),
                 tags: card.tags.clone(),
+                settings_schema: card.settings_schema.clone(),
             });
             n += 1;
         }
@@ -482,6 +486,8 @@ mod isolate {
         /// JS object the Game/Inventory/Skills/EventSignal shims read
         /// before the next dispatched tick. Never a JSON string.
         Snapshot(Vec<u8>),
+        /// Merged operator settings JSON for the prelude's `this.settings.*`.
+        Settings(String),
         Pause,
         Resume,
         Probe(String, Sender<Result<serde_json::Value, String>>),
@@ -577,6 +583,16 @@ mod isolate {
         /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
         pub fn post_snapshot(&self, bytes: Vec<u8>) {
             let _ = self.tx.send(IsolateCmd::Snapshot(bytes));
+        }
+
+        /// Post the merged operator settings bag (schema defaults + panel/TUI
+        /// overrides + optional scenario inject). The prelude's
+        /// `this.settings.*` reads `__rs2b0t_host.settingsBag`.
+        pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
+            let Ok(json) = serde_json::to_string(bag) else {
+                return;
+            };
+            let _ = self.tx.send(IsolateCmd::Settings(json));
         }
 
         /// Dispatch one observed game tick to the isolate. The previous
@@ -1103,6 +1119,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(&mut scope, host, "snapshot", snapshot)
     }
 
+    fn materialize_settings_bag(runtime: &mut Runtime, json: &str) -> Result<(), String> {
+        runtime
+            .eval::<()>(format!(
+                "globalThis.__rs2b0t_host.settingsBag = {json};"
+            ))
+            .map_err(|e| format!("settings bag: {e}"))
+    }
+
     fn js_string<'s>(
         scope: &mut v8::HandleScope<'s>,
         s: &str,
@@ -1306,6 +1330,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         Err(e) => {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
                         }
+                    }
+                }
+                IsolateCmd::Settings(json) => {
+                    if let Err(e) = materialize_settings_bag(&mut runtime, &json) {
+                        let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));
                     }
                 }
                 IsolateCmd::Tick(n) => {

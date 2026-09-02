@@ -43,11 +43,33 @@ globalThis.LoopingBot = class LoopingBot {
         h.log.push(String(message));
     }
     get settings() {
-        // The shim serves the script's own defaults; per-run settings
-        // panes are not v1.
+        const bag = globalThis.__rs2b0t_host.settingsBag || {};
         return {
             str(name, fallback = '') {
+                const v = bag[name];
+                return typeof v === 'string' ? v : fallback;
+            },
+            num(name, fallback = 0) {
+                const v = bag[name];
+                if (typeof v === 'number' && !Number.isNaN(v)) return v;
+                if (typeof v === 'string' && v !== '' && !Number.isNaN(Number(v))) return Number(v);
                 return fallback;
+            },
+            bool(name, fallback = false) {
+                const v = bag[name];
+                if (typeof v === 'boolean') return v;
+                if (v === 'true') return true;
+                if (v === 'false') return false;
+                return fallback;
+            },
+            tile(name, fallback = null) {
+                const v = bag[name];
+                if (v && typeof v === 'object' && typeof v.x === 'number') return v;
+                return fallback;
+            },
+            list(name, fallback = []) {
+                const v = bag[name];
+                return Array.isArray(v) ? v : fallback;
             },
         };
     }

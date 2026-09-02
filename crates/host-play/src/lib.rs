@@ -1989,6 +1989,7 @@ impl Play {
         name: &str,
         source: String,
         shape: script::LoadShape,
+        settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<(), String> {
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
@@ -1996,7 +1997,7 @@ impl Play {
         script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_load(source, shape)?;
+            .start_load_with_settings(source, shape, settings_bag.as_ref())?;
         self.wake(name);
         Ok(())
     }
@@ -3786,12 +3787,12 @@ mod tests {
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-        play.script_start_load("alice", src.clone(), script::LoadShape::NativeTick)
+        play.script_start_load("alice", src.clone(), script::LoadShape::NativeTick, None)
             .unwrap();
         assert_eq!(play.script_state("alice"), script::RunState::Running);
 
         let err = play
-            .script_start_load("alice", src.clone(), script::LoadShape::NativeTick)
+            .script_start_load("alice", src.clone(), script::LoadShape::NativeTick, None)
             .unwrap_err();
         assert!(err.contains("active"), "err was {err}");
 
@@ -3800,7 +3801,7 @@ mod tests {
 
         // Unknown slot: never creates an entry, and never a V8 runtime.
         let err = play
-            .script_start_load("ghost", src, script::LoadShape::NativeTick)
+            .script_start_load("ghost", src, script::LoadShape::NativeTick, None)
             .unwrap_err();
         assert!(err.contains("no slot"), "err was {err}");
         assert!(

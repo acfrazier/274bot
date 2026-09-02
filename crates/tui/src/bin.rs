@@ -270,6 +270,10 @@ pub struct TuiSession {
     rs2b0t_catalog_dir: PathBuf,
     /// Browse category order keys (in-memory; panel persists to panel-ui.json).
     script_category_order: Vec<String>,
+    /// Operator script-parameter overrides (`~/.274bot/script-settings.json`).
+    script_settings: script::ScriptSettingsStore,
+    /// Scenario/live inject merged last on Start.
+    script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[cfg(test)]
@@ -304,7 +308,23 @@ impl TuiSession {
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             script_category_order: Vec::new(),
+            script_settings: script::ScriptSettingsStore::with_default_path(),
+            script_settings_inject: None,
         }
+    }
+
+    fn merged_settings_bag(
+        &self,
+        source: script::ScriptSource,
+        name: &str,
+        schema: &[script::SettingDef],
+    ) -> serde_json::Map<String, serde_json::Value> {
+        self.script_settings.merged_bag(
+            source,
+            name,
+            schema,
+            self.script_settings_inject.as_ref(),
+        )
     }
 
     fn default_catalog_browse_dir() -> PathBuf {
@@ -480,8 +500,17 @@ impl TuiSession {
                 .ok_or_else(|| {
                 format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
             })?;
+            let bag = if card.settings_schema.is_empty() {
+                None
+            } else {
+                Some(self.merged_settings_bag(
+                    script::ScriptSource::Catalog,
+                    card_name,
+                    &card.settings_schema,
+                ))
+            };
             let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.js, card.shape)
+            play.script_start_load(&names[0], card.js, card.shape, bag)
                 .map_err(|e| format!("start {card_name}: {e}"))?;
         }
         Ok(())
@@ -666,7 +695,16 @@ impl TuiSession {
                 script::ScriptSel::Loaded(source, card_name) => {
                     match self.js.get(*source, card_name) {
                         Some(card) => {
-                            play.script_start_load(&name, card.js.clone(), card.shape)
+                            let bag = if card.settings_schema.is_empty() {
+                                None
+                            } else {
+                                Some(self.merged_settings_bag(
+                                    *source,
+                                    card_name,
+                                    &card.settings_schema,
+                                ))
+                            };
+                            play.script_start_load(&name, card.js.clone(), card.shape, bag)
                         }
                         None => Err(format!("no loaded script: {card_name}")),
                     }
@@ -1382,7 +1420,7 @@ ScriptRegistry.register({
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-        play.script_start_load("alice", src, script::LoadShape::NativeTick)
+        play.script_start_load("alice", src, script::LoadShape::NativeTick, None)
             .unwrap();
         assert_eq!(play.script_state("alice"), script::RunState::Running);
 

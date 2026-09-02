@@ -13,6 +13,7 @@ nav = { path = "../nav" }
 ratatui = "0.30"
 scenario = { path = "../scenario" }
 script = { path = "../script" }
+serde_json = "=1.0.140"
 vault = { path = "../vault" }
 
 [dev-dependencies]

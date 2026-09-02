@@ -193,6 +193,29 @@ impl SlotScript {
         }
     }
 
+    /// Post the merged operator settings bag into a Load isolate.
+    #[cfg(feature = "load")]
+    pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
+        if let Some(isolate) = &self.load {
+            isolate.post_settings_bag(bag);
+        }
+    }
+
+    /// Start a JS Load isolate and optionally post the operator settings bag.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_settings(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        bag: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<(), String> {
+        self.start_load(source, shape)?;
+        if let Some(bag) = bag {
+            self.post_settings_bag(bag);
+        }
+        Ok(())
+    }
+
     /// Encode `input` into this slot's reusable isolate buffer and return
     /// the finished bytes. Stores the new last-post fingerprint so the
     /// next observe is a delta. Disjoint-field borrow of `ipc` and

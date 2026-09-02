@@ -10,6 +10,7 @@ pub mod isolate_fb;
 pub mod js_cache;
 pub mod load;
 pub mod params;
+pub mod settings_store;
 pub mod ported;
 pub mod registry;
 pub mod rs2b0t_registry;
@@ -24,6 +25,10 @@ pub use load::{
     default_js_store, detect_shape, is_reserved, JsCard, JsLibrary, LoadShape, ScriptSel,
 };
 pub use params::defaults;
+pub use settings_store::{
+    card_key, default_script_settings_path, merge_bag, parameter_rows, setting_visible,
+    ScriptSettingsStore,
+};
 pub use registry::{compiled_ids, factory, is_whale, CompiledId};
 pub use rs2b0t_registry::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,

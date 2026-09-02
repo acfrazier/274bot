@@ -709,6 +709,12 @@ pub struct Session {
     pub rs2b0t_catalog_dir: PathBuf,
     /// Script Browse category filter (`None` = all categories).
     pub browse_category_filter: Option<String>,
+    /// Persisted operator script-parameter overrides.
+    pub script_settings: script::ScriptSettingsStore,
+    /// Parameters editor modal open.
+    pub params_edit_open: bool,
+    /// Scenario/live inject merged last on Start (Task 12 fills this).
+    pub script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
     /// The out-of-tree JS library (`~/.274bot/js-scripts.json`). Loaded
     /// cards appear in Browse and Start spawns their isolate.
     pub js: script::JsLibrary,
@@ -833,6 +839,9 @@ impl Session {
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: default_catalog_browse_dir(),
             browse_category_filter: None,
+            script_settings: script::ScriptSettingsStore::with_default_path(),
+            params_edit_open: false,
+            script_settings_inject: None,
             js: {
                 let mut js = script::JsLibrary::new(script::default_js_store());
                 let _ = js.restore(); // missing/broken store is not fatal here
@@ -1199,8 +1208,17 @@ impl Session {
                 .ok_or_else(|| {
                 format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
             })?;
+            let bag = if card.settings_schema.is_empty() {
+                None
+            } else {
+                Some(self.merged_settings_bag(
+                    script::ScriptSource::Catalog,
+                    card_name,
+                    &card.settings_schema,
+                ))
+            };
             let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.js, card.shape)
+            play.script_start_load(&names[0], card.js, card.shape, bag)
                 .map_err(|e| format!("start {card_name}: {e}"))?;
         }
         self.login_all();
@@ -2702,6 +2720,30 @@ impl Session {
         self.play.as_ref()?.script_last_error(&name)
     }
 
+    /// Merged operator bag for the Browse-selected JS card (schema defaults,
+    /// persisted overrides, optional scenario inject).
+    pub fn merged_settings_bag(
+        &self,
+        source: script::ScriptSource,
+        name: &str,
+        schema: &[script::SettingDef],
+    ) -> serde_json::Map<String, serde_json::Value> {
+        self.script_settings.merged_bag(
+            source,
+            name,
+            schema,
+            self.script_settings_inject.as_ref(),
+        )
+    }
+
+    /// Inject overrides merged last when the selected script Starts (live gold).
+    pub fn set_script_settings_inject(
+        &mut self,
+        inject: Option<serde_json::Map<String, serde_json::Value>>,
+    ) {
+        self.script_settings_inject = inject;
+    }
+
     /// Start the Browse-selected script (compiled or loaded JS) on the
     /// focused slot. The rs2b0t rule is enforced here too: while the slot's
     /// script is active the call is refused (the Start button is disabled,
@@ -2722,7 +2764,19 @@ impl Session {
             (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
             (Some(play), script::ScriptSel::Loaded(source, card_name)) => {
                 match self.js.get(source, &card_name) {
-                    Some(card) => play.script_start_load(&name, card.js.clone(), card.shape),
+                    Some(card) => {
+                        let bag = if card.settings_schema.is_empty() {
+                            None
+                        } else {
+                            Some(self.merged_settings_bag(source, &card_name, &card.settings_schema))
+                        };
+                        play.script_start_load(
+                            &name,
+                            card.js.clone(),
+                            card.shape,
+                            bag,
+                        )
+                    }
                     None => Err(format!("no loaded script: {card_name}")),
                 }
             }
