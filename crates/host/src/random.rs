@@ -69,6 +69,35 @@ const MIME_IF_ROOT: i32 = 6543;
 /// The eight emote buttons, answer index → child id (`com_2..com_9`).
 const MIME_IF_BUTTONS: [i32; 8] = [6546, 6547, 6548, 6549, 6550, 6551, 6552, 6553];
 
+/// Genie-lamp skill IF root (Lost City `xplamp.if`; rs2b0t `rubLamp`).
+const LAMP_IF_ROOT: i32 = 2808;
+/// First skill button (`attack`); `strength` is 2813, `fletching` is 2830.
+const LAMP_IF_FIRST: i32 = 2812;
+/// Confirm button after the skill pick.
+const LAMP_IF_CONFIRM: i32 = 2831;
+/// Skill names in xplamp.if button order (2812..=2830).
+const LAMP_IF_SKILLS: [&str; 19] = [
+    "attack",
+    "strength",
+    "defence",
+    "hitpoints",
+    "ranged",
+    "prayer",
+    "magic",
+    "cooking",
+    "woodcutting",
+    "fletching",
+    "fishing",
+    "firemaking",
+    "crafting",
+    "smithing",
+    "mining",
+    "herblore",
+    "agility",
+    "thieving",
+    "slayer",
+];
+
 /// Strange-box cube root (rs2b0t `CUBE_IF.root`; Lost City `macro_cube`,
 /// the 274 interface jag verifies 6554 with three TYPE_MODEL children,
 /// the question text and the answer buttons).
@@ -265,6 +294,14 @@ fn detect_scene(
                 npc_index: None,
             });
         }
+        if name == PICK_NAME {
+            return Some(DetectedRandom {
+                kind: RandomKind::Pick,
+                name,
+                ours: true,
+                npc_index: None,
+            });
+        }
     }
     None
 }
@@ -347,10 +384,14 @@ fn flee_candidates(from: (i32, i32)) -> Vec<(i32, i32)> {
     tiles
 }
 
-/// Whether a chat option answers the lamp's skill prompt for `want`
-/// (the vault `lamp_skill`, default "strength").
-fn skill_match(text: &str, want: &str) -> bool {
-    text.trim().eq_ignore_ascii_case(want.trim())
+/// xplamp.if button id for the vault `lamp_skill` (default `"strength"`
+/// → 2813). Unknown skills → `None` (fail-closed: hold, no click).
+fn lamp_skill_button(skill: &str) -> Option<i32> {
+    let want = skill.trim().to_lowercase();
+    LAMP_IF_SKILLS
+        .iter()
+        .position(|s| *s == want.as_str())
+        .map(|i| LAMP_IF_FIRST + i as i32)
 }
 
 /// Mime anim seq → answer index (rs2b0t `MIME_EMOTE_BY_SEQ`; the Lost
@@ -573,6 +614,14 @@ pub struct Guardian {
     /// waits for it to drop (the answer consumed a box) before handling
     /// the next held box (rs2b0t waits on the count drop the same way).
     box_answer_count: Option<i32>,
+    /// Lamp: Rub went out — do not Rub again until the skill IF closes.
+    lamp_rubbed: bool,
+    /// Lamp: the skill button went out — the next tick on the IF presses
+    /// confirm (2831).
+    lamp_skill_sent: bool,
+    /// Box: Open went out — do not Open again until the cube IF closes
+    /// and the answer is consumed.
+    box_opened: bool,
     /// Maze: the active solve state, None while trapped without a route.
     maze: Option<maze::MazeSolve>,
 }
@@ -602,6 +651,9 @@ impl Guardian {
             mime_last_seen: None,
             mime_answered: false,
             box_answer_count: None,
+            lamp_rubbed: false,
+            lamp_skill_sent: false,
+            box_opened: false,
             maze: None,
         }
     }
@@ -651,6 +703,14 @@ impl Guardian {
                     self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
                 }
                 self.clear_handle();
+            } else if self.acting
+                && self.acting_kind == RandomKind::Pick
+                && new_lines.any(|l| WRONG_TALK_MARKERS.iter().any(|w| l.text.contains(w)))
+            {
+                if let Some(index) = ev.as_ref().and_then(|e| e.npc_index) {
+                    self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
+                }
+                self.acting = false;
             }
             self.chat_seen = head;
             // The dialog ended: the chat is closed and the NPC is gone.
@@ -765,7 +825,7 @@ impl Guardian {
             }
             return;
         };
-        if !ev.ours {
+        if !ev.ours && ev.kind != RandomKind::Pick {
             if self.acting {
                 self.resolve(driver, snap);
             }
@@ -868,6 +928,9 @@ impl Guardian {
         self.mime_last_seen = None;
         self.mime_answered = false;
         self.box_answer_count = None;
+        self.lamp_rubbed = false;
+        self.lamp_skill_sent = false;
+        self.box_opened = false;
         self.maze = None;
     }
 
@@ -917,25 +980,42 @@ impl Guardian {
         }
     }
 
-    /// Pick the growing plant, gated on range like Talk-to.
+    /// Pick the growing plant, gated on range like Talk-to. Pick is not
+    /// owner-gated (rs2b0t picks even when the overhead is another name).
     fn step_pick<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, ev: &DetectedRandom) {
-        let Some(index) = ev.npc_index else {
-            self.acting = false;
-            return;
-        };
-        let Some(npc) = npc_by_index(snap.npcs(), index) else {
-            self.acting = false;
-            return;
-        };
         let Some((px, pz, _)) = snap.tile() else {
             return;
         };
-        if cheb((px, pz), (npc.tile.x, npc.tile.z)) > 1 {
-            walk(driver, npc.tile.x, npc.tile.z);
+        if let Some(index) = ev.npc_index {
+            let Some(npc) = npc_by_index(snap.npcs(), index) else {
+                self.acting = false;
+                return;
+            };
+            if cheb((px, pz), (npc.tile.x, npc.tile.z)) > 1 {
+                walk(driver, npc.tile.x, npc.tile.z);
+                return;
+            }
+            let mut ix = Interactions::new(snap, driver);
+            match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
+                SendResult::Sent { .. } => {}
+                SendResult::Refused { .. } => self.acting = false,
+            }
+            return;
+        }
+        let Some(loc) = snap.locs().iter().find(|l| {
+            l.name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(PICK_NAME))
+        }) else {
+            self.acting = false;
+            return;
+        };
+        if cheb((px, pz), (loc.tile.x, loc.tile.z)) > 1 {
+            walk(driver, loc.tile.x, loc.tile.z);
             return;
         }
         let mut ix = Interactions::new(snap, driver);
-        match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
+        match ix.interact(OpTarget::Loc(loc), ActionSpec::Label("Pick".to_string())) {
             SendResult::Sent { .. } => {}
             SendResult::Refused { .. } => self.acting = false,
         }
@@ -1041,17 +1121,23 @@ impl Guardian {
                 return;
             }
             self.box_answer_count = None;
+            self.box_opened = false;
         }
         if snap.modals().main == CUBE_IF_ROOT {
             let ctx = ReadContext::new(snap);
             let question = ctx.component_text(CUBE_IF_QUESTION).unwrap_or("");
             let models = CUBE_IF_MODELS.map(|id| ctx.component_model_obj_id(id));
+            if models.iter().any(|m| m.is_none()) {
+                return;
+            }
             let Some(answer) = solve_cube(question, models) else {
-                self.acting = false;
                 return;
             };
             self.box_answer_count = Some(count);
             press(driver, CUBE_IF_BUTTONS[answer]);
+            return;
+        }
+        if self.box_opened {
             return;
         }
         let Some(held) = snap
@@ -1064,7 +1150,9 @@ impl Guardian {
         };
         let mut ix = Interactions::new(snap, driver);
         match ix.interact(OpTarget::Item(held), ActionSpec::Label("Open".to_string())) {
-            SendResult::Sent { .. } => {}
+            SendResult::Sent { .. } => {
+                self.box_opened = true;
+            }
             SendResult::Refused { .. } => self.acting = false,
         }
     }
@@ -1121,9 +1209,9 @@ impl Guardian {
         }
     }
 
-    /// Lamp auto-use: Rub the held lamp, then answer the skill dialog
-    /// with the vault `lamp_skill` button. `lamp_auto` off keeps the
-    /// 0.1.2 behavior (detect, no op, no hold).
+    /// Lamp auto-use: Rub the held lamp once, wait for the skill IF
+    /// (2808), press the vault `lamp_skill` button, then confirm 2831.
+    /// `lamp_auto` off keeps the 0.1.2 behavior (detect, no op, no hold).
     fn step_lamp<D: Driver>(
         &mut self,
         driver: &mut D,
@@ -1137,23 +1225,28 @@ impl Guardian {
         let lamp_here = snap.inventory().iter().any(|i| i.def.id == LAMP_OBJ);
         if !lamp_here {
             self.acting = false;
+            self.lamp_rubbed = false;
+            self.lamp_skill_sent = false;
             return;
         }
-        // The skill dialog answers through its BUTTON_OK options; a
-        // dialog page without the matching button continues. No dialog
-        // yet → the Rub itself.
-        if let Some(pos) = snap
-            .chat_options()
-            .iter()
-            .position(|o| skill_match(&o.text, &settings.lamp_skill))
-        {
-            let mut ix = Interactions::new(snap, driver);
-            let _ = ix.answer_choice(pos as i32 + 1);
+        if snap.modals().main == LAMP_IF_ROOT {
+            if !self.lamp_skill_sent {
+                if let Some(btn) = lamp_skill_button(&settings.lamp_skill) {
+                    press(driver, btn);
+                    self.lamp_skill_sent = true;
+                } else if crate::debug_enabled() {
+                    eprintln!(
+                        "[host] lamp: unknown skill {:?}",
+                        settings.lamp_skill
+                    );
+                }
+                return;
+            }
+            press(driver, LAMP_IF_CONFIRM);
             return;
         }
-        if chat_is_open(snap) {
-            let mut ix = Interactions::new(snap, driver);
-            let _ = ix.continue_dialog();
+        self.lamp_skill_sent = false;
+        if self.lamp_rubbed {
             return;
         }
         let Some(lamp) = snap.inventory().iter().find(|i| i.def.id == LAMP_OBJ) else {
@@ -1162,7 +1255,9 @@ impl Guardian {
         };
         let mut ix = Interactions::new(snap, driver);
         match ix.interact(OpTarget::Item(lamp), ActionSpec::Label("Rub".to_string())) {
-            SendResult::Sent { .. } => {}
+            SendResult::Sent { .. } => {
+                self.lamp_rubbed = true;
+            }
             SendResult::Refused { .. } => self.acting = false,
         }
     }
@@ -1877,41 +1972,6 @@ mod tests {
         c.gens.iface += 1;
     }
 
-    /// The lamp skill-choice component id.
-    const CHAT_SKILL: i32 = 502;
-
-    /// Open the chat modal with one BUTTON_OK choice (the lamp skill
-    /// dialog shape).
-    fn open_chat_choice(c: &mut Client, root: i32, component: i32, text: &str) {
-        c.set_iface(
-            root as usize,
-            IfType {
-                id: root,
-                children: Some(vec![component]),
-                ..Default::default()
-            },
-        );
-        c.set_iface(
-            component as usize,
-            IfType {
-                id: component,
-                layer_id: root,
-                r#type: ComponentType::TYPE_TEXT,
-                ..Default::default()
-            },
-        );
-        c.set_iface_mut(
-            component as usize,
-            IfTypeMut {
-                button_type: ButtonType::BUTTON_OK,
-                text: text.to_string(),
-                ..Default::default()
-            },
-        );
-        c.chat_modal_id = root;
-        c.gens.iface += 1;
-    }
-
     #[test]
     fn guardian_talks_to_old_man_then_continues_open_chat() {
         let mut c = new_client();
@@ -2251,6 +2311,19 @@ mod tests {
     /// A wall loc of cache `name` at scene (`scene_x`, `scene_z`) (the
     /// hazard-loc shape).
     fn plant_loc(c: &mut Client, id: i32, name: &str, scene_x: i32, scene_z: i32) {
+        plant_loc_with_op(c, id, name, scene_x, scene_z, None);
+    }
+
+    /// Like [`plant_loc`] with an optional first scene op (the growing
+    /// plant loc's `Pick`).
+    fn plant_loc_with_op(
+        c: &mut Client,
+        id: i32,
+        name: &str,
+        scene_x: i32,
+        scene_z: i32,
+        op: Option<&str>,
+    ) {
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
             while cache.locs.len() <= id as usize {
@@ -2259,12 +2332,49 @@ mod tests {
             cache.locs[id as usize] = LocType {
                 id,
                 name: name.to_string(),
+                op: op.map(|o| vec![Some(o.to_string())]).unwrap_or_default(),
                 ..Default::default()
             };
         }
         let typecode = 0x4000_0000 + (id << 14) + scene_x + (scene_z << 7);
         c.world
             .set_wall(0, scene_x, scene_z, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    }
+
+    /// Open the genie-lamp skill IF (xplamp 2808) with skill buttons
+    /// 2812..2830 and confirm 2831.
+    fn open_lamp(c: &mut Client) {
+        let children: Vec<i32> = (LAMP_IF_FIRST..=LAMP_IF_CONFIRM).collect();
+        c.set_iface(
+            LAMP_IF_ROOT as usize,
+            IfType {
+                id: LAMP_IF_ROOT,
+                layer_id: LAMP_IF_ROOT,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(children.clone()),
+                ..Default::default()
+            },
+        );
+        for com in LAMP_IF_FIRST..=LAMP_IF_CONFIRM {
+            c.set_iface(
+                com as usize,
+                IfType {
+                    id: com,
+                    layer_id: LAMP_IF_ROOT,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                com as usize,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    ..Default::default()
+                },
+            );
+        }
+        c.main_modal_id = LAMP_IF_ROOT;
+        c.gens.iface += 1;
     }
 
     #[test]
@@ -2445,7 +2555,7 @@ mod tests {
         let settings = ProfileSettings::default(); // lamp_auto on, skill strength
         let mut snap = GameSnapshot::new();
 
-        // Tick 1: rub the lamp and hold while the lamp iface is in flight.
+        // Tick 1: rub the lamp once and hold while waiting for the IF.
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(status.kind, Some(RandomKind::Lamp));
@@ -2456,18 +2566,38 @@ mod tests {
             "Rub is the lamp's 4th held op"
         );
 
-        // Tick 2: the skill dialog offers Strength → the auto skill is pressed.
+        // Tick 2: IF not open yet → no second Rub.
         drv.menus.clear();
         drv.actions.clear();
-        open_chat_choice(&mut c, CHAT_ROOT, CHAT_SKILL, "Strength");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert!(drv.menus.is_empty(), "pending IF: no second Rub");
+
+        // Tick 3: the skill IF (2808) opens → IF_BUTTON strength (2813).
+        drv.menus.clear();
+        drv.actions.clear();
+        open_lamp(&mut c);
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert!(status.hold);
         assert_eq!(drv.menus.len(), 1, "one skill button press");
         assert_eq!(drv.menus[0].1, MiniMenuAction::IF_BUTTON);
-        assert_eq!(drv.menus[0].4, CHAT_SKILL);
+        assert_eq!(drv.menus[0].4, 2813, "strength is xplamp button 2813");
 
-        // Tick 3: the lamp is consumed → the hold lifts.
+        // Tick 4: confirm 2831, still no Rub.
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 2831)],
+            "next tick presses confirm"
+        );
+
+        // Tick 5: the lamp is consumed → the hold lifts.
         drv.menus.clear();
         drv.actions.clear();
         clear_inv(&mut c);
@@ -2475,6 +2605,74 @@ mod tests {
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(status.kind, None);
         assert!(!status.hold);
+    }
+
+    #[test]
+    fn not_ours_strange_plant_still_gets_picked() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Bob!"), "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Pick));
+        assert!(!status.ours, "overhead is another name");
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)],
+            "Pick even when not ours"
+        );
+    }
+
+    #[test]
+    fn strange_box_pending_ticks_send_nothing_then_if_button() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_box(&mut c, 1);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        // Tick 1: Open once.
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_HELD1, STRANGE_BOX_OBJ, 0, 301)],
+        );
+
+        // Tick 2: IF not open yet → nothing (no second Open).
+        drv.menus.clear();
+        drv.actions.clear();
+        c.main_modal_id = -1;
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(
+            drv.menus.is_empty(),
+            "pending cube IF: no second Open"
+        );
+        assert!(drv.actions.is_empty());
+
+        // Tick 3: cube IF opens → IF_BUTTON answer, no Open.
+        drv.menus.clear();
+        drv.actions.clear();
+        open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 6562)],
+            "cube IF answers via button"
+        );
+        assert_eq!(drv.actions, vec![0]);
     }
 
     #[test]
