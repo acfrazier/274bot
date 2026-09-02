@@ -15,6 +15,9 @@ scenario = { path = "../scenario" }
 script = { path = "../script" }
 vault = { path = "../vault" }
 
+[dev-dependencies]
+host = { path = "../host" }
+
 [[bin]]
 name = "tui-play"
 path = "src/main.rs"

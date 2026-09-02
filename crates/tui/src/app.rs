@@ -15,7 +15,7 @@ use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use host_play::SlotStatus;
-use nav::router::Route;
+use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
 use script::RunState;
@@ -60,6 +60,26 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Nothing to dispatch.
     None,
+}
+
+/// Session nav find opt-ins (panel `NavSettings` parity for Walk-confirm).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NavFindSettings {
+    pub allow_teleports: bool,
+    pub allow_wilderness: bool,
+    pub allow_bank_fetch: bool,
+}
+
+impl NavFindSettings {
+    /// The [`FindOptions`] Walk-confirm passes to [`host_play::arm_walk_on`].
+    pub fn find_options(self) -> FindOptions {
+        FindOptions {
+            allow_teleports: self.allow_teleports,
+            allow_wilderness: self.allow_wilderness,
+            allow_bank_fetch: self.allow_bank_fetch,
+            ..FindOptions::default()
+        }
+    }
 }
 
 /// Adjacent world tile for a WASD step from `here`. +z is north on the
@@ -151,6 +171,8 @@ pub struct TuiApp {
     /// persists [`TuiApp::settings`] back to the vault when
     /// [`TuiApp::settings_dirty`] flips.
     pub settings: vault::ProfileSettings,
+    /// Walk-confirm find opt-ins (teleports / wilderness / BankBudget).
+    pub nav: NavFindSettings,
     pub settings_state: SettingsState,
     pub settings_dirty: bool,
     /// The focused slot's script lifecycle (shape display only).
@@ -192,6 +214,7 @@ impl TuiApp {
             walk_dest: None,
             chat: ChatState::default(),
             settings: vault::ProfileSettings::default(),
+            nav: NavFindSettings::default(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
             script_state: RunState::Idle,
@@ -351,7 +374,8 @@ impl TuiApp {
             _ => {}
         }
         if self.settings_state.open {
-            let mut pane = SettingsPane::new(&mut self.settings, &mut self.settings_state);
+            let mut pane =
+                SettingsPane::new(&mut self.settings, &mut self.nav, &mut self.settings_state);
             if pane.on_key(key) == SettingsKey::Changed {
                 self.settings_dirty = true;
             }
@@ -526,7 +550,8 @@ impl TuiApp {
         self.draw_script(frame, chunks[4]);
 
         if self.settings_state.open {
-            let pane = SettingsPane::new(&mut self.settings, &mut self.settings_state);
+            let pane =
+                SettingsPane::new(&mut self.settings, &mut self.nav, &mut self.settings_state);
             frame.render_widget(pane, area);
         }
     }

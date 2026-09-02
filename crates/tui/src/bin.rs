@@ -30,12 +30,11 @@ use crossterm::terminal::{
 };
 use host_play::{
     arm_walk_on, live_vault_passphrase, mint_live_entries, mint_live_names, open_vault,
-    profile_password, run_with_io, Play, PlayOptions, SlotArm, WalkArm,
-    WireCmd,
+    profile_password, run_with_io, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow,
+    Play, PlayOptions, SlotArm, WalkArm, WireCmd,
 };
-use nav::router::FindOptions;
 use nav::tile::Tile;
-use nav::traveller::TravelOptions;
+use nav::traveller::{TravelOptions, TravelOutcome};
 use nav::WorldState;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -173,6 +172,57 @@ fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
 /// The walk-arm step latch key: `(player gen, here)` per username, so a
 /// hop is sent once per server tick, not every 20 ms frame.
 type NavStepLatch = HashMap<String, (u64, (i32, i32, i32))>;
+
+/// Panel-parity walk-arm tick: BankBudget session first, then route follow.
+fn step_walk_arm_follow<D: api::interact::Driver>(
+    driver: &mut D,
+    snapshot: &api::snapshot::GameSnapshot,
+    arm: &mut WalkArm,
+    world: Option<&nav::world::NavWorld>,
+    here: (i32, i32, i32),
+) -> bool {
+    if arm.bank_fetch.is_some() {
+        step_walk_arm_bank_fetch(driver, snapshot, arm, world, Some(here));
+        if walk_arm_bank_fetch_freezes_follow(arm) {
+            return false;
+        }
+    }
+    let Some(route) = arm.route.clone() else {
+        return false;
+    };
+    let walking_stand = arm.bank_fetch.as_ref().is_some_and(|p| {
+        matches!(
+            p.steps.front(),
+            Some(nav::bank_fetch::BankStep::Walk { x, z, level })
+                if route.dest.x == *x
+                    && route.dest.z == *z
+                    && route.dest.level == *level
+        )
+    });
+    let mut options = TravelOptions {
+        close_enough: 0,
+        teleports: world.map(|w| w.graph.teleports.as_slice()),
+        edges: world.map(|w| w.graph.edges.as_slice()),
+        ..TravelOptions::default()
+    };
+    let outcome = arm.traveller.follow(driver, snapshot, route, &mut options);
+    if walking_stand
+        && matches!(
+            &outcome,
+            Some(o) if !matches!(o, TravelOutcome::Arrived { .. })
+        )
+    {
+        arm.bank_fetch = None;
+        arm.route = None;
+        return false;
+    }
+    if outcome.is_some() {
+        arm.route = None;
+        true
+    } else {
+        false
+    }
+}
 
 /// The TUI session: the running play, the vault, the per-slot snapshot
 /// publication, and the per-username walk arms (the same `WalkArm` map
@@ -313,25 +363,14 @@ impl TuiSession {
                 }
                 let finished = {
                     let mut arm = arm.lock().unwrap();
-                    let Some(route) = arm.route.clone() else {
-                        return;
-                    };
                     let world = nav_world.lock().unwrap().clone();
-                    let mut options = TravelOptions {
-                        // Exact arrival: the armed dest must be stood on
-                        // before the route clears (the panel's contract).
-                        close_enough: 0,
-                        teleports: world.as_ref().map(|w| w.graph.teleports.as_slice()),
-                        edges: world.as_ref().map(|w| w.graph.edges.as_slice()),
-                        ..TravelOptions::default()
-                    };
-                    let outcome = arm.traveller.follow(c, snap, route, &mut options);
-                    if outcome.is_some() {
-                        arm.route = None;
-                        true
-                    } else {
-                        false
-                    }
+                    step_walk_arm_follow(
+                        c,
+                        snap,
+                        &mut arm,
+                        world.as_deref(),
+                        here,
+                    )
                 };
                 if finished {
                     walk_clear.store(true, Ordering::Relaxed);
@@ -475,7 +514,7 @@ impl TuiSession {
             &world,
             from,
             dest,
-            FindOptions::default(),
+            app.nav.find_options(),
             &state,
             &bank,
             &self.travellers,
@@ -974,7 +1013,9 @@ pub fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use nav::grid::StepGrid;
+    use nav::router::FindOptions;
     use nav::world::NavWorld;
 
     fn dummy_options() -> PlayOptions {
@@ -1096,6 +1137,341 @@ mod tests {
         assert!(
             !app.chat_data.show_game_chat,
             "a stopped/not-yet-painted slot must fall back to showing paint by default"
+        );
+    }
+
+    mod bank_fetch_fixtures {
+        use std::sync::Arc;
+
+        use api::snapshot::GameSnapshot;
+        use client::client::{Client, ClientConfig, ClientPlayer};
+        use client::config::if_type::ComponentType;
+        use client::config::{Cache, IfType, IfTypeMut, LocType, ObjType};
+        use client::io::ServerProt;
+        use nav::pack::BankAccess;
+        use api::snapshot::WorldTile;
+        use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+        use nav::world::NavWorld;
+
+        pub fn bank_client() -> Client {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let stream =
+                client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+            std::mem::forget(listener);
+            let mut c = host::prepare_client(
+                ClientConfig {
+                    host: "127.0.0.1".into(),
+                    port: 1,
+                    cache_dir: String::new(),
+                    members: true,
+                    lowmem: true,
+                },
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
+            c.stream = Some(stream);
+            c.ingame = true;
+            c.scene_state = 2;
+            c.map_build_base_x = 3200;
+            c.map_build_base_z = 3200;
+            c.minusedlevel = 0;
+            c.local_player = Some(ClientPlayer::at(5, 5));
+            {
+                let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+                cache.objs.resize(3, ObjType::default());
+                cache.objs[1].id = 1;
+                cache.objs[1].name = "Bones".into();
+                cache.objs[2].id = 2;
+                cache.objs[2].name = "Lobster".into();
+                cache.locs.extend(
+                    (0..(2214usize.saturating_sub(cache.locs.len()))).map(|_| LocType::default()),
+                );
+                cache.locs[2213].id = 2213;
+                cache.locs[2213].name = "Bank booth".into();
+                cache.locs[2213].op = vec![None, Some("Use-quickly".into()), None, None, None];
+            }
+            let booth_typecode = 0x4000_0000 + (2213 << 14) + 1 + (2 << 7);
+            c.world
+                .set_wall(0, 5, 6, 0, 0, 0, booth_typecode, 0, 0, 0, 0, 0);
+            c.main_modal_id = 600;
+            c.set_iface(
+                600,
+                IfType {
+                    id: 600,
+                    layer_id: 600,
+                    r#type: ComponentType::TYPE_LAYER,
+                    children: Some(vec![601]),
+                    ..Default::default()
+                },
+            );
+            c.set_iface(
+                601,
+                IfType {
+                    id: 601,
+                    layer_id: 600,
+                    r#type: ComponentType::TYPE_INV,
+                    iop: [
+                        Some("Withdraw 1".into()),
+                        Some("Withdraw 5".into()),
+                        Some("Withdraw 10".into()),
+                        Some("Withdraw All".into()),
+                        None,
+                    ],
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                601,
+                IfTypeMut {
+                    link_obj_type: Some(vec![2, 0]),
+                    link_obj_number: Some(vec![20, 0]),
+                    ..Default::default()
+                },
+            );
+            c.side_modal_id = 700;
+            c.set_iface(
+                700,
+                IfType {
+                    id: 700,
+                    layer_id: 700,
+                    r#type: ComponentType::TYPE_LAYER,
+                    children: Some(vec![701]),
+                    ..Default::default()
+                },
+            );
+            c.set_iface(
+                701,
+                IfType {
+                    id: 701,
+                    layer_id: 700,
+                    r#type: ComponentType::TYPE_INV,
+                    iop: [Some("Deposit All".into()), None, None, None, None],
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                701,
+                IfTypeMut {
+                    link_obj_type: Some(vec![2, 0]),
+                    link_obj_number: Some(vec![3, 0]),
+                    ..Default::default()
+                },
+            );
+            for prot in [
+                ServerProt::IF_OPENMAIN,
+                ServerProt::IF_OPENCHAT,
+                ServerProt::UPDATE_INV_FULL,
+                ServerProt::REBUILD_NORMAL,
+                ServerProt::PLAYER_INFO,
+            ] {
+                c.bump_gens(prot);
+            }
+            c
+        }
+
+        pub fn bank_fetch_client() -> Client {
+            let mut c = bank_client();
+            {
+                let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+                cache.objs[2].name = "Knife".into();
+            }
+            c.side_icon[3] = 500;
+            c.set_iface(
+                500,
+                IfType {
+                    id: 500,
+                    r#type: ComponentType::TYPE_INV,
+                    obj_ops: true,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                500,
+                IfTypeMut {
+                    link_obj_type: Some(vec![2, 0]),
+                    link_obj_number: Some(vec![3, 0]),
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                601,
+                IfTypeMut {
+                    link_obj_type: Some(vec![3, 0]),
+                    link_obj_number: Some(vec![20, 0]),
+                    ..Default::default()
+                },
+            );
+            c.bump_gens(ServerProt::IF_OPENMAIN);
+            c.bump_gens(ServerProt::UPDATE_INV_FULL);
+            c
+        }
+
+        pub fn knife_nav_world(knife_id: i32) -> NavWorld {
+            let mut flags = vec![0u32; 25];
+            for z in 0..5 {
+                flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
+                flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
+            }
+            let edge = TransportEdge {
+                kind: TransportKind::Door,
+                at: WorldTile {
+                    x: 1,
+                    z: 2,
+                    level: 0,
+                },
+                to: WorldTile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
+                loc_id: 2882,
+                option: 1,
+                ticks: 2,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![knife_id],
+            };
+            let mut graph = TransportGraph::default();
+            graph.at.entry(edge.at).or_default().push(0);
+            graph.edges.push(edge);
+            let (walk, blocked) = nav::collision::pack_walk(&flags);
+            NavWorld::from_parts(
+                nav::collision::WorldCollision {
+                    origin: WorldTile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    },
+                    width: 5,
+                    height: 5,
+                    walk,
+                    blocked,
+                    flags: None,
+                },
+                graph,
+                vec![nav::pack::BankStand {
+                    name: "Bank booth".into(),
+                    tile: WorldTile {
+                        x: 0,
+                        z: 4,
+                        level: 0,
+                    },
+                    access: BankAccess::Booth { op: 2 },
+                }],
+            )
+        }
+
+        pub fn seed_bank_fetch_snapshot() -> GameSnapshot {
+            let c = bank_fetch_client();
+            let mut snap = GameSnapshot::new();
+            snap.rebuild(&c);
+            snap
+        }
+    }
+
+    /// TR-TUI-003: Walk-confirm must pass `allow_bank_fetch` from nav
+    /// settings so `arm_walk_on` can latch a BankBudget session.
+    #[test]
+    fn arm_walk_on_with_allow_bank_fetch_latches_bank_fetch() {
+        use api::snapshot::WorldTile as SnapTile;
+        use bank_fetch_fixtures::{knife_nav_world, seed_bank_fetch_snapshot};
+
+        let mut session = TuiSession::new(dummy_options());
+        *session.nav_world.lock().unwrap() = Some(Arc::new(knife_nav_world(2)));
+        session
+            .snapshots
+            .lock()
+            .unwrap()
+            .insert("alice".into(), seed_bank_fetch_snapshot());
+        let mut app = TuiApp::new("274bot headless");
+        app.names = vec!["alice".into()];
+        app.focused = Some(0);
+        app.here = Some(SnapTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        });
+        app.nav.allow_bank_fetch = true;
+        session.arm_walk_on(
+            &mut app,
+            Tile {
+                x: 4,
+                z: 4,
+                level: 0,
+            },
+        );
+        let latched = session
+            .travellers
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|a| a.lock().unwrap().bank_fetch.is_some());
+        assert!(
+            latched,
+            "allow_bank_fetch must latch WalkArm.bank_fetch on the focused arm"
+        );
+    }
+
+    /// OPT-012: the follow tick must pump BankBudget before route follow.
+    #[test]
+    fn follow_tick_pumps_bank_budget_step() {
+        use bank_fetch_fixtures::{bank_client, knife_nav_world};
+        use host_play::PendingBankFetch;
+        use nav::bank_fetch::BankStep;
+        use nav::router::Route;
+        use api::snapshot::WorldTile;
+        use std::collections::VecDeque;
+
+        let mut c = bank_client();
+        let mut snap = api::snapshot::GameSnapshot::new();
+        snap.rebuild(&c);
+        let world = Arc::new(knife_nav_world(2));
+        let final_route = Route {
+            dest: WorldTile {
+                x: 4,
+                z: 4,
+                level: 0,
+            },
+            legs: vec![],
+            ticks: 0.0,
+        };
+        let mut arm = WalkArm::default();
+        arm.bank_fetch = Some(PendingBankFetch {
+            steps: VecDeque::from([
+                BankStep::DepositAll,
+                BankStep::Withdraw { id: 2, count: 1 },
+                BankStep::Close,
+            ]),
+            dest: WorldTile {
+                x: 4,
+                z: 4,
+                level: 0,
+            },
+            opts: FindOptions::default(),
+            final_route: final_route.clone(),
+        });
+        arm.route = Some(Route {
+            dest: WorldTile {
+                x: 0,
+                z: 4,
+                level: 0,
+            },
+            legs: vec![],
+            ticks: 0.0,
+        });
+        let before = c.out.pos;
+        step_walk_arm_follow(&mut c, &snap, &mut arm, Some(world.as_ref()), (0, 4, 0));
+        assert!(
+            c.out.pos > before,
+            "BankBudget pump must drive deposit on the Driver (pos {before} → {})",
+            c.out.pos
         );
     }
 }

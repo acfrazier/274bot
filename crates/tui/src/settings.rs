@@ -1,6 +1,7 @@
 //! Settings popup (spec `2026-09-01-headless-tui-design.md`): an overlay
 //! keyed `s` with the focused profile's `random_events`, `lamp_skill`, and
-//! `lamp_auto`. The random toggle flips [`ProfileSettings`] in place (the
+//! `lamp_auto`, plus session nav find opt-ins (teleports / wilderness /
+//! BankBudget). The random toggle flips [`ProfileSettings`] in place (the
 //! operator vault; `--live` still ephemeral, no persist). Not crowding the
 //! main view — a small centered box drawn after the panes.
 
@@ -11,6 +12,8 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use vault::ProfileSettings;
+
+use crate::app::NavFindSettings;
 
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
@@ -28,14 +31,15 @@ pub const LAMP_SKILLS: [&str; 7] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SettingsState {
     pub open: bool,
-    /// 0 = random events, 1 = lamp skill, 2 = lamp auto.
+    /// 0 = random events, 1 = lamp skill, 2 = lamp auto, 3 = teleports,
+    /// 4 = wilderness, 5 = bank fetch.
     pub row: usize,
 }
 
 /// The outcome of one settings key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsKey {
-    /// A setting value changed — persist [`ProfileSettings`] back.
+    /// A profile setting value changed — persist [`ProfileSettings`] back.
     Changed,
     /// The key was consumed but nothing changed (navigation, Esc).
     Consumed,
@@ -46,18 +50,27 @@ pub enum SettingsKey {
 /// The settings popup widget over a `ProfileSettings`.
 pub struct SettingsPane<'a> {
     pub settings: &'a mut ProfileSettings,
+    pub nav: &'a mut NavFindSettings,
     pub state: &'a mut SettingsState,
 }
 
 impl<'a> SettingsPane<'a> {
-    pub fn new(settings: &'a mut ProfileSettings, state: &'a mut SettingsState) -> Self {
-        Self { settings, state }
+    pub fn new(
+        settings: &'a mut ProfileSettings,
+        nav: &'a mut NavFindSettings,
+        state: &'a mut SettingsState,
+    ) -> Self {
+        Self {
+            settings,
+            nav,
+            state,
+        }
     }
 
     /// One key while the popup is open. Up/Down move the row; Enter/Space
     /// toggle the row's setting (the random toggle flips `random_events`,
-    /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`]);
-    /// Esc closes.
+    /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`],
+    /// nav rows flip session find opt-ins); Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -65,12 +78,16 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(2);
+                self.state.row = (self.state.row + 1).min(5);
                 SettingsKey::Consumed
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.activate();
-                SettingsKey::Changed
+                if self.state.row <= 2 {
+                    SettingsKey::Changed
+                } else {
+                    SettingsKey::Consumed
+                }
             }
             KeyCode::Esc => {
                 self.state.open = false;
@@ -92,14 +109,17 @@ impl<'a> SettingsPane<'a> {
                     .unwrap_or(0);
                 self.settings.lamp_skill = LAMP_SKILLS[next].into();
             }
-            _ => self.settings.lamp_auto = !self.settings.lamp_auto,
+            2 => self.settings.lamp_auto = !self.settings.lamp_auto,
+            3 => self.nav.allow_teleports = !self.nav.allow_teleports,
+            4 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
+            _ => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
         }
     }
 
-    /// The popup rect: centered, sized to the three rows.
+    /// The popup rect: centered, sized to the six rows.
     pub fn popup_rect(area: Rect) -> Rect {
-        let w = area.width.min(34);
-        let h = 5.min(area.height);
+        let w = area.width.min(36);
+        let h = 8.min(area.height);
         Rect {
             x: area.x + area.width.saturating_sub(w) / 2,
             y: area.y + area.height.saturating_sub(h) / 2,
@@ -123,6 +143,9 @@ impl Widget for SettingsPane<'_> {
             ("random events", format!("{}", self.settings.random_events)),
             ("lamp skill", self.settings.lamp_skill.clone()),
             ("lamp auto", format!("{}", self.settings.lamp_auto)),
+            ("allow teleports", format!("{}", self.nav.allow_teleports)),
+            ("allow wilderness", format!("{}", self.nav.allow_wilderness)),
+            ("bank fetch", format!("{}", self.nav.allow_bank_fetch)),
         ];
         let lines: Vec<Line> = rows
             .iter()
@@ -145,6 +168,8 @@ mod tests {
     use ratatui::Terminal;
 
     use vault::ProfileSettings;
+
+    use crate::app::NavFindSettings;
 
     use super::{SettingsKey, SettingsPane, SettingsState, LAMP_SKILLS};
 
@@ -171,13 +196,14 @@ mod tests {
     #[test]
     fn popup_flips_random_events_on_the_profile() {
         let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
         let mut state = SettingsState {
             open: true,
             ..Default::default()
         };
         assert!(settings.random_events, "default random events on");
         let first = {
-            let mut pane = SettingsPane::new(&mut settings, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(first, SettingsKey::Changed, "Enter reports the change");
@@ -186,7 +212,7 @@ mod tests {
             "Enter on the random-events row flips it off"
         );
         let second = {
-            let mut pane = SettingsPane::new(&mut settings, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(second, SettingsKey::Changed);
@@ -196,9 +222,10 @@ mod tests {
     #[test]
     fn popup_cycles_lamp_skill_and_toggles_lamp_auto() {
         let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
         let mut state = SettingsState { open: true, row: 1 };
         {
-            let mut pane = SettingsPane::new(&mut settings, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
             pane.on_key(key(KeyCode::Enter));
         }
         assert_eq!(
@@ -206,7 +233,7 @@ mod tests {
             "default strength (index 1) cycles to the next skill"
         );
         let flipped = {
-            let mut pane = SettingsPane::new(&mut settings, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
             pane.state.row = 2;
             pane.on_key(key(KeyCode::Char(' ')))
         };
@@ -215,11 +242,25 @@ mod tests {
     }
 
     #[test]
+    fn popup_toggles_bank_fetch_without_marking_profile_dirty() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
+        let mut state = SettingsState { open: true, row: 5 };
+        let key = {
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(key, SettingsKey::Consumed, "nav rows are session-only");
+        assert!(nav.allow_bank_fetch, "bank fetch toggles on");
+    }
+
+    #[test]
     fn up_and_down_move_the_row_and_esc_closes() {
         let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
         let mut state = SettingsState { open: true, row: 0 };
         let rows = {
-            let mut pane = SettingsPane::new(&mut settings, &mut state);
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut state);
             let down = pane.on_key(key(KeyCode::Down));
             let at = pane.state.row;
             let up = pane.on_key(key(KeyCode::Up));
@@ -235,12 +276,13 @@ mod tests {
     #[test]
     fn popup_draws_the_rows_while_open_and_nothing_when_closed() {
         let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
         let mut state = SettingsState { open: true, row: 0 };
-        let text = render(SettingsPane::new(&mut settings, &mut state), 60, 12);
+        let text = render(SettingsPane::new(&mut settings, &mut nav, &mut state), 60, 14);
         assert!(text.contains("random events"), "row paints: {text:?}");
-        assert!(text.contains("lamp skill"), "row paints: {text:?}");
+        assert!(text.contains("bank fetch"), "nav row paints: {text:?}");
         state.open = false;
-        let text = render(SettingsPane::new(&mut settings, &mut state), 60, 12);
+        let text = render(SettingsPane::new(&mut settings, &mut nav, &mut state), 60, 14);
         assert!(
             !text.contains("random events"),
             "closed popup paints nothing: {text:?}"
