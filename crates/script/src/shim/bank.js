@@ -44,7 +44,11 @@ export const Bank = new Proxy(
                 name: row?.name ?? null,
                 count: row?.count ?? 0,
                 id: row?.id ?? 0,
-                ops: ['Withdraw-1', 'Withdraw-5', 'Withdraw-10', 'Withdraw All'],
+                ops: Array.isArray(row?.ops) && row.ops.length > 0
+                    ? row.ops
+                    : ['Withdraw-1', 'Withdraw-5', 'Withdraw-10', 'Withdraw All'],
+                noted: row?.noted === true,
+                cert: row?.cert ?? -1,
             }));
         },
         count(name) {

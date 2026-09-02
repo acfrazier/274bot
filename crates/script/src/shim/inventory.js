@@ -28,12 +28,14 @@ function held(row) {
         count: row.count,
         id: row.id ?? 0,
         slot: row.slot ?? 0,
+        noted: row.noted === true,
+        cert: row.cert ?? -1,
         interact(action) {
             queue({ op: 'held', name: row.name, action: String(action) });
             return true;
         },
         actions() {
-            return [];
+            return Array.isArray(row.ops) ? row.ops.slice() : [];
         },
         useOn(target) {
             if (!target) return false;
@@ -81,7 +83,14 @@ export const Inventory = new Proxy(
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
         countById(id) {
-            throw notV1('Inventory.countById');
+            const rs = rows();
+            if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
+                throw notV1('Inventory.countById');
+            }
+            const want = Number(id);
+            return rs
+                .filter((r) => r && r.id === want)
+                .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
         first(name) {
             const wanted = String(name).toLowerCase();

@@ -21,6 +21,10 @@ table Tile {
 table Row {
   name: string;
   count: int;
+  id: int;
+  ops: [string];
+  noted: bool;
+  cert: int;
 }
 
 // One skill row: the snapshot's stat index, name, xp, and effective level.
@@ -97,6 +101,16 @@ table MakeProduct {
   buttons: [MakeButton];
 }
 
+table SideTabIface {
+  index: int;
+  id: int;
+}
+
+table ChatLine {
+  seq: int;
+  text: string;
+}
+
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
@@ -145,6 +159,9 @@ table Snapshot {
   main_modal_id: int;
   chat_modal_id: int;
   make_products: [MakeProduct];
+  side_tab_ifaces: [SideTabIface];
+  spell_buttons: [CombatStyle];
+  chat_lines: [ChatLine];
 }
 
 // One shim interact request, tagged by `op`:

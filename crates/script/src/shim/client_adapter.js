@@ -1,6 +1,6 @@
 // Thin reader/actions (ClientAdapter shape). Scene views read the posted
 // snapshot; missing members throw `not v1` — never a fake value.
-import { snap, queue, proxy, optionalText } from '../shim/_kernel.js';
+import { snap, queue, proxy, optionalText, notV1 } from '../shim/_kernel.js';
 
 const host = () => globalThis.__rs2b0t_host || {};
 
@@ -86,8 +86,16 @@ export const reader = proxy('reader', {
     skillCount() {
         return (snap().stats || []).length;
     },
-    sideTabInterface(_tab) {
-        return -1;
+    sideTabInterface(tab) {
+        const rows = snap().side_tab_ifaces;
+        if (!Array.isArray(rows)) {
+            throw notV1('reader.sideTabInterface');
+        }
+        const row = rows.find((r) => r && r.index === tab);
+        if (!row || typeof row.id !== 'number') {
+            throw notV1('reader.sideTabInterface');
+        }
+        return row.id;
     },
     selectButtonLabelsByVarp(_root, _varp) {
         return (snap().combat_styles || []).map((s) => ({ mode: s.mode, label: s.label }));

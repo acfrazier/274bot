@@ -1,19 +1,38 @@
 import Tile from '../../geometry/Tile.js';
-import { PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';
+import { host, notV1 } from '../../shim/_kernel.js';
 
-const SPOTS = {
-    Guard: { anchor: new Tile(2661, 3306, 0), leash: 19 },
-    'Knight of Ardougne': { anchor: new Tile(2661, 3306, 0), leash: 29 },
-    Paladin: { anchor: new Tile(2655, 3311, 0), leash: 12 },
-    Hero: { anchor: new Tile(2657, 3311, 0), leash: 17 },
-};
+export const PICKPOCKET_TARGET_NAMES = [
+    'Man',
+    'Woman',
+    'Farmer',
+    'Warrior woman',
+    'Al-Kharid warrior',
+    'Rogue',
+    'Guard',
+    'Knight of Ardougne',
+    'Watchman',
+    'Paladin',
+    'Hero',
+];
+export const ARDOUGNE_PICKPOCKET_TARGETS = ['Guard', 'Knight of Ardougne', 'Paladin', 'Hero'];
 
 export function targetSpot(target) {
-    return SPOTS[target] ?? SPOTS.Guard;
+    const bag = host().settingsBag || {};
+    const spots = bag.campTiles || bag.spots;
+    const row = spots && spots[target];
+    if (row && row.anchor && typeof row.anchor.x === 'number') {
+        return { anchor: Tile.from(row.anchor), leash: row.leash ?? 19 };
+    }
+    throw notV1('targetSpot');
 }
 
 export function requiredThieving(target) {
-    return PICKPOCKET_TARGETS.find((t) => t.name === target)?.level ?? 1;
+    const bag = host().settingsBag || {};
+    const levels = bag.pickpocketLevels || bag.thievingLevels;
+    if (levels && typeof levels[target] === 'number') {
+        return levels[target];
+    }
+    throw notV1('requiredThieving');
 }
 
 export const HOSTILE_NAMES = ['Guard', 'Knight of Ardougne', 'Paladin', 'Hero'];

@@ -21,37 +21,8 @@ export function nextWithdrawChunk(need) {
     return { kind: 'op', op: 'Withdraw-1' };
 }
 
-export async function withdrawTo(name, target, countInInv = () => Inventory.count(name)) {
-    const start = countInInv();
-    for (let guard = 0; guard < 40 && countInInv() < target && !Inventory.isFull(); guard++) {
-        const before = countInInv();
-        const need = target - before;
-        const chunk = nextWithdrawChunk(need);
-        if (!chunk) {
-            break;
-        }
-        if (chunk.kind === 'x') {
-            if (await Bank.withdrawX(name, chunk.count)) {
-                if (countInInv() > before) {
-                    continue;
-                }
-            }
-            const fallback = nextWithdrawChunk(Math.min(need, 10));
-            if (!fallback || fallback.kind !== 'op') {
-                break;
-            }
-            await Bank.withdraw(name, fallback.op);
-            if (!(await Execution.delayUntil(() => countInInv() > before, 2500))) {
-                break;
-            }
-            continue;
-        }
-        await Bank.withdraw(name, chunk.op);
-        if (!(await Execution.delayUntil(() => countInInv() > before, 2500))) {
-            break;
-        }
-    }
-    return countInInv() - start;
+export async function withdrawTo(name, target, _countInInv = () => Inventory.count(name)) {
+    Bank.withdraw(name, target);
 }
 
 export async function closeBankAndConfirmCount(expected, count) {

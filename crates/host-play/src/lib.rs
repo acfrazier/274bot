@@ -1266,7 +1266,7 @@ fn script_snapshot_fb(
 /// Build the observed snapshot input and hand it to `f`. The live observe
 /// path encodes through the slot's reusable [`script::isolate_fb::IsolateBuf`];
 /// tests encode through a one-shot builder via [`script_snapshot_fb`].
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, unused_assignments)]
 fn with_script_snapshot_input<R>(
     tick: u64,
     here: Option<(i32, i32, i32)>,
@@ -1280,16 +1280,54 @@ fn with_script_snapshot_input<R>(
     f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
 ) -> R {
     use script::isolate_fb::{
-        BankStandInput, ChatOptionInput, CombatStyleInput, MakeButtonInput, MakeProductInput,
-        SceneEntityInput, SnapshotInput, StatInput, TileInput, VarpInput,
+        BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
+        MakeButtonInput, MakeProductInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
+        StatInput, TileInput, VarpInput,
     };
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
-    let inv = inv.map(|rows| {
-        rows.iter()
-            .map(|(id, count)| (obj_names.and_then(|names| names.name(*id)), *count))
-            .collect::<Vec<_>>()
-    });
+    let inv_ops_store: Vec<Vec<String>>;
+    let inv: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        inv_ops_store = s
+            .inventory()
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.inventory()
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &inv_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+            })
+            .collect()
+    } else {
+        inv_ops_store = Vec::new();
+        inv.map(|rows| {
+            rows.iter()
+                .map(|(id, count)| ItemRowInput {
+                    name: obj_names.and_then(|names| names.name(*id)),
+                    count: *count,
+                    id: *id,
+                    ops: &[],
+                    noted: false,
+                    cert: -1,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    };
     let stats = snapshot.map(|s| {
         s.stats()
             .iter()
@@ -1301,11 +1339,65 @@ fn with_script_snapshot_input<R>(
             })
             .collect::<Vec<_>>()
     });
-    let bank_rows = |items: &[api::snapshot::ItemView]| {
-        items
+    let bank_ops_store: Vec<Vec<String>>;
+    let bank: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        bank_ops_store = s
+            .bank()
             .iter()
-            .map(|it| (obj_names.and_then(|names| names.name(it.def.id)), it.count))
-            .collect::<Vec<_>>()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.bank()
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &bank_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+            })
+            .collect()
+    } else {
+        bank_ops_store = Vec::new();
+        Vec::new()
+    };
+    let bank_side_ops_store: Vec<Vec<String>>;
+    let bank_side: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        bank_side_ops_store = s
+            .bank_side()
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.bank_side()
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &bank_side_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+            })
+            .collect()
+    } else {
+        bank_side_ops_store = Vec::new();
+        Vec::new()
     };
     let npc_action_store: Vec<Vec<String>>;
     let npcs: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
@@ -1441,7 +1533,36 @@ fn with_script_snapshot_input<R>(
     } else {
         Vec::new()
     };
-    let equipment = snapshot.map(|s| bank_rows(s.equipment()));
+    let equip_ops_store: Vec<Vec<String>>;
+    let equipment: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        equip_ops_store = s
+            .equipment()
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.equipment()
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &equip_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+            })
+            .collect()
+    } else {
+        equip_ops_store = Vec::new();
+        Vec::new()
+    };
     let chat_options = snapshot.map(|s| {
         s.chat_options()
             .iter()
@@ -1533,8 +1654,6 @@ fn with_script_snapshot_input<R>(
             })
             .collect::<Vec<_>>()
     });
-    let bank = snapshot.map(|s| bank_rows(s.bank()));
-    let bank_side = snapshot.map(|s| bank_rows(s.bank_side()));
     let mut make_button_store: Vec<Vec<MakeButtonInput>> = Vec::new();
     let make_products: Vec<MakeProductInput<'_>> = snapshot
         .map(|s| {
@@ -1562,11 +1681,67 @@ fn with_script_snapshot_input<R>(
                 .collect()
         })
         .unwrap_or_default();
+    let side_tab_ifaces: Vec<SideTabIfaceInput> = snapshot
+        .map(|s| {
+            s.side_tabs()
+                .iter()
+                .map(|t| SideTabIfaceInput {
+                    index: t.index,
+                    id: t.root_component_id,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let spell_store = snapshot.map(|s| {
+        let root = s
+            .side_tabs()
+            .iter()
+            .find(|t| t.index == 6)
+            .map(|t| t.root_component_id)
+            .unwrap_or(-1);
+        if root == -1 {
+            Vec::new()
+        } else {
+            s.widgets()
+                .iter()
+                .chain(s.side_tabs().iter().flat_map(|t| t.widgets.iter()))
+                .filter(|w| {
+                    w.root_component_id == root
+                        && w.button_type == 2
+                        && w.target_base.as_deref().is_some_and(|t| !t.is_empty())
+                })
+                .map(|w| (w.target_base.clone().unwrap_or_default(), w.component_id))
+                .collect::<Vec<_>>()
+        }
+    });
+    let spell_buttons: Vec<CombatStyleInput<'_>> = spell_store
+        .as_ref()
+        .map(|rows| {
+            rows.iter()
+                .map(|(label, component_id)| CombatStyleInput {
+                    mode: 0,
+                    label,
+                    component_id: *component_id,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let chat_lines: Vec<ChatLineInput<'_>> = snapshot
+        .map(|s| {
+            s.chat_lines()
+                .iter()
+                .map(|l| ChatLineInput {
+                    seq: l.sequence,
+                    text: l.text.as_str(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let input = SnapshotInput {
         tick,
         here,
         ingame,
-        inv: inv.as_deref().unwrap_or(&[]),
+        inv: &inv,
         // The inv tab's slot count (28 when bound, 0 while the side icons
         // stay tutorial-locked): the `reader.inventorySize()` gate a
         // script's onStart parks on.
@@ -1574,8 +1749,8 @@ fn with_script_snapshot_input<R>(
         stats: stats.as_deref().unwrap_or(&[]),
         booths: booths.as_deref().unwrap_or(&[]),
         banks: banks.as_deref().unwrap_or(&[]),
-        bank: bank.as_deref().unwrap_or(&[]),
-        bank_side: bank_side.as_deref().unwrap_or(&[]),
+        bank: &bank,
+        bank_side: &bank_side,
         bank_open: snapshot.is_some_and(|s| s.bank_component_id() != -1),
         bank_loaded: snapshot.is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
         hold,
@@ -1584,7 +1759,7 @@ fn with_script_snapshot_input<R>(
         locs: &locs,
         players: &players,
         ground: &ground,
-        equipment: equipment.as_deref().unwrap_or(&[]),
+        equipment: &equipment,
         chat_open: modals.is_some_and(|m| m.chat != -1),
         chat_continue: snapshot.is_some_and(|s| s.chat_continue_component_id() != -1),
         chat_text: snapshot.and_then(|s| s.chat()),
@@ -1603,6 +1778,9 @@ fn with_script_snapshot_input<R>(
         main_modal_id: modals.map(|m| m.main).unwrap_or(-1),
         chat_modal_id: modals.map(|m| m.chat).unwrap_or(-1),
         make_products: &make_products,
+        side_tab_ifaces: &side_tab_ifaces,
+        spell_buttons: &spell_buttons,
+        chat_lines: &chat_lines,
     };
     f(&input)
 }

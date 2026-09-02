@@ -1865,10 +1865,22 @@ fn alcher_scenario() -> Scenario {
         steps: {
             let mut steps = script_live_seed_steps();
             steps.push(Step {
-                name: "seed magic, bank stock, and tele to Varrock West",
+                name: "seed magic 55 before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setstat magic 55");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 6, min: 55 },
+                    budget_ticks: 200,
+                },
+            });
+            steps.push(Step {
+                name: "seed bank stock and tele to Varrock West",
                 kind: StepKind::Perform {
                     send: Box::new(move |c, _| {
-                        cheat(c, "setstat magic 55");
                         cheat(c, "givebank rune_chainbody 30");
                         cheat(c, "givebank naturerune 200");
                         cheat(c, "givebank staff_of_fire 1");
@@ -2324,6 +2336,13 @@ mod tests {
         assert!(
             alcher.settings.script_settings_inject.is_some(),
             "Alcher injects the items bag"
+        );
+        assert!(
+            alcher.steps.iter().any(|st| matches!(
+                st.wait.arm,
+                Proof::Stat { id: 6, min: 55 }
+            )),
+            "alcher seed waits for Magic ≥ 55 before Start/watch, not arrival alone"
         );
         let thiever = get("thiever").expect("thiever");
         assert!(

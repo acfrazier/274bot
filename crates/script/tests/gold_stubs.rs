@@ -66,7 +66,7 @@ export default class T extends LoopingBot {
             r#"
 import { foodHealAmount } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
-    loop() { globalThis.__probe = foodHealAmount('Lobster'); }
+    loop() { globalThis.__probe = typeof foodHealAmount; }
 }
 "#,
         ),

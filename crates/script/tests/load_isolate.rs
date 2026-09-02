@@ -138,6 +138,28 @@ fn is_throw_shaped_log(line: &str) -> bool {
         || (line.starts_with("tick ") && line.contains(':'))
 }
 
+fn nc<'a>(name: Option<&'a str>, count: i32) -> script::isolate_fb::ItemRowInput<'a> {
+    script::isolate_fb::ItemRowInput::nc(name, count)
+}
+
+fn item_row<'a>(
+    id: i32,
+    name: Option<&'a str>,
+    count: i32,
+    ops: &'a [String],
+    noted: bool,
+    cert: i32,
+) -> script::isolate_fb::ItemRowInput<'a> {
+    script::isolate_fb::ItemRowInput {
+        name,
+        count,
+        id,
+        ops,
+        noted,
+        cert,
+    }
+}
+
 /// The empty fail-closed snapshot; tests override the fields they post.
 fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
     script::isolate_fb::SnapshotInput {
@@ -176,6 +198,9 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         main_modal_id: -1,
         chat_modal_id: -1,
         make_products: &[],
+        side_tab_ifaces: &[],
+        spell_buttons: &[],
+        chat_lines: &[],
     }
 }
 
@@ -1179,7 +1204,8 @@ export default class T extends LoopingBot {
         level: 0,
     });
     snap.ingame = true;
-    snap.inv = &[(Some("Bones"), 2)];
+    let inv = [nc(Some("Bones"), 2)];
+    snap.inv = &inv;
     snap.stats = &[script::isolate_fb::StatInput {
         index: 5,
         name: "prayer",
@@ -1344,7 +1370,8 @@ export default class T extends LoopingBot {
 
     // First post is the keyframe: the inv table is present.
     let mut snap = base_snapshot();
-    snap.inv = &[(Some("Bones"), 2)];
+    let inv = [nc(Some("Bones"), 2)];
+    snap.inv = &inv;
     let (keyframe, fp1) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
     let kf = script::isolate_fb::decode_snapshot(&keyframe).expect("keyframe decodes");
     assert!(kf.has_inv(), "keyframe carries the inv table");
@@ -1365,7 +1392,8 @@ export default class T extends LoopingBot {
     );
 
     // Third post: inv count 1 -> the inv table comes back and count reads 1.
-    snap.inv = &[(Some("Bones"), 1)];
+    let inv = [nc(Some("Bones"), 1)];
+    snap.inv = &inv;
     let (delta, fp3) = script::isolate_fb::encode_snapshot_delta(Some(&fp2), &snap, false);
     assert!(
         script::isolate_fb::decode_snapshot(&delta)
@@ -1471,7 +1499,8 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.inv = &[(Some("Bones"), 5)];
+    let inv = [nc(Some("Bones"), 5)];
+    snap.inv = &inv;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
@@ -1548,7 +1577,7 @@ fn real_bone_burier_queues_bury_when_seeded() {
         z: 3220,
         level: 0,
     });
-    let inv = [(Some("Bones"), 5)];
+    let inv = [nc(Some("Bones"), 5)];
     snap.inv = &inv;
     snap.inv_size = 28;
     let stats = [script::isolate_fb::StatInput {
@@ -1705,12 +1734,14 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
-    snap.bank = &[
-        (Some("Bones"), 20),
-        (Some("Lobster"), 30),
-        (Some("Vial"), 1),
+    let bank = [
+        nc(Some("Bones"), 20),
+        nc(Some("Lobster"), 30),
+        nc(Some("Vial"), 1),
     ];
-    snap.bank_side = &[(Some("Bones"), 3), (Some("Big bones"), 1)];
+    let bank_side = [nc(Some("Bones"), 3), nc(Some("Big bones"), 1)];
+    snap.bank = &bank;
+    snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_snapshot_input(&iso, &snap);
@@ -1763,7 +1794,8 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
-    snap.bank_side = &[(None, 3)];
+    let bank_side = [nc(None, 3)];
+    snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
     post_snapshot_input(&iso, &snap);
@@ -1863,12 +1895,15 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.inv = &[(Some("Steel platebody"), 1)];
-    snap.combat_styles = &[script::isolate_fb::CombatStyleInput {
+    let inv = [nc(Some("Steel platebody"), 1)];
+    let spells = [script::isolate_fb::CombatStyleInput {
         mode: 0,
         label: "High level alchemy",
         component_id: 1234,
     }];
+    snap.inv = &inv;
+    snap.combat_styles = &[];
+    snap.spell_buttons = &spells;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("__probe");
@@ -1950,7 +1985,8 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.inv = &[(Some("Bones"), 5)];
+    let inv = [nc(Some("Bones"), 5)];
+    snap.inv = &inv;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
@@ -1994,7 +2030,8 @@ export default class T extends LoopingBot {
         actions: &use_actions,
     }];
     let mut snap = base_snapshot();
-    snap.inv = &[(Some("Knife"), 1)];
+    let inv = [nc(Some("Knife"), 1)];
+    snap.inv = &inv;
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -2062,5 +2099,351 @@ export default class T extends LoopingBot {
     assert_eq!(value["reach"], "function");
     assert_eq!(value["reachability"], "function");
     assert_eq!(value["openOp"], "function");
+    iso.join();
+}
+
+// Task 12b — nearestBank reads posted Use-quickly locs on the same plane.
+// A fake booth at `here` is a lie.
+#[test]
+fn isolate_nearest_bank_is_posted_booth_not_player_tile() {
+    let src = r#"
+import { nearestBank } from '../../api/bank/BankLocations.js';
+export default class T extends LoopingBot {
+    loop() {
+        const b = nearestBank();
+        globalThis.__probe = b ? { x: b.tile.x, z: b.tile.z, level: b.tile.level, name: b.name, op: b.op } : null;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 3180,
+        z: 3436,
+        level: 0,
+        distance: 20,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &use_quickly,
+    }];
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3185,
+        z: 3440,
+        level: 0,
+    });
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["x"], 3180, "nearestBank tile is the posted booth, not here");
+    assert_eq!(value["z"], 3436);
+    assert_eq!(value["level"], 0);
+    assert_ne!(
+        (value["x"].as_i64(), value["z"].as_i64()),
+        (Some(3185), Some(3440)),
+        "nearestBank must not fake a booth at the player tile"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_nearest_bank_null_when_no_booth() {
+    let src = r#"
+import { nearestBank } from '../../api/bank/BankLocations.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            globalThis.__probe = nearestBank();
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let is_null = value.is_null();
+    let not_v1 = value.as_str().is_some_and(|s| s.contains("not v1"));
+    assert!(
+        is_null || not_v1,
+        "no booth → null or not v1, not a fake at here: {value:?}"
+    );
+    if let Some(obj) = value.as_object() {
+        assert!(
+            obj.get("tile").is_none(),
+            "must not invent a booth object: {value:?}"
+        );
+    }
+    iso.join();
+}
+
+// Task 12b — Reachability.canReach must not be Chebyshev ≤ 400.
+#[test]
+fn isolate_reachability_can_reach_is_not_chebyshev() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            const far = { x: 3300, z: 3300, level: 0 };
+            globalThis.__probe = Reachability.canReach(far, { maxSteps: 400 });
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let cheb = 3300i64 - 3222;
+    assert!(
+        cheb <= 400,
+        "fixture: Chebyshev {cheb} is ≤ 400 so a fake would return true"
+    );
+    assert_ne!(
+        value,
+        true,
+        "canReach must not return true from Chebyshev ≤ 400: {value:?}"
+    );
+    iso.join();
+}
+
+// Task 12b — walkOpening maps onto Traversal.walkResilient(tile, opts).
+#[test]
+fn isolate_walk_opening_queues_walk_resilient_not_walk_to() {
+    let src = r#"
+import { walkOpening } from '../../event/webwalk/walkOpening.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__probe = 'go';
+        try {
+            await walkOpening({ x: 3222, z: 3295, level: 0 }, 0, [], () => {});
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let msg = value.as_str().unwrap_or("");
+    assert!(
+        !msg.contains("walkTo") && !msg.contains("Traversal.walkTo"),
+        "walkOpening must not call missing Traversal.walkTo: {value:?}"
+    );
+    assert_eq!(value, "go", "walkOpening parks on walkResilient, not throw");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Walk {
+            x: 3222,
+            z: 3295,
+            level: 0,
+        }],
+        "walkOpening queues Traversal.walkResilient walk"
+    );
+    iso.join();
+}
+
+// Task 12b — TaskBot.loop awaits execute() so ContinueDialog's continue is not dropped.
+#[test]
+fn isolate_task_bot_loop_awaits_execute() {
+    let src = r#"
+import { TaskBot } from '../../api/bot/Bot.js';
+import { ContinueDialog } from '../../api/tasks/ContinueDialog.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new ContinueDialog());
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.chat_open = true;
+    snap.chat_continue = true;
+    snap.chat_modal_id = 4882;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::ContinueDialog],
+        "awaited execute() queues ContinueDialog.continue"
+    );
+    iso.join();
+}
+
+// Task 12b — SettingsStore is the host bag, not schema defaults pretending to be set.
+#[test]
+fn isolate_settings_store_does_not_return_schema_defaults() {
+    let src = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+export default class T extends LoopingBot {
+    loop() {
+        const schema = { food: { type: 'string', default: 'Lobster' } };
+        globalThis.__probe = SettingsStore.resolve('T', schema).food;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_ne!(
+        value, "Lobster",
+        "SettingsStore must not return schema defaults as if they were set: {value:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_inventory_count_by_id_sums_posted_ids() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            n: Inventory.countById(526),
+            rowId: Inventory.first('Bones') && Inventory.first('Bones').id,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Bury".to_string()];
+    let inv = [item_row(526, Some("Bones"), 5, &ops, false, -1)];
+    let mut snap = base_snapshot();
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["n"], 5, "countById sums posted ids");
+    assert_eq!(value["rowId"], 526, "posted inv row has id");
+    iso.join();
+}
+
+#[test]
+fn isolate_side_tab_interface_posts_id() {
+    let src = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            globalThis.__probe = reader.sideTabInterface(6);
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ifaces = [script::isolate_fb::SideTabIfaceInput { index: 6, id: 192 }];
+    let mut snap = base_snapshot();
+    snap.side_tab_ifaces = &ifaces;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, 192, "sideTabInterface returns posted id, not -1");
+    iso.join();
+}
+
+#[test]
+fn isolate_game_messages_ingest_posted_chat() {
+    let src = r#"
+import { GameMessages, CANT_REACH } from '../../api/chatbox/gameMessages.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = GameMessages.sawSince(0, CANT_REACH);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let lines = [script::isolate_fb::ChatLineInput {
+        seq: 3,
+        text: "I can't reach that!",
+    }];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &lines;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "GameMessages reads posted chat_lines");
+    iso.join();
+}
+
+#[test]
+fn isolate_return_to_anchor_uses_walk_resilient_arity() {
+    let src = r#"
+import { createReturnToAnchorTask } from '../../api/tasks/Anchor.js';
+import Tile from '../../geometry/Tile.js';
+export default class T extends LoopingBot {
+    async loop() {
+        const bot = {
+            getAnchor() { return new Tile(3222, 3295, 0); },
+            leashRadius() { return 8; },
+            setStatus() {},
+        };
+        const task = createReturnToAnchorTask(bot, { arriveRadius: 0 });
+        globalThis.__probe = 'go';
+        try {
+            await task.execute();
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let msg = value.as_str().unwrap_or("");
+    assert!(
+        !msg.contains("not v1"),
+        "walkResilient(tile, opts) must not throw: {value:?}"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Walk {
+            x: 3222,
+            z: 3295,
+            level: 0,
+        }],
+        "createReturnToAnchorTask queues walkResilient(tile, opts)"
+    );
     iso.join();
 }

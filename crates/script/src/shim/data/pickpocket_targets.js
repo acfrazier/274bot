@@ -1,15 +1,16 @@
+// SETTINGS target names only. Levels/camp tiles are the inject bag, not this table.
 export const PICKPOCKET_TARGETS = [
-    { name: 'Man', level: 1 },
-    { name: 'Woman', level: 1 },
-    { name: 'Farmer', level: 10 },
-    { name: 'Warrior woman', level: 25 },
-    { name: 'Al-Kharid warrior', level: 25 },
-    { name: 'Rogue', level: 32 },
-    { name: 'Guard', level: 40 },
-    { name: 'Knight of Ardougne', level: 55 },
-    { name: 'Watchman', level: 65 },
-    { name: 'Paladin', level: 70 },
-    { name: 'Hero', level: 80 },
+    { name: 'Man' },
+    { name: 'Woman' },
+    { name: 'Farmer' },
+    { name: 'Warrior woman' },
+    { name: 'Al-Kharid warrior' },
+    { name: 'Rogue' },
+    { name: 'Guard' },
+    { name: 'Knight of Ardougne' },
+    { name: 'Watchman' },
+    { name: 'Paladin' },
+    { name: 'Hero' },
 ];
 
 export const PICKPOCKET_TARGET_NAMES = PICKPOCKET_TARGETS.map((t) => t.name);

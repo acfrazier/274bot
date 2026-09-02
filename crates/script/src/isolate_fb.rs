@@ -52,9 +52,13 @@ const VT_TILE_X: VOffsetT = 4;
 const VT_TILE_Z: VOffsetT = 6;
 const VT_TILE_LEVEL: VOffsetT = 8;
 
-// Row: { name: string, count: int }
+// Row: { name: string, count: int, id, ops, noted, cert }
 const VT_ROW_NAME: VOffsetT = 4;
 const VT_ROW_COUNT: VOffsetT = 6;
+const VT_ROW_ID: VOffsetT = 8;
+const VT_ROW_OPS: VOffsetT = 10;
+const VT_ROW_NOTED: VOffsetT = 12;
+const VT_ROW_CERT: VOffsetT = 14;
 
 // Stat: { index, name, xp, level }
 const VT_STAT_INDEX: VOffsetT = 4;
@@ -108,6 +112,17 @@ const VT_SNAP_ANIMATING: VOffsetT = 66;
 const VT_SNAP_MAIN_MODAL: VOffsetT = 68;
 const VT_SNAP_CHAT_MODAL: VOffsetT = 70;
 const VT_SNAP_MAKE_PRODUCTS: VOffsetT = 72;
+const VT_SNAP_SIDE_TAB_IFACES: VOffsetT = 74;
+const VT_SNAP_SPELL_BUTTONS: VOffsetT = 76;
+const VT_SNAP_CHAT_LINES: VOffsetT = 78;
+
+// SideTabIface: { index, id }
+const VT_STI_INDEX: VOffsetT = 4;
+const VT_STI_ID: VOffsetT = 6;
+
+// ChatLine: { seq, text }
+const VT_CL_SEQ: VOffsetT = 4;
+const VT_CL_TEXT: VOffsetT = 6;
 
 // SceneEntity: { index, id, name, x, z, level, distance, health,
 //               max_health, in_combat, animating, actions }
@@ -207,6 +222,44 @@ pub struct ChatOptionInput<'a> {
     pub text: &'a str,
 }
 
+/// One inv/bank/equipment row posted from `ItemView`.
+#[derive(Clone, Copy)]
+pub struct ItemRowInput<'a> {
+    pub name: Option<&'a str>,
+    pub count: i32,
+    pub id: i32,
+    pub ops: &'a [String],
+    pub noted: bool,
+    pub cert: i32,
+}
+
+impl<'a> ItemRowInput<'a> {
+    pub const fn nc(name: Option<&'a str>, count: i32) -> Self {
+        Self {
+            name,
+            count,
+            id: 0,
+            ops: &[],
+            noted: false,
+            cert: -1,
+        }
+    }
+}
+
+/// Posted side-tab root component id (`reader.sideTabInterface`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SideTabIfaceInput {
+    pub index: i32,
+    pub id: i32,
+}
+
+/// Posted game-chat ring line.
+#[derive(Clone, Copy)]
+pub struct ChatLineInput<'a> {
+    pub seq: i32,
+    pub text: &'a str,
+}
+
 #[derive(Clone, Copy)]
 pub struct MakeButtonInput {
     pub qty: i32,
@@ -260,15 +313,15 @@ pub struct SnapshotInput<'a> {
     pub tick: u64,
     pub here: Option<TileInput>,
     pub ingame: bool,
-    pub inv: &'a [(Option<&'a str>, i32)],
+    pub inv: &'a [ItemRowInput<'a>],
     /// The inv tab's slot count (28 bound, 0 while tutorial-locked) — the
     /// `reader.inventorySize()` read a script's onStart gates on.
     pub inv_size: i32,
     pub stats: &'a [StatInput<'a>],
     pub booths: &'a [TileInput],
     pub banks: &'a [BankStandInput<'a>],
-    pub bank: &'a [(Option<&'a str>, i32)],
-    pub bank_side: &'a [(Option<&'a str>, i32)],
+    pub bank: &'a [ItemRowInput<'a>],
+    pub bank_side: &'a [ItemRowInput<'a>],
     pub bank_open: bool,
     pub bank_loaded: bool,
     pub hold: bool,
@@ -277,7 +330,7 @@ pub struct SnapshotInput<'a> {
     pub locs: &'a [SceneEntityInput<'a>],
     pub players: &'a [SceneEntityInput<'a>],
     pub ground: &'a [SceneEntityInput<'a>],
-    pub equipment: &'a [(Option<&'a str>, i32)],
+    pub equipment: &'a [ItemRowInput<'a>],
     pub chat_open: bool,
     pub chat_continue: bool,
     pub chat_text: Option<&'a str>,
@@ -294,6 +347,9 @@ pub struct SnapshotInput<'a> {
     pub main_modal_id: i32,
     pub chat_modal_id: i32,
     pub make_products: &'a [MakeProductInput<'a>],
+    pub side_tab_ifaces: &'a [SideTabIfaceInput],
+    pub spell_buttons: &'a [CombatStyleInput<'a>],
+    pub chat_lines: &'a [ChatLineInput<'a>],
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -336,7 +392,7 @@ impl Verifiable for TileReader<'_> {
 }
 
 /// One inventory/bank row as decoded: the resolved obj name (`None` =
-/// unknown id) and a count.
+/// unknown id), count, and ItemView fields (id/ops/noted/cert).
 #[derive(Clone, Copy)]
 pub struct RowReader<'a> {
     tab: Table<'a>,
@@ -358,6 +414,24 @@ impl RowReader<'_> {
     pub fn count(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ROW_COUNT, None) }.unwrap_or(0)
     }
+    pub fn id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ROW_ID, None) }.unwrap_or(0)
+    }
+    pub fn ops(&self) -> Vec<&str> {
+        match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_ROW_OPS, None)
+        } {
+            Some(v) => v.iter().collect(),
+            None => Vec::new(),
+        }
+    }
+    pub fn noted(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_ROW_NOTED, None) }.unwrap_or(false)
+    }
+    pub fn cert(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ROW_CERT, None) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for RowReader<'_> {
@@ -365,6 +439,12 @@ impl Verifiable for RowReader<'_> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_ROW_NAME, false)?
             .visit_field::<i32>("count", VT_ROW_COUNT, false)?
+            .visit_field::<i32>("id", VT_ROW_ID, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "ops", VT_ROW_OPS, false,
+            )?
+            .visit_field::<bool>("noted", VT_ROW_NOTED, false)?
+            .visit_field::<i32>("cert", VT_ROW_CERT, false)?
             .finish();
         Ok(())
     }
@@ -548,6 +628,15 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("chat_modal_id", VT_SNAP_CHAT_MODAL, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeProductReader>>>>(
                 "make_products", VT_SNAP_MAKE_PRODUCTS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SideTabIfaceReader>>>>(
+                "side_tab_ifaces", VT_SNAP_SIDE_TAB_IFACES, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CombatStyleReader>>>>(
+                "spell_buttons", VT_SNAP_SPELL_BUTTONS, false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatLineReader>>>>(
+                "chat_lines", VT_SNAP_CHAT_LINES, false,
             )?
             .finish();
         Ok(())
@@ -786,6 +875,24 @@ impl SnapshotReader<'_> {
     pub fn make_products(&self) -> Vec<MakeProductReader<'_>> {
         rows::<MakeProductReader>(&self.tab, VT_SNAP_MAKE_PRODUCTS)
     }
+    pub fn has_side_tab_ifaces(&self) -> bool {
+        rows_present::<SideTabIfaceReader>(&self.tab, VT_SNAP_SIDE_TAB_IFACES)
+    }
+    pub fn side_tab_ifaces(&self) -> Vec<SideTabIfaceReader<'_>> {
+        rows::<SideTabIfaceReader>(&self.tab, VT_SNAP_SIDE_TAB_IFACES)
+    }
+    pub fn has_spell_buttons(&self) -> bool {
+        rows_present::<CombatStyleReader>(&self.tab, VT_SNAP_SPELL_BUTTONS)
+    }
+    pub fn spell_buttons(&self) -> Vec<CombatStyleReader<'_>> {
+        rows::<CombatStyleReader>(&self.tab, VT_SNAP_SPELL_BUTTONS)
+    }
+    pub fn has_chat_lines(&self) -> bool {
+        rows_present::<ChatLineReader>(&self.tab, VT_SNAP_CHAT_LINES)
+    }
+    pub fn chat_lines(&self) -> Vec<ChatLineReader<'_>> {
+        rows::<ChatLineReader>(&self.tab, VT_SNAP_CHAT_LINES)
+    }
 }
 
 /// Decode `buf` as a root-`Snapshot` FlatBuffer (produced by our own
@@ -868,6 +975,16 @@ pub struct SceneEntityFp {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ItemRowFp {
+    pub name: Option<String>,
+    pub count: i32,
+    pub id: i32,
+    pub ops: Vec<String>,
+    pub noted: bool,
+    pub cert: i32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CombatStyleFp {
     pub mode: i32,
     pub label: String,
@@ -895,13 +1012,13 @@ pub struct MakeProductFp {
 pub struct SnapshotFingerprint {
     pub here: Option<TileInput>,
     pub ingame: bool,
-    pub inv: Vec<(Option<String>, i32)>,
+    pub inv: Vec<ItemRowFp>,
     pub inv_size: i32,
     pub stats: Vec<(i32, String, i32, i32)>,
     pub booths: Vec<TileInput>,
     pub banks: Vec<BankStandFp>,
-    pub bank: Vec<(Option<String>, i32)>,
-    pub bank_side: Vec<(Option<String>, i32)>,
+    pub bank: Vec<ItemRowFp>,
+    pub bank_side: Vec<ItemRowFp>,
     pub bank_open: bool,
     pub bank_loaded: bool,
     pub hold: bool,
@@ -910,7 +1027,7 @@ pub struct SnapshotFingerprint {
     pub locs: Vec<SceneEntityFp>,
     pub players: Vec<SceneEntityFp>,
     pub ground: Vec<SceneEntityFp>,
-    pub equipment: Vec<(Option<String>, i32)>,
+    pub equipment: Vec<ItemRowFp>,
     pub chat_open: bool,
     pub chat_continue: bool,
     pub chat_text: Option<String>,
@@ -927,11 +1044,24 @@ pub struct SnapshotFingerprint {
     pub main_modal_id: i32,
     pub chat_modal_id: i32,
     pub make_products: Vec<MakeProductFp>,
+    pub side_tab_ifaces: Vec<SideTabIfaceInput>,
+    pub spell_buttons: Vec<CombatStyleFp>,
+    pub chat_lines: Vec<(i32, String)>,
 }
 
 impl SnapshotFingerprint {
     /// Own the input's field values (names cloned) for later comparison.
     pub fn from_input(input: &SnapshotInput<'_>) -> SnapshotFingerprint {
+        fn item_row_fp(r: &ItemRowInput<'_>) -> ItemRowFp {
+            ItemRowFp {
+                name: r.name.map(str::to_string),
+                count: r.count,
+                id: r.id,
+                ops: r.ops.iter().map(|a| a.to_string()).collect(),
+                noted: r.noted,
+                cert: r.cert,
+            }
+        }
         fn entity_fp(e: &SceneEntityInput<'_>) -> SceneEntityFp {
             SceneEntityFp {
                 index: e.index,
@@ -951,11 +1081,7 @@ impl SnapshotFingerprint {
         SnapshotFingerprint {
             here: input.here,
             ingame: input.ingame,
-            inv: input
-                .inv
-                .iter()
-                .map(|(name, count)| (name.map(str::to_string), *count))
-                .collect(),
+            inv: input.inv.iter().map(item_row_fp).collect(),
             inv_size: input.inv_size,
             stats: input
                 .stats
@@ -976,16 +1102,8 @@ impl SnapshotFingerprint {
                     choose: b.choose.map(str::to_string),
                 })
                 .collect(),
-            bank: input
-                .bank
-                .iter()
-                .map(|(name, count)| (name.map(str::to_string), *count))
-                .collect(),
-            bank_side: input
-                .bank_side
-                .iter()
-                .map(|(name, count)| (name.map(str::to_string), *count))
-                .collect(),
+            bank: input.bank.iter().map(item_row_fp).collect(),
+            bank_side: input.bank_side.iter().map(item_row_fp).collect(),
             bank_open: input.bank_open,
             bank_loaded: input.bank_loaded,
             hold: input.hold,
@@ -994,11 +1112,7 @@ impl SnapshotFingerprint {
             locs: input.locs.iter().map(entity_fp).collect(),
             players: input.players.iter().map(entity_fp).collect(),
             ground: input.ground.iter().map(entity_fp).collect(),
-            equipment: input
-                .equipment
-                .iter()
-                .map(|(name, count)| (name.map(str::to_string), *count))
-                .collect(),
+            equipment: input.equipment.iter().map(item_row_fp).collect(),
             chat_open: input.chat_open,
             chat_continue: input.chat_continue,
             chat_text: input.chat_text.map(str::to_string),
@@ -1041,6 +1155,21 @@ impl SnapshotFingerprint {
                         })
                         .collect(),
                 })
+                .collect(),
+            side_tab_ifaces: input.side_tab_ifaces.to_vec(),
+            spell_buttons: input
+                .spell_buttons
+                .iter()
+                .map(|c| CombatStyleFp {
+                    mode: c.mode,
+                    label: c.label.to_string(),
+                    component_id: c.component_id,
+                })
+                .collect(),
+            chat_lines: input
+                .chat_lines
+                .iter()
+                .map(|l| (l.seq, l.text.to_string()))
                 .collect(),
         }
     }
@@ -1087,6 +1216,9 @@ pub struct DeltaMask {
     pub main_modal_id: bool,
     pub chat_modal_id: bool,
     pub make_products: bool,
+    pub side_tab_ifaces: bool,
+    pub spell_buttons: bool,
+    pub chat_lines: bool,
 }
 
 impl DeltaMask {
@@ -1127,6 +1259,9 @@ impl DeltaMask {
             main_modal_id: true,
             chat_modal_id: true,
             make_products: true,
+            side_tab_ifaces: true,
+            spell_buttons: true,
+            chat_lines: true,
         }
     }
 
@@ -1176,6 +1311,9 @@ impl DeltaMask {
             main_modal_id: next.main_modal_id != last.main_modal_id,
             chat_modal_id: next.chat_modal_id != last.chat_modal_id,
             make_products: next.make_products != last.make_products,
+            side_tab_ifaces: next.side_tab_ifaces != last.side_tab_ifaces,
+            spell_buttons: next.spell_buttons != last.spell_buttons,
+            chat_lines: next.chat_lines != last.chat_lines,
         }
     }
 }
@@ -1290,7 +1428,7 @@ fn encode_snapshot_masked_into(
         let offs = input
             .inv
             .iter()
-            .map(|(name, count)| row_off(b, *name, *count))
+            .map(|r| row_off(b, r))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -1330,7 +1468,7 @@ fn encode_snapshot_masked_into(
         let offs = input
             .bank
             .iter()
-            .map(|(name, count)| row_off(b, *name, *count))
+            .map(|r| row_off(b, r))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -1340,7 +1478,7 @@ fn encode_snapshot_masked_into(
         let offs = input
             .bank_side
             .iter()
-            .map(|(name, count)| row_off(b, *name, *count))
+            .map(|r| row_off(b, r))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -1377,7 +1515,7 @@ fn encode_snapshot_masked_into(
         let offs = input
             .equipment
             .iter()
-            .map(|(name, count)| row_off(b, *name, *count))
+            .map(|r| row_off(b, r))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -1423,6 +1561,36 @@ fn encode_snapshot_masked_into(
             .combat_styles
             .iter()
             .map(|c| combat_style_off(b, c))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let side_tab_ifaces_off = if mask.side_tab_ifaces {
+        let offs = input
+            .side_tab_ifaces
+            .iter()
+            .map(|t| side_tab_iface_off(b, *t))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let spell_buttons_off = if mask.spell_buttons {
+        let offs = input
+            .spell_buttons
+            .iter()
+            .map(|c| combat_style_off(b, c))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let chat_lines_off = if mask.chat_lines {
+        let offs = input
+            .chat_lines
+            .iter()
+            .map(|l| chat_line_off(b, l))
             .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
@@ -1542,6 +1710,21 @@ fn encode_snapshot_masked_into(
             make_products_off.expect("mask checked"),
         );
     }
+    if mask.side_tab_ifaces {
+        b.push_slot_always(
+            VT_SNAP_SIDE_TAB_IFACES,
+            side_tab_ifaces_off.expect("mask checked"),
+        );
+    }
+    if mask.spell_buttons {
+        b.push_slot_always(
+            VT_SNAP_SPELL_BUTTONS,
+            spell_buttons_off.expect("mask checked"),
+        );
+    }
+    if mask.chat_lines {
+        b.push_slot_always(VT_SNAP_CHAT_LINES, chat_lines_off.expect("mask checked"));
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -1556,15 +1739,20 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileRe
 
 fn row_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
-    name: Option<&str>,
-    count: i32,
+    r: &ItemRowInput<'_>,
 ) -> WIPOffset<RowReader<'b>> {
-    let name_off = name.map(|n| b.create_string(n));
+    let name_off = r.name.map(|n| b.create_string(n));
+    let ops_offs: Vec<_> = r.ops.iter().map(|a| b.create_string(a)).collect();
+    let ops_off = b.create_vector(&ops_offs);
     let tab = b.start_table();
     if let Some(off) = name_off {
         b.push_slot_always(VT_ROW_NAME, off);
     }
-    b.push_slot_always(VT_ROW_COUNT, count);
+    b.push_slot_always(VT_ROW_COUNT, r.count);
+    b.push_slot_always(VT_ROW_ID, r.id);
+    b.push_slot_always(VT_ROW_OPS, ops_off);
+    b.push_slot_always(VT_ROW_NOTED, r.noted);
+    b.push_slot_always(VT_ROW_CERT, r.cert);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -1610,6 +1798,27 @@ fn chat_option_off<'b>(
     let text_off = b.create_string(o.text);
     let tab = b.start_table();
     b.push_slot_always(VT_CHAT_OPT_TEXT, text_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn chat_line_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    l: &ChatLineInput<'_>,
+) -> WIPOffset<ChatLineReader<'b>> {
+    let text_off = b.create_string(l.text);
+    let tab = b.start_table();
+    b.push_slot_always(VT_CL_SEQ, l.seq);
+    b.push_slot_always(VT_CL_TEXT, text_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn side_tab_iface_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    t: SideTabIfaceInput,
+) -> WIPOffset<SideTabIfaceReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_STI_INDEX, t.index);
+    b.push_slot_always(VT_STI_ID, t.id);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -1786,6 +1995,72 @@ impl Verifiable for ChatOptionReader<'_> {
     fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CHAT_OPT_TEXT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SideTabIfaceReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for SideTabIfaceReader<'a> {
+    type Inner = SideTabIfaceReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl SideTabIfaceReader<'_> {
+    pub fn index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_STI_INDEX, None) }.unwrap_or(0)
+    }
+    pub fn id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_STI_ID, None) }.unwrap_or(-1)
+    }
+}
+
+impl Verifiable for SideTabIfaceReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("index", VT_STI_INDEX, false)?
+            .visit_field::<i32>("id", VT_STI_ID, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ChatLineReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for ChatLineReader<'a> {
+    type Inner = ChatLineReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl ChatLineReader<'_> {
+    pub fn seq(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CL_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn text(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CL_TEXT, None) }.unwrap_or("")
+    }
+}
+
+impl Verifiable for ChatLineReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("seq", VT_CL_SEQ, false)?
+            .visit_field::<ForwardsUOffset<&str>>("text", VT_CL_TEXT, false)?
             .finish();
         Ok(())
     }
@@ -2532,6 +2807,9 @@ mod tests {
             main_modal_id: -1,
             chat_modal_id: -1,
             make_products: &[],
+            side_tab_ifaces: &[],
+            spell_buttons: &[],
+            chat_lines: &[],
         }
     }
 

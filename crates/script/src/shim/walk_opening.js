@@ -1,4 +1,3 @@
-import { Game } from '../../api/game/Game.js';
 import { Traversal } from '../../api/walking/Traversal.js';
 
 export function openOp(actions) {
@@ -18,11 +17,5 @@ export function isOpenableObstacle(name, actions, obstacles) {
 }
 
 export async function walkOpening(dest, radius, _obstacles, log) {
-    await Traversal.walkTo(dest, { radius, timeoutMs: 90_000, log: (m) => log?.(m) });
-    const here = Game.tile();
-    if (!here || !dest) {
-        return false;
-    }
-    const cheb = Math.max(Math.abs(here.x - dest.x), Math.abs(here.z - dest.z));
-    return cheb <= radius;
+    return Traversal.walkResilient(dest, { radius, timeoutMs: 90_000, log: (m) => log?.(m) });
 }

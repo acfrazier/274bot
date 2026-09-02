@@ -1,57 +1,47 @@
-// Melee ChickenKiller does not need a real autocast caster — the module
-// must exist so eval/Start works. Magic arming is best-effort via IF ops.
 import { actions, reader } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
 import { Game } from '../game/Game.js';
-import {
-    ATTACKSTYLE_MAGIC_VARP,
-    AUTOCAST_ARMED,
-    AUTO_CHOOSE_COM,
-    AUTO_TOGGLE_COM,
-    spellButtonCom,
-} from '../combat/CombatStyleLogic.js';
+import { notV1, snap } from '../../shim/_kernel.js';
 
 const COMBAT_TAB = 0;
-const SPELL_PANEL_ROOT = 1829;
 const STEP_MS = 3000;
+
+function postedCom(label) {
+    const wanted = String(label).toLowerCase();
+    const styles = snap().combat_styles || [];
+    const row = styles.find((s) => s && s.label && String(s.label).toLowerCase().includes(wanted));
+    return row && typeof row.component_id === 'number' ? row.component_id : -1;
+}
 
 export const Autocast = {
     armed() {
-        return reader.varp(ATTACKSTYLE_MAGIC_VARP) === AUTOCAST_ARMED;
+        return reader.varp(108) === 3;
     },
     staffTabAttached() {
-        return reader.sideTabInterface(COMBAT_TAB) === 328;
+        try {
+            const id = reader.sideTabInterface(COMBAT_TAB);
+            return typeof id === 'number' && id !== -1;
+        } catch (_) {
+            return false;
+        }
     },
     async arm(spellName, log) {
-        const ssbCom = spellButtonCom(spellName);
-        if (ssbCom === -1) {
-            log(`'${spellName}' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)`);
-            return false;
-        }
-        if (!this.staffTabAttached()) {
-            log('combat tab is not the staff layout — is a staff wielded?');
-            return false;
+        const spells = snap().spell_buttons || [];
+        const wanted = String(spellName).toLowerCase();
+        const spell = spells.find((s) => s && s.label && String(s.label).toLowerCase() === wanted);
+        const choose = postedCom('choose') !== -1 ? postedCom('choose') : -1;
+        const toggle = postedCom('autocast') !== -1 ? postedCom('autocast') : postedCom('auto');
+        if (!spell || choose === -1 || toggle === -1) {
+            log?.(`not v1: Autocast.arm needs posted coms for '${spellName}'`);
+            throw notV1('Autocast.arm');
         }
         if (!(await Game.openSideTab(COMBAT_TAB))) {
-            log('could not open the combat tab');
+            log?.('could not open the combat tab');
             return false;
         }
-        actions.ifButton(AUTO_CHOOSE_COM);
-        if (!(await Execution.delayUntil(() => reader.sideTabInterface(COMBAT_TAB) === SPELL_PANEL_ROOT, STEP_MS))) {
-            log('spell chooser did not open');
-            return false;
-        }
-        actions.ifButton(ssbCom);
-        if (!(await Execution.delayUntil(() => reader.varp(ATTACKSTYLE_MAGIC_VARP) === 2, STEP_MS))) {
-            log(`choosing '${spellName}' did not take — magic level too low?`);
-            return false;
-        }
-        actions.ifButton(AUTO_TOGGLE_COM);
-        if (!(await Execution.delayUntil(() => this.armed(), STEP_MS))) {
-            log('autocast toggle did not arm');
-            return false;
-        }
-        log(`autocast armed: ${spellName}`);
-        return true;
+        actions.ifButton(choose);
+        actions.ifButton(spell.component_id);
+        actions.ifButton(toggle);
+        return Execution.delayUntil(() => this.armed(), STEP_MS);
     },
 };

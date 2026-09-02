@@ -88,10 +88,10 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     add(...tasks) {
         this._tasks.push(...tasks);
     }
-    loop() {
+    async loop() {
         for (const task of this._tasks) {
             if (task.validate()) {
-                task.execute();
+                await task.execute();
                 return;
             }
         }

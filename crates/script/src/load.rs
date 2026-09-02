@@ -1385,6 +1385,24 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "make_products", empty_rows)?;
         }
+        if snap.has_side_tab_ifaces() {
+            let ifaces = side_tab_iface_array(&mut scope, &snap.side_tab_ifaces())?;
+            set(&mut scope, obj, "side_tab_ifaces", ifaces)?;
+        } else if !had {
+            set(&mut scope, obj, "side_tab_ifaces", empty_rows)?;
+        }
+        if snap.has_spell_buttons() {
+            let spell_buttons = combat_style_array(&mut scope, &snap.spell_buttons())?;
+            set(&mut scope, obj, "spell_buttons", spell_buttons)?;
+        } else if !had {
+            set(&mut scope, obj, "spell_buttons", empty_rows)?;
+        }
+        if snap.has_chat_lines() {
+            let chat_lines = chat_line_array(&mut scope, &snap.chat_lines())?;
+            set(&mut scope, obj, "chat_lines", chat_lines)?;
+        } else if !had {
+            set(&mut scope, obj, "chat_lines", empty_rows)?;
+        }
         let snapshot = obj.into();
         set(&mut scope, host, "snapshot", snapshot)
     }
@@ -1422,8 +1440,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         Ok(())
     }
 
-    /// One `{name, count}` row; a row the host table has no name for is a
-    /// null name (a script query never matches).
+    /// One `{id, name, ops, count, noted, cert}` row from ItemView.
     fn row_object<'s>(
         scope: &mut v8::HandleScope<'s>,
         row: &crate::isolate_fb::RowReader<'_>,
@@ -1441,6 +1458,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
         let count = num(scope, row.count() as f64);
         set(scope, o, "count", count)?;
+        let id = num(scope, row.id() as f64);
+        set(scope, o, "id", id)?;
+        let ops = v8::Array::new(scope, row.ops().len() as i32);
+        for (i, op) in row.ops().iter().enumerate() {
+            let a = js_string(scope, op)?;
+            ops.set_index(scope, i as u32, a)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        set(scope, o, "ops", ops.into())?;
+        let noted = v8::Boolean::new(scope, row.noted());
+        set(scope, o, "noted", noted.into())?;
+        let cert = num(scope, row.cert() as f64);
+        set(scope, o, "cert", cert)?;
         Ok(o.into())
     }
 
@@ -1645,6 +1675,40 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "component_id", component_id)?;
             let obj = o.into();
             arr.set_index(scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn side_tab_iface_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        tabs: &[crate::isolate_fb::SideTabIfaceReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, tabs.len() as i32);
+        for (i, t) in tabs.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let index = num(scope, t.index() as f64);
+            set(scope, o, "index", index)?;
+            let id = num(scope, t.id() as f64);
+            set(scope, o, "id", id)?;
+            arr.set_index(scope, i as u32, o.into())
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn chat_line_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        lines: &[crate::isolate_fb::ChatLineReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, lines.len() as i32);
+        for (i, line) in lines.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let seq = num(scope, line.seq() as f64);
+            set(scope, o, "seq", seq)?;
+            let text = js_string(scope, line.text())?;
+            set(scope, o, "text", text)?;
+            arr.set_index(scope, i as u32, o.into())
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }
         Ok(arr.into())

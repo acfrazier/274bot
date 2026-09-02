@@ -1405,6 +1405,58 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     assert!(rec.actions.is_empty(), "none on the plane fails closed");
 }
 
+/// Out of reach: walk toward the booth instead of Use-quickly (live
+/// FAIL was `"I can't reach that!"` from op-ing with no walk).
+#[test]
+fn open_nearest_booth_walks_when_not_adjacent() {
+    let mut s = scene();
+    s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let booth_id = 2213;
+    let far_tc = 0x4000_0000 + (booth_id << 14) + 1 + (2 << 7);
+    s.client
+        .world
+        .set_wall(0, 20, 5, 0, 0, 0, far_tc, 1 << 6, 0, 0, 0, 0);
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        while cache.locs.len() <= booth_id as usize {
+            cache.locs.push(LocType::default());
+        }
+        cache.locs[booth_id as usize] = LocType {
+            id: booth_id,
+            name: "Bank booth".into(),
+            op: vec![None, Some("Use-quickly".into()), None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder {
+        base: (3200, 3200),
+        route: Some((5, 5)),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.open_nearest_booth() {
+            SendResult::Sent { command, .. } => {
+                assert!(
+                    matches!(command, WireCommand::Walk { .. }),
+                    "out-of-reach booth must walk, not op: {command:?}"
+                );
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert!(
+        rec.menus.is_empty(),
+        "must not Use-quickly from 15 tiles away: menus={:?}",
+        rec.menus
+    );
+    assert!(
+        !rec.moves.is_empty(),
+        "must try_move toward the booth when not adjacent"
+    );
+}
+
 /// A ground-item target dispatches through the scene coords with the obj
 /// id as menu param `a`.
 #[test]

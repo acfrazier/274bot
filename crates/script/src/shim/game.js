@@ -88,11 +88,14 @@ export const Game = new Proxy(
         },
         async castOnItem(spell, item) {
             if (!item) return false;
-            const comId = reader.targetButtonByBase(-1, spell);
-            if (comId === -1) return false;
+            const wanted = String(spell).toLowerCase();
+            const row = (snap().spell_buttons || []).find(
+                (s) => s && s.label && String(s.label).toLowerCase() === wanted,
+            );
+            if (!row || typeof row.component_id !== 'number') return false;
             queue({
                 op: 'use-widget-on',
-                component_id: comId,
+                component_id: row.component_id,
                 kind: 'held',
                 target_name: item.name ?? null,
                 x: 0,
