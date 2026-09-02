@@ -18,6 +18,8 @@ use client::client::ClientConfig;
 use client::client::LoginError;
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
+use client::BotTarget;
+use rand_core::{OsRng, RngCore};
 pub use host::debug_enabled;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use host::prepare_client;
@@ -69,6 +71,53 @@ pub fn mint_live_names(n: usize) -> Vec<String> {
         .take(max_token)
         .collect();
     (0..n).map(|i| format!("live{token}_{i}")).collect()
+}
+
+/// High-entropy secret for prod profile passwords and live temp vaults.
+fn mint_high_entropy_secret() -> String {
+    let mut bytes = [0u8; 24];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Profile login password for a freshly minted or missing account.
+/// Local keeps username-as-password (Lost City auto-register); prod refuses it.
+pub fn profile_password_for(username: &str, target: BotTarget) -> String {
+    match target {
+        BotTarget::Local => username.to_string(),
+        BotTarget::Prod => mint_high_entropy_secret(),
+    }
+}
+
+/// [`profile_password_for`] for the active [`client::bot_target`].
+pub fn profile_password(username: &str) -> String {
+    profile_password_for(username, client::bot_target())
+}
+
+/// Ephemeral live-vault passphrase. Local `--live` keeps the `"bot"` shim.
+pub fn live_vault_passphrase_for(target: BotTarget) -> String {
+    match target {
+        BotTarget::Local => "bot".into(),
+        BotTarget::Prod => mint_high_entropy_secret(),
+    }
+}
+
+/// [`live_vault_passphrase_for`] for the active target.
+pub fn live_vault_passphrase() -> String {
+    live_vault_passphrase_for(client::bot_target())
+}
+
+/// `(username, password)` pairs for a live boot from minted names.
+pub fn mint_live_entries_for_target(names: &[String], target: BotTarget) -> Vec<(String, String)> {
+    names
+        .iter()
+        .map(|u| (u.clone(), profile_password_for(u, target)))
+        .collect()
+}
+
+/// [`mint_live_entries_for_target`] for the active target.
+pub fn mint_live_entries(names: &[String]) -> Vec<(String, String)> {
+    mint_live_entries_for_target(names, client::bot_target())
 }
 
 /// Per-slot hook invoked by the slot thread after every mainloop pass.
@@ -2704,6 +2753,52 @@ mod tests {
     #[test]
     fn mint_live_names_zero_is_empty() {
         assert!(mint_live_names(0).is_empty());
+    }
+
+    #[test]
+    fn profile_password_local_is_username() {
+        assert_eq!(
+            profile_password_for("alice", client::BotTarget::Local),
+            "alice"
+        );
+    }
+
+    #[test]
+    fn profile_password_prod_is_not_username() {
+        let pass = profile_password_for("alice", client::BotTarget::Prod);
+        assert_ne!(pass, "alice");
+        assert!(
+            pass.len() >= 16,
+            "prod password should be high-entropy: {pass}"
+        );
+    }
+
+    #[test]
+    fn mint_live_entries_prod_refuses_username_as_password() {
+        let names = mint_live_names(2);
+        let entries = mint_live_entries_for_target(&names, client::BotTarget::Prod);
+        for (u, p) in &entries {
+            assert_ne!(u, p, "prod must not use username-as-password");
+        }
+        let local = mint_live_entries_for_target(&names, client::BotTarget::Local);
+        for (u, p) in &local {
+            assert_eq!(u, p, "local keeps username-as-password");
+        }
+    }
+
+    #[test]
+    fn live_vault_passphrase_local_is_bot() {
+        assert_eq!(
+            live_vault_passphrase_for(client::BotTarget::Local),
+            "bot"
+        );
+    }
+
+    #[test]
+    fn live_vault_passphrase_prod_is_not_bot() {
+        let pass = live_vault_passphrase_for(client::BotTarget::Prod);
+        assert_ne!(pass, "bot");
+        assert!(pass.len() >= 16, "prod temp vault passphrase: {pass}");
     }
 
     fn tmp_vault(name: &str) -> std::path::PathBuf {

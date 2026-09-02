@@ -1,14 +1,14 @@
 //! `host-play` CLI: unlock a vault (passphrase from `BOT_VAULT_PASS` or
 //! `--vault-pass`), load the named profiles, and run them through the host
 //! kernel until the process is stopped. Missing vault/profiles are created
-//! with `password = username` (default `--user test` → `test`/`test`; the
-//! local engine auto-registers them).
+//! with target-aware passwords (local: `password = username` for auto-register;
+//! prod: high-entropy secret).
 
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use host_play::{open_vault, run, set_debug, PlayOptions};
+use host_play::{open_vault, profile_password, run, set_debug, PlayOptions};
 use vault::{Profile, ProfileSettings, VaultError};
 
 const DEFAULT_PORT: u16 = 43594;
@@ -121,7 +121,7 @@ fn main() -> ExitCode {
             None => {
                 let profile = Profile {
                     username: username.clone(),
-                    password: username.clone(),
+                    password: profile_password(username),
                     uid: 274_000_000 + i as i32 + 1,
                     settings: ProfileSettings::default(),
                 };

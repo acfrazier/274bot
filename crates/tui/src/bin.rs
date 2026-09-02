@@ -29,7 +29,8 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use host_play::{
-    arm_walk_on, mint_live_names, open_vault, run_with_io, Play, PlayOptions, SlotArm, WalkArm,
+    arm_walk_on, live_vault_passphrase, mint_live_entries, mint_live_names, open_vault,
+    profile_password, run_with_io, Play, PlayOptions, SlotArm, WalkArm,
     WireCmd,
 };
 use nav::router::FindOptions;
@@ -133,8 +134,8 @@ pub fn live_scenario(name: &str) -> Result<scenario::Scenario, String> {
     scenario::get(script).ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
 }
 
-/// Throwaway encrypted vault for `--live` (minted names, `bot` pass).
-fn temp_live_vault(entries: &[(String, String)]) -> PathBuf {
+/// Throwaway encrypted vault for `--live` (minted names, target-aware pass).
+fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
     static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = env::temp_dir().join(format!(
@@ -147,7 +148,7 @@ fn temp_live_vault(entries: &[(String, String)]) -> PathBuf {
     if path.exists() {
         std::fs::remove_file(&path).unwrap();
     }
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, vault_pass).unwrap();
     for (i, (user, pass)) in entries.iter().enumerate() {
         vault
             .upsert(Profile {
@@ -382,9 +383,10 @@ impl TuiSession {
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
         let names = mint_live_names(scenario.seed.profiles.len());
-        let entries: Vec<(String, String)> = names.iter().map(|u| (u.clone(), u.clone())).collect();
-        let path = temp_live_vault(&entries);
-        self.unlock_at(&path, "bot")?;
+        let entries = mint_live_entries(&names);
+        let pass = live_vault_passphrase();
+        let path = temp_live_vault(&entries, &pass);
+        self.unlock_at(&path, &pass)?;
         self.live_name = Some(name);
         let mut runner = scenario::ScenarioRunner::new(scenario);
         runner.set_live_names(&names);
@@ -831,7 +833,7 @@ impl TuiSession {
             .unwrap_or(274_000_001);
         let profile = Profile {
             username: username.into(),
-            password: username.into(),
+            password: profile_password(username).into(),
             uid,
             settings: vault::ProfileSettings::default(),
         };
@@ -978,6 +980,16 @@ mod tests {
         assert!(
             app.world.is_some(),
             "pump copies the session nav world onto the map"
+        );
+    }
+
+    #[test]
+    fn create_profile_prod_password_is_not_username() {
+        let pass = host_play::profile_password_for("alice", client::BotTarget::Prod);
+        assert_ne!(pass, "alice");
+        assert_eq!(
+            host_play::profile_password_for("alice", client::BotTarget::Local),
+            "alice"
         );
     }
 

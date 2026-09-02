@@ -2285,6 +2285,7 @@ dependencies = [
  "host",
  "libc",
  "nav",
+ "rand_core",
  "script",
  "serde_json",
  "vault",

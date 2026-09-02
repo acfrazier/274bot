@@ -933,8 +933,9 @@ impl Session {
     /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
         self.persist_ui = false;
-        let path = temp_live_vault(&[("test", "test"), ("test2", "test2")]);
-        if !self.unlock_at(&path, "bot") {
+        let pass = host_play::live_vault_passphrase();
+        let path = temp_live_vault_from(&[("test", "test"), ("test2", "test2")], 274_000_001, &pass);
+        if !self.unlock_at(&path, &pass) {
             return Err(self
                 .error
                 .clone()
@@ -990,9 +991,10 @@ impl Session {
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
-        let path = temp_live_vault_from(&entries, 274_000_100);
+        let pass = host_play::live_vault_passphrase();
+        let path = temp_live_vault_from(&entries, 274_000_100, &pass);
         // Empty Play first: do not spawn last_focus before s00 focuses.
-        if !self.start_vault(&path, "bot") {
+        if !self.start_vault(&path, &pass) {
             return Err(self
                 .error
                 .clone()
@@ -1060,9 +1062,10 @@ impl Session {
         // Mint one name per seed slot (fleet included): both slots get a
         // fresh account for this invocation.
         let names = host_play::mint_live_names(scenario.seed.profiles.len());
-        let entries: Vec<(String, String)> = names.iter().map(|u| (u.clone(), u.clone())).collect();
-        let path = temp_live_vault(&entries);
-        if !self.unlock_at(&path, "bot") {
+        let entries = host_play::mint_live_entries(&names);
+        let pass = host_play::live_vault_passphrase();
+        let path = temp_live_vault_from(&entries, 274_000_001, &pass);
+        if !self.unlock_at(&path, &pass) {
             return Err(self
                 .error
                 .clone()
@@ -2678,12 +2681,8 @@ impl Session {
 /// kept panel-private so panel does not depend on the e2e crate).
 /// Null raster keeps base uid `274_000_001`. Accepts `&str` or `String`
 /// entries (live scripts mint per-run usernames).
-fn temp_live_vault<S: AsRef<str>>(entries: &[(S, S)]) -> PathBuf {
-    temp_live_vault_from(entries, 274_000_001)
-}
-
-/// Same as [`temp_live_vault`] with an explicit uid base (`base + i`).
-fn temp_live_vault_from<S: AsRef<str>>(entries: &[(S, S)], uid_base: i32) -> PathBuf {
+/// Same as a single-base [`temp_live_vault_from`] (`274_000_001`).
+fn temp_live_vault_from<S: AsRef<str>>(entries: &[(S, S)], uid_base: i32, vault_pass: &str) -> PathBuf {
     // Unique per call: parallel tests boot several scenarios and must not
     // race on one temp vault path.
     static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -2699,7 +2698,7 @@ fn temp_live_vault_from<S: AsRef<str>>(entries: &[(S, S)], uid_base: i32) -> Pat
     if path.exists() {
         std::fs::remove_file(&path).unwrap();
     }
-    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut vault = Vault::create(&path, vault_pass).unwrap();
     for (i, (user, pass)) in entries.iter().enumerate() {
         vault
             .upsert(Profile {
@@ -2778,8 +2777,8 @@ mod tests {
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
         is_local_engine, live_or_walk_paint, maybe_send_click, parse_getvar_line,
         publish_nav_debug, script_active, script_pause_enabled, script_status_text,
-        script_stop_enabled, seed_on_first_world, stream_capture, walkto_tele_cmd, Session, SlotIo,
-        WalkArm,
+        script_stop_enabled, seed_on_first_world, stream_capture, temp_live_vault_from,
+        walkto_tele_cmd, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -5128,6 +5127,22 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             "no wall members, no extra rasters"
         );
         // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
+    }
+
+    #[test]
+    fn temp_live_vault_prod_mint_does_not_persist_username_as_password() {
+        let names = host_play::mint_live_names(2);
+        let entries =
+            host_play::mint_live_entries_for_target(&names, client::BotTarget::Prod);
+        let pass = host_play::live_vault_passphrase_for(client::BotTarget::Prod);
+        let path = temp_live_vault_from(&entries, 274_000_001, &pass);
+        let vault = Vault::unlock(&path, &pass).unwrap();
+        for p in vault.profiles() {
+            assert_ne!(
+                p.username, p.password,
+                "prod live temp vault must not store username-as-password"
+            );
+        }
     }
 
     #[test]
