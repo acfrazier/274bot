@@ -161,9 +161,9 @@ pub fn move_heading(order: &mut Vec<String>, from: &str, onto: &str) {
     order.insert(at, from.to_string());
 }
 
-/// Under WalkTo, above the reorderable headings: General config and Nav
-/// config are live windows. Loadouts stays mocked until the TS shim.
-pub const MOCK_BUTTONS: &[&str] = &["Loadouts"];
+/// Under WalkTo, above the reorderable headings: General config, Nav
+/// config, and Loadouts are live windows.
+pub const MOCK_BUTTONS: &[&str] = &[];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
 /// Under WalkTo, not credentials and not parameters.
@@ -240,7 +240,10 @@ mod tests {
             !MOCK_BUTTONS.contains(&"MultiBox"),
             "MultiBox is a live toggle; only parameter chrome stays mocked"
         );
-        assert!(MOCK_BUTTONS.contains(&"Loadouts"), "Loadouts stays mocked");
+        assert!(
+            !MOCK_BUTTONS.contains(&"Loadouts"),
+            "Loadouts is wired, not a mock"
+        );
         assert!(
             !MOCK_BUTTONS.contains(&"General config"),
             "General config opens slot render + global cadence"
@@ -254,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn walkto_row_wires_slot_and_nav_mocks_loadouts() {
+    fn walkto_row_wires_slot_and_nav_and_loadouts() {
         assert_eq!(CONFIG_ROW, ["General config", "Nav config", "Loadouts"]);
         assert!(
             !MOCK_BUTTONS.contains(&"Nav config"),
@@ -262,8 +265,8 @@ mod tests {
         );
         assert!(!MOCK_BUTTONS.contains(&"General config"));
         assert!(
-            MOCK_BUTTONS.contains(&"Loadouts"),
-            "Loadouts stays mocked until the TS shim"
+            !MOCK_BUTTONS.contains(&"Loadouts"),
+            "Loadouts opens its own window"
         );
     }
 

@@ -22,6 +22,7 @@ use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::map::{Map, MapAction, MapView};
+use crate::loadouts::{LoadoutsPane, LoadoutsState};
 use crate::script_shape::{
     browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
     ScriptPane,
@@ -198,6 +199,7 @@ pub struct TuiApp {
     pub nav: NavFindSettings,
     pub settings_state: SettingsState,
     pub settings_dirty: bool,
+    pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
     /// The Browse-selected script card; Start keys on `(source, name)`.
@@ -251,6 +253,7 @@ impl TuiApp {
             nav: NavFindSettings::default(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
+            loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
             script_sel: None,
             script_cards: Vec::new(),
@@ -399,6 +402,16 @@ impl TuiApp {
                 self.settings_state.open = !self.settings_state.open;
                 return AppAction::None;
             }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                self.loadouts_state.open = !self.loadouts_state.open;
+                if self.loadouts_state.open {
+                    self.loadouts_state.sel = 0;
+                    self.loadouts_state.name_scratch.clear();
+                    self.loadouts_state.worn_scratch.clear();
+                    self.loadouts_state.carry_scratch.clear();
+                }
+                return AppAction::None;
+            }
             KeyCode::Char('m') => return AppAction::SpawnAll,
             KeyCode::Char('p') => {
                 // Paint-as-chat toggle: `p` shows the game chat while the
@@ -425,6 +438,9 @@ impl TuiApp {
             }
             return AppAction::None;
         }
+        if self.loadouts_state.open {
+            return AppAction::None;
+        }
         if self.chat_data.is_modal_open() {
             return self.chat_on_key(key).unwrap_or(AppAction::None);
         }
@@ -436,11 +452,32 @@ impl TuiApp {
         self.map_on_key(key)
     }
 
+    /// Route keys to the loadouts popup when it is open.
+    pub fn loadouts_on_key(
+        &mut self,
+        store: &mut script::LoadoutsStore,
+        key: KeyEvent,
+    ) -> bool {
+        if !self.loadouts_state.open {
+            return false;
+        }
+        let mut pane = LoadoutsPane {
+            store,
+            state: &mut self.loadouts_state,
+        };
+        if pane.state.name_scratch.is_empty() && !pane.store.loadouts().is_empty() {
+            pane.sync_scratch_from_selection();
+        }
+        let _ = pane.on_key(key);
+        true
+    }
+
     /// Route keys to the params popup when it is open; returns whether the
     /// key was consumed.
     pub fn params_on_key(
         &mut self,
         store: &mut script::ScriptSettingsStore,
+        loadouts: &script::LoadoutsStore,
         key: KeyEvent,
     ) -> bool {
         if !self.params_state.open {
@@ -455,6 +492,7 @@ impl TuiApp {
             schema: &schema,
             bag: &mut self.params_bag,
             store,
+            loadouts,
             source,
             name: &name,
             state: &mut self.params_state,
@@ -800,11 +838,31 @@ impl TuiApp {
         }
     }
 
+    /// Render the loadouts popup overlay (call after [`Self::draw`]).
+    pub fn draw_loadouts_overlay(
+        &mut self,
+        frame: &mut Frame<'_>,
+        store: &mut script::LoadoutsStore,
+    ) {
+        if !self.loadouts_state.open {
+            return;
+        }
+        let mut pane = LoadoutsPane {
+            store,
+            state: &mut self.loadouts_state,
+        };
+        if pane.state.name_scratch.is_empty() && !pane.store.loadouts().is_empty() {
+            pane.sync_scratch_from_selection();
+        }
+        frame.render_widget(pane, frame.area());
+    }
+
     /// Render the params popup overlay (call after [`Self::draw`]).
     pub fn draw_params_overlay(
         &mut self,
         frame: &mut Frame<'_>,
         store: &mut script::ScriptSettingsStore,
+        loadouts: &script::LoadoutsStore,
     ) {
         if !self.params_state.open {
             return;
@@ -817,6 +875,7 @@ impl TuiApp {
             schema: &schema,
             bag: &mut self.params_bag,
             store,
+            loadouts,
             source,
             name: &name,
             state: &mut self.params_state,
@@ -827,7 +886,7 @@ impl TuiApp {
     fn draw_strip(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = self.focused_name().unwrap_or_else(|| "_".into());
         let mut text = format!(
-            "[{}]  focused: {focused}   {}   q quit · o options · Tab focus",
+            "[{}]  focused: {focused}   {}   q quit · o options · l loadouts · Tab focus",
             self.names.join(" "),
             self.title
         );
@@ -1543,6 +1602,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("script-settings.json");
         let mut store = script::ScriptSettingsStore::at(path);
+        let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
         let schema = vec![script::SettingDef {
             id: "buryBones".into(),
             ty: "boolean".into(),
@@ -1575,7 +1635,7 @@ mod tests {
         );
         app.open_script_params(&store);
         assert!(app.params_state.open);
-        app.params_on_key(&mut store, key(KeyCode::Char(' ')));
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Char(' ')));
         assert_eq!(
             app.params_bag.get("buryBones"),
             Some(&serde_json::json!(false))
@@ -1589,7 +1649,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 app.draw(frame);
-                app.draw_params_overlay(frame, &mut store);
+                app.draw_params_overlay(frame, &mut store, &loadouts);
             })
             .unwrap();
         let buf = terminal.backend().buffer();

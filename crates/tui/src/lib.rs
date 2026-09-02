@@ -17,6 +17,7 @@
 pub mod app;
 pub mod bin;
 pub mod chat;
+pub mod loadouts;
 pub mod map;
 pub mod script_params;
 pub mod script_shape;
@@ -26,6 +27,7 @@ pub mod status;
 pub use app::{AppAction, TuiApp};
 pub use bin::RunMode;
 pub use chat::{Chat, ChatAction, ChatState, ChatView};
+pub use loadouts::{LoadoutsKey, LoadoutsPane, LoadoutsState};
 pub use map::{Map, MapAction, MapView};
 pub use script_params::{ParamsKey, ParamsPane, ParamsState};
 pub use script_shape::ScriptPane;

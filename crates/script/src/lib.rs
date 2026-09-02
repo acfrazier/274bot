@@ -9,6 +9,7 @@ pub mod isolate_fb;
 #[cfg(feature = "load")]
 pub mod js_cache;
 pub mod load;
+pub mod loadouts_store;
 pub mod params;
 pub mod settings_store;
 pub mod ported;
@@ -25,6 +26,9 @@ pub use load::{
     default_js_store, detect_shape, is_reserved, JsCard, JsLibrary, LoadShape, ScriptSel,
 };
 pub use params::defaults;
+pub use loadouts_store::{
+    default_loadouts_path, resolve_setting_options, Loadout, LoadoutsStore,
+};
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore,

@@ -272,6 +272,8 @@ pub struct TuiSession {
     script_category_order: Vec<String>,
     /// Operator script-parameter overrides (`~/.274bot/script-settings.json`).
     script_settings: script::ScriptSettingsStore,
+    /// Process-wide loadout presets (`~/.274bot/loadouts.json`).
+    loadouts: script::LoadoutsStore,
     /// Scenario/live inject merged last on Start.
     script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
 }
@@ -309,6 +311,7 @@ impl TuiSession {
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             script_category_order: Vec::new(),
             script_settings: script::ScriptSettingsStore::with_default_path(),
+            loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
         }
     }
@@ -1080,14 +1083,24 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         terminal
             .draw(|frame| {
                 app.draw(frame);
-                app.draw_params_overlay(frame, &mut session.script_settings);
+                app.draw_loadouts_overlay(frame, &mut session.loadouts);
+                app.draw_params_overlay(
+                    frame,
+                    &mut session.script_settings,
+                    &session.loadouts,
+                );
             })
             .map_err(|e| e.to_string())?;
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
                     if app.params_state.open {
-                        app.params_on_key(&mut session.script_settings, k);
+                        app.params_on_key(
+                            &mut session.script_settings,
+                            &session.loadouts,
+                            k,
+                        );
+                    } else if app.loadouts_on_key(&mut session.loadouts, k) {
                     } else {
                         let action = app.on_key(k);
                         dispatch(&mut session, &mut app, action);

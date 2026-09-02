@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use script::{setting_visible, ScriptSettingsStore, ScriptSource, SettingDef};
+use script::{resolve_setting_options, setting_visible, LoadoutsStore, ScriptSettingsStore, ScriptSource, SettingDef};
 
 /// Mutable params-pane state: whether the form is open and the cursor row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,6 +29,7 @@ pub struct ParamsPane<'a> {
     pub schema: &'a [SettingDef],
     pub bag: &'a mut serde_json::Map<String, serde_json::Value>,
     pub store: &'a mut ScriptSettingsStore,
+    pub loadouts: &'a LoadoutsStore,
     pub source: ScriptSource,
     pub name: &'a str,
     pub state: &'a mut ParamsState,
@@ -72,6 +73,26 @@ impl<'a> ParamsPane<'a> {
                         let next = !cur;
                         self.store
                             .set_bool(self.source, self.name, &def.id, next);
+                        let _ = self.store.save();
+                        self.bag.insert(def.id.clone(), serde_json::json!(next));
+                        return ParamsKey::Toggle;
+                    }
+                    let opts = resolve_setting_options(def, self.loadouts);
+                    if def.ty == "string" && !opts.is_empty() {
+                        let cur = self
+                            .bag
+                            .get(&def.id)
+                            .and_then(|v| v.as_str())
+                            .or(def.default.as_deref())
+                            .unwrap_or("")
+                            .to_string();
+                        let next = opts
+                            .iter()
+                            .position(|o| o == &cur)
+                            .map(|i| opts[(i + 1) % opts.len()].clone())
+                            .unwrap_or_else(|| opts[0].clone());
+                        self.store
+                            .set_str(self.source, self.name, &def.id, &next);
                         let _ = self.store.save();
                         self.bag.insert(def.id.clone(), serde_json::json!(next));
                         return ParamsKey::Toggle;
@@ -158,6 +179,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
         let schema = bury_schema();
         let mut bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(true)));
@@ -169,11 +191,68 @@ mod tests {
             schema: &schema,
             bag: &mut bag,
             store: &mut store,
+            loadouts: &loadouts,
             source: ScriptSource::Catalog,
             name: "ChickenKiller",
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
+    }
+
+    #[test]
+    fn params_pane_space_cycles_loadout_combo_from_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-tui-loadout-combo-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let settings_path = dir.join("script-settings.json");
+        let loadouts_path = dir.join("loadouts.json");
+        let mut loadouts = LoadoutsStore::at(loadouts_path);
+        loadouts.upsert(script::Loadout {
+            name: "fish".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+        loadouts.upsert(script::Loadout {
+            name: "mine".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+        loadouts.save().unwrap();
+        let schema = vec![SettingDef {
+            id: "loadout".into(),
+            ty: "string".into(),
+            default: Some("fish".into()),
+            label: Some("Loadout".into()),
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("loadouts".into()),
+            csv_toggle: None,
+            help: None,
+        }];
+        let mut store = ScriptSettingsStore::at(settings_path);
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Thiever", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+        };
+        let mut pane = ParamsPane {
+            schema: &schema,
+            bag: &mut bag,
+            store: &mut store,
+            loadouts: &loadouts,
+            source: ScriptSource::Catalog,
+            name: "Thiever",
+            state: &mut state,
+        };
+        assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
+        assert_eq!(bag.get("loadout"), Some(&serde_json::json!("mine")));
     }
 }

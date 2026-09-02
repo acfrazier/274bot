@@ -713,6 +713,16 @@ pub struct Session {
     pub script_settings: script::ScriptSettingsStore,
     /// Parameters editor modal open.
     pub params_edit_open: bool,
+    /// Loadouts CRUD window (non-modal).
+    pub loadouts_open: bool,
+    /// Selected row in the loadouts list.
+    pub loadouts_sel: usize,
+    /// Scratch buffers for the selected loadout editor.
+    pub loadouts_name_scratch: String,
+    pub loadouts_worn_scratch: String,
+    pub loadouts_carry_scratch: String,
+    /// Process-wide equipment/inventory presets.
+    pub loadouts: script::LoadoutsStore,
     /// Scenario/live inject merged last on Start (Task 12 fills this).
     pub script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
     /// The out-of-tree JS library (`~/.274bot/js-scripts.json`). Loaded
@@ -841,6 +851,12 @@ impl Session {
             browse_category_filter: None,
             script_settings: script::ScriptSettingsStore::with_default_path(),
             params_edit_open: false,
+            loadouts_open: false,
+            loadouts_sel: 0,
+            loadouts_name_scratch: String::new(),
+            loadouts_worn_scratch: String::new(),
+            loadouts_carry_scratch: String::new(),
+            loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
             js: {
                 let mut js = script::JsLibrary::new(script::default_js_store());

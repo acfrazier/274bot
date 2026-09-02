@@ -2276,8 +2276,9 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
                         bag.insert(def.id.clone(), serde_json::json!(value));
                     }
                 }
-                "string" if !def.options.is_empty() => {
+                "string" if !script::resolve_setting_options(def, &session.loadouts).is_empty() => {
                     ui.text(&label);
+                    let opts = script::resolve_setting_options(def, &session.loadouts);
                     let current = bag
                         .get(&def.id)
                         .and_then(|v| v.as_str())
@@ -2285,11 +2286,11 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
                         .unwrap_or("")
                         .to_string();
                     ui.set_next_item_width(-1.0);
-                    let opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+                    let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
                     if let Some(_popup) =
-                        ui.begin_combo_with_flags(&format!("##param-{id}", id = def.id), &current, opts)
+                        ui.begin_combo_with_flags(&format!("##param-{id}", id = def.id), &current, combo_opts)
                     {
-                        for opt in &def.options {
+                        for opt in &opts {
                             let selected = opt == &current;
                             if ui.selectable_config(opt).selected(selected).build() {
                                 session
@@ -2354,10 +2355,120 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
                 }
                 ui.set_item_tooltip("nav debug paints and labels");
             }
-            "Loadouts" => mock_button(ui, "Loadouts", "until TS shim", [w, 0.0]),
+            "Loadouts" => {
+                if ui.button_with_size("Loadouts", [w, 0.0]) {
+                    session.loadouts_open = true;
+                    session.loadouts_sel = 0;
+                    sync_loadouts_scratch(session);
+                }
+                ui.set_item_tooltip("equipment and inventory presets");
+            }
             _ => {}
         }
     }
+}
+
+/// Copy the selected loadout into the session scratch buffers.
+fn sync_loadouts_scratch(session: &mut Session) {
+    if let Some(loadout) = session.loadouts.loadouts().get(session.loadouts_sel) {
+        session.loadouts_name_scratch = loadout.name.clone();
+        session.loadouts_worn_scratch = loadout.worn.join(", ");
+        session.loadouts_carry_scratch = loadout.carry.join(", ");
+    } else {
+        session.loadouts_name_scratch.clear();
+        session.loadouts_worn_scratch.clear();
+        session.loadouts_carry_scratch.clear();
+    }
+}
+
+fn split_loadout_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn apply_loadouts_scratch(session: &mut Session) {
+    let name = session.loadouts_name_scratch.trim();
+    if name.is_empty() {
+        return;
+    }
+    session.loadouts.upsert(script::Loadout {
+        name: name.to_string(),
+        worn: split_loadout_csv(&session.loadouts_worn_scratch),
+        carry: split_loadout_csv(&session.loadouts_carry_scratch),
+    });
+    let _ = session.loadouts.save();
+}
+
+/// Loadouts window: list presets and edit worn/carry item names.
+fn loadouts_window(ui: &Ui, session: &mut Session) {
+    if !session.loadouts_open {
+        return;
+    }
+    let mut open = true;
+    ui.window("Loadouts")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([400.0, 360.0], Condition::FirstUseEver)
+        .build(|| {
+            let count = session.loadouts.loadouts().len();
+            if count == 0 {
+                ui.text_wrapped("No loadouts yet — add one below.");
+            } else {
+                ui.text("Presets");
+                let names: Vec<String> = session.loadouts.names();
+                for (i, name) in names.iter().enumerate() {
+                    let selected = i == session.loadouts_sel;
+                    if ui.selectable_config(name).selected(selected).build() {
+                        session.loadouts_sel = i;
+                        sync_loadouts_scratch(session);
+                    }
+                }
+            }
+            ui.spacing();
+            ui.text("Edit");
+            if ui.input_text("name", &mut session.loadouts_name_scratch).build() {
+                apply_loadouts_scratch(session);
+            }
+            if ui.input_text("worn (comma-separated)", &mut session.loadouts_worn_scratch).build()
+            {
+                apply_loadouts_scratch(session);
+            }
+            if ui.input_text("carry (comma-separated)", &mut session.loadouts_carry_scratch)
+                .build()
+            {
+                apply_loadouts_scratch(session);
+            }
+            if ui.button("Add loadout") {
+                let next = format!("loadout-{}", session.loadouts.loadouts().len() + 1);
+                session.loadouts.upsert(script::Loadout {
+                    name: next.clone(),
+                    worn: vec![],
+                    carry: vec![],
+                });
+                let _ = session.loadouts.save();
+                session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
+                sync_loadouts_scratch(session);
+            }
+            if count > 0 && ui.button("Delete selected") {
+                if let Some(name) = session
+                    .loadouts
+                    .loadouts()
+                    .get(session.loadouts_sel)
+                    .map(|l| l.name.clone())
+                {
+                    session.loadouts.remove(&name);
+                    let _ = session.loadouts.save();
+                    if session.loadouts_sel >= session.loadouts.loadouts().len() {
+                        session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
+                    }
+                    sync_loadouts_scratch(session);
+                }
+            }
+        });
+    session.loadouts_open = open;
 }
 
 /// Parameter editing is enabled for compat cards with a settings schema.
@@ -3456,6 +3567,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session);
+    loadouts_window(ui, &mut state.session);
     params_edit_window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
 }
@@ -3552,6 +3664,48 @@ mod tests {
     #[test]
     fn edit_parameters_enabled_for_operator_bag() {
         assert!(edit_parameters_enabled(), "parameter editors ship in 0.1.6");
+    }
+
+    #[test]
+    fn loadout_combo_lists_store_names() {
+        use script::{Loadout, LoadoutsStore, SettingDef, resolve_setting_options};
+
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-loadout-combo-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
+        store.upsert(Loadout {
+            name: "guard".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+        store.upsert(Loadout {
+            name: "stall".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+        let def = SettingDef {
+            id: "loadout".into(),
+            ty: "string".into(),
+            default: None,
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("loadouts".into()),
+            csv_toggle: None,
+            help: None,
+        };
+        assert_eq!(
+            resolve_setting_options(&def, &store),
+            vec!["guard".to_string(), "stall".to_string()]
+        );
     }
 
     #[test]
