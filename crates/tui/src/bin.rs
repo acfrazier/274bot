@@ -276,6 +276,8 @@ pub struct TuiSession {
     loadouts: script::LoadoutsStore,
     /// Scenario/live inject merged last on Start.
     script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Last directory visited in the out-of-tree Load file browser.
+    script_load_last_dir: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -313,6 +315,7 @@ impl TuiSession {
             script_settings: script::ScriptSettingsStore::with_default_path(),
             loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
+            script_load_last_dir: None,
         }
     }
 
@@ -512,8 +515,18 @@ impl TuiSession {
                     &card.settings_schema,
                 ))
             };
+            let siblings = script::resolve_sibling_modules(
+                &card.path,
+                &card.origin,
+                self.js.cache(),
+                script::CacheMeta {
+                    kind: card.kind,
+                    source: card.source,
+                    shape: None,
+                },
+            )?;
             let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.js, card.shape, bag)
+            play.script_start_load(&names[0], card.js.clone(), card.shape, bag, siblings)
                 .map_err(|e| format!("start {card_name}: {e}"))?;
         }
         Ok(())
@@ -707,7 +720,25 @@ impl TuiSession {
                                     &card.settings_schema,
                                 ))
                             };
-                            play.script_start_load(&name, card.js.clone(), card.shape, bag)
+                            match script::resolve_sibling_modules(
+                                &card.path,
+                                &card.origin,
+                                self.js.cache(),
+                                script::CacheMeta {
+                                    kind: card.kind,
+                                    source: card.source,
+                                    shape: None,
+                                },
+                            ) {
+                                Ok(siblings) => play.script_start_load(
+                                    &name,
+                                    card.js.clone(),
+                                    card.shape,
+                                    bag,
+                                    siblings,
+                                ),
+                                Err(e) => Err(e),
+                            }
                         }
                         None => Err(format!("no loaded script: {card_name}")),
                     }
@@ -748,11 +779,15 @@ impl TuiSession {
 
     /// Load a local JS bot file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
-    fn script_load(&mut self, app: &mut TuiApp, path: &str) {
-        match self.js.load(Path::new(path)) {
+    fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
+        match self.js.load(path) {
             Ok(card) => {
                 app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
                 app.error = None;
+                if let Some(parent) = path.parent() {
+                    self.script_load_last_dir = Some(parent.to_path_buf());
+                    app.script_load_last_dir = self.script_load_last_dir.clone();
+                }
             }
             Err(e) => app.error = Some(format!("script: {e}")),
         }
@@ -818,6 +853,7 @@ impl TuiSession {
             app.params_state.open = false;
         }
         app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
+        app.script_load_last_dir = self.script_load_last_dir.clone();
         if !app.rs2b0t_catalog_open {
             app.rs2b0t_catalog_dir = self.rs2b0t_catalog_dir.clone();
         } else {
@@ -1165,7 +1201,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
                 Err(e) => Some(e),
             };
         }
-        AppAction::ScriptLoad(path) => session.script_load(app, &path.to_string_lossy()),
+        AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => app.open_script_params(&session.script_settings),
         AppAction::None => {}
     }
@@ -1452,7 +1488,7 @@ ScriptRegistry.register({
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-        play.script_start_load("alice", src, script::LoadShape::NativeTick, None)
+        play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
             .unwrap();
         assert_eq!(play.script_state("alice"), script::RunState::Running);
 

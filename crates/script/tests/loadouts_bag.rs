@@ -12,7 +12,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn settings_str_returns_selected_loadout_name() {
-    let iso = LoadIsolate::spawn(LOADOUT_PROBE.to_string(), LoadShape::CompatClass)
+    let iso = LoadIsolate::spawn(LOADOUT_PROBE.to_string(), LoadShape::CompatClass, vec![])
         .expect("spawn loadout probe");
     let mut bag = serde_json::Map::new();
     bag.insert("loadout".into(), serde_json::json!("melee"));

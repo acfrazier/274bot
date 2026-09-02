@@ -1990,6 +1990,7 @@ impl Play {
         source: String,
         shape: script::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
@@ -1997,7 +1998,7 @@ impl Play {
         script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_load_with_settings(source, shape, settings_bag.as_ref())?;
+            .start_load_with_settings(source, shape, settings_bag.as_ref(), siblings)?;
         self.wake(name);
         Ok(())
     }
@@ -3787,7 +3788,7 @@ mod tests {
         );
         play.attach_arm("alice", SlotArm::new(7, false));
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-        play.script_start_load("alice", src.clone(), script::LoadShape::NativeTick, None)
+        play.script_start_load("alice", src.clone(), script::LoadShape::NativeTick, None, vec![])
             .unwrap();
         assert_eq!(play.script_state("alice"), script::RunState::Running);
 
@@ -3801,7 +3802,7 @@ mod tests {
 
         // Unknown slot: never creates an entry, and never a V8 runtime.
         let err = play
-            .script_start_load("ghost", src, script::LoadShape::NativeTick, None)
+            .script_start_load("ghost", src, script::LoadShape::NativeTick, None, vec![])
             .unwrap_err();
         assert!(err.contains("no slot"), "err was {err}");
         assert!(
@@ -5107,7 +5108,7 @@ mod tests {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("load isolate starts");
         assert!(
             script_slot(&scripts, "alice")
@@ -5842,7 +5843,7 @@ mod tests {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("load isolate starts");
         // Held edge: blob posts + isolate tick (paint-only); loop must not
         // advance.
@@ -5974,7 +5975,7 @@ export default class T extends LoopingBot {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("load isolate starts");
         let mut status = SlotStatus {
             username: "alice".into(),
@@ -6234,7 +6235,7 @@ export default class T extends LoopingBot {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("load isolate starts");
         // The production knock arm (see the slot thread): always ask the
         // running slot script; ignore-list is not consulted here.
@@ -6283,7 +6284,7 @@ export default class T extends LoopingBot {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("load isolate starts");
 
         // The guardian talks to the old man and holds the slot.

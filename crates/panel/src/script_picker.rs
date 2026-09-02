@@ -1,6 +1,6 @@
 //! Script Browse picker helpers: category order, rs2b0t catalog prompt, badges.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use script::{ScriptKind, ScriptSource};
 
@@ -67,6 +67,55 @@ pub fn rs2b0t_root_has_index(root: &Path) -> bool {
     script::registry_index_path(root).is_file()
 }
 
+/// Default Load browser directory: last dir from prefs, else `$HOME`.
+pub fn default_load_browse_dir(last: Option<&Path>) -> PathBuf {
+    last.filter(|p| p.is_dir())
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+fn is_load_script_file(name: &str) -> bool {
+    name.ends_with(".ts") || name.ends_with(".js")
+}
+
+/// One row in the out-of-tree Load file browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadBrowseEntry {
+    Up,
+    Subdir(String),
+    File(String),
+}
+
+/// Directory listing for the Load picker (subdirs + `.ts`/`.js` files).
+pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
+    let mut out = vec![LoadBrowseEntry::Up];
+    let mut subdirs = Vec::new();
+    let mut files = Vec::new();
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                subdirs.push(name);
+            } else if is_load_script_file(&name) {
+                files.push(name);
+            }
+        }
+    }
+    subdirs.sort();
+    files.sort();
+    for name in subdirs {
+        out.push(LoadBrowseEntry::Subdir(name));
+    }
+    for name in files {
+        out.push(LoadBrowseEntry::File(name));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -116,6 +165,19 @@ mod tests {
         assert!(needs_rs2b0t_catalog_prompt(None, false));
         assert!(!needs_rs2b0t_catalog_prompt(Some(Path::new("/tmp/x")), false));
         assert!(!needs_rs2b0t_catalog_prompt(None, true));
+    }
+
+    #[test]
+    fn load_window_has_no_free_text_path_field() {
+        const APP: &str = include_str!("app.rs");
+        assert!(
+            !APP.contains("input_text(\"##load-path\""),
+            "Load must not use a free-text path field"
+        );
+        assert!(
+            APP.contains("script_load_dir"),
+            "Load must browse directories and remember the last dir"
+        );
     }
 
     #[test]

@@ -17,7 +17,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn prelude_reads_posted_settings_bag_not_only_fallback() {
-    let iso = LoadIsolate::spawn(SETTINGS_PROBE.to_string(), LoadShape::CompatClass)
+    let iso = LoadIsolate::spawn(SETTINGS_PROBE.to_string(), LoadShape::CompatClass, vec![])
         .expect("spawn settings probe");
     let mut bag = serde_json::Map::new();
     bag.insert("leashRadius".into(), serde_json::json!(25));
@@ -156,7 +156,7 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
         },
     ];
     let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
-    let iso = LoadIsolate::spawn(TILE_LIST_PROBE.to_string(), LoadShape::CompatClass)
+    let iso = LoadIsolate::spawn(TILE_LIST_PROBE.to_string(), LoadShape::CompatClass, vec![])
         .expect("spawn tile/list probe");
     iso.post_settings_bag(&bag);
     iso.on_game_tick(1);

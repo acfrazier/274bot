@@ -28,6 +28,9 @@ pub struct PanelUiState {
     /// Script Browse category chip order. Unknown categories append at open.
     #[serde(default)]
     pub script_category_order: Vec<String>,
+    /// Last directory visited in the out-of-tree Load file browser.
+    #[serde(default)]
+    pub script_load_last_dir: Option<PathBuf>,
 }
 
 fn default_true() -> bool {
@@ -45,6 +48,7 @@ impl Default for PanelUiState {
             lowmem: true,
             section_order: Vec::new(),
             script_category_order: Vec::new(),
+            script_load_last_dir: None,
         }
     }
 }

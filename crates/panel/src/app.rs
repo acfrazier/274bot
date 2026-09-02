@@ -1715,7 +1715,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         };
         if ui.button_with_size("Load", [w, 0.0]) {
             session.fill_rs2b0t_cards_once();
-            session.script_load_open = true;
+            session.open_script_load_browser();
         }
         ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
     }
@@ -2012,41 +2012,70 @@ fn rs2b0t_catalog_window(ui: &Ui, session: &mut Session) {
     session.rs2b0t_catalog_open = open;
 }
 
-/// Load modal: a filesystem path to an out-of-tree JS bot. Load registers
+/// Load window: out-of-tree file browser (`.ts`/`.js` only). Load registers
 /// the card (same name overwrites; only WalkTo reserved), persists the
 /// store, and selects the card for Start. The isolate is spawned only on
 /// Start, never here.
 fn load_window(ui: &Ui, session: &mut Session) {
-    let want = session.script_load_open;
-    let (open_popup, new_prev) = chooser_should_open_popup(want, PREV_LOAD.load(Ordering::Relaxed));
-    PREV_LOAD.store(new_prev, Ordering::Relaxed);
-    if open_popup {
-        ui.open_popup("274bot-load");
+    if !session.script_load_open {
+        return;
     }
-    let mut open = want;
-    if let Some(_t) = ui
-        .begin_modal_popup_config("274bot-load")
+    let mut open = true;
+    ui.window("Load script")
         .opened(&mut open)
-        .begin()
-    {
-        let w = ui.content_region_avail()[0];
-        ui.text("path to a JS bot file:");
-        ui.input_text("##load-path", &mut session.load_scratch)
-            .hint("e.g. ~/bot.js")
-            .build();
-        if ui.button_with_size("Load", [w / 2.0, 0.0]) {
-            let path = session.load_scratch.clone();
-            session.load_js(&path);
-            if session.error.is_none() {
-                ui.close_current_popup();
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([420.0, 420.0], Condition::FirstUseEver)
+        .build(|| {
+            let w = ui.content_region_avail()[0];
+            ui.text_wrapped("Choose a `.ts` or `.js` bot file (out-of-tree):");
+            ui.text(&session.script_load_dir.to_string_lossy());
+            ui.spacing();
+            let entries = script_picker::load_browse_entries(&session.script_load_dir);
+            if session.script_load_sel >= entries.len() {
+                session.script_load_sel = entries.len().saturating_sub(1);
             }
-        }
-        ui.same_line();
-        if ui.button_with_size("Cancel", [w / 2.0, 0.0]) {
-            session.load_scratch.clear();
-            ui.close_current_popup();
-        }
-    }
+            let dir = session.script_load_dir.clone();
+            if dir.parent().is_some() {
+                if ui.button_with_size("Up", [w, 0.0]) {
+                    if let Some(parent) = dir.parent() {
+                        session.script_load_dir = parent.to_path_buf();
+                        session.script_load_sel = 0;
+                    }
+                }
+                ui.spacing();
+            }
+            for (i, entry) in entries.iter().enumerate() {
+                let label = match entry {
+                    script_picker::LoadBrowseEntry::Up => "[Up]".to_string(),
+                    script_picker::LoadBrowseEntry::Subdir(name) => format!("{name}/"),
+                    script_picker::LoadBrowseEntry::File(name) => name.clone(),
+                };
+                let selected = i == session.script_load_sel;
+                if ui.selectable_config(&label).selected(selected).build() {
+                    match entry {
+                        script_picker::LoadBrowseEntry::Subdir(name) => {
+                            session.script_load_dir.push(name);
+                            session.script_load_sel = 0;
+                        }
+                        _ => session.script_load_sel = i,
+                    }
+                }
+            }
+            ui.spacing();
+            let half = w / 2.0 - BUTTON_GAP / 2.0;
+            if ui.button_with_size("Load", [half, 0.0]) {
+                if let Some(script_picker::LoadBrowseEntry::File(name)) =
+                    entries.get(session.script_load_sel)
+                {
+                    let path = session.script_load_dir.join(name);
+                    session.load_js(&path);
+                }
+            }
+            ui.same_line();
+            if ui.button_with_size("Cancel", [half, 0.0]) {
+                session.script_load_open = false;
+            }
+        });
     session.script_load_open = open;
 }
 

@@ -104,7 +104,12 @@ impl SlotScript {
     /// Start a JS Load isolate (the isolate is spawned here, on Start, not
     /// at Load). Same state gating as [`SlotScript::start_compiled`].
     #[cfg(feature = "load")]
-    pub fn start_load(&mut self, source: String, shape: LoadShape) -> Result<(), String> {
+    pub fn start_load(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+    ) -> Result<(), String> {
         match self.state {
             RunState::Running | RunState::Paused | RunState::Stopping => {
                 Err("script already active: stop it first".to_string())
@@ -113,7 +118,7 @@ impl SlotScript {
                 if self.compiled.is_some() {
                     return Err("compiled script active: stop it first".to_string());
                 }
-                let isolate = LoadIsolate::spawn(source, shape)?;
+                let isolate = LoadIsolate::spawn(source, shape, siblings)?;
                 self.load = Some(isolate);
                 self.want_run = true;
                 self.last_error = None;
@@ -208,8 +213,9 @@ impl SlotScript {
         source: String,
         shape: LoadShape,
         bag: Option<&serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        self.start_load(source, shape)?;
+        self.start_load(source, shape, siblings)?;
         if let Some(bag) = bag {
             self.post_settings_bag(bag);
         }

@@ -382,7 +382,7 @@ impl Widget for ScriptPane<'_> {
             lines.push(Line::from("[Params]"));
         }
         if self.load_open {
-            lines.push(Line::from(format!("path: {}_", self.load_path)));
+            lines.push(Line::from("load: browse for .ts/.js file"));
         }
         if self.browse_open {
             for line in self.browse_lines() {
@@ -760,30 +760,6 @@ mod tests {
             pane.on_click(area, 18, 2),
             ScriptClick::Button("Resume"),
             "Resume is clickable when paused"
-        );
-    }
-
-    #[test]
-    fn load_open_renders_the_typed_path() {
-        let text = render(
-            ScriptPane::new(
-                RunState::Idle,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                true,
-                "/tmp/digbot.js",
-                false,
-                None,
-            ),
-            60,
-            5,
-        );
-        assert!(
-            text.contains("/tmp/digbot.js"),
-            "typed load path paints: {text:?}"
         );
     }
 }

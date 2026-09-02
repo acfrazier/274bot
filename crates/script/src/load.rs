@@ -419,6 +419,114 @@ impl JsLibrary {
         vault::write_private_file(&self.store, json.as_bytes())
             .map_err(|e| format!("js-scripts.json: {e}"))
     }
+
+    /// The SHA cache backing this library (Start sibling resolve).
+    pub fn cache(&self) -> &JsCache {
+        &self.cache
+    }
+}
+
+/// Scan `source` for same-folder `./Name.js` import specifiers (quoted).
+pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for quote in ['\'', '"'] {
+        let needle = format!("{quote}./");
+        let mut rest = source;
+        while let Some(idx) = rest.find(&needle) {
+            let after = &rest[idx + needle.len()..];
+            if let Some(end) = after.find(quote) {
+                let spec = &after[..end];
+                if spec.ends_with(".js")
+                    && !spec.contains("..")
+                    && !spec.contains('/')
+                    && !spec.contains('\\')
+                {
+                    let import = format!("./{spec}");
+                    if !out.iter().any(|x| x == &import) {
+                        out.push(import);
+                    }
+                }
+            }
+            rest = &rest[idx + 1..];
+        }
+    }
+    out
+}
+
+/// Map a `./Foo.js` import from [`BOT_MODULE`] to the synthetic module URL
+/// rustyscript resolves.
+pub fn sibling_module_url(import_rel: &str) -> Option<String> {
+    let name = import_rel.strip_prefix("./")?;
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return None;
+    }
+    Some(format!("/rs2b0t/bot/scripts/bot/{name}"))
+}
+
+/// Resolve a same-folder `./Foo.js` import beside `card_path`. The `.ts`
+/// twin wins when the verbatim `.js` path is absent. Rejects `..` and
+/// paths outside `card_dir` (Load has no catalog sandbox, but siblings
+/// must stay beside the picked file).
+pub fn resolve_sibling_path(card_dir: &Path, import_rel: &str) -> Option<PathBuf> {
+    let rel = import_rel.strip_prefix("./")?;
+    if rel.contains("..") {
+        return None;
+    }
+    let verbatim = card_dir.join(rel);
+    let candidate = if verbatim.is_file() {
+        verbatim
+    } else if let Some(stem) = rel.strip_suffix(".js") {
+        let ts = card_dir.join(format!("{stem}.ts"));
+        if ts.is_file() {
+            ts
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    canonical_under_dir(card_dir, &candidate)
+}
+
+fn canonical_under_dir(dir: &Path, path: &Path) -> Option<PathBuf> {
+    if !path.starts_with(dir) {
+        return None;
+    }
+    if let (Ok(canon_dir), Ok(canon_path)) = (dir.canonicalize(), path.canonicalize()) {
+        if !canon_path.starts_with(&canon_dir) {
+            return None;
+        }
+        return Some(canon_path);
+    }
+    Some(path.to_path_buf())
+}
+
+/// Same-folder `./Foo.js` imports beside `card_path`: read the `.ts` twin
+/// (or `.js` origin), cache under `js-cache`, return `(module_url, js)` pairs
+/// for extra rustyscript modules at Start.
+pub fn resolve_sibling_modules(
+    card_path: &Path,
+    origin: &str,
+    cache: &JsCache,
+    meta: CacheMeta,
+) -> Result<Vec<(String, String)>, String> {
+    let card_dir = card_path
+        .parent()
+        .ok_or_else(|| format!("no parent dir for {}", card_path.display()))?;
+    let mut out = Vec::new();
+    for import_rel in scan_same_folder_js_imports(origin) {
+        let Some(url) = sibling_module_url(&import_rel) else {
+            continue;
+        };
+        let Some(path) = resolve_sibling_path(card_dir, &import_rel) else {
+            continue;
+        };
+        let bytes = std::fs::read(&path)
+            .map_err(|e| format!("sibling {}: {e}", path.display()))?;
+        let cached = cache.get_or_transpile(&path, &bytes, meta.clone())?;
+        out.push((url, cached.js));
+    }
+    Ok(out)
 }
 
 /// True when `name` collides with a reserved picker id. Only WalkTo is
@@ -546,14 +654,18 @@ mod isolate {
     impl LoadIsolate {
         /// Spawn the isolate thread with already-cached JS (no transpile).
         /// Fails with a message when the source cannot be wired.
-        pub fn spawn(js: String, shape: LoadShape) -> Result<Self, String> {
+        pub fn spawn(
+            js: String,
+            shape: LoadShape,
+            siblings: Vec<(String, String)>,
+        ) -> Result<Self, String> {
             ensure_platform();
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
             let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
             let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
             let handle = std::thread::Builder::new()
                 .name("js-isolate".into())
-                .spawn(move || isolate_main(js, shape, rx, msg_tx, setup_tx))
+                .spawn(move || isolate_main(js, shape, siblings, rx, msg_tx, setup_tx))
                 .map_err(|e| format!("isolate thread: {e}"))?;
             let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
                 Ok(Ok(handle)) => handle,
@@ -804,6 +916,7 @@ mod isolate {
     fn isolate_main(
         source: String,
         shape: LoadShape,
+        siblings: Vec<(String, String)>,
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
         setup: Sender<Result<v8::IsolateHandle, String>>,
@@ -819,7 +932,7 @@ mod isolate {
                 return;
             }
         };
-        if let Err(e) = wire_runtime(&mut runtime, &source, shape) {
+        if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings) {
             let _ = setup.send(Err(e));
             return;
         }
@@ -845,7 +958,12 @@ mod isolate {
     /// `@rs2b0t/api` bundle resolve to our modules; an import that does
     /// not name a shim module (e.g. `../../api/bank/Banking.js` before
     /// its task) fails the load honestly.
-    fn wire_runtime(runtime: &mut Runtime, source: &str, shape: LoadShape) -> Result<(), String> {
+    fn wire_runtime(
+        runtime: &mut Runtime,
+        source: &str,
+        shape: LoadShape,
+        siblings: &[(String, String)],
+    ) -> Result<(), String> {
         if shape == LoadShape::Reject {
             return Err("not a bot shape".to_string());
         }
@@ -882,6 +1000,9 @@ mod isolate {
         // Side modules load in order, so the shim modules (which the bot
         // imports) must precede the bot's own module.
         let mut side = crate::shim::shim_modules();
+        for (url, src) in siblings {
+            side.push(rustyscript::Module::new(url, src));
+        }
         side.push(bot);
         let side: Vec<&rustyscript::Module> = side.iter().collect();
         // Loading evaluates the modules, so a missing `tick`/default
@@ -903,7 +1024,7 @@ mod isolate {
             ..Default::default()
         })
         .map_err(|e| format!("js engine init: {e}"))?;
-        let result = wire_runtime(&mut runtime, source, shape);
+        let result = wire_runtime(&mut runtime, source, shape, &[]);
         drop(runtime); // compile Runtime must not outlive load()
         result
     }

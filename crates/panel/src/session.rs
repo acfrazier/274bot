@@ -701,8 +701,12 @@ pub struct Session {
     pub script_sel: Option<script::ScriptSel>,
     /// Browse picker open flag (the Scripts window in `app.rs`).
     pub script_browse_open: bool,
-    /// Load modal open flag (the path modal in `app.rs`).
+    /// Load file browser open flag (the Load window in `app.rs`).
     pub script_load_open: bool,
+    /// Current directory in the out-of-tree Load file browser.
+    pub script_load_dir: PathBuf,
+    /// Selected row in the Load file browser.
+    pub script_load_sel: usize,
     /// First-run rs2b0t clone-root folder picker (when `$RS2B0T` unset).
     pub rs2b0t_catalog_open: bool,
     /// Current directory in the rs2b0t folder picker.
@@ -732,8 +736,6 @@ pub struct Session {
     /// (first Load/Browse). Keeps the ambient env/persisted root out of
     /// boot and of every `Session::new`.
     rs2b0t_filled: bool,
-    /// The Load modal's path scratch buffer.
-    pub load_scratch: String,
     /// Shared `--live script_*` harness runner (Task 6): the slot thread
     /// ticks it from the per-frame hook (sends go through the slot's own
     /// `Client`), the UI frame reads its status/evidence. `None` when no
@@ -846,6 +848,8 @@ impl Session {
             script_sel: None,
             script_browse_open: false,
             script_load_open: false,
+            script_load_dir: crate::script_picker::default_load_browse_dir(None),
+            script_load_sel: 0,
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: default_catalog_browse_dir(),
             browse_category_filter: None,
@@ -864,7 +868,6 @@ impl Session {
                 js
             },
             rs2b0t_filled: false,
-            load_scratch: String::new(),
             scenario: Arc::new(Mutex::new(None)),
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
@@ -1234,7 +1237,8 @@ impl Session {
                 ))
             };
             let play = self.play.as_ref().ok_or("no play")?;
-            play.script_start_load(&names[0], card.js, card.shape, bag)
+            let siblings = self.sibling_modules_for_card(&card)?;
+            play.script_start_load(&names[0], card.js.clone(), card.shape, bag, siblings)
                 .map_err(|e| format!("start {card_name}: {e}"))?;
         }
         self.login_all();
@@ -2786,12 +2790,16 @@ impl Session {
                         } else {
                             Some(self.merged_settings_bag(source, &card_name, &card.settings_schema))
                         };
-                        play.script_start_load(
-                            &name,
-                            card.js.clone(),
-                            card.shape,
-                            bag,
-                        )
+                        match self.sibling_modules_for_card(card) {
+                            Ok(siblings) => play.script_start_load(
+                                &name,
+                                card.js.clone(),
+                                card.shape,
+                                bag,
+                                siblings,
+                            ),
+                            Err(e) => Err(e),
+                        }
                     }
                     None => Err(format!("no loaded script: {card_name}")),
                 }
@@ -2804,23 +2812,53 @@ impl Session {
         }
     }
 
-    /// Load a local JS file into the library (registers a picker card,
+    /// Same-folder `./Foo.js` siblings cached for isolate Start.
+    fn sibling_modules_for_card(
+        &self,
+        card: &script::JsCard,
+    ) -> Result<Vec<(String, String)>, String> {
+        script::resolve_sibling_modules(
+            &card.path,
+            &card.origin,
+            self.js.cache(),
+            script::CacheMeta {
+                kind: card.kind,
+                source: card.source,
+                shape: None,
+            },
+        )
+    }
+
+    /// Load a local JS/TS file into the library (registers a picker card,
     /// persists `~/.274bot/js-scripts.json`), select it for Start, and
-    /// clear the modal scratch. Errors set [`Session::error`].
-    pub fn load_js(&mut self, path: &str) {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            self.error = Some("script: path required".into());
+    /// remember the parent directory. Errors set [`Session::error`].
+    pub fn load_js(&mut self, path: &std::path::Path) {
+        if !path.is_file() {
+            self.error = Some(format!("script: not a file: {}", path.display()));
             return;
         }
-        match self.js.load(std::path::Path::new(trimmed)) {
+        match self.js.load(path) {
             Ok(card) => {
                 self.error = None;
                 self.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
-                self.load_scratch.clear();
+                if let Some(parent) = path.parent() {
+                    self.ui.script_load_last_dir = Some(parent.to_path_buf());
+                    if self.persist_ui {
+                        crate::ui_state::save(&self.ui);
+                    }
+                }
+                self.script_load_open = false;
             }
             Err(e) => self.error = Some(format!("load: {e}")),
         }
+    }
+
+    /// Open the Load file browser at the last visited directory (or `$HOME`).
+    pub fn open_script_load_browser(&mut self) {
+        self.script_load_dir =
+            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
+        self.script_load_sel = 0;
+        self.script_load_open = true;
     }
 
     /// Pause the focused slot's script, or Resume when it is Paused (the
@@ -6752,7 +6790,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
 
         let mut s = Session::new();
         s.js = script::JsLibrary::new(store.clone());
-        s.load_js(path.to_str().unwrap());
+        s.load_js(&path);
         assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
         assert_eq!(
             s.script_sel,
@@ -6762,13 +6800,13 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             ))
         );
         assert_eq!(s.js.cards().len(), 1);
-        assert_eq!(s.load_scratch, "", "success clears the modal scratch");
+        assert!(!s.script_load_open, "success closes the load browser");
         assert!(store.exists(), "the card is persisted to the session store");
 
         // A path that is not a bot shape fails and keeps the error banner.
         let bad = dir.join("plain.js");
         std::fs::write(&bad, "const x = 1;").unwrap();
-        s.load_js(bad.to_str().unwrap());
+        s.load_js(&bad);
         assert!(s.error.as_deref().is_some_and(|e| e.contains("shape")));
     }
 

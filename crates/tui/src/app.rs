@@ -40,6 +40,20 @@ fn default_catalog_browse_dir() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("/"))
 }
 
+fn default_load_browse_dir(last: Option<&std::path::Path>) -> std::path::PathBuf {
+    last.filter(|p| p.is_dir())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(default_catalog_browse_dir)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LoadEntry {
+    Up,
+    Subdir(String),
+    File(String),
+    Cancel,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
@@ -215,9 +229,11 @@ pub struct TuiApp {
     pub rs2b0t_catalog_dir: std::path::PathBuf,
     /// Highlight row in the catalog folder browser.
     pub catalog_sel: usize,
-    /// The Load path input is open (`script_load_path` is the typed path).
+    /// The Load file browser is open.
     pub script_load_open: bool,
-    pub script_load_path: String,
+    pub script_load_dir: std::path::PathBuf,
+    pub script_load_sel: usize,
+    pub script_load_last_dir: Option<std::path::PathBuf>,
     /// Selected card's settings schema (refreshed each pump from the library).
     pub params_schema: Vec<script::SettingDef>,
     /// Working bag while the params popup is open.
@@ -263,7 +279,9 @@ impl TuiApp {
             rs2b0t_catalog_dir: default_catalog_browse_dir(),
             catalog_sel: 0,
             script_load_open: false,
-            script_load_path: String::new(),
+            script_load_dir: default_load_browse_dir(None),
+            script_load_sel: 0,
+            script_load_last_dir: None,
             params_schema: Vec::new(),
             params_bag: serde_json::Map::new(),
             params_state: ParamsState::default(),
@@ -385,7 +403,7 @@ impl TuiApp {
         // The script pane's text inputs capture keys before the global
         // shortcuts (typing a load path must not quit on `q`).
         if self.script_load_open {
-            return self.script_load_on_key(key);
+            return self.load_on_key(key);
         }
         if self.rs2b0t_catalog_open {
             return self.catalog_on_key(key);
@@ -534,28 +552,87 @@ impl TuiApp {
         }
         Some(store.merged_bag(source, &name, &self.params_schema, None))
     }
-    /// deletes, Enter submits [`AppAction::ScriptLoad`], Esc cancels.
-    fn script_load_on_key(&mut self, key: KeyEvent) -> AppAction {
-        match key.code {
-            KeyCode::Esc => {
-                self.script_load_open = false;
-                self.script_load_path.clear();
-            }
-            KeyCode::Enter => {
-                let path = std::mem::take(&mut self.script_load_path);
-                self.script_load_open = false;
-                let trimmed = path.trim().to_string();
-                if !trimmed.is_empty() {
-                    return AppAction::ScriptLoad(std::path::PathBuf::from(trimmed));
+    fn load_entries(&self) -> Vec<LoadEntry> {
+        let mut out = vec![LoadEntry::Up];
+        let mut subdirs = Vec::new();
+        let mut files = Vec::new();
+        if let Ok(read) = std::fs::read_dir(&self.script_load_dir) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') {
+                    continue;
+                }
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    subdirs.push(name);
+                } else if name.ends_with(".ts") || name.ends_with(".js") {
+                    files.push(name);
                 }
             }
-            KeyCode::Backspace => {
-                self.script_load_path.pop();
-            }
-            KeyCode::Char(c) => self.script_load_path.push(c),
-            _ => {}
         }
-        AppAction::None
+        subdirs.sort();
+        files.sort();
+        for name in subdirs {
+            out.push(LoadEntry::Subdir(name));
+        }
+        for name in files {
+            out.push(LoadEntry::File(name));
+        }
+        out.push(LoadEntry::Cancel);
+        out
+    }
+
+    fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
+        let entries = self.load_entries();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.script_load_sel > 0 {
+                    self.script_load_sel -= 1;
+                }
+                AppAction::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.script_load_sel + 1 < entries.len() {
+                    self.script_load_sel += 1;
+                }
+                AppAction::None
+            }
+            KeyCode::Esc => {
+                self.script_load_open = false;
+                AppAction::None
+            }
+            KeyCode::Enter => match entries.get(self.script_load_sel) {
+                Some(LoadEntry::Cancel) => {
+                    self.script_load_open = false;
+                    AppAction::None
+                }
+                Some(LoadEntry::Up) => {
+                    if let Some(parent) = self.script_load_dir.parent() {
+                        self.script_load_dir = parent.to_path_buf();
+                        self.script_load_sel = 0;
+                    }
+                    AppAction::None
+                }
+                Some(LoadEntry::Subdir(name)) => {
+                    self.script_load_dir.push(name.clone());
+                    self.script_load_sel = 0;
+                    AppAction::None
+                }
+                Some(LoadEntry::File(name)) => {
+                    let path = self.script_load_dir.join(name);
+                    self.script_load_open = false;
+                    AppAction::ScriptLoad(path)
+                }
+                _ => AppAction::None,
+            },
+            _ => AppAction::None,
+        }
+    }
+
+    /// Open the out-of-tree Load file browser.
+    pub fn open_script_load_browser(&mut self, last_dir: Option<&std::path::Path>) {
+        self.script_load_dir = default_load_browse_dir(last_dir);
+        self.script_load_sel = 0;
+        self.script_load_open = true;
     }
 
     /// The Browse picker's keys: Up/Down (j/k) cycle the card selection,
@@ -707,6 +784,9 @@ impl TuiApp {
     /// nothing is selected), Pause/Stop emit their actions, Load opens
     /// the path input, and picker rows store the selection.
     fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+        if self.script_load_open {
+            return self.load_click(col, row);
+        }
         if self.rs2b0t_catalog_open {
             return self.catalog_click(col, row);
         }
@@ -719,7 +799,7 @@ impl TuiApp {
             deferred,
             self.script_browse_open,
             self.script_load_open,
-            &self.script_load_path,
+            "",
             !self.params_schema.is_empty(),
             None,
         );
@@ -743,7 +823,8 @@ impl TuiApp {
             ScriptClick::Button("Pause") | ScriptClick::Button("Resume") => AppAction::ScriptPause,
             ScriptClick::Button("Stop") => AppAction::ScriptStop,
             ScriptClick::Button("Load") => {
-                self.script_load_open = true;
+                let last = self.script_load_last_dir.clone();
+                self.open_script_load_browser(last.as_deref());
                 AppAction::None
             }
             ScriptClick::Params => AppAction::ScriptParams,
@@ -760,6 +841,24 @@ impl TuiApp {
             }
             ScriptClick::None => AppAction::None,
         }
+    }
+
+    fn load_click(&mut self, col: u16, row: u16) -> AppAction {
+        let inner = Block::default().borders(Borders::ALL).inner(self.script_area);
+        if row < inner.y + 2 {
+            return AppAction::None;
+        }
+        let line = row - (inner.y + 2);
+        let entries = self.load_entries();
+        if usize::from(line) == self.script_load_sel && entries.get(self.script_load_sel).is_some() {
+            self.script_load_sel = usize::from(line);
+            return self.load_on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        }
+        if usize::from(line) < entries.len() {
+            self.script_load_sel = usize::from(line);
+        }
+        let _ = col;
+        AppAction::None
     }
 
     fn catalog_click(&mut self, col: u16, row: u16) -> AppAction {
@@ -806,10 +905,16 @@ impl TuiApp {
         } else {
             0
         };
+        let load_h = if self.script_load_open {
+            (self.load_entries().len() as u16 + 3).min(16)
+        } else {
+            0
+        };
         let script_h = 4
             + browse_h
             + catalog_h
-            + u16::from(self.script_load_open)
+            + load_h
+            + u16::from(self.script_load_open && load_h == 0)
             + u16::from(!self.params_schema.is_empty() && !self.script_browse_open && !self.rs2b0t_catalog_open && !self.script_load_open);
         let chunks = Layout::vertical([
             Constraint::Length(1),
@@ -996,6 +1101,31 @@ impl TuiApp {
     }
 
     fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if self.script_load_open {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("load script");
+            let inner = block.inner(area);
+            block.render(area, frame.buffer_mut());
+            let mut lines = vec![
+                Line::from("Choose a .ts or .js bot file (out-of-tree):"),
+                Line::from(self.script_load_dir.to_string_lossy().to_string()),
+            ];
+            for (i, entry) in self.load_entries().iter().enumerate() {
+                let mark = if i == self.script_load_sel { "> " } else { "  " };
+                let label = match entry {
+                    LoadEntry::Up => "[Up]".into(),
+                    LoadEntry::Subdir(name) => format!("{name}/"),
+                    LoadEntry::File(name) => name.clone(),
+                    LoadEntry::Cancel => "[Cancel]".into(),
+                };
+                lines.push(Line::from(format!("{mark}{label}")));
+            }
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .render(inner, frame.buffer_mut());
+            return;
+        }
         if self.rs2b0t_catalog_open {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -1034,7 +1164,7 @@ impl TuiApp {
             script::rs2b0t_import_deferred(),
             self.script_browse_open,
             self.script_load_open,
-            &self.script_load_path,
+            "",
             !self.params_schema.is_empty(),
             None,
         );
@@ -1558,37 +1688,51 @@ mod tests {
         );
     }
 
-    /// Task 13: the Load button opens the path input; typed path + Enter
+    #[test]
+    fn load_browser_has_no_free_text_path() {
+        const APP: &str = include_str!("app.rs");
+        assert!(
+            !APP.contains("script_load_path: String"),
+            "Load must not keep a typed-path scratch buffer"
+        );
+        assert!(
+            APP.contains("script_load_dir"),
+            "Load must browse directories"
+        );
+    }
+
+    /// Task 7: the Load button opens the file browser; Enter on a file
     /// produces `AppAction::ScriptLoad` with that path.
     #[test]
-    fn load_path_typed_and_enter_returns_script_load() {
+    fn load_browser_enter_returns_script_load() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-tui-load-browser-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bot = dir.join("digbot.js");
+        std::fs::write(
+            &bot,
+            "export function tick(api) { globalThis.__rs_n = 1 }",
+        )
+        .unwrap();
+
         let mut app = TuiApp::new("274bot headless");
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        terminal.draw(|frame| app.draw(frame)).unwrap();
-        let area = app.script_area;
-        // `[Load]` starts after Browse(9) + Start(8) + Pause(8) + Stop(7):
-        // inner.x + 32 = area.x + 33.
-        assert_eq!(
-            app.on_click(area.x + 33, area.y + 2),
-            AppAction::None,
-            "Load opens the path input (no action until Enter)"
-        );
-        assert!(app.script_load_open);
-        for c in "/tmp/digbot.js".chars() {
-            app.on_key(key(KeyCode::Char(c)));
-        }
+        app.script_load_dir = dir.clone();
+        app.script_load_open = true;
+        app.script_load_sel = 1; // [Up]=0, file=1
+
         assert_eq!(
             app.on_key(key(KeyCode::Enter)),
-            AppAction::ScriptLoad(std::path::PathBuf::from("/tmp/digbot.js")),
-            "Enter on the typed path loads that file"
+            AppAction::ScriptLoad(bot),
+            "Enter on a file row loads that path"
         );
-        assert!(!app.script_load_open, "load input closes after Enter");
-        // Esc cancels the input without an action.
-        app.on_click(area.x + 33, area.y + 2);
-        app.on_key(key(KeyCode::Char('x')));
+        assert!(!app.script_load_open, "load browser closes after Enter");
+
+        app.open_script_load_browser(Some(&dir));
         assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
-        assert!(!app.script_load_open);
-        assert!(app.script_load_path.is_empty(), "Esc clears the path");
+        assert!(!app.script_load_open, "Esc closes the load browser");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Task 5 fix: clicking `[Params]` opens the popup; Space toggles a

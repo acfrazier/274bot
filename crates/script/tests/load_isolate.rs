@@ -269,7 +269,7 @@ fn js_library_restore_reads_persisted_paths() {
 // object, `probe` reads `_n` back, `join` stops the thread.
 #[test]
 fn isolate_spawn_ticks_probe_and_joins() {
-    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .expect("spawn native isolate");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
@@ -283,7 +283,7 @@ fn isolate_spawn_ticks_probe_and_joins() {
 // and ticks run `create()`'s `loop()` without throwing.
 #[test]
 fn isolate_spawn_compat_fixture_ticks_and_joins() {
-    let iso = LoadIsolate::spawn(COMPAT_FIXTURE.to_string(), LoadShape::CompatDefineBot)
+    let iso = LoadIsolate::spawn(COMPAT_FIXTURE.to_string(), LoadShape::CompatDefineBot, vec![])
         .expect("spawn compat isolate");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
@@ -299,7 +299,7 @@ fn isolate_spawn_compat_fixture_ticks_and_joins() {
 // (5c) Pause ignores ticks; resume continues; join returns.
 #[test]
 fn isolate_pause_ignores_ticks_and_resume_continues() {
-    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
+    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.pause();
     iso.on_game_tick(2);
@@ -316,11 +316,11 @@ fn isolate_pause_ignores_ticks_and_resume_continues() {
 // (5d) A second spawn after join works (isolate lifecycle is not one-shot).
 #[test]
 fn isolate_join_returns_and_isolates_are_reusable() {
-    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
+    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.join();
 
-    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
+    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(2);
     let n = iso.probe("__rs_n").unwrap();
     assert_eq!(n, 1, "fresh isolate, fresh api");
@@ -331,7 +331,7 @@ fn isolate_join_returns_and_isolates_are_reusable() {
 #[test]
 fn isolate_logs_tick_errors() {
     let src = "export function tick(api) { throw new Error('boom') }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_n"); // round-trip: the tick finished first
     let logs = iso.drain_logs();
@@ -349,7 +349,7 @@ fn isolate_logs_tick_errors() {
 fn slow_tick_is_interrupted_and_isolate_survives() {
     // The first tick spins forever; later ticks count.
     let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     // Let the thread enter the spin; pause then arms a terminate for the
     // over-budget tick (no immediate cancel), and resume re-arms dispatch.
@@ -376,10 +376,7 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
 // and returns even if the interrupt were somehow not delivered.
 #[test]
 fn join_bounds_a_runaway_tick() {
-    let iso = LoadIsolate::spawn(
-        "export function tick(api) { while(true){} }".to_string(),
-        LoadShape::NativeTick,
-    )
+    let iso = LoadIsolate::spawn("export function tick(api) { while(true){} }".to_string(), LoadShape::NativeTick, vec![])
     .expect("spawn runaway isolate");
     iso.on_game_tick(1);
     std::thread::sleep(std::time::Duration::from_millis(80));
@@ -397,7 +394,7 @@ fn join_bounds_a_runaway_tick() {
 #[test]
 fn slot_start_load_ticks_and_stop_joins() {
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .expect("start_load spawns the isolate");
     assert_eq!(slot.state(), script::RunState::Running);
 
@@ -436,15 +433,15 @@ fn slot_start_load_ticks_and_stop_joins() {
 #[test]
 fn slot_start_load_refuses_while_active() {
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .unwrap();
     let err = slot
-        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .expect_err("already active");
     assert!(err.contains("active"), "{err}");
     slot.stop();
     assert!(slot
-        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .is_ok());
     slot.stop();
 }
@@ -461,14 +458,14 @@ fn slot_load_and_compiled_are_xor() {
         fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
     }
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .unwrap();
     assert!(slot.start_compiled(Box::new(Noop)).is_err());
     slot.stop();
 
     slot.start_compiled(Box::new(Noop)).unwrap();
     assert!(slot
-        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick)
+        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .is_err());
     slot.stop();
 }
@@ -482,7 +479,7 @@ fn isolate_spawn_returns_immediately_with_handle() {
     let (tx, rx) = mpsc::channel::<()>();
     let (done_tx, done_rx) = mpsc::channel::<()>();
     let t = std::thread::spawn(move || {
-        let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick).unwrap();
+        let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
         tx.send(()).unwrap();
         let _ = done_rx.recv();
         iso.join();
@@ -542,7 +539,7 @@ fn transpile_ts_strips_types_and_v8_can_parse_it() {
 #[test]
 fn isolate_spawn_compat_class_ticks_and_joins() {
     let js = script::transpile_ts(CLASS_TS_FIXTURE).expect("transpile class fixture");
-    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass).expect("spawn compat class isolate");
+    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass, vec![]).expect("spawn compat class isolate");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let n = iso.probe("__rs_bot.n").expect("instance readable");
@@ -562,7 +559,7 @@ fn isolate_spawn_compat_class_ticks_and_joins() {
 fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.ingame(); } }";
     let iso =
-        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("remapped import loads");
+        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("remapped import loads");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let _ = iso.probe("__rs_bot"); // round-trip: both ticks finished first
@@ -576,7 +573,7 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     // Game.teleport is a real member that throws at runtime.
     let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.teleport('Lumbridge'); } }";
     let iso =
-        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("teleport bot loads");
+        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("teleport bot loads");
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
@@ -592,7 +589,7 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
 #[test]
 fn isolate_rs2b0t_api_bare_import_resolves_to_our_shim() {
     let src = "import { Game } from '@rs2b0t/api'; export default class T extends LoopingBot { loop() { Game.ingame(); } }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass)
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
         .expect("bare @rs2b0t/api import loads");
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
@@ -620,7 +617,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("paint bot loads");
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("paint bot loads");
     iso.on_game_tick(1);
     let value = iso
         .probe("__rs2b0t_host.paint")
@@ -648,7 +645,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).expect("paint bot loads");
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("paint bot loads");
     iso.on_game_tick(1);
     // The probe round-trips after the tick, so the forwarded Paint
     // message is in the channel by the time it returns.
@@ -677,7 +674,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("stub reads back");
     assert_eq!(value["tile"], serde_json::Value::Null, "no snapshot tile");
@@ -686,7 +683,7 @@ export default class T extends LoopingBot {
     iso.join();
 
     let src = "import { reader } from '../../adapter/ClientAdapter.js'; export default class T extends LoopingBot { loop() { reader.bankOpen(); } }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
@@ -712,7 +709,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     // The flag is read inside the tick; the thread logs and breaks. Poll
     // for the log (a probe round-trip would race the thread exit).
@@ -761,7 +758,7 @@ export default class T extends TaskBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let runs = iso.probe("__rs_bot.runs").expect("task runs readable");
@@ -797,7 +794,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let loops = iso.probe("__rs_loops").unwrap();
@@ -838,7 +835,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop parked");
     let mut snap = base_snapshot();
@@ -880,7 +877,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop runs");
     let paints_after_first = iso.probe("__rs_paints").unwrap();
@@ -919,7 +916,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.hold = true;
     snap.tick = 1;
@@ -970,7 +967,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let done = iso.probe("__rs_done");
@@ -1003,7 +1000,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     std::thread::sleep(std::time::Duration::from_millis(140));
     iso.on_game_tick(2); // wall clock elapsed: the wait settles
@@ -1033,7 +1030,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     std::thread::sleep(std::time::Duration::from_millis(140));
     iso.on_game_tick(2); // timeout elapsed: the wait resolves false
@@ -1073,7 +1070,7 @@ export default class T extends LoopingBot {
     onPaint() { this.capture(); }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.tick = 1;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -1129,7 +1126,7 @@ export default class T extends LoopingBot {
     loop() {}
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let deadline = Instant::now() + Duration::from_millis(500);
     let list = loop {
@@ -1152,7 +1149,7 @@ export default class T extends LoopingBot {
     loop() { if (globalThis.__rs_tick >= 2) { while (true) {} } }
 }
 "#;
-    let iso_block = LoadIsolate::spawn(src_block.to_string(), LoadShape::CompatClass).unwrap();
+    let iso_block = LoadIsolate::spawn(src_block.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso_block.on_game_tick(1);
     thread::sleep(Duration::from_millis(50));
     iso_block.on_game_tick(2);
@@ -1182,7 +1179,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso
         .probe("__probe")
@@ -1209,7 +1206,7 @@ export default defineBot({
     },
 });
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatDefineBot).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatDefineBot, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("defineBot instance reads back");
     assert_eq!(
@@ -1242,7 +1239,7 @@ export default class T extends LoopingBot {
     onPaint() { this.capture(); }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
 
     // First post is the keyframe: the inv table is present.
     let mut snap = base_snapshot();
@@ -1307,7 +1304,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.ours = true;
     post_snapshot_input(&iso, &snap);
@@ -1337,7 +1334,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(value["bones"], 0, "no posted snapshot: count 0");
@@ -1347,7 +1344,7 @@ export default class T extends LoopingBot {
     iso.join();
 
     let src = "import { Inventory } from '../../api/inventory/Inventory.js'; export default class T extends LoopingBot { loop() { globalThis.__probe = Inventory.first('Bones'); } }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert!(
@@ -1371,7 +1368,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.inv = &[(Some("Bones"), 5)];
     post_snapshot_input(&iso, &snap);
@@ -1402,7 +1399,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.inv_size = 28;
     post_snapshot_input(&iso, &snap);
@@ -1438,7 +1435,7 @@ fn real_bone_burier_queues_bury_when_seeded() {
         "BoneBurier is a class card"
     );
     let js = script::transpile_ts(&source).expect("transpile BoneBurier.ts");
-    let iso = LoadIsolate::spawn(js, shape).unwrap();
+    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.ingame = true;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -1484,7 +1481,7 @@ fn real_bone_burier_queues_bury_when_seeded() {
 #[test]
 fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let n = iso.probe("__rs_n").unwrap();
@@ -1518,7 +1515,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
         x: 100,
@@ -1564,7 +1561,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
         x: 100,
@@ -1608,7 +1605,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
         x: 100,
@@ -1666,7 +1663,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
         x: 100,
@@ -1687,7 +1684,7 @@ export default class T extends LoopingBot {
     iso.join();
 
     let src = "import { Banking } from '../../api/bank/Banking.js'; export default class T extends LoopingBot { loop() { Banking.close(); } }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot"); // round-trip: the tick finished first
     let logs = iso.drain_logs();

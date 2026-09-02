@@ -23,7 +23,8 @@ pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
 #[cfg(feature = "load")]
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 pub use load::{
-    default_js_store, detect_shape, is_reserved, JsCard, JsLibrary, LoadShape, ScriptSel,
+    default_js_store, detect_shape, is_reserved, resolve_sibling_modules,
+    scan_same_folder_js_imports, sibling_module_url, JsCard, JsLibrary, LoadShape, ScriptSel,
 };
 pub use params::defaults;
 pub use loadouts_store::{
