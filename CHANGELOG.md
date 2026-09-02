@@ -5,9 +5,56 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 
 ## [Unreleased] — 0.1.5
 
-TS rs2b0t compatibility shim (listed scripts, not all-ports). Guardian
-solvers that were stubbed in 0.1.2 (evade, plant, maze / mime / box,
-lamp rub). See the 0.1.2 “After” list.
+### TS shim (`crates/script`)
+
+- `$RS2B0T` registry parse (static scan of `src/bot/scripts/index.ts`, no
+  V8): listed scripts become Browse cards; the root persists to
+  `~/.274bot/rs2b0t-path` after the first successful parse.
+- TS transpile at Load (CompatClass shape), rs2b0t import remap, and a
+  throw-on-missing Proxy for the listed API.
+- Shim Game / Inventory / EventSignal from the posted snapshot;
+  `Execution.delayUntil` parks the isolate on PLAYER_INFO; Banking.open
+  and bank deposit / withdraw on the BankSide container.
+- FlatBuffers isolate IPC: delta snapshots omit unchanged tables, and a
+  hold tick re-posts so `EventSignal.pending` sees the held state.
+- `EventSignal.pending` and `ignoredRandoms` surface from the bot
+  instance.
+
+### Guardian solvers (complete)
+
+- The 0.1.2 stubs are gone: evade flee, plant pick, maze / mime /
+  strange-box, hazard, lamp rub, and lost-gear / lost-tool solvers land
+  as the complete act set.
+
+### Nav and banking
+
+- Pack `274V` version **8**: content-derived bank-stand table baked by
+  `nav-pack` over the content tree. v7 files are `BadVersion` — rebake.
+- Banking.open and the BankBudget session: deposit-withdraw-wear with
+  **any-of** `worn_req`.
+
+### TUI and panel
+
+- `tui-play` script chrome is wired (Browse / Start / Pause / Stop /
+  Load over the same JS library); a recording script's paint shows in
+  the chat pane (`p` toggles back to the game ring).
+- Panel paints ScriptPaint as ImGui over the Game chatbox — never on the
+  client framebuffer.
+
+### Live BoneBurier
+
+- `script_bone_burier` live scenario: unique minted account, mainland
+  hop, seed five Bones, bury until at most three remain — PASS on the
+  server's "You bury the bones." chat line. Headed `panel-play --live
+  script_bone_burier` and headless `tui-play --live script_bone_burier`
+  pass the same runner.
+
+### Public world docs
+
+- `BOT_TARGET=prod` (alias `live`) / `host-play --prod` → `w1.rs2b2t.com:43594`
+  with the baked public RSA; the local engine stays the default. Cargo
+  `TARGET` is the rustc triple, not a world switch. Not Jagex, not a
+  hosted wall, no w1 CI.
 
 ## [0.1.2] — 2026-09-01
 

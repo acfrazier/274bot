@@ -22,10 +22,11 @@ parent (`content/scripts/general_use/configs/gates.loc`).
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **7**. Raw
-`u32` flags are not on the v7 wire; the optional `274F` sidecar holds
-them for collision paint. `decode` accepts version 7 only — v6 and older
-are `BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
+the derived `TransportGraph`. Magic `b"274V"`, version byte **8** (v8
+appends the content-derived bank-stand table after the edges; raw `u32`
+flags are not on the v8 wire, the optional `274F` sidecar holds them for
+collision paint). `decode` accepts version 8 only — v7 and older are
+`BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
 boolean-walk files.
 
 ## Collision (`nav::collision`)

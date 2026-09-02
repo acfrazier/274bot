@@ -7,7 +7,12 @@ non-technical authors. WalkTo is **host nav** (panel picker / TUI map), not a
 script card. `Script::on_random` is a rising-edge knock (`RandomClaim::Host`
 default); `Handle` is unnamed in-tree. The 0.1.5 shim loads listed scripts
 from `$RS2B0T/src/bot/scripts` (upstream `rs2b2t/rs2b0t`), not a copy in
-this tree.
+this tree. `$RS2B0T` wins over the persisted root
+(`~/.274bot/rs2b0t-path`, written on the first successful catalog parse).
+Scripts run on whatever world the client logs into — **local engine by
+default**; `BOT_TARGET=prod|live` or `host-play --prod` switches the login
+host to `w1.rs2b2t.com:43594` with the baked public RSA (Cargo `TARGET` is
+the rustc triple, not a world switch; not Jagex, not a hosted wall, no w1 CI).
 
 ## Two runners
 
@@ -24,6 +29,13 @@ Load registers a picker card tagged **JS** (`~/.274bot/js-scripts.json`
 `{name, path}`). Same JS name overwrites. Compiled names are **reserved**.
 Isolate is its own OS thread; ~50 ms budget; 64 MB heap cap. A `while(true)`
 tick is interrupted via `terminate_execution`; Stop join is bounded.
+
+Browse/Start/Pause/Stop are wired in **both** operator panels: the native
+`panel-play` script chrome and the headless `tui-play` script pane (the
+same `host_play::Play` dispatch; `$RS2B0T` catalog cards fill both
+pickers). Script paint (`ScriptPaint`, the rs2b0t dock shape) draws over
+the Game chatbox in the panel and replaces the chat pane in the TUI
+(`p` toggles back to the game ring).
 
 ## ScriptCtx read surface
 

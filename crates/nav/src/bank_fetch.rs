@@ -295,12 +295,7 @@ mod tests {
         ));
         let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
             .expect("only the worn knife is missing");
-        assert_eq!(
-            missing,
-            vec![MissingReq::WearAny {
-                ids: vec![KNIFE],
-            }]
-        );
+        assert_eq!(missing, vec![MissingReq::WearAny { ids: vec![KNIFE] }]);
         let fetch = plan_bank_fetch(&missing, &state, &[], &[stand(4, 0)], from)
             .expect("a carried knife plans a bare wear");
         assert_eq!(
@@ -340,12 +335,7 @@ mod tests {
         ));
         let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
             .expect("only the worn knife is missing");
-        assert_eq!(
-            missing,
-            vec![MissingReq::WearAny {
-                ids: vec![KNIFE],
-            }]
-        );
+        assert_eq!(missing, vec![MissingReq::WearAny { ids: vec![KNIFE] }]);
         // The bank snapshot holds the knife (1).
         let bank = [(KNIFE, 1)];
         let fetch = plan_bank_fetch(&missing, &state, &bank, &[stand(4, 0)], from)
@@ -431,9 +421,7 @@ mod tests {
         assert_eq!(
             missing,
             vec![
-                MissingReq::WearAny {
-                    ids: vec![KNIFE],
-                },
+                MissingReq::WearAny { ids: vec![KNIFE] },
                 MissingReq::Carry { id: 995, count: 10 },
             ]
         );
@@ -524,9 +512,7 @@ mod tests {
         assert_eq!(
             missing,
             vec![
-                MissingReq::WearAny {
-                    ids: vec![KNIFE],
-                },
+                MissingReq::WearAny { ids: vec![KNIFE] },
                 MissingReq::Carry { id: 995, count: 10 },
             ]
         );
@@ -544,7 +530,10 @@ mod tests {
                 },
                 BankStep::Open,
                 BankStep::DepositAll,
-                BankStep::Withdraw { id: KNIFE, count: 1 },
+                BankStep::Withdraw {
+                    id: KNIFE,
+                    count: 1
+                },
                 BankStep::Wear { id: KNIFE },
                 BankStep::Withdraw { id: 995, count: 10 },
                 BankStep::Close,

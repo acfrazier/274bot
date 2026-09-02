@@ -1126,7 +1126,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             if is_focused {
                 draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
                 if let Some(slot) = statuses.iter().find(|s| s.username == *name) {
-                    state.paint.frame(ui, slot.script_paint.as_ref(), ui.item_rect_min(), size);
+                    state
+                        .paint
+                        .frame(ui, slot.script_paint.as_ref(), ui.item_rect_min(), size);
                 }
             }
         }

@@ -13,6 +13,10 @@ pub enum Proof {
     /// `has_item("Bones")`: inventory holds `count` of the obj named
     /// `name`, resolved through the runner's shared obj table.
     Item { name: &'static str, count: i32 },
+    /// `has_item(name) <= count`: the inv holds at most `count` of the
+    /// obj named `name` — the consume-side arm (a BoneBurier run has
+    /// buried the difference from the seeded count).
+    ItemAtMost { name: &'static str, count: i32 },
     /// `arrived(x, z, level)`: standing on the tile (or adjacent to it
     /// when the dest is solid).
     Arrived { x: i32, z: i32, level: i32 },
@@ -67,6 +71,7 @@ impl Proof {
     pub fn name(&self) -> String {
         match self {
             Proof::Item { name, count } => format!("has_item({name})>={count}"),
+            Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::Arrived { x, z, level } => format!("arrived({x},{z},{level})"),
             Proof::ArrivedNear {
                 x,
@@ -107,6 +112,21 @@ impl Proof {
                     .map(|(_, n)| *n)
                     .sum();
                 got >= *count
+            }
+            Proof::ItemAtMost { name, count } => {
+                // Same name resolution as `Item`: fail closed without an
+                // obj table, never a fake 0 (a run with no table could
+                // otherwise "consume" everything).
+                let Some(names) = names else {
+                    return false;
+                };
+                let got: i32 = snap
+                    .inv()
+                    .iter()
+                    .filter(|(id, _)| names.name(*id) == Some(*name))
+                    .map(|(_, n)| *n)
+                    .sum();
+                got <= *count
             }
             Proof::Arrived { x, z, level } => snap.tile().is_some_and(|(tx, tz, tl)| {
                 arrived(
@@ -366,6 +386,39 @@ mod tests {
         c.runenergy = 20;
         let s = snap(&mut c);
         assert!(Proof::StatAtMost { id: 16, max: 25 }.check(&s, None));
+    }
+
+    #[test]
+    fn item_at_most_is_the_consume_side_of_a_count() {
+        // The seed holds one Bone (id 526).
+        let s = snap(&mut seeded());
+        assert!(Proof::ItemAtMost {
+            name: "Bones",
+            count: 1
+        }
+        .check(&s, Some(&names())));
+        assert!(
+            !Proof::ItemAtMost {
+                name: "Bones",
+                count: 0
+            }
+            .check(&s, Some(&names())),
+            "one bone held is above zero"
+        );
+        // Same fail-closed rule as `Item`: no obj table never fakes a hit.
+        assert!(!Proof::ItemAtMost {
+            name: "Bones",
+            count: 1
+        }
+        .check(&s, None));
+        assert_eq!(
+            Proof::ItemAtMost {
+                name: "Bones",
+                count: 3
+            }
+            .name(),
+            "has_item(Bones)<=3"
+        );
     }
 
     #[test]

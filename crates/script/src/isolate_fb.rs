@@ -17,7 +17,7 @@
 //! The per-slot last-post [`SnapshotFingerprint`] is compared by value
 //! (equality, not a hash) once per slot per tick.
 
-use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, Table, Vector, VOffsetT, WIPOffset};
+use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, Table, VOffsetT, Vector, WIPOffset};
 
 // Field slot offsets are vtable byte offsets: field id N sits at
 // `(N + 2) * SIZE_VOFFSET` (`SIZE_VOFFSET = 2`), so id 0 -> 4, 1 -> 6, ...
@@ -279,10 +279,17 @@ impl SnapshotReader<'_> {
     /// fields that did not change since the last post — absent is distinct
     /// from empty, and the isolate keeps its last JS value.
     pub fn has_here(&self) -> bool {
-        unsafe { self.tab.get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None).is_some() }
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None)
+                .is_some()
+        }
     }
     pub fn here(&self) -> Option<TileReader<'_>> {
-        unsafe { self.tab.get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None) }
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None)
+        }
     }
     pub fn has_ingame(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_INGAME, None).is_some() }
@@ -364,9 +371,7 @@ where
     T: flatbuffers::Follow<'a> + 'a,
 {
     // Safety: the buffer was produced by our encoder (root checked).
-    match unsafe {
-        tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None)
-    } {
+    match unsafe { tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None) } {
         Some(v) => v.iter().collect(),
         None => Vec::new(),
     }
@@ -511,7 +516,11 @@ impl DeltaMask {
     /// — a keyframe). Packed banks are additionally forced by
     /// `force_banks` (a `NavWorld` identity change the list alone cannot
     /// see).
-    fn changed(last: &SnapshotFingerprint, next: &SnapshotFingerprint, force_banks: bool) -> DeltaMask {
+    fn changed(
+        last: &SnapshotFingerprint,
+        next: &SnapshotFingerprint,
+        force_banks: bool,
+    ) -> DeltaMask {
         DeltaMask {
             here: next.here != last.here,
             ingame: next.ingame != last.ingame,
@@ -588,7 +597,11 @@ fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8
         None
     };
     let booths_off = if mask.booths {
-        let offs = input.booths.iter().map(|t| tile_off(&mut b, *t)).collect::<Vec<_>>();
+        let offs = input
+            .booths
+            .iter()
+            .map(|t| tile_off(&mut b, *t))
+            .collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
         None
@@ -690,10 +703,7 @@ fn row_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
-fn stat_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    s: &StatInput<'_>,
-) -> WIPOffset<StatReader<'b>> {
+fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<StatReader<'b>> {
     let name_off = b.create_string(s.name);
     let tab = b.start_table();
     b.push_slot_always(VT_STAT_INDEX, s.index);
@@ -818,7 +828,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
     let batch = InteractBatchReader::from_bytes(buf)?;
     let mut out = Vec::with_capacity(batch.reqs().len());
     for row in batch.reqs() {
-        let op = row.op().ok_or_else(|| "interact row has no op".to_string())?;
+        let op = row
+            .op()
+            .ok_or_else(|| "interact row has no op".to_string())?;
         match op {
             "open-booth" => out.push(crate::shim::InteractReq::OpenBooth {
                 x: row.x(),

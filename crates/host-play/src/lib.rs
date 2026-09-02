@@ -212,6 +212,16 @@ pub enum WireCmd {
     Walk { x: i32, z: i32, level: i32 },
 }
 
+/// The per-slot walk arms keyed by username (shared with the panel and
+/// TUI; [`arm_walk_on`] latches the picked route on the focused slot).
+pub type WalkArms = Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>;
+
+/// `arm_walk_on` no-path result: the picked dest has no route under the
+/// caller's nav options (the caller keeps its picked dest and shows a
+/// short error).
+#[derive(Debug)]
+pub struct NoPath;
+
 /// Route `from` → `dest` over `world` and latch the found route on the
 /// focused slot's [`WalkArm`] (keyed by username) when one is named.
 /// `options` carries the caller's nav settings (`allow_teleports` /
@@ -221,17 +231,17 @@ pub enum WireCmd {
 /// keeps the mine sealed. `state` gates payable edges: the focused slot's
 /// last published snapshot facts, fail-closed [`WorldState::empty`] when
 /// none. On success the caller's picked dest is stored by the arm's
-/// route; returns `Err` when no path exists (the caller keeps its picked
-/// dest and shows a short error).
+/// route; returns `Err(NoPath)` when no path exists (the caller keeps
+/// its picked dest and shows a short error).
 pub fn arm_walk_on(
     world: &NavWorld,
     from: Tile,
     dest: Tile,
     options: FindOptions,
     state: &WorldState,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &WalkArms,
     focused: Option<&str>,
-) -> Result<Route, ()> {
+) -> Result<Route, NoPath> {
     let from_w = WorldTile {
         x: from.x,
         z: from.z,
@@ -279,7 +289,7 @@ pub fn arm_walk_on(
             }
             Ok(route)
         }
-        Err(_) => Err(()),
+        Err(_) => Err(NoPath),
     }
 }
 
@@ -771,9 +781,10 @@ fn script_snapshot_fb(
         s.locs()
             .iter()
             .filter(|l| {
-                l.actions
-                    .iter()
-                    .any(|a| a.as_deref().is_some_and(|a| a.eq_ignore_ascii_case("Use-quickly")))
+                l.actions.iter().any(|a| {
+                    a.as_deref()
+                        .is_some_and(|a| a.eq_ignore_ascii_case("Use-quickly"))
+                })
             })
             .map(|l| TileInput {
                 x: l.tile.x,
@@ -822,8 +833,7 @@ fn script_snapshot_fb(
         bank: bank.as_deref().unwrap_or(&[]),
         bank_side: bank_side.as_deref().unwrap_or(&[]),
         bank_open: snapshot.is_some_and(|s| s.bank_component_id() != -1),
-        bank_loaded: snapshot
-            .is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
+        bank_loaded: snapshot.is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty()),
         hold,
         ours,
     };
@@ -3318,8 +3328,7 @@ mod tests {
             cache.objs[2].id = 2;
             cache.objs[2].name = "Lobster".into();
             cache.locs.extend(
-                (0..(2214usize.saturating_sub(cache.locs.len())))
-                    .map(|_| LocType::default()),
+                (0..(2214usize.saturating_sub(cache.locs.len()))).map(|_| LocType::default()),
             );
             cache.locs[2213].id = 2213;
             cache.locs[2213].name = "Bank booth".into();
@@ -3327,7 +3336,8 @@ mod tests {
         }
         // The booth: a wall at scene (5, 6) whose typecode encodes loc 2213.
         let booth_typecode = 0x4000_0000 + (2213 << 14) + 1 + (2 << 7);
-        c.world.set_wall(0, 5, 6, 0, 0, 0, booth_typecode, 0, 0, 0, 0, 0);
+        c.world
+            .set_wall(0, 5, 6, 0, 0, 0, booth_typecode, 0, 0, 0, 0, 0);
         // Bank: main modal 600 wrapping the withdraw component 601
         // (Bones × 20, ops `[Withdraw 1, ...]`).
         c.main_modal_id = 600;
@@ -3416,14 +3426,17 @@ mod tests {
     fn dispatch_script_interact_sends_open_deposit_withdraw() {
         let mut c = bank_client();
         let mut snap = GameSnapshot::new();
-        snap.rebuild(&mut c);
+        snap.rebuild(&c);
         let names = api::obj_names::ObjNames::from_objs(&{
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
             cache.objs.clone()
         });
         let (navs, world) = empty_nav();
         assert_eq!(
-            snap.locs().iter().find(|l| l.tile.x == 3205 && l.tile.z == 3206).map(|l| l.actions.clone()),
+            snap.locs()
+                .iter()
+                .find(|l| l.tile.x == 3205 && l.tile.z == 3206)
+                .map(|l| l.actions.clone()),
             Some(vec![None, Some("Use-quickly".into()), None, None, None]),
             "the seeded booth loc carries the Use-quickly op"
         );
@@ -3493,9 +3506,18 @@ mod tests {
             None,
             "alice",
             vec![
-                script::shim::InteractReq::OpenBooth { x: 3299, z: 3299, level: 0 },
-                script::shim::InteractReq::Deposit { name: "Lobster".into() },
-                script::shim::InteractReq::Withdraw { name: "Lobster".into(), action: "Withdraw 1".into() },
+                script::shim::InteractReq::OpenBooth {
+                    x: 3299,
+                    z: 3299,
+                    level: 0
+                },
+                script::shim::InteractReq::Deposit {
+                    name: "Lobster".into()
+                },
+                script::shim::InteractReq::Withdraw {
+                    name: "Lobster".into(),
+                    action: "Withdraw 1".into()
+                },
             ],
         ));
         assert_eq!(
@@ -3665,19 +3687,11 @@ mod tests {
             missing,
             vec![nav::router::MissingReq::WearAny { ids: vec![2] }]
         );
-        let bank_rows: Vec<(i32, i32)> = snap
-            .bank()
-            .iter()
-            .map(|it| (it.def.id, it.count))
-            .collect();
-        let fetch = nav::bank_fetch::plan_bank_fetch(
-            &missing,
-            &state,
-            &bank_rows,
-            world.banks(),
-            from,
-        )
-        .expect("the banked knife plans a trip");
+        let bank_rows: Vec<(i32, i32)> =
+            snap.bank().iter().map(|it| (it.def.id, it.count)).collect();
+        let fetch =
+            nav::bank_fetch::plan_bank_fetch(&missing, &state, &bank_rows, world.banks(), from)
+                .expect("the banked knife plans a trip");
         assert_eq!(
             fetch.steps,
             vec![
@@ -4154,9 +4168,10 @@ mod tests {
         assert!(!view.ours());
 
         // No tile / no snapshot: fail-closed nulls and flags.
-        let (bare_bytes, _) = script_snapshot_fb(None, false, 1, None, false, None, None, None, None, false, true);
-        let bare =
-            script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
+        let (bare_bytes, _) = script_snapshot_fb(
+            None, false, 1, None, false, None, None, None, None, false, true,
+        );
+        let bare = script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
         assert!(bare.here().is_none());
         assert!(bare.inv().is_empty());
         assert!(bare.stats().is_empty());
@@ -4197,7 +4212,11 @@ mod tests {
         let inv = vec![(1, 2)];
         let world = Some(Arc::new(NavWorld::from_parts(
             nav::collision::WorldCollision {
-                origin: WorldTile { x: 0, z: 0, level: 0 },
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
                 width: 2,
                 height: 1,
                 walk: vec![0u8; 2],
@@ -4207,7 +4226,11 @@ mod tests {
             nav::transport::TransportGraph::default(),
             vec![nav::pack::BankStand {
                 name: "Bank booth".into(),
-                tile: WorldTile { x: 1, z: 0, level: 0 },
+                tile: WorldTile {
+                    x: 1,
+                    z: 0,
+                    level: 0,
+                },
                 access: nav::pack::BankAccess::Booth { op: 2 },
             }],
         )));
@@ -4530,8 +4553,7 @@ mod tests {
         // skipped. The blob's contents are pinned by the script crate's
         // load_isolate tests; here the held edge drives a live isolate's
         // post path without dispatching, and the unheld edge dispatches.
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (navs, world) = empty_nav();
@@ -4560,13 +4582,41 @@ mod tests {
         // Held edge: the blob posts into the live isolate (no dispatch, no
         // driver write).
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, Some((3200, 3200, 0)), None, None, None, None,
-            &scripts, &cheats, &navs, &world, true, false
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3200, 3200, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            true,
+            false
         ));
         // Unheld edge: the same slot dispatches.
         assert!(script_observe(
-            &mut c, "alice", true, true, 2, Some((3200, 3200, 0)), None, None, None, None,
-            &scripts, &cheats, &navs, &world, false, false
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3200, 3200, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false
         ));
         scripts.lock().unwrap().get_mut("alice").unwrap().stop();
     }
@@ -4710,8 +4760,7 @@ mod tests {
         // — while detect still publishes the kind (chrome can show it).
         // The claim knock itself stays Host for JS isolates (no Handle
         // from V8); the Handle here is the host-play path's own decision.
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let src = "export default class T extends LoopingBot { ignoredRandoms() { return ['swarm']; } loop() {} }";
         scripts
             .lock()
@@ -4729,7 +4778,11 @@ mod tests {
             let Some(slot) = all.get_mut("alice") else {
                 return RandomClaim::Host;
             };
-            if slot.ignored_randoms().iter().any(|n| n.eq_ignore_ascii_case(&ev.name)) {
+            if slot
+                .ignored_randoms()
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(&ev.name))
+            {
                 return RandomClaim::Handle;
             }
             slot.on_random(ev)
@@ -4777,8 +4830,7 @@ mod tests {
         // shim's `pending()` mapping is pinned by the script crate's
         // load_isolate tests; here the held edge drives the full
         // guardian -> observe -> isolate chain.
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let src = "export default class T extends LoopingBot { loop() {} }";
         scripts
             .lock()
@@ -4805,8 +4857,22 @@ mod tests {
         let (navs, world) = empty_nav();
         let cheats = Arc::new(Mutex::new(HashMap::new()));
         assert!(!script_observe(
-            &mut c, "alice", true, true, 1, Some((3200, 3200, 0)), None, None, None, None,
-            &scripts, &cheats, &navs, &world, status.hold, status.ours
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3200, 3200, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            status.hold,
+            status.ours
         ));
         let hold = scripts
             .lock()

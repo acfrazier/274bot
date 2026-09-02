@@ -73,9 +73,19 @@ If you rotated the engine key, login reads the public half from
 `$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
 layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
+## Public world (`w1.rs2b2t.com:43594`)
+
+`BOT_TARGET=prod` (alias `live`) or `host-play --prod` switches the login
+host to **`w1.rs2b2t.com:43594`** and uses the **baked public RSA** — no
+`LOGIN_RSAN`/`LOGIN_RSAE`, no `private.pem`. Port stays 43594. This is a
+client `bot_target.rs` world switch (Cargo `TARGET` remains the rustc
+triple), not a hosted wall and not a w1 CI. Alpha's tested path is the
+local engine; the public world is built in for a later bin, and the login
+FIFO stays under the production throttle numbers above either way.
+
 `$ENGINE_DIR` defaults to `$HOME/experiments/Server/engine`. Cache and
 nav-pack paths follow it. Cargo `TARGET` is the rustc triple, not a world
-switch. Alpha’s supported scenario is this local engine.
+switch. Alpha’s supported scenario is the local engine.
 
 ## Wiring
 

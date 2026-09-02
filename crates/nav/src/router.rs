@@ -1787,7 +1787,14 @@ mod tests {
         );
         // None worn: one WearAny listing both alternatives.
         assert_eq!(
-            find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &WorldState::empty()),
+            find_missing_item_reqs(
+                &wc,
+                &g,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty()
+            ),
             Some(vec![MissingReq::WearAny {
                 ids: vec![1277, 1321],
             }]),

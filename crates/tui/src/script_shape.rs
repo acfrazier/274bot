@@ -229,15 +229,7 @@ mod tests {
     #[test]
     fn browse_open_picks_a_card_row() {
         let names = vec!["BoneBurier".to_string(), "MineRobber".to_string()];
-        let pane = ScriptPane::new(
-            script::RunState::Idle,
-            None,
-            &names,
-            true,
-            false,
-            "",
-            None,
-        );
+        let pane = ScriptPane::new(script::RunState::Idle, None, &names, true, false, "", None);
         let area = Rect::new(0, 0, 60, 7);
         // With the picker open the card rows start after the state and
         // buttons lines: inner.y + 2 = area.y + 3.

@@ -7,7 +7,12 @@ Stop, JS Load) and WalkTo are in-tree; honest bot scripts are not this
 tag (see [CHANGELOG.md](CHANGELOG.md) for v0.1.5 / v0.2.x).
 
 Alpha is not turnkey rs2b2t: you run a local 274 engine and point
-`--cache` at a pack. Live cache fetch is a beta goal. PRs that read like
+`--cache` at a pack. Live cache fetch is a beta goal. The public world is
+built in but untested CI territory: `BOT_TARGET=prod` (alias `live`) or
+`host-play --prod` talks to **`w1.rs2b2t.com:43594`** with the baked
+public RSA. Local is the default; Cargo `TARGET` is the rustc triple, not
+a world switch. This is **not** Jagex and not a hosted wall — there is **no
+w1 CI** and no asset server. PRs that read like
 unreviewed model output will be rejected; the product bar is a host that
 does not suck.
 
@@ -23,10 +28,10 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
 - RSA: stock LC Server uses the **Java default pair** — no bake. Rotated
   `private.pem` is read at login from `$ENGINE_DIR/data/config/private.pem`
   (or `LOGIN_RSAN` / `LOGIN_RSAE`).
-- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack` (`274V` v7), baked
+- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack` (`274V` v8), baked
   with `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
   `gates.loc` follows the maps dir's parent. Alpha assumes you already
-  have a Server tree. Rebake after this tag (`274V` v7; v6 is `BadVersion`).
+  have a Server tree. Rebake after this tag (`274V` v8; v7 is `BadVersion`).
 
 ## Clone and run
 

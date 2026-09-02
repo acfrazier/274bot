@@ -791,7 +791,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let loops = iso.probe("__rs_loops").unwrap();
-    assert_eq!(loops, 1, "parked: loop must not re-enter while the wait is active");
+    assert_eq!(
+        loops, 1,
+        "parked: loop must not re-enter while the wait is active"
+    );
     let ok = iso.probe("__rs_ok").unwrap();
     assert_eq!(ok, serde_json::Value::Null, "delayUntil not settled yet");
     iso.on_game_tick(3); // cond true: the wait clears, loop 1 finishes
@@ -862,7 +865,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let done = iso.probe("__rs_done");
-    assert!(done.is_err(), "two posted ticks are not enough for delayTicks(2)");
+    assert!(
+        done.is_err(),
+        "two posted ticks are not enough for delayTicks(2)"
+    );
     iso.on_game_tick(3); // dueTick reached: the wait clears
     let done = iso.probe("__rs_done").unwrap();
     assert_eq!(done, true, "delayTicks(2) settled after two posted ticks");
@@ -893,7 +899,10 @@ export default class T extends LoopingBot {
     std::thread::sleep(std::time::Duration::from_millis(140));
     iso.on_game_tick(2); // wall clock elapsed: the wait settles
     let done = iso.probe("__rs_done").unwrap();
-    assert_eq!(done, true, "delay(100) settled after the wall clock elapsed");
+    assert_eq!(
+        done, true,
+        "delay(100) settled after the wall clock elapsed"
+    );
     iso.on_game_tick(3);
     let loops = iso.probe("__rs_loops").unwrap();
     assert_eq!(loops, 2, "loop re-enters after delay");
@@ -971,17 +980,29 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("posted snapshot reads back");
-    assert_eq!(value["bones"], 2, "Inventory.count('Bones') sums the posted inv row");
+    assert_eq!(
+        value["bones"], 2,
+        "Inventory.count('Bones') sums the posted inv row"
+    );
     assert_eq!(value["drag"], 0, "a name never posted fails closed to 0");
-    assert_eq!(value["pending"], true, "EventSignal.pending() is hold as posted");
+    assert_eq!(
+        value["pending"], true,
+        "EventSignal.pending() is hold as posted"
+    );
     assert_eq!(
         value["ignored"],
         serde_json::json!([]),
         "no posted ignore list defaults to []"
     );
     assert_eq!(value["xp"], 1300, "Skills.xp reads the posted stats row");
-    assert_eq!(value["idx"], 0, "Skills.index finds the posted stat by name");
-    assert_eq!(value["tile"]["x"], 3200, "Game.tile() reads the posted here tile");
+    assert_eq!(
+        value["idx"], 0,
+        "Skills.index finds the posted stat by name"
+    );
+    assert_eq!(
+        value["tile"]["x"], 3200,
+        "Game.tile() reads the posted here tile"
+    );
     assert_eq!(value["ingame"], true, "Game.ingame() reads the posted flag");
     iso.join();
 }
@@ -1003,7 +1024,9 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
     iso.on_game_tick(1);
-    let value = iso.probe("__probe").expect("instance ignore list reads back");
+    let value = iso
+        .probe("__probe")
+        .expect("instance ignore list reads back");
     assert_eq!(
         value,
         serde_json::json!(["swarm", "rock golem"]),
@@ -1075,13 +1098,18 @@ export default class T extends LoopingBot {
     iso.post_snapshot(delta);
     iso.on_game_tick(2);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(value["bones"], 2, "Inventory.count still 2 after an inv-less delta");
+    assert_eq!(
+        value["bones"], 2,
+        "Inventory.count still 2 after an inv-less delta"
+    );
 
     // Third post: inv count 1 -> the inv table comes back and count reads 1.
     snap.inv = &[(Some("Bones"), 1)];
     let (delta, fp3) = script::isolate_fb::encode_snapshot_delta(Some(&fp2), &snap, false);
     assert!(
-        script::isolate_fb::decode_snapshot(&delta).unwrap().has_inv(),
+        script::isolate_fb::decode_snapshot(&delta)
+            .unwrap()
+            .has_inv(),
         "changed inv is carried"
     );
     iso.post_snapshot(delta);
@@ -1274,7 +1302,11 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Walk { x: 200, z: 100, level: 0 }],
+        vec![script::shim::InteractReq::Walk {
+            x: 200,
+            z: 100,
+            level: 0
+        }],
         "no booth in range: the nearest packed stand gets a walk"
     );
     iso.join();

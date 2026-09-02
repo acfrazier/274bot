@@ -581,12 +581,7 @@ mod isolate {
                         // Decode the FlatBuffer interact batch (no JSON).
                         match crate::isolate_fb::decode_interact_batch(&bytes) {
                             Ok(reqs) => self.interacts.lock().unwrap().extend(reqs),
-                            Err(e) => {
-                                self.logs
-                                    .lock()
-                                    .unwrap()
-                                    .push(format!("interact: {e}"))
-                            }
+                            Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
                         }
                     }
                     ThreadMsg::Paint(value) => {
@@ -1122,7 +1117,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // parked conds (time waits too) — the wait stays parked
                     // until the hold lifts. Pause already freezes above.
                     let held = runtime
-                        .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.hold)")
+                        .eval::<bool>(
+                            "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.hold)",
+                        )
                         .unwrap_or(false);
                     if held {
                         let _ = out.send(ThreadMsg::Completed(n));
@@ -1135,7 +1132,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // event loop, so the resolved wait's continuation (which
                     // may re-park or complete the tick) lands here.
                     let parked = runtime
-                        .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)")
+                        .eval::<bool>(
+                            "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)",
+                        )
                         .unwrap_or(false);
                     let result: Result<serde_json::Value, rustyscript::Error> = if parked {
                         runtime.call_function(None, "__rs2b0t_pump", json_args!(n))

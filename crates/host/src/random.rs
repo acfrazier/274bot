@@ -9,7 +9,9 @@ use std::collections::HashMap;
 
 pub mod maze;
 
-use api::interact::{op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY};
+use api::interact::{
+    op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY,
+};
 use api::query::npc_by_index;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext};
 use vault::ProfileSettings;
@@ -356,14 +358,14 @@ fn skill_match(text: &str, want: &str) -> bool {
 /// climb-rope, lean, glass-wall, glass-box). Unknown → `None`.
 fn mime_answer(seq: i32) -> Option<usize> {
     match seq {
-        860 => Some(0),   // emote_cry
-        857 => Some(1),   // emote_think
-        861 => Some(2),   // emote_laugh
-        866 => Some(3),   // emote_dance
-        1130 => Some(4),  // emote_climbing_rope
-        1129 => Some(5),  // emote_mime_lean
-        1128 => Some(6),  // emote_glass_wall
-        1131 => Some(7),  // emote_glass_box
+        860 => Some(0),  // emote_cry
+        857 => Some(1),  // emote_think
+        861 => Some(2),  // emote_laugh
+        866 => Some(3),  // emote_dance
+        1130 => Some(4), // emote_climbing_rope
+        1129 => Some(5), // emote_mime_lean
+        1128 => Some(6), // emote_glass_wall
+        1131 => Some(7), // emote_glass_box
         _ => None,
     }
 }
@@ -406,14 +408,18 @@ fn solve_cube(question: &str, models: [Option<i32>; 3]) -> Option<usize> {
         .and_then(|r| r.strip_suffix('?'))
     {
         let shape = shape.trim();
-        return parts.iter().position(|p| p.expect("checked above").0 == shape);
+        return parts
+            .iter()
+            .position(|p| p.expect("checked above").0 == shape);
     }
     if let Some(colour) = q
         .strip_prefix("which shape is ")
         .and_then(|r| r.strip_suffix('?'))
     {
         let colour = colour.trim();
-        return parts.iter().position(|p| p.expect("checked above").1 == colour);
+        return parts
+            .iter()
+            .position(|p| p.expect("checked above").1 == colour);
     }
     None
 }
@@ -987,7 +993,10 @@ impl Guardian {
         }
         // Watch the mime NPC (rs2b0t watches every frame).
         for npc in snap.npcs() {
-            if npc.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case("mime"))
+            if npc
+                .name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case("mime"))
                 && mime_answer(npc.animation).is_some()
             {
                 self.mime_last_seen = Some(npc.animation);
@@ -1045,7 +1054,11 @@ impl Guardian {
             press(driver, CUBE_IF_BUTTONS[answer]);
             return;
         }
-        let Some(held) = snap.inventory().iter().find(|i| i.def.id == STRANGE_BOX_OBJ) else {
+        let Some(held) = snap
+            .inventory()
+            .iter()
+            .find(|i| i.def.id == STRANGE_BOX_OBJ)
+        else {
             self.acting = false;
             return;
         };
@@ -1102,9 +1115,7 @@ impl Guardian {
         );
         if !keep {
             if crate::debug_enabled() {
-                eprintln!(
-                    "[host] maze: pass gave up; restarting the route from ({px},{pz})"
-                );
+                eprintln!("[host] maze: pass gave up; restarting the route from ({px},{pz})");
             }
             self.maze = None;
         }
@@ -1428,7 +1439,9 @@ fn step_maze_phase<D: Driver>(
         maze::MazePhase::OpenShrine { from } => {
             if cheb(me, from) >= 2 || st.refused || st.wait_ticks >= maze::OPEN_WAIT {
                 st.refused = false;
-                st.phase = maze::MazePhase::Touch { pass: st.touch_pass };
+                st.phase = maze::MazePhase::Touch {
+                    pass: st.touch_pass,
+                };
                 st.walk_from = None;
                 st.walk_sends = 0;
                 st.wait_ticks = 0;
@@ -2439,7 +2452,7 @@ mod tests {
         assert!(status.hold, "lamp auto-use holds while rubbing");
         assert_eq!(
             drv.menus,
-            vec![(0, MiniMenuAction::OP_HELD4, LAMP_OBJ as i32, 0, 301)],
+            vec![(0, MiniMenuAction::OP_HELD4, LAMP_OBJ, 0, 301)],
             "Rub is the lamp's 4th held op"
         );
 
@@ -2609,17 +2622,26 @@ mod tests {
     #[test]
     fn solve_cube_answers_colour_question_by_shape_position() {
         assert_eq!(
-            solve_cube("What colour is the Square?", [Some(3069), Some(3065), Some(3075)]),
+            solve_cube(
+                "What colour is the Square?",
+                [Some(3069), Some(3065), Some(3075)]
+            ),
             Some(0),
             "square-red sits in model slot 0"
         );
         assert_eq!(
-            solve_cube("What colour is the Star?", [Some(3063), Some(3085), Some(3071)]),
+            solve_cube(
+                "What colour is the Star?",
+                [Some(3063), Some(3085), Some(3071)]
+            ),
             Some(1),
             "the star is model slot 1"
         );
         assert_eq!(
-            solve_cube("What colour is the Half Moon?", [Some(3089), Some(3063), Some(3079)]),
+            solve_cube(
+                "What colour is the Half Moon?",
+                [Some(3089), Some(3063), Some(3079)]
+            ),
             Some(0),
             "two-word shape still matches"
         );
@@ -2643,7 +2665,10 @@ mod tests {
             "a missing model obj id is unsolvable"
         );
         assert_eq!(
-            solve_cube("What colour is the Potato?", [Some(3063), Some(3071), Some(3079)]),
+            solve_cube(
+                "What colour is the Potato?",
+                [Some(3063), Some(3071), Some(3079)]
+            ),
             None,
             "a shape not on the cube is unsolvable"
         );
@@ -2807,7 +2832,10 @@ mod tests {
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert!(status.hold);
-        assert!(drv.menus.is_empty(), "no repeat press while the chat stays up");
+        assert!(
+            drv.menus.is_empty(),
+            "no repeat press while the chat stays up"
+        );
         assert!(drv.actions.is_empty());
 
         // Tick 4: off the mime square → the hold lifts.
@@ -2959,8 +2987,7 @@ mod tests {
 
     /// The NW spawn's route (door 0 (2890,4592), door 1 (2888,4587)).
     fn nw_route() -> Vec<(i32, i32)> {
-        maze::select_route(maze::graph(), maze::MAZE_SPAWNS[0])
-            .expect("the NW spawn solves")
+        maze::select_route(maze::graph(), maze::MAZE_SPAWNS[0]).expect("the NW spawn solves")
     }
 
     #[test]
@@ -3027,7 +3054,10 @@ mod tests {
         plant_player(&mut c, "Test", 2890, 4593);
         tick_at(&mut c, &mut snap);
         g.tick(&mut drv, &snap, &settings, 0, None);
-        assert_eq!(drv.menus, vec![(0, MiniMenuAction::OP_LOC1, 3628, 2890, 4592)]);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_LOC1, 3628, 2890, 4592)]
+        );
 
         // The door refuses: the wrong-door mesbox opens → continue drains
         // it (rs2b0t clearMesbox).
@@ -3109,7 +3139,13 @@ mod tests {
         assert!(status.hold, "the trapped hold stays while touching");
         assert_eq!(
             drv.menus,
-            vec![(0, MiniMenuAction::OP_LOC1, maze::MAZE_SHRINE_LOC, 2911, 4575)],
+            vec![(
+                0,
+                MiniMenuAction::OP_LOC1,
+                maze::MAZE_SHRINE_LOC,
+                2911,
+                4575
+            )],
             "Touch is the shrine's OP_LOC1"
         );
         assert!(drv.walks.is_empty(), "near the shrine: no stand walk");

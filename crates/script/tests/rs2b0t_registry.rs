@@ -64,7 +64,10 @@ fn parse_registry_yields_register_name_and_import_path() {
         "picker name is the register name, not the folder"
     );
     assert_eq!(cards[1].rel_path, "./AIOTeleport/AIOTeleport.js");
-    assert_eq!(cards[2].name, "ShopRunner", "named import matches the create");
+    assert_eq!(
+        cards[2].name, "ShopRunner",
+        "named import matches the create"
+    );
     assert_eq!(cards[2].rel_path, "./ShopRunner/ShopRunner.js");
 }
 
@@ -158,7 +161,9 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
 
     let path_file = dir.join("rs2b0t-path");
     let mut lib = JsLibrary::new(dir.join("js-scripts.json"));
-    let n = lib.register_rs2b0t(&root, &path_file).expect("registry fills");
+    let n = lib
+        .register_rs2b0t(&root, &path_file)
+        .expect("registry fills");
     assert_eq!(n, 2);
 
     let bone = lib.get("BoneBurier").expect("BoneBurier card");
@@ -215,7 +220,9 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
         .expect("registry fills");
     assert_eq!(n, 1, "WalkTo is host nav, never a JS card");
 
-    let card = lib.get("AIO Teleport").expect("register name is the picker name");
+    let card = lib
+        .get("AIO Teleport")
+        .expect("register name is the picker name");
     assert_eq!(card.shape, LoadShape::CompatClass);
     assert!(card.source.contains("class T"));
     assert!(lib.get("WalkTo").is_none());
@@ -228,4 +235,3 @@ fn parse_registry_is_relative_path_to_catalog_dir() {
     let p = script::script_file_path(root, &cards[0].rel_path);
     assert_eq!(p, root.join("src/bot/scripts/BoneBurier/BoneBurier.js"));
 }
-

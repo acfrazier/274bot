@@ -82,8 +82,10 @@ impl PaintOverlay {
             .position([x, y], Condition::Always)
             .size([w, height], Condition::Always)
             .build(|| {
-                if ui.is_mouse_hovering_rect([title_row[0], title_row[1]], [title_row[2], title_row[3]])
-                    && ui.is_mouse_clicked(MouseButton::Left)
+                if ui.is_mouse_hovering_rect(
+                    [title_row[0], title_row[1]],
+                    [title_row[2], title_row[3]],
+                ) && ui.is_mouse_clicked(MouseButton::Left)
                 {
                     self.collapsed = !self.collapsed;
                 }
@@ -226,7 +228,8 @@ mod tests {
         if let Some(m) = mouse {
             ctx.io_mut().add_mouse_pos_event(m);
         }
-        ctx.io_mut().add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
         {
             let ui = ctx.frame();
             overlay.frame(ui, Some(p), [10.0, 20.0], [765.0, 503.0]);

@@ -19,7 +19,7 @@ The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D
 
 ## What it is not
 
-- No hosted product, no official anything: **not** Jagex, **not** official Lost City, **not** Fairy Ring, **not** a file-port of rs2b0t (rs2b0t’s chrome is mimicked in the panel; the code is our own).
+- No hosted product, no official anything: **not** Jagex, **not** official Lost City, **not** Fairy Ring, **not** a file-port of rs2b0t (rs2b0t’s chrome is mimicked in the panel; the code is our own). `BOT_TARGET=prod`/`live` is a built-in world switch to the public rs2b2t server, **not** a hosted wall and **not** a w1 CI.
 - Do **not** push `Fairy-Ring/FR-client-rust`. The live client branch is **`r274-bh-modular`**. `r274-modular` is the same refactor without bot-host hooks. `r274-bothost` is the pre-modular fork.
 - Still no bot action API inside `client`. Packet timing and `doAction` stay Java-shaped. Client MIT/NOTICE stay in the submodule.
 - This tree ships **no Jagex assets**; you bring your own local engine and pack cache.
@@ -35,7 +35,14 @@ You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the pac
 
 Stock Lost City Server uses the **Java default login RSA**. That is the usual local-dev case — no key bake. If you rotated the engine `private.pem`, 274bot reads the public half from `$ENGINE_DIR/data/config/private.pem` at login (or `LOGIN_RSAN` / `LOGIN_RSAE`). Then `cargo run --release -p panel --bin panel-play`. Nav pack: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
 
-Alpha’s supported world is the **local engine**. Cargo `TARGET` is the rustc triple, not a world switch.
+Alpha’s supported world is the **local engine** (loopback `127.0.0.1:43594`,
+login RSA from the engine or `LOGIN_RSAN`/`LOGIN_RSAE`). The public world
+is built in: `BOT_TARGET=prod` (alias `live`) or `host-play --prod` talks
+to **`w1.rs2b2t.com:43594`** with the baked public RSA — no key bake at
+runtime. Everything else stays loopback. Cargo `TARGET` is the **rustc
+triple**, not a world switch. This is **not** Jagex and not a hosted wall:
+no `w1` GitHub CI, no asset server, no SLA. The live world needs your own
+credentials; the local engine stays the tested path.
 
 ```bash
 export BOT_VAULT_PASS=bot
@@ -85,7 +92,7 @@ Bake the collision + transport pack, then WalkTo / `Traveller::follow` over it:
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **7**). Rebake after this tag — v6 files are `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **8**). Rebake after this tag — v7 files are `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests
 

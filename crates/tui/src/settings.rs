@@ -171,8 +171,10 @@ mod tests {
     #[test]
     fn popup_flips_random_events_on_the_profile() {
         let mut settings = ProfileSettings::default();
-        let mut state = SettingsState::default();
-        state.open = true;
+        let mut state = SettingsState {
+            open: true,
+            ..Default::default()
+        };
         assert!(settings.random_events, "default random events on");
         let first = {
             let mut pane = SettingsPane::new(&mut settings, &mut state);

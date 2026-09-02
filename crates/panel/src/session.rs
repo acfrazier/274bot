@@ -6260,8 +6260,7 @@ mod tests {
         // catalog-free: the fill is first Load/Browse only, so panel unit
         // tests that merely construct a `Session` never parse a real
         // catalog or rewrite `~/.274bot/rs2b0t-path`.
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-rs2b0t-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("274bot-panel-rs2b0t-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let home = dir.join("home");
         let root = dir.join("rs2b0t");
@@ -6297,10 +6296,9 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         );
         // First Browse fills once.
         s.fill_rs2b0t_cards_once();
-        let card = s
-            .js
-            .get("BoneBurier")
-            .expect("BoneBurier card filled on first Browse");
+        let card =
+            s.js.get("BoneBurier")
+                .expect("BoneBurier card filled on first Browse");
         assert_eq!(card.shape, script::LoadShape::CompatClass);
         assert!(
             home.join(".274bot/rs2b0t-path").is_file(),

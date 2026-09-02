@@ -253,14 +253,16 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 /// bit-plane, the per-edge `worn_req` id list, and the trailing bank
 /// stand table (see [`BankStand`]); the raw flags are
 /// not resident and not on the wire (see the flags sidecar).
-pub fn encode(
-    collision: &WorldCollision,
-    graph: &TransportGraph,
-    banks: &[BankStand],
-) -> Vec<u8> {
+pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankStand]) -> Vec<u8> {
     let edge_count = graph.edges.len() + graph.teleports.len();
     let mut out = Vec::with_capacity(
-        4 + 1 + 12 + 8 + collision.walk.len() + collision.blocked.len() * 8 + 4 + edge_count * 96
+        4 + 1
+            + 12
+            + 8
+            + collision.walk.len()
+            + collision.blocked.len() * 8
+            + 4
+            + edge_count * 96
             + 4
             + banks.len() * 48,
     );
@@ -655,9 +657,7 @@ fn read_bank_stands(r: &mut Cursor<&[u8]>) -> Result<Vec<BankStand>, PackError> 
             level: read_i32(r)?,
         };
         let access = match read_u8(r)? {
-            0 => BankAccess::Booth {
-                op: read_i32(r)?,
-            },
+            0 => BankAccess::Booth { op: read_i32(r)? },
             1 => {
                 let npc = read_name(r)?;
                 let op = read_i32(r)?;
@@ -694,9 +694,7 @@ fn read_name(r: &mut Cursor<&[u8]>) -> Result<String, PackError> {
     let len = read_u32(r)? as usize;
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf).map_err(|_| PackError::Truncated)?;
-    String::from_utf8(buf).map_err(|_| {
-        PackError::BadLength("bank stand name is not UTF-8".into())
-    })
+    String::from_utf8(buf).map_err(|_| PackError::BadLength("bank stand name is not UTF-8".into()))
 }
 
 /// Bake the bank stand table from the Server content tree (the maps
@@ -1269,9 +1267,9 @@ mod tests {
 
     use super::{
         decode, decode_flags_sidecar, decode_grid, derive_banks, encode, encode_flags_sidecar,
-        encode_grid, merge_squares, parse_door_config, parse_door_config_ids,
-        parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, walkable_dots, BankAccess,
-        BankStand, Mapsquare, SQUARE, VERSION,
+        encode_grid, merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
+        parse_mapsquare_text, parse_passable_locs, walkable_dots, BankAccess, BankStand, Mapsquare,
+        SQUARE, VERSION,
     };
     use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
@@ -2188,7 +2186,11 @@ blockwalk=yes
         .unwrap();
         let banks = derive_banks(&dir);
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(banks.len(), 1, "only the bankbooth placement becomes a stand");
+        assert_eq!(
+            banks.len(),
+            1,
+            "only the bankbooth placement becomes a stand"
+        );
         assert_eq!(banks[0].name, "Bank booth");
         assert_eq!(
             banks[0].tile,

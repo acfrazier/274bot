@@ -662,9 +662,8 @@ impl TuiSession {
             // The script's paint frame rides the status row (copied from
             // the isolate each observe); the chat pane shows it in place
             // of the game chat while it is non-empty.
-            app.chat_data.script_paint = app
-                .focused_status()
-                .and_then(|st| st.script_paint.clone());
+            app.chat_data.script_paint =
+                app.focused_status().and_then(|st| st.script_paint.clone());
             // Stop drops the isolate (and its paint with it); reset the
             // operator's game-chat toggle when no paint is showing so a
             // fresh Start shows the new paint by default instead of
@@ -908,6 +907,22 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
     }
 }
 
+pub fn main() -> ExitCode {
+    let args = parse_args();
+    let mode = match args.live.clone() {
+        Some(name) => RunMode::Live(name),
+        None => RunMode::Interactive,
+    };
+    match run(&args, mode) {
+        Ok(0) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(code as u8),
+        Err(e) => {
+            eprintln!("tui-play: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -969,21 +984,5 @@ mod tests {
             !app.chat_data.show_game_chat,
             "a stopped/not-yet-painted slot must fall back to showing paint by default"
         );
-    }
-}
-
-pub fn main() -> ExitCode {
-    let args = parse_args();
-    let mode = match args.live.clone() {
-        Some(name) => RunMode::Live(name),
-        None => RunMode::Interactive,
-    };
-    match run(&args, mode) {
-        Ok(0) => ExitCode::SUCCESS,
-        Ok(code) => ExitCode::from(code as u8),
-        Err(e) => {
-            eprintln!("tui-play: {e}");
-            ExitCode::FAILURE
-        }
     }
 }

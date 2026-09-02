@@ -26,16 +26,16 @@ still prints PASS/FAIL.
 | --- | --- |
 | Strip | vault / running slot names; Tab / click focuses (`Play::focus`) |
 | Map | packed collision dots, town pins, `@` here, remaining-walk `*`. Walk-confirm is `host_play::arm_walk_on`. WASD one-tile walk. Empty title is `map (no nav pack)` when `$NAV_PACK` / `~/.274bot/274bot.navpack` did not load. |
-| Chat | game chat ring + NPC dialogue Continue / Answer |
+| Chat | game chat ring + NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back) |
 | Status | same `SlotStatus` + `RandomStatus` as the panel |
 | Inv / stats / locs | focused snapshot (bank UI is 0.1.5) |
-| Script | chrome shape only (unwired) |
+| Script | Browse/Start/Pause/Stop + Load over the same JS library as the panel; `$RS2B0T` catalog cards included |
 | Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` (persisted on the profile) |
 
 `q` quits, `s` settings, `m` spawn the rest of the MultiBox wall.
 
 ## Not this tag
 
-Script start/pause/stop wiring, bank snapshot, evade / plant / maze /
-mime / box / lamp-use solvers (guardian detect + dialog act *are* this
-tag; those solvers are 0.1.5).
+Bank snapshot pane, and any in-tree script ports of farming bots (the
+TS shim runs listed rs2b0t scripts; the solvers' *logic* is host-side
+guardian code).

@@ -131,12 +131,10 @@ pub fn build_maze(locs: &[(i32, i32, i32, i32, i32)]) -> MazeGraph {
             g.minz = Some(g.minz.map_or(wz, |m| m.min(wz)));
             g.maxz = Some(g.maxz.map_or(wz, |m| m.max(wz)));
             if shape == 0 {
-                g.wall_edge
-                    .insert(edge_key_t(straight_edge(wx, wz, angle)));
+                g.wall_edge.insert(edge_key_t(straight_edge(wx, wz, angle)));
             } else if shape == 2 {
                 for a in WALL_L_ANGLES[angle as usize] {
-                    g.wall_edge
-                        .insert(edge_key_t(straight_edge(wx, wz, a)));
+                    g.wall_edge.insert(edge_key_t(straight_edge(wx, wz, a)));
                 }
             }
         } else if door_dir(id).is_some() {
@@ -201,6 +199,10 @@ fn is_shrine_touch_stand(g: &MazeGraph, x: i32, z: i32) -> bool {
     false
 }
 
+/// A maze BFS back-edge: the previous tile plus the door crossed to reach
+/// the current one (rs2b0t `solveRoute` prev map).
+type MazePrev = HashMap<(i32, i32), Option<((i32, i32), Option<DoorInfo>)>>;
+
 /// `solveRoute`: BFS from the spawn to the first shrine touch stand,
 /// crossing passable door edges, never the shrine footprint. Returns the
 /// door tiles in route order (the last is the chamber door).
@@ -213,7 +215,7 @@ pub fn solve_route(g: &MazeGraph, spawn: (i32, i32)) -> Vec<(i32, i32)> {
         g.maxx.unwrap_or(spawn.0.max(MAZE_SHRINE.0)) + 2,
         g.maxz.unwrap_or(spawn.1.max(MAZE_SHRINE.1)) + 2,
     );
-    let mut prev: HashMap<(i32, i32), Option<((i32, i32), Option<DoorInfo>)>> = HashMap::new();
+    let mut prev: MazePrev = HashMap::new();
     prev.insert(spawn, None);
     let mut queue: VecDeque<(i32, i32)> = VecDeque::from([spawn]);
     while let Some(cur) = queue.pop_front() {
@@ -364,9 +366,7 @@ impl MazeSolve {
     /// The door tile the current phase targets.
     pub fn target(&self) -> Option<(i32, i32)> {
         match self.phase {
-            MazePhase::WalkDoor | MazePhase::OpenDoor { .. } => {
-                self.doors.get(self.next).copied()
-            }
+            MazePhase::WalkDoor | MazePhase::OpenDoor { .. } => self.doors.get(self.next).copied(),
             MazePhase::Resync | MazePhase::OpenResync { .. } => self
                 .next
                 .checked_sub(1)
@@ -1915,7 +1915,10 @@ mod tests {
         let observed = select_route(g, (2905, 4566)).expect("observed tile solves");
         let sw = select_route(g, (2891, 4555)).expect("sw corner solves");
         assert_eq!(observed.len(), 7);
-        assert_ne!(observed, sw, "a different spawn must not be handed the SW route");
+        assert_ne!(
+            observed, sw,
+            "a different spawn must not be handed the SW route"
+        );
         assert_eq!(
             observed,
             vec![
@@ -1941,15 +1944,27 @@ mod tests {
     #[test]
     fn door_passable_gates_the_approach_side() {
         // 3628 (dir 0) opens from either side.
-        let d0 = DoorInfo { tile: (2900, 4550), id: 3628, angle: 2 };
+        let d0 = DoorInfo {
+            tile: (2900, 4550),
+            id: 3628,
+            angle: 2,
+        };
         assert!(door_passable(&d0, (2900, 4550)));
         assert!(door_passable(&d0, (2901, 4550)));
         // 3629 (dir 1) opens only from the same-axis side.
-        let d1 = DoorInfo { tile: (2900, 4550), id: 3629, angle: 0 };
+        let d1 = DoorInfo {
+            tile: (2900, 4550),
+            id: 3629,
+            angle: 0,
+        };
         assert!(door_passable(&d1, (2900, 4550)));
         assert!(!door_passable(&d1, (2901, 4550)));
         // 3630 (dir 2) opens only from the opposite side.
-        let d2 = DoorInfo { tile: (2900, 4550), id: 3630, angle: 0 };
+        let d2 = DoorInfo {
+            tile: (2900, 4550),
+            id: 3630,
+            angle: 0,
+        };
         assert!(!door_passable(&d2, (2900, 4550)));
         assert!(door_passable(&d2, (2901, 4550)));
     }

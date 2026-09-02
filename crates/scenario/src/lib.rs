@@ -24,7 +24,9 @@ pub mod shot;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::interact::{cheat, op_loc, tele_args, Driver, MAXME_SETSTATS};
+use api::interact::{
+    cheat, op_loc, tele_args, ActionSpec, Driver, Interactions, OpTarget, MAXME_SETSTATS,
+};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 
@@ -304,6 +306,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_shantay" => Some(nav_shantay_scenario()),
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
+        "bone_burier" => Some(bone_burier_scenario()),
         _ => None,
     }
 }
@@ -322,6 +325,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_shantay",
         "nav_routes",
         "nav_paint_path",
+        "bone_burier",
     ]
 }
 
@@ -1498,7 +1502,103 @@ fn nav_paint_path_scenario() -> Scenario {
     }
 }
 
-/// rs2b0t transport-quest perm varps (`transportQuestSetvarCommands`).
+/// The `bone_burier` scenario: the live BoneBurier twin (rs2b0t's listed
+/// script, exercised as a scenario). Log in a unique minted account,
+/// mainland-hop into the Lumbridge courtyard, stick `tutorial=1000`, then
+/// relog so the tutorial lock releases the side icons (the inv tab's
+/// TYPE_INV widget only binds on a clean login payload — a bare setvar
+/// leaves the inv view empty). Then seed five Bones with the `give` cheat
+/// and bury them until at most three remain — the server's
+/// `bury_bone.rs2` deletes the slot, advances prayer, and prints "You
+/// bury the bones." Proof is the bury message in the chat ring: a burial
+/// actually happened, not just a count read.
+fn bone_burier_scenario() -> Scenario {
+    Scenario {
+        name: "bone_burier",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "stick tutorial skip",
+                kind: StepKind::Repeat {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "getvar tutorial");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Chat {
+                        needle: "get tutorial: 1000",
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            Step {
+                name: "relog so the inv tab binds",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    // Same arm as the nav kit: after the clean logout the
+                    // login payload binds side tab 3 (inventory).
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "seed five bones",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "give bones 5");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Item {
+                        name: "Bones",
+                        count: 5,
+                    },
+                    budget_ticks: 80,
+                },
+            },
+            Step {
+                name: "bury bones until at most three remain",
+                kind: StepKind::Repeat {
+                    send: Box::new(|c, snap| {
+                        // Held-item Bury (opheld1 on the obj): the label
+                        // resolves through the same snapshot the closure
+                        // reads. A refusal never fails the run — the arm
+                        // needs the server-side count drop.
+                        let Some(item) = snap.inventory().iter().find(|it| it.def.id == 526) else {
+                            return true;
+                        };
+                        let mut ix = Interactions::new(snap, c);
+                        let _ = ix.interact(OpTarget::Item(item), ActionSpec::Label("Bury".into()));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ItemAtMost {
+                        name: "Bones",
+                        count: 3,
+                    },
+                    budget_ticks: 200,
+                },
+            },
+        ],
+        proof: Proof::Chat {
+            needle: "bury the bones",
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(300),
+            ..Default::default()
+        },
+    }
+}
 /// Journal colour is login-time `~update_questlist`; the Relog step after
 /// these cheats is what actually opens packed quest-gated edges.
 const TRANSPORT_QUEST_SETVARS: &[&str] = &[
@@ -1787,9 +1887,47 @@ mod tests {
                 "nav_tele",
                 "nav_shantay",
                 "nav_routes",
-                "nav_paint_path"
+                "nav_paint_path",
+                "bone_burier",
             ]
         );
+    }
+
+    #[test]
+    fn bone_burier_seeds_bones_and_buries_until_three_remain() {
+        let s = get("bone_burier").expect("bone_burier is registered");
+        assert_eq!(s.name, "bone_burier");
+        assert_eq!(s.seed.profiles, [("test", "test")]);
+        assert!(s.seed.mainland, "unique live accounts spawn on tutorial");
+        assert_eq!(s.steps.len(), 4, "skip, relog, seed, bury");
+        // Step 2 relogs so the inv tab binds (bare setvar leaves the
+        // side icons tutorial-locked).
+        assert!(matches!(s.steps[1].kind, StepKind::Relog));
+        assert_eq!(s.steps[1].wait.arm, Proof::SideTabAvailable { index: 3 });
+        // Step 3 cheats five Bones into the pack.
+        assert!(matches!(s.steps[2].kind, StepKind::Perform { .. }));
+        assert_eq!(
+            s.steps[2].wait.arm,
+            Proof::Item {
+                name: "Bones",
+                count: 5
+            }
+        );
+        // Step 4 buries the held Bones until at most three remain (the
+        // server's own count drop proves each burial, not a chat read).
+        assert!(matches!(s.steps[3].kind, StepKind::Repeat { .. }));
+        assert_eq!(
+            s.steps[3].wait.arm,
+            Proof::ItemAtMost {
+                name: "Bones",
+                count: 3
+            }
+        );
+        // The terminal proof is the server's bury message: a burial
+        // actually happened.
+        assert_eq!(s.proof.name(), "chat(contains \"bury the bones\")");
+        assert!(s.companions.is_empty());
+        assert!(s.settings.require_mainland_base);
     }
 
     #[test]
