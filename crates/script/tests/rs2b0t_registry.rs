@@ -100,6 +100,18 @@ fn parse_registry_errors_on_non_registry_index() {
 }
 
 #[test]
+fn rs2b0t_import_deferred_roundtrip() {
+    let dir = scratch("rs2b0t_import");
+    let import_file = dir.join("rs2b0t-import");
+    assert!(!script::rs2b0t_import_deferred_at(&import_file));
+    script::set_rs2b0t_import_deferred_at(&import_file).expect("defer");
+    assert!(script::rs2b0t_import_deferred_at(&import_file));
+    script::clear_rs2b0t_import_at(&import_file).expect("clear");
+    assert!(!script::rs2b0t_import_deferred_at(&import_file));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn rs2b0t_root_prefers_env_then_persisted_file() {
     let dir = scratch("rs2b0t_root");
     let path_file = dir.join("rs2b0t-path");

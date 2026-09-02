@@ -27,6 +27,9 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
+use crate::script_picker::{
+    self, kind_badge, move_category, resolve_category_order, source_badge, BROWSE_WINDOW_TITLE,
+};
 use crate::rail::{
     cap_title, os_window_size, rail_preview_open, rail_split_ratio, traffic_light, Light,
     BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
@@ -1696,7 +1699,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None
         };
         if ui.button_with_size("Browse…", [w, 0.0]) {
-            session.fill_rs2b0t_cards_once();
+            session.on_script_browse_open();
             session.script_browse_open = true;
         }
         ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
@@ -1762,70 +1765,251 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// True while the script Browse picker was wanted last frame; drives the
-/// rising-edge `open_popup` (same latch as the chooser) so Esc cannot be
-/// defeated by a per-frame reopen.
-static PREV_BROWSE: AtomicBool = AtomicBool::new(false);
-
 /// True while the script Load picker was wanted last frame (same rising-
 /// edge latch as the chooser and Browse).
 static PREV_LOAD: AtomicBool = AtomicBool::new(false);
 
-/// Browse picker: one row per compiled script, then one per loaded JS card
-/// (tagged "JS"). Clicking a row only stores the selection — selecting
-/// never Starts.
-fn browse_window(ui: &Ui, session: &mut Session) {
-    let want = session.script_browse_open;
-    let (open_popup, new_prev) =
-        chooser_should_open_popup(want, PREV_BROWSE.load(Ordering::Relaxed));
-    PREV_BROWSE.store(new_prev, Ordering::Relaxed);
-    if open_popup {
-        ui.open_popup("274bot-browse");
+fn category_key(cat: &str) -> [u8; 32] {
+    let mut a = [0u8; 32];
+    let b = cat.as_bytes();
+    let n = b.len().min(31);
+    a[..n].copy_from_slice(&b[..n]);
+    a
+}
+
+fn category_from_key(a: [u8; 32]) -> Option<String> {
+    let n = a.iter().position(|&c| c == 0).unwrap_or(32);
+    std::str::from_utf8(&a[..n]).ok().map(str::to_string)
+}
+
+fn card_categories(cards: &[script::JsCard]) -> Vec<String> {
+    let mut out = Vec::new();
+    for card in cards {
+        let cat = if card.category.is_empty() {
+            "Uncategorized".to_string()
+        } else {
+            card.category.clone()
+        };
+        if !out.iter().any(|c| c == &cat) {
+            out.push(cat);
+        }
     }
-    let mut open = want;
-    if let Some(_t) = ui
-        .begin_modal_popup_config("274bot-browse")
-        .opened(&mut open)
-        .begin()
+    out
+}
+
+fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
+    if let Some(_tip) = ui
+        .drag_drop_source_config("274bot-script-cat")
+        .begin_payload(category_key(cat))
     {
-        let ids = script::compiled_ids();
-        let cards = session.js.cards();
-        let w = ui.content_region_avail()[0];
-        if ids.is_empty() && cards.is_empty() {
-            ui.text_disabled("no scripts — Browse is empty");
-        }
-        for id in ids {
-            let selected = session.script_sel == Some(script::ScriptSel::Compiled(*id));
-            if ui
-                .selectable_config(id.0)
-                .selected(selected)
-                .close_popups(false)
-                .size([w, 0.0])
-                .build()
-            {
-                session.script_sel = Some(script::ScriptSel::Compiled(*id));
+        ui.text(cat);
+    }
+    if let Some(tgt) = ui.drag_drop_target() {
+        if let Some(Ok(p)) = tgt.accept_payload::<[u8; 32], _>(
+            "274bot-script-cat",
+            DragDropTargetFlags::NONE,
+        ) {
+            if p.delivery {
+                if let Some(from) = category_from_key(p.data) {
+                    let present = card_categories(session.js.cards());
+                    let mut order =
+                        resolve_category_order(&session.ui.script_category_order, &present);
+                    move_category(&mut order, &from, cat);
+                    session.ui.script_category_order = order;
+                    crate::ui_state::save(&session.ui);
+                }
             }
         }
-        for card in cards {
-            let selected = session.script_sel
-                == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
-            if ui
-                .selectable_config(format!("{}  (JS)", card.name))
-                .selected(selected)
-                .close_popups(false)
-                .size([w, 0.0])
-                .build()
-            {
-                session.script_sel =
-                    Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
-            }
+    }
+}
+
+fn browse_script_card_row(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
+    let selected = session.script_sel
+        == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
+    let label = format!(
+        "{}  [{}] [{}]",
+        card.name,
+        kind_badge(card.kind),
+        source_badge(card.source)
+    );
+    if ui
+        .selectable_config(label)
+        .selected(selected)
+        .size([w, 0.0])
+        .build()
+    {
+        session.script_sel = Some(script::ScriptSel::Loaded(
+            card.source,
+            card.name.clone(),
+        ));
+    }
+    if !card.description.is_empty() {
+        ui.text_disabled(&card.description);
+    }
+    let cat = if card.category.is_empty() {
+        "Uncategorized"
+    } else {
+        card.category.as_str()
+    };
+    ui.text_disabled(format!("category: {cat}"));
+    if !card.tags.is_empty() {
+        ui.text_disabled(format!("tags: {}", card.tags.join(", ")));
+    }
+}
+
+fn browse_window_body(ui: &Ui, session: &mut Session) {
+    let w = ui.content_region_avail()[0];
+    if script::rs2b0t_import_deferred() {
+        if ui.button_with_size("Import catalog…", [w, 0.0]) {
+            session.rs2b0t_catalog_open = true;
+            session.rs2b0t_catalog_dir = std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/"));
         }
         ui.spacing();
-        if ui.button_with_size("Close", [w, 0.0]) {
-            ui.close_current_popup();
+    }
+    let cards: Vec<script::JsCard> = session.js.cards().to_vec();
+    let present = card_categories(&cards);
+    let order = resolve_category_order(&session.ui.script_category_order, &present);
+    if order != session.ui.script_category_order {
+        session.ui.script_category_order = order.clone();
+        crate::ui_state::save(&session.ui);
+    }
+    if !order.is_empty() {
+        ui.text_disabled("categories (drag to reorder):");
+        let all_sel = session.browse_category_filter.is_none();
+        if ui.selectable_config("All").selected(all_sel).build() {
+            session.browse_category_filter = None;
+        }
+        ui.same_line();
+        for cat in &order {
+            let sel = session.browse_category_filter.as_deref() == Some(cat.as_str());
+            if ui.selectable_config(cat).selected(sel).build() {
+                session.browse_category_filter = Some(cat.clone());
+            }
+            ui.same_line();
+            category_chip_dnd(ui, session, cat);
+            ui.same_line();
+        }
+        ui.new_line();
+        ui.spacing();
+    }
+    let ids = script::compiled_ids();
+    let filter = session.browse_category_filter.clone();
+    let mut any = false;
+    for id in ids {
+        any = true;
+        let selected = session.script_sel == Some(script::ScriptSel::Compiled(*id));
+        if ui
+            .selectable_config(id.0)
+            .selected(selected)
+            .size([w, 0.0])
+            .build()
+        {
+            session.script_sel = Some(script::ScriptSel::Compiled(*id));
         }
     }
+    for card in &cards {
+        let cat = if card.category.is_empty() {
+            "Uncategorized"
+        } else {
+            card.category.as_str()
+        };
+        if filter.as_deref().is_some_and(|f| f != cat) {
+            continue;
+        }
+        any = true;
+        browse_script_card_row(ui, session, card, w);
+    }
+    if !any {
+        ui.text_disabled("no scripts — Browse is empty");
+    }
+}
+
+/// Browse picker: script cards with category chips and badges. Non-modal
+/// window (same pattern as Nav config).
+fn browse_window(ui: &Ui, session: &mut Session) {
+    rs2b0t_catalog_window(ui, session);
+    if !session.script_browse_open {
+        return;
+    }
+    let mut open = true;
+    ui.window(BROWSE_WINDOW_TITLE)
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([480.0, 520.0], Condition::FirstUseEver)
+        .build(|| browse_window_body(ui, session));
     session.script_browse_open = open;
+}
+
+/// First-run folder browser for the rs2b0t clone root (`index.ts` required).
+fn rs2b0t_catalog_window(ui: &Ui, session: &mut Session) {
+    if !session.rs2b0t_catalog_open {
+        return;
+    }
+    let mut open = true;
+    ui.window("Import rs2b0t catalog")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([420.0, 420.0], Condition::FirstUseEver)
+        .build(|| {
+            let w = ui.content_region_avail()[0];
+            ui.text_wrapped(
+                "Choose the rs2b0t clone root (must contain src/bot/scripts/index.ts):",
+            );
+            ui.text(&session.rs2b0t_catalog_dir.to_string_lossy());
+            ui.spacing();
+            let dir = session.rs2b0t_catalog_dir.clone();
+            if dir.parent().is_some() {
+                if ui.button_with_size("Up", [w, 0.0]) {
+                    if let Some(parent) = dir.parent() {
+                        session.rs2b0t_catalog_dir = parent.to_path_buf();
+                    }
+                }
+                ui.spacing();
+            }
+            let mut subdirs = Vec::new();
+            if let Ok(read) = std::fs::read_dir(&dir) {
+                for entry in read.flatten() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        subdirs.push(entry.path());
+                    }
+                }
+            }
+            subdirs.sort();
+            for path in subdirs {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?");
+                if ui.selectable_config(name).build() {
+                    session.rs2b0t_catalog_dir = path;
+                }
+            }
+            ui.spacing();
+            let has_index = script_picker::rs2b0t_root_has_index(&session.rs2b0t_catalog_dir);
+            if has_index {
+                ui.text_colored(ACCENT, "catalog index found");
+            } else {
+                ui.text_disabled("no src/bot/scripts/index.ts here");
+            }
+            let half = w / 2.0 - BUTTON_GAP / 2.0;
+            if has_index {
+                if ui.button_with_size("Use this folder", [half, 0.0]) {
+                    let root = session.rs2b0t_catalog_dir.clone();
+                    if let Err(e) = session.import_rs2b0t_catalog(&root) {
+                        session.error = Some(e);
+                    } else {
+                        session.error = None;
+                    }
+                }
+                ui.same_line();
+            }
+            if ui.button_with_size("Not now", [half, 0.0]) {
+                session.defer_rs2b0t_catalog();
+            }
+        });
+    session.rs2b0t_catalog_open = open;
 }
 
 /// Load modal: a filesystem path to an out-of-tree JS bot. Load registers

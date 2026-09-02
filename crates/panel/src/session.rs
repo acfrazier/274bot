@@ -699,10 +699,16 @@ pub struct Session {
     /// `None` until one is selected. Selecting never Starts — Start is the
     /// section button.
     pub script_sel: Option<script::ScriptSel>,
-    /// Browse picker open flag (the modal window in `app.rs`).
+    /// Browse picker open flag (the Scripts window in `app.rs`).
     pub script_browse_open: bool,
     /// Load modal open flag (the path modal in `app.rs`).
     pub script_load_open: bool,
+    /// First-run rs2b0t clone-root folder picker (when `$RS2B0T` unset).
+    pub rs2b0t_catalog_open: bool,
+    /// Current directory in the rs2b0t folder picker.
+    pub rs2b0t_catalog_dir: PathBuf,
+    /// Script Browse category filter (`None` = all categories).
+    pub browse_category_filter: Option<String>,
     /// The out-of-tree JS library (`~/.274bot/js-scripts.json`). Loaded
     /// cards appear in Browse and Start spawns their isolate.
     pub js: script::JsLibrary,
@@ -743,6 +749,12 @@ fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
     while vec.len() > LOG_CAP {
         vec.remove(0);
     }
+}
+
+fn default_catalog_browse_dir() -> PathBuf {
+    env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/"))
 }
 
 impl Default for Session {
@@ -818,6 +830,9 @@ impl Session {
             script_sel: None,
             script_browse_open: false,
             script_load_open: false,
+            rs2b0t_catalog_open: false,
+            rs2b0t_catalog_dir: default_catalog_browse_dir(),
+            browse_category_filter: None,
             js: {
                 let mut js = script::JsLibrary::new(script::default_js_store());
                 let _ = js.restore(); // missing/broken store is not fatal here
@@ -861,6 +876,62 @@ impl Session {
                 }
             }
         }
+    }
+
+    fn rs2b0t_import_file(&self) -> PathBuf {
+        script::default_rs2b0t_import_file()
+    }
+
+    fn rs2b0t_path_file(&self) -> PathBuf {
+        script::default_rs2b0t_path_file()
+    }
+
+    /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
+    /// clone root, or honour a prior defer.
+    pub fn on_script_browse_open(&mut self) {
+        if self.rs2b0t_filled {
+            return;
+        }
+        self.rs2b0t_filled = true;
+        if let Some(root) = script::rs2b0t_root() {
+            if let Err(e) = self
+                .js
+                .register_rs2b0t(&root, &self.rs2b0t_path_file())
+            {
+                if host::debug_enabled() {
+                    eprintln!("[panel] $RS2B0T registry: {e}");
+                }
+            }
+            return;
+        }
+        if script::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
+            return;
+        }
+        self.rs2b0t_catalog_open = true;
+        self.rs2b0t_catalog_dir = default_catalog_browse_dir();
+    }
+
+    /// Operator chose **Not now** on the first-run catalog prompt.
+    pub fn defer_rs2b0t_catalog(&mut self) {
+        let _ = script::set_rs2b0t_import_deferred_at(&self.rs2b0t_import_file());
+        self.rs2b0t_catalog_open = false;
+    }
+
+    /// Import catalog cards from a clone root that contains
+    /// `src/bot/scripts/index.ts`. Persists `rs2b0t-path` and clears defer.
+    pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<usize, String> {
+        if !crate::script_picker::rs2b0t_root_has_index(root) {
+            return Err(format!(
+                "no catalog at {}",
+                script::registry_index_path(root).display()
+            ));
+        }
+        let n = self
+            .js
+            .register_rs2b0t(root, &self.rs2b0t_path_file())?;
+        let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
+        self.rs2b0t_catalog_open = false;
+        Ok(n)
     }
 
     pub fn play_options(&self) -> &PlayOptions {
@@ -2847,6 +2918,7 @@ mod tests {
         seed_on_first_world, stream_capture, stress_live_entries_for_target,
         temp_live_vault_from, walkto_tele_cmd, Session, SlotIo, WalkArm,
     };
+    use std::path::{Path, PathBuf};
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
     use client::client::{Client, ClientConfig};
@@ -6707,6 +6779,144 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         assert_eq!(s.js.cards().len(), 1, "once-only fill");
         s.fill_rs2b0t_cards_once();
         assert_eq!(s.js.cards().len(), 1, "a second Browse does not re-parse");
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn fake_rs2b0t_tree(dir: &Path) -> PathBuf {
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import BoneBurier from './BoneBurier/BoneBurier.js';
+ScriptRegistry.register({
+  name: 'BoneBurier',
+  description: 'Buries bones',
+  category: 'Prayer',
+  tags: ['bones'],
+  create: () => new BoneBurier(),
+});
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("BoneBurier/BoneBurier.ts"),
+            "export default class BoneBurier extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
+        let dir = std::env::temp_dir().join(format!("274bot-panel-defer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("RS2B0T");
+
+        let mut s = Session::new();
+        s.on_script_browse_open();
+        assert!(s.rs2b0t_catalog_open, "first browse opens folder picker");
+        s.defer_rs2b0t_catalog();
+        assert!(
+            script::rs2b0t_import_deferred_at(&home.join(".274bot/rs2b0t-import")),
+            "defer flag written"
+        );
+        assert!(
+            !home.join(".274bot/rs2b0t-path").exists(),
+            "defer must not write rs2b0t-path"
+        );
+        assert!(
+            s.js
+                .cards()
+                .iter()
+                .all(|c| c.source != script::ScriptSource::Catalog),
+            "zero Catalog cards after defer"
+        );
+
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+        let dir = std::env::temp_dir().join(format!("274bot-panel-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let root = fake_rs2b0t_tree(&dir);
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("RS2B0T");
+
+        let mut s = Session::new();
+        let n = s.import_rs2b0t_catalog(&root).expect("import");
+        assert_eq!(n, 1);
+        assert!(home.join(".274bot/rs2b0t-path").is_file());
+        let card = s
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .expect("catalog card");
+        assert_eq!(card.category, "Prayer");
+        assert_eq!(card.description, "Buries bones");
+        assert_eq!(card.tags, vec!["bones"]);
+
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-browse-env-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = fake_rs2b0t_tree(&dir);
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+
+        let mut s = Session::new();
+        s.on_script_browse_open();
+        assert!(
+            s.js
+                .get(script::ScriptSource::Catalog, "BoneBurier")
+                .is_some(),
+            "RS2B0T env still fills catalog on first browse"
+        );
+        assert!(home.join(".274bot/rs2b0t-path").is_file());
+
         match orig_rs2b0t {
             Some(v) => std::env::set_var("RS2B0T", v),
             None => std::env::remove_var("RS2B0T"),

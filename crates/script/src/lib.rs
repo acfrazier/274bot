@@ -26,9 +26,11 @@ pub use load::{
 pub use params::defaults;
 pub use registry::{compiled_ids, factory, is_whale, CompiledId};
 pub use rs2b0t_registry::{
-    default_rs2b0t_path_file, parse_registry, parse_registry_with_sources,
-    persist_rs2b0t_root, persist_rs2b0t_root_at, rs2b0t_root, rs2b0t_root_at, script_file_path,
-    RegistryCard, ScriptKind, ScriptSource, SettingDef,
+    clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
+    parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
+    rs2b0t_import_deferred, rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at,
+    script_file_path, set_rs2b0t_import_deferred_at, RegistryCard, ScriptKind, ScriptSource,
+    SettingDef,
 };
 pub use slot::{RunState, SlotScript};
 

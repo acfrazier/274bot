@@ -146,6 +146,43 @@ fn canonical_under(catalog: &Path, path: &Path) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
+const RS2B0T_IMPORT_DEFERRED: &str = "deferred";
+
+/// Default first-run defer flag file (`~/.274bot/rs2b0t-import`).
+pub fn default_rs2b0t_import_file() -> PathBuf {
+    match std::env::var("HOME") {
+        Ok(home) => PathBuf::from(format!("{home}/.274bot/rs2b0t-import")),
+        Err(_) => PathBuf::from(".274bot/rs2b0t-import"),
+    }
+}
+
+/// Whether the operator chose **Not now** on the first Browse catalog prompt.
+pub fn rs2b0t_import_deferred_at(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|s| s.trim() == RS2B0T_IMPORT_DEFERRED)
+        .unwrap_or(false)
+}
+
+/// [`rs2b0t_import_deferred_at`] against the default import file.
+pub fn rs2b0t_import_deferred() -> bool {
+    rs2b0t_import_deferred_at(&default_rs2b0t_import_file())
+}
+
+/// Record that the operator deferred the rs2b0t catalog import.
+pub fn set_rs2b0t_import_deferred_at(path: &Path) -> Result<(), String> {
+    vault::write_private_file(path, RS2B0T_IMPORT_DEFERRED.as_bytes())
+        .map_err(|e| format!("rs2b0t-import: {e}"))
+}
+
+/// Clear the defer flag after a successful import.
+pub fn clear_rs2b0t_import_at(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("rs2b0t-import: {e}")),
+    }
+}
+
 /// Default persisted rs2b0t root file (`~/.274bot/rs2b0t-path`).
 pub fn default_rs2b0t_path_file() -> PathBuf {
     match std::env::var("HOME") {

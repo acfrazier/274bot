@@ -11,6 +11,7 @@ pub mod picker;
 pub mod queue_card;
 pub mod rail;
 pub mod resource;
+pub mod script_picker;
 pub mod session;
 pub mod theme;
 pub mod ui_state;

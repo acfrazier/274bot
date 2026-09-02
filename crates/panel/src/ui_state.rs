@@ -25,6 +25,9 @@ pub struct PanelUiState {
     /// Strip collapsing-header order. Empty = [`crate::chrome::HEADING_ORDER`].
     #[serde(default)]
     pub section_order: Vec<String>,
+    /// Script Browse category chip order. Unknown categories append at open.
+    #[serde(default)]
+    pub script_category_order: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -41,6 +44,7 @@ impl Default for PanelUiState {
             raster: vault::RasterMode::Gpu,
             lowmem: true,
             section_order: Vec::new(),
+            script_category_order: Vec::new(),
         }
     }
 }
@@ -264,6 +268,27 @@ mod tests {
             "path should sit under .274bot, got {}",
             p.display()
         );
+    }
+
+    #[test]
+    fn script_category_order_persist_roundtrip() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-ui-cat-order-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            script_category_order: vec!["Prayer".into(), "Combat".into(), "Skilling".into()],
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        let loaded = load_at(&p);
+        assert_eq!(
+            loaded.script_category_order,
+            vec!["Prayer", "Combat", "Skilling"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

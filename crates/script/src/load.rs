@@ -98,6 +98,9 @@ pub struct JsCard {
     pub kind: ScriptKind,
     pub source: ScriptSource,
     pub sha256: String,
+    pub description: String,
+    pub category: String,
+    pub tags: Vec<String>,
 }
 
 /// Default persisted library path (`~/.274bot/js-scripts.json`).
@@ -186,6 +189,9 @@ impl JsLibrary {
                 kind: shape_to_kind(shape),
                 source: ScriptSource::File,
                 sha256: cached.sha256,
+                description: String::new(),
+                category: String::new(),
+                tags: Vec::new(),
             });
         }
         Ok(())
@@ -237,6 +243,9 @@ impl JsLibrary {
             kind: shape_to_kind(shape),
             source: ScriptSource::File,
             sha256: cached.sha256,
+            description: String::new(),
+            category: String::new(),
+            tags: Vec::new(),
         };
         let new_cards: Vec<JsCard> = self
             .cards
@@ -319,6 +328,9 @@ impl JsLibrary {
                 kind: card.kind,
                 source: ScriptSource::Catalog,
                 sha256: cached.sha256,
+                description: card.description.clone(),
+                category: card.category.clone(),
+                tags: card.tags.clone(),
             });
             n += 1;
         }
