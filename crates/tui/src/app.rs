@@ -328,7 +328,7 @@ impl TuiApp {
                 self.quit = true;
                 return AppAction::Quit;
             }
-            KeyCode::Char('s') => {
+            KeyCode::Char('o') => {
                 self.settings_state.open = !self.settings_state.open;
                 return AppAction::None;
             }
@@ -534,7 +534,7 @@ impl TuiApp {
     fn draw_strip(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = self.focused_name().unwrap_or_else(|| "_".into());
         let mut text = format!(
-            "[{}]  focused: {focused}   {}   q quit · s settings · Tab focus",
+            "[{}]  focused: {focused}   {}   q quit · o options · Tab focus",
             self.names.join(" "),
             self.title
         );
@@ -787,10 +787,35 @@ mod tests {
     }
 
     #[test]
-    fn q_quits_and_s_toggles_settings() {
+    fn lowercase_s_walks_south_when_settings_closed() {
         let mut app = TuiApp::new("274bot headless");
-        assert_eq!(app.on_key(key(KeyCode::Char('s'))), AppAction::None);
-        assert!(app.settings_state.open, "s opens the settings popup");
+        app.names = vec!["test".into()];
+        app.focused = Some(0);
+        app.statuses = vec![host_play::SlotStatus {
+            username: "test".into(),
+            ingame: true,
+            scene_state: 2,
+            tile_x: 10,
+            tile_z: 10,
+            ..host_play::SlotStatus::default()
+        }];
+        app.refresh();
+        assert!(
+            !app.settings_state.open,
+            "settings must start closed so s is free for WASD"
+        );
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('s'))),
+            AppAction::WalkTile(tile(10, 9)),
+            "lowercase s walks south when settings are closed"
+        );
+    }
+
+    #[test]
+    fn q_quits_and_o_toggles_settings() {
+        let mut app = TuiApp::new("274bot headless");
+        assert_eq!(app.on_key(key(KeyCode::Char('o'))), AppAction::None);
+        assert!(app.settings_state.open, "o opens the settings popup");
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), AppAction::Quit);
         assert!(app.quit);
     }
