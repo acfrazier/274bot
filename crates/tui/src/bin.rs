@@ -125,6 +125,11 @@ pub fn parse_args() -> Args {
     args
 }
 
+/// Refuse a non-loopback `--host` while local RSA is active (same bind as host-play).
+pub fn validate_startup_host(host: &str) -> Result<(), &'static str> {
+    host_play::validate_play_host(host, client::bot_target())
+}
+
 /// The `--live` scenario, `Err` when the name is not a `script_<name>`.
 /// Unknown names fail the run (same usage contract as panel-play).
 pub fn live_scenario(name: &str) -> Result<scenario::Scenario, String> {
@@ -936,6 +941,10 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
 
 pub fn main() -> ExitCode {
     let args = parse_args();
+    if let Err(msg) = validate_startup_host(&args.host) {
+        eprintln!("{msg}");
+        return ExitCode::FAILURE;
+    }
     let mode = match args.live.clone() {
         Some(name) => RunMode::Live(name),
         None => RunMode::Interactive,
@@ -980,6 +989,24 @@ mod tests {
         assert!(
             app.world.is_some(),
             "pump copies the session nav world onto the map"
+        );
+    }
+
+    #[test]
+    fn validate_startup_host_refuses_non_loopback_with_local_rsa() {
+        assert!(
+            host_play::validate_play_host("attacker.example", client::BotTarget::Local).is_err(),
+            "non-loopback host must be refused with local RSA"
+        );
+        assert!(host_play::validate_play_host("127.0.0.1", client::BotTarget::Local).is_ok());
+        // `tui-play` startup must delegate to the shared helper (not duplicate checks).
+        assert_eq!(
+            validate_startup_host("attacker.example").is_ok(),
+            host_play::validate_play_host("attacker.example", client::bot_target()).is_ok(),
+        );
+        assert_eq!(
+            validate_startup_host("127.0.0.1").is_ok(),
+            host_play::validate_play_host("127.0.0.1", client::bot_target()).is_ok(),
         );
     }
 
