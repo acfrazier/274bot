@@ -1849,6 +1849,8 @@ export default class T extends LoopingBot {
             in_combat: false,
             animating: false,
             actions: &attack,
+            reachable: false,
+            reachable_adj: false,
         },
         script::isolate_fb::SceneEntityInput {
             index: 2,
@@ -1863,6 +1865,8 @@ export default class T extends LoopingBot {
             in_combat: false,
             animating: false,
             actions: &attack,
+            reachable: false,
+            reachable_adj: false,
         },
     ];
     let mut snap = base_snapshot();
@@ -2028,6 +2032,8 @@ export default class T extends LoopingBot {
         in_combat: false,
         animating: false,
         actions: &use_actions,
+        reachable: false,
+        reachable_adj: false,
     }];
     let mut snap = base_snapshot();
     let inv = [nc(Some("Knife"), 1)];
@@ -2130,6 +2136,8 @@ export default class T extends LoopingBot {
         in_combat: false,
         animating: false,
         actions: &use_quickly,
+        reachable: false,
+        reachable_adj: false,
     }];
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
@@ -2188,6 +2196,57 @@ export default class T extends LoopingBot {
             "must not invent a booth object: {value:?}"
         );
     }
+    iso.join();
+}
+
+// Hop 2 — Reachability.canReach reads posted reachable / reachable_adj.
+#[test]
+fn isolate_reachability_can_reach_reads_posted_flags() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        const withTile = {
+            tile() {
+                return { x: 3220, z: 3220, level: 0 };
+            },
+        };
+        globalThis.__probe = {
+            exact: Reachability.canReach(withTile, {}),
+            adj: Reachability.canReach(withTile, { adjacentOk: true }),
+            tile: Reachability.canReach({ x: 3220, z: 3220, level: 0 }, {}),
+            missing: Reachability.canReach({ x: 9999, z: 9999, level: 0 }, {}),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Steal".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 9,
+        name: Some("Guard"),
+        x: 3220,
+        z: 3220,
+        level: 0,
+        distance: 3,
+        health: 10,
+        max_health: 10,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: false,
+        reachable_adj: true,
+    }];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["exact"], false, "reachable false when only adjacent is ok");
+    assert_eq!(value["adj"], true, "reachable_adj when adjacentOk");
+    assert_eq!(value["tile"], false, "tile lookup reads the same row");
+    assert_eq!(value["missing"], false, "no row on tile is false, not Chebyshev");
     iso.join();
 }
 

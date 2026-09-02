@@ -1581,6 +1581,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }
         set(scope, o, "actions", actions.into())?;
+        let reachable = v8::Boolean::new(scope, ent.reachable());
+        set(scope, o, "reachable", reachable.into())?;
+        let reachable_adj = v8::Boolean::new(scope, ent.reachable_adj());
+        set(scope, o, "reachable_adj", reachable_adj.into())?;
         Ok(o.into())
     }
 

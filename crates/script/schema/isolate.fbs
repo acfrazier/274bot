@@ -50,6 +50,8 @@ table SceneEntity {
   in_combat: bool;
   animating: bool;
   actions: [string];
+  reachable: bool;
+  reachable_adj: bool;
 }
 
 // One chat modal BUTTON_OK choice.

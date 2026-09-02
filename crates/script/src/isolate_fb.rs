@@ -138,6 +138,8 @@ const VT_ENT_MAX_HEALTH: VOffsetT = 20;
 const VT_ENT_IN_COMBAT: VOffsetT = 22;
 const VT_ENT_ANIMATING: VOffsetT = 24;
 const VT_ENT_ACTIONS: VOffsetT = 26;
+const VT_ENT_REACHABLE: VOffsetT = 28;
+const VT_ENT_REACHABLE_ADJ: VOffsetT = 30;
 
 // ChatOption: { text }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
@@ -214,6 +216,8 @@ pub struct SceneEntityInput<'a> {
     pub in_combat: bool,
     pub animating: bool,
     pub actions: &'a [String],
+    pub reachable: bool,
+    pub reachable_adj: bool,
 }
 
 /// One chat modal BUTTON_OK choice.
@@ -972,6 +976,8 @@ pub struct SceneEntityFp {
     pub in_combat: bool,
     pub animating: bool,
     pub actions: Vec<String>,
+    pub reachable: bool,
+    pub reachable_adj: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1076,6 +1082,8 @@ impl SnapshotFingerprint {
                 in_combat: e.in_combat,
                 animating: e.animating,
                 actions: e.actions.iter().map(|a| a.to_string()).collect(),
+                reachable: e.reachable,
+                reachable_adj: e.reachable_adj,
             }
         }
         SnapshotFingerprint {
@@ -1788,6 +1796,8 @@ fn scene_entity_off<'b>(
     b.push_slot_always(VT_ENT_IN_COMBAT, e.in_combat);
     b.push_slot_always(VT_ENT_ANIMATING, e.animating);
     b.push_slot_always(VT_ENT_ACTIONS, actions_off);
+    b.push_slot_always(VT_ENT_REACHABLE, e.reachable);
+    b.push_slot_always(VT_ENT_REACHABLE_ADJ, e.reachable_adj);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -1947,6 +1957,12 @@ impl SceneEntityReader<'_> {
             None => Vec::new(),
         }
     }
+    pub fn reachable(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_ENT_REACHABLE, None) }.unwrap_or(false)
+    }
+    pub fn reachable_adj(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_ENT_REACHABLE_ADJ, None) }.unwrap_or(false)
+    }
 }
 
 impl Verifiable for SceneEntityReader<'_> {
@@ -1966,6 +1982,8 @@ impl Verifiable for SceneEntityReader<'_> {
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
                 "actions", VT_ENT_ACTIONS, false,
             )?
+            .visit_field::<bool>("reachable", VT_ENT_REACHABLE, false)?
+            .visit_field::<bool>("reachable_adj", VT_ENT_REACHABLE_ADJ, false)?
             .finish();
         Ok(())
     }
@@ -2830,6 +2848,8 @@ mod tests {
             in_combat: false,
             animating: false,
             actions: &actions,
+            reachable: false,
+            reachable_adj: false,
         };
         let mut input = empty_input(9);
         let npcs = [npc];
@@ -2863,6 +2883,8 @@ mod tests {
             in_combat: false,
             animating: false,
             actions: &actions,
+            reachable: false,
+            reachable_adj: false,
         };
         let mut input = empty_input(1);
         let npcs = [npc];

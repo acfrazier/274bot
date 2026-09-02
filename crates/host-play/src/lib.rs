@@ -1286,6 +1286,41 @@ fn with_script_snapshot_input<R>(
     };
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
+    let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {
+        let Some(s) = snapshot else {
+            return (false, false);
+        };
+        let Some(h) = here else {
+            return (false, false);
+        };
+        if !s.scene().available {
+            return (false, false);
+        }
+        let sq = api::query::SceneQuery::new(
+            s.scene(),
+            Some(WorldTile {
+                x: h.x,
+                z: h.z,
+                level: h.level,
+            }),
+        );
+        let dest = WorldTile { x, z, level };
+        let reach = sq.can_reach(
+            dest,
+            &api::query::SceneReachOptions {
+                max_steps: None,
+                adjacent_ok: false,
+            },
+        );
+        let reach_adj = sq.can_reach(
+            dest,
+            &api::query::SceneReachOptions {
+                max_steps: None,
+                adjacent_ok: true,
+            },
+        );
+        (reach, reach_adj)
+    };
     let inv_ops_store: Vec<Vec<String>>;
     let inv: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
         inv_ops_store = s
@@ -1414,7 +1449,10 @@ fn with_script_snapshot_input<R>(
         s.npcs()
             .iter()
             .enumerate()
-            .map(|(i, npc)| SceneEntityInput {
+            .map(|(i, npc)| {
+                let (reachable, reachable_adj) =
+                    entity_reach(npc.tile.x, npc.tile.z, npc.tile.level);
+                SceneEntityInput {
                 index: npc.index as i32,
                 id: npc.r#type.map(|t| t as i32).unwrap_or(-1),
                 name: npc.name.as_deref(),
@@ -1427,6 +1465,9 @@ fn with_script_snapshot_input<R>(
                 in_combat: npc.in_combat,
                 animating: npc.moving || npc.animation != -1,
                 actions: &npc_action_store[i],
+                reachable,
+                reachable_adj,
+            }
             })
             .collect()
     } else {
@@ -1460,6 +1501,8 @@ fn with_script_snapshot_input<R>(
                 in_combat: false,
                 animating: loc.animation != -1,
                 actions: &loc_action_store[i],
+                reachable: false,
+                reachable_adj: false,
             })
             .collect()
     } else {
@@ -1495,6 +1538,8 @@ fn with_script_snapshot_input<R>(
                 in_combat: player.actor.in_combat,
                 animating: player.actor.moving || player.actor.animation != -1,
                 actions: &player_action_store[i],
+                reachable: false,
+                reachable_adj: false,
             })
             .collect()
     } else {
@@ -1515,7 +1560,10 @@ fn with_script_snapshot_input<R>(
         s.ground_items()
             .iter()
             .enumerate()
-            .map(|(i, item)| SceneEntityInput {
+            .map(|(i, item)| {
+                let (reachable, reachable_adj) =
+                    entity_reach(item.tile.x, item.tile.z, item.tile.level);
+                SceneEntityInput {
                 index: item.def.id,
                 id: item.def.id,
                 name: obj_names.and_then(|names| names.name(item.def.id)),
@@ -1528,6 +1576,9 @@ fn with_script_snapshot_input<R>(
                 in_combat: false,
                 animating: false,
                 actions: &ground_action_store[i],
+                reachable,
+                reachable_adj,
+            }
             })
             .collect()
     } else {
@@ -6279,6 +6330,66 @@ mod tests {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    /// Hop 2 — an npc behind a wall posts `reachable: false` from SceneQuery.
+    #[test]
+    fn script_snapshot_npc_behind_wall_posts_reachable_false() {
+        use client::dash3d::{ClientNpc, ClientPlayer, CollisionFlag};
+
+        let mut c = nav_client();
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(ClientPlayer::at(5, 5));
+        c.collision[0].flags[5][6] |= CollisionFlag::SQ_BLOCKED;
+
+        let slot = 0usize;
+        let type_id = 501;
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.npcs.len() <= type_id {
+                cache.npcs.push(client::config::NpcType::default());
+            }
+            cache.npcs[type_id] = client::config::NpcType {
+                id: type_id as i32,
+                name: "Wall guard".to_string(),
+                op: vec![Some("Attack".to_string())],
+                ..Default::default()
+            };
+        }
+        let mut npc = ClientNpc::at(5, 6);
+        npc.r#type = Some(type_id);
+        while c.npc.len() <= slot {
+            c.npc.push(None);
+        }
+        c.npc[slot] = Some(Box::new(npc));
+        c.npc_ids[0] = slot as i32;
+        c.npc_count = 1;
+
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut c, &mut snap);
+        assert_eq!(snap.npcs().len(), 1, "fixture carries one npc");
+
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        let npcs = view.npcs();
+        assert_eq!(npcs.len(), 1);
+        assert!(
+            !npcs[0].reachable(),
+            "npc behind SQ_BLOCKED tile is not reachable"
+        );
     }
 
     // Task 9c — delta posts: the keyframe carries every field; a later
