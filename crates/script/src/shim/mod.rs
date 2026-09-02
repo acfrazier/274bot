@@ -174,6 +174,42 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("continue_dialog.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/tasks/DeathRecovery.js",
+            include_str!("death_recovery.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/tasks/PeriodicBank.js",
+            include_str!("periodic_bank.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/CombatStyle.js",
+            include_str!("combat_style.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/spelldb.js",
+            include_str!("data/spelldb.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/market/catalog.js",
+            include_str!("catalog.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/market/MarketMaker.js",
+            include_str!("market_maker.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/runtime/Settings.js",
+            include_str!("settings.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ai/quests/engine/QuestEngine.js",
+            include_str!("quest_engine.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ai/clues/SolveClue.js",
+            include_str!("solve_clue.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/walking/Traversal.js",
             include_str!("traversal.js"),
         ),

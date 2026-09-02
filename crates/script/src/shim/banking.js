@@ -87,6 +87,36 @@ export function depositAllExcept(keep) {
     return (name) => name.length > 0 && !set.has(name.toLowerCase());
 }
 
+const BANK_STRATEGY_OPTIONS = ['Off', 'Loot count', 'Time', 'Either'];
+
+export const PERIODIC_BANK_SETTINGS = {
+    bankStrategy: {
+        type: 'string',
+        default: 'Off',
+        options: BANK_STRATEGY_OPTIONS,
+        label: 'Periodic bank',
+        help: 'save accumulated loot so a death does not lose it all',
+    },
+    bankEveryItems: { type: 'number', default: 15, min: 1, max: 27, label: 'Bank at N loot items' },
+    bankEveryMinutes: { type: 'number', default: 10, min: 1, max: 120, label: 'Bank every N minutes' },
+    bankCommonJunk: {
+        type: 'boolean',
+        default: true,
+        label: 'Also bank gems/fruit/beer/kebabs/caskets',
+    },
+};
+
+export function parseBankStrategy(label) {
+    const n = String(label || '')
+        .trim()
+        .toLowerCase();
+    if (n === 'off') return 'off';
+    if (n === 'loot count') return 'loot';
+    if (n === 'time') return 'time';
+    if (n === 'either') return 'either';
+    return 'off';
+}
+
 export const Banking = new Proxy(
     {
         async open() {
