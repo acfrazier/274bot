@@ -51,13 +51,16 @@ impl<'a> LoadoutsPane<'a> {
         if name.is_empty() {
             return;
         }
-        let worn = split_csv(&self.state.worn_scratch);
-        let carry = split_csv(&self.state.carry_scratch);
-        self.store.upsert(Loadout {
+        let loadout = Loadout {
             name: name.to_string(),
-            worn,
-            carry,
-        });
+            worn: split_csv(&self.state.worn_scratch),
+            carry: split_csv(&self.state.carry_scratch),
+        };
+        if self.state.sel < self.store.loadouts().len() {
+            self.store.replace_at(self.state.sel, loadout);
+        } else {
+            self.store.upsert(loadout);
+        }
         let _ = self.store.save();
     }
 
@@ -215,6 +218,8 @@ impl Widget for LoadoutsPane<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -223,14 +228,20 @@ mod tests {
 
     use super::{LoadoutsKey, LoadoutsPane, LoadoutsState};
 
+    static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
     fn tmp_store() -> LoadoutsStore {
+        let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "274bot-tui-loadouts-{}",
-            std::process::id()
+            "274bot-tui-loadouts-{n}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("loadouts.json");
@@ -291,5 +302,45 @@ mod tests {
             .collect();
         assert!(text.contains("loadouts"), "popup paints: {text:?}");
         assert!(text.contains("fish"), "selected loadout paints: {text:?}");
+    }
+
+    #[test]
+    fn apply_scratch_renames_in_place() {
+        let mut store = LoadoutsStore::at({
+            let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "274bot-tui-loadout-rename-{n}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            dir.join("loadouts.json")
+        });
+        store.upsert(Loadout {
+            name: "melee".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+
+        let mut state = LoadoutsState {
+            open: true,
+            sel: 0,
+            row: 1,
+            name_scratch: "melee2".into(),
+            ..Default::default()
+        };
+        let changed = {
+            let mut pane = LoadoutsPane {
+                store: &mut store,
+                state: &mut state,
+            };
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(changed, LoadoutsKey::Changed);
+        assert_eq!(store.loadouts().len(), 1);
+        assert_eq!(store.loadouts()[0].name, "melee2");
+        assert_eq!(state.sel, 0);
     }
 }

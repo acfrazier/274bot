@@ -2394,11 +2394,16 @@ fn apply_loadouts_scratch(session: &mut Session) {
     if name.is_empty() {
         return;
     }
-    session.loadouts.upsert(script::Loadout {
+    let loadout = script::Loadout {
         name: name.to_string(),
         worn: split_loadout_csv(&session.loadouts_worn_scratch),
         carry: split_loadout_csv(&session.loadouts_carry_scratch),
-    });
+    };
+    if session.loadouts_sel < session.loadouts.loadouts().len() {
+        session.loadouts.replace_at(session.loadouts_sel, loadout);
+    } else {
+        session.loadouts.upsert(loadout);
+    }
     let _ = session.loadouts.save();
 }
 
@@ -3579,12 +3584,13 @@ mod tests {
     use dear_imgui_rs::{ConfigFlags, Key, WindowFlags};
 
     use super::{
-        apply_only_render_selected, apply_ui_scale, boot_for, capture_key_ch,
-        chooser_should_open_popup, clamp_hop_label_px, debug_caption, edit_parameters_enabled,
-        game_window_flags, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
-        manual_shot_label, parse_live_args, random_status_text, runner_config, smoke_settled,
-        smoke_should_fire, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode,
-        BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_for,
+        capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
+        edit_parameters_enabled, game_window_flags, live_null_tick, live_script_tick,
+        live_smoke_tick, live_stress_tick, manual_shot_label, parse_live_args, random_status_text,
+        runner_config, smoke_settled, smoke_should_fire, sync_loadouts_scratch, Boot, LiveBoot,
+        LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W,
+        LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -3669,10 +3675,16 @@ mod tests {
     #[test]
     fn loadout_combo_lists_store_names() {
         use script::{Loadout, LoadoutsStore, SettingDef, resolve_setting_options};
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-loadout-combo-{}",
-            std::process::id()
+            "274bot-panel-loadout-combo-{n}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
@@ -3706,6 +3718,42 @@ mod tests {
             resolve_setting_options(&def, &store),
             vec!["guard".to_string(), "stall".to_string()]
         );
+    }
+
+    #[test]
+    fn apply_loadouts_scratch_renames_in_place() {
+        use script::{Loadout, LoadoutsStore};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::session::Session;
+
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-loadout-rename-{n}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
+        store.upsert(Loadout {
+            name: "melee".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+
+        let mut session = Session::new();
+        session.loadouts = store;
+        session.loadouts_sel = 0;
+        sync_loadouts_scratch(&mut session);
+        session.loadouts_name_scratch = "melee2".into();
+        apply_loadouts_scratch(&mut session);
+
+        assert_eq!(session.loadouts.loadouts().len(), 1);
+        assert_eq!(session.loadouts.loadouts()[0].name, "melee2");
+        assert_eq!(session.loadouts_sel, 0);
     }
 
     #[test]

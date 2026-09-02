@@ -68,6 +68,16 @@ impl LoadoutsStore {
         }
     }
 
+    /// Replace the loadout at `index`, including renames (does not key on name).
+    pub fn replace_at(&mut self, index: usize, loadout: Loadout) -> bool {
+        if index >= self.loadouts.len() {
+            return false;
+        }
+        self.dirty = true;
+        self.loadouts[index] = loadout;
+        true
+    }
+
     pub fn remove(&mut self, name: &str) -> bool {
         let before = self.loadouts.len();
         self.loadouts.retain(|l| l.name != name);
@@ -105,13 +115,21 @@ pub fn resolve_setting_options(def: &crate::rs2b0t_registry::SettingDef, loadout
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::rs2b0t_registry::SettingDef;
 
+    static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
     fn tmp_path() -> PathBuf {
+        let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "274bot-loadouts-test-{}",
-            std::process::id()
+            "274bot-loadouts-test-{n}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("loadouts.json")
@@ -181,5 +199,33 @@ mod tests {
         };
         let opts = resolve_setting_options(&def, &store);
         assert_eq!(opts, vec!["fish", "mine"]);
+    }
+
+    #[test]
+    fn replace_at_renames_without_duplicating() {
+        let path = tmp_path();
+        let mut store = LoadoutsStore::at(path);
+        store.upsert(Loadout {
+            name: "melee".into(),
+            worn: vec!["helm".into()],
+            carry: vec![],
+        });
+        store.upsert(Loadout {
+            name: "range".into(),
+            worn: vec![],
+            carry: vec![],
+        });
+        assert!(store.replace_at(
+            0,
+            Loadout {
+                name: "melee2".into(),
+                worn: vec!["helm".into()],
+                carry: vec![],
+            },
+        ));
+        assert_eq!(store.loadouts().len(), 2);
+        assert_eq!(store.loadouts()[0].name, "melee2");
+        assert!(store.get("melee").is_none());
+        assert!(store.get("melee2").is_some());
     }
 }
