@@ -869,18 +869,7 @@ impl<'a> Interactions<'a> {
         let Some((px, pz, level)) = snapshot.tile() else {
             return refuse(snapshot, SendReason::OffScene);
         };
-        let loc = snapshot
-            .locs()
-            .iter()
-            .filter(|l| {
-                l.tile.level == level
-                    && l.actions.iter().any(|a| {
-                        a.as_deref()
-                            .is_some_and(|s| s.eq_ignore_ascii_case("Use-quickly"))
-                    })
-            })
-            .min_by_key(|l| (l.tile.x - px).abs().max((l.tile.z - pz).abs()));
-        let Some(loc) = loc else {
+        let Some(loc) = snapshot.nearest_use_quickly_booth() else {
             return refuse(snapshot, SendReason::StaleTarget);
         };
         let cheb = (loc.tile.x - px).abs().max((loc.tile.z - pz).abs());

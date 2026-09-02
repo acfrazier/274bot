@@ -1281,8 +1281,8 @@ fn with_script_snapshot_input<R>(
 ) -> R {
     use script::isolate_fb::{
         BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
-        MakeButtonInput, MakeProductInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
-        StatInput, TileInput, VarpInput,
+        MakeButtonInput, MakeProductInput, NearestBoothInput, SceneEntityInput, SideTabIfaceInput,
+        SnapshotInput, StatInput, TileInput, VarpInput,
     };
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
@@ -1684,6 +1684,16 @@ fn with_script_snapshot_input<R>(
             })
             .collect::<Vec<_>>()
     });
+    let nearest_booth = snapshot.and_then(|s| {
+        s.nearest_use_quickly_booth()
+            .map(|loc| NearestBoothInput {
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                name: loc.name.as_deref().unwrap_or("Bank booth"),
+                op: "Use-quickly",
+            })
+    });
     let banks = world.map(|w| {
         use nav::pack::BankAccess;
         w.banks()
@@ -1799,6 +1809,7 @@ fn with_script_snapshot_input<R>(
         inv_size: snapshot.map_or(0, |s| s.inventory_size()),
         stats: stats.as_deref().unwrap_or(&[]),
         booths: booths.as_deref().unwrap_or(&[]),
+        nearest_booth,
         banks: banks.as_deref().unwrap_or(&[]),
         bank: &bank,
         bank_side: &bank_side,

@@ -1202,6 +1202,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "booths", empty_rows)?;
         }
+        if snap.has_nearest_booth() {
+            let nb = nearest_booth_object(&mut scope, &snap.nearest_booth().expect("has flag"))?;
+            set(&mut scope, obj, "nearest_booth", nb)?;
+        } else if !had {
+            set(&mut scope, obj, "nearest_booth", none)?;
+        }
         if snap.has_banks() {
             let banks = bank_stand_array(&mut scope, &snap.banks())?;
             set(&mut scope, obj, "banks", banks)?;
@@ -1522,6 +1528,24 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "z", z)?;
         let level = num(scope, t.level() as f64);
         set(scope, o, "level", level)?;
+        Ok(o.into())
+    }
+
+    fn nearest_booth_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        nb: &crate::isolate_fb::NearestBoothReader<'_>,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let o = v8::Object::new(scope);
+        let x = num(scope, nb.x() as f64);
+        set(scope, o, "x", x)?;
+        let z = num(scope, nb.z() as f64);
+        set(scope, o, "z", z)?;
+        let level = num(scope, nb.level() as f64);
+        set(scope, o, "level", level)?;
+        let name = js_string(scope, nb.name())?;
+        set(scope, o, "name", name)?;
+        let op = js_string(scope, nb.op())?;
+        set(scope, o, "op", op)?;
         Ok(o.into())
     }
 

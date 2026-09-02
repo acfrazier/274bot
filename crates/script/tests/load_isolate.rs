@@ -201,6 +201,22 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         side_tab_ifaces: &[],
         spell_buttons: &[],
         chat_lines: &[],
+        nearest_booth: None,
+    }
+}
+
+fn nearest_booth_input<'a>(
+    x: i32,
+    z: i32,
+    level: i32,
+    name: &'a str,
+) -> script::isolate_fb::NearestBoothInput<'a> {
+    script::isolate_fb::NearestBoothInput {
+        x,
+        z,
+        level,
+        name,
+        op: "Use-quickly",
     }
 }
 
@@ -2108,8 +2124,7 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 12b — nearestBank reads posted Use-quickly locs on the same plane.
-// A fake booth at `here` is a lie.
+// Hop 3 — nearestBank reads the host-posted nearest_booth row, never scans locs.
 #[test]
 fn isolate_nearest_bank_is_posted_booth_not_player_tile() {
     let src = r#"
@@ -2146,6 +2161,7 @@ export default class T extends LoopingBot {
         level: 0,
     });
     snap.locs = &locs;
+    snap.nearest_booth = Some(nearest_booth_input(3180, 3436, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
@@ -2156,6 +2172,76 @@ export default class T extends LoopingBot {
         (value["x"].as_i64(), value["z"].as_i64()),
         (Some(3185), Some(3440)),
         "nearestBank must not fake a booth at the player tile"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_nearest_bank_picks_rust_nearest_of_two_booths() {
+    let src = r#"
+import { nearestBank } from '../../api/bank/BankLocations.js';
+export default class T extends LoopingBot {
+    loop() {
+        const b = nearestBank();
+        globalThis.__probe = b ? { x: b.tile.x, z: b.tile.z, level: b.tile.level } : null;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let near = script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 3180,
+        z: 3436,
+        level: 0,
+        distance: 5,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &use_quickly,
+        reachable: false,
+        reachable_adj: false,
+    };
+    let far = script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 2214,
+        name: Some("Bank booth"),
+        x: 3195,
+        z: 3455,
+        level: 0,
+        distance: 20,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &use_quickly,
+        reachable: false,
+        reachable_adj: false,
+    };
+    let locs = [near, far];
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3185,
+        z: 3440,
+        level: 0,
+    });
+    snap.locs = &locs;
+    snap.nearest_booth = Some(nearest_booth_input(3180, 3436, 0, "Bank booth"));
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        (value["x"].as_i64(), value["z"].as_i64()),
+        (Some(3180), Some(3436)),
+        "two booths posted: nearestBank is Rust-nearest, not player tile"
+    );
+    assert_ne!(
+        (value["x"].as_i64(), value["z"].as_i64()),
+        (Some(3185), Some(3440)),
+        "must not return player tile when two booths exist"
     );
     iso.join();
 }

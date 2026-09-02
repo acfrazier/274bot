@@ -880,6 +880,22 @@ impl GameSnapshot {
         &self.loc
     }
 
+    /// The nearest scene loc whose actions include `Use-quickly` on the
+    /// player's plane. None when off-scene or no booth on the plane.
+    pub fn nearest_use_quickly_booth(&self) -> Option<&LocView> {
+        let (px, pz, level) = self.tile()?;
+        self.locs()
+            .iter()
+            .filter(|l| {
+                l.tile.level == level
+                    && l.actions.iter().any(|a| {
+                        a.as_deref()
+                            .is_some_and(|s| s.eq_ignore_ascii_case("Use-quickly"))
+                    })
+            })
+            .min_by_key(|l| (l.tile.x - px).abs().max((l.tile.z - pz).abs()))
+    }
+
     /// Ground-object stacks from the last ground-item rebuild.
     pub fn ground_items(&self) -> &[GroundItemView] {
         &self.ground_item

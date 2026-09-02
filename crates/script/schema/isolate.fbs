@@ -79,6 +79,15 @@ table Booth {
   level: int;
 }
 
+// The nearest Use-quickly booth on the player's plane (Rust-picked).
+table NearestBooth {
+  x: int;
+  z: int;
+  level: int;
+  name: string;
+  op: string;
+}
+
 // A packed bank stand the shim walks to / opens.
 table BankStand {
   name: string;
@@ -133,6 +142,7 @@ table Snapshot {
   inv_size: int;   // inv-tab slot count (28 bound, 0 tutorial-locked)
   stats: [Stat];
   booths: [Booth];
+  nearest_booth: NearestBooth;
   banks: [BankStand];
   bank: [Row];
   bank_side: [Row];

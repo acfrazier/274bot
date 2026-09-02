@@ -75,7 +75,14 @@ const VT_BANK_KIND: VOffsetT = 12;
 const VT_BANK_OP: VOffsetT = 14;
 const VT_BANK_CHOOSE: VOffsetT = 16;
 
-// Snapshot: { tick, here, ingame, inv, inv_size, stats, booths, banks,
+// NearestBooth: { x, z, level, name, op }
+const VT_NEAREST_X: VOffsetT = 4;
+const VT_NEAREST_Z: VOffsetT = 6;
+const VT_NEAREST_LEVEL: VOffsetT = 8;
+const VT_NEAREST_NAME: VOffsetT = 10;
+const VT_NEAREST_OP: VOffsetT = 12;
+
+// Snapshot: { tick, here, ingame, inv, inv_size, stats, booths, nearest_booth,
 //             bank, bank_side, bank_open, bank_loaded, hold, ours }
 const VT_SNAP_TICK: VOffsetT = 4;
 const VT_SNAP_HERE: VOffsetT = 6;
@@ -115,6 +122,7 @@ const VT_SNAP_MAKE_PRODUCTS: VOffsetT = 72;
 const VT_SNAP_SIDE_TAB_IFACES: VOffsetT = 74;
 const VT_SNAP_SPELL_BUTTONS: VOffsetT = 76;
 const VT_SNAP_CHAT_LINES: VOffsetT = 78;
+const VT_SNAP_NEAREST_BOOTH: VOffsetT = 80;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -306,6 +314,15 @@ pub struct BankStandInput<'a> {
     pub choose: Option<&'a str>,
 }
 
+/// The Rust-picked nearest Use-quickly booth on the player's plane.
+pub struct NearestBoothInput<'a> {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub name: &'a str,
+    pub op: &'a str,
+}
+
 /// The snapshot fields the host observed this PLAYER_INFO — exactly the
 /// set the shim Game/Inventory/Skills/Bank/Banking/EventSignal read, no
 /// World clone. `inv`/`bank`/`bank_side` rows carry the resolved obj name
@@ -323,6 +340,7 @@ pub struct SnapshotInput<'a> {
     pub inv_size: i32,
     pub stats: &'a [StatInput<'a>],
     pub booths: &'a [TileInput],
+    pub nearest_booth: Option<NearestBoothInput<'a>>,
     pub banks: &'a [BankStandInput<'a>],
     pub bank: &'a [ItemRowInput<'a>],
     pub bank_side: &'a [ItemRowInput<'a>],
@@ -550,6 +568,52 @@ impl Verifiable for BankStandReader<'_> {
     }
 }
 
+/// The Rust-picked nearest Use-quickly booth as decoded.
+#[derive(Clone, Copy)]
+pub struct NearestBoothReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for NearestBoothReader<'a> {
+    type Inner = NearestBoothReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl NearestBoothReader<'_> {
+    pub fn x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_NEAREST_X, None) }.unwrap_or(0)
+    }
+    pub fn z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_NEAREST_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_NEAREST_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn name(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_NEAREST_NAME, None) }.unwrap_or("")
+    }
+    pub fn op(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_NEAREST_OP, None) }.unwrap_or("")
+    }
+}
+
+impl Verifiable for NearestBoothReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("x", VT_NEAREST_X, false)?
+            .visit_field::<i32>("z", VT_NEAREST_Z, false)?
+            .visit_field::<i32>("level", VT_NEAREST_LEVEL, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_NEAREST_NAME, false)?
+            .visit_field::<ForwardsUOffset<&str>>("op", VT_NEAREST_OP, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// The PLAYER_INFO snapshot as decoded: read-only access to the same
 /// fields `script_snapshot_fb` encodes.
 pub struct SnapshotReader<'a> {
@@ -641,6 +705,9 @@ impl Verifiable for SnapshotReader<'_> {
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatLineReader>>>>(
                 "chat_lines", VT_SNAP_CHAT_LINES, false,
+            )?
+            .visit_field::<ForwardsUOffset<NearestBoothReader>>(
+                "nearest_booth", VT_SNAP_NEAREST_BOOTH, false,
             )?
             .finish();
         Ok(())
@@ -897,6 +964,19 @@ impl SnapshotReader<'_> {
     pub fn chat_lines(&self) -> Vec<ChatLineReader<'_>> {
         rows::<ChatLineReader>(&self.tab, VT_SNAP_CHAT_LINES)
     }
+    pub fn has_nearest_booth(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<NearestBoothReader>>(VT_SNAP_NEAREST_BOOTH, None)
+                .is_some()
+        }
+    }
+    pub fn nearest_booth(&self) -> Option<NearestBoothReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<NearestBoothReader>>(VT_SNAP_NEAREST_BOOTH, None)
+        }
+    }
 }
 
 /// Decode `buf` as a root-`Snapshot` FlatBuffer (produced by our own
@@ -1010,6 +1090,15 @@ pub struct MakeProductFp {
     pub buttons: Vec<MakeButtonFp>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct NearestBoothFp {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub name: String,
+    pub op: String,
+}
+
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
@@ -1022,6 +1111,7 @@ pub struct SnapshotFingerprint {
     pub inv_size: i32,
     pub stats: Vec<(i32, String, i32, i32)>,
     pub booths: Vec<TileInput>,
+    pub nearest_booth: Option<NearestBoothFp>,
     pub banks: Vec<BankStandFp>,
     pub bank: Vec<ItemRowFp>,
     pub bank_side: Vec<ItemRowFp>,
@@ -1097,6 +1187,13 @@ impl SnapshotFingerprint {
                 .map(|s| (s.index, s.name.to_string(), s.xp, s.level))
                 .collect(),
             booths: input.booths.to_vec(),
+            nearest_booth: input.nearest_booth.as_ref().map(|b| NearestBoothFp {
+                x: b.x,
+                z: b.z,
+                level: b.level,
+                name: b.name.to_string(),
+                op: b.op.to_string(),
+            }),
             banks: input
                 .banks
                 .iter()
@@ -1196,6 +1293,7 @@ pub struct DeltaMask {
     pub inv_size: bool,
     pub stats: bool,
     pub booths: bool,
+    pub nearest_booth: bool,
     pub banks: bool,
     pub bank: bool,
     pub bank_side: bool,
@@ -1239,6 +1337,7 @@ impl DeltaMask {
             inv_size: true,
             stats: true,
             booths: true,
+            nearest_booth: true,
             banks: true,
             bank: true,
             bank_side: true,
@@ -1289,6 +1388,7 @@ impl DeltaMask {
             inv_size: next.inv_size != last.inv_size,
             stats: next.stats != last.stats,
             booths: next.booths != last.booths,
+            nearest_booth: next.nearest_booth != last.nearest_booth,
             banks: force_banks || next.banks != last.banks,
             bank: next.bank != last.bank,
             bank_side: next.bank_side != last.bank_side,
@@ -1604,6 +1704,14 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let nearest_booth_table_off = if mask.nearest_booth {
+        input
+            .nearest_booth
+            .as_ref()
+            .map(|nb| nearest_booth_table_off(b, nb))
+    } else {
+        None
+    };
     let my_name_off = if mask.my_name {
         Some(b.create_string(input.my_name.unwrap_or("")))
     } else {
@@ -1630,6 +1738,11 @@ fn encode_snapshot_masked_into(
     }
     if mask.booths {
         b.push_slot_always(VT_SNAP_BOOTHS, booths_off.expect("mask checked"));
+    }
+    if mask.nearest_booth {
+        if let Some(off) = nearest_booth_table_off {
+            b.push_slot_always(VT_SNAP_NEAREST_BOOTH, off);
+        }
     }
     if mask.banks {
         b.push_slot_always(VT_SNAP_BANKS, banks_off.expect("mask checked"));
@@ -1896,6 +2009,21 @@ fn bank_stand_off<'b>(
     if let Some(off) = choose_off {
         b.push_slot_always(VT_BANK_CHOOSE, off);
     }
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn nearest_booth_table_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    s: &NearestBoothInput<'_>,
+) -> WIPOffset<NearestBoothReader<'b>> {
+    let name_off = b.create_string(s.name);
+    let op_off = b.create_string(s.op);
+    let tab = b.start_table();
+    b.push_slot_always(VT_NEAREST_X, s.x);
+    b.push_slot_always(VT_NEAREST_Z, s.z);
+    b.push_slot_always(VT_NEAREST_LEVEL, s.level);
+    b.push_slot_always(VT_NEAREST_NAME, name_off);
+    b.push_slot_always(VT_NEAREST_OP, op_off);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -2797,6 +2925,7 @@ mod tests {
             inv_size: 28,
             stats: &[],
             booths: &[],
+            nearest_booth: None,
             banks: &[],
             bank: &[],
             bank_side: &[],
