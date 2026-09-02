@@ -43,6 +43,7 @@ use vault::{Profile, Vault};
 
 use crate::app::{AppAction, ChatData, TuiApp};
 use crate::chat::ChatAction;
+use crate::script_shape::{categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard};
 
 /// The default engine port (same as host-play / panel).
 const DEFAULT_PORT: u16 = 43594;
@@ -264,6 +265,11 @@ pub struct TuiSession {
     /// The `$RS2B0T` registry cards were filled into `js` once (first
     /// Browse/Load, like the panel).
     rs2b0t_filled: bool,
+    /// First-run rs2b0t clone-root folder browser.
+    rs2b0t_catalog_open: bool,
+    rs2b0t_catalog_dir: PathBuf,
+    /// Browse category order keys (in-memory; panel persists to panel-ui.json).
+    script_category_order: Vec<String>,
 }
 
 #[cfg(test)]
@@ -295,7 +301,16 @@ impl TuiSession {
             live_name: None,
             js,
             rs2b0t_filled: false,
+            rs2b0t_catalog_open: false,
+            rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
+            script_category_order: Vec::new(),
         }
+    }
+
+    fn default_catalog_browse_dir() -> PathBuf {
+        env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/"))
     }
 
     /// Unlock (or first-run create) the vault at `path` and start the play.
@@ -567,8 +582,8 @@ impl TuiSession {
         }
     }
 
-    /// Fill the JS library's cards from the `$RS2B0T` registry once
-    /// (first Browse/Load, like the panel). Errors are debug-only.
+    /// Fill the JS library's cards from the `$RS2B0T` registry once when
+    /// the env/persisted root is already known (live boot). Errors are debug-only.
     fn fill_rs2b0t_cards_once(&mut self) {
         if self.rs2b0t_filled {
             return;
@@ -586,18 +601,77 @@ impl TuiSession {
         }
     }
 
-    /// Start the Browse-selected card (a loaded JS bot) on the focused
-    /// slot: `Play::script_start_load` with the card's source and shape
-    /// (the same dispatch the panel uses). Errors land on the strip.
-    fn script_start(&mut self, app: &mut TuiApp, card: &str) {
+    /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
+    /// clone root, or honour a prior defer (panel parity).
+    fn on_script_browse_open(&mut self, app: &mut TuiApp) {
+        if self.rs2b0t_filled {
+            return;
+        }
+        self.rs2b0t_filled = true;
+        if let Some(root) = script::rs2b0t_root() {
+            if let Err(e) = self
+                .js
+                .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
+            {
+                if std::env::var("BOT_DEBUG").is_ok() {
+                    eprintln!("[tui-play] $RS2B0T registry: {e}");
+                }
+            }
+            return;
+        }
+        if script::rs2b0t_import_deferred_at(&script::default_rs2b0t_import_file()) {
+            return;
+        }
+        self.rs2b0t_catalog_open = true;
+        self.rs2b0t_catalog_dir = Self::default_catalog_browse_dir();
+        app.rs2b0t_catalog_open = true;
+        app.rs2b0t_catalog_dir = self.rs2b0t_catalog_dir.clone();
+        app.catalog_sel = 0;
+    }
+
+    fn defer_rs2b0t_catalog(&mut self, app: &mut TuiApp) {
+        let _ = script::set_rs2b0t_import_deferred_at(&script::default_rs2b0t_import_file());
+        self.rs2b0t_catalog_open = false;
+        app.rs2b0t_catalog_open = false;
+    }
+
+    fn import_rs2b0t_catalog(
+        &mut self,
+        app: &mut TuiApp,
+        root: &Path,
+    ) -> Result<usize, String> {
+        if !rs2b0t_root_has_index(root) {
+            return Err(format!(
+                "no catalog at {}",
+                script::registry_index_path(root).display()
+            ));
+        }
+        let n = self
+            .js
+            .register_rs2b0t(root, &script::default_rs2b0t_path_file())?;
+        let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
+        self.rs2b0t_catalog_open = false;
+        app.rs2b0t_catalog_open = false;
+        Ok(n)
+    }
+
+    /// Start the Browse-selected card on the focused slot.
+    fn script_start(&mut self, app: &mut TuiApp, sel: &script::ScriptSel) {
         let Some(name) = app.focused_name() else {
             app.error = Some("script: no focused profile".into());
             return;
         };
         let result = match &self.play {
-            Some(play) => match self.js.find_name(card) {
-                Some(card) => play.script_start_load(&name, card.js.clone(), card.shape),
-                None => Err(format!("no loaded script: {card}")),
+            Some(play) => match sel {
+                script::ScriptSel::Loaded(source, card_name) => {
+                    match self.js.get(*source, card_name) {
+                        Some(card) => {
+                            play.script_start_load(&name, card.js.clone(), card.shape)
+                        }
+                        None => Err(format!("no loaded script: {card_name}")),
+                    }
+                }
+                script::ScriptSel::Compiled(id) => play.script_start(&name, *id),
             },
             None => Err("no play".to_string()),
         };
@@ -636,7 +710,7 @@ impl TuiSession {
     fn script_load(&mut self, app: &mut TuiApp, path: &str) {
         match self.js.load(Path::new(path)) {
             Ok(card) => {
-                app.script_sel = Some(card.name);
+                app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
                 app.error = None;
             }
             Err(e) => app.error = Some(format!("script: {e}")),
@@ -683,9 +757,20 @@ impl TuiSession {
         }
         app.names = names;
         app.statuses = statuses;
-        // The script pane's Browse picker lists the library cards
-        // (persisted store + filled $RS2B0T registry cards).
-        app.script_names = self.js.cards().iter().map(|c| c.name.clone()).collect();
+        // The script pane's Browse picker lists library cards with registry fields.
+        app.script_cards = self.js.cards().iter().map(BrowseCard::from).collect();
+        let present = categories_present(&app.script_cards);
+        let order = resolve_category_order(&self.script_category_order, &present);
+        if order != self.script_category_order {
+            self.script_category_order = order.clone();
+        }
+        app.script_category_order = self.script_category_order.clone();
+        app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
+        if !app.rs2b0t_catalog_open {
+            app.rs2b0t_catalog_dir = self.rs2b0t_catalog_dir.clone();
+        } else {
+            self.rs2b0t_catalog_dir.clone_from(&app.rs2b0t_catalog_dir);
+        }
         // The map paints `Play`'s packed collision, not the live loc
         // snapshot. Copy the session world each pump (an `Arc` clone)
         // so a loaded pack is not stuck behind the empty-state title.
@@ -988,10 +1073,29 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
-        AppAction::ScriptStart(card) => session.script_start(app, &card),
+        AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
-        AppAction::ScriptBrowse => session.fill_rs2b0t_cards_once(),
+        AppAction::ScriptBrowse => {
+            if app.script_browse_open {
+                session.on_script_browse_open(app);
+            }
+        }
+        AppAction::ScriptImportCatalog => {
+            session.rs2b0t_catalog_open = true;
+            session.rs2b0t_catalog_dir = app.rs2b0t_catalog_dir.clone();
+            app.rs2b0t_catalog_open = true;
+            app.catalog_sel = 0;
+        }
+        AppAction::ScriptDeferCatalog => session.defer_rs2b0t_catalog(app),
+        AppAction::ScriptUseCatalog => {
+            let root = app.rs2b0t_catalog_dir.clone();
+            session.rs2b0t_catalog_dir = root.clone();
+            app.error = match session.import_rs2b0t_catalog(app, &root) {
+                Ok(_) => None,
+                Err(e) => Some(e),
+            };
+        }
         AppAction::ScriptLoad(path) => session.script_load(app, &path.to_string_lossy()),
         AppAction::None => {}
     }
@@ -1097,6 +1201,148 @@ mod tests {
             err.starts_with("profile:"),
             "upsert failure must return Err, got {err:?}"
         );
+    }
+
+    fn fake_rs2b0t_tree(dir: &Path) -> PathBuf {
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import BoneBurier from './BoneBurier/BoneBurier.js';
+ScriptRegistry.register({
+  name: 'BoneBurier',
+  description: 'Buries bones',
+  category: 'Prayer',
+  tags: ['bones'],
+  create: () => new BoneBurier(),
+});
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("BoneBurier/BoneBurier.ts"),
+            "export default class BoneBurier extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn first_browse_without_rs2b0t_opens_catalog_prompt() {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-tui-browse-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("RS2B0T");
+
+        let mut session = TuiSession::new(dummy_options());
+        let mut app = TuiApp::new("274bot headless");
+        app.script_browse_open = true;
+        session.on_script_browse_open(&mut app);
+        assert!(
+            session.rs2b0t_catalog_open,
+            "first browse opens folder picker"
+        );
+        assert!(
+            !home.join(".274bot/rs2b0t-path").exists(),
+            "first browse must not write rs2b0t-path"
+        );
+
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
+        let dir = std::env::temp_dir().join(format!("274bot-tui-defer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("RS2B0T");
+
+        let mut session = TuiSession::new(dummy_options());
+        let mut app = TuiApp::new("274bot headless");
+        app.script_browse_open = true;
+        session.on_script_browse_open(&mut app);
+        session.defer_rs2b0t_catalog(&mut app);
+        assert!(
+            script::rs2b0t_import_deferred_at(&home.join(".274bot/rs2b0t-import")),
+            "defer flag written"
+        );
+        assert!(
+            !home.join(".274bot/rs2b0t-path").exists(),
+            "defer must not write rs2b0t-path"
+        );
+        assert!(
+            session
+                .js
+                .cards()
+                .iter()
+                .all(|c| c.source != script::ScriptSource::Catalog),
+            "zero Catalog cards after defer"
+        );
+
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+        let dir = std::env::temp_dir().join(format!("274bot-tui-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let root = fake_rs2b0t_tree(&dir);
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("RS2B0T");
+
+        let mut session = TuiSession::new(dummy_options());
+        let mut app = TuiApp::new("274bot headless");
+        let n = session
+            .import_rs2b0t_catalog(&mut app, &root)
+            .expect("import");
+        assert_eq!(n, 1);
+        assert!(home.join(".274bot/rs2b0t-path").is_file());
+        let card = session
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .expect("catalog card");
+        assert_eq!(card.description, "Buries bones");
+
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
@@ -18,19 +18,26 @@ use host_play::SlotStatus;
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use script::RunState;
+use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::map::{Map, MapAction, MapView};
-use crate::script_shape::{ScriptClick, ScriptPane};
+use crate::script_shape::{
+    browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
+    ScriptPane,
+};
 use crate::settings::{SettingsKey, SettingsPane, SettingsState};
 use crate::status::StatusPane;
 
-/// How many Browse picker rows the script pane shows at once (the pane
-/// grows by this much; more names are reachable with j/k).
-const MAX_BROWSE_ROWS: usize = 4;
+/// Cap Browse detail lines so a small terminal keeps map/status room.
+const MAX_BROWSE_LINES: u16 = 14;
 
-/// One operator action the binary dispatches onto `host_play::Play`.
+fn default_catalog_browse_dir() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
@@ -45,17 +52,23 @@ pub enum AppAction {
     Chat(ChatAction),
     /// MultiBox: spawn every vault profile that is not running yet.
     SpawnAll,
-    /// Start the Browse-selected JS card `name` on the focused slot:
+    /// Start the Browse-selected JS card on the focused slot:
     /// `tui-play` dispatches `Play::script_start_load` with the card's
     /// source and shape.
-    ScriptStart(String),
+    ScriptStart(ScriptSel),
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
     /// / `Play::script_resume`, like the panel's `script_toggle_pause`).
     ScriptPause,
     /// Stop the focused slot's script (`Play::script_stop`).
     ScriptStop,
-    /// Open the script Browse picker (registry card names).
+    /// Open the script Browse picker (registry cards).
     ScriptBrowse,
+    /// Open the first-run rs2b0t catalog folder browser.
+    ScriptImportCatalog,
+    /// Defer the rs2b0t catalog import (Not now).
+    ScriptDeferCatalog,
+    /// Import catalog from the chosen clone root.
+    ScriptUseCatalog,
     /// Load the JS bot at `path` into the library and select it.
     ScriptLoad(std::path::PathBuf),
     /// Nothing to dispatch.
@@ -80,6 +93,13 @@ impl NavFindSettings {
             ..FindOptions::default()
         }
     }
+}
+
+enum CatalogEntry {
+    Up,
+    Subdir(String),
+    UseFolder,
+    NotNow,
 }
 
 /// Adjacent world tile for a WASD step from `here`. +z is north on the
@@ -177,13 +197,19 @@ pub struct TuiApp {
     pub settings_dirty: bool,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
-    /// The Browse-selected script card name (Start keys on it).
-    pub script_sel: Option<String>,
-    /// The registry card names the Browse picker lists (copied from the
-    /// session's JS library each pump).
-    pub script_names: Vec<String>,
+    /// The Browse-selected script card; Start keys on `(source, name)`.
+    pub script_sel: Option<ScriptSel>,
+    /// Registry cards the Browse picker lists (copied from the session each pump).
+    pub script_cards: Vec<BrowseCard>,
+    /// Persisted category order keys for Browse grouping.
+    pub script_category_order: Vec<String>,
     /// The Browse picker is open.
     pub script_browse_open: bool,
+    /// First-run rs2b0t clone-root folder browser.
+    pub rs2b0t_catalog_open: bool,
+    pub rs2b0t_catalog_dir: std::path::PathBuf,
+    /// Highlight row in the catalog folder browser.
+    pub catalog_sel: usize,
     /// The Load path input is open (`script_load_path` is the typed path).
     pub script_load_open: bool,
     pub script_load_path: String,
@@ -219,8 +245,12 @@ impl TuiApp {
             settings_dirty: false,
             script_state: RunState::Idle,
             script_sel: None,
-            script_names: Vec::new(),
+            script_cards: Vec::new(),
+            script_category_order: Vec::new(),
             script_browse_open: false,
+            rs2b0t_catalog_open: false,
+            rs2b0t_catalog_dir: default_catalog_browse_dir(),
+            catalog_sel: 0,
             script_load_open: false,
             script_load_path: String::new(),
             quit: false,
@@ -343,6 +373,9 @@ impl TuiApp {
         if self.script_load_open {
             return self.script_load_on_key(key);
         }
+        if self.rs2b0t_catalog_open {
+            return self.catalog_on_key(key);
+        }
         if self.script_browse_open {
             return self.script_browse_on_key(key);
         }
@@ -429,19 +462,103 @@ impl TuiApp {
         AppAction::None
     }
 
-    /// Move the Browse selection `step` cards through the registry names
+    /// First-run catalog folder browser keys.
+    fn catalog_on_key(&mut self, key: KeyEvent) -> AppAction {
+        let entries = self.catalog_entries();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.catalog_sel > 0 {
+                    self.catalog_sel -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.catalog_sel + 1 < entries.len() {
+                    self.catalog_sel += 1;
+                }
+            }
+            KeyCode::Esc => return AppAction::ScriptDeferCatalog,
+            KeyCode::Enter => {
+                return match entries.get(self.catalog_sel) {
+                    Some(CatalogEntry::Up) => {
+                        if let Some(parent) = self.rs2b0t_catalog_dir.parent() {
+                            self.rs2b0t_catalog_dir = parent.to_path_buf();
+                            self.catalog_sel = 0;
+                        }
+                        AppAction::None
+                    }
+                    Some(CatalogEntry::Subdir(name)) => {
+                        self.rs2b0t_catalog_dir.push(name.clone());
+                        self.catalog_sel = 0;
+                        AppAction::None
+                    }
+                    Some(CatalogEntry::UseFolder) => AppAction::ScriptUseCatalog,
+                    Some(CatalogEntry::NotNow) => AppAction::ScriptDeferCatalog,
+                    None => AppAction::None,
+                };
+            }
+            _ => {}
+        }
+        AppAction::None
+    }
+
+    fn catalog_entries(&self) -> Vec<CatalogEntry> {
+        let mut out = vec![CatalogEntry::Up];
+        if let Ok(read) = std::fs::read_dir(&self.rs2b0t_catalog_dir) {
+            let mut subdirs: Vec<String> = read
+                .flatten()
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .filter_map(|e| {
+                    e.file_name()
+                        .into_string()
+                        .ok()
+                        .filter(|s| !s.starts_with('.'))
+                })
+                .collect();
+            subdirs.sort();
+            for name in subdirs {
+                out.push(CatalogEntry::Subdir(name));
+            }
+        }
+        if rs2b0t_root_has_index(&self.rs2b0t_catalog_dir) {
+            out.push(CatalogEntry::UseFolder);
+        }
+        out.push(CatalogEntry::NotNow);
+        out
+    }
+
+    /// Move the Browse selection `step` cards through the grouped list
     /// (wrapping).
     fn move_script_sel(&mut self, step: i32) {
-        if self.script_names.is_empty() {
+        let deferred = script::rs2b0t_import_deferred();
+        let lines = browse_lines(
+            &self.script_cards,
+            &self.script_category_order,
+            deferred,
+        );
+        let card_indices: Vec<usize> = lines
+            .iter()
+            .filter_map(|l| match l {
+                BrowseLine::Card(i) => Some(*i),
+                _ => None,
+            })
+            .collect();
+        if card_indices.is_empty() {
             return;
         }
         let pos = self
             .script_sel
-            .as_deref()
-            .and_then(|s| self.script_names.iter().position(|n| n == s))
+            .as_ref()
+            .and_then(|sel| match sel {
+                ScriptSel::Loaded(source, name) => self.script_cards.iter().position(|c| {
+                    c.source == *source && c.name == *name
+                }),
+                _ => None,
+            })
+            .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
             .unwrap_or(0);
-        let next = (pos as i32 + step).rem_euclid(self.script_names.len() as i32) as usize;
-        self.script_sel = Some(self.script_names[next].clone());
+        let next = (pos as i32 + step).rem_euclid(card_indices.len() as i32) as usize;
+        let card = &self.script_cards[card_indices[next]];
+        self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
     }
 
     /// One mouse click (crossterm col/row). The strip selects a slot; the
@@ -479,10 +596,16 @@ impl TuiApp {
     /// nothing is selected), Pause/Stop emit their actions, Load opens
     /// the path input, and picker rows store the selection.
     fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+        if self.rs2b0t_catalog_open {
+            return self.catalog_click(col, row);
+        }
+        let deferred = script::rs2b0t_import_deferred();
         let pane = ScriptPane::new(
             self.script_state,
-            self.script_sel.as_deref(),
-            &self.script_names,
+            self.script_sel.as_ref(),
+            &self.script_cards,
+            &self.script_category_order,
+            deferred,
             self.script_browse_open,
             self.script_load_open,
             &self.script_load_path,
@@ -490,11 +613,16 @@ impl TuiApp {
         );
         match pane.on_click(self.script_area, col, row) {
             ScriptClick::Button("Browse") => {
-                self.script_browse_open = !self.script_browse_open;
-                AppAction::ScriptBrowse
+                let opening = !self.script_browse_open;
+                self.script_browse_open = opening;
+                if opening {
+                    AppAction::ScriptBrowse
+                } else {
+                    AppAction::None
+                }
             }
             ScriptClick::Button("Start") => match self.script_sel.clone() {
-                Some(name) => AppAction::ScriptStart(name),
+                Some(sel) => AppAction::ScriptStart(sel),
                 None => {
                     self.error = Some("script: browse to pick one first".into());
                     AppAction::None
@@ -507,14 +635,37 @@ impl TuiApp {
                 AppAction::None
             }
             ScriptClick::Button(_) => AppAction::None,
+            ScriptClick::ImportCatalog => AppAction::ScriptImportCatalog,
             ScriptClick::Pick(idx) => {
-                if let Some(name) = self.script_names.get(idx).cloned() {
-                    self.script_sel = Some(name);
+                if let Some(card) = self.script_cards.get(idx) {
+                    self.script_sel = Some(ScriptSel::Loaded(
+                        card.source,
+                        card.name.clone(),
+                    ));
                 }
                 AppAction::None
             }
             ScriptClick::None => AppAction::None,
         }
+    }
+
+    fn catalog_click(&mut self, col: u16, row: u16) -> AppAction {
+        let inner = Block::default().borders(Borders::ALL).inner(self.script_area);
+        if row < inner.y + 2 {
+            return AppAction::None;
+        }
+        let line = row - (inner.y + 2);
+        let entries = self.catalog_entries();
+        if usize::from(line) == self.catalog_sel && entries.get(self.catalog_sel).is_some() {
+            // Enter-equivalent on the highlighted row.
+            self.catalog_sel = usize::from(line);
+            return self.catalog_on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        }
+        if usize::from(line) < entries.len() {
+            self.catalog_sel = usize::from(line);
+        }
+        let _ = col;
+        AppAction::None
     }
 
     /// Render the full layout (spec): slot strip, map, chat, status |
@@ -523,12 +674,26 @@ impl TuiApp {
         let area = frame.area();
         // The script pane grows for the Browse picker rows and the Load
         // path line (capped so a small terminal keeps map/status room).
-        let browse_rows = if self.script_browse_open {
-            self.script_names.len().min(MAX_BROWSE_ROWS)
+        let browse_lines = if self.script_browse_open && !self.rs2b0t_catalog_open {
+            browse_lines(
+                &self.script_cards,
+                &self.script_category_order,
+                script::rs2b0t_import_deferred(),
+            )
+        } else {
+            Vec::new()
+        };
+        let browse_h = if self.script_browse_open && !self.rs2b0t_catalog_open {
+            browse_section_height(&browse_lines, &self.script_cards).min(MAX_BROWSE_LINES)
         } else {
             0
         };
-        let script_h = 4 + browse_rows as u16 + u16::from(self.script_load_open);
+        let catalog_h = if self.rs2b0t_catalog_open {
+            (self.catalog_entries().len() as u16 + 3).min(16)
+        } else {
+            0
+        };
+        let script_h = 4 + browse_h + catalog_h + u16::from(self.script_load_open);
         let chunks = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(8),
@@ -669,10 +834,42 @@ impl TuiApp {
     }
 
     fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if self.rs2b0t_catalog_open {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("import rs2b0t catalog");
+            let inner = block.inner(area);
+            block.render(area, frame.buffer_mut());
+            let mut lines = vec![
+                Line::from("Choose clone root (src/bot/scripts/index.ts):"),
+                Line::from(self.rs2b0t_catalog_dir.to_string_lossy().to_string()),
+            ];
+            if rs2b0t_root_has_index(&self.rs2b0t_catalog_dir) {
+                lines.push(Line::from("catalog index found"));
+            } else {
+                lines.push(Line::from("no src/bot/scripts/index.ts here"));
+            }
+            for (i, entry) in self.catalog_entries().iter().enumerate() {
+                let mark = if i == self.catalog_sel { "> " } else { "  " };
+                let label = match entry {
+                    CatalogEntry::Up => "[Up]".into(),
+                    CatalogEntry::Subdir(name) => format!("{name}/"),
+                    CatalogEntry::UseFolder => "[Use this folder]".into(),
+                    CatalogEntry::NotNow => "[Not now]".into(),
+                };
+                lines.push(Line::from(format!("{mark}{label}")));
+            }
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .render(inner, frame.buffer_mut());
+            return;
+        }
         let pane = ScriptPane::new(
             self.script_state,
-            self.script_sel.as_deref(),
-            &self.script_names,
+            self.script_sel.as_ref(),
+            &self.script_cards,
+            &self.script_category_order,
+            script::rs2b0t_import_deferred(),
             self.script_browse_open,
             self.script_load_open,
             &self.script_load_path,
@@ -692,10 +889,23 @@ mod tests {
 
     use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
     use nav::tile::Tile;
-    use script::RunState;
+    use script::{RunState, ScriptKind, ScriptSel, ScriptSource};
     use vault::ProfileSettings;
 
+    use crate::script_shape::BrowseCard;
+
     use super::{wasd_target, AppAction, TuiApp};
+
+    fn bone_burier_card() -> BrowseCard {
+        BrowseCard {
+            name: "BoneBurier".into(),
+            description: String::new(),
+            category: "Prayer".into(),
+            tags: Vec::new(),
+            kind: ScriptKind::Compat,
+            source: ScriptSource::Catalog,
+        }
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1120,25 +1330,38 @@ mod tests {
     #[test]
     fn click_start_with_a_selected_card_returns_script_start() {
         let mut app = TuiApp::new("274bot headless");
-        app.script_sel = Some("BoneBurier".into());
+        app.script_sel = Some(ScriptSel::Loaded(
+            ScriptSource::Catalog,
+            "BoneBurier".into(),
+        ));
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let area = app.script_area;
-        // Buttons are the second inner line; `[Start]` starts after
-        // `[Browse] ` (9 cells): inner.x + 9 = area.x + 10.
         assert_eq!(
             app.on_click(area.x + 10, area.y + 2),
-            AppAction::ScriptStart("BoneBurier".into()),
+            AppAction::ScriptStart(ScriptSel::Loaded(
+                ScriptSource::Catalog,
+                "BoneBurier".into(),
+            )),
             "Start with a selected card starts that card"
         );
     }
 
-    /// Task 13: the script pane's Browse button opens the picker and a
-    /// click on a card row stores the selection (Start then carries it).
     #[test]
     fn browse_rows_select_a_card_for_start() {
         let mut app = TuiApp::new("274bot headless");
-        app.script_names = vec!["BoneBurier".into(), "MineRobber".into()];
+        app.script_cards = vec![
+            bone_burier_card(),
+            BrowseCard {
+                name: "MineRobber".into(),
+                description: String::new(),
+                category: "Skilling".into(),
+                tags: Vec::new(),
+                kind: ScriptKind::Compat,
+                source: ScriptSource::File,
+            },
+        ];
+        app.script_category_order = vec!["Prayer".into(), "Skilling".into()];
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let area = app.script_area;
@@ -1153,15 +1376,21 @@ mod tests {
         // the third inner line (area.y + 3).
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let area = app.script_area;
-        assert_eq!(app.on_click(area.x + 2, area.y + 3), AppAction::None);
+        assert_eq!(app.on_click(area.x + 2, area.y + 4), AppAction::None);
         assert_eq!(
-            app.script_sel.as_deref(),
-            Some("BoneBurier"),
+            app.script_sel,
+            Some(ScriptSel::Loaded(
+                ScriptSource::Catalog,
+                "BoneBurier".into(),
+            )),
             "clicking the first card row selects it"
         );
         assert_eq!(
             app.on_click(area.x + 10, area.y + 2),
-            AppAction::ScriptStart("BoneBurier".into()),
+            AppAction::ScriptStart(ScriptSel::Loaded(
+                ScriptSource::Catalog,
+                "BoneBurier".into(),
+            )),
             "Start starts the card picked in Browse"
         );
     }
