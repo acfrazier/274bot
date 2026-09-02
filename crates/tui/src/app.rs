@@ -251,7 +251,7 @@ impl TuiApp {
             .map(|s| WorldTile {
                 x: s.tile_x,
                 z: s.tile_z,
-                level: 0,
+                level: s.tile_level,
             });
     }
 
@@ -690,7 +690,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use api::snapshot::{ChatLineView, ChatOptionView};
+    use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
     use nav::tile::Tile;
     use script::RunState;
     use vault::ProfileSettings;
@@ -808,6 +808,42 @@ mod tests {
             app.on_key(key(KeyCode::Char('w'))),
             AppAction::WalkTile(tile(10, 11)),
             "W on the app queues a one-tile north walk"
+        );
+    }
+
+    /// TASK-014 parity: upstairs origin must arm WASD on the player plane.
+    #[test]
+    fn player_at_plane_one_refresh_arms_wasd_with_level() {
+        let mut app = TuiApp::new("274bot headless");
+        app.names = vec!["test".into()];
+        app.focused = Some(0);
+        app.statuses = vec![host_play::SlotStatus {
+            username: "test".into(),
+            ingame: true,
+            scene_state: 2,
+            tile_x: 10,
+            tile_z: 10,
+            tile_level: 1,
+            ..host_play::SlotStatus::default()
+        }];
+        app.refresh();
+        assert_eq!(
+            app.here,
+            Some(WorldTile {
+                x: 10,
+                z: 10,
+                level: 1,
+            }),
+            "refresh must publish tile_level, not hardcoded ground"
+        );
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('w'))),
+            AppAction::WalkTile(Tile {
+                x: 10,
+                z: 11,
+                level: 1,
+            }),
+            "W must keep the player plane when arming a one-tile walk"
         );
     }
 

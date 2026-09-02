@@ -30,7 +30,8 @@ use crossterm::terminal::{
 };
 use host_play::{
     arm_walk_on, live_vault_passphrase, mint_live_entries, mint_live_names, open_vault,
-    profile_password, run_with_io, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow,
+    player_here_tile, profile_password, run_with_io, step_walk_arm_bank_fetch,
+    walk_arm_bank_fetch_freezes_follow,
     Play, PlayOptions, SlotArm, WalkArm, WireCmd,
 };
 use nav::tile::Tile;
@@ -338,11 +339,9 @@ impl TuiSession {
                     }
                 }
 
-                let (rx, rz) = match &c.local_player {
-                    Some(lp) => (lp.route_x[0], lp.route_z[0]),
-                    None => return,
+                let Some(here) = player_here_tile(c) else {
+                    return;
                 };
-                let here = (c.map_build_base_x + rx, c.map_build_base_z + rz, 0);
                 // Guardian hold freezes WalkArm follow; the armed route
                 // stays latched and resumes when hold lifts.
                 if !WalkArm::may_follow(hold) {
@@ -1449,6 +1448,70 @@ mod tests {
         assert!(
             latched,
             "allow_bank_fetch must latch WalkArm.bank_fetch on the focused arm"
+        );
+    }
+
+    /// Whole-branch fix: follow hook must pass minusedlevel, not plane 0.
+    #[test]
+    fn player_at_plane_one_follow_uses_level() {
+        use bank_fetch_fixtures::bank_client;
+        use host_play::{PendingBankFetch, player_here_tile, step_walk_arm_bank_fetch};
+        use nav::bank_fetch::BankStep;
+        use nav::router::Route;
+        use api::snapshot::WorldTile;
+        use std::collections::VecDeque;
+
+        let mut c = bank_client();
+        c.minusedlevel = 1;
+        let here = player_here_tile(&c).expect("bank_client has local_player");
+        assert_eq!(here.2, 1, "fixture player must be upstairs");
+        let mut snap = api::snapshot::GameSnapshot::new();
+        snap.rebuild(&c);
+        let final_route = Route {
+            dest: WorldTile {
+                x: 99,
+                z: 99,
+                level: 0,
+            },
+            legs: vec![],
+            ticks: 0.0,
+        };
+        let pending = PendingBankFetch {
+            steps: VecDeque::from([BankStep::Walk {
+                x: here.0,
+                z: here.1,
+                level: 1,
+            }]),
+            dest: final_route.dest,
+            opts: FindOptions::default(),
+            final_route: final_route.clone(),
+        };
+
+        let mut arm = WalkArm::default();
+        arm.bank_fetch = Some(pending.clone());
+        step_walk_arm_bank_fetch(&mut c, &snap, &mut arm, None, Some(here));
+        assert_eq!(
+            arm.route.as_ref().map(|r| r.dest),
+            Some(final_route.dest),
+            "follow at (x,z,1) must complete the stand Walk on the player plane"
+        );
+        assert!(
+            arm.bank_fetch.is_none(),
+            "stand Walk must clear bank_fetch when here matches plane 1"
+        );
+
+        let mut arm_ground = WalkArm::default();
+        arm_ground.bank_fetch = Some(pending);
+        step_walk_arm_bank_fetch(
+            &mut c,
+            &snap,
+            &mut arm_ground,
+            None,
+            Some((here.0, here.1, 0)),
+        );
+        assert!(
+            arm_ground.route.is_none(),
+            "ground-plane here must not complete an upstairs stand Walk"
         );
     }
 
