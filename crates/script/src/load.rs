@@ -357,6 +357,9 @@ mod isolate {
         /// script that stops painting keeps its last frame. Never a JSON
         /// value on this channel.
         Paint(Vec<u8>),
+        /// The bot instance's `ignoredRandoms()` list, read on the isolate
+        /// thread after the tick and cached on the host handle (no probe).
+        IgnoredRandoms(Vec<String>),
         /// The highest tick the thread has fully processed (ran or skipped).
         Completed(u64),
     }
@@ -376,6 +379,9 @@ mod isolate {
         /// [`crate::shim::ScriptPaint`] decoded off the host handle after
         /// each tick), read by the script paint views.
         paint: Mutex<Option<crate::shim::ScriptPaint>>,
+        /// The bot instance's random-ignore list, forwarded by the tick
+        /// thread after each tick (same source as the old probe path).
+        ignored_randoms: Mutex<Vec<String>>,
         handle: Option<JoinHandle<()>>,
         /// Thread-safe handle used to terminate a runaway tick from this
         /// side of the channel. The terminate stays armed until the isolate
@@ -415,6 +421,7 @@ mod isolate {
                 logs: Mutex::new(Vec::new()),
                 interacts: Mutex::new(Vec::new()),
                 paint: Mutex::new(None),
+                ignored_randoms: Mutex::new(Vec::new()),
                 handle: Some(handle),
                 terminate,
                 in_flight: Mutex::new(None),
@@ -500,19 +507,13 @@ mod isolate {
         }
 
         /// The bot instance's random-ignore list (`inst.ignoredRandoms?.()`
-        /// on `__rs_bot`, default `[]`): the host's knock path reads it
-        /// once per detected event so it can skip act for those names. A
-        /// throwing / non-array method and a native `tick`-shaped card
-        /// (no instance) fail closed to `[]`.
+        /// on `__rs_bot`, default `[]`): cached on the isolate thread
+        /// after each tick (see [`ThreadMsg::IgnoredRandoms`]). A throwing /
+        /// non-array method and a native `tick`-shaped card (no instance)
+        /// fail closed to `[]`. No probe round-trip.
         pub fn ignored_randoms(&self) -> Vec<String> {
-            const EXPR: &str = "(() => { const b = globalThis.__rs_bot; if (!b || typeof b.ignoredRandoms !== 'function') return []; const l = b.ignoredRandoms(); return Array.isArray(l) ? l : []; })()";
-            match self.probe(EXPR) {
-                Ok(serde_json::Value::Array(items)) => items
-                    .iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect(),
-                _ => Vec::new(),
-            }
+            self.pump_logs();
+            self.ignored_randoms.lock().unwrap().clone()
         }
 
         /// Drain the isolate's log lines (tick errors, slow/interrupted
@@ -592,6 +593,9 @@ mod isolate {
                             Err(e) => self.logs.lock().unwrap().push(format!("paint: {e}")),
                         }
                     }
+                    ThreadMsg::IgnoredRandoms(list) => {
+                        *self.ignored_randoms.lock().unwrap() = list;
+                    }
                     ThreadMsg::Completed(up_to) => {
                         clear_through = Some(clear_through.map_or(up_to, |c| c.max(up_to)));
                     }
@@ -624,6 +628,15 @@ mod isolate {
         INIT.call_once(|| {
             rustyscript::init_platform(1, true);
         });
+    }
+
+    /// Read the bot instance's ignore list on the isolate thread (no probe).
+    fn eval_ignored_randoms(runtime: &mut Runtime) -> Vec<String> {
+        runtime
+            .eval::<Vec<String>>(
+                "(() => { const b = globalThis.__rs_bot; if (!b || typeof b.ignoredRandoms !== 'function') return []; const l = b.ignoredRandoms(); return Array.isArray(l) ? l.filter(x => typeof x === 'string') : []; })()",
+            )
+            .unwrap_or_default()
     }
 
     /// The isolate thread: create the Runtime, wire the module, hand the
@@ -1163,6 +1176,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         if let Ok(Some(frame)) = paint {
                             let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
                         }
+                        let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
+                            &mut runtime,
+                        )));
                         let _ = out.send(ThreadMsg::Completed(n));
                         continue;
                     }
@@ -1246,6 +1262,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     if let Ok(Some(frame)) = paint {
                         let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
                     }
+                    let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
+                        &mut runtime,
+                    )));
                     // ScriptRunner.stop signal: the script flags the host
                     // handle. The isolate treats it like `IsolateCmd::Stop`
                     // — fold the completed tick, log the stop, and break the

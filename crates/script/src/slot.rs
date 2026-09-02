@@ -248,10 +248,8 @@ impl SlotScript {
 
     /// The bot instance's random-ignore list (a Load isolate's
     /// `inst.ignoredRandoms?.()`, default `[]`; empty for a compiled
-    /// script — there is no instance). The host's knock path reads it
-    /// once per detected event to skip act on those names. Gated like
-    /// [`SlotScript::on_random`]: a Paused / Idle slot does not influence
-    /// the host.
+    /// script — there is no instance). Cached on the isolate thread
+    /// after each tick; no probe round-trip.
     #[cfg(feature = "load")]
     pub fn ignored_randoms(&self) -> Vec<String> {
         if self.state != RunState::Running || !self.want_run {

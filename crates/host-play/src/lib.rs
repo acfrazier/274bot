@@ -522,6 +522,24 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
     s.bytes_out = bo;
 }
 
+/// Per-uid script cell on the wall. Encode/post/drain take the slot lock
+/// only — the wall map lock is held briefly for lookup/insert.
+type ScriptSlot = Arc<Mutex<SlotScript>>;
+/// Lock order: wall before slot; never hold slot then wall.
+type ScriptWall = Arc<Mutex<HashMap<String, ScriptSlot>>>;
+
+fn script_slot(wall: &ScriptWall, name: &str) -> Option<ScriptSlot> {
+    wall.lock().unwrap().get(name).cloned()
+}
+
+fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot {
+    wall.lock()
+        .unwrap()
+        .entry(name.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(SlotScript::new())))
+        .clone()
+}
+
 /// One observe of a slot's script wiring: gate [`SlotScript::on_is_up`],
 /// dispatch [`SlotScript::on_game_tick`] on the PLAYER_INFO edge, then run
 /// any cheats the panel queued. `driver` is the slot body's own `Client`
@@ -565,7 +583,7 @@ fn script_observe(
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
     obj_names: Option<&api::obj_names::ObjNames>,
-    scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
+    scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
@@ -574,10 +592,9 @@ fn script_observe(
 ) -> bool {
     let mut wrote = false;
     let mut interact = Vec::new();
-    {
-        let mut all = scripts.lock().unwrap();
-        if let Some(slot) = all.get_mut(name) {
-            slot.on_is_up(up);
+    if let Some(slot) = script_slot(scripts, name) {
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(up);
             // Post the snapshot only while the slot script is Running.
             // While the guardian holds: still dispatch the isolate tick so
             // `onPaint` runs (loop/pump stay frozen inside the isolate);
@@ -687,7 +704,6 @@ fn script_observe(
             // a frame after the tick that produced them, tick edge or not —
             // and dispatch them below.
             interact = slot.drain_interacts();
-        }
     }
     // Dispatch the shim's interact requests through the slot's own Driver
     // (open/deposit/withdraw) and the shared walk arm (bank-stand walks
@@ -1108,23 +1124,17 @@ fn nav_world_state_for_observe(
 }
 
 /// the per-observe inventory view (the observe re-checks the gate inside).
-fn script_running(scripts: &Arc<Mutex<HashMap<String, SlotScript>>>, name: &str) -> bool {
-    scripts
-        .lock()
-        .unwrap()
-        .get(name)
-        .is_some_and(|s| s.state() == script::RunState::Running)
+fn script_running(scripts: &ScriptWall, name: &str) -> bool {
+    script_slot(scripts, name)
+        .is_some_and(|s| s.lock().unwrap().state() == script::RunState::Running)
 }
 
 /// `name`'s slot script's latest paint frame, `None` for a slot with no
 /// script or a script that has not painted. Copied onto the status row
 /// each observe so the TUI can show paint-as-chat without a probe
 /// round-trip (the isolate forwards the frame after each tick).
-fn script_paint_of(
-    scripts: &Arc<Mutex<HashMap<String, SlotScript>>>,
-    name: &str,
-) -> Option<script::shim::ScriptPaint> {
-    scripts.lock().unwrap().get(name).and_then(|s| s.paint())
+fn script_paint_of(scripts: &ScriptWall, name: &str) -> Option<script::shim::ScriptPaint> {
+    script_slot(scripts, name).and_then(|s| s.lock().unwrap().paint())
 }
 
 /// Per-uid nav state: the whole-world traveller plus the route it is
@@ -1759,7 +1769,7 @@ pub struct Play {
     /// `on_game_tick` on each drain, the panel arms them via the
     /// [`Play::script_start`] family. Keyed by username (the identity the
     /// status rows and arms use).
-    scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+    scripts: ScriptWall,
     /// Per-slot cheat commands the panel queued; each slot thread runs
     /// `api::interact::cheat` on its own Driver and flushes the socket.
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -1927,11 +1937,9 @@ impl Play {
             return Err(format!("no slot: {name}"));
         }
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
-        self.scripts
+        script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .entry(name.to_string())
-            .or_default()
             .start_compiled(make())?;
         self.wake(name);
         Ok(())
@@ -1949,11 +1957,9 @@ impl Play {
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
-        self.scripts
+        script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .entry(name.to_string())
-            .or_default()
             .start_load(source, shape)?;
         self.wake(name);
         Ok(())
@@ -1962,45 +1968,39 @@ impl Play {
     /// Pause `name`'s script (operator Pause; survives login until
     /// Resume re-arms it). No-op when the slot has no script.
     pub fn script_pause(&self, name: &str) {
-        if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
-            slot.pause();
+        if let Some(slot) = script_slot(&self.scripts, name) {
+            slot.lock().unwrap().pause();
         }
         self.wake(name);
     }
 
     /// Resume `name`'s script; the next `on_is_up` re-gates it.
     pub fn script_resume(&self, name: &str) {
-        if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
-            slot.resume();
+        if let Some(slot) = script_slot(&self.scripts, name) {
+            slot.lock().unwrap().resume();
         }
         self.wake(name);
     }
 
     /// Stop `name`'s script: teardown hook, instance dropped, Idle.
     pub fn script_stop(&self, name: &str) {
-        if let Some(slot) = self.scripts.lock().unwrap().get_mut(name) {
-            slot.stop();
+        if let Some(slot) = script_slot(&self.scripts, name) {
+            slot.lock().unwrap().stop();
         }
         self.wake(name);
     }
 
     /// `name`'s script lifecycle state; `Idle` when the slot has none.
     pub fn script_state(&self, name: &str) -> script::RunState {
-        self.scripts
-            .lock()
-            .unwrap()
-            .get(name)
-            .map(|slot| slot.state())
+        script_slot(&self.scripts, name)
+            .map(|slot| slot.lock().unwrap().state())
             .unwrap_or(script::RunState::Idle)
     }
 
     /// `name`'s script `last_error`; `None` when the slot has none.
     pub fn script_last_error(&self, name: &str) -> Option<String> {
-        self.scripts
-            .lock()
-            .unwrap()
-            .get(name)
-            .and_then(|slot| slot.last_error().map(str::to_string))
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().unwrap().last_error().map(str::to_string))
     }
 
     /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread
@@ -2255,7 +2255,7 @@ fn spawn_slot_thread(
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     slot_queue: Arc<Mutex<LoginQueue>>,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
-    slot_scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+    slot_scripts: ScriptWall,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
@@ -2286,11 +2286,7 @@ fn spawn_slot_thread(
                     ..SlotStatus::default()
                 });
             }
-            slot_scripts
-                .lock()
-                .unwrap()
-                .entry(username.clone())
-                .or_default();
+            script_slot_or_insert(&slot_scripts, &username);
             slot_cheats
                 .lock()
                 .unwrap()
@@ -2376,10 +2372,10 @@ fn spawn_slot_thread(
                 let knock_name = username.clone();
                 let knock_scripts = Arc::clone(&slot_scripts);
                 let knock = move |ev: &DetectedRandom| -> RandomClaim {
-                    let mut all = knock_scripts.lock().unwrap();
-                    let Some(slot) = all.get_mut(&knock_name) else {
+                    let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
                         return RandomClaim::Host;
                     };
+                    let mut slot = slot.lock().unwrap();
                     slot.on_random(ev)
                 };
                 Host::run_client(
@@ -4717,21 +4713,21 @@ mod tests {
     /// One `script_observe` wiring rig: a started slot script for
     /// "alice" plus its (empty) cheat queue.
     struct ScriptWiring {
-        scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+        scripts: ScriptWall,
         cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
         count: Arc<Mutex<u32>>,
     }
 
     fn script_wiring() -> ScriptWiring {
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let count = Arc::new(Mutex::new(0));
-        let mut all = scripts.lock().unwrap();
-        let slot = all.entry("alice".into()).or_default();
-        slot.start_compiled(Box::new(TickCounter(Arc::clone(&count))))
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_compiled(Box::new(TickCounter(Arc::clone(&count))))
             .unwrap();
-        drop(all);
         cheats
             .lock()
             .unwrap()
@@ -4841,16 +4837,18 @@ mod tests {
         ));
         assert_eq!(c.out.pos, 0, "no script bytes on the driver");
         // Started then stopped: Idle again, same skip.
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_compiled(Box::new(TickCounter(Arc::clone(&count))))
             .unwrap();
-        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
+        script_slot(&scripts, "alice").unwrap().lock().unwrap().stop();
         assert_eq!(
-            scripts.lock().unwrap().get("alice").unwrap().state(),
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .state(),
             script::RunState::Idle
         );
         assert!(!script_observe(
@@ -4916,7 +4914,13 @@ mod tests {
         let mut snap = GameSnapshot::new();
         snap.rebuild(&c);
         let state = WorldState::from_snapshot(&snap);
-        assert!(!scripts.lock().unwrap().get("alice").unwrap().load_active());
+        assert!(
+            !script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .load_active()
+        );
         script_observe(
             &mut c,
             "alice",
@@ -4936,10 +4940,9 @@ mod tests {
             false,
         );
         assert!(
-            !scripts
-                .lock()
+            !script_slot(&scripts, "alice")
                 .unwrap()
-                .get("alice")
+                .lock()
                 .unwrap()
                 .has_snapshot_fingerprint(),
             "compiled-only Running must not encode isolate snapshot delta"
@@ -4948,7 +4951,7 @@ mod tests {
 
     #[test]
     fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> =
+        let scripts: ScriptWall =
             Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -4971,14 +4974,18 @@ mod tests {
             Vec::new(),
         );
         let src = "export default class T extends LoopingBot { loop() {} }";
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_load(src.to_string(), script::LoadShape::CompatClass)
             .expect("load isolate starts");
-        assert!(scripts.lock().unwrap().get("alice").unwrap().load_active());
+        assert!(
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .load_active()
+        );
         script_observe(
             &mut c,
             "alice",
@@ -4998,15 +5005,14 @@ mod tests {
             false,
         );
         assert!(
-            scripts
-                .lock()
+            script_slot(&scripts, "alice")
                 .unwrap()
-                .get("alice")
+                .lock()
                 .unwrap()
                 .has_snapshot_fingerprint(),
             "Load isolate must still encode snapshot delta on tick edge"
         );
-        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
+        script_slot(&scripts, "alice").unwrap().lock().unwrap().stop();
     }
 
     #[test]
@@ -5082,15 +5088,13 @@ mod tests {
         objs[1].name = "Bones".into();
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let seen = Arc::new(Mutex::new(None));
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (navs, world) = empty_nav();
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_compiled(Box::new(InvProbe(Arc::clone(&seen))))
             .unwrap();
         let inv: Vec<(i32, i32)> = vec![(1, 3), (0, 0)];
@@ -5151,15 +5155,13 @@ mod tests {
     #[test]
     fn script_observe_passes_the_tick_snapshot_to_the_ctx() {
         let seen = Arc::new(Mutex::new(None));
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (navs, world) = empty_nav();
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_compiled(Box::new(SnapProbe(Arc::clone(&seen))))
             .unwrap();
         // A transmitted varp table so the probe's `varp(101)` has a value
@@ -5688,7 +5690,7 @@ mod tests {
         // the isolate tick still dispatches for onPaint (loop frozen inside
         // V8). Compiled-path skip is covered by
         // `script_observe_skips_the_tick_dispatch_while_hold`.
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (navs, world) = empty_nav();
@@ -5707,11 +5709,9 @@ mod tests {
         );
         let src =
             "export default class T extends LoopingBot { loop() { globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1; } }";
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_load(src.to_string(), script::LoadShape::CompatClass)
             .expect("load isolate starts");
         // Held edge: blob posts + isolate tick (paint-only); loop must not
@@ -5734,10 +5734,9 @@ mod tests {
             true,
             false
         ));
-        let loops = scripts
-            .lock()
+        let loops = script_slot(&scripts, "alice")
             .unwrap()
-            .get("alice")
+            .lock()
             .unwrap()
             .probe("globalThis.__rs_loops || 0")
             .unwrap();
@@ -5761,15 +5760,14 @@ mod tests {
             false,
             false
         ));
-        let loops = scripts
-            .lock()
+        let loops = script_slot(&scripts, "alice")
             .unwrap()
-            .get("alice")
+            .lock()
             .unwrap()
             .probe("globalThis.__rs_loops || 0")
             .unwrap();
         assert_eq!(loops, 1, "unheld isolate tick runs loop()");
-        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
+        script_slot(&scripts, "alice").unwrap().lock().unwrap().stop();
     }
 
     #[test]
@@ -5859,23 +5857,21 @@ mod tests {
     #[test]
     fn handle_claim_keeps_ticks_and_blocks_host_talk() {
         let count = Arc::new(Mutex::new(0u32));
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
-        scripts
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_compiled(Box::new(ClaimHandle(Arc::clone(&count))))
             .unwrap();
         // The production knock arm: ask the running slot script.
         let knock_scripts = Arc::clone(&scripts);
+        let knock_name = "alice".to_string();
         let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
-            knock_scripts
-                .lock()
-                .unwrap()
-                .get_mut("alice")
-                .map(|slot| slot.on_random(ev))
-                .unwrap_or(RandomClaim::Host)
+            let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
+                return RandomClaim::Host;
+            };
+            let mut slot = slot.lock().unwrap();
+            slot.on_random(ev)
         };
 
         // The guardian's rising edge knocks; the script claims the event,
@@ -5905,27 +5901,76 @@ mod tests {
     }
 
     #[test]
+    fn knock_reaches_peer_slot_while_other_slot_lock_held() {
+        // OPT-006: knock takes a brief wall lookup then the peer slot lock —
+        // never the wall lock for the whole on_random call.
+        use api::random::{DetectedRandom, RandomKind};
+
+        struct ClaimHandle;
+        impl script::Script for ClaimHandle {
+            fn name(&self) -> &str {
+                "claim-handle"
+            }
+            fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
+            fn on_random(&mut self, _ev: &DetectedRandom) -> RandomClaim {
+                RandomClaim::Handle
+            }
+        }
+
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))))
+            .unwrap();
+        script_slot_or_insert(&scripts, "bob")
+            .lock()
+            .unwrap()
+            .start_compiled(Box::new(ClaimHandle))
+            .unwrap();
+
+        let alice = script_slot(&scripts, "alice").unwrap();
+        let _alice_guard = alice.lock().unwrap();
+
+        let knock_scripts = Arc::clone(&scripts);
+        let knock_name = "bob".to_string();
+        let ev = DetectedRandom {
+            kind: RandomKind::Dialog,
+            name: "genie".to_string(),
+            ours: true,
+            npc_index: Some(0),
+        };
+        let claim = {
+            let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
+                return;
+            };
+            let mut slot = slot.lock().unwrap();
+            slot.on_random(&ev)
+        };
+        assert_eq!(claim, RandomClaim::Handle);
+    }
+
+    #[test]
     fn ignored_randoms_skips_flee_but_detect_still_publishes() {
         // SEC-003: `ignoredRandoms()` remains readable from JS (EventSignal)
         // but the host knock must not honor it — Load isolates cannot
         // decline the guardian. Detect still publishes the kind.
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let src = "export default class T extends LoopingBot { ignoredRandoms() { return ['swarm']; } loop() {} }";
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_load(src.to_string(), script::LoadShape::CompatClass)
             .expect("load isolate starts");
         // The production knock arm (see the slot thread): always ask the
         // running slot script; ignore-list is not consulted here.
         let knock_scripts = Arc::clone(&scripts);
+        let knock_name = "alice".to_string();
         let mut knock = move |ev: &DetectedRandom| -> RandomClaim {
-            let mut all = knock_scripts.lock().unwrap();
-            let Some(slot) = all.get_mut("alice") else {
+            let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
                 return RandomClaim::Host;
             };
+            let mut slot = slot.lock().unwrap();
             slot.on_random(ev)
         };
 
@@ -5959,13 +6004,11 @@ mod tests {
         // shim's `pending()` mapping is pinned by the script crate's
         // load_isolate tests; here the held edge drives the full
         // guardian -> observe -> isolate chain.
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let src = "export default class T extends LoopingBot { loop() {} }";
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_load(src.to_string(), script::LoadShape::CompatClass)
             .expect("load isolate starts");
 
@@ -6003,15 +6046,14 @@ mod tests {
             status.hold,
             status.ours
         ));
-        let hold = scripts
-            .lock()
+        let hold = script_slot(&scripts, "alice")
             .unwrap()
-            .get("alice")
+            .lock()
             .unwrap()
             .probe("globalThis.__rs2b0t_host.snapshot.hold")
             .expect("posted snapshot reads back");
         assert_eq!(hold, true, "the dialog hold is what pending() reads");
-        scripts.lock().unwrap().get_mut("alice").unwrap().stop();
+        script_slot(&scripts, "alice").unwrap().lock().unwrap().stop();
     }
 
     #[test]
@@ -6145,7 +6187,7 @@ mod tests {
     /// an empty nav-bot map, the open-1×40 fixture world (x in 0..40 at
     /// z=0), and a status row.
     struct NavRig {
-        scripts: Arc<Mutex<HashMap<String, SlotScript>>>,
+        scripts: ScriptWall,
         cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
         navs: Arc<Mutex<HashMap<String, NavBot>>>,
         world: Option<Arc<NavWorld>>,
@@ -6179,18 +6221,16 @@ mod tests {
     /// [`nav_rig`] on the given world (the walk-probe target stays
     /// `(4,0,0)`; callers that walk elsewhere override `walk_target`).
     fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
-        let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
         let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(Vec::new()));
         let walk_ret = Arc::new(Mutex::new(None));
         let walk_target = Arc::new(Mutex::new((4, 0, 0)));
-        scripts
+        script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .entry("alice".into())
-            .or_default()
             .start_compiled(Box::new(WalkProbe(
                 Arc::clone(&walk_ret),
                 Arc::clone(&walk_target),

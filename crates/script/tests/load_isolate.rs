@@ -9,6 +9,8 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use api::interact::Driver;
 use api::prot::Out;
@@ -1108,6 +1110,54 @@ export default class T extends LoopingBot {
     );
     assert_eq!(value["ingame"], true, "Game.ingame() reads the posted flag");
     iso.join();
+}
+
+// OPT-007: the isolate thread forwards ignoredRandoms after each tick;
+// the host reads the cache without a probe recv_timeout round-trip.
+#[test]
+fn ignored_randoms_cache_fills_without_probe() {
+    let src = r#"
+export default class T extends LoopingBot {
+    ignoredRandoms() { return ['swarm']; }
+    loop() {}
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let list = loop {
+        let list = iso.ignored_randoms();
+        if list == ["swarm"] {
+            break list;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "ignored_randoms cache expected ['swarm'], got {list:?} (probe path?)"
+            );
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(list, vec!["swarm".to_string()]);
+    // Park the isolate on tick 2; cache read must not probe.
+    let src_block = r#"
+export default class T extends LoopingBot {
+    ignoredRandoms() { return ['swarm']; }
+    loop() { if (globalThis.__rs_tick >= 2) { while (true) {} } }
+}
+"#;
+    let iso_block = LoadIsolate::spawn(src_block.to_string(), LoadShape::CompatClass).unwrap();
+    iso_block.on_game_tick(1);
+    thread::sleep(Duration::from_millis(50));
+    iso_block.on_game_tick(2);
+    thread::sleep(Duration::from_millis(20));
+    let block_list = iso_block.ignored_randoms();
+    assert_eq!(
+        block_list,
+        vec!["swarm".to_string()],
+        "cached list readable while a later tick is in flight"
+    );
+    iso.join();
+    iso_block.join();
 }
 
 // Task 12 — `EventSignal.ignoredRandoms()` reads the bot instance (the
