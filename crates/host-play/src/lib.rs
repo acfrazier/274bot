@@ -1155,6 +1155,18 @@ fn script_paint_of(scripts: &ScriptWall, name: &str) -> Option<script::shim::Scr
     script_slot(scripts, name).and_then(|s| s.lock().unwrap().paint())
 }
 
+/// Copy `paint` onto `status.script_paint` only when the frame changed.
+fn publish_script_paint(
+    status: &mut SlotStatus,
+    paint: Option<&script::shim::ScriptPaint>,
+) {
+    match (&status.script_paint, paint) {
+        (Some(cur), Some(next)) if cur == next => {}
+        (None, None) => {}
+        _ => status.script_paint = paint.cloned(),
+    }
+}
+
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route (found off-pump over the shared
 /// [`NavWorld`]); the slot pump polls [`Traveller::follow`] with a clone of
@@ -2477,7 +2489,7 @@ fn spawn_slot_thread(
                                         copy_stream_bytes(c, s);
                                         s.chat_head = c.chat_text[0].clone();
                                         s.random = status.clone();
-                                        s.script_paint = paint.clone();
+                                        publish_script_paint(s, paint.as_ref());
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,
@@ -5885,6 +5897,150 @@ mod tests {
             .unwrap();
         assert_eq!(loops, 1, "unheld isolate tick runs loop()");
         script_slot(&scripts, "alice").unwrap().lock().unwrap().stop();
+    }
+
+    #[test]
+    fn identical_script_paint_skips_status_clone() {
+        use script::shim::ScriptPaint;
+
+        let frame = ScriptPaint {
+            title: Some("probe".into()),
+            accent: None,
+            lines: vec!["same".into()],
+        };
+        let mut status = SlotStatus {
+            username: "alice".into(),
+            script_paint: Some(frame.clone()),
+            ..SlotStatus::default()
+        };
+        let lines_ptr = status.script_paint.as_ref().unwrap().lines.as_ptr();
+
+        publish_script_paint(&mut status, Some(&frame));
+        assert_eq!(
+            status.script_paint.as_ref().unwrap().lines.as_ptr(),
+            lines_ptr,
+            "identical paint must not replace status.script_paint"
+        );
+
+        let changed = ScriptPaint {
+            title: Some("probe".into()),
+            accent: None,
+            lines: vec!["different".into()],
+        };
+        publish_script_paint(&mut status, Some(&changed));
+        assert_ne!(
+            status.script_paint.as_ref().unwrap().lines.as_ptr(),
+            lines_ptr,
+            "changed lines must publish a new frame"
+        );
+        assert_eq!(status.script_paint.as_ref().unwrap().lines[0], "different");
+    }
+
+    #[test]
+    fn isolate_identical_paint_skips_status_clone_on_two_ticks() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    loop() {}
+    onPaint() {
+        const p = Paint.begin();
+        p.row('same');
+        p.end();
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(src.to_string(), script::LoadShape::CompatClass)
+            .expect("load isolate starts");
+        let mut status = SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        };
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3200, 3200, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            true,
+            false,
+        );
+        assert!(
+            wait_until(500, || script_paint_of(&scripts, "alice").is_some()),
+            "first tick paints"
+        );
+        publish_script_paint(&mut status, script_paint_of(&scripts, "alice").as_ref());
+        let lines_ptr = status
+            .script_paint
+            .as_ref()
+            .expect("first tick paints")
+            .lines
+            .as_ptr();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3200, 3200, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            true,
+            false,
+        );
+        assert!(
+            wait_until(500, || script_paint_of(&scripts, "alice").is_some()),
+            "second tick still has paint"
+        );
+        publish_script_paint(&mut status, script_paint_of(&scripts, "alice").as_ref());
+        assert_eq!(
+            status.script_paint.as_ref().unwrap().lines.as_ptr(),
+            lines_ptr,
+            "second identical tick must not clone paint onto status"
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .stop();
     }
 
     #[test]

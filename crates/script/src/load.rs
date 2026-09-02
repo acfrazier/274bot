@@ -589,7 +589,12 @@ mod isolate {
                     ThreadMsg::Paint(bytes) => {
                         // Decode the FlatBuffer paint frame (no JSON).
                         match crate::isolate_fb::decode_paint(&bytes) {
-                            Ok(paint) => *self.paint.lock().unwrap() = Some(paint),
+                            Ok(paint) => {
+                                let mut slot = self.paint.lock().unwrap();
+                                if slot.as_ref() != Some(&paint) {
+                                    *slot = Some(paint);
+                                }
+                            }
                             Err(e) => self.logs.lock().unwrap().push(format!("paint: {e}")),
                         }
                     }
@@ -1102,6 +1107,21 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         Ok(arr.into())
     }
 
+    /// Forward a paint frame to the host when it differs from the last one
+    /// sent on this isolate thread (skips FlatBuffer encode on quiet ticks).
+    fn forward_paint_if_changed(
+        ipc: &mut crate::isolate_fb::IsolateBuf,
+        out: &Sender<ThreadMsg>,
+        last: &mut Option<crate::shim::ScriptPaint>,
+        frame: crate::shim::ScriptPaint,
+    ) {
+        if last.as_ref() == Some(&frame) {
+            return;
+        }
+        *last = Some(frame.clone());
+        let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
+    }
+
     /// The tick loop: commands are serialized on this thread; ticks run
     /// with a time budget, slow ticks are logged and stale queued ticks are
     /// skipped, and errors never kill the isolate.
@@ -1120,6 +1140,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         // One reusable encode buffer for this V8 isolate: interact batch
         // and paint frames share it (`reset` between messages).
         let mut ipc = crate::isolate_fb::IsolateBuf::new();
+        let mut last_forwarded_paint: Option<crate::shim::ScriptPaint> = None;
         loop {
             let cmd = match pending.take() {
                 Some(cmd) => cmd,
@@ -1174,7 +1195,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
                             runtime.eval("globalThis.__rs2b0t_host.paint || null");
                         if let Ok(Some(frame)) = paint {
-                            let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
+                            forward_paint_if_changed(
+                                &mut ipc,
+                                &out,
+                                &mut last_forwarded_paint,
+                                frame,
+                            );
                         }
                         let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                             &mut runtime,
@@ -1260,7 +1286,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
                         runtime.eval("globalThis.__rs2b0t_host.paint || null");
                     if let Ok(Some(frame)) = paint {
-                        let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
+                        forward_paint_if_changed(
+                            &mut ipc,
+                            &out,
+                            &mut last_forwarded_paint,
+                            frame,
+                        );
                     }
                     let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                         &mut runtime,
