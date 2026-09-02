@@ -7,6 +7,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::ctx::{Script, ScriptCtx};
 #[cfg(feature = "load")]
+use crate::isolate_fb::SnapshotFingerprint;
+#[cfg(feature = "load")]
 use crate::load::{LoadIsolate, LoadShape};
 use api::random::{DetectedRandom, RandomClaim};
 
@@ -29,6 +31,14 @@ pub struct SlotScript {
     /// JS Load isolate, spawned by `start_load` on Start (not on Load).
     #[cfg(feature = "load")]
     load: Option<LoadIsolate>,
+    /// Per-slot last-post snapshot fingerprint (delta posts: only the
+    /// fields that changed are re-sent) and the `NavWorld` identity the
+    /// packed banks keyframe on. Cleared on Start so the first post is a
+    /// keyframe.
+    #[cfg(feature = "load")]
+    last_snapshot: Option<SnapshotFingerprint>,
+    #[cfg(feature = "load")]
+    last_world_id: Option<usize>,
     last_error: Option<String>,
     /// Dispatched game ticks since the last Start.
     ticks: u64,
@@ -48,6 +58,10 @@ impl SlotScript {
             compiled: None,
             #[cfg(feature = "load")]
             load: None,
+            #[cfg(feature = "load")]
+            last_snapshot: None,
+            #[cfg(feature = "load")]
+            last_world_id: None,
             last_error: None,
             ticks: 0,
         }
@@ -97,6 +111,9 @@ impl SlotScript {
                 self.want_run = true;
                 self.last_error = None;
                 self.ticks = 0;
+                // Fresh isolate: the first posted snapshot is a keyframe.
+                self.last_snapshot = None;
+                self.last_world_id = None;
                 self.state = RunState::Running;
                 Ok(())
             }
@@ -167,6 +184,36 @@ impl SlotScript {
         if let Some(isolate) = &self.load {
             isolate.post_snapshot(bytes);
         }
+    }
+
+    /// The per-slot last-post fingerprint the host compares the next
+    /// snapshot against (delta posts), `None` right after Start — the
+    /// first post is then the full keyframe.
+    #[cfg(feature = "load")]
+    pub fn last_snapshot(&self) -> Option<&SnapshotFingerprint> {
+        self.last_snapshot.as_ref()
+    }
+
+    /// Store the fingerprint of the snapshot just posted as the new
+    /// last-post baseline.
+    #[cfg(feature = "load")]
+    pub fn store_last_snapshot(&mut self, fp: SnapshotFingerprint) {
+        self.last_snapshot = Some(fp);
+    }
+
+    /// The `NavWorld` identity the packed banks were posted against
+    /// (`None` before the first post / after a Start). A world rebuild
+    /// changes the identity, forcing the banks table onto the next post.
+    #[cfg(feature = "load")]
+    pub fn last_world_id(&self) -> Option<usize> {
+        self.last_world_id
+    }
+
+    /// Store the `NavWorld` identity the packed banks were just posted
+    /// against.
+    #[cfg(feature = "load")]
+    pub fn store_last_world_id(&mut self, id: Option<usize>) {
+        self.last_world_id = id;
     }
 
     /// Drain the Load isolate's forwarded interact requests (the shim

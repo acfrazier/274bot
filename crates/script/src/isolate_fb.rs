@@ -10,6 +10,12 @@
 //! decoder trusts the buffer (root offset bounds-checked) like
 //! `flatbuffers::root_unchecked`; accessors default missing fields to the
 //! same fail-closed values the old JSON blob carried.
+//!
+//! Posts are deltas (schema: `Snapshot`): `tick` is always carried, other
+//! fields only when they changed vs the last post — an omitted vector is
+//! absent, never empty, and the isolate keeps its last JS value for it.
+//! The per-slot last-post [`SnapshotFingerprint`] is compared by value
+//! (equality, not a hash) once per slot per tick.
 
 use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, Table, Vector, VOffsetT, WIPOffset};
 
@@ -70,7 +76,7 @@ const VT_IN_ACTION: VOffsetT = 20;
 const VT_REQS: VOffsetT = 4;
 
 /// A game tile `{x, z, level}`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TileInput {
     pub x: i32,
     pub z: i32,
@@ -269,38 +275,77 @@ impl SnapshotReader<'_> {
         // Safety: the buffer was produced by our encoder (root checked).
         unsafe { self.tab.get::<u64>(VT_SNAP_TICK, None) }.unwrap_or(0)
     }
+    /// Whether the buffer carries the `here` tile. A delta omits the
+    /// fields that did not change since the last post — absent is distinct
+    /// from empty, and the isolate keeps its last JS value.
+    pub fn has_here(&self) -> bool {
+        unsafe { self.tab.get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None).is_some() }
+    }
     pub fn here(&self) -> Option<TileReader<'_>> {
         unsafe { self.tab.get::<ForwardsUOffset<TileReader>>(VT_SNAP_HERE, None) }
+    }
+    pub fn has_ingame(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_INGAME, None).is_some() }
     }
     pub fn ingame(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_INGAME, None) }.unwrap_or(false)
     }
+    pub fn has_inv(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_INV)
+    }
     pub fn inv(&self) -> Vec<RowReader<'_>> {
         rows::<RowReader>(&self.tab, VT_SNAP_INV)
+    }
+    pub fn has_stats(&self) -> bool {
+        rows_present::<StatReader>(&self.tab, VT_SNAP_STATS)
     }
     pub fn stats(&self) -> Vec<StatReader<'_>> {
         rows::<StatReader>(&self.tab, VT_SNAP_STATS)
     }
+    pub fn has_booths(&self) -> bool {
+        rows_present::<TileReader>(&self.tab, VT_SNAP_BOOTHS)
+    }
     pub fn booths(&self) -> Vec<TileReader<'_>> {
         rows::<TileReader>(&self.tab, VT_SNAP_BOOTHS)
+    }
+    pub fn has_banks(&self) -> bool {
+        rows_present::<BankStandReader>(&self.tab, VT_SNAP_BANKS)
     }
     pub fn banks(&self) -> Vec<BankStandReader<'_>> {
         rows::<BankStandReader>(&self.tab, VT_SNAP_BANKS)
     }
+    pub fn has_bank(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_BANK)
+    }
     pub fn bank(&self) -> Vec<RowReader<'_>> {
         rows::<RowReader>(&self.tab, VT_SNAP_BANK)
+    }
+    pub fn has_bank_side(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_BANK_SIDE)
     }
     pub fn bank_side(&self) -> Vec<RowReader<'_>> {
         rows::<RowReader>(&self.tab, VT_SNAP_BANK_SIDE)
     }
+    pub fn has_bank_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OPEN, None).is_some() }
+    }
     pub fn bank_open(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OPEN, None) }.unwrap_or(false)
+    }
+    pub fn has_bank_loaded(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_LOADED, None).is_some() }
     }
     pub fn bank_loaded(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_BANK_LOADED, None) }.unwrap_or(false)
     }
+    pub fn has_hold(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
+    }
     pub fn hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None) }.unwrap_or(false)
+    }
+    pub fn has_ours(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_OURS, None).is_some() }
     }
     pub fn ours(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_OURS, None) }.unwrap_or(false)
@@ -327,72 +372,297 @@ where
     }
 }
 
-/// Encode `input` as a root-`Snapshot` FlatBuffer.
+/// Whether the buffer carries the vector at `slot` — a delta omits an
+/// unchanged table entirely, and absent must stay distinct from empty
+/// (the isolate keeps its last JS rows for an omitted table).
+fn rows_present<'a, T>(tab: &Table<'a>, slot: VOffsetT) -> bool
+where
+    T: flatbuffers::Follow<'a> + 'a,
+{
+    // Safety: the buffer was produced by our encoder (root checked).
+    unsafe {
+        tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None)
+            .is_some()
+    }
+}
+
+/// One packed bank stand as an owned fingerprint row (same fields as
+/// [`BankStandInput`], names cloned).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BankStandFp {
+    pub name: String,
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub kind: String,
+    pub op: i32,
+    pub choose: Option<String>,
+}
+
+/// The per-slot last-post fingerprint: an owned copy of the snapshot
+/// fields the host last posted, compared against the next input to build
+/// the delta. Content equality (not a hash) is fine — the tables are
+/// small and the compare runs once per slot per tick.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct SnapshotFingerprint {
+    pub here: Option<TileInput>,
+    pub ingame: bool,
+    pub inv: Vec<(Option<String>, i32)>,
+    pub stats: Vec<(i32, String, i32)>,
+    pub booths: Vec<TileInput>,
+    pub banks: Vec<BankStandFp>,
+    pub bank: Vec<(Option<String>, i32)>,
+    pub bank_side: Vec<(Option<String>, i32)>,
+    pub bank_open: bool,
+    pub bank_loaded: bool,
+    pub hold: bool,
+    pub ours: bool,
+}
+
+impl SnapshotFingerprint {
+    /// Own the input's field values (names cloned) for later comparison.
+    pub fn from_input(input: &SnapshotInput<'_>) -> SnapshotFingerprint {
+        SnapshotFingerprint {
+            here: input.here,
+            ingame: input.ingame,
+            inv: input
+                .inv
+                .iter()
+                .map(|(name, count)| (name.map(str::to_string), *count))
+                .collect(),
+            stats: input
+                .stats
+                .iter()
+                .map(|s| (s.index, s.name.to_string(), s.xp))
+                .collect(),
+            booths: input.booths.to_vec(),
+            banks: input
+                .banks
+                .iter()
+                .map(|b| BankStandFp {
+                    name: b.name.to_string(),
+                    x: b.x,
+                    z: b.z,
+                    level: b.level,
+                    kind: b.kind.to_string(),
+                    op: b.op,
+                    choose: b.choose.map(str::to_string),
+                })
+                .collect(),
+            bank: input
+                .bank
+                .iter()
+                .map(|(name, count)| (name.map(str::to_string), *count))
+                .collect(),
+            bank_side: input
+                .bank_side
+                .iter()
+                .map(|(name, count)| (name.map(str::to_string), *count))
+                .collect(),
+            bank_open: input.bank_open,
+            bank_loaded: input.bank_loaded,
+            hold: input.hold,
+            ours: input.ours,
+        }
+    }
+}
+
+/// Which snapshot fields a delta carries. `tick` is always carried; every
+/// other field only when it changed vs the last post (or on the keyframe —
+/// first post / isolate spawn). `force_banks` re-includes the packed banks
+/// when the `NavWorld` identity changed even though the stand list is
+/// byte-identical.
+#[derive(Clone, Copy, Default)]
+pub struct DeltaMask {
+    pub here: bool,
+    pub ingame: bool,
+    pub inv: bool,
+    pub stats: bool,
+    pub booths: bool,
+    pub banks: bool,
+    pub bank: bool,
+    pub bank_side: bool,
+    pub bank_open: bool,
+    pub bank_loaded: bool,
+    pub hold: bool,
+    pub ours: bool,
+}
+
+impl DeltaMask {
+    /// Every field: the full (keyframe) snapshot.
+    fn all() -> DeltaMask {
+        DeltaMask {
+            here: true,
+            ingame: true,
+            inv: true,
+            stats: true,
+            booths: true,
+            banks: true,
+            bank: true,
+            bank_side: true,
+            bank_open: true,
+            bank_loaded: true,
+            hold: true,
+            ours: true,
+        }
+    }
+
+    /// The fields that differ from `last` (all when there is no last post
+    /// — a keyframe). Packed banks are additionally forced by
+    /// `force_banks` (a `NavWorld` identity change the list alone cannot
+    /// see).
+    fn changed(last: &SnapshotFingerprint, next: &SnapshotFingerprint, force_banks: bool) -> DeltaMask {
+        DeltaMask {
+            here: next.here != last.here,
+            ingame: next.ingame != last.ingame,
+            inv: next.inv != last.inv,
+            stats: next.stats != last.stats,
+            booths: next.booths != last.booths,
+            banks: force_banks || next.banks != last.banks,
+            bank: next.bank != last.bank,
+            bank_side: next.bank_side != last.bank_side,
+            bank_open: next.bank_open != last.bank_open,
+            bank_loaded: next.bank_loaded != last.bank_loaded,
+            hold: next.hold != last.hold,
+            ours: next.ours != last.ours,
+        }
+    }
+}
+
+/// Encode `input` as a root-`Snapshot` FlatBuffer carrying every field —
+/// the keyframe posted on Start / isolate spawn.
 pub fn encode_snapshot(input: &SnapshotInput<'_>) -> Vec<u8> {
+    encode_snapshot_masked(input, &DeltaMask::all())
+}
+
+/// Encode a delta snapshot: `tick` always; every other field only when it
+/// differs from `last` (all fields when `last` is `None` — the keyframe).
+/// Omitted tables are absent from the buffer, never empty: the isolate
+/// keeps its last JS values for them. Packed `banks` are carried on the
+/// keyframe and when `force_banks` even if the stand list is unchanged
+/// (a `NavWorld` identity change). Returns the encoded buffer and the
+/// fingerprint of what was just posted — the caller stores it as the new
+/// `last` (per-slot, reset on Start).
+pub fn encode_snapshot_delta(
+    last: Option<&SnapshotFingerprint>,
+    input: &SnapshotInput<'_>,
+    force_banks: bool,
+) -> (Vec<u8>, SnapshotFingerprint) {
+    let fp = SnapshotFingerprint::from_input(input);
+    let mask = match last {
+        None => DeltaMask::all(),
+        Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
+    };
+    (encode_snapshot_masked(input, &mask), fp)
+}
+
+/// Encode `input` carrying exactly the masked fields (`tick` is always
+/// carried).
+fn encode_snapshot_masked(input: &SnapshotInput<'_>, mask: &DeltaMask) -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
     // Children (strings, sub-tables, vectors) are written before the root
-    // table's own start.
-    let here_off = input.here.map(|h| tile_off(&mut b, h));
-    let inv_off = {
+    // table's own start — masked-in fields only.
+    let here_off = if mask.here {
+        input.here.map(|h| tile_off(&mut b, h))
+    } else {
+        None
+    };
+    let inv_off = if mask.inv {
         let offs = input
             .inv
             .iter()
             .map(|(name, count)| row_off(&mut b, *name, *count))
             .collect::<Vec<_>>();
-        b.create_vector(&offs)
+        Some(b.create_vector(&offs))
+    } else {
+        None
     };
-    let stats_off = {
+    let stats_off = if mask.stats {
         let offs = input
             .stats
             .iter()
             .map(|s| stat_off(&mut b, s))
             .collect::<Vec<_>>();
-        b.create_vector(&offs)
+        Some(b.create_vector(&offs))
+    } else {
+        None
     };
-    let booths_off = {
+    let booths_off = if mask.booths {
         let offs = input.booths.iter().map(|t| tile_off(&mut b, *t)).collect::<Vec<_>>();
-        b.create_vector(&offs)
+        Some(b.create_vector(&offs))
+    } else {
+        None
     };
-    let banks_off = {
+    let banks_off = if mask.banks {
         let offs = input
             .banks
             .iter()
             .map(|s| bank_stand_off(&mut b, s))
             .collect::<Vec<_>>();
-        b.create_vector(&offs)
+        Some(b.create_vector(&offs))
+    } else {
+        None
     };
-    let bank_off = {
+    let bank_off = if mask.bank {
         let offs = input
             .bank
             .iter()
             .map(|(name, count)| row_off(&mut b, *name, *count))
             .collect::<Vec<_>>();
-        b.create_vector(&offs)
+        Some(b.create_vector(&offs))
+    } else {
+        None
     };
-    let bank_side_off = {
+    let bank_side_off = if mask.bank_side {
         let offs = input
             .bank_side
             .iter()
             .map(|(name, count)| row_off(&mut b, *name, *count))
             .collect::<Vec<_>>();
-        b.create_vector(&offs)
+        Some(b.create_vector(&offs))
+    } else {
+        None
     };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
-    if let Some(off) = here_off {
-        b.push_slot_always(VT_SNAP_HERE, off);
+    if mask.here {
+        if let Some(off) = here_off {
+            b.push_slot_always(VT_SNAP_HERE, off);
+        }
     }
-    b.push_slot_always(VT_SNAP_INGAME, input.ingame);
-    b.push_slot_always(VT_SNAP_INV, inv_off);
-    b.push_slot_always(VT_SNAP_STATS, stats_off);
-    b.push_slot_always(VT_SNAP_BOOTHS, booths_off);
-    b.push_slot_always(VT_SNAP_BANKS, banks_off);
-    b.push_slot_always(VT_SNAP_BANK, bank_off);
-    b.push_slot_always(VT_SNAP_BANK_SIDE, bank_side_off);
-    b.push_slot_always(VT_SNAP_BANK_OPEN, input.bank_open);
-    b.push_slot_always(VT_SNAP_BANK_LOADED, input.bank_loaded);
-    b.push_slot_always(VT_SNAP_HOLD, input.hold);
-    b.push_slot_always(VT_SNAP_OURS, input.ours);
+    if mask.ingame {
+        b.push_slot_always(VT_SNAP_INGAME, input.ingame);
+    }
+    if mask.inv {
+        b.push_slot_always(VT_SNAP_INV, inv_off.expect("mask checked"));
+    }
+    if mask.stats {
+        b.push_slot_always(VT_SNAP_STATS, stats_off.expect("mask checked"));
+    }
+    if mask.booths {
+        b.push_slot_always(VT_SNAP_BOOTHS, booths_off.expect("mask checked"));
+    }
+    if mask.banks {
+        b.push_slot_always(VT_SNAP_BANKS, banks_off.expect("mask checked"));
+    }
+    if mask.bank {
+        b.push_slot_always(VT_SNAP_BANK, bank_off.expect("mask checked"));
+    }
+    if mask.bank_side {
+        b.push_slot_always(VT_SNAP_BANK_SIDE, bank_side_off.expect("mask checked"));
+    }
+    if mask.bank_open {
+        b.push_slot_always(VT_SNAP_BANK_OPEN, input.bank_open);
+    }
+    if mask.bank_loaded {
+        b.push_slot_always(VT_SNAP_BANK_LOADED, input.bank_loaded);
+    }
+    if mask.hold {
+        b.push_slot_always(VT_SNAP_HOLD, input.hold);
+    }
+    if mask.ours {
+        b.push_slot_always(VT_SNAP_OURS, input.ours);
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
     b.finished_data().to_vec()

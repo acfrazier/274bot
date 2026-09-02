@@ -406,7 +406,18 @@ fn script_observe(
                 // host handle; while it is set the tick is still not
                 // dispatched below (a held script is frozen, never
                 // looped).
-                slot.post_snapshot(script_snapshot_fb(
+                // Task 9c: the post is a DELTA — `tick` always, other
+                // fields only when changed vs the slot's last post (a
+                // 50+ isolate wall never resends unchanged tables). The
+                // packed banks are re-posted when the NavWorld identity
+                // changed (identity = the shared Arc's pointer), not when
+                // the stand list merely rebuilds identical.
+                let last = slot.last_snapshot();
+                let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
+                let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
+                let (bytes, fp) = script_snapshot_fb(
+                    last,
+                    force_banks,
                     tick,
                     here,
                     up,
@@ -416,7 +427,10 @@ fn script_observe(
                     world.as_deref(),
                     hold,
                     ours,
-                ));
+                );
+                slot.post_snapshot(bytes);
+                slot.store_last_snapshot(fp);
+                slot.store_last_world_id(world_id);
                 if !hold {
                     // One shared arm for both hooks: `walk_with` carries the
                     // script's options through to `find_with`; `walk` is the
@@ -701,8 +715,19 @@ fn dispatch_wires(
 /// name (`None` when the table has none — a deposit/withdraw by that name
 /// never matches); `hold`/`ours` are the guardian's published status that
 /// `EventSignal.pending()` reads.
+///
+/// Posts are DELTAS: `tick` is always carried; every other field only
+/// when it changed vs `last` (the per-slot last-post fingerprint, `None`
+/// right after Start — the first post is then the full keyframe). A 50+
+/// isolate wall never resends unchanged inv/bank/stats/booths/packed
+/// banks. Packed `banks` are additionally re-posted when `force_banks`
+/// (the `NavWorld` identity changed) even though the stand list is
+/// byte-identical. Returns the blob and the fingerprint to store as the
+/// new last-post baseline.
 #[allow(clippy::too_many_arguments)]
 fn script_snapshot_fb(
+    last: Option<&script::isolate_fb::SnapshotFingerprint>,
+    force_banks: bool,
     tick: u64,
     here: Option<(i32, i32, i32)>,
     ingame: bool,
@@ -712,7 +737,7 @@ fn script_snapshot_fb(
     world: Option<&NavWorld>,
     hold: bool,
     ours: bool,
-) -> Vec<u8> {
+) -> (Vec<u8>, script::isolate_fb::SnapshotFingerprint) {
     use script::isolate_fb::{BankStandInput, SnapshotInput, StatInput, TileInput};
 
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
@@ -795,7 +820,7 @@ fn script_snapshot_fb(
         hold,
         ours,
     };
-    script::isolate_fb::encode_snapshot(&input)
+    script::isolate_fb::encode_snapshot_delta(last, &input, force_banks)
 }
 
 /// True when `name`'s slot script is Running — the only state that builds
@@ -4044,7 +4069,9 @@ mod tests {
         objs[1].name = "Bones".into();
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let inv = vec![(1, 2), (99, 5)];
-        let bytes = script_snapshot_fb(
+        let (bytes, _fp) = script_snapshot_fb(
+            None,
+            false,
             7,
             Some((3200, 3200, 0)),
             true,
@@ -4057,9 +4084,11 @@ mod tests {
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
         assert_eq!(view.tick(), 7);
+        assert!(view.has_here(), "keyframe carries here");
         let here = view.here().expect("here posted");
         assert_eq!((here.x(), here.z(), here.level()), (3200, 3200, 0));
         assert!(view.ingame());
+        assert!(view.has_inv(), "keyframe carries inv");
         let inv = view.inv();
         assert_eq!(inv.len(), 2);
         assert_eq!((inv[0].name(), inv[0].count()), (Some("Bones"), 2));
@@ -4068,6 +4097,7 @@ mod tests {
             (None, 5),
             "an obj the table does not know posts a null name, never invented"
         );
+        assert!(view.has_stats(), "keyframe carries stats");
         let stats = view.stats();
         assert_eq!(
             (stats[7].index(), stats[7].name(), stats[7].xp()),
@@ -4089,7 +4119,7 @@ mod tests {
         assert!(!view.ours());
 
         // No tile / no snapshot: fail-closed nulls and flags.
-        let bare_bytes = script_snapshot_fb(1, None, false, None, None, None, None, false, true);
+        let (bare_bytes, _) = script_snapshot_fb(None, false, 1, None, false, None, None, None, None, false, true);
         let bare =
             script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
         assert!(bare.here().is_none());
@@ -4097,6 +4127,141 @@ mod tests {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    // Task 9c — delta posts: the keyframe carries every field; a later
+    // post carries only the fields that changed (plus tick), so a 50+
+    // isolate wall never resends unchanged inv/bank/stats/booths/packed
+    // banks. The returned fingerprint is the per-slot last-post state the
+    // observe stores; banks are re-included on `force_banks` even when the
+    // stand list did not change (NavWorld identity change).
+    #[test]
+    fn script_snapshot_fb_posts_only_changed_tables() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.stat_effective_level[7] = 40;
+        c.stat_xp[7] = 1300;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let mut objs = vec![client::config::ObjType::default(); 2];
+        objs[1].id = 1;
+        objs[1].name = "Bones".into();
+        let names = api::obj_names::ObjNames::from_objs(&objs);
+        let inv = vec![(1, 2)];
+        let world = Some(Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: WorldTile { x: 0, z: 0, level: 0 },
+                width: 2,
+                height: 1,
+                walk: vec![0u8; 2],
+                blocked: vec![0u64; 2usize.div_ceil(64)],
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            vec![nav::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: WorldTile { x: 1, z: 0, level: 0 },
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            }],
+        )));
+
+        // Keyframe (no last post): every observed field is present.
+        let (keyframe, fp1) = script_snapshot_fb(
+            None,
+            false,
+            7,
+            Some((3200, 3200, 0)),
+            true,
+            Some(&inv),
+            Some(&snap),
+            Some(&names),
+            world.as_deref(),
+            true,
+            false,
+        );
+        let kf = script::isolate_fb::decode_snapshot(&keyframe).expect("keyframe decodes");
+        assert!(kf.has_here());
+        assert!(kf.has_ingame());
+        assert!(kf.has_inv());
+        assert!(kf.has_stats());
+        assert!(kf.has_banks(), "keyframe carries the packed banks");
+
+        // Same observed data again: only tick is carried.
+        let (delta, fp2) = script_snapshot_fb(
+            Some(&fp1),
+            false,
+            8,
+            Some((3200, 3200, 0)),
+            true,
+            Some(&inv),
+            Some(&snap),
+            Some(&names),
+            world.as_deref(),
+            true,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+        assert_eq!(view.tick(), 8, "tick is always present");
+        assert!(!view.has_here(), "unchanged here omitted");
+        assert!(!view.has_ingame(), "unchanged ingame omitted");
+        assert!(!view.has_inv(), "unchanged inv omitted");
+        assert!(!view.has_stats(), "unchanged stats omitted");
+        assert!(!view.has_banks(), "unchanged packed banks omitted");
+        assert!(!view.has_bank());
+        assert!(!view.has_bank_side());
+        assert!(!view.hold(), "unchanged hold omitted");
+
+        // inv changed -> the inv table comes back; banks stay omitted even
+        // when force_banks is false.
+        let inv2 = vec![(1, 2), (99, 5)];
+        let (delta, _fp3) = script_snapshot_fb(
+            Some(&fp2),
+            false,
+            9,
+            Some((3200, 3200, 0)),
+            true,
+            Some(&inv2),
+            Some(&snap),
+            Some(&names),
+            world.as_deref(),
+            true,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+        assert!(view.has_inv(), "changed inv is carried");
+        assert_eq!(view.inv().len(), 2);
+        assert!(!view.has_banks(), "unchanged banks still omitted");
+
+        // NavWorld identity change (force_banks): the packed banks are
+        // re-posted even though the stand list is unchanged.
+        let (delta, _) = script_snapshot_fb(
+            Some(&fp2),
+            true,
+            10,
+            Some((3200, 3200, 0)),
+            true,
+            Some(&inv),
+            Some(&snap),
+            Some(&names),
+            world.as_deref(),
+            true,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+        assert!(view.has_banks(), "force_banks re-posts the packed banks");
+        assert!(!view.has_inv(), "unchanged inv stays omitted");
     }
 
     #[test]

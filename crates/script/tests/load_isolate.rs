@@ -959,6 +959,73 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Task 9c — snapshot deltas: host-play posts `tick` every post and only
+// the fields that changed vs the last post (keyframe on Start). The
+// isolate merges the delta onto the last JS snapshot object — an omitted
+// table keeps its prior value, it never clears to empty. The first post
+// (keyframe) carries every field.
+#[test]
+fn isolate_snapshot_delta_merges_onto_last_js_snapshot() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            bones: Inventory.count('Bones'),
+            pending: EventSignal.pending(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+
+    // First post is the keyframe: the inv table is present.
+    let mut snap = base_snapshot();
+    snap.inv = &[(Some("Bones"), 2)];
+    let (keyframe, fp1) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
+    let kf = script::isolate_fb::decode_snapshot(&keyframe).expect("keyframe decodes");
+    assert!(kf.has_inv(), "keyframe carries the inv table");
+    iso.post_snapshot(keyframe);
+    iso.on_game_tick(1);
+
+    // Second post: inv unchanged -> the buffer has no inv table, and the
+    // isolate keeps the last JS rows (Inventory.count still 2).
+    let (delta, fp2) = script::isolate_fb::encode_snapshot_delta(Some(&fp1), &snap, false);
+    let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+    assert!(!view.has_inv(), "second buffer has no inv table");
+    iso.post_snapshot(delta);
+    iso.on_game_tick(2);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["bones"], 2, "Inventory.count still 2 after an inv-less delta");
+
+    // Third post: inv count 1 -> the inv table comes back and count reads 1.
+    snap.inv = &[(Some("Bones"), 1)];
+    let (delta, fp3) = script::isolate_fb::encode_snapshot_delta(Some(&fp2), &snap, false);
+    assert!(
+        script::isolate_fb::decode_snapshot(&delta).unwrap().has_inv(),
+        "changed inv is carried"
+    );
+    iso.post_snapshot(delta);
+    iso.on_game_tick(3);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["bones"], 1, "Inventory.count reads the posted 1");
+
+    // Hold flip without an inv change -> hold present, inv still omitted,
+    // EventSignal.pending() flips true while the inv rows are untouched.
+    snap.hold = true;
+    let (delta, _fp4) = script::isolate_fb::encode_snapshot_delta(Some(&fp3), &snap, false);
+    let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+    assert!(!view.has_inv(), "inv omitted by the hold-only delta");
+    assert!(view.hold(), "hold flip is carried");
+    iso.post_snapshot(delta);
+    iso.on_game_tick(4);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["pending"], true, "hold flip reads pending true");
+    assert_eq!(value["bones"], 1, "inv untouched by the hold-only delta");
+    iso.join();
+}
+
 // Task 9b — EventSignal.pending() is hold OR ours, as the host posted them
 // (the FlatBuffer blob carries both flags).
 #[test]

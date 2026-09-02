@@ -761,12 +761,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
 "#;
 
     /// Materialise the decoded FlatBuffer snapshot as the JS object the
-    /// shim reads (`__rs2b0t_host.snapshot`). The object is built on the
-    /// isolate thread directly from the buffer (v8 object construction —
-    /// not `JSON.parse`): a wall of 50+ isolates never parses a JSON
-    /// document per tick. Missing fields materialise to the same
-    /// fail-closed values the old JSON blob carried (absent `here`, empty
-    /// row vectors, null names for ids the host table does not know).
+    /// shim reads (`__rs2b0t_host.snapshot`), merging it onto the last
+    /// posted object. A post is a delta: `tick` is always carried, other
+    /// fields only when they changed — so an omitted vector must NOT clear
+    /// the previous JS rows. Only the fields the buffer carries are
+    /// overwritten; the first post (keyframe on Start / isolate spawn)
+    /// builds the object and fail-closes the fields the keyframe also
+    /// lacks (absent `here`, empty rows, false flags), exactly like the
+    /// old JSON blob. The object is built on the isolate thread directly
+    /// from the buffer (v8 object construction — not `JSON.parse`): a wall
+    /// of 50+ isolates never parses a JSON document per tick.
     fn materialize_snapshot(
         runtime: &mut Runtime,
         snap: &crate::isolate_fb::SnapshotReader<'_>,
@@ -781,36 +785,104 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             .to_object(&mut scope)
             .ok_or_else(|| "__rs2b0t_host is not an object".to_string())?;
 
-        let obj = v8::Object::new(&mut scope);
+        let snap_key = js_string(&mut scope, "snapshot")?;
+        let existing = host.get(&mut scope, snap_key);
+        let had = existing.is_some_and(|v| v.is_object());
+        let obj = if had {
+            existing
+                .expect("checked above")
+                .to_object(&mut scope)
+                .ok_or_else(|| "snapshot is not an object".to_string())?
+        } else {
+            v8::Object::new(&mut scope)
+        };
+        // The fail-closed defaults a keyframe's absent fields materialise
+        // to (the same values the shim's `snap()` reads with no snapshot).
+        let empty_rows: v8::Local<v8::Value> = v8::Array::new(&mut scope, 0).into();
+        let none: v8::Local<v8::Value> = v8::null(&mut scope).into();
+
+        // `tick` is always carried. A field the buffer carries overwrites
+        // the object; a field a delta omits keeps its last value. On the
+        // keyframe (`had` is false) an absent field fail-closes to the
+        // same value the shim's `snap()` reads without a snapshot.
         let tick = num(&mut scope, snap.tick() as f64);
         set(&mut scope, obj, "tick", tick)?;
-        let here = match snap.here() {
-            Some(tile) => tile_object(&mut scope, &tile)?,
-            None => v8::null(&mut scope).into(),
-        };
-        set(&mut scope, obj, "here", here)?;
-        let ingame = v8::Boolean::new(&mut scope, snap.ingame());
-        set(&mut scope, obj, "ingame", ingame.into())?;
-        let inv = row_array(&mut scope, &snap.inv())?;
-        set(&mut scope, obj, "inv", inv)?;
-        let stats = stat_array(&mut scope, &snap.stats())?;
-        set(&mut scope, obj, "stats", stats)?;
-        let booths = tile_array(&mut scope, &snap.booths())?;
-        set(&mut scope, obj, "booths", booths)?;
-        let banks = bank_stand_array(&mut scope, &snap.banks())?;
-        set(&mut scope, obj, "banks", banks)?;
-        let bank = row_array(&mut scope, &snap.bank())?;
-        set(&mut scope, obj, "bank", bank)?;
-        let bank_side = row_array(&mut scope, &snap.bank_side())?;
-        set(&mut scope, obj, "bank_side", bank_side)?;
-        let bank_open = v8::Boolean::new(&mut scope, snap.bank_open());
-        set(&mut scope, obj, "bank_open", bank_open.into())?;
-        let bank_loaded = v8::Boolean::new(&mut scope, snap.bank_loaded());
-        set(&mut scope, obj, "bank_loaded", bank_loaded.into())?;
-        let hold = v8::Boolean::new(&mut scope, snap.hold());
-        set(&mut scope, obj, "hold", hold.into())?;
-        let ours = v8::Boolean::new(&mut scope, snap.ours());
-        set(&mut scope, obj, "ours", ours.into())?;
+        let falsy: v8::Local<v8::Value> = v8::Boolean::new(&mut scope, false).into();
+        if snap.has_here() {
+            let here = match snap.here() {
+                Some(tile) => tile_object(&mut scope, &tile)?,
+                None => v8::null(&mut scope).into(),
+            };
+            set(&mut scope, obj, "here", here)?;
+        } else if !had {
+            set(&mut scope, obj, "here", none)?;
+        }
+        if snap.has_ingame() {
+            let ingame = v8::Boolean::new(&mut scope, snap.ingame());
+            set(&mut scope, obj, "ingame", ingame.into())?;
+        } else if !had {
+            set(&mut scope, obj, "ingame", falsy)?;
+        }
+        if snap.has_inv() {
+            let inv = row_array(&mut scope, &snap.inv())?;
+            set(&mut scope, obj, "inv", inv)?;
+        } else if !had {
+            set(&mut scope, obj, "inv", empty_rows)?;
+        }
+        if snap.has_stats() {
+            let stats = stat_array(&mut scope, &snap.stats())?;
+            set(&mut scope, obj, "stats", stats)?;
+        } else if !had {
+            set(&mut scope, obj, "stats", empty_rows)?;
+        }
+        if snap.has_booths() {
+            let booths = tile_array(&mut scope, &snap.booths())?;
+            set(&mut scope, obj, "booths", booths)?;
+        } else if !had {
+            set(&mut scope, obj, "booths", empty_rows)?;
+        }
+        if snap.has_banks() {
+            let banks = bank_stand_array(&mut scope, &snap.banks())?;
+            set(&mut scope, obj, "banks", banks)?;
+        } else if !had {
+            set(&mut scope, obj, "banks", empty_rows)?;
+        }
+        if snap.has_bank() {
+            let bank = row_array(&mut scope, &snap.bank())?;
+            set(&mut scope, obj, "bank", bank)?;
+        } else if !had {
+            set(&mut scope, obj, "bank", empty_rows)?;
+        }
+        if snap.has_bank_side() {
+            let bank_side = row_array(&mut scope, &snap.bank_side())?;
+            set(&mut scope, obj, "bank_side", bank_side)?;
+        } else if !had {
+            set(&mut scope, obj, "bank_side", empty_rows)?;
+        }
+        if snap.has_bank_open() {
+            let bank_open = v8::Boolean::new(&mut scope, snap.bank_open());
+            set(&mut scope, obj, "bank_open", bank_open.into())?;
+        } else if !had {
+            set(&mut scope, obj, "bank_open", falsy)?;
+        }
+        if snap.has_bank_loaded() {
+            let bank_loaded = v8::Boolean::new(&mut scope, snap.bank_loaded());
+            set(&mut scope, obj, "bank_loaded", bank_loaded.into())?;
+        } else if !had {
+            set(&mut scope, obj, "bank_loaded", falsy)?;
+        }
+        if snap.has_hold() {
+            let hold = v8::Boolean::new(&mut scope, snap.hold());
+            set(&mut scope, obj, "hold", hold.into())?;
+        } else if !had {
+            set(&mut scope, obj, "hold", falsy)?;
+        }
+        if snap.has_ours() {
+            let ours = v8::Boolean::new(&mut scope, snap.ours());
+            set(&mut scope, obj, "ours", ours.into())?;
+        } else if !had {
+            set(&mut scope, obj, "ours", falsy)?;
+        }
         let snapshot = obj.into();
         set(&mut scope, host, "snapshot", snapshot)
     }

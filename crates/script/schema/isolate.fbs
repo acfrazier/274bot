@@ -52,6 +52,14 @@ table BankStand {
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
 // that EventSignal.pending() reads.
+//
+// Posts are DELTAS: `tick` is always present; every other field is present
+// only when it changed vs the last post (the first post — Start / isolate
+// spawn — is the keyframe and carries everything). An omitted field is
+// NOT an empty value: the isolate keeps its last JS rows/flags for it.
+// Packed `banks` are keyframed and re-posted only when the NavWorld
+// identity changes, never merely because the stand list is rebuilt
+// unchanged.
 table Snapshot {
   tick: ulong;
   here: Tile;
