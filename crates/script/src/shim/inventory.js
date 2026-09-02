@@ -13,6 +13,15 @@ function capacity() {
     return size > 0 ? size : BACKPACK_CAPACITY;
 }
 
+function useOnKind(target) {
+    const cn = target?.constructor?.name;
+    if (cn === 'Npc') return 'npc';
+    if (cn === 'Loc') return 'loc';
+    if (cn === 'GroundItem') return 'obj';
+    if (cn === 'Player') return 'player';
+    throw notV1('Inventory.useOn');
+}
+
 function held(row) {
     return {
         name: row.name,
@@ -29,15 +38,19 @@ function held(row) {
         useOn(target) {
             if (!target) return false;
             if (target.name && target.snap) {
+                const kind = useOnKind(target);
                 queue({
                     op: 'use-on',
                     name: row.name,
-                    kind: 'npc',
+                    kind,
                     target_name: target.name ?? target.snap.name ?? null,
                     x: target.snap?.x ?? 0,
                     z: target.snap?.z ?? 0,
                     level: target.snap?.level ?? 0,
-                    index: target.snap?.index ?? target.index ?? null,
+                    index:
+                        kind === 'npc'
+                            ? (target.snap?.index ?? target.index ?? null)
+                            : null,
                 });
                 return true;
             }
@@ -55,9 +68,7 @@ export const Inventory = new Proxy(
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
         countById(id) {
-            return rows()
-                .filter((r) => r && r.id === id)
-                .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
+            throw notV1('Inventory.countById');
         },
         first(name) {
             const wanted = String(name).toLowerCase();

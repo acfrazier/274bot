@@ -1847,6 +1847,108 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Task 9 fix — Game.autoRetaliate is the gold export name (not autoRetaliateOn).
+#[test]
+fn kernel_facade_game_auto_retaliate_is_exported() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = typeof Game.autoRetaliate;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, "function", "Game.autoRetaliate must be exported");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("not v1")),
+        "autoRetaliate must not throw not v1: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 9 fix — Row FB has name+count only; countById cannot observe ids.
+#[test]
+fn kernel_facade_inventory_count_by_id_throws_not_v1() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        Inventory.countById(526);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.inv = &[(Some("Bones"), 5)];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("Inventory.countById")),
+        "countById must throw not v1 until ids exist: {logs:?}"
+    );
+    iso.join();
+}
+
+// Task 9 fix — item.useOn derives interact kind from the target entity type.
+#[test]
+fn kernel_facade_inventory_use_on_loc_queues_loc_kind() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+import { Locs } from '../../api/locs/Locs.js';
+export default class T extends LoopingBot {
+    loop() {
+        const item = Inventory.first('Knife');
+        const loc = Locs.query().nearest();
+        globalThis.__probe = item ? item.useOn(loc) : false;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_actions = ["Use".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 873,
+        name: Some("Tree"),
+        x: 3220,
+        z: 3220,
+        level: 0,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &use_actions,
+    }];
+    let mut snap = base_snapshot();
+    snap.inv = &[(Some("Knife"), 1)];
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "useOn accepts a loc target");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::UseOn {
+            name: "Knife".into(),
+            kind: "loc".into(),
+            target_name: Some("Tree".into()),
+            x: 3220,
+            z: 3220,
+            level: 0,
+            index: None,
+        }],
+        "useOn on a loc must not hardcode kind npc"
+    );
+    iso.join();
+}
+
 #[test]
 fn kernel_facade_gold_import_paths_resolve() {
     let src = r#"

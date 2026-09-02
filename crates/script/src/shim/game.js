@@ -40,9 +40,12 @@ export const Game = new Proxy(
             if (snap().run_enabled !== undefined) return snap().run_enabled === true;
             return reader.varp(RUN_VARP) === 1;
         },
-        autoRetaliateOn() {
+        autoRetaliate() {
             if (snap().retaliate_enabled !== undefined) return snap().retaliate_enabled === true;
             return reader.varp(RETALIATE_VARP) === 0;
+        },
+        autoRetaliateOn() {
+            return Game.autoRetaliate();
         },
         myName() {
             return optionalText(snap().my_name);
