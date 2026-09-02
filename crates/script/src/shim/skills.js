@@ -1,10 +1,6 @@
-// Our Skills module: `index` scans the host-posted snapshot's stats rows
-// for the name (case-insensitive; -1 when absent), `xp` reads that row's
-// xp (0 when absent). Missing snapshot or missing stat fail closed —
-// never a fake value. Every other member throws `not v1`.
-const host = () => globalThis.__rs2b0t_host || {};
-const notV1 = (name) => new Error('not v1: ' + name);
-const snap = () => host().snapshot || {};
+// Our Skills module: reads posted stats rows. Missing members throw `not v1`.
+import { notV1, proxy, snap } from '../../shim/_kernel.js';
+
 const stats = () => snap().stats || [];
 
 export const Skills = new Proxy(
@@ -20,6 +16,23 @@ export const Skills = new Proxy(
             if (i === -1) return 0;
             const row = stats()[i];
             return row && typeof row.xp === 'number' ? row.xp : 0;
+        },
+        level(name) {
+            const i = Skills.index(name);
+            if (i === -1) return 0;
+            const row = stats()[i];
+            return row && typeof row.level === 'number' ? row.level : 0;
+        },
+        effective(name) {
+            const i = Skills.index(name);
+            if (i === -1) return 0;
+            const row = stats()[i];
+            if (row && typeof row.effective === 'number') return row.effective;
+            return row && typeof row.level === 'number' ? row.level : 0;
+        },
+        hpFraction() {
+            const base = Skills.level('hitpoints');
+            return base > 0 ? Skills.effective('hitpoints') / base : 1;
         },
     },
     {

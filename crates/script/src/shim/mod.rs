@@ -107,6 +107,30 @@ globalThis.__dummy_ctx = {
 /// `src/bot/api/...`, and the adapter lives at `src/bot/adapter/`).
 pub(crate) fn shim_modules() -> Vec<Module> {
     vec![
+        Module::new(
+            "/rs2b0t/bot/shim/_kernel.js",
+            include_str!("_kernel.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/geometry/Tile.js",
+            include_str!("tile.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/query/Query.js",
+            include_str!("query.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/execution/Execution.js",
+            include_str!("execution.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/execution/EventSignal.js",
+            include_str!("event_signal.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/adapter/ClientAdapter.js",
+            include_str!("client_adapter.js"),
+        ),
         Module::new("/rs2b0t/bot/api/game/Game.js", include_str!("game.js")),
         Module::new(
             "/rs2b0t/bot/api/inventory/Inventory.js",
@@ -116,22 +140,54 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/skills/Skills.js",
             include_str!("skills.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/api/execution/Execution.js",
-            include_str!("execution.js"),
-        ),
         Module::new("/rs2b0t/bot/api/bank/Bank.js", include_str!("bank.js")),
         Module::new(
             "/rs2b0t/bot/api/bank/Banking.js",
             include_str!("banking.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/api/execution/EventSignal.js",
-            include_str!("event_signal.js"),
+            "/rs2b0t/bot/api/npcs/Npcs.js",
+            include_str!("npcs.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/adapter/ClientAdapter.js",
-            include_str!("client_adapter.js"),
+            "/rs2b0t/bot/api/locs/Locs.js",
+            include_str!("locs.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/players/Players.js",
+            include_str!("players.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/grounditems/GroundItems.js",
+            include_str!("grounditems.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/equipment/Equipment.js",
+            include_str!("equipment.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ui/dialogue/ChatDialog.js",
+            include_str!("chat_dialog.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/tasks/ContinueDialog.js",
+            include_str!("continue_dialog.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/walking/Traversal.js",
+            include_str!("traversal.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/walking/Reach.js",
+            include_str!("reach.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/event/webwalk/geometry/Reachability.js",
+            include_str!("reachability.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/event/webwalk/walkOpening.js",
+            include_str!("walk_opening.js"),
         ),
         Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
         Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),

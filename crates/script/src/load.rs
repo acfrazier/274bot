@@ -1236,6 +1236,136 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "ours", falsy)?;
         }
+        if snap.has_npcs() {
+            let npcs = scene_entity_array(&mut scope, &snap.npcs())?;
+            set(&mut scope, obj, "npcs", npcs)?;
+        } else if !had {
+            set(&mut scope, obj, "npcs", empty_rows)?;
+        }
+        if snap.has_locs() {
+            let locs = scene_entity_array(&mut scope, &snap.locs())?;
+            set(&mut scope, obj, "locs", locs)?;
+        } else if !had {
+            set(&mut scope, obj, "locs", empty_rows)?;
+        }
+        if snap.has_players() {
+            let players = scene_entity_array(&mut scope, &snap.players())?;
+            set(&mut scope, obj, "players", players)?;
+        } else if !had {
+            set(&mut scope, obj, "players", empty_rows)?;
+        }
+        if snap.has_ground() {
+            let ground = scene_entity_array(&mut scope, &snap.ground())?;
+            set(&mut scope, obj, "ground", ground)?;
+        } else if !had {
+            set(&mut scope, obj, "ground", empty_rows)?;
+        }
+        if snap.has_equipment() {
+            let equipment = row_array(&mut scope, &snap.equipment())?;
+            set(&mut scope, obj, "equipment", equipment)?;
+        } else if !had {
+            set(&mut scope, obj, "equipment", empty_rows)?;
+        }
+        if snap.has_chat_open() {
+            let chat_open = v8::Boolean::new(&mut scope, snap.chat_open());
+            set(&mut scope, obj, "chat_open", chat_open.into())?;
+        } else if !had {
+            set(&mut scope, obj, "chat_open", falsy)?;
+        }
+        if snap.has_chat_continue() {
+            let chat_continue = v8::Boolean::new(&mut scope, snap.chat_continue());
+            set(&mut scope, obj, "chat_continue", chat_continue.into())?;
+        } else if !had {
+            set(&mut scope, obj, "chat_continue", falsy)?;
+        }
+        if snap.has_chat_text() {
+            let chat_text = match snap.chat_text() {
+                Some("") | None => v8::null(&mut scope).into(),
+                Some(s) => js_string(&mut scope, s)?,
+            };
+            set(&mut scope, obj, "chat_text", chat_text)?;
+        } else if !had {
+            set(&mut scope, obj, "chat_text", none)?;
+        }
+        if snap.has_chat_options() {
+            let chat_options = chat_option_array(&mut scope, &snap.chat_options())?;
+            set(&mut scope, obj, "chat_options", chat_options)?;
+        } else if !had {
+            set(&mut scope, obj, "chat_options", empty_rows)?;
+        }
+        if snap.has_side_tab() {
+            let side_tab = num(&mut scope, snap.side_tab() as f64);
+            set(&mut scope, obj, "side_tab", side_tab)?;
+        } else if !had {
+            let neg = num(&mut scope, -1.0);
+            set(&mut scope, obj, "side_tab", neg)?;
+        }
+        if snap.has_varps() {
+            let varps = varp_array(&mut scope, &snap.varps())?;
+            set(&mut scope, obj, "varps", varps)?;
+        } else if !had {
+            set(&mut scope, obj, "varps", empty_rows)?;
+        }
+        if snap.has_combat_styles() {
+            let combat_styles = combat_style_array(&mut scope, &snap.combat_styles())?;
+            set(&mut scope, obj, "combat_styles", combat_styles)?;
+        } else if !had {
+            set(&mut scope, obj, "combat_styles", empty_rows)?;
+        }
+        if snap.has_run_energy() {
+            let run_energy = num(&mut scope, snap.run_energy() as f64);
+            set(&mut scope, obj, "run_energy", run_energy)?;
+        } else if !had {
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, obj, "run_energy", zero)?;
+        }
+        if snap.has_run_enabled() {
+            let run_enabled = v8::Boolean::new(&mut scope, snap.run_enabled());
+            set(&mut scope, obj, "run_enabled", run_enabled.into())?;
+        } else if !had {
+            set(&mut scope, obj, "run_enabled", falsy)?;
+        }
+        if snap.has_retaliate_enabled() {
+            let retaliate_enabled = v8::Boolean::new(&mut scope, snap.retaliate_enabled());
+            set(&mut scope, obj, "retaliate_enabled", retaliate_enabled.into())?;
+        } else if !had {
+            set(&mut scope, obj, "retaliate_enabled", falsy)?;
+        }
+        if snap.has_my_name() {
+            let my_name = match snap.my_name() {
+                Some("") | None => v8::null(&mut scope).into(),
+                Some(s) => js_string(&mut scope, s)?,
+            };
+            set(&mut scope, obj, "my_name", my_name)?;
+        } else if !had {
+            set(&mut scope, obj, "my_name", none)?;
+        }
+        if snap.has_in_combat() {
+            let in_combat = v8::Boolean::new(&mut scope, snap.in_combat());
+            set(&mut scope, obj, "in_combat", in_combat.into())?;
+        } else if !had {
+            set(&mut scope, obj, "in_combat", falsy)?;
+        }
+        if snap.has_animating() {
+            let animating = v8::Boolean::new(&mut scope, snap.animating());
+            set(&mut scope, obj, "animating", animating.into())?;
+        } else if !had {
+            set(&mut scope, obj, "animating", falsy)?;
+        }
+        if snap.has_main_modal_id() {
+            let main_modal_id = num(&mut scope, snap.main_modal_id() as f64);
+            set(&mut scope, obj, "main_modal_id", main_modal_id)?;
+        } else if !had {
+            let neg = num(&mut scope, -1.0);
+            set(&mut scope, obj, "main_modal_id", neg)?;
+        }
+        if snap.has_chat_modal_id() {
+            let chat_modal_id = num(&mut scope, snap.chat_modal_id() as f64);
+            set(&mut scope, obj, "chat_modal_id", chat_modal_id)?;
+        } else if !had {
+            let neg = num(&mut scope, -1.0);
+            set(&mut scope, obj, "chat_modal_id", neg)?;
+        }
         let snapshot = obj.into();
         set(&mut scope, host, "snapshot", snapshot)
     }
@@ -1321,6 +1451,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "name", name)?;
             let xp = num(scope, st.xp() as f64);
             set(scope, o, "xp", xp)?;
+            let level = num(scope, st.level() as f64);
+            set(scope, o, "level", level)?;
+            let effective = num(scope, st.level() as f64);
+            set(scope, o, "effective", effective)?;
             let obj = o.into();
             arr.set_index(scope, i as u32, obj)
                 .ok_or_else(|| "v8 array set failed".to_string())?;
@@ -1350,6 +1484,119 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         for (i, t) in tiles.iter().enumerate() {
             let t = tile_object(scope, t)?;
             arr.set_index(scope, i as u32, t)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn scene_entity_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        ent: &crate::isolate_fb::SceneEntityReader<'_>,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let o = v8::Object::new(scope);
+        let index = num(scope, ent.index() as f64);
+        set(scope, o, "index", index)?;
+        let id = num(scope, ent.id() as f64);
+        set(scope, o, "id", id)?;
+        match ent.name() {
+            Some(name) => {
+                let name = js_string(scope, name)?;
+                set(scope, o, "name", name)?;
+            }
+            None => {
+                let none = v8::null(scope);
+                set(scope, o, "name", none.into())?;
+            }
+        }
+        let x = num(scope, ent.x() as f64);
+        set(scope, o, "x", x)?;
+        let z = num(scope, ent.z() as f64);
+        set(scope, o, "z", z)?;
+        let level = num(scope, ent.level() as f64);
+        set(scope, o, "level", level)?;
+        let distance = num(scope, ent.distance() as f64);
+        set(scope, o, "distance", distance)?;
+        let health = num(scope, ent.health() as f64);
+        set(scope, o, "health", health)?;
+        let max_health = num(scope, ent.max_health() as f64);
+        set(scope, o, "max_health", max_health)?;
+        let in_combat = v8::Boolean::new(scope, ent.in_combat());
+        set(scope, o, "in_combat", in_combat.into())?;
+        let animating = v8::Boolean::new(scope, ent.animating());
+        set(scope, o, "animating", animating.into())?;
+        let actions = v8::Array::new(scope, ent.actions().len() as i32);
+        for (i, action) in ent.actions().iter().enumerate() {
+            let a = js_string(scope, action)?;
+            actions
+                .set_index(scope, i as u32, a)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        set(scope, o, "actions", actions.into())?;
+        Ok(o.into())
+    }
+
+    fn scene_entity_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        ents: &[crate::isolate_fb::SceneEntityReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, ents.len() as i32);
+        for (i, ent) in ents.iter().enumerate() {
+            let ent = scene_entity_object(scope, ent)?;
+            arr.set_index(scope, i as u32, ent)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn chat_option_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        opts: &[crate::isolate_fb::ChatOptionReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, opts.len() as i32);
+        for (i, opt) in opts.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let text = js_string(scope, opt.text())?;
+            set(scope, o, "text", text)?;
+            let obj = o.into();
+            arr.set_index(scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn varp_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        varps: &[crate::isolate_fb::VarpReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, varps.len() as i32);
+        for (i, v) in varps.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let index = num(scope, v.index() as f64);
+            set(scope, o, "index", index)?;
+            let value = num(scope, v.value() as f64);
+            set(scope, o, "value", value)?;
+            let obj = o.into();
+            arr.set_index(scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn combat_style_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        styles: &[crate::isolate_fb::CombatStyleReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, styles.len() as i32);
+        for (i, st) in styles.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let mode = num(scope, st.mode() as f64);
+            set(scope, o, "mode", mode)?;
+            let label = js_string(scope, st.label())?;
+            set(scope, o, "label", label)?;
+            let component_id = num(scope, st.component_id() as f64);
+            set(scope, o, "component_id", component_id)?;
+            let obj = o.into();
+            arr.set_index(scope, i as u32, obj)
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }
         Ok(arr.into())

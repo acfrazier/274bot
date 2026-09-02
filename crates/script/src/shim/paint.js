@@ -1,8 +1,6 @@
-// Recording Paint: `begin` returns a frame whose title/row/gap/end append
-// to a ScriptPaint on the host handle. No canvas; `list`/`click` and other
-// widgets throw `not v1`.
-const host = () => globalThis.__rs2b0t_host || {};
-const notV1 = (name) => new Error('not v1: ' + name);
+// Recording Paint: begin returns a frame whose methods append to ScriptPaint
+// on the host handle. Unused widgets throw `not v1`.
+import { host, notV1 } from '../shim/_kernel.js';
 
 export const Paint = {
     begin(ctx, opts) {
@@ -10,6 +8,8 @@ export const Paint = {
             title: null,
             accent: (opts && opts.accent) || null,
             lines: [],
+            tabs: {},
+            selects: {},
         };
         const frame = {
             title(text) {
@@ -23,6 +23,27 @@ export const Paint = {
             gap() {
                 rec.lines.push('');
                 return frame;
+            },
+            text(line) {
+                rec.lines.push(String(line));
+                return frame;
+            },
+            bar(label, fraction, _color) {
+                const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+                rec.lines.push(`${label}: ${pct}%`);
+                return frame;
+            },
+            tabs(id, names) {
+                rec.tabs[id] = names.slice();
+                return names[0] ?? '';
+            },
+            cells(cols) {
+                rec.lines.push(cols.map((c) => (typeof c === 'string' ? c : c.text)).join(' | '));
+                return frame;
+            },
+            select(id, label, options, current) {
+                rec.selects[id] = { label, options, current };
+                return current;
             },
             end() {
                 host().paint = {

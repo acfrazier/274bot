@@ -1721,3 +1721,177 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+// Task 9 — kernel facades read posted snapshot rows and queue interact ops.
+#[test]
+fn kernel_facade_npcs_nearest_reads_posted_snapshot() {
+    let src = r#"
+import { Npcs } from '../../api/npcs/Npcs.js';
+export default class T extends LoopingBot {
+    loop() {
+        const nearest = Npcs.nearest(2);
+        globalThis.__probe = nearest.map(n => ({ name: n.name, distance: n.distance() }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let attack = ["Attack".to_string()];
+    let npcs = [
+        script::isolate_fb::SceneEntityInput {
+            index: 1,
+            id: 41,
+            name: Some("Chicken"),
+            x: 3220,
+            z: 3220,
+            level: 0,
+            distance: 5,
+            health: 3,
+            max_health: 3,
+            in_combat: false,
+            animating: false,
+            actions: &attack,
+        },
+        script::isolate_fb::SceneEntityInput {
+            index: 2,
+            id: 41,
+            name: Some("Chicken"),
+            x: 3221,
+            z: 3220,
+            level: 0,
+            distance: 2,
+            health: 3,
+            max_health: 3,
+            in_combat: false,
+            animating: false,
+            actions: &attack,
+        },
+    ];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!([
+            { "name": "Chicken", "distance": 2 },
+            { "name": "Chicken", "distance": 5 }
+        ]),
+        "Npcs.nearest sorts by posted distance"
+    );
+    iso.join();
+}
+
+#[test]
+fn kernel_facade_game_cast_on_item_queues_use_widget_on() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    async loop() {
+        const item = Inventory.first('Steel platebody');
+        globalThis.__probe = await Game.castOnItem('High level alchemy', item);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.inv = &[(Some("Steel platebody"), 1)];
+    snap.combat_styles = &[script::isolate_fb::CombatStyleInput {
+        mode: 0,
+        label: "High level alchemy",
+        component_id: 1234,
+    }];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__probe");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::UseWidgetOn {
+            component_id: 1234,
+            kind: "held".into(),
+            target_name: Some("Steel platebody".into()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: None,
+        }],
+        "Game.castOnItem queues use-widget-on from posted spell label"
+    );
+    iso.join();
+}
+
+#[test]
+fn kernel_facade_chat_dialog_continue_queues_continue_op() {
+    let src = r#"
+import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__probe = await ChatDialog.continue();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.chat_open = true;
+    snap.chat_continue = true;
+    snap.chat_modal_id = 4882;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__probe");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::ContinueDialog],
+        "ChatDialog.continue queues the continue interact op"
+    );
+    iso.join();
+}
+
+#[test]
+fn kernel_facade_gold_import_paths_resolve() {
+    let src = r#"
+import Tile from '../../geometry/Tile.js';
+import { Npcs } from '../../api/npcs/Npcs.js';
+import { Locs } from '../../api/locs/Locs.js';
+import { Players } from '../../api/players/Players.js';
+import { GroundItems } from '../../api/grounditems/GroundItems.js';
+import { Equipment } from '../../api/equipment/Equipment.js';
+import { ContinueDialog } from '../../api/tasks/ContinueDialog.js';
+import { Traversal } from '../../api/walking/Traversal.js';
+import { Reach } from '../../api/walking/Reach.js';
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+import { openOp } from '../../event/webwalk/walkOpening.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            tile: Tile.from({ x: 1, z: 2, level: 0 }).toString(),
+            npcs: typeof Npcs.nearest,
+            locs: typeof Locs.query,
+            players: typeof Players.all,
+            ground: typeof GroundItems.query,
+            equip: typeof Equipment.contains,
+            task: typeof ContinueDialog,
+            walk: typeof Traversal.walkResilient,
+            reach: typeof Reach.entityOp,
+            reachability: typeof Reachability.canReach,
+            openOp: typeof openOp,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["tile"], "(1, 2, 0)");
+    assert_eq!(value["npcs"], "function");
+    assert_eq!(value["locs"], "function");
+    assert_eq!(value["players"], "function");
+    assert_eq!(value["ground"], "function");
+    assert_eq!(value["equip"], "function");
+    assert_eq!(value["task"], "function");
+    assert_eq!(value["walk"], "function");
+    assert_eq!(value["reach"], "function");
+    assert_eq!(value["reachability"], "function");
+    assert_eq!(value["openOp"], "function");
+    iso.join();
+}
