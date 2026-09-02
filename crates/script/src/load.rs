@@ -925,10 +925,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, obj, "bank_loaded", falsy)?;
         }
         if snap.has_hold() {
-            let hold = v8::Boolean::new(&mut scope, snap.hold());
+            let hold_flag = snap.hold();
+            let hold = v8::Boolean::new(&mut scope, hold_flag);
             set(&mut scope, obj, "hold", hold.into())?;
+            // Mirror onto `__rs2b0t_host.hold` so the tick_loop gate freezes
+            // without a probe poke (EventSignal still reads snapshot.hold).
+            let hold2 = v8::Boolean::new(&mut scope, hold_flag);
+            set(&mut scope, host, "hold", hold2.into())?;
         } else if !had {
             set(&mut scope, obj, "hold", falsy)?;
+            set(&mut scope, host, "hold", falsy)?;
         }
         if snap.has_ours() {
             let ours = v8::Boolean::new(&mut scope, snap.ours());
@@ -1129,13 +1135,32 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     let start = Instant::now();
                     // Guardian hold: skip `loop()` AND skip resolving
                     // parked conds (time waits too) — the wait stays parked
-                    // until the hold lifts. Pause already freezes above.
+                    // until the hold lifts. Still call `onPaint` so status
+                    // rows keep updating. Pause already freezes above.
                     let held = runtime
                         .eval::<bool>(
                             "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.hold)",
                         )
                         .unwrap_or(false);
                     if held {
+                        // Paint-only tick: no loop, no pump. Use `__rs_bot`
+                        // (global); module-local `inst` is not visible here.
+                        let _ = runtime.eval::<()>(&format!(
+                            "globalThis.__rs2b0t_host.tick = {n}"
+                        ));
+                        let _ = runtime.eval::<()>(
+                            "(() => { const bot = globalThis.__rs_bot; if (bot && typeof bot.onPaint === 'function') { bot.onPaint(globalThis.__dummy_ctx); } })()",
+                        );
+                        let _ = runtime.block_on_event_loop(
+                            rustyscript::deno_core::PollEventLoopOptions::default(),
+                            Some(Duration::from_millis(10)),
+                        );
+                        // Forward paint the same as a normal tick.
+                        let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
+                            runtime.eval("globalThis.__rs2b0t_host.paint || null");
+                        if let Ok(Some(frame)) = paint {
+                            let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
+                        }
                         let _ = out.send(ThreadMsg::Completed(n));
                         continue;
                     }

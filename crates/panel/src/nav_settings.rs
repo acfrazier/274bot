@@ -11,8 +11,9 @@
 pub struct NavSettings {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
-    /// BankBudget stub (0.1.1 names the flag; find must not fetch): the
-    /// checkbox round-trips but no bank leg is inserted this tag.
+    /// BankBudget execute (0.1.5): when set, a fail-closed `find` that
+    /// misses only on item/worn reqs starts a deposit-withdraw-wear
+    /// session. Default false.
     pub allow_bank_fetch: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
@@ -146,7 +147,7 @@ mod tests {
         let d = NavSettings::default();
         assert!(!d.allow_teleports);
         assert!(!d.allow_wilderness);
-        assert!(!d.allow_bank_fetch, "BankBudget stub defaults off");
+        assert!(!d.allow_bank_fetch, "BankBudget defaults off");
         assert!(!d.show_nav_path);
         assert_eq!(d.color_path, "#FF0000");
         assert_eq!(d.color_transport, "#00FF00");
@@ -177,7 +178,7 @@ mod tests {
         assert_eq!(e.color_path, "#FF0000");
     }
 
-    /// The BankBudget stub round-trips: serializing an on flag and loading
+    /// The BankBudget flag round-trips: serializing an on flag and loading
     /// it back keeps the value (the same persist shape as the wildy/teles
     /// flags).
     #[test]

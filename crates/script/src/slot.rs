@@ -327,11 +327,11 @@ impl SlotScript {
     /// Whether a JS Load isolate is installed (feature-gated; always false
     /// in a build without the `load` feature).
     #[cfg(feature = "load")]
-    fn load_active(&self) -> bool {
+    pub fn load_active(&self) -> bool {
         self.load.is_some()
     }
     #[cfg(not(feature = "load"))]
-    fn load_active(&self) -> bool {
+    pub fn load_active(&self) -> bool {
         false
     }
 }

@@ -846,6 +846,51 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Fix round — Guardian hold from a posted FlatBuffer freezes loop() but
+// still calls onPaint. Do NOT poke `__rs2b0t_host.hold`; the blob's
+// `hold: true` must mirror onto the host flag and the tick must paint.
+#[test]
+fn isolate_hold_from_blob_freezes_loop_but_still_paints() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+    }
+    onPaint() {
+        globalThis.__rs_paints = (globalThis.__rs_paints || 0) + 1;
+        const p = Paint.begin();
+        p.title('held');
+        p.row('status');
+        p.end();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop runs");
+    let paints_after_first = iso.probe("__rs_paints").unwrap();
+    assert_eq!(paints_after_first, 1, "first tick paints");
+    // Post hold via the FlatBuffer — never poke `__rs2b0t_host.hold`.
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    iso.on_game_tick(3);
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 1, "posted hold freezes loop: count does not increase");
+    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
+    assert!(
+        paints >= 3,
+        "onPaint still runs while held (paints={paints})"
+    );
+    let frame = iso.paint().expect("paint forwarded while held");
+    assert_eq!(frame.title.as_deref(), Some("held"));
+    assert!(frame.lines.iter().any(|l| l == "status"));
+    iso.join();
+}
+
 // Task 4 — Execution.delayTicks(n) parks for n posted ticks (dueTick =
 // current + n), then the loop continues and re-enters on the next tick.
 #[test]
@@ -948,7 +993,7 @@ import { Inventory } from '../../api/inventory/Inventory.js';
 import { Skills } from '../../api/skills/Skills.js';
 import { EventSignal } from '../../api/execution/EventSignal.js';
 export default class T extends LoopingBot {
-    loop() {
+    capture() {
         globalThis.__probe = {
             bones: Inventory.count('Bones'),
             drag: Inventory.count('Dragon bones'),
@@ -960,6 +1005,9 @@ export default class T extends LoopingBot {
             ingame: Game.ingame(),
         };
     }
+    loop() { this.capture(); }
+    // Guardian hold still calls onPaint — keep the probe fresh while held.
+    onPaint() { this.capture(); }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();
@@ -1072,12 +1120,15 @@ fn isolate_snapshot_delta_merges_onto_last_js_snapshot() {
 import { Inventory } from '../../api/inventory/Inventory.js';
 import { EventSignal } from '../../api/execution/EventSignal.js';
 export default class T extends LoopingBot {
-    loop() {
+    capture() {
         globalThis.__probe = {
             bones: Inventory.count('Bones'),
             pending: EventSignal.pending(),
         };
     }
+    loop() { this.capture(); }
+    // Guardian hold still calls onPaint — pending flips while held.
+    onPaint() { this.capture(); }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass).unwrap();

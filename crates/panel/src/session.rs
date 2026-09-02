@@ -1332,6 +1332,23 @@ impl Session {
                 }
                 let finished = {
                     let mut arm = arm.lock().unwrap();
+                    let mut snapshot = GameSnapshot::new();
+                    snapshot.rebuild(c);
+                    let world = crate::picker::pack();
+                    // BankBudget session first: Wear / deposit / withdraw
+                    // freeze follow until the steps clear.
+                    if arm.bank_fetch.is_some() {
+                        host_play::step_walk_arm_bank_fetch(
+                            c,
+                            &snapshot,
+                            &mut arm,
+                            world.as_deref(),
+                            Some((here.x, here.z, here.level)),
+                        );
+                        if arm.bank_fetch.is_some() {
+                            return;
+                        }
+                    }
                     let Some(route) = arm.route.clone() else {
                         return;
                     };
@@ -1340,9 +1357,6 @@ impl Session {
                     // run is polled one step per player-info tick. The packed
                     // teleport list rides along so a jewellery rub hop can
                     // answer the destination dialog's choice for its landing.
-                    let mut snapshot = GameSnapshot::new();
-                    snapshot.rebuild(c);
-                    let world = crate::picker::pack();
                     let mut options = TravelOptions {
                         // Exact arrival: the armed dest must be stood on
                         // before the route clears (the v1 traveller arrived
@@ -2391,6 +2405,22 @@ impl Session {
             .unwrap_or_else(WorldState::empty)
     }
 
+    /// Open bank rows (obj id, count) from the focused slot's last
+    /// published snapshot — empty when the bank is closed or no slot is
+    /// focused (BankBudget has no closed-bank inventory).
+    fn focused_walk_bank(&self) -> Vec<(i32, i32)> {
+        self.focused_name()
+            .and_then(|name| {
+                self.nav_states.lock().unwrap().get(&name).map(|(snap, _)| {
+                    snap.bank()
+                        .iter()
+                        .map(|it| (it.def.id, it.count))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
     /// Arm a walk to `dest` and route it on `world` from `from` (the
     /// player's observed tile). On a found route the focused username's
     /// walk arm stores the route so the observe tick can step it via
@@ -2412,6 +2442,7 @@ impl Session {
         self.walk_clear.store(false, Ordering::Relaxed);
         let name = self.focused_name();
         let state = self.focused_walk_state();
+        let bank = self.focused_walk_bank();
         let routed = host_play::arm_walk_on(
             world,
             from,
@@ -2423,6 +2454,7 @@ impl Session {
                 ..FindOptions::default()
             },
             &state,
+            &bank,
             &self.travellers,
             name.as_deref(),
         );
@@ -3879,6 +3911,7 @@ mod tests {
                     t
                 },
                 route: None,
+                bank_fetch: None,
             })),
         );
         let world = mine_world();

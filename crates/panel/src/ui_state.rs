@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(back.nav.color_path, "#AABBCC");
         assert!(
             back.nav.allow_bank_fetch,
-            "the BankBudget stub flag round-trips like the other nav toggles"
+            "the BankBudget flag round-trips like the other nav toggles"
         );
     }
 

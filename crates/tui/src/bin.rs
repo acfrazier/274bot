@@ -445,12 +445,24 @@ impl TuiSession {
             return; // no player tile / no pack: dest stored only
         };
         let state = self.focused_walk_state(&name);
+        let bank = name
+            .as_deref()
+            .and_then(|n| {
+                self.snapshots.lock().unwrap().get(n).map(|snap| {
+                    snap.bank()
+                        .iter()
+                        .map(|it| (it.def.id, it.count))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
         let routed = arm_walk_on(
             &world,
             from,
             dest,
             FindOptions::default(),
             &state,
+            &bank,
             &self.travellers,
             name.as_deref(),
         );

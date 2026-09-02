@@ -32,7 +32,8 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use host::{
     should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Pump, SlotInput, SlotPark, SlotWake,
 };
-use nav::router::{find_with, FindOptions, Route};
+use nav::bank_fetch::{plan_bank_fetch, BankStep};
+use nav::router::{find_missing_item_reqs, find_with, FindOptions, Route};
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
@@ -162,18 +163,35 @@ pub fn player_world_tile(
     (map_build_base_x + route_x, map_build_base_z + route_z)
 }
 
+/// A latched BankBudget session: remaining [`BankStep`]s plus the dest
+/// the arm re-finds after the session lands. Follow stays frozen while
+/// `steps` is non-empty; Wear-from-inv and bank-trip deposit/withdraw
+/// both pump through the same path. `final_route` is the post-session
+/// route (status row + follow once steps clear); a Walk-to-stand may
+/// temporarily replace `WalkArm::route` / `NavBot::route`.
+#[derive(Debug, Clone)]
+pub struct PendingBankFetch {
+    pub steps: VecDeque<BankStep>,
+    pub dest: WorldTile,
+    pub opts: FindOptions,
+    pub final_route: Route,
+}
+
 /// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
 /// [`Route`] it is following. [`arm_walk_on`] stores the route (found
 /// over the shared [`NavWorld`]); the slot hook polls
 /// [`Traveller::follow`] with a clone of it one step per player-info
 /// tick. `route` being set is the "armed" gate the status row and the
 /// overlay read; any terminal outcome clears it (arrival and stall
-/// alike). Shared by the panel and the TUI so a walk armed from either
-/// view drives the same follow path.
+/// alike). A pending [`PendingBankFetch`] freezes follow until its
+/// steps finish (Wear-in-place or bank deposit/withdraw). Shared by the
+/// panel and the TUI so a walk armed from either view drives the same
+/// follow path.
 #[derive(Default)]
 pub struct WalkArm {
     pub traveller: Traveller,
     pub route: Option<Route>,
+    pub bank_fetch: Option<PendingBankFetch>,
 }
 
 impl WalkArm {
@@ -229,15 +247,20 @@ pub struct NoPath;
 /// walk out through the exit portal's return hop, a slot with no latch
 /// keeps the mine sealed. `state` gates payable edges: the focused slot's
 /// last published snapshot facts, fail-closed [`WorldState::empty`] when
-/// none. On success the caller's picked dest is stored by the arm's
-/// route; returns `Err(NoPath)` when no path exists (the caller keeps
-/// its picked dest and shows a short error).
+/// none. `bank` is the open bank's rows (obj id, count) for the BankBudget
+/// session — empty when the bank is closed (no closed-bank inventory).
+/// On success the caller's picked dest is stored by the arm's route;
+/// when `allow_bank_fetch` is on and `find` fails only on missing
+/// item/worn reqs, a [`PendingBankFetch`] is latched and the post-session
+/// route is armed. Returns `Err(NoPath)` when no path (and no session)
+/// exists.
 pub fn arm_walk_on(
     world: &NavWorld,
     from: Tile,
     dest: Tile,
     options: FindOptions,
     state: &WorldState,
+    bank: &[(i32, i32)],
     travellers: &WalkArms,
     focused: Option<&str>,
 ) -> Result<Route, NoPath> {
@@ -264,16 +287,9 @@ pub fn arm_walk_on(
             .get(name)
             .and_then(|arm| arm.lock().unwrap().traveller.essence())
     });
-    let routed = find_with(
-        &world.collision,
-        &world.graph,
-        from_w,
-        dest_w,
-        options,
-        state,
-    );
-    match routed {
-        Ok(route) => {
+    let outcome = route_or_bank_fetch(world, from_w, dest_w, options, state, bank);
+    match outcome {
+        RouteOutcome::Routed(route) => {
             if let Some(name) = focused {
                 let arm = travellers
                     .lock()
@@ -284,11 +300,93 @@ pub fn arm_walk_on(
                 let mut arm = arm.lock().unwrap();
                 // A fresh arm replaces any in-flight follow run.
                 arm.traveller.clear();
+                arm.bank_fetch = None;
                 arm.route = Some(route.clone());
             }
             Ok(route)
         }
-        Err(_) => Err(NoPath),
+        RouteOutcome::BankSession { pending, route } => {
+            if let Some(name) = focused {
+                let arm = travellers
+                    .lock()
+                    .unwrap()
+                    .entry(name.to_string())
+                    .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
+                    .clone();
+                let mut arm = arm.lock().unwrap();
+                arm.traveller.clear();
+                arm.bank_fetch = Some(pending);
+                arm.route = Some(route.clone());
+            }
+            Ok(route)
+        }
+        RouteOutcome::NoPath => Err(NoPath),
+    }
+}
+
+/// Outcome of a walk-arm route attempt: a direct route, a BankBudget
+/// session plus the post-session route, or no path.
+enum RouteOutcome {
+    Routed(Route),
+    BankSession {
+        pending: PendingBankFetch,
+        route: Route,
+    },
+    NoPath,
+}
+
+/// Strict `find_with`, then — only when `allow_bank_fetch` is on and the
+/// failure is solely missing item/worn reqs — plan a BankBudget session
+/// and re-find against the session's post state. Never inserts a virtual
+/// bank edge into Dijkstra.
+fn route_or_bank_fetch(
+    world: &NavWorld,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    bank: &[(i32, i32)],
+) -> RouteOutcome {
+    match find_with(&world.collision, &world.graph, from, to, opts, state) {
+        Ok(route) => RouteOutcome::Routed(route),
+        Err(_) if opts.allow_bank_fetch => {
+            let Some(missing) =
+                find_missing_item_reqs(&world.collision, &world.graph, from, to, opts, state)
+            else {
+                return RouteOutcome::NoPath;
+            };
+            let Some(fetch) = plan_bank_fetch(&missing, state, bank, world.banks(), from) else {
+                return RouteOutcome::NoPath;
+            };
+            // Re-find against the post-session state (ADR 0005: find itself
+            // stayed fail-closed; the session is what unblocks).
+            let Ok(route) = find_with(
+                &world.collision,
+                &world.graph,
+                from,
+                to,
+                FindOptions {
+                    allow_bank_fetch: false,
+                    ..opts
+                },
+                &fetch.state,
+            ) else {
+                return RouteOutcome::NoPath;
+            };
+            RouteOutcome::BankSession {
+                pending: PendingBankFetch {
+                    steps: fetch.steps.into(),
+                    dest: to,
+                    opts: FindOptions {
+                        allow_bank_fetch: false,
+                        ..opts
+                    },
+                    final_route: route.clone(),
+                },
+                route,
+            }
+        }
+        Err(_) => RouteOutcome::NoPath,
     }
 }
 
@@ -409,19 +507,18 @@ fn script_observe(
         let mut all = scripts.lock().unwrap();
         if let Some(slot) = all.get_mut(name) {
             slot.on_is_up(up);
-            // Post the snapshot only while the slot script is Running, and
-            // skip the tick dispatch entirely while the guardian holds the
-            // slot (the blob still posts while held, so EventSignal reads
-            // the freeze the script is frozen by).
+            // Post the snapshot only while the slot script is Running.
+            // While the guardian holds: still dispatch the isolate tick so
+            // `onPaint` runs (loop/pump stay frozen inside the isolate);
+            // compiled scripts stay fully frozen (0.1.2). The blob still
+            // posts while held so EventSignal reads the freeze.
             if tick_edge && slot.state() == script::RunState::Running {
                 // Task 9b: post the FlatBuffer snapshot blob on every tick
                 // edge — held or not — so the isolate's
                 // Game/Inventory/Skills/Bank/Banking/EventSignal read what
                 // this observe saw (only these fields — no World clone).
-                // The blob's `hold` mirrors the guardian's freeze onto the
-                // host handle; while it is set the tick is still not
-                // dispatched below (a held script is frozen, never
-                // looped).
+                // The blob's `hold` mirrors onto `__rs2b0t_host.hold` so a
+                // posted hold freezes the isolate without a probe poke.
                 // Task 9c: the post is a DELTA — `tick` always, other
                 // fields only when changed vs the slot's last post (a
                 // 50+ isolate wall never resends unchanged tables). The
@@ -444,18 +541,38 @@ fn script_observe(
                 );
                 slot.post_snapshot(bytes);
                 slot.store_last_world_id(world_id);
-                if !hold {
+                if hold {
+                    // Isolate: tick for onPaint only (hold gate inside V8).
+                    // Compiled: skip — keep tick/nav follow frozen.
+                    if slot.load_active() {
+                        slot.on_game_tick(&mut ScriptCtx {
+                            driver,
+                            tick,
+                            here,
+                            walk: None,
+                            walk_with: None,
+                            inv,
+                            snapshot,
+                            obj_names,
+                        });
+                        wrote = true;
+                    }
+                } else {
                     // One shared arm for both hooks: `walk_with` carries the
                     // script's options through to `find_with`; `walk` is the
                     // default-options adapter (rs2b0t `walk` semantics stay
                     // default-off for teleports and wilderness). Each closure
                     // owns its own clone of the arm.
+                    let bank_rows: Vec<(i32, i32)> = snapshot
+                        .map(|s| s.bank().iter().map(|it| (it.def.id, it.count)).collect())
+                        .unwrap_or_default();
                     let arm = ScriptWalkArm {
                         here,
                         world: world.clone(),
                         navs: Arc::clone(navs),
                         name: name.to_string(),
                         state: state.clone(),
+                        bank: bank_rows,
                     };
                     let mut walk_with = {
                         let arm = arm.clone();
@@ -604,12 +721,15 @@ fn dispatch_script_interact(
                 }
             }
             InteractReq::Walk { x, z, level } => {
+                let bank_rows: Vec<(i32, i32)> =
+                    snapshot.bank().iter().map(|it| (it.def.id, it.count)).collect();
                 let arm = ScriptWalkArm {
                     here,
                     world: world.clone(),
                     navs: Arc::clone(navs),
                     name: name.to_string(),
                     state: state.clone(),
+                    bank: bank_rows,
                 };
                 wrote |= arm.route(x, z, level, FindOptions::default());
             }
@@ -922,11 +1042,13 @@ fn script_paint_of(
 /// following. `ctx.walk` stores the route (found off-pump over the shared
 /// [`NavWorld`]); the slot pump polls [`Traveller::follow`] with a clone of
 /// it one step per player-info tick. `route` being set is the "armed"
-/// gate the walk hook and the busy flag read.
+/// gate the walk hook and the busy flag read. A pending BankBudget
+/// session freezes follow until its steps finish.
 #[derive(Default)]
 struct NavBot {
     traveller: Traveller,
     route: Option<Route>,
+    bank_fetch: Option<PendingBankFetch>,
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and
@@ -944,15 +1066,19 @@ struct ScriptWalkArm {
     /// `None` when no player is decoded — the worker then routes with
     /// the fail-closed empty [`WorldState`].
     state: Option<WorldState>,
+    /// Open bank rows (obj id, count) at arm time — empty when closed.
+    bank: Vec<(i32, i32)>,
 }
 
 impl ScriptWalkArm {
     /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
     /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
-    /// Refuses synchronously only when there is no player tile, no nav
-    /// world, or a route already queued for the uid; the worker stores the
-    /// route in the uid's nav bot when one exists. Returns whether the
-    /// worker was spawned — not whether a path exists.
+    /// When `allow_bank_fetch` is on and the strict find fails only on
+    /// missing item/worn reqs, latches a [`PendingBankFetch`] session and
+    /// the post-session route. Refuses synchronously only when there is
+    /// no player tile, no nav world, or a route/session already queued;
+    /// the worker stores the outcome on the uid's nav bot. Returns whether
+    /// the worker was spawned — not whether a path exists.
     fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
         let Some((hx, hz, hl)) = self.here else {
             return false;
@@ -960,15 +1086,11 @@ impl ScriptWalkArm {
         let Some(world) = self.world.as_ref() else {
             return false;
         };
-        // One route in flight per uid: a script spamming walk every tick
-        // must not spawn a worker each tick.
-        if self
-            .navs
-            .lock()
-            .unwrap()
-            .get(&self.name)
-            .is_some_and(|b| b.route.is_some())
-        {
+        // One route/session in flight per uid: a script spamming walk
+        // every tick must not spawn a worker each tick.
+        if self.navs.lock().unwrap().get(&self.name).is_some_and(|b| {
+            b.route.is_some() || b.bank_fetch.is_some()
+        }) {
             return false;
         }
         let from = WorldTile {
@@ -996,29 +1118,39 @@ impl ScriptWalkArm {
         let navs = Arc::clone(&self.navs);
         let name = self.name.clone();
         let state = self.state.clone();
-        // Routing is the expensive part: run `find_with` off-pump on a
-        // short-lived worker. The worker is detached and exits right after
-        // storing the route; it never touches the scripts map (lock order
-        // stays scripts → navs). The arm's facts gate the route — a gated
-        // edge the state cannot prove (an unpaid toll, an unearned quest
-        // hop) stays refused; no state at all fails closed.
+        let bank = self.bank.clone();
+        // Routing is the expensive part: run `find_with` / BankBudget
+        // planning off-pump on a short-lived worker. The worker is
+        // detached and exits right after storing the outcome; it never
+        // touches the scripts map (lock order stays scripts → navs).
         thread::Builder::new()
             .name(format!("nav-find-{name}"))
             .spawn(move || {
                 let empty = WorldState::empty();
                 let state = state.as_ref().unwrap_or(&empty);
-                if let Ok(route) = find_with(&world.collision, &world.graph, from, to, opts, state)
-                {
-                    navs.lock().unwrap().entry(name).or_default().route = Some(route);
+                match route_or_bank_fetch(&world, from, to, opts, state, &bank) {
+                    RouteOutcome::Routed(route) => {
+                        let mut guard = navs.lock().unwrap();
+                        let bot = guard.entry(name).or_default();
+                        bot.bank_fetch = None;
+                        bot.route = Some(route);
+                    }
+                    RouteOutcome::BankSession { pending, route } => {
+                        let mut guard = navs.lock().unwrap();
+                        let bot = guard.entry(name).or_default();
+                        bot.bank_fetch = Some(pending);
+                        bot.route = Some(route);
+                    }
+                    RouteOutcome::NoPath => {}
                 }
             })
             .is_ok()
     }
 }
 
-/// One pump step of a uid's nav bot: poll the armed route through
-/// [`Traveller::follow`] one step against `snapshot` (the slot's per-tick
-/// view, rebuilt from the same client that supplied `here`). `here` is the
+/// One pump step of a uid's nav bot: advance a pending BankBudget session
+/// first (Wear / deposit / withdraw), then poll the armed route through
+/// [`Traveller::follow`] one step against `snapshot`. `here` is the
 /// player's world tile when the body decoded one (else the bot stands
 /// still). `world` is the shared nav world, `None` when no pack loaded —
 /// its packed any-tile teleport list rides into the follow so a jewellery
@@ -1041,9 +1173,38 @@ fn step_nav_bot<D: Driver>(
 ) {
     // The random-event freeze: the follow is not stepped while the
     // guardian holds the slot, and the armed route stays latched so it
-    // resumes when the hold lifts.
+    // resumes when the hold lifts. BankBudget steps freeze the same way.
     if here.is_none() || hold {
         return;
+    }
+    {
+        let mut all = navs.lock().unwrap();
+        if let Some(bot) = all.get_mut(name) {
+            if bot.bank_fetch.is_some() {
+                step_bank_fetch_on_bot(driver, snapshot, bot, world, here);
+                // Session still in flight: do not follow yet.
+                if bot.bank_fetch.is_some() {
+                    let queued = bot.route.as_ref().map(|r| r.dest);
+                    drop(all);
+                    let mut rows = statuses.lock().unwrap();
+                    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
+                        match queued {
+                            Some(d) => {
+                                s.walk_x = d.x;
+                                s.walk_z = d.z;
+                                s.walk_level = d.level;
+                            }
+                            None => {
+                                s.walk_x = -1;
+                                s.walk_z = -1;
+                                s.walk_level = -1;
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+        }
     }
     let mut options = TravelOptions {
         // Exact arrival: the armed dest must be stood on before the route
@@ -1085,6 +1246,217 @@ fn step_nav_bot<D: Driver>(
             }
         }
     }
+}
+
+/// Advance one BankBudget session step on a [`NavBot`]. Walk completes
+/// when the player is already on the stand tile (or a sub-route is
+/// armed); Open is a no-op while the bank is already open+loaded;
+/// DepositAll / Withdraw / Wear / Close dispatch through
+/// [`api::interact::Interactions`]. Clears the pending session when
+/// steps are exhausted. Returns whether the driver was written.
+fn step_bank_fetch_on_bot<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    bot: &mut NavBot,
+    world: Option<&NavWorld>,
+    here: Option<(i32, i32, i32)>,
+) -> bool {
+    let Some(pending) = bot.bank_fetch.as_mut() else {
+        return false;
+    };
+    let Some(step) = pending.steps.front().cloned() else {
+        bot.bank_fetch = None;
+        return false;
+    };
+    let wrote = match step {
+        BankStep::Walk { x, z, level } => {
+            if here == Some((x, z, level)) {
+                pending.steps.pop_front();
+                // Restore the post-session route for follow / status.
+                bot.route = Some(pending.final_route.clone());
+                false
+            } else if bot.route.as_ref().is_some_and(|r| {
+                r.dest.x == x && r.dest.z == z && r.dest.level == level
+            }) {
+                // Sub-route to the stand already armed; wait for arrival.
+                false
+            } else if let Some(w) = world {
+                let from = match here {
+                    Some((hx, hz, hl)) => WorldTile {
+                        x: hx,
+                        z: hz,
+                        level: hl,
+                    },
+                    None => return false,
+                };
+                let to = WorldTile { x, z, level };
+                if let Ok(route) = find_with(
+                    &w.collision,
+                    &w.graph,
+                    from,
+                    to,
+                    FindOptions::default(),
+                    &WorldState::empty(),
+                ) {
+                    bot.route = Some(route);
+                }
+                false
+            } else {
+                false
+            }
+        }
+        BankStep::Open => {
+            if snapshot.bank_component_id() != -1 && !snapshot.bank().is_empty() {
+                pending.steps.pop_front();
+                false
+            } else {
+                let wrote = open_bank_at_here(driver, snapshot, here, world);
+                if wrote || (snapshot.bank_component_id() != -1) {
+                    pending.steps.pop_front();
+                }
+                wrote
+            }
+        }
+        BankStep::DepositAll => {
+            let wrote = deposit_all_backpack(driver, snapshot);
+            pending.steps.pop_front();
+            wrote
+        }
+        BankStep::Withdraw { id, count } => {
+            let wrote = withdraw_id(driver, snapshot, id, count);
+            pending.steps.pop_front();
+            wrote
+        }
+        BankStep::Wear { id } => {
+            let mut ix = api::interact::Interactions::new(snapshot, driver);
+            let wrote = matches!(ix.wear(id), api::interact::SendResult::Sent { .. });
+            pending.steps.pop_front();
+            wrote
+        }
+        BankStep::Close => {
+            let mut ix = api::interact::Interactions::new(snapshot, driver);
+            let wrote = matches!(ix.close_modal(), api::interact::SendResult::Sent { .. });
+            pending.steps.pop_front();
+            wrote
+        }
+    };
+    if pending.steps.is_empty() {
+        bot.bank_fetch = None;
+    }
+    wrote
+}
+
+/// Public WalkArm BankBudget pump (panel / TUI follow path). Same step
+/// semantics as the script [`NavBot`] pump.
+pub fn step_walk_arm_bank_fetch<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    arm: &mut WalkArm,
+    world: Option<&NavWorld>,
+    here: Option<(i32, i32, i32)>,
+) -> bool {
+    // Reuse NavBot stepping by temporarily viewing the arm as the same
+    // shape of pending session + route.
+    let mut bot = NavBot {
+        traveller: Traveller::default(),
+        route: arm.route.clone(),
+        bank_fetch: arm.bank_fetch.take(),
+    };
+    let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here);
+    arm.bank_fetch = bot.bank_fetch;
+    // Walk-to-stand may have armed a temporary route on the bot.
+    if arm.bank_fetch.is_some() {
+        if let Some(r) = bot.route {
+            arm.route = Some(r);
+        }
+    }
+    wrote
+}
+
+fn open_bank_at_here<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    here: Option<(i32, i32, i32)>,
+    world: Option<&NavWorld>,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    // Prefer a packed booth stand's tile; else any Use-quickly loc.
+    let target_tile = world.and_then(|w| {
+        here.and_then(|(hx, hz, hl)| {
+            w.banks()
+                .iter()
+                .min_by_key(|s| {
+                    (
+                        s.tile.level != hl,
+                        (s.tile.x - hx).abs().max((s.tile.z - hz).abs()),
+                    )
+                })
+                .map(|s| (s.tile.x, s.tile.z, s.tile.level))
+        })
+    });
+    if let Some((x, z, level)) = target_tile {
+        if let Some(loc) = snapshot
+            .locs()
+            .iter()
+            .find(|l| l.tile.x == x && l.tile.z == z && l.tile.level == level)
+        {
+            if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
+                return matches!(
+                    ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
+                    SendResult::Sent { .. }
+                );
+            }
+        }
+    }
+    for loc in snapshot.locs() {
+        if let Some(op) = action_slot(&loc.actions, "Use-quickly") {
+            return matches!(
+                ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
+                SendResult::Sent { .. }
+            );
+        }
+    }
+    false
+}
+
+fn deposit_all_backpack<D: Driver>(driver: &mut D, snapshot: &GameSnapshot) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    let mut wrote = false;
+    for item in snapshot.bank_side() {
+        if let Some(op) = all_slot(&item.actions) {
+            wrote |= matches!(
+                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                SendResult::Sent { .. }
+            );
+        }
+    }
+    wrote
+}
+
+fn withdraw_id<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let mut ix = api::interact::Interactions::new(snapshot, driver);
+    let Some(item) = snapshot.bank().iter().find(|it| it.def.id == id) else {
+        return false;
+    };
+    let label = match count {
+        1 => "Withdraw 1",
+        5 => "Withdraw 5",
+        10 => "Withdraw 10",
+        _ => "Withdraw All",
+    };
+    if let Some(op) = action_slot(&item.actions, label)
+        .or_else(|| action_slot(&item.actions, "Withdraw 1"))
+        .or_else(|| action_slot(&item.actions, "Withdraw All"))
+    {
+        return matches!(
+            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+            SendResult::Sent { .. }
+        );
+    }
+    false
 }
 
 /// The fat Client's inventory `(obj_id, count)` slots, zipped from the
@@ -2018,11 +2390,9 @@ fn spawn_slot_thread(
                                 last_nav_step = Some(nav_key);
                                 if here.is_some()
                                     && !status.hold
-                                    && slot_navs
-                                        .lock()
-                                        .unwrap()
-                                        .get(name)
-                                        .is_some_and(|b| b.route.is_some())
+                                    && slot_navs.lock().unwrap().get(name).is_some_and(|b| {
+                                        b.route.is_some() || b.bank_fetch.is_some()
+                                    })
                                 {
                                     step_nav_bot(
                                         c,
@@ -2051,11 +2421,9 @@ fn spawn_slot_thread(
                                     .unwrap()
                                     .get(name)
                                     .is_some_and(|q| !q.is_empty())
-                                || slot_navs
-                                    .lock()
-                                    .unwrap()
-                                    .get(name)
-                                    .is_some_and(|b| b.route.is_some())
+                                || slot_navs.lock().unwrap().get(name).is_some_and(|b| {
+                                    b.route.is_some() || b.bank_fetch.is_some()
+                                })
                         }
                     },
                     {
@@ -2986,6 +3354,7 @@ mod tests {
             dest,
             FindOptions::default(),
             &WorldState::empty(),
+            &[],
             &travellers,
             Some("alice"),
         )
@@ -3021,6 +3390,7 @@ mod tests {
             },
             FindOptions::default(),
             &WorldState::empty(),
+            &[],
             &travellers,
             None,
         )
@@ -3935,6 +4305,82 @@ mod tests {
         assert_eq!(r.dest, to);
     }
 
+    /// Fix round — BankBudget execute on the live walk arm: `allow_bank_fetch`
+    /// on + junk inv + knife in the open bank snapshot must latch a session
+    /// on [`ScriptWalkArm::route`] and actually drive Deposit/Withdraw on
+    /// the Driver (not only `plan_bank_fetch` in isolation). Start on the
+    /// packed bank stand so Walk completes in place; the client's bank is
+    /// already open so Open is a no-op; DepositAll + Withdraw must write.
+    #[test]
+    fn allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw() {
+        let mut c = bank_fetch_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let world = Arc::new(knife_nav_world(2));
+        let state = WorldState::from_snapshot(&snap);
+        let bank_rows: Vec<(i32, i32)> =
+            snap.bank().iter().map(|it| (it.def.id, it.count)).collect();
+        assert!(
+            bank_rows.iter().any(|&(id, n)| id == 2 && n >= 1),
+            "knife is in the open bank"
+        );
+        let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+        // Stand on the packed bank booth so the session's Walk completes
+        // without a follow hop; Open sees the already-open bank.
+        let arm = ScriptWalkArm {
+            here: Some((0, 4, 0)),
+            world: Some(Arc::clone(&world)),
+            navs: Arc::clone(&navs),
+            name: "alice".into(),
+            state: Some(state),
+            bank: bank_rows,
+        };
+        assert!(
+            arm.route(
+                4,
+                4,
+                0,
+                FindOptions {
+                    allow_bank_fetch: true,
+                    ..FindOptions::default()
+                },
+            ),
+            "the walk arm must accept the bank-fetch route"
+        );
+        // The worker latches the session; wait briefly for it.
+        let mut latched = false;
+        for _ in 0..200 {
+            if navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|b| b.bank_fetch.is_some())
+            {
+                latched = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(latched, "allow_bank_fetch must latch a BankFetch session");
+        let out_before = c.out.pos;
+        // Pump until DepositAll + Withdraw have had a chance to write (Walk
+        // and Open complete immediately on this fixture).
+        for _ in 0..16 {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("alice").expect("nav bot");
+            if bot.bank_fetch.is_none() {
+                break;
+            }
+            step_bank_fetch_on_bot(&mut c, &snap, bot, Some(world.as_ref()), Some((0, 4, 0)));
+        }
+        assert!(
+            c.out.pos > out_before,
+            "BankBudget execute must drive deposit/withdraw on the Driver (pos {} → {})",
+            out_before,
+            c.out.pos
+        );
+    }
+
     /// Test script that counts ticks into a shared cell (the panel cannot
     /// read a running script's internals, so the wiring tests observe the
     /// side effect instead).
@@ -4730,6 +5176,9 @@ mod tests {
         snap.rebuild(c);
     }
 
+    /// A guardian hold still posts the blob and dispatches the isolate
+    /// tick (onPaint only); compiled scripts stay frozen. The unheld edge
+    /// dispatches fully.
     #[test]
     fn script_observe_skips_the_tick_dispatch_while_hold() {
         let ScriptWiring {
@@ -4751,12 +5200,12 @@ mod tests {
             Arc::new(vec![]),
             Vec::new(),
         );
-        // Up + edge but held by the guardian: no dispatch.
+        // Up + edge but held by the guardian: compiled tick stays frozen.
         script_observe(
             &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
             &world, true, false,
         );
-        assert_eq!(*count.lock().unwrap(), 0, "hold skips on_game_tick");
+        assert_eq!(*count.lock().unwrap(), 0, "hold freezes compiled on_game_tick");
         // The same edge unheld dispatches.
         script_observe(
             &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
@@ -4767,12 +5216,10 @@ mod tests {
 
     #[test]
     fn script_observe_posts_blob_while_held_and_skips_dispatch() {
-        // Fix-round regression (Task 5): the snapshot blob must post on the
-        // held tick edge too, so EventSignal.pending() sees the freeze the
-        // guardian holds the script by — while on_game_tick is still
-        // skipped. The blob's contents are pinned by the script crate's
-        // load_isolate tests; here the held edge drives a live isolate's
-        // post path without dispatching, and the unheld edge dispatches.
+        // Fix-round: the snapshot blob must post on the held tick edge, and
+        // the isolate tick still dispatches for onPaint (loop frozen inside
+        // V8). Compiled-path skip is covered by
+        // `script_observe_skips_the_tick_dispatch_while_hold`.
         let scripts: Arc<Mutex<HashMap<String, SlotScript>>> = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -4799,9 +5246,9 @@ mod tests {
             .or_default()
             .start_load(src.to_string(), script::LoadShape::CompatClass)
             .expect("load isolate starts");
-        // Held edge: the blob posts into the live isolate (no dispatch, no
-        // driver write).
-        assert!(!script_observe(
+        // Held edge: blob posts + isolate tick (paint-only); loop must not
+        // advance.
+        assert!(script_observe(
             &mut c,
             "alice",
             true,
@@ -4819,7 +5266,15 @@ mod tests {
             true,
             false
         ));
-        // Unheld edge: the same slot dispatches.
+        let loops = scripts
+            .lock()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .probe("globalThis.__rs_loops || 0")
+            .unwrap();
+        assert_eq!(loops, 0, "held isolate tick must not run loop()");
+        // Unheld edge: the same slot dispatches a full tick (loop runs).
         assert!(script_observe(
             &mut c,
             "alice",
@@ -4838,6 +5293,14 @@ mod tests {
             false,
             false
         ));
+        let loops = scripts
+            .lock()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .probe("globalThis.__rs_loops || 0")
+            .unwrap();
+        assert_eq!(loops, 1, "unheld isolate tick runs loop()");
         scripts.lock().unwrap().get_mut("alice").unwrap().stop();
     }
 
@@ -5072,11 +5535,11 @@ mod tests {
         assert!(status.handling);
         assert!(status.hold, "the in-flight dialog holds the slot");
 
-        // The held edge posts the blob (no dispatch); the isolate's
-        // EventSignal snapshot carries the freeze.
+        // The held edge posts the blob and dispatches the isolate tick
+        // (onPaint only); EventSignal reads the freeze from the blob.
         let (navs, world) = empty_nav();
         let cheats = Arc::new(Mutex::new(HashMap::new()));
-        assert!(!script_observe(
+        assert!(script_observe(
             &mut c,
             "alice",
             true,
@@ -5843,6 +6306,7 @@ mod tests {
                     t
                 },
                 route: None,
+                bank_fetch: None,
             },
         );
         // The walk target is Aubury's anchor; the origin is the mine pad.
