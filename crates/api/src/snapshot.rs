@@ -554,6 +554,11 @@ pub struct GameSnapshot {
     /// (separately from the scene family's own counter).
     #[serde(skip)]
     loc_gen: u64,
+    /// Aggregated tile `model_stamp` from the last loc sweep. Locs can
+    /// change without a scene gen bump (door multiloc, map restamp), so
+    /// the cheap stamp gates the 104×104×4 sweep between gen moves.
+    #[serde(skip)]
+    loc_model_stamp: u64,
     #[serde(skip)]
     ground_item_gen: u64,
 
@@ -648,6 +653,7 @@ impl Default for GameSnapshot {
             camera: CameraView::default(),
             map_flag: None,
             loc_gen: 0,
+            loc_model_stamp: empty_loc_model_stamp(),
             ground_item_gen: 0,
             inventory: Vec::new(),
             equipment: Vec::new(),
@@ -1642,15 +1648,20 @@ impl GameSnapshot {
 
     /// Loc-family rebuild: sweep the sim world's four layers at
     /// `minusedlevel` (locs sit on scene tiles, so the world tile is
-    /// `base + scene` with no pixel conversion). The dirty flag still
-    /// tracks the scene gen (loc packets bump it), but the sweep always
-    /// runs — typecodes can change on the world after the observer already
-    /// consumed that gen (map restamp after `REBUILD_NORMAL`, a door
-    /// multiloc applied in the same drain). A gen-gated copy leaves nav
-    /// reading the previous build's door. Same pattern as
-    /// [`GameSnapshot::rebuild_scene`]'s always-fresh `scene_state`.
+    /// `base + scene` with no pixel conversion). Gated on the scene gen
+    /// and the aggregated tile `model_stamp` dirty bit — typecodes can
+    /// change on the world after the observer already consumed that gen
+    /// (map restamp after `REBUILD_NORMAL`, a door multiloc applied in the
+    /// same drain), so a gen-only gate leaves nav reading the previous
+    /// build's door.
     fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
+        let stamp = loc_model_stamp(client);
+        if !moved && stamp == self.loc_model_stamp {
+            return false;
+        }
+        let dirty = moved || stamp != self.loc_model_stamp;
+        self.loc_model_stamp = stamp;
         let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
@@ -1713,7 +1724,7 @@ impl GameSnapshot {
                 }
             }
         }
-        moved
+        dirty
     }
 
     /// Ground-item rebuild: iterate each `ground_obj` list at
@@ -2332,6 +2343,32 @@ fn track(world: u64, tracked: &mut u64) -> bool {
     }
     *tracked = world;
     true
+}
+
+/// Cheap dirty bit for loc rebuilds: aggregate every scene tile's
+/// `model_stamp` (bumped by wall/decor/scenery mutations including door
+/// multilocs). Integer reads only — no loc string clones.
+fn loc_model_stamp(client: &Client) -> u64 {
+    let level = client.minusedlevel;
+    let mut stamp = 0u64;
+    for sx in 0..104 {
+        for sz in 0..104 {
+            stamp = stamp
+                .wrapping_mul(31)
+                .wrapping_add(client.world.tile_model_stamp(level, sx, sz) as u64);
+        }
+    }
+    stamp
+}
+
+const fn empty_loc_model_stamp() -> u64 {
+    let mut stamp = 0u64;
+    let mut i = 0usize;
+    while i < 104 * 104 {
+        stamp = stamp.wrapping_mul(31).wrapping_add(i32::MIN as u64);
+        i += 1;
+    }
+    stamp
 }
 
 /// The two-counter gate of the item-bearing iface families: rebuild when

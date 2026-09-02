@@ -751,6 +751,15 @@ impl Default for Session {
     }
 }
 
+/// The slot's incremental nav snapshot for walk follow. The observe path
+/// already rebuilt this entry; hop ticks must not allocate fresh.
+fn nav_snapshot_for_follow<'a>(
+    states: &'a HashMap<String, (GameSnapshot, WorldState)>,
+    name: &str,
+) -> Option<&'a GameSnapshot> {
+    states.get(name).map(|(snap, _)| snap)
+}
+
 impl Session {
     /// Empty session: no vault, no slots, default `PlayOptions` (same engine
     /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
@@ -1334,9 +1343,11 @@ impl Session {
                     latch.insert(name.to_string(), (c.gens.player, here));
                 }
                 let finished = {
+                    let states = nav_states.lock().unwrap();
+                    let Some(snapshot) = nav_snapshot_for_follow(&states, name) else {
+                        return;
+                    };
                     let mut arm = arm.lock().unwrap();
-                    let mut snapshot = GameSnapshot::new();
-                    snapshot.rebuild(c);
                     let world = crate::picker::pack();
                     // BankBudget session first. Walk follows the stand
                     // sub-route; Open / Deposit / Withdraw / Wear / Close
@@ -1344,7 +1355,7 @@ impl Session {
                     if arm.bank_fetch.is_some() {
                         host_play::step_walk_arm_bank_fetch(
                             c,
-                            &snapshot,
+                            snapshot,
                             &mut arm,
                             world.as_deref(),
                             Some((here.x, here.z, here.level)),
@@ -1379,7 +1390,7 @@ impl Session {
                         edges: world.as_ref().map(|w| w.graph.edges.as_slice()),
                         ..TravelOptions::default()
                     };
-                    let outcome = arm.traveller.follow(c, &snapshot, route, &mut options);
+                    let outcome = arm.traveller.follow(c, snapshot, route, &mut options);
                     if walking_stand
                         && matches!(
                             &outcome,
@@ -2796,11 +2807,11 @@ impl Drop for Session {
 mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
-        is_local_engine, live_or_walk_paint, maybe_send_click, parse_getvar_line,
-        publish_nav_debug, script_active, script_pause_enabled, script_status_text,
-        null_raster_live_entries_for_target, script_stop_enabled, seed_on_first_world,
-        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
-        Session, SlotIo, WalkArm,
+        is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
+        parse_getvar_line, publish_nav_debug, script_active, script_pause_enabled,
+        script_status_text, null_raster_live_entries_for_target, script_stop_enabled,
+        seed_on_first_world, stream_capture, stress_live_entries_for_target,
+        temp_live_vault_from, walkto_tele_cmd, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -4219,6 +4230,23 @@ mod tests {
                 )),
             "the route must cross the toll"
         );
+    }
+
+    /// Walk follow reads the slot's stored nav snapshot, not a from-scratch
+    /// `GameSnapshot::new()` on each hop tick.
+    #[test]
+    fn walk_follow_uses_stored_nav_snapshot() {
+        use std::collections::HashMap;
+        let mut states = HashMap::new();
+        let snap = GameSnapshot::new();
+        states.insert("alice".into(), (snap, WorldState::empty()));
+        let stored = states.get("alice").unwrap().0.locs().as_ptr();
+        let got = nav_snapshot_for_follow(&states, "alice").expect("published snapshot");
+        assert!(
+            std::ptr::eq(got.locs().as_ptr(), stored),
+            "follow must borrow the stored snapshot"
+        );
+        assert!(nav_snapshot_for_follow(&states, "bob").is_none());
     }
 
     /// No published facts for the slot (still logging in / no player

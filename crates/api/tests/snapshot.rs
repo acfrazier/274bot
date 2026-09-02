@@ -862,6 +862,31 @@ fn loc_view_rebuild_reads_world_locs() {
     assert!(!snap.rebuild_family(&c, Family::Loc), "unchanged scene gen");
 }
 
+/// Quiet observe frames must not re-sweep locs when scene gen and the
+/// tile model stamps are unchanged (no string clones).
+#[test]
+fn unchanged_scene_gen_skips_loc_resweep() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    let typecode = 0x4000_0000 + (1530 << 14) + 3 + (4 << 7);
+    c.world
+        .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    let loc_ptr = snap.locs().as_ptr();
+    let name_ptr = snap.locs()[0].name.as_ref().map(|s| s.as_ptr());
+
+    assert!(!snap.rebuild(&c), "unchanged gens and loc stamps");
+    assert_eq!(snap.locs().as_ptr(), loc_ptr, "loc vec not reallocated");
+    assert_eq!(
+        snap.locs()[0].name.as_ref().map(|s| s.as_ptr()),
+        name_ptr,
+        "loc name not re-cloned"
+    );
+}
+
 /// Loc typecodes can change on the sim world after the observer already
 /// consumed `gens.scene` (map restamp after REBUILD_NORMAL, a door
 /// multiloc the packet applied before the gen latch). A gen-gated copy
@@ -886,14 +911,17 @@ fn loc_view_is_always_fresh_without_a_gen_bump() {
         "first rebuild sees the closed door"
     );
 
-    // The live loc flips with no packet / no scene gen — the snapshot
-    // must still read the open leaf.
+    // The live loc flips with no packet / no scene gen — the tile model
+    // stamp dirty bit must still re-sweep the open leaf.
     c.world.set_wall(0, 3, 4, 0, 0, 0, open, 1 << 6, 0, 0, 0, 0);
-    assert!(!snap.rebuild_family(&c, Family::Loc), "no scene gen moved");
+    assert!(
+        snap.rebuild_family(&c, Family::Loc),
+        "loc stamp moved without a scene gen bump"
+    );
     assert_eq!(
         snap.locs()[0].id,
         1531,
-        "loc view is always fresh, even when the scene gen did not bump"
+        "loc view stays fresh when the tile model stamp moves"
     );
 }
 
