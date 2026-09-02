@@ -385,6 +385,23 @@ impl TuiSession {
             .merged_bag(source, name, schema, self.script_settings_inject.as_ref())
     }
 
+    /// Schema defaults + overrides + inject. Empty schema still keeps
+    /// inject keys (Thiever `target: Guard`). `None` only when the merged
+    /// bag is empty.
+    fn pending_settings_bag(
+        &self,
+        source: script::ScriptSource,
+        name: &str,
+        schema: &[script::SettingDef],
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let merged = self.merged_settings_bag(source, name, schema);
+        if merged.is_empty() {
+            None
+        } else {
+            Some(merged)
+        }
+    }
+
     fn default_catalog_browse_dir() -> PathBuf {
         env::var("HOME")
             .map(PathBuf::from)
@@ -564,15 +581,11 @@ impl TuiSession {
                 script::ScriptSource::Catalog,
                 card_name.to_string(),
             ));
-            let bag = if card.settings_schema.is_empty() {
-                None
-            } else {
-                Some(self.merged_settings_bag(
-                    script::ScriptSource::Catalog,
-                    card_name,
-                    &card.settings_schema,
-                ))
-            };
+            let bag = self.pending_settings_bag(
+                script::ScriptSource::Catalog,
+                card_name,
+                &card.settings_schema,
+            );
             let siblings = script::resolve_sibling_modules(
                 &card.path,
                 &card.origin,
@@ -769,15 +782,11 @@ impl TuiSession {
                 script::ScriptSel::Loaded(source, card_name) => {
                     match self.js.get(*source, card_name) {
                         Some(card) => {
-                            let bag = if card.settings_schema.is_empty() {
-                                None
-                            } else {
-                                Some(self.merged_settings_bag(
-                                    *source,
-                                    card_name,
-                                    &card.settings_schema,
-                                ))
-                            };
+                            let bag = self.pending_settings_bag(
+                                *source,
+                                card_name,
+                                &card.settings_schema,
+                            );
                             match script::resolve_sibling_modules(
                                 &card.path,
                                 &card.origin,
@@ -1412,6 +1421,61 @@ ScriptRegistry.register({
             play.script_state(&name),
             script::RunState::Running,
             "isolate is not Running yet — Start waits for the StartScript step"
+        );
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-tui-thiever-bag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("ThievingBot")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import ThievingBot from './ThievingBot/ThievingBot.js';
+ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("ThievingBot/ThievingBot.ts"),
+            "export default class ThievingBot extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+        let mut session = TuiSession::new(dummy_options());
+        session
+            .live_prepare_script(scenario::get("thiever").expect("registered"))
+            .expect("prepare");
+        let bag = session
+            .pending_script
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("catalog start stashed")
+            .bag
+            .clone()
+            .expect("inject bag is posted even when the card schema is empty");
+        assert_eq!(
+            bag.get("target"),
+            Some(&serde_json::json!("Guard")),
+            "thiever inject must beat the Man fallback"
         );
         match orig_rs2b0t {
             Some(v) => std::env::set_var("RS2B0T", v),

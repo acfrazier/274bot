@@ -1278,15 +1278,11 @@ impl Session {
                 script::ScriptSource::Catalog,
                 card_name.to_string(),
             ));
-            let bag = if card.settings_schema.is_empty() {
-                None
-            } else {
-                Some(self.merged_settings_bag(
-                    script::ScriptSource::Catalog,
-                    card_name,
-                    &card.settings_schema,
-                ))
-            };
+            let bag = self.pending_settings_bag(
+                script::ScriptSource::Catalog,
+                card_name,
+                &card.settings_schema,
+            );
             let siblings = self.sibling_modules_for_card(&card)?;
             *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
                 slot: names[0].clone(),
@@ -2829,6 +2825,23 @@ impl Session {
         self.script_settings_inject = inject;
     }
 
+    /// Schema defaults + overrides + inject. Empty schema still keeps
+    /// inject keys (Thiever `target: Guard`). `None` only when the merged
+    /// bag is empty.
+    fn pending_settings_bag(
+        &self,
+        source: script::ScriptSource,
+        name: &str,
+        schema: &[script::SettingDef],
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let merged = self.merged_settings_bag(source, name, schema);
+        if merged.is_empty() {
+            None
+        } else {
+            Some(merged)
+        }
+    }
+
     /// Start the Browse-selected script (compiled or loaded JS) on the
     /// focused slot. The rs2b0t rule is enforced here too: while the slot's
     /// script is active the call is refused (the Start button is disabled,
@@ -2850,15 +2863,11 @@ impl Session {
             (Some(play), script::ScriptSel::Loaded(source, card_name)) => {
                 match self.js.get(source, &card_name) {
                     Some(card) => {
-                        let bag = if card.settings_schema.is_empty() {
-                            None
-                        } else {
-                            Some(self.merged_settings_bag(
-                                source,
-                                &card_name,
-                                &card.settings_schema,
-                            ))
-                        };
+                        let bag = self.pending_settings_bag(
+                            source,
+                            &card_name,
+                            &card.settings_schema,
+                        );
                         match self.sibling_modules_for_card(card) {
                             Ok(siblings) => play.script_start_load(
                                 &name,
@@ -5463,6 +5472,71 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             script::RunState::Running,
             "isolate is not Running yet — Start waits for the StartScript step"
         );
+        match orig_rs2b0t {
+            Some(v) => std::env::set_var("RS2B0T", v),
+            None => std::env::remove_var("RS2B0T"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Thiever SETTINGS often fail to parse (`loadout: LOADOUT_SETTING`
+    /// stops the object walk), so the card schema is empty. The live
+    /// inject still has to post `target: Guard` or `str('target', 'Man')`
+    /// camps Men.
+    #[test]
+    fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-thiever-bag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("home");
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        std::fs::create_dir_all(scripts.join("ThievingBot")).unwrap();
+        std::fs::write(
+            scripts.join("index.ts"),
+            r#"
+import ThievingBot from './ThievingBot/ThievingBot.js';
+ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            scripts.join("ThievingBot/ThievingBot.ts"),
+            "export default class ThievingBot extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+
+        let orig_home = std::env::var("HOME").ok();
+        let orig_rs2b0t = std::env::var("RS2B0T").ok();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("RS2B0T", &root);
+        let mut s = Session::new();
+        s.live_prepare_script(scenario::get("thiever").expect("registered"))
+            .expect("prepare");
+        let bag = s
+            .pending_script
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("catalog start stashed")
+            .bag
+            .clone()
+            .expect("inject bag is posted even when the card schema is empty");
+        assert_eq!(
+            bag.get("target"),
+            Some(&serde_json::json!("Guard")),
+            "thiever inject must beat the Man fallback"
+        );
+        assert_eq!(bag.get("loot"), Some(&serde_json::json!("")));
+        assert_eq!(bag.get("banking"), Some(&serde_json::json!("None")));
         match orig_rs2b0t {
             Some(v) => std::env::set_var("RS2B0T", v),
             None => std::env::remove_var("RS2B0T"),
