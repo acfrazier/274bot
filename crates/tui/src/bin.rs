@@ -665,6 +665,13 @@ impl TuiSession {
             app.chat_data.script_paint = app
                 .focused_status()
                 .and_then(|st| st.script_paint.clone());
+            // Stop drops the isolate (and its paint with it); reset the
+            // operator's game-chat toggle when no paint is showing so a
+            // fresh Start shows the new paint by default instead of
+            // hiding it until `p` again.
+            if app.chat_data.script_paint.is_none() {
+                app.chat_data.show_game_chat = false;
+            }
             app.route = self
                 .travellers
                 .lock()
@@ -942,6 +949,25 @@ mod tests {
         assert!(
             app.world.is_none(),
             "no session pack stays the empty-state title"
+        );
+    }
+
+    /// Task 13 fix: the paint-as-chat toggle must not stick across a
+    /// Stop → new Start. A slot whose script has no paint (stopped, or
+    /// not painted yet) resets the toggle, so the fresh paint is visible
+    /// by default instead of hidden behind the game-chat toggle.
+    #[test]
+    fn pump_resets_the_paint_toggle_when_the_paint_is_gone() {
+        let mut session = TuiSession::new(dummy_options());
+        session.names = vec!["test".into()];
+        let mut app = TuiApp::new("274bot headless");
+        app.focused = Some(0);
+        // The operator toggled to game chat while the old script painted.
+        app.chat_data.show_game_chat = true;
+        session.pump(&mut app);
+        assert!(
+            !app.chat_data.show_game_chat,
+            "a stopped/not-yet-painted slot must fall back to showing paint by default"
         );
     }
 }
