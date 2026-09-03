@@ -24,8 +24,8 @@ pub mod shot;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::interact::{cheat, op_loc, tele_args, Driver, MAXME_SETSTATS};
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::interact::{cheat, op_loc, tele_args, Interactions, SendResult, Driver, MAXME_SETSTATS};
+use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use serde_json::{Map, Value};
 
@@ -71,6 +71,10 @@ pub struct ScenarioSettings {
     /// Scenario-only parameter overrides merged last at script Start (never
     /// written to operator `script-settings.json`).
     pub script_settings_inject: Option<&'static [ScriptSettingInject]>,
+    /// When set (e.g. `"partner"`), live_prepare inserts the minted
+    /// companion username (`names[1]`) into the script settings bag under
+    /// this key after [`script_settings_inject`].
+    pub inject_companion_as: Option<&'static str>,
 }
 
 /// One injected script setting for live gold scenarios.
@@ -228,6 +232,7 @@ impl Default for ScenarioSettings {
             sustains: Vec::new(),
             start_script: None,
             script_settings_inject: None,
+            inject_companion_as: None,
         }
     }
 }
@@ -366,6 +371,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "thiever" => Some(thiever_scenario()),
         "alcher" => Some(alcher_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
+        "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
 }
@@ -389,6 +395,7 @@ pub fn names() -> Vec<&'static str> {
         "thiever",
         "alcher",
         "bank_fletcher",
+        "script_trade",
     ]
 }
 
@@ -2016,6 +2023,203 @@ fn bank_fletcher_scenario() -> Scenario {
     }
 }
 
+/// Lumbridge courtyard stand where the two-bot trade meets.
+const TRADE_COURTYARD: WorldTile = WorldTile {
+    x: 3220,
+    z: 3220,
+    level: 0,
+};
+
+/// Per-frame state for the trade-accept companion (profile 1).
+#[derive(Default)]
+struct TradeAcceptSlot {
+    scene2_seen: bool,
+    tele_sent: bool,
+}
+
+/// The `script_trade` scenario: a two-bot fleet — profile 0 runs the
+/// in-tree `TradeBot` fixture (Compat `Trade.request` / `offerAll` /
+/// `accept`); profile 1 is the rust acceptor that cheat-teles beside the
+/// driven bot after the mainland hop and presses Accept on both trade
+/// screens. Proof: the driven slot holds zero Coins after offering the
+/// seeded stack of twenty-five.
+fn script_trade_scenario() -> Scenario {
+    let courtyard = TRADE_COURTYARD;
+    Scenario {
+        name: "script_trade",
+        seed: Seed {
+            profiles: vec![("test", "test"), ("test2", "test2")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "stick tutorial skip and seed twenty-five coins",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "getvar tutorial");
+                        cheat(c, "give coins 25");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Chat {
+                        needle: "get tutorial: 1000",
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            Step {
+                name: "relog so the inv tab binds",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+            Step {
+                name: "tele to Lumbridge courtyard",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, &tele_args(courtyard.level, courtyard.x, courtyard.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Arrived {
+                        x: courtyard.x,
+                        z: courtyard.z,
+                        level: courtyard.level,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            start_catalog_step(),
+            Step {
+                name: "watch the trade consume coins",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::ItemAtMost {
+                        name: "Coins",
+                        count: 0,
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::ItemAtMost {
+            name: "Coins",
+            count: 0,
+        },
+        companions: vec![Companion {
+            profile: 1,
+            per_frame: {
+                let mut slot = TradeAcceptSlot::default();
+                Box::new(move |c| trade_acceptor_frame(c, &mut slot))
+            },
+        }],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(300),
+            start_script: Some("TradeBot"),
+            inject_companion_as: Some("partner"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn trade_acceptor_frame(c: &mut Client, s: &mut TradeAcceptSlot) {
+    let Some(lp) = &c.local_player else {
+        if debug_enabled() {
+            eprintln!("[trade-companion] no local_player scene={}", c.scene_state);
+        }
+        return;
+    };
+    let here = WorldTile {
+        x: c.map_build_base_x + lp.route_x[0],
+        z: c.map_build_base_z + lp.route_z[0],
+        level: 0,
+    };
+    if stage_trade_companion_tele(c, here, s) {
+        return;
+    }
+    press_trade_accept(c);
+}
+
+/// Host-play queues `mainland_hop` after the first `scene_state == 2`
+/// companion frame; cheat-tele beside the driven bot once ingame on a
+/// mainland build base (the runner seed gate), not only when `here.x > 3100`.
+fn stage_trade_companion_tele(c: &mut Client, here: WorldTile, s: &mut TradeAcceptSlot) -> bool {
+    if at_trade_courtyard(here) || s.tele_sent {
+        return false;
+    }
+    if c.scene_state != 2 {
+        return false;
+    }
+    if !s.scene2_seen {
+        s.scene2_seen = true;
+        return false;
+    }
+    if c.map_build_base_x < 3000 {
+        if debug_enabled() {
+            eprintln!(
+                "[trade-companion] waiting mainland base, here={here:?} base_x={}",
+                c.map_build_base_x
+            );
+        }
+        return false;
+    }
+    if debug_enabled() {
+        eprintln!(
+            "[trade-companion] tele {} from {here:?}",
+            tele_args(TRADE_COURTYARD.level, TRADE_COURTYARD.x, TRADE_COURTYARD.z)
+        );
+    }
+    cheat(
+        c,
+        &tele_args(
+            TRADE_COURTYARD.level,
+            TRADE_COURTYARD.x,
+            TRADE_COURTYARD.z,
+        ),
+    );
+    s.tele_sent = true;
+    true
+}
+
+fn at_trade_courtyard(here: WorldTile) -> bool {
+    here.x == TRADE_COURTYARD.x
+        && here.z == TRADE_COURTYARD.z
+        && here.level == TRADE_COURTYARD.level
+}
+
+fn press_trade_accept(c: &mut Client) {
+    let mut snap = GameSnapshot::default();
+    snap.rebuild(c);
+    let trade = snap.trade();
+    if !trade.offer_open && !trade.confirm_open {
+        return;
+    }
+    if trade.accept_component_id < 0 {
+        if debug_enabled() {
+            eprintln!("[trade-companion] trade open but accept id missing");
+        }
+        return;
+    }
+    let mut ix = Interactions::new(&snap, c);
+    let ctx = ReadContext::new(&snap);
+    let Some(widget) = ctx.component(trade.accept_component_id) else {
+        return;
+    };
+    match ix.press(widget) {
+        SendResult::Sent { .. } | SendResult::Refused { .. } => {}
+    }
+}
+
 /// Journal colour is login-time `~update_questlist`; the Relog step after
 /// these cheats is what actually opens packed quest-gated edges.
 const TRANSPORT_QUEST_SETVARS: &[&str] = &[
@@ -2310,8 +2514,75 @@ mod tests {
                 "thiever",
                 "alcher",
                 "bank_fletcher",
+                "script_trade",
             ]
         );
+    }
+
+    #[test]
+    fn script_trade_is_a_two_profile_fleet_with_a_rust_acceptor_companion() {
+        let s = get("script_trade").expect("script_trade is registered");
+        assert_eq!(s.name, "script_trade");
+        assert_eq!(s.seed.profiles, [("test", "test"), ("test2", "test2")]);
+        assert!(s.seed.mainland, "the hop lands both bots before the trade tele");
+        assert_eq!(
+            s.steps.len(),
+            5,
+            "seed coins, relog, tele, StartScript, watch coins"
+        );
+        assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
+        assert!(matches!(s.steps[1].kind, StepKind::Relog));
+        assert_eq!(s.steps[1].wait.arm, Proof::SideTabAvailable { index: 3 });
+        assert!(matches!(s.steps[2].kind, StepKind::Perform { .. }));
+        assert!(matches!(s.steps[3].kind, StepKind::StartScript));
+        assert_eq!(
+            s.steps[4].wait.arm,
+            Proof::ItemAtMost {
+                name: "Coins",
+                count: 0
+            }
+        );
+        assert_eq!(
+            s.proof.name(),
+            "has_item(Coins)<=0",
+            "terminal proof is zero coins on the driven slot"
+        );
+        assert_eq!(s.companions.len(), 1, "profile 1 rust-accepts");
+        assert_eq!(s.companions[0].profile, 1);
+        assert_eq!(s.settings.start_script, Some("TradeBot"));
+        assert_eq!(s.settings.inject_companion_as, Some("partner"));
+        assert!(s.settings.full_rate);
+        assert!(s.settings.require_mainland_base);
+        assert_eq!(s.settings.nav.engine_speed_ms, Some(600));
+        assert!(names().contains(&"script_trade"));
+    }
+
+    #[test]
+    fn script_trade_starts_tradebot_after_relog_and_courtyard_tele() {
+        let s = get("script_trade").unwrap();
+        let i = s
+            .steps
+            .iter()
+            .position(|st| matches!(st.kind, StepKind::StartScript))
+            .expect("StartScript step");
+        assert!(
+            matches!(s.steps[i - 1].kind, StepKind::Perform { .. }),
+            "StartScript follows the courtyard tele"
+        );
+        assert_eq!(
+            s.steps[i - 1].wait.arm,
+            Proof::Arrived {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            }
+        );
+        assert!(
+            matches!(s.steps[i - 2].kind, StepKind::Relog),
+            "StartScript follows the relog"
+        );
+        assert_eq!(s.steps[i].wait.arm, Proof::Stat { id: 16, min: 0 });
+        assert_eq!(s.steps[i].wait.budget_ticks, 1);
     }
 
     #[test]
@@ -2322,6 +2593,7 @@ mod tests {
             ("thiever", "Thiever"),
             ("alcher", "Alcher"),
             ("bank_fletcher", "BankFletcher"),
+            ("script_trade", "TradeBot"),
         ];
         for (name, card) in cases {
             let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
@@ -2888,6 +3160,7 @@ mod tests {
         assert!(d.sustains.is_empty());
         assert_eq!(d.start_script, None);
         assert_eq!(d.script_settings_inject, None);
+        assert_eq!(d.inject_companion_as, None);
     }
 
     #[test]

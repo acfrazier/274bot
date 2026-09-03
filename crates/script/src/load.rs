@@ -112,6 +112,23 @@ pub fn default_js_store() -> PathBuf {
     crate::bot_file("js-scripts.json")
 }
 
+/// Live gold file fixtures under `tests/fixtures/` (not catalog whales).
+pub fn live_file_fixture_path(name: &str) -> Option<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    match name {
+        "TradeBot" => Some(base.join("trade_bot.ts")),
+        _ => None,
+    }
+}
+
+/// File stem registered by [`live_file_fixture_path`] for a gold card name.
+pub fn live_file_fixture_stem(name: &str) -> Option<&'static str> {
+    match name {
+        "TradeBot" => Some("trade_bot"),
+        _ => None,
+    }
+}
+
 /// One persisted library record: only the name and the source path (the
 /// source itself is re-read from disk on restore).
 #[derive(serde::Serialize, serde::Deserialize)]

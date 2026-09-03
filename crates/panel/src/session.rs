@@ -1343,10 +1343,18 @@ impl Session {
         self.persist_ui = false;
         // Copy the view knobs before `scenario` moves into the runner.
         let view = scenario.settings.clone();
-        self.set_script_settings_inject(scenario::settings_inject_map(view.script_settings_inject));
         // Mint one name per seed slot (fleet included): both slots get a
         // fresh account for this invocation.
         let names = host_play::mint_live_names(scenario.seed.profiles.len());
+        let mut inject = scenario::settings_inject_map(view.script_settings_inject);
+        if let Some(key) = view.inject_companion_as {
+            if names.len() > 1 {
+                inject
+                    .get_or_insert_with(serde_json::Map::new)
+                    .insert(key.to_string(), serde_json::Value::String(names[1].clone()));
+            }
+        }
+        self.set_script_settings_inject(inject);
         let entries = host_play::mint_live_entries(&names);
         let pass = host_play::live_vault_passphrase();
         let path = temp_live_vault_from(&entries, 274_000_001, &pass);
@@ -1390,38 +1398,69 @@ impl Session {
         }
         *self.scenario.lock().unwrap() = Some(runner);
         // A scenario that names a script card (`start_script`) selects
-        // the real `$RS2B0T` catalog script on the driven slot — Start
-        // waits for [`scenario::StepKind::StartScript`] after seed. The
-        // catalog is filled from `$RS2B0T` (or the persisted root) here.
+        // the script on the driven slot — Start waits for
+        // [`scenario::StepKind::StartScript`] after seed. Catalog cards
+        // come from `$RS2B0T`; in-tree file fixtures load from
+        // `crates/script/tests/fixtures/`.
         if let Some(card_name) = view.start_script {
-            self.fill_rs2b0t_cards_once();
-            self.js
-                .ensure_js(script::ScriptSource::Catalog, card_name)
-                .map_err(|e| format!("transpile {card_name}: {e}"))?;
-            let card = self
-                .js
-                .get(script::ScriptSource::Catalog, card_name)
-                .cloned()
-                .ok_or_else(|| {
-                    format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                })?;
-            self.script_sel = Some(script::ScriptSel::Loaded(
-                script::ScriptSource::Catalog,
-                card_name.to_string(),
-            ));
-            let bag = self.pending_settings_bag(
-                script::ScriptSource::Catalog,
-                card_name,
-                &card.settings_schema,
-            );
-            let siblings = self.sibling_modules_for_card(&card)?;
-            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                slot: names[0].clone(),
-                js: card.js.clone(),
-                shape: card.shape,
-                bag,
-                siblings,
-            });
+            if let Some(fixture) = script::live_file_fixture_path(card_name) {
+                let stem = script::live_file_fixture_stem(card_name)
+                    .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
+                self.js
+                    .load(&fixture)
+                    .map_err(|e| format!("load {card_name} fixture: {e}"))?;
+                let card = self
+                    .js
+                    .get(script::ScriptSource::File, stem)
+                    .cloned()
+                    .ok_or_else(|| format!("file fixture {card_name} missing after load"))?;
+                self.script_sel = Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::File,
+                    stem.to_string(),
+                ));
+                let bag = self.pending_settings_bag(
+                    script::ScriptSource::File,
+                    stem,
+                    &card.settings_schema,
+                );
+                let siblings = self.sibling_modules_for_card(&card)?;
+                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                    slot: names[0].clone(),
+                    js: card.js.clone(),
+                    shape: card.shape,
+                    bag,
+                    siblings,
+                });
+            } else {
+                self.fill_rs2b0t_cards_once();
+                self.js
+                    .ensure_js(script::ScriptSource::Catalog, card_name)
+                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                let card = self
+                    .js
+                    .get(script::ScriptSource::Catalog, card_name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+                    })?;
+                self.script_sel = Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::Catalog,
+                    card_name.to_string(),
+                ));
+                let bag = self.pending_settings_bag(
+                    script::ScriptSource::Catalog,
+                    card_name,
+                    &card.settings_schema,
+                );
+                let siblings = self.sibling_modules_for_card(&card)?;
+                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                    slot: names[0].clone(),
+                    js: card.js.clone(),
+                    shape: card.shape,
+                    bag,
+                    siblings,
+                });
+            }
         }
         self.login_all();
         Ok(())
@@ -5662,6 +5701,53 @@ mod tests {
             script::RunState::Running,
             "isolate is not Running yet — Start waits for the StartScript step"
         );
+    }
+
+    #[test]
+    fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
+        let iso = IsolatedEnv::enter("trade-live");
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let mut s = Session::new();
+        s.js = script::JsLibrary::with_cache(
+            iso.dir.join("js-scripts.json"),
+            iso.dir.join("js-cache"),
+        );
+        s.live_prepare_script(scenario::get("script_trade").expect("registered"))
+            .expect("prepare");
+        assert_eq!(
+            s.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::File,
+                "trade_bot".into()
+            )),
+            "script_trade loads the in-tree TradeBot fixture as File"
+        );
+        let names: Vec<_> = s
+            .vault
+            .as_ref()
+            .expect("live vault")
+            .profiles()
+            .map(|p| p.username.clone())
+            .collect();
+        assert_eq!(names.len(), 2, "script_trade is a two-profile fleet");
+        let bag = s
+            .pending_script
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("file start stashed")
+            .bag
+            .clone()
+            .expect("partner inject is posted");
+        assert_eq!(
+            bag.get("partner"),
+            Some(&serde_json::json!(names[1])),
+            "companion minted name is injected as partner"
+        );
+        assert!(s.multibox, "fleet opens the MultiBox wall");
     }
 
     /// Thiever SETTINGS often fail to parse (`loadout: LOADOUT_SETTING`
