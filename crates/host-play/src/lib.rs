@@ -1391,6 +1391,18 @@ fn with_script_snapshot_input<R>(
         );
         (reach, reach_adj)
     };
+    let scene_entity_target = |target: Option<&api::snapshot::ActorTargetView>| -> (i32, i32) {
+        match target {
+            None => (0, -1),
+            Some(t) => {
+                let kind = match t.kind {
+                    api::snapshot::ActorKind::Npc => 1,
+                    api::snapshot::ActorKind::Player => 2,
+                };
+                (kind, t.index as i32)
+            }
+        }
+    };
     let inv_ops_store: Vec<Vec<String>>;
     let inv: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
         if s.inventory().is_empty() {
@@ -1539,6 +1551,7 @@ fn with_script_snapshot_input<R>(
             .map(|(i, npc)| {
                 let (reachable, reachable_adj) =
                     entity_reach(npc.tile.x, npc.tile.z, npc.tile.level);
+                let (target_kind, target_index) = scene_entity_target(npc.target.as_ref());
                 SceneEntityInput {
                     index: npc.index as i32,
                     id: npc.r#type.map(|t| t as i32).unwrap_or(-1),
@@ -1554,6 +1567,9 @@ fn with_script_snapshot_input<R>(
                     actions: &npc_action_store[i],
                     reachable,
                     reachable_adj,
+                    combat_level: npc.level,
+                    target_kind,
+                    target_index,
                 }
             })
             .collect()
@@ -1593,6 +1609,9 @@ fn with_script_snapshot_input<R>(
                     actions: &loc_action_store[i],
                     reachable,
                     reachable_adj,
+                    combat_level: 0,
+                    target_kind: 0,
+                    target_index: -1,
                 }
             })
             .collect()
@@ -1622,6 +1641,8 @@ fn with_script_snapshot_input<R>(
                     player.actor.tile.z,
                     player.actor.tile.level,
                 );
+                let (target_kind, target_index) =
+                    scene_entity_target(player.actor.target.as_ref());
                 SceneEntityInput {
                     index: player.index as i32,
                     id: player.index as i32,
@@ -1637,6 +1658,9 @@ fn with_script_snapshot_input<R>(
                     actions: &player_action_store[i],
                     reachable,
                     reachable_adj,
+                    combat_level: player.combat_level,
+                    target_kind,
+                    target_index,
                 }
             })
             .collect()
@@ -1676,6 +1700,9 @@ fn with_script_snapshot_input<R>(
                     actions: &ground_action_store[i],
                     reachable,
                     reachable_adj,
+                    combat_level: 0,
+                    target_kind: 0,
+                    target_index: -1,
                 }
             })
             .collect()
@@ -1954,6 +1981,7 @@ fn with_script_snapshot_input<R>(
         camera_yaw: snapshot.map(|s| s.camera().orbit_yaw).unwrap_or(0),
         camera_pitch: snapshot.map(|s| s.camera().orbit_pitch).unwrap_or(0),
         teleports_enabled,
+        self_slot: snapshot.map(|s| s.self_slot()).unwrap_or(-1),
     };
     f(&input)
 }

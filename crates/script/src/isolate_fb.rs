@@ -130,6 +130,7 @@ const VT_SNAP_WEIGHT: VOffsetT = 88;
 const VT_SNAP_CAMERA_YAW: VOffsetT = 90;
 const VT_SNAP_CAMERA_PITCH: VOffsetT = 92;
 const VT_SNAP_TELEPORTS_ENABLED: VOffsetT = 94;
+const VT_SNAP_SELF_SLOT: VOffsetT = 96;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -155,6 +156,9 @@ const VT_ENT_ANIMATING: VOffsetT = 24;
 const VT_ENT_ACTIONS: VOffsetT = 26;
 const VT_ENT_REACHABLE: VOffsetT = 28;
 const VT_ENT_REACHABLE_ADJ: VOffsetT = 30;
+const VT_ENT_COMBAT_LEVEL: VOffsetT = 32;
+const VT_ENT_TARGET_KIND: VOffsetT = 34;
+const VT_ENT_TARGET_INDEX: VOffsetT = 36;
 
 // ChatOption: { text }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
@@ -233,6 +237,11 @@ pub struct SceneEntityInput<'a> {
     pub actions: &'a [String],
     pub reachable: bool,
     pub reachable_adj: bool,
+    pub combat_level: i32,
+    /// `0` none, `1` npc, `2` player.
+    pub target_kind: i32,
+    /// `-1` when not facing anyone.
+    pub target_index: i32,
 }
 
 /// One chat modal BUTTON_OK choice.
@@ -393,6 +402,8 @@ pub struct SnapshotInput<'a> {
     pub camera_pitch: i32,
     /// Whether packed nav last armed with `allow_teleports` (default off).
     pub teleports_enabled: bool,
+    /// Local player table index (`GameSnapshot::self_slot`).
+    pub self_slot: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -775,6 +786,7 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("camera_yaw", VT_SNAP_CAMERA_YAW, false)?
             .visit_field::<i32>("camera_pitch", VT_SNAP_CAMERA_PITCH, false)?
             .visit_field::<bool>("teleports_enabled", VT_SNAP_TELEPORTS_ENABLED, false)?
+            .visit_field::<i32>("self_slot", VT_SNAP_SELF_SLOT, false)?
             .finish();
         Ok(())
     }
@@ -911,6 +923,12 @@ impl SnapshotReader<'_> {
     }
     pub fn teleports_enabled(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_TELEPORTS_ENABLED, None) }.unwrap_or(false)
+    }
+    pub fn has_self_slot(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_SLOT, None).is_some() }
+    }
+    pub fn self_slot(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_SLOT, None) }.unwrap_or(0)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1177,6 +1195,9 @@ pub struct SceneEntityFp {
     pub actions: Vec<String>,
     pub reachable: bool,
     pub reachable_adj: bool,
+    pub combat_level: i32,
+    pub target_kind: i32,
+    pub target_index: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1269,6 +1290,7 @@ pub struct SnapshotFingerprint {
     pub camera_yaw: i32,
     pub camera_pitch: i32,
     pub teleports_enabled: bool,
+    pub self_slot: i32,
 }
 
 impl SnapshotFingerprint {
@@ -1300,6 +1322,9 @@ impl SnapshotFingerprint {
                 actions: e.actions.iter().map(|a| a.to_string()).collect(),
                 reachable: e.reachable,
                 reachable_adj: e.reachable_adj,
+                combat_level: e.combat_level,
+                target_kind: e.target_kind,
+                target_index: e.target_index,
             }
         }
         SnapshotFingerprint {
@@ -1409,6 +1434,7 @@ impl SnapshotFingerprint {
             camera_yaw: input.camera_yaw,
             camera_pitch: input.camera_pitch,
             teleports_enabled: input.teleports_enabled,
+            self_slot: input.self_slot,
         }
     }
 }
@@ -1465,6 +1491,7 @@ pub struct DeltaMask {
     pub camera_yaw: bool,
     pub camera_pitch: bool,
     pub teleports_enabled: bool,
+    pub self_slot: bool,
 }
 
 impl DeltaMask {
@@ -1516,6 +1543,7 @@ impl DeltaMask {
             camera_yaw: true,
             camera_pitch: true,
             teleports_enabled: true,
+            self_slot: true,
         }
     }
 
@@ -1576,6 +1604,7 @@ impl DeltaMask {
             camera_yaw: next.camera_yaw != last.camera_yaw,
             camera_pitch: next.camera_pitch != last.camera_pitch,
             teleports_enabled: next.teleports_enabled != last.teleports_enabled,
+            self_slot: next.self_slot != last.self_slot,
         }
     }
 }
@@ -2019,6 +2048,9 @@ fn encode_snapshot_masked_into(
     if mask.teleports_enabled {
         b.push_slot_always(VT_SNAP_TELEPORTS_ENABLED, input.teleports_enabled);
     }
+    if mask.self_slot {
+        b.push_slot_always(VT_SNAP_SELF_SLOT, input.self_slot);
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -2081,6 +2113,9 @@ fn scene_entity_off<'b>(
     b.push_slot_always(VT_ENT_ACTIONS, actions_off);
     b.push_slot_always(VT_ENT_REACHABLE, e.reachable);
     b.push_slot_always(VT_ENT_REACHABLE_ADJ, e.reachable_adj);
+    b.push_slot_always(VT_ENT_COMBAT_LEVEL, e.combat_level);
+    b.push_slot_always(VT_ENT_TARGET_KIND, e.target_kind);
+    b.push_slot_always(VT_ENT_TARGET_INDEX, e.target_index);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -2261,6 +2296,15 @@ impl SceneEntityReader<'_> {
     pub fn reachable_adj(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_ENT_REACHABLE_ADJ, None) }.unwrap_or(false)
     }
+    pub fn combat_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_COMBAT_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn target_kind(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_TARGET_KIND, None) }.unwrap_or(0)
+    }
+    pub fn target_index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_TARGET_INDEX, None) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for SceneEntityReader<'_> {
@@ -2284,6 +2328,9 @@ impl Verifiable for SceneEntityReader<'_> {
             )?
             .visit_field::<bool>("reachable", VT_ENT_REACHABLE, false)?
             .visit_field::<bool>("reachable_adj", VT_ENT_REACHABLE_ADJ, false)?
+            .visit_field::<i32>("combat_level", VT_ENT_COMBAT_LEVEL, false)?
+            .visit_field::<i32>("target_kind", VT_ENT_TARGET_KIND, false)?
+            .visit_field::<i32>("target_index", VT_ENT_TARGET_INDEX, false)?
             .finish();
         Ok(())
     }
@@ -3171,6 +3218,7 @@ mod tests {
             camera_yaw: 0,
             camera_pitch: 0,
             teleports_enabled: false,
+            self_slot: 0,
         }
     }
 
@@ -3193,6 +3241,9 @@ mod tests {
             actions: &actions,
             reachable: false,
             reachable_adj: false,
+            combat_level: 1,
+            target_kind: 0,
+            target_index: -1,
         };
         let mut input = empty_input(9);
         let npcs = [npc];
@@ -3228,6 +3279,9 @@ mod tests {
             actions: &actions,
             reachable: false,
             reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
         };
         let mut input = empty_input(1);
         let npcs = [npc];

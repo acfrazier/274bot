@@ -209,6 +209,7 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
+        self_slot: 0,
     }
 }
 
@@ -2056,6 +2057,9 @@ export default class T extends LoopingBot {
             actions: &attack,
             reachable: false,
             reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
         },
         script::isolate_fb::SceneEntityInput {
             index: 2,
@@ -2072,6 +2076,9 @@ export default class T extends LoopingBot {
             actions: &attack,
             reachable: false,
             reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
         },
     ];
     let mut snap = base_snapshot();
@@ -2239,6 +2246,9 @@ export default class T extends LoopingBot {
         actions: &use_actions,
         reachable: false,
         reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     }];
     let mut snap = base_snapshot();
     let inv = [nc(Some("Knife"), 1)];
@@ -2342,6 +2352,9 @@ export default class T extends LoopingBot {
         actions: &use_quickly,
         reachable: false,
         reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     }];
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
@@ -2396,6 +2409,9 @@ export default class T extends LoopingBot {
         actions: &use_quickly,
         reachable: false,
         reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     };
     let far = script::isolate_fb::SceneEntityInput {
         index: 1,
@@ -2412,6 +2428,9 @@ export default class T extends LoopingBot {
         actions: &use_quickly,
         reachable: false,
         reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     };
     let locs = [near, far];
     let mut snap = base_snapshot();
@@ -2663,6 +2682,9 @@ export default class T extends LoopingBot {
         actions: &actions,
         reachable: false,
         reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -3311,6 +3333,9 @@ export default class T extends LoopingBot {
         actions: &actions,
         reachable: true,
         reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -3349,6 +3374,100 @@ export default class T extends LoopingBot {
         "sceneReady is ingame && scene_state==2"
     );
     assert_eq!(probe["energy"], 50, "energy forwards posted run_energy");
+    iso.join();
+}
+
+#[test]
+fn npc_targets_me_follows_posted_face_entity() {
+    let src = r#"
+import { Npcs } from '../../api/npcs/Npcs.js';
+export default class T extends LoopingBot {
+    loop() {
+        const n = Npcs.all()[0];
+        globalThis.__probe = {
+            level: n.level,
+            me: n.targetsMe(),
+            other: n.targetsAnotherPlayer(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Attack".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 9,
+        name: Some("Guard"),
+        x: 3220,
+        z: 3220,
+        level: 0,
+        distance: 3,
+        health: 10,
+        max_health: 10,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 5,
+        target_kind: 2,
+        target_index: 0,
+    }];
+    let mut snap = base_snapshot();
+    snap.self_slot = 0;
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe["level"], 5);
+    assert_eq!(probe["me"], true);
+    assert_eq!(probe["other"], false);
+    iso.join();
+}
+
+#[test]
+fn npc_targets_another_player_when_face_entity_not_self() {
+    let src = r#"
+import { Npcs } from '../../api/npcs/Npcs.js';
+export default class T extends LoopingBot {
+    loop() {
+        const n = Npcs.all()[0];
+        globalThis.__probe = {
+            me: n.targetsMe(),
+            other: n.targetsAnotherPlayer(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Attack".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 9,
+        name: Some("Guard"),
+        x: 3220,
+        z: 3220,
+        level: 0,
+        distance: 3,
+        health: 10,
+        max_health: 10,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 5,
+        target_kind: 2,
+        target_index: 7,
+    }];
+    let mut snap = base_snapshot();
+    snap.self_slot = 0;
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe["me"], false);
+    assert_eq!(probe["other"], true);
     iso.join();
 }
 
@@ -3434,6 +3553,9 @@ export default class T extends LoopingBot {
         actions: &actions,
         reachable: false,
         reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
     }];
     let spells = [script::isolate_fb::CombatStyleInput {
         mode: 0,

@@ -52,6 +52,9 @@ table SceneEntity {
   actions: [string];
   reachable: bool;
   reachable_adj: bool;
+  combat_level: int;
+  target_kind: int;   // 0 none, 1 npc, 2 player
+  target_index: int; // -1 when none
 }
 
 // One chat modal BUTTON_OK choice.
@@ -181,6 +184,7 @@ table Snapshot {
   camera_yaw: int;
   camera_pitch: int;
   teleports_enabled: bool;
+  self_slot: int;
 }
 
 // One shim interact request, tagged by `op`:

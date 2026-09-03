@@ -19,8 +19,15 @@ export class Player {
         return this.snap.in_combat === true;
     }
 
+    /**
+     * True when this player's combat target is the local player (`face_entity`),
+     * not merely when `Game.inCombat()` is true.
+     */
     targetsMe() {
-        throw notImpl('Player.targetsMe');
+        return (
+            this.snap.target_kind === 2 &&
+            this.snap.target_index === (snap().self_slot ?? 0)
+        );
     }
 
     tile() {

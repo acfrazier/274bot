@@ -1398,6 +1398,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "teleports_enabled", falsy)?;
         }
+        if snap.has_self_slot() {
+            let self_slot = num(&mut scope, snap.self_slot() as f64);
+            set(&mut scope, obj, "self_slot", self_slot)?;
+        } else if !had {
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, obj, "self_slot", zero)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;
@@ -1788,6 +1795,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "reachable", reachable.into())?;
         let reachable_adj = v8::Boolean::new(scope, ent.reachable_adj());
         set(scope, o, "reachable_adj", reachable_adj.into())?;
+        let combat_level = num(scope, ent.combat_level() as f64);
+        set(scope, o, "combat_level", combat_level)?;
+        let target_kind = num(scope, ent.target_kind() as f64);
+        set(scope, o, "target_kind", target_kind)?;
+        let target_index = num(scope, ent.target_index() as f64);
+        set(scope, o, "target_index", target_index)?;
         Ok(o.into())
     }
 

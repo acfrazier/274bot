@@ -28,15 +28,24 @@ export class Npc {
     }
 
     get level() {
-        throw notImpl('Npc.level');
+        if (typeof this.snap.combat_level !== 'number') throw notImpl('Npc.level');
+        return this.snap.combat_level;
     }
 
+    /**
+     * True when this NPC's combat target is the local player (`face_entity`),
+     * not merely when `Game.inCombat()` is true.
+     */
     targetsMe() {
-        throw notImpl('Npc.targetsMe');
+        return (
+            this.snap.target_kind === 2 &&
+            this.snap.target_index === (snap().self_slot ?? 0)
+        );
     }
 
     targetsAnotherPlayer() {
-        throw notImpl('Npc.targetsAnotherPlayer');
+        const self = snap().self_slot ?? 0;
+        return this.snap.target_kind === 2 && this.snap.target_index !== self;
     }
 
     tile() {
