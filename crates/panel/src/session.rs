@@ -901,12 +901,14 @@ impl Session {
     pub fn new() -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
+        let ui = crate::ui_state::load();
+        let capture_pref = ui.capture;
         Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
                 renderer: true,
                 game_pane_open: true,
-                capture: false,
+                capture: capture_pref,
                 only_render_selected: true,
                 sidecar_50: false,
                 live_full_rate: false,
@@ -952,7 +954,7 @@ impl Session {
             scatter: Arc::new(AtomicBool::new(false)),
             wall: Wall::default(),
             multibox: false,
-            ui: crate::ui_state::load(),
+            ui,
             script_sel: None,
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
@@ -2195,16 +2197,24 @@ impl Session {
             .unwrap_or_else(|| self.ui.nav.clone())
     }
 
-    /// Game window `.build()` Some/None. Closing the pane turns capture off
-    /// (`set_enabled(false)` + drop tx); reopening does not re-enable it.
+    /// Game window `.build()` Some/None. Closing the pane drops the live
+    /// drain but leaves the capture pref (`should_capture` is draw-gated).
+    /// Reopening with capture on re-attaches the channel.
     pub fn set_game_pane_open(&mut self, open: bool) {
         let mut focus = self.focus.lock().unwrap();
         let was = focus.game_pane_open;
         focus.game_pane_open = open;
         let name = focus.focused.clone();
+        let capture = focus.capture;
         drop(focus);
         if was && !open {
-            self.set_capture(false);
+            if capture {
+                self.capture_off();
+            }
+        } else if !was && open && capture {
+            if let Some(name) = name.as_deref() {
+                self.capture_on(name);
+            }
         }
         // draw_for_slot gates on the pane; kick the focused slot so a
         // parked thread sees the change within a frame.
@@ -2220,6 +2230,10 @@ impl Session {
     /// cannot enqueue (the slot thread does no `try_recv` while disabled).
     pub fn set_capture(&mut self, on: bool) {
         self.focus.lock().unwrap().capture = on;
+        if self.persist_ui {
+            self.ui.capture = on;
+            crate::ui_state::save(&self.ui);
+        }
         let name = self.focused_name();
         if on {
             match name.as_deref() {
@@ -4456,11 +4470,12 @@ mod tests {
     }
 
     #[test]
-    fn session_starts_with_renderer_on_capture_off() {
+    fn session_starts_with_renderer_on_capture_on_by_default() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState::default());
         let s = Session::new();
         let f = s.focus.lock().unwrap();
         assert!(f.renderer, "rail is on; Game pane 50 fps is focused_50");
-        assert!(!f.capture);
+        assert!(f.capture, "capture pref defaults on");
         assert!(f.focused_50);
     }
 
@@ -6274,7 +6289,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_game_pane_turns_capture_off() {
+    fn closing_game_pane_leaves_capture_pref_on() {
         let mut s = Session::new();
         s.select("alice");
         s.set_capture(true);
@@ -6282,18 +6297,37 @@ mod tests {
         s.set_game_pane_open(false);
         let f = s.focus.lock().unwrap();
         assert!(!f.game_pane_open);
-        assert!(!f.capture);
-        assert!(s.capture_tx.is_none());
+        assert!(f.capture, "pane close must not clear the capture pref");
+        assert!(s.capture_tx.is_none(), "drain drops while the pane is closed");
     }
 
     #[test]
-    fn opening_game_pane_sets_flag_without_capture() {
+    fn reopening_game_pane_resumes_capture_drain() {
         let mut s = Session::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(true);
+        assert!(s.capture_tx.is_some());
         s.set_game_pane_open(false);
+        assert!(s.capture_tx.is_none());
         s.set_game_pane_open(true);
-        let f = s.focus.lock().unwrap();
-        assert!(f.game_pane_open);
-        assert!(!f.capture);
+        assert!(s.capture_tx.is_some(), "pref on resumes the drain");
+    }
+
+    #[test]
+    fn set_capture_persists_to_panel_ui() {
+        crate::ui_state::save(&crate::ui_state::PanelUiState::default());
+        let mut s = Session::new();
+        s.set_capture(false);
+        assert!(!crate::ui_state::load().capture);
+        s.set_capture(true);
+        assert!(crate::ui_state::load().capture);
     }
 
     #[test]

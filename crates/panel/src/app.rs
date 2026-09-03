@@ -51,7 +51,7 @@ use crate::session::{
 };
 use crate::theme::{
     applet_offset, apply_amber, fit_applet, game_window_title, integer_ui_scale, native_applet,
-    panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW,
+    panel_split_ratio, ACCENT, ACCENT_HOVER, BG, BG_DEEP, ERROR, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW,
     TEXT, TEXT_DIM, TITLE,
 };
 
@@ -1326,6 +1326,9 @@ fn panel_window(ui: &Ui, session: &mut Session) {
             slot_config_row(ui, session);
             let order = resolve_heading_order(&session.ui.section_order);
             for id in order {
+                if !crate::ui_state::panel_section_visible(&session.ui, &id) {
+                    continue;
+                }
                 match id.as_str() {
                     "status" => status_section(ui, session),
                     "profile" => profile_section(ui, session),
@@ -1335,7 +1338,7 @@ fn panel_window(ui: &Ui, session: &mut Session) {
                     _ => {}
                 }
             }
-            if session.ui.show_parameters_rail {
+            if crate::ui_state::panel_section_visible(&session.ui, "parameters") {
                 parameters_section(ui, session);
             }
         });
@@ -3046,23 +3049,36 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     mem_popup(ui, session);
 }
 
-fn config_heading(ui: &Ui, label: &str) {
-    ui.text_colored(ACCENT, label);
-}
-
-/// rendering: none/GPU/CPU picker; `set_draw` is applied by the slot
-/// threads from the shared focus on every frame.
-fn slot_render_section(ui: &Ui, session: &mut Session) {
-    ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem drops + reattaches the renderer — the client stays logged in.");
-    raster_picker(ui, session);
-    let mut focused_50 = session.focus.lock().unwrap().focused_50;
-    if ui.checkbox("focused 50 fps", &mut focused_50) {
-        session.set_focused_50(focused_50);
+/// General config collapsible row: orange title, black strip, orange border
+/// and expand arrow (not the profile combo chip).
+fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&Ui, &mut Session)) {
+    let closed = session
+        .ui
+        .config_collapsed
+        .get(id)
+        .copied()
+        .unwrap_or(false);
+    let desired = !closed;
+    ui.set_next_item_open(desired);
+    let _text = ui.push_style_color(StyleColor::Text, ACCENT);
+    let _header = ui.push_style_color(StyleColor::Header, BG_DEEP);
+    let _header_h = ui.push_style_color(StyleColor::HeaderHovered, BG_DEEP);
+    let _header_a = ui.push_style_color(StyleColor::HeaderActive, BG_DEEP);
+    let _border = ui.push_style_color(StyleColor::Border, ACCENT);
+    let open = ui.collapsing_header(id, TreeNodeFlags::FRAME_PADDING);
+    if open != desired {
+        session
+            .ui
+            .config_collapsed
+            .insert(id.to_string(), !open);
+        crate::ui_state::save(&session.ui);
     }
-    ui.text_wrapped("Game pane only; this client on the rail uses the rail cadence.");
+    if open {
+        body(ui, session);
+    }
 }
 
-fn slot_capture_section(ui: &Ui, session: &mut Session) {
+fn global_capture_section(ui: &Ui, session: &mut Session) {
     let on = session.focus.lock().unwrap().capture;
     let mut cur = on;
     if ui.checkbox("capture input", &mut cur) {
@@ -3073,22 +3089,21 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
     } else {
         "watch-only; no input work"
     });
-    let focused = session.focused_name();
-    let auto = focused
-        .as_deref()
-        .and_then(|n| session.vault.as_ref().and_then(|v| v.get(n)))
-        .map(|p| p.settings.auto_login)
-        .unwrap_or(false);
-    let mut auto_cur = auto;
-    if ui.checkbox("auto-login on title", &mut auto_cur) {
-        if let Some(name) = focused {
-            session.set_auto_login(&name, auto_cur);
+}
+
+fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
+    ui.text_colored(ACCENT, "Panel");
+    for id in crate::ui_state::PANEL_SECTION_IDS {
+        let mut visible = crate::ui_state::panel_section_visible(&session.ui, id);
+        if ui.checkbox(*id, &mut visible) {
+            crate::ui_state::set_panel_section_visible(&mut session.ui, id, visible);
+            crate::ui_state::save(&session.ui);
         }
     }
-    ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
+    global_capture_section(ui, session);
     let mut sidecar = session.focus.lock().unwrap().sidecar_50;
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
@@ -3112,6 +3127,36 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         }
         ui.text_wrapped("every drawing slot at 50 fps; not sidecar, not capture, not saved");
     }
+    ui.spacing();
+    panel_heading_toggles(ui, session);
+}
+
+/// rendering: none/GPU/CPU picker; `set_draw` is applied by the slot
+/// threads from the shared focus on every frame.
+fn slot_render_section(ui: &Ui, session: &mut Session) {
+    ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem drops + reattaches the renderer — the client stays logged in.");
+    raster_picker(ui, session);
+    let mut focused_50 = session.focus.lock().unwrap().focused_50;
+    if ui.checkbox("focused 50 fps", &mut focused_50) {
+        session.set_focused_50(focused_50);
+    }
+    ui.text_wrapped("Game pane only; this client on the rail uses the rail cadence.");
+}
+
+fn slot_capture_section(ui: &Ui, session: &mut Session) {
+    let focused = session.focused_name();
+    let auto = focused
+        .as_deref()
+        .and_then(|n| session.vault.as_ref().and_then(|v| v.get(n)))
+        .map(|p| p.settings.auto_login)
+        .unwrap_or(false);
+    let mut auto_cur = auto;
+    if ui.checkbox("auto-login on title", &mut auto_cur) {
+        if let Some(name) = focused {
+            session.set_auto_login(&name, auto_cur);
+        }
+    }
+    ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
 
 /// Sidecar rail window: only while MultiBox is on and Grid is off. Bulk
@@ -3671,19 +3716,23 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .size([PANEL_WIDTH, 480.0], Condition::FirstUseEver)
         .size_constraints([280.0, 80.0], [f32::MAX, 720.0])
         .build(|| {
-            config_heading(ui, "slot");
-            let slot = session.focused_name().unwrap_or_else(|| "—".into());
-            ui.text_disabled(slot);
-            slot_capture_section(ui, session);
+            config_section(ui, session, "Global", |ui, session| {
+                global_config_section(ui, session);
+            });
             ui.spacing();
-            config_heading(ui, "render");
-            slot_render_section(ui, session);
+            config_section(ui, session, "slot", |ui, session| {
+                let slot = session.focused_name().unwrap_or_else(|| "—".into());
+                ui.text_disabled(slot);
+                slot_capture_section(ui, session);
+            });
             ui.spacing();
-            config_heading(ui, "random");
-            slot_random_section(ui, session);
+            config_section(ui, session, "render", |ui, session| {
+                slot_render_section(ui, session);
+            });
             ui.spacing();
-            config_heading(ui, "global");
-            global_config_section(ui, session);
+            config_section(ui, session, "random", |ui, session| {
+                slot_random_section(ui, session);
+            });
         });
     session.global_settings_open = open;
 }
@@ -5132,5 +5181,26 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(random_status_text(&r).as_deref(), Some("lost-gear: ?"));
+    }
+
+    #[test]
+    fn panel_heading_toggle_hides_status_section() {
+        use crate::ui_state::{panel_section_visible, set_panel_section_visible, PanelUiState};
+        let mut ui = PanelUiState::default();
+        assert!(panel_section_visible(&ui, "status"));
+        set_panel_section_visible(&mut ui, "status", false);
+        assert!(!panel_section_visible(&ui, "status"));
+    }
+
+    #[test]
+    fn parameters_and_script_prefs_share_show_parameters_rail() {
+        use crate::ui_state::{panel_section_visible, set_panel_section_visible, PanelUiState};
+        let mut ui = PanelUiState::default();
+        assert!(!ui.show_parameters_rail);
+        set_panel_section_visible(&mut ui, "parameters", true);
+        assert!(ui.show_parameters_rail);
+        assert!(panel_section_visible(&ui, "parameters"));
+        ui.show_parameters_rail = false;
+        assert!(!panel_section_visible(&ui, "parameters"));
     }
 }

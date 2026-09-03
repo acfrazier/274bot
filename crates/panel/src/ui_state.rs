@@ -37,6 +37,39 @@ pub struct PanelUiState {
     /// Read-only parameters preview in the rail (default off).
     #[serde(default)]
     pub show_parameters_rail: bool,
+    /// Global capture input pref (General config). Default on.
+    #[serde(default = "default_true")]
+    pub capture: bool,
+    /// Panel strip section visibility. Absent = on (parameters uses
+    /// [`Self::show_parameters_rail`]).
+    #[serde(default)]
+    pub panel_sections: HashMap<String, bool>,
+    /// General config collapsible rows closed. Absent = open.
+    #[serde(default)]
+    pub config_collapsed: HashMap<String, bool>,
+}
+
+/// Panel subsection ids in General config (parameters shares
+/// [`PanelUiState::show_parameters_rail`]).
+pub const PANEL_SECTION_IDS: &[&str] =
+    &["status", "profile", "script", "debug", "log", "parameters"];
+
+/// Whether a panel strip heading should draw in [`crate::app::panel_window`].
+pub fn panel_section_visible(state: &PanelUiState, id: &str) -> bool {
+    if id == "parameters" {
+        return state.show_parameters_rail;
+    }
+    state.panel_sections.get(id).copied().unwrap_or(true)
+}
+
+/// Write a panel strip heading visibility bit (parameters →
+/// `show_parameters_rail`).
+pub fn set_panel_section_visible(state: &mut PanelUiState, id: &str, visible: bool) {
+    if id == "parameters" {
+        state.show_parameters_rail = visible;
+    } else {
+        state.panel_sections.insert(id.to_string(), visible);
+    }
 }
 
 fn default_true() -> bool {
@@ -57,6 +90,9 @@ impl Default for PanelUiState {
             script_load_last_dir: None,
             script_catalog_last_dir: None,
             show_parameters_rail: false,
+            capture: true,
+            panel_sections: HashMap::new(),
+            config_collapsed: HashMap::new(),
         }
     }
 }
@@ -334,5 +370,47 @@ mod tests {
         assert!(!default_section_closed("rendering"));
         assert!(!default_section_closed("input"));
         assert!(!default_section_closed("debug"));
+    }
+
+    #[test]
+    fn capture_default_on() {
+        assert!(PanelUiState::default().capture);
+        let back: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(back.capture, "missing capture key defaults on");
+    }
+
+    #[test]
+    fn panel_section_visible_defaults_on_except_parameters() {
+        use super::{panel_section_visible, set_panel_section_visible, PANEL_SECTION_IDS};
+        let s = PanelUiState::default();
+        for id in PANEL_SECTION_IDS {
+            if *id == "parameters" {
+                assert!(!panel_section_visible(&s, id));
+            } else {
+                assert!(panel_section_visible(&s, id), "{id} defaults on");
+            }
+        }
+        let mut s = PanelUiState::default();
+        set_panel_section_visible(&mut s, "status", false);
+        assert!(!panel_section_visible(&s, "status"));
+        set_panel_section_visible(&mut s, "parameters", true);
+        assert!(panel_section_visible(&s, "parameters"));
+        assert!(s.show_parameters_rail);
+    }
+
+    #[test]
+    fn capture_persist_roundtrip() {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-ui-capture-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            capture: false,
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        assert!(!load_at(&p).capture);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
