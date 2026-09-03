@@ -1247,6 +1247,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             let bank_note_off = num(&mut scope, -1.0);
             set(&mut scope, obj, "bank_note_off", bank_note_off)?;
         }
+        if snap.has_scene_state() {
+            let scene_state = num(&mut scope, snap.scene_state() as f64);
+            set(&mut scope, obj, "scene_state", scene_state)?;
+        } else if !had {
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, obj, "scene_state", zero)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;

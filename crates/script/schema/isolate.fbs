@@ -176,6 +176,7 @@ table Snapshot {
   chat_lines: [ChatLine];
   bank_note_on: int;
   bank_note_off: int;
+  scene_state: int;
 }
 
 // One shim interact request, tagged by `op`:

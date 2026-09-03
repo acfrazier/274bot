@@ -1923,6 +1923,7 @@ fn with_script_snapshot_input<R>(
             .and_then(|s| s.bank_note_controls())
             .map(|c| c.off_component_id)
             .unwrap_or(-1),
+        scene_state: snapshot.map(|s| s.scene_state()).unwrap_or(0),
     };
     f(&input)
 }

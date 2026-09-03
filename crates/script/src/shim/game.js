@@ -130,11 +130,33 @@ export const Game = new Proxy(
             });
             return true;
         },
+        async castOnLoc(spell, loc) {
+            if (!loc) return false;
+            const wanted = String(spell).toLowerCase();
+            const row = (snap().spell_buttons || []).find(
+                (s) => s && s.label && String(s.label).toLowerCase() === wanted,
+            );
+            if (!row || typeof row.component_id !== 'number') {
+                throw notV1('Game.castOnLoc');
+            }
+            const tile = typeof loc.tile === 'function' ? loc.tile() : loc;
+            queue({
+                op: 'use-widget-on',
+                component_id: row.component_id,
+                kind: 'loc',
+                target_name: loc.name ?? null,
+                x: tile && typeof tile.x === 'number' ? tile.x : 0,
+                z: tile && typeof tile.z === 'number' ? tile.z : 0,
+                level: tile && typeof tile.level === 'number' ? tile.level : 0,
+                index: null,
+            });
+            return true;
+        },
         teleport() {
             throw notV1('Game.teleport');
         },
         energy() {
-            throw notV1('Game.energy');
+            return typeof snap().run_energy === 'number' ? snap().run_energy : 0;
         },
         weight() {
             throw notV1('Game.weight');
@@ -152,16 +174,13 @@ export const Game = new Proxy(
             throw notV1('Game.combatStyleMode');
         },
         sceneReady() {
-            throw notV1('Game.sceneReady');
+            return snap().ingame === true && snap().scene_state === 2;
         },
         sceneState() {
-            throw notV1('Game.sceneState');
+            return typeof snap().scene_state === 'number' ? snap().scene_state : 0;
         },
         attackedByPlayer() {
             throw notV1('Game.attackedByPlayer');
-        },
-        async castOnLoc() {
-            throw notV1('Game.castOnLoc');
         },
         async castOnNpc() {
             throw notV1('Game.castOnNpc');

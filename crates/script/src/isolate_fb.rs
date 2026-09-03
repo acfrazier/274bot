@@ -123,8 +123,9 @@ const VT_SNAP_SIDE_TAB_IFACES: VOffsetT = 74;
 const VT_SNAP_SPELL_BUTTONS: VOffsetT = 76;
 const VT_SNAP_CHAT_LINES: VOffsetT = 78;
 const VT_SNAP_NEAREST_BOOTH: VOffsetT = 80;
-const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
-const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
+    const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
+    const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
+    const VT_SNAP_SCENE_STATE: VOffsetT = 86;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -378,6 +379,8 @@ pub struct SnapshotInput<'a> {
     pub bank_note_on: i32,
     /// The bank Item toggle component id (-1 when absent).
     pub bank_note_off: i32,
+    /// Client `GameSnapshot::scene_state` (2 = 3D ready).
+    pub scene_state: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -755,6 +758,7 @@ impl Verifiable for SnapshotReader<'_> {
             )?
             .visit_field::<i32>("bank_note_on", VT_SNAP_BANK_NOTE_ON, false)?
             .visit_field::<i32>("bank_note_off", VT_SNAP_BANK_NOTE_OFF, false)?
+            .visit_field::<i32>("scene_state", VT_SNAP_SCENE_STATE, false)?
             .finish();
         Ok(())
     }
@@ -857,6 +861,12 @@ impl SnapshotReader<'_> {
     }
     pub fn bank_note_off(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_OFF, None) }.unwrap_or(-1)
+    }
+    pub fn has_scene_state(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SCENE_STATE, None).is_some() }
+    }
+    pub fn scene_state(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SCENE_STATE, None) }.unwrap_or(0)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1210,6 +1220,7 @@ pub struct SnapshotFingerprint {
     pub chat_lines: Vec<(i32, String)>,
     pub bank_note_on: i32,
     pub bank_note_off: i32,
+    pub scene_state: i32,
 }
 
 impl SnapshotFingerprint {
@@ -1345,6 +1356,7 @@ impl SnapshotFingerprint {
                 .collect(),
             bank_note_on: input.bank_note_on,
             bank_note_off: input.bank_note_off,
+            scene_state: input.scene_state,
         }
     }
 }
@@ -1396,6 +1408,7 @@ pub struct DeltaMask {
     pub chat_lines: bool,
     pub bank_note_on: bool,
     pub bank_note_off: bool,
+    pub scene_state: bool,
 }
 
 impl DeltaMask {
@@ -1442,6 +1455,7 @@ impl DeltaMask {
             chat_lines: true,
             bank_note_on: true,
             bank_note_off: true,
+            scene_state: true,
         }
     }
 
@@ -1497,6 +1511,7 @@ impl DeltaMask {
             chat_lines: next.chat_lines != last.chat_lines,
             bank_note_on: next.bank_note_on != last.bank_note_on,
             bank_note_off: next.bank_note_off != last.bank_note_off,
+            scene_state: next.scene_state != last.scene_state,
         }
     }
 }
@@ -1924,6 +1939,9 @@ fn encode_snapshot_masked_into(
     }
     if mask.bank_note_off {
         b.push_slot_always(VT_SNAP_BANK_NOTE_OFF, input.bank_note_off);
+    }
+    if mask.scene_state {
+        b.push_slot_always(VT_SNAP_SCENE_STATE, input.scene_state);
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -3067,6 +3085,7 @@ mod tests {
             chat_lines: &[],
             bank_note_on: -1,
             bank_note_off: -1,
+            scene_state: 0,
         }
     }
 

@@ -204,6 +204,7 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         nearest_booth: None,
         bank_note_on: -1,
         bank_note_off: -1,
+        scene_state: 0,
     }
 }
 
@@ -3272,5 +3273,93 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
     assert_eq!(probe, 7, "snap.totalHealth must alias posted max_health");
+    iso.join();
+}
+
+#[test]
+fn game_scene_state_ready_and_energy_read_posted_fields() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            state: Game.sceneState(),
+            ready: Game.sceneReady(),
+            energy: Game.energy(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.ingame = true;
+    snap.scene_state = 2;
+    snap.run_energy = 50;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe["state"], 2, "sceneState forwards posted scene_state");
+    assert_eq!(
+        probe["ready"], true,
+        "sceneReady is ingame && scene_state==2"
+    );
+    assert_eq!(probe["energy"], 50, "energy forwards posted run_energy");
+    iso.join();
+}
+
+#[test]
+fn game_cast_on_loc_queues_use_widget_on() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+import { Locs } from '../../api/locs/Locs.js';
+export default class T extends LoopingBot {
+    async loop() {
+        const loc = Locs.query().nearest();
+        globalThis.__probe = await Game.castOnLoc('High level alchemy', loc);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Use".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 873,
+        name: Some("Tree"),
+        x: 3220,
+        z: 3220,
+        level: 0,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: false,
+        reachable_adj: false,
+    }];
+    let spells = [script::isolate_fb::CombatStyleInput {
+        mode: 0,
+        label: "High level alchemy",
+        component_id: 1234,
+    }];
+    let mut snap = base_snapshot();
+    snap.locs = &locs;
+    snap.spell_buttons = &spells;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__probe");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::UseWidgetOn {
+            component_id: 1234,
+            kind: "loc".into(),
+            target_name: Some("Tree".into()),
+            x: 3220,
+            z: 3220,
+            level: 0,
+            index: None,
+        }],
+        "Game.castOnLoc queues use-widget-on from posted spell label and loc tile"
+    );
     iso.join();
 }
