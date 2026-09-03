@@ -2197,17 +2197,24 @@ fn at_trade_courtyard(here: WorldTile) -> bool {
         && here.level == TRADE_COURTYARD.level
 }
 
+/// Fail-closed when the trade screen is open but the posted accept
+/// component id is absent (companion cannot press Accept).
+fn trade_accept_missing_block(trade: &api::snapshot::TradeView) -> Option<&'static str> {
+    if (trade.offer_open || trade.confirm_open) && trade.accept_component_id < 0 {
+        Some("BLOCKED: missing trade accept com")
+    } else {
+        None
+    }
+}
+
 fn press_trade_accept(c: &mut Client) {
     let mut snap = GameSnapshot::default();
     snap.rebuild(c);
     let trade = snap.trade();
-    if !trade.offer_open && !trade.confirm_open {
-        return;
+    if let Some(msg) = trade_accept_missing_block(trade) {
+        fail(msg);
     }
-    if trade.accept_component_id < 0 {
-        if debug_enabled() {
-            eprintln!("[trade-companion] trade open but accept id missing");
-        }
+    if !trade.offer_open && !trade.confirm_open {
         return;
     }
     let mut ix = Interactions::new(&snap, c);
@@ -2583,6 +2590,52 @@ mod tests {
         );
         assert_eq!(s.steps[i].wait.arm, Proof::Stat { id: 16, min: 0 });
         assert_eq!(s.steps[i].wait.budget_ticks, 1);
+    }
+
+    #[test]
+    fn script_trade_companion_blocks_when_trade_open_without_accept_id() {
+        use api::snapshot::GameSnapshot;
+        use client::client::{Client, ClientConfig};
+        use client::dash3d::ClientPlayer;
+        use client::io::ServerProt;
+
+        let mut c = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        c.ingame = true;
+        c.scene_state = 2;
+        c.local_player = Some(ClientPlayer::at(20, 20));
+        // TRADEMAIN without Accept/Decline buttons in the modal tree.
+        c.main_modal_id = 3323;
+        c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+
+        let mut snap = GameSnapshot::default();
+        snap.rebuild(&c);
+        let trade = snap.trade();
+        assert!(trade.offer_open, "offer screen must be open");
+        assert!(
+            trade.accept_component_id < 0,
+            "accept id must be missing without iface buttons"
+        );
+        assert_eq!(
+            trade_accept_missing_block(trade),
+            Some("BLOCKED: missing trade accept com")
+        );
+
+        c.main_modal_id = 3443; // TRADECONFIRM
+        c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+        snap.rebuild(&c);
+        let trade = snap.trade();
+        assert!(trade.confirm_open, "confirm screen must be open");
+        assert!(trade.accept_component_id < 0);
+        assert_eq!(
+            trade_accept_missing_block(trade),
+            Some("BLOCKED: missing trade accept com")
+        );
     }
 
     #[test]
