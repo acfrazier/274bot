@@ -470,4 +470,7 @@ pub enum InteractReq {
     /// Toggle bank withdraw-as-note on/off.
     #[serde(rename = "set-note-mode")]
     SetNoteMode { on: bool },
+    /// Host-side orbit yaw write (`client.orbit_camera_yaw`); no opcode.
+    #[serde(rename = "set-camera-yaw")]
+    SetCameraYaw { yaw: i32 },
 }

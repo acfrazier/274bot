@@ -168,19 +168,20 @@ export const Game = new Proxy(
             return typeof snap().run_energy === 'number' ? snap().run_energy : 0;
         },
         weight() {
-            throw notImpl('Game.weight');
+            return typeof snap().weight === 'number' ? snap().weight : 0;
         },
         cameraYaw() {
-            throw notImpl('Game.cameraYaw');
+            return typeof snap().camera_yaw === 'number' ? snap().camera_yaw : 0;
         },
         cameraPitch() {
-            throw notImpl('Game.cameraPitch');
+            return typeof snap().camera_pitch === 'number' ? snap().camera_pitch : 0;
         },
-        setCameraYaw() {
-            throw notImpl('Game.setCameraYaw');
+        setCameraYaw(yaw) {
+            queue({ op: 'set-camera-yaw', yaw: yaw | 0 });
+            return true;
         },
         combatStyleMode() {
-            throw notImpl('Game.combatStyleMode');
+            return Game.combatMode();
         },
         sceneReady() {
             return snap().ingame === true && snap().scene_state === 2;

@@ -1371,6 +1371,33 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             let zero = num(&mut scope, 0.0);
             set(&mut scope, obj, "scene_state", zero)?;
         }
+        if snap.has_weight() {
+            let weight = num(&mut scope, snap.weight() as f64);
+            set(&mut scope, obj, "weight", weight)?;
+        } else if !had {
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, obj, "weight", zero)?;
+        }
+        if snap.has_camera_yaw() {
+            let camera_yaw = num(&mut scope, snap.camera_yaw() as f64);
+            set(&mut scope, obj, "camera_yaw", camera_yaw)?;
+        } else if !had {
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, obj, "camera_yaw", zero)?;
+        }
+        if snap.has_camera_pitch() {
+            let camera_pitch = num(&mut scope, snap.camera_pitch() as f64);
+            set(&mut scope, obj, "camera_pitch", camera_pitch)?;
+        } else if !had {
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, obj, "camera_pitch", zero)?;
+        }
+        if snap.has_teleports_enabled() {
+            let teleports_enabled = v8::Boolean::new(&mut scope, snap.teleports_enabled());
+            set(&mut scope, obj, "teleports_enabled", teleports_enabled.into())?;
+        } else if !had {
+            set(&mut scope, obj, "teleports_enabled", falsy)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;

@@ -68,6 +68,11 @@ pub trait Driver {
     fn click_side_tab(&mut self, _tab: i32) -> bool {
         false
     }
+    /// Host-side orbit yaw write (`Client::orbit_camera_yaw`); no opcode.
+    /// Default no-op for recording stubs.
+    fn set_orbit_camera_yaw(&mut self, _yaw: i32) -> bool {
+        false
+    }
 }
 
 impl Driver for Client {
@@ -161,6 +166,12 @@ impl Driver for Client {
         self.active_icon = tab;
         self.redraw_side = true;
         self.redraw_icons = true;
+        true
+    }
+
+    fn set_orbit_camera_yaw(&mut self, yaw: i32) -> bool {
+        self.orbit_camera_yaw = yaw;
+        self.orbit_camera_yaw_velocity = 0;
         true
     }
 }

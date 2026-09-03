@@ -205,6 +205,10 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         bank_note_on: -1,
         bank_note_off: -1,
         scene_state: 0,
+        weight: 0,
+        camera_yaw: 0,
+        camera_pitch: 0,
+        teleports_enabled: false,
     }
 }
 
@@ -3345,6 +3349,59 @@ export default class T extends LoopingBot {
         "sceneReady is ingame && scene_state==2"
     );
     assert_eq!(probe["energy"], 50, "energy forwards posted run_energy");
+    iso.join();
+}
+
+#[test]
+fn game_weight_and_camera_read_posted_fields() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            w: Game.weight(),
+            yaw: Game.cameraYaw(),
+            pitch: Game.cameraPitch(),
+            mode: Game.combatStyleMode(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.weight = 24;
+    snap.camera_yaw = 512;
+    snap.camera_pitch = 200;
+    snap.varps = &[script::isolate_fb::VarpInput { index: 43, value: 1 }];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let v = iso.probe("__probe").unwrap();
+    assert_eq!(v["w"], 24);
+    assert_eq!(v["yaw"], 512);
+    assert_eq!(v["pitch"], 200);
+    assert_eq!(v["mode"], 1, "combatStyleMode is varp 43");
+    iso.join();
+}
+
+#[test]
+fn set_camera_yaw_queues_host_write() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = Game.setCameraYaw(100);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), true);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::SetCameraYaw { yaw: 100 }],
+        "setCameraYaw queues set-camera-yaw for the host write"
+    );
     iso.join();
 }
 

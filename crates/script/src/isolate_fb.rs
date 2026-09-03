@@ -126,6 +126,10 @@ const VT_SNAP_NEAREST_BOOTH: VOffsetT = 80;
     const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
     const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
     const VT_SNAP_SCENE_STATE: VOffsetT = 86;
+const VT_SNAP_WEIGHT: VOffsetT = 88;
+const VT_SNAP_CAMERA_YAW: VOffsetT = 90;
+const VT_SNAP_CAMERA_PITCH: VOffsetT = 92;
+const VT_SNAP_TELEPORTS_ENABLED: VOffsetT = 94;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -381,6 +385,14 @@ pub struct SnapshotInput<'a> {
     pub bank_note_off: i32,
     /// Client `GameSnapshot::scene_state` (2 = 3D ready).
     pub scene_state: i32,
+    /// Local player run weight from `GameSnapshot::local_player`.
+    pub weight: i32,
+    /// Orbit camera yaw (`CameraView::orbit_yaw`).
+    pub camera_yaw: i32,
+    /// Orbit camera pitch (`CameraView::orbit_pitch`).
+    pub camera_pitch: i32,
+    /// Whether packed nav last armed with `allow_teleports` (default off).
+    pub teleports_enabled: bool,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -759,6 +771,10 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("bank_note_on", VT_SNAP_BANK_NOTE_ON, false)?
             .visit_field::<i32>("bank_note_off", VT_SNAP_BANK_NOTE_OFF, false)?
             .visit_field::<i32>("scene_state", VT_SNAP_SCENE_STATE, false)?
+            .visit_field::<i32>("weight", VT_SNAP_WEIGHT, false)?
+            .visit_field::<i32>("camera_yaw", VT_SNAP_CAMERA_YAW, false)?
+            .visit_field::<i32>("camera_pitch", VT_SNAP_CAMERA_PITCH, false)?
+            .visit_field::<bool>("teleports_enabled", VT_SNAP_TELEPORTS_ENABLED, false)?
             .finish();
         Ok(())
     }
@@ -867,6 +883,34 @@ impl SnapshotReader<'_> {
     }
     pub fn scene_state(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_SCENE_STATE, None) }.unwrap_or(0)
+    }
+    pub fn has_weight(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_WEIGHT, None).is_some() }
+    }
+    pub fn weight(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_WEIGHT, None) }.unwrap_or(0)
+    }
+    pub fn has_camera_yaw(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_YAW, None).is_some() }
+    }
+    pub fn camera_yaw(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_YAW, None) }.unwrap_or(0)
+    }
+    pub fn has_camera_pitch(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_PITCH, None).is_some() }
+    }
+    pub fn camera_pitch(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_PITCH, None) }.unwrap_or(0)
+    }
+    pub fn has_teleports_enabled(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_TELEPORTS_ENABLED, None)
+                .is_some()
+        }
+    }
+    pub fn teleports_enabled(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_TELEPORTS_ENABLED, None) }.unwrap_or(false)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1221,6 +1265,10 @@ pub struct SnapshotFingerprint {
     pub bank_note_on: i32,
     pub bank_note_off: i32,
     pub scene_state: i32,
+    pub weight: i32,
+    pub camera_yaw: i32,
+    pub camera_pitch: i32,
+    pub teleports_enabled: bool,
 }
 
 impl SnapshotFingerprint {
@@ -1357,6 +1405,10 @@ impl SnapshotFingerprint {
             bank_note_on: input.bank_note_on,
             bank_note_off: input.bank_note_off,
             scene_state: input.scene_state,
+            weight: input.weight,
+            camera_yaw: input.camera_yaw,
+            camera_pitch: input.camera_pitch,
+            teleports_enabled: input.teleports_enabled,
         }
     }
 }
@@ -1409,6 +1461,10 @@ pub struct DeltaMask {
     pub bank_note_on: bool,
     pub bank_note_off: bool,
     pub scene_state: bool,
+    pub weight: bool,
+    pub camera_yaw: bool,
+    pub camera_pitch: bool,
+    pub teleports_enabled: bool,
 }
 
 impl DeltaMask {
@@ -1456,6 +1512,10 @@ impl DeltaMask {
             bank_note_on: true,
             bank_note_off: true,
             scene_state: true,
+            weight: true,
+            camera_yaw: true,
+            camera_pitch: true,
+            teleports_enabled: true,
         }
     }
 
@@ -1512,6 +1572,10 @@ impl DeltaMask {
             bank_note_on: next.bank_note_on != last.bank_note_on,
             bank_note_off: next.bank_note_off != last.bank_note_off,
             scene_state: next.scene_state != last.scene_state,
+            weight: next.weight != last.weight,
+            camera_yaw: next.camera_yaw != last.camera_yaw,
+            camera_pitch: next.camera_pitch != last.camera_pitch,
+            teleports_enabled: next.teleports_enabled != last.teleports_enabled,
         }
     }
 }
@@ -1942,6 +2006,18 @@ fn encode_snapshot_masked_into(
     }
     if mask.scene_state {
         b.push_slot_always(VT_SNAP_SCENE_STATE, input.scene_state);
+    }
+    if mask.weight {
+        b.push_slot_always(VT_SNAP_WEIGHT, input.weight);
+    }
+    if mask.camera_yaw {
+        b.push_slot_always(VT_SNAP_CAMERA_YAW, input.camera_yaw);
+    }
+    if mask.camera_pitch {
+        b.push_slot_always(VT_SNAP_CAMERA_PITCH, input.camera_pitch);
+    }
+    if mask.teleports_enabled {
+        b.push_slot_always(VT_SNAP_TELEPORTS_ENABLED, input.teleports_enabled);
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -2827,6 +2903,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             "set-note-mode" => out.push(crate::shim::InteractReq::SetNoteMode {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
+            "set-camera-yaw" => out.push(crate::shim::InteractReq::SetCameraYaw { yaw: row.x() }),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -2862,6 +2939,7 @@ fn interact_off<'b>(
         InteractReq::SetRun { .. } => "set-run",
         InteractReq::SetRetaliate { .. } => "set-retaliate",
         InteractReq::SetNoteMode { .. } => "set-note-mode",
+        InteractReq::SetCameraYaw { .. } => "set-camera-yaw",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -3033,6 +3111,9 @@ fn interact_off<'b>(
         | InteractReq::SetNoteMode { .. } => {
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }
+        InteractReq::SetCameraYaw { yaw } => {
+            b.push_slot_always(VT_IN_X, *yaw);
+        }
     }
     WIPOffset::new(b.end_table(tab).value())
 }
@@ -3086,6 +3167,10 @@ mod tests {
             bank_note_on: -1,
             bank_note_off: -1,
             scene_state: 0,
+            weight: 0,
+            camera_yaw: 0,
+            camera_pitch: 0,
+            teleports_enabled: false,
         }
     }
 

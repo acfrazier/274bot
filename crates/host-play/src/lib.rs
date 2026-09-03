@@ -646,6 +646,11 @@ fn script_observe(
             let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
             let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
             if slot.load_active() {
+                let teleports_enabled = navs
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .is_some_and(|b| b.allow_teleports);
                 let bytes = with_script_snapshot_input(
                     tick,
                     here,
@@ -656,6 +661,7 @@ fn script_observe(
                     world.as_deref(),
                     hold,
                     ours,
+                    teleports_enabled,
                     |input| slot.encode_snapshot_delta(input, force_banks),
                 );
                 slot.post_snapshot(bytes);
@@ -791,6 +797,16 @@ fn dispatch_script_interact(
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::shim::InteractReq;
     let mut wrote = false;
+    let camera_yaws: Vec<i32> = reqs
+        .iter()
+        .filter_map(|req| {
+            if let InteractReq::SetCameraYaw { yaw } = req {
+                Some(*yaw)
+            } else {
+                None
+            }
+        })
+        .collect();
     let mut ix = api::interact::Interactions::new(snapshot, driver);
     if debug_enabled() {
         for req in &reqs {
@@ -1107,7 +1123,11 @@ fn dispatch_script_interact(
             InteractReq::SetNoteMode { on } => {
                 wrote |= matches!(ix.set_note_mode(on), SendResult::Sent { .. });
             }
+            InteractReq::SetCameraYaw { .. } => {}
         }
+    }
+    for yaw in camera_yaws {
+        wrote |= driver.set_orbit_camera_yaw(yaw);
     }
     wrote
 }
@@ -1295,6 +1315,7 @@ fn script_snapshot_fb(
     world: Option<&NavWorld>,
     hold: bool,
     ours: bool,
+    teleports_enabled: bool,
 ) -> (Vec<u8>, script::isolate_fb::SnapshotFingerprint) {
     with_script_snapshot_input(
         tick,
@@ -1306,6 +1327,7 @@ fn script_snapshot_fb(
         world,
         hold,
         ours,
+        teleports_enabled,
         |input| script::isolate_fb::encode_snapshot_delta(last, input, force_banks),
     )
 }
@@ -1324,6 +1346,7 @@ fn with_script_snapshot_input<R>(
     world: Option<&NavWorld>,
     hold: bool,
     ours: bool,
+    teleports_enabled: bool,
     f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
 ) -> R {
     use script::isolate_fb::{
@@ -1924,6 +1947,13 @@ fn with_script_snapshot_input<R>(
             .map(|c| c.off_component_id)
             .unwrap_or(-1),
         scene_state: snapshot.map(|s| s.scene_state()).unwrap_or(0),
+        weight: snapshot
+            .and_then(|s| s.local_player())
+            .map(|lp| lp.weight)
+            .unwrap_or(0),
+        camera_yaw: snapshot.map(|s| s.camera().orbit_yaw).unwrap_or(0),
+        camera_pitch: snapshot.map(|s| s.camera().orbit_pitch).unwrap_or(0),
+        teleports_enabled,
     };
     f(&input)
 }
@@ -1977,6 +2007,8 @@ struct NavBot {
     traveller: Traveller,
     route: Option<Route>,
     bank_fetch: Option<PendingBankFetch>,
+    /// Last packed-walk `allow_teleports` opt-in (`Traversal.teleportsEnabled`).
+    allow_teleports: bool,
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and
@@ -2046,6 +2078,12 @@ impl ScriptWalkArm {
         {
             opts.essence = Some(ess);
         }
+        self.navs
+            .lock()
+            .unwrap()
+            .entry(self.name.clone())
+            .or_default()
+            .allow_teleports = opts.allow_teleports;
         let world = Arc::clone(world);
         let navs = Arc::clone(&self.navs);
         let name = self.name.clone();
@@ -2350,6 +2388,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
         traveller: Traveller::default(),
         route: arm.route.clone(),
         bank_fetch: arm.bank_fetch.take(),
+        allow_teleports: false,
     };
     let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here);
     arm.bank_fetch = bot.bank_fetch;
@@ -2370,6 +2409,7 @@ pub fn walk_arm_bank_fetch_freezes_follow(arm: &WalkArm) -> bool {
         traveller: Traveller::default(),
         route: arm.route.clone(),
         bank_fetch: arm.bank_fetch.clone(),
+        allow_teleports: false,
     })
 }
 
@@ -6533,6 +6573,7 @@ mod tests {
             None,
             true,
             false,
+            false,
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
         assert_eq!(view.tick(), 7);
@@ -6572,7 +6613,7 @@ mod tests {
 
         // No tile / no snapshot: fail-closed nulls and flags.
         let (bare_bytes, _) = script_snapshot_fb(
-            None, false, 1, None, false, None, None, None, None, false, true,
+            None, false, 1, None, false, None, None, None, None, false, true, false,
         );
         let bare = script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
         assert!(bare.here().is_none());
@@ -6691,6 +6732,7 @@ mod tests {
             None,
             false,
             false,
+            false,
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
         let labels: Vec<String> = view
@@ -6763,6 +6805,7 @@ mod tests {
             None,
             false,
             false,
+            false,
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
         let npcs = view.npcs();
@@ -6827,6 +6870,7 @@ mod tests {
             None,
             false,
             false,
+            false,
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
         let locs = view.locs();
@@ -6889,6 +6933,7 @@ mod tests {
             None,
             false,
             false,
+            false,
         )
         .0;
         let on = script::isolate_fb::decode_snapshot(&on_bytes).expect("on blob");
@@ -6907,6 +6952,7 @@ mod tests {
             Some(&snap),
             None,
             None,
+            false,
             false,
             false,
         )
@@ -6987,6 +7033,7 @@ mod tests {
             world.as_deref(),
             true,
             false,
+            false,
         );
         let kf = script::isolate_fb::decode_snapshot(&keyframe).expect("keyframe decodes");
         assert!(kf.has_here());
@@ -7007,6 +7054,7 @@ mod tests {
             Some(&names),
             world.as_deref(),
             true,
+            false,
             false,
         );
         let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
@@ -7036,6 +7084,7 @@ mod tests {
             world.as_deref(),
             true,
             false,
+            false,
         );
         let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
         assert!(view.has_inv(), "changed inv is carried");
@@ -7055,6 +7104,7 @@ mod tests {
             Some(&names),
             world.as_deref(),
             true,
+            false,
             false,
         );
         let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
@@ -8558,6 +8608,7 @@ export default class T extends LoopingBot {
                 },
                 route: None,
                 bank_fetch: None,
+                allow_teleports: false,
             },
         );
         // The walk target is Aubury's anchor; the origin is the mine pad.

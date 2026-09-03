@@ -52,7 +52,7 @@ export const Traversal = proxy('Traversal', {
         throw notImpl('Traversal.remaining');
     },
     teleportsEnabled() {
-        throw notImpl('Traversal.teleportsEnabled');
+        return snap().teleports_enabled === true;
     },
     requestRepath(_reason) {
         throw notImpl('Traversal.requestRepath');

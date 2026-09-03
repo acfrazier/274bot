@@ -177,13 +177,17 @@ table Snapshot {
   bank_note_on: int;
   bank_note_off: int;
   scene_state: int;
+  weight: int;
+  camera_yaw: int;
+  camera_pitch: int;
+  teleports_enabled: bool;
 }
 
 // One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "walk-to" | "deposit" | "withdraw" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "if-button" | "close-modal" | "side-tab"
-// | "wear" | "set-run" | "set-retaliate" | "set-note-mode".
+// | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;
