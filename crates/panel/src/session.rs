@@ -47,7 +47,9 @@ use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 
 /// Catalog card live_prepare stashes so the StartScript pump can
-/// `script_start_load` once after seed waits.
+/// `script_start_load` once after seed waits. Fleet P2P golds stash one
+/// entry per slot (driven + companion).
+#[derive(Clone)]
 struct PendingCatalogStart {
     slot: String,
     js: String,
@@ -56,11 +58,11 @@ struct PendingCatalogStart {
     siblings: Vec<(String, String)>,
 }
 
-/// When the runner is on [`scenario::StepKind::StartScript`], start the
-/// stashed catalog isolate once. Returns false when Start was attempted
-/// and failed, so the pump must not consume the one-tick wait.
+/// When the runner is on [`scenario::StepKind::StartScript`], start every
+/// stashed isolate. Returns false when Start was attempted and failed,
+/// so the pump must not consume the one-tick wait.
 fn fire_pending_catalog_start(
-    pending: &Mutex<Option<PendingCatalogStart>>,
+    pending: &Mutex<Vec<PendingCatalogStart>>,
     handle: &Mutex<Option<host_play::ScriptStartHandle>>,
     runner: &scenario::ScenarioRunner,
 ) -> bool {
@@ -68,27 +70,66 @@ fn fire_pending_catalog_start(
         return true;
     }
     let mut pending = pending.lock().unwrap();
-    let Some(card) = pending.as_ref() else {
+    if pending.is_empty() {
         return true;
-    };
+    }
     let handle = handle.lock().unwrap();
     let Some(h) = handle.as_ref() else {
         return false;
     };
-    if h.start_load(
-        &card.slot,
-        card.js.clone(),
-        card.shape,
-        card.bag.clone(),
-        card.siblings.clone(),
-    )
-    .is_ok()
-    {
-        pending.take();
-        true
-    } else {
-        false
+    for card in pending.iter() {
+        if h.start_load(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+        )
+        .is_err()
+        {
+            return false;
+        }
     }
+    pending.clear();
+    true
+}
+
+/// Stash StartScript isolate(s). Driven slot always. When
+/// `inject_companion_as` is set on a fleet, also Start the same JS on
+/// slot 1 with that key pointing at the driven minted name (P2P Trade).
+fn stash_pending_starts(
+    pending: &Mutex<Vec<PendingCatalogStart>>,
+    names: &[String],
+    inject_companion_as: Option<&str>,
+    js: String,
+    shape: script::LoadShape,
+    bag: Option<serde_json::Map<String, serde_json::Value>>,
+    siblings: Vec<(String, String)>,
+) {
+    let mut starts = vec![PendingCatalogStart {
+        slot: names[0].clone(),
+        js: js.clone(),
+        shape,
+        bag: bag.clone(),
+        siblings: siblings.clone(),
+    }];
+    if let Some(key) = inject_companion_as {
+        if names.len() > 1 {
+            let mut companion_bag = bag.unwrap_or_default();
+            companion_bag.insert(
+                key.to_string(),
+                serde_json::Value::String(names[0].clone()),
+            );
+            starts.push(PendingCatalogStart {
+                slot: names[1].clone(),
+                js,
+                shape,
+                bag: Some(companion_bag),
+                siblings,
+            });
+        }
+    }
+    *pending.lock().unwrap() = starts;
 }
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -804,7 +845,7 @@ pub struct Session {
     pub scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
     /// Catalog card `live_prepare_script` stashes; the live pump Starts
     /// it once on [`scenario::StepKind::StartScript`].
-    pending_script: Arc<Mutex<Option<PendingCatalogStart>>>,
+    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
     /// Isolate-start handle the per-frame hook uses (filled after Play).
     script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
     /// Focused-slot speaker gate: at most one cpal speaker, owned by the
@@ -944,7 +985,7 @@ impl Session {
             },
             rs2b0t_filled: false,
             scenario: Arc::new(Mutex::new(None)),
-            pending_script: Arc::new(Mutex::new(None)),
+            pending_script: Arc::new(Mutex::new(Vec::new())),
             script_start_handle: Arc::new(Mutex::new(None)),
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
@@ -1398,9 +1439,10 @@ impl Session {
         }
         *self.scenario.lock().unwrap() = Some(runner);
         // A scenario that names a script card (`start_script`) selects
-        // the script on the driven slot — Start waits for
-        // [`scenario::StepKind::StartScript`] after seed. Catalog cards
-        // come from `$RS2B0T`; in-tree file fixtures load from
+        // the script; Start waits for [`scenario::StepKind::StartScript`]
+        // after seed. With `inject_companion_as` on a fleet, the same JS
+        // Starts on slot 1 too (reciprocal partner). Catalog cards come
+        // from `$RS2B0T`; in-tree file fixtures load from
         // `crates/script/tests/fixtures/`.
         if let Some(card_name) = view.start_script {
             if let Some(fixture) = script::live_file_fixture_path(card_name) {
@@ -1424,13 +1466,15 @@ impl Session {
                     &card.settings_schema,
                 );
                 let siblings = self.sibling_modules_for_card(&card)?;
-                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                    slot: names[0].clone(),
-                    js: card.js.clone(),
-                    shape: card.shape,
+                stash_pending_starts(
+                    &self.pending_script,
+                    &names,
+                    view.inject_companion_as,
+                    card.js.clone(),
+                    card.shape,
                     bag,
                     siblings,
-                });
+                );
             } else {
                 self.fill_rs2b0t_cards_once();
                 self.js
@@ -1453,13 +1497,15 @@ impl Session {
                     &card.settings_schema,
                 );
                 let siblings = self.sibling_modules_for_card(&card)?;
-                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                    slot: names[0].clone(),
-                    js: card.js.clone(),
-                    shape: card.shape,
+                stash_pending_starts(
+                    &self.pending_script,
+                    &names,
+                    view.inject_companion_as,
+                    card.js.clone(),
+                    card.shape,
                     bag,
                     siblings,
-                });
+                );
             }
         }
         self.login_all();
@@ -5733,19 +5779,31 @@ mod tests {
             .map(|p| p.username.clone())
             .collect();
         assert_eq!(names.len(), 2, "script_trade is a two-profile fleet");
-        let bag = s
-            .pending_script
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("file start stashed")
-            .bag
-            .clone()
-            .expect("partner inject is posted");
+        let pending = s.pending_script.lock().unwrap().clone();
         assert_eq!(
-            bag.get("partner"),
+            pending.len(),
+            2,
+            "StartScript loads TradeBot on both fleet slots"
+        );
+        assert_eq!(pending[0].slot, names[0], "driven slot is first start");
+        assert_eq!(pending[1].slot, names[1], "companion slot is second start");
+        assert_eq!(
+            pending[0]
+                .bag
+                .as_ref()
+                .expect("driven partner inject")
+                .get("partner"),
             Some(&serde_json::json!(names[1])),
-            "companion minted name is injected as partner"
+            "driven partner is the companion minted name"
+        );
+        assert_eq!(
+            pending[1]
+                .bag
+                .as_ref()
+                .expect("companion partner inject")
+                .get("partner"),
+            Some(&serde_json::json!(names[0])),
+            "companion partner is the driven minted name"
         );
         assert!(s.multibox, "fleet opens the MultiBox wall");
     }
@@ -5770,7 +5828,7 @@ mod tests {
             .pending_script
             .lock()
             .unwrap()
-            .as_ref()
+            .first()
             .expect("catalog start stashed")
             .bag
             .clone()

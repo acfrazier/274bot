@@ -3751,7 +3751,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_trade_request_queues_npc_trade() {
+fn isolate_trade_request_queues_player_trade() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
@@ -3767,12 +3767,11 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs,
-        vec![script::shim::InteractReq::Npc {
+        vec![script::shim::InteractReq::Player {
             name: "bob".into(),
             action: "Trade".into(),
-            index: None,
         }],
-        "Trade.request queues scene Trade-with via npc op"
+        "Trade.request queues scene Trade-with via player op"
     );
     iso.join();
 }

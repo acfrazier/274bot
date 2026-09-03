@@ -2037,12 +2037,12 @@ struct TradeAcceptSlot {
     tele_sent: bool,
 }
 
-/// The `script_trade` scenario: a two-bot fleet — profile 0 runs the
+/// The `script_trade` scenario: a two-bot fleet — both profiles Start the
 /// in-tree `TradeBot` fixture (Compat `Trade.request` / `offerAll` /
-/// `accept`); profile 1 is the rust acceptor that cheat-teles beside the
-/// driven bot after the mainland hop and presses Accept on both trade
-/// screens. Proof: the driven slot holds zero Coins after offering the
-/// seeded stack of twenty-five.
+/// `accept`) with reciprocal `partner` inject; profile 1 also rust-teles
+/// beside the driven bot after the mainland hop and presses Accept on
+/// both trade screens. Proof: the driven slot holds zero Coins after
+/// offering the seeded stack of twenty-five.
 fn script_trade_scenario() -> Scenario {
     let courtyard = TRADE_COURTYARD;
     Scenario {
@@ -2554,7 +2554,7 @@ mod tests {
             "has_item(Coins)<=0",
             "terminal proof is zero coins on the driven slot"
         );
-        assert_eq!(s.companions.len(), 1, "profile 1 rust-accepts");
+        assert_eq!(s.companions.len(), 1, "profile 1 rust-teles and rust-accepts");
         assert_eq!(s.companions[0].profile, 1);
         assert_eq!(s.settings.start_script, Some("TradeBot"));
         assert_eq!(s.settings.inject_companion_as, Some("partner"));

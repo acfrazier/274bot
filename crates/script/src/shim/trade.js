@@ -47,7 +47,7 @@ export const Trade = new Proxy(
             return nameCountRows('trade_theirs');
         },
         request(playerName) {
-            queue({ op: 'npc', name: String(playerName), action: 'Trade' });
+            queue({ op: 'player', name: String(playerName), action: 'Trade' });
         },
         offer(name) {
             const rows = findRows('trade_side', name);
