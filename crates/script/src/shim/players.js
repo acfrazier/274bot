@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy, presentOps, opIndex } from '../../shim/_kernel.js';
+import { snap, queue, proxy, presentOps, opIndex, notV1 } from '../../shim/_kernel.js';
 
 export class Player {
     constructor(row) {
@@ -9,6 +9,18 @@ export class Player {
 
     get name() {
         return this.snap.name ?? null;
+    }
+
+    get index() {
+        return this.snap.index;
+    }
+
+    get inCombat() {
+        return this.snap.in_combat === true;
+    }
+
+    targetsMe() {
+        throw notV1('Player.targetsMe');
     }
 
     tile() {

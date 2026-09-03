@@ -93,4 +93,19 @@ export const ChatDialog = proxy('ChatDialog', {
             3000,
         );
     },
+    isMainMakePanel() {
+        throw notV1('ChatDialog.isMainMakePanel');
+    },
+    mainMakeProducts() {
+        throw notV1('ChatDialog.mainMakeProducts');
+    },
+    async makeFromPanel() {
+        throw notV1('ChatDialog.makeFromPanel');
+    },
+    async makeFromPanelMax() {
+        throw notV1('ChatDialog.makeFromPanelMax');
+    },
+    async makeOne() {
+        throw notV1('ChatDialog.makeOne');
+    },
 });

@@ -110,6 +110,39 @@ export const Game = new Proxy(
         teleport() {
             throw notV1('Game.teleport');
         },
+        energy() {
+            throw notV1('Game.energy');
+        },
+        weight() {
+            throw notV1('Game.weight');
+        },
+        cameraYaw() {
+            throw notV1('Game.cameraYaw');
+        },
+        cameraPitch() {
+            throw notV1('Game.cameraPitch');
+        },
+        setCameraYaw() {
+            throw notV1('Game.setCameraYaw');
+        },
+        combatStyleMode() {
+            throw notV1('Game.combatStyleMode');
+        },
+        sceneReady() {
+            throw notV1('Game.sceneReady');
+        },
+        sceneState() {
+            throw notV1('Game.sceneState');
+        },
+        attackedByPlayer() {
+            throw notV1('Game.attackedByPlayer');
+        },
+        async castOnLoc() {
+            throw notV1('Game.castOnLoc');
+        },
+        async castOnNpc() {
+            throw notV1('Game.castOnNpc');
+        },
     },
     {
         get(target, prop) {

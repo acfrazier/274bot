@@ -1,4 +1,4 @@
-import { snap, queue, proxy, chebyshev } from '../../shim/_kernel.js';
+import { snap, queue, proxy, chebyshev, notV1 } from '../../shim/_kernel.js';
 import { Execution } from '../execution/Execution.js';
 
 function allowTeleports(opts) {
@@ -44,5 +44,23 @@ export const Traversal = proxy('Traversal', {
             const h = snap().here;
             return h && chebyshev(h, target) <= radius;
         }, opts.timeoutMs ?? 60_000);
+    },
+    preload() {
+        throw notV1('Traversal.preload');
+    },
+    remaining() {
+        throw notV1('Traversal.remaining');
+    },
+    teleportsEnabled() {
+        throw notV1('Traversal.teleportsEnabled');
+    },
+    requestRepath(_reason) {
+        throw notV1('Traversal.requestRepath');
+    },
+    get pureWalk() {
+        throw notV1('Traversal.pureWalk');
+    },
+    get withTeles() {
+        throw notV1('Traversal.withTeles');
     },
 });

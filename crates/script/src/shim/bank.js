@@ -142,6 +142,27 @@ export const Bank = new Proxy(
         async openNearest() {
             return Bank.openBooth();
         },
+        async waitReady(_timeoutMs, _log) {
+            throw notV1('Bank.waitReady');
+        },
+        snapshotReady() {
+            throw notV1('Bank.snapshotReady');
+        },
+        snapshotGeneration() {
+            throw notV1('Bank.snapshotGeneration');
+        },
+        async waitSnapshotAfter(_generation, _timeoutMs) {
+            throw notV1('Bank.waitSnapshotAfter');
+        },
+        countById(_id) {
+            throw notV1('Bank.countById');
+        },
+        async withdrawLoad(_name) {
+            throw notV1('Bank.withdrawLoad');
+        },
+        async openNearestAccess(_access, _log) {
+            throw notV1('Bank.openNearestAccess');
+        },
     },
     {
         get(target, prop) {

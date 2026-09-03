@@ -186,6 +186,22 @@ fn parse_members(src: &str, start: usize, end: usize) -> Vec<String> {
                 i += "async ".len();
                 continue;
             }
+            if src[i..].starts_with("public ") {
+                i += "public ".len();
+                continue;
+            }
+            if src[i..].starts_with("private ") {
+                i += "private ".len();
+                continue;
+            }
+            if src[i..].starts_with("protected ") {
+                i += "protected ".len();
+                continue;
+            }
+            if src[i..].starts_with("override ") {
+                i += "override ".len();
+                continue;
+            }
             if src[i..].starts_with("get ") || src[i..].starts_with("set ") {
                 i += 4;
                 continue;
@@ -397,4 +413,264 @@ fn match_pair(src: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<usize
         i += 1;
     }
     None
+}
+
+/// `crates/script/src/shim/declared_surface.js` — generated from the fixture.
+pub fn declared_surface_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/shim/declared_surface.js")
+}
+
+struct Reexport {
+    names: &'static [&'static str],
+    line: &'static str,
+}
+
+const REEXPORTS: &[Reexport] = &[
+    Reexport {
+        names: &["Game"],
+        line: "export { Game } from '../../api/game/Game.js';",
+    },
+    Reexport {
+        names: &["Inventory"],
+        line: "export { Inventory } from '../../api/inventory/Inventory.js';",
+    },
+    Reexport {
+        names: &["Skills"],
+        line: "export { Skills } from '../../api/skills/Skills.js';",
+    },
+    Reexport {
+        names: &["Bank", "withdrawOp"],
+        line: "export { Bank, withdrawOp } from '../../api/bank/Bank.js';",
+    },
+    Reexport {
+        names: &[
+            "Banking",
+            "COMMON_BANK_LOOT",
+            "depositAllExcept",
+            "depositMatcher",
+            "matchesCommonBankLoot",
+            "PERIODIC_BANK_SETTINGS",
+            "parseBankStrategy",
+        ],
+        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, parseBankStrategy } from '../../api/bank/Banking.js';",
+    },
+    Reexport {
+        names: &["EventSignal"],
+        line: "export { EventSignal } from '../../api/execution/EventSignal.js';",
+    },
+    Reexport {
+        names: &["Execution"],
+        line: "export { Execution } from '../../api/execution/Execution.js';",
+    },
+    Reexport {
+        names: &["LoopingBot", "TaskBot", "TreeBot", "AbstractBot"],
+        line: "export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';",
+    },
+    Reexport {
+        names: &["Paint"],
+        line: "export { Paint } from '../../paint/Paint.js';",
+    },
+    Reexport {
+        names: &["ScriptRunner"],
+        line: "export { ScriptRunner } from '../../runtime/ScriptRunner.js';",
+    },
+    Reexport {
+        names: &["ChatDialog"],
+        line: "export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';",
+    },
+    Reexport {
+        names: &["Traversal"],
+        line: "export { Traversal } from '../../api/walking/Traversal.js';",
+    },
+    Reexport {
+        names: &["Tile"],
+        line: "export { default as Tile } from '../../geometry/Tile.js';",
+    },
+    Reexport {
+        names: &["Npc", "Npcs"],
+        line: "export { Npc, Npcs } from '../../api/npcs/Npcs.js';",
+    },
+    Reexport {
+        names: &["Player", "Players"],
+        line: "export { Player, Players } from '../../api/players/Players.js';",
+    },
+    Reexport {
+        names: &["Loc", "Locs"],
+        line: "export { Loc, Locs } from '../../api/locs/Locs.js';",
+    },
+    Reexport {
+        names: &["GroundItem", "GroundItems"],
+        line: "export { GroundItem, GroundItems } from '../../api/grounditems/GroundItems.js';",
+    },
+    Reexport {
+        names: &["Equipment"],
+        line: "export { Equipment } from '../../api/equipment/Equipment.js';",
+    },
+    Reexport {
+        names: &["EntityQuery"],
+        line: "export { default as EntityQuery } from '../../api/query/Query.js';",
+    },
+    Reexport {
+        names: &["nearestBank"],
+        line: "export { nearestBank } from '../../api/bank/BankLocations.js';",
+    },
+    Reexport {
+        names: &[
+            "PICKPOCKET_TARGETS",
+            "PICKPOCKET_TARGET_NAMES",
+            "ARDOUGNE_PICKPOCKET_TARGETS",
+        ],
+        line: "export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';",
+    },
+];
+
+/// Generate the `@rs2b0t/api` surface: re-export real shims, stub the rest.
+pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
+    use std::collections::HashSet;
+    let wanted: HashSet<&str> = exports.iter().map(|e| e.name.as_str()).collect();
+    let mut covered: HashSet<&str> = HashSet::new();
+    let mut out = String::from(
+        "// Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.\n\
+         // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored\n\
+         import { notV1, proxy } from '../../shim/_kernel.js';\n\n",
+    );
+    out.push_str("export const defineBot = globalThis.defineBot;\n\n");
+    covered.insert("defineBot");
+
+    for re in REEXPORTS {
+        if re.names.iter().any(|n| wanted.contains(n)) {
+            out.push_str(re.line);
+            out.push('\n');
+            for n in re.names {
+                covered.insert(*n);
+            }
+        }
+    }
+    out.push('\n');
+
+    // Walk flags are constants (not a walker clone).
+    if wanted.contains("NAV_PURE_WALK") && !covered.contains("NAV_PURE_WALK") {
+        out.push_str(
+            "export const NAV_PURE_WALK = { useTeleportCatalog: false, policy: { useTeleports: false } };\n",
+        );
+        covered.insert("NAV_PURE_WALK");
+    }
+    if wanted.contains("NAV_WITH_TELES") && !covered.contains("NAV_WITH_TELES") {
+        out.push_str(
+            "export const NAV_WITH_TELES = { useTeleportCatalog: true, policy: { useTeleports: true } };\n",
+        );
+        covered.insert("NAV_WITH_TELES");
+    }
+
+    for exp in exports {
+        if covered.contains(exp.name.as_str()) {
+            continue;
+        }
+        match exp.kind {
+            DeclaredKind::Value => {
+                let init = stub_value_init(&exp.name);
+                out.push_str(&format!("export const {} = {};\n", exp.name, init));
+            }
+            DeclaredKind::Function => {
+                out.push_str(&format!(
+                    "export function {}() {{ throw notV1('{}'); }}\n",
+                    exp.name, exp.name
+                ));
+            }
+            DeclaredKind::Object => {
+                out.push_str(&format!(
+                    "export const {} = proxy('{}', {{\n",
+                    exp.name, exp.name
+                ));
+                for m in &exp.members {
+                    out.push_str(&format!(
+                        "    {}() {{ throw notV1('{}.{}'); }},\n",
+                        m, exp.name, m
+                    ));
+                }
+                out.push_str("});\n");
+            }
+            DeclaredKind::Class => {
+                out.push_str(&format!("export class {} {{\n", exp.name));
+                let mut has_ctor = false;
+                for m in &exp.members {
+                    if m == "constructor" {
+                        has_ctor = true;
+                        out.push_str("    constructor() {}\n");
+                        continue;
+                    }
+                    if matches!(exp.name.as_str(), "Area")
+                        && matches!(m.as_str(), "rectangular" | "circular")
+                    {
+                        out.push_str(&format!(
+                            "    static {}() {{ throw notV1('{}.{}'); }}\n",
+                            m, exp.name, m
+                        ));
+                        continue;
+                    }
+                    out.push_str(&format!(
+                        "    {}() {{ throw notV1('{}.{}'); }}\n",
+                        m, exp.name, m
+                    ));
+                }
+                if !has_ctor {
+                    out.push_str("    constructor() {}\n");
+                }
+                out.push_str("}\n");
+            }
+        }
+    }
+    out
+}
+
+fn stub_value_init(name: &str) -> &'static str {
+    if name == "apiVersion" {
+        return "1";
+    }
+    let upper = name.to_ascii_uppercase();
+    if upper.contains("OPTIONS")
+        || upper.contains("LOCATIONS")
+        || upper.contains("TARGETS")
+        || upper.contains("METHODS")
+        || upper.contains("DESTINATIONS")
+        || name.ends_with("_IDS")
+        || name.ends_with("_COSTS")
+        || name.ends_with("_DB")
+        || name.ends_with("_FOR")
+        || name.ends_with("_LEVEL")
+        || name.ends_with("_LOOT")
+        || name.ends_with("_LABELS")
+        || name == "RUNES"
+        || name == "AXES"
+        || name == "PICKAXES"
+        || name == "WHIRLPOOL_IDS"
+        || name == "GERRANT_ONLY_FISHING"
+        || name == "ROCK_TYPES"
+        || name == "AXE_BAR_FOR"
+        || name == "AXE_SMITH_LEVEL"
+        || name == "ALL_FISHING_GEAR_NAMES"
+    {
+        return "[]";
+    }
+    if name.ends_with("_ID")
+        || name.ends_with("_RADIUS")
+        || name.ends_with("_ODDS")
+        || name.ends_with("_TICKS")
+        || name.ends_with("_TARGET")
+        || name == "MAP_SQUARE"
+        || name == "TOLL_COIN_TARGET"
+        || name == "GAS_ROCK_TICKS"
+        || name == "NEARBY_BANK_RADIUS"
+        || name == "RANDOM_EVENT_CASKET_ID"
+        || name == "FORGETFUL_BANK_ODDS"
+    {
+        return "-1";
+    }
+    "''"
+}
+
+pub fn write_declared_surface(exports: &[DeclaredExport]) -> Result<(), String> {
+    let path = declared_surface_path();
+    let src = render_declared_surface(exports);
+    std::fs::write(&path, src).map_err(|e| format!("write {}: {e}", path.display()))
 }

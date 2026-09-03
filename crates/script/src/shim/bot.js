@@ -4,3 +4,4 @@
 export const LoopingBot = globalThis.LoopingBot;
 export const TaskBot = globalThis.TaskBot;
 export const TreeBot = globalThis.TreeBot;
+export const AbstractBot = globalThis.LoopingBot;

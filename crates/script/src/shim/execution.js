@@ -76,6 +76,10 @@ export const Execution = {
             timeoutAt: timeoutMs > 0 ? performance.now() + timeoutMs : null,
         });
     },
+
+    delayUntilTicks(_cond, _maxTicks) {
+        return Promise.reject(new Error('not v1: Execution.delayUntilTicks'));
+    },
 };
 
 // The isolate tick loop calls this (through the rustyscript event loop,

@@ -637,8 +637,8 @@
     "name": "TaskBot",
     "kind": "class",
     "members": [
-      "loop",
-      "protected"
+      "add",
+      "loop"
     ]
   },
   {

@@ -35,8 +35,16 @@ globalThis.defineBot = (manifest) => {
 };
 globalThis.LoopingBot = class LoopingBot {
             loopDelay = 600;
+            loopCadence = null;
             onStart() {}
+            onStop() {}
+            onPause() {}
+            onResume() {}
+            onPaint() {}
             loop() {}
+            recoveryAnchor() { return null; }
+            grindTargets() { return []; }
+            ignoredRandoms() { return []; }
             on(event, cb) {
                 if (typeof cb !== 'function') return;
                 this._subs = this._subs || Object.create(null);
@@ -97,7 +105,11 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
         }
     }
 };
-globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {};
+globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
+    root() {
+        throw new Error('not v1: TreeBot.root');
+    }
+};
 globalThis.__dummy_ctx = {
     fillRect() {},
     fillText() {},
@@ -269,6 +281,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/runtime/ScriptRunner.js",
             include_str!("script_runner.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/scripts/bot/declared_surface.js",
+            include_str!("declared_surface.js"),
         ),
         Module::new(
             "/rs2b0t/bot/scripts/bot/rs2b0t-api.js",

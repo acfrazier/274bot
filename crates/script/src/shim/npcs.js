@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy, presentOps, opIndex } from '../../shim/_kernel.js';
+import { snap, queue, proxy, presentOps, opIndex, notV1 } from '../../shim/_kernel.js';
 
 export class Npc {
     constructor(row) {
@@ -25,6 +25,18 @@ export class Npc {
 
     get health() {
         return this.snap.health;
+    }
+
+    get level() {
+        throw notV1('Npc.level');
+    }
+
+    targetsMe() {
+        throw notV1('Npc.targetsMe');
+    }
+
+    targetsAnotherPlayer() {
+        throw notV1('Npc.targetsAnotherPlayer');
     }
 
     tile() {

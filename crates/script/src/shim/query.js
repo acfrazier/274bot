@@ -1,4 +1,4 @@
-import { entitySnapView } from '../../shim/_kernel.js';
+import { entitySnapView, notV1 } from '../../shim/_kernel.js';
 
 export default class EntityQuery {
     constructor(supplySnaps, wrap) {
@@ -78,5 +78,13 @@ export default class EntityQuery {
 
     count() {
         return this.results().length;
+    }
+
+    inside(_area) {
+        throw notV1('EntityQuery.inside');
+    }
+
+    nearestPreferLocal(_preferRadius) {
+        throw notV1('EntityQuery.nearestPreferLocal');
     }
 }
