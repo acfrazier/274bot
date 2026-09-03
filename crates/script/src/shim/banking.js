@@ -10,29 +10,19 @@ const notV1 = (name) => new Error('not v1: ' + name);
 // The rs2b0t bankRules junk list, kept as data. Names match as
 // substrings; one that is not a 274 obj never matches a posted row (the
 // host resolves names through ObjNames), so it drops itself.
-export const COMMON_BANK_LOOT = [
-    'uncut',
-    'sapphire',
-    'emerald',
-    'ruby',
-    'diamond',
-    'opal',
-    'jade',
-    'topaz',
-    'strange fruit',
-    'beer',
-    'kebab',
-];
+export const COMMON_BANK_LOOT = [];
 
-export function matchesCommonBankLoot(name) {
-    const n = String(name).toLowerCase();
-    return COMMON_BANK_LOOT.some((p) => n.includes(p));
+export function matchesCommonBankLoot(_name) {
+    throw notV1('matchesCommonBankLoot');
 }
 
 // The rs2b0t depositMatcher shape, minus the obj-id arm (posted rows
-// carry names only): `own(name) || (includeCommon && matchesJunk(name))`.
+// carry names only). Common-junk matching is not v1 — no policy table.
 export function depositMatcher(own, includeCommon) {
-    return (name) => own(name) || (includeCommon && matchesCommonBankLoot(name));
+    if (includeCommon) {
+        throw notV1('depositMatcher.includeCommon');
+    }
+    return (name) => own(name);
 }
 
 export function depositAllExcept(keep) {

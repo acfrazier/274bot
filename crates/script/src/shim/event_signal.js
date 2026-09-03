@@ -11,8 +11,8 @@ const notV1 = (name) => new Error('not v1: ' + name);
 export const EventSignal = new Proxy(
     {
         pending() {
-            const snap = host().snapshot || {};
-            return snap.hold === true || snap.ours === true;
+            const h = host();
+            return h.hold === true || h.ours === true;
         },
         ignoredRandoms() {
             const inst = globalThis.__rs_bot;

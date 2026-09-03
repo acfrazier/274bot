@@ -36,7 +36,7 @@ class SettingsStoreImpl {
     }
 
     globalBag() {
-        return new SettingsBag({});
+        throw new Error('not v1: SettingsStore.globalBag');
     }
 }
 

@@ -1,4 +1,6 @@
 // Combat-style constants ChickenKiller SETTINGS needs at eval time.
+import { notV1 } from '../../shim/_kernel.js';
+
 const COMBAT_STYLE = {
     attack: 'attack',
     accurate: 'attack',
@@ -15,7 +17,9 @@ export const COMBAT_STYLE_OPTIONS = ['attack', 'strength', 'controlled', 'defenc
 export const RANGE_STYLE_OPTIONS = ['accurate', 'rapid', 'longrange'];
 
 export function parseCombatStyle(name) {
-    return COMBAT_STYLE[String(name).trim().toLowerCase()] ?? 'strength';
+    const hit = COMBAT_STYLE[String(name).trim().toLowerCase()];
+    if (!hit) throw notV1('parseCombatStyle');
+    return hit;
 }
 
 export function tryParseCombatStyle(name) {
@@ -25,9 +29,13 @@ export function tryParseCombatStyle(name) {
 export function parseRangeStyle(name) {
     const n = String(name).trim().toLowerCase();
     const idx = RANGE_STYLE_OPTIONS.indexOf(n);
-    return idx >= 0 ? idx : 0;
+    if (idx < 0) throw notV1('parseRangeStyle');
+    return idx;
 }
 
 export function describeCombatStyle(resolution) {
-    return resolution?.requested ?? 'strength';
+    if (!resolution || typeof resolution.requested !== 'string') {
+        throw notV1('describeCombatStyle');
+    }
+    return resolution.requested;
 }

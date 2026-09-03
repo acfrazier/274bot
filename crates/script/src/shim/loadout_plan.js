@@ -1,25 +1,25 @@
-import { selectedLoadout } from './loadoutSetting.js';
+import { notV1 } from '../../shim/_kernel.js';
 
-export function foodOf(loadout, fallback) {
-    return fallback;
+export function foodOf(_loadout, _fallback) {
+    throw notV1('foodOf');
 }
 
 export function gearOf(_loadout) {
-    return [];
+    throw notV1('gearOf');
 }
 
 export function suppliesOf(_loadout) {
-    return [];
+    throw notV1('suppliesOf');
 }
 
-export function weaponOf(_loadout, fallback = null) {
-    return fallback;
+export function weaponOf(_loadout, _fallback) {
+    throw notV1('weaponOf');
 }
 
-export function scriptFood(_bag, fallback) {
-    return foodOf(selectedLoadout(_bag), fallback);
+export function scriptFood(_bag, _fallback) {
+    throw notV1('scriptFood');
 }
 
-export function scriptFoods(_bag, fallback) {
-    return [...fallback];
+export function scriptFoods(_bag, _fallback) {
+    throw notV1('scriptFoods');
 }

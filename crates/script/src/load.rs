@@ -1261,8 +1261,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         if snap.has_ours() {
             let ours = v8::Boolean::new(&mut scope, snap.ours());
             set(&mut scope, obj, "ours", ours.into())?;
+            set(&mut scope, host, "ours", ours.into())?;
         } else if !had {
             set(&mut scope, obj, "ours", falsy)?;
+            set(&mut scope, host, "ours", falsy)?;
         }
         if snap.has_npcs() {
             let npcs = scene_entity_array(&mut scope, &snap.npcs())?;

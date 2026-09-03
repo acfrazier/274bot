@@ -1,17 +1,10 @@
+import { notV1 } from '../shim/_kernel.js';
+
 export const RecoveryHints = {
-    pendingRecovery: false,
-    anchor: null,
-
     takeAnchor() {
-        if (!this.pendingRecovery) {
-            return null;
-        }
-        this.pendingRecovery = false;
-        return this.anchor;
+        throw notV1('RecoveryHints.takeAnchor');
     },
-
     clear() {
-        this.pendingRecovery = false;
-        this.anchor = null;
+        throw notV1('RecoveryHints.clear');
     },
 };

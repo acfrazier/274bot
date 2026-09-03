@@ -1,59 +1,41 @@
 import { Bank } from '../bank/Bank.js';
-import { Execution } from '../execution/Execution.js';
-import { Inventory } from '../inventory/Inventory.js';
+import { notV1 } from '../../shim/_kernel.js';
 
 export const THIEVER_BANKING_OPTIONS = ['None', 'Auto'];
 export const STUN_COMBAT_TICKS = 9;
 
-export function nextWithdrawChunk(need) {
-    if (need <= 0) {
-        return null;
-    }
-    if (need > 10) {
-        return { kind: 'x', count: need };
-    }
-    if (need >= 10) {
-        return { kind: 'op', op: 'Withdraw-10' };
-    }
-    if (need >= 5) {
-        return { kind: 'op', op: 'Withdraw-5' };
-    }
-    return { kind: 'op', op: 'Withdraw-1' };
+export function nextWithdrawChunk(_need) {
+    throw notV1('nextWithdrawChunk');
 }
 
-export async function withdrawTo(name, target, _countInInv = () => Inventory.count(name)) {
+export async function withdrawTo(name, target) {
     Bank.withdraw(name, target);
 }
 
-export async function closeBankAndConfirmCount(expected, count) {
-    if (!(await Bank.close())) {
-        return false;
-    }
-    await Execution.delayTicks(1);
-    return Execution.delayUntil(() => count() >= expected, 3000);
+export async function closeBankAndConfirmCount(_expected, _count) {
+    throw notV1('closeBankAndConfirmCount');
 }
 
-export function autoFoodBanking(mode) {
-    return mode.trim().toLowerCase() === 'auto';
+export function autoFoodBanking(_mode) {
+    throw notV1('autoFoodBanking');
 }
 
-export function foodMatches(name, keyword) {
-    const wanted = keyword.trim().toLowerCase();
-    return wanted.length > 0 && (name ?? '').toLowerCase().includes(wanted);
+export function foodMatches(_name, _keyword) {
+    throw notV1('foodMatches');
 }
 
-export function countFood(items, keyword) {
-    return items.filter((item) => foodMatches(item.name, keyword)).reduce((sum, item) => sum + item.count, 0);
+export function countFood(_items, _keyword) {
+    throw notV1('countFood');
 }
 
-export function shouldRestockFood(enabled, foodCount, restockAt, bankablePackFull) {
-    return enabled && (foodCount <= restockAt || bankablePackFull);
+export function shouldRestockFood(_enabled, _foodCount, _restockAt, _bankablePackFull) {
+    throw notV1('shouldRestockFood');
 }
 
-export function safeToSteal(hpFraction, eatAt, foodCount) {
-    return hpFraction >= eatAt || foodCount > 0;
+export function safeToSteal(_hpFraction, _eatAt, _foodCount) {
+    throw notV1('safeToSteal');
 }
 
-export function canStealNow(foodCount, hp, minEatHp, suicide) {
-    return suicide || foodCount > 0 || hp > minEatHp;
+export function canStealNow(_foodCount, _hp, _minEatHp, _suicide) {
+    throw notV1('canStealNow');
 }

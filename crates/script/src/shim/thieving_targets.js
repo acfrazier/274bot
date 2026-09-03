@@ -37,15 +37,8 @@ export function requiredThieving(target) {
 
 export const HOSTILE_NAMES = ['Guard', 'Knight of Ardougne', 'Paladin', 'Hero'];
 
-export function isHostileAttacker(c, maxDistance) {
-    return (
-        c.name !== null &&
-        HOSTILE_NAMES.includes(c.name) &&
-        c.inCombat &&
-        !c.targetsAnotherPlayer &&
-        c.distance <= maxDistance &&
-        c.actions.includes('Attack')
-    );
+export function isHostileAttacker(_c, _maxDistance) {
+    throw notV1('isHostileAttacker');
 }
 
 export function chooseTarget(candidatesNearestFirst, reachable) {

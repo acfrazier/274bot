@@ -2981,3 +2981,83 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn isolate_event_signal_pending_ignores_js_writable_snapshot_hold() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    capture() {
+        const snap = globalThis.__rs2b0t_host.snapshot || {};
+        snap.hold = false;
+        snap.ours = false;
+        globalThis.__probe = EventSignal.pending();
+    }
+    loop() { this.capture(); }
+    onPaint() { this.capture(); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value, true,
+        "pending() must not trust JS-writable snapshot.hold"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_silent_fakes_and_policy_tables_throw_not_v1() {
+    let src = r#"
+import { clientName, displayName } from '../../api/market/catalog.js';
+import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
+import { SettingsStore } from '../../runtime/Settings.js';
+import { foodOf } from '../../api/loadout/loadoutPlan.js';
+import { matchesCommonBankLoot, COMMON_BANK_LOOT } from '../../api/bank/Banking.js';
+import { RecoveryHints } from '../../runtime/RecoveryHints.js';
+import { safeToSteal } from '../../api/thieving/stealRules.js';
+import { shouldEatFood } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        const hits = [];
+        const tryHit = (fn) => {
+            try { fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
+        };
+        tryHit(() => clientName(526));
+        tryHit(() => displayName(526));
+        tryHit(() => parseCombatStyle('no-such-style'));
+        tryHit(() => SettingsStore.globalBag());
+        tryHit(() => foodOf(null, 'Shark'));
+        tryHit(() => matchesCommonBankLoot('uncut sapphire'));
+        tryHit(() => RecoveryHints.takeAnchor());
+        tryHit(() => safeToSteal(1, 0.5, 0));
+        tryHit(() => shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }));
+        globalThis.__probe = JSON.stringify({ hits, loot: COMMON_BANK_LOOT });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(value.as_str().expect("probe string")).expect("json");
+    let hits = parsed["hits"].as_array().expect("hits");
+    assert_eq!(hits.len(), 9, "every silent fake must be probed: {parsed:?}");
+    for (i, hit) in hits.iter().enumerate() {
+        let s = hit.as_str().unwrap_or("");
+        assert!(
+            s.contains("not v1"),
+            "probe {i} must throw not v1, got {s:?}"
+        );
+    }
+    let loot = parsed["loot"].as_array().expect("COMMON_BANK_LOOT");
+    assert!(
+        loot.is_empty(),
+        "COMMON_BANK_LOOT must not ship a junk policy table: {loot:?}"
+    );
+    iso.join();
+}

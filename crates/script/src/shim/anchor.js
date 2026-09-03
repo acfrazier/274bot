@@ -5,21 +5,12 @@ import { host, notV1 } from '../../shim/_kernel.js';
 
 export const HOME_ARRIVE_RADIUS = 8;
 
-export function shouldWalkHomeToGatherAnchor(distToAnchor, arriveRadius = HOME_ARRIVE_RADIUS) {
-    if (distToAnchor == null || !Number.isFinite(distToAnchor)) {
-        return false;
-    }
-    const r = Math.max(0, Math.floor(Number.isFinite(arriveRadius) ? arriveRadius : HOME_ARRIVE_RADIUS));
-    return distToAnchor > r;
+export function shouldWalkHomeToGatherAnchor(_distToAnchor, _arriveRadius) {
+    throw notV1('shouldWalkHomeToGatherAnchor');
 }
 
-export function shouldSoftHomeFromGatherMiss(distToAnchor, leash = 64) {
-    if (distToAnchor == null || !Number.isFinite(distToAnchor)) {
-        return false;
-    }
-    const L = Math.max(2, Math.floor(Number.isFinite(leash) ? leash : 64));
-    const threshold = Math.max(HOME_ARRIVE_RADIUS + 12, Math.min(L, 28));
-    return distToAnchor > threshold;
+export function shouldSoftHomeFromGatherMiss(_distToAnchor, _leash) {
+    throw notV1('shouldSoftHomeFromGatherMiss');
 }
 
 function campTile(bot) {
