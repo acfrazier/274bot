@@ -3084,7 +3084,6 @@ import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
 import { SettingsStore } from '../../runtime/Settings.js';
 import { foodOf } from '../../api/loadout/loadoutPlan.js';
 import { matchesCommonBankLoot, COMMON_BANK_LOOT } from '../../api/bank/Banking.js';
-import { RecoveryHints } from '../../runtime/RecoveryHints.js';
 import { safeToSteal } from '../../api/thieving/stealRules.js';
 import { shouldEatFood } from '../../api/combat/food.js';
 import { Skills } from '../../api/skills/Skills.js';
@@ -3102,7 +3101,6 @@ export default class T extends LoopingBot {
         await tryHit(() => SettingsStore.globalBag());
         await tryHit(() => foodOf(null, 'Shark'));
         await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
-        await tryHit(() => RecoveryHints.takeAnchor());
         await tryHit(() => safeToSteal(1, 0.5, 0));
         await tryHit(() => shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }));
         await tryHit(() => Skills.xp('prayer'));
@@ -3120,7 +3118,7 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        12,
+        11,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
@@ -3140,5 +3138,42 @@ export default class T extends LoopingBot {
         hostile.is_empty(),
         "HOSTILE_NAMES must not ship a hostility policy table: {hostile:?}"
     );
+    iso.join();
+}
+
+#[test]
+fn isolate_recovery_hints_take_anchor_is_empty_so_here_wins() {
+    let src = r#"
+import { RecoveryHints } from '../../runtime/RecoveryHints.js';
+export default class T extends LoopingBot {
+    loop() {
+        let raw;
+        let threw = null;
+        try { raw = RecoveryHints.takeAnchor(); } catch (e) { threw = String(e.message || e); }
+        const here = { x: 3235, z: 3295, level: 0 };
+        const camp = raw ?? here;
+        globalThis.__probe = JSON.stringify({ threw, raw, camp });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(value.as_str().expect("probe string")).expect("json");
+    assert!(
+        parsed["threw"].is_null(),
+        "empty hint store must not throw (?? here would never run): {parsed:?}"
+    );
+    assert!(
+        parsed["raw"].is_null(),
+        "takeAnchor must not invent a camp tile: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["camp"]["x"],
+        3235,
+        "takeAnchor() ?? here must keep the live tele tile: {parsed:?}"
+    );
+    assert_eq!(parsed["camp"]["z"], 3295);
     iso.join();
 }
