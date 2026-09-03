@@ -25,6 +25,7 @@ table Row {
   ops: [string];
   noted: bool;
   cert: int;
+  component_id: int;
 }
 
 // One skill row: the snapshot's stat index, name, xp, and effective level.
@@ -185,6 +186,14 @@ table Snapshot {
   camera_pitch: int;
   teleports_enabled: bool;
   self_slot: int;
+  trade_offer_open: bool;
+  trade_confirm_open: bool;
+  trade_partner: string;
+  trade_mine: [Row];
+  trade_theirs: [Row];
+  trade_side: [Row];
+  trade_accept_id: int;
+  trade_decline_id: int;
 }
 
 // One shim interact request, tagged by `op`:

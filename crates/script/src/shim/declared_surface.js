@@ -122,20 +122,7 @@ export const TINDERBOX = '';
 export const TOLL_COIN_TARGET = -1;
 export const TOOL_ACQUIRE_OPTIONS = [];
 export const TOOL_ACQUIRE_SETTING = '';
-export const Trade = proxy('Trade', {
-    accept() { throw notImpl('Trade.accept'); },
-    active() { throw notImpl('Trade.active'); },
-    decline() { throw notImpl('Trade.decline'); },
-    myOffer() { throw notImpl('Trade.myOffer'); },
-    offer() { throw notImpl('Trade.offer'); },
-    offerAll() { throw notImpl('Trade.offerAll'); },
-    onConfirmScreen() { throw notImpl('Trade.onConfirmScreen'); },
-    onOfferScreen() { throw notImpl('Trade.onOfferScreen'); },
-    partner() { throw notImpl('Trade.partner'); },
-    removeAll() { throw notImpl('Trade.removeAll'); },
-    request() { throw notImpl('Trade.request'); },
-    theirOffer() { throw notImpl('Trade.theirOffer'); },
-});
+export { Trade } from '../../api/trade/Trade.js';
 export const VARROCK_ANVIL_BANK = '';
 export const VARROCK_ANVIL_STAND = '';
 export const WALK_DESTINATIONS = [];

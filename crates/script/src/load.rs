@@ -1405,6 +1405,65 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             let zero = num(&mut scope, 0.0);
             set(&mut scope, obj, "self_slot", zero)?;
         }
+        if snap.has_trade_offer_open() {
+            let trade_offer_open = v8::Boolean::new(&mut scope, snap.trade_offer_open());
+            set(&mut scope, obj, "trade_offer_open", trade_offer_open.into())?;
+        } else if !had {
+            set(&mut scope, obj, "trade_offer_open", falsy)?;
+        }
+        if snap.has_trade_confirm_open() {
+            let trade_confirm_open = v8::Boolean::new(&mut scope, snap.trade_confirm_open());
+            set(&mut scope, obj, "trade_confirm_open", trade_confirm_open.into())?;
+        } else if !had {
+            set(&mut scope, obj, "trade_confirm_open", falsy)?;
+        }
+        if snap.has_trade_partner() {
+            match snap.trade_partner() {
+                Some(name) => {
+                    let partner = js_string(&mut scope, name)?;
+                    set(&mut scope, obj, "trade_partner", partner)?;
+                }
+                None => {
+                    let none = v8::null(&mut scope);
+                    set(&mut scope, obj, "trade_partner", none.into())?;
+                }
+            }
+        } else if !had {
+            let none = v8::null(&mut scope);
+            set(&mut scope, obj, "trade_partner", none.into())?;
+        }
+        if snap.has_trade_mine() {
+            let trade_mine = row_array(&mut scope, &snap.trade_mine())?;
+            set(&mut scope, obj, "trade_mine", trade_mine)?;
+        } else if !had {
+            set(&mut scope, obj, "trade_mine", empty_rows)?;
+        }
+        if snap.has_trade_theirs() {
+            let trade_theirs = row_array(&mut scope, &snap.trade_theirs())?;
+            set(&mut scope, obj, "trade_theirs", trade_theirs)?;
+        } else if !had {
+            set(&mut scope, obj, "trade_theirs", empty_rows)?;
+        }
+        if snap.has_trade_side() {
+            let trade_side = row_array(&mut scope, &snap.trade_side())?;
+            set(&mut scope, obj, "trade_side", trade_side)?;
+        } else if !had {
+            set(&mut scope, obj, "trade_side", empty_rows)?;
+        }
+        if snap.has_trade_accept_id() {
+            let trade_accept_id = num(&mut scope, snap.trade_accept_id() as f64);
+            set(&mut scope, obj, "trade_accept_id", trade_accept_id)?;
+        } else if !had {
+            let trade_accept_id = num(&mut scope, -1.0);
+            set(&mut scope, obj, "trade_accept_id", trade_accept_id)?;
+        }
+        if snap.has_trade_decline_id() {
+            let trade_decline_id = num(&mut scope, snap.trade_decline_id() as f64);
+            set(&mut scope, obj, "trade_decline_id", trade_decline_id)?;
+        } else if !had {
+            let trade_decline_id = num(&mut scope, -1.0);
+            set(&mut scope, obj, "trade_decline_id", trade_decline_id)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;
@@ -1662,6 +1721,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "noted", noted.into())?;
         let cert = num(scope, row.cert() as f64);
         set(scope, o, "cert", cert)?;
+        if row.has_component_id() {
+            let component_id = num(scope, row.component_id() as f64);
+            set(scope, o, "component_id", component_id)?;
+        }
         Ok(o.into())
     }
 

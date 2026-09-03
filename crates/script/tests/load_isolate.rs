@@ -148,8 +148,9 @@ fn item_row<'a>(
     count: i32,
     ops: &'a [String],
     noted: bool,
-    cert: i32,
-) -> script::isolate_fb::ItemRowInput<'a> {
+        cert: i32,
+        component_id: i32,
+    ) -> script::isolate_fb::ItemRowInput<'a> {
     script::isolate_fb::ItemRowInput {
         name,
         count,
@@ -157,6 +158,7 @@ fn item_row<'a>(
         ops,
         noted,
         cert,
+        component_id,
     }
 }
 
@@ -210,6 +212,14 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         camera_pitch: 0,
         teleports_enabled: false,
         self_slot: 0,
+        trade_offer_open: false,
+        trade_confirm_open: false,
+        trade_partner: None,
+        trade_mine: &[],
+        trade_theirs: &[],
+        trade_side: &[],
+        trade_accept_id: -1,
+        trade_decline_id: -1,
     }
 }
 
@@ -2619,6 +2629,7 @@ export default class T extends LoopingBot {
         &ops,
         false,
         1234,
+        -1,
     )];
     let mut snap = base_snapshot();
     snap.bank = &bank;
@@ -2852,7 +2863,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let ops = ["Bury".to_string()];
-    let inv = [item_row(526, Some("Bones"), 5, &ops, false, -1)];
+    let inv = [item_row(526, Some("Bones"), 5, &ops, false, -1, -1)];
     let mut snap = base_snapshot();
     snap.inv = &inv;
     post_snapshot_input(&iso, &snap);
@@ -3596,7 +3607,7 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let ops = ["Withdraw 1".to_string()];
-    let bank = [item_row(526, Some("Bones"), 12, &ops, false, -1)];
+    let bank = [item_row(526, Some("Bones"), 12, &ops, false, -1, -1)];
     let mut snap = base_snapshot();
     snap.bank = &bank;
     snap.bank_open = true;
@@ -3679,6 +3690,87 @@ export default class T extends LoopingBot {
             level: 0
         }],
         "DirectNavigator.walk is the scene walk-to packet, not Traveller"
+    );
+    iso.join();
+}
+
+// Task 4 — Trade.* reads posted TradeView; request queues Npc Trade.
+#[test]
+fn isolate_trade_empty_is_inactive_with_no_partner() {
+    let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            active: Trade.active(),
+            partner: Trade.partner(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe.get("active"), Some(&false.into()), "empty trade is inactive");
+    assert!(
+        probe.get("partner").map(|v| v.is_null()).unwrap_or(false),
+        "empty trade has no partner"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_trade_posted_offer_reads_partner_and_screen() {
+    let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            onOffer: Trade.onOfferScreen(),
+            partner: Trade.partner(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("bob");
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe.get("onOffer"), Some(&true.into()));
+    assert_eq!(
+        probe.get("partner").and_then(|v| v.as_str()),
+        Some("bob")
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_trade_request_queues_npc_trade() {
+    let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
+export default class T extends LoopingBot {
+    loop() {
+        Trade.request('bob');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    let reqs = iso.drain_interacts();
+    assert_eq!(
+        reqs,
+        vec![script::shim::InteractReq::Npc {
+            name: "bob".into(),
+            action: "Trade".into(),
+            index: None,
+        }],
+        "Trade.request queues scene Trade-with via npc op"
     );
     iso.join();
 }

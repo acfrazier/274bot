@@ -337,7 +337,7 @@ pub struct SideTabView {
 }
 
 /// The trade ifaces' state and the four trade containers.
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TradeView {
     pub offer_open: bool,
     pub confirm_open: bool,
@@ -345,6 +345,25 @@ pub struct TradeView {
     pub their_offer: Vec<ItemView>,
     pub side_pack: Vec<ItemView>,
     pub partner: Option<String>,
+    /// Accept button on the open trade root (-1 when absent).
+    pub accept_component_id: i32,
+    /// Decline button on the open trade root (-1 when absent).
+    pub decline_component_id: i32,
+}
+
+impl Default for TradeView {
+    fn default() -> Self {
+        Self {
+            offer_open: false,
+            confirm_open: false,
+            my_offer: Vec::new(),
+            their_offer: Vec::new(),
+            side_pack: Vec::new(),
+            partner: None,
+            accept_component_id: -1,
+            decline_component_id: -1,
+        }
+    }
 }
 
 /// One chat history line. The ring's index 0 is the newest line;
@@ -1372,6 +1391,7 @@ impl GameSnapshot {
             .unwrap_or_default();
         let side_pack =
             inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
+        let (accept_component_id, decline_component_id) = trade_controls(client);
         self.trade = TradeView {
             offer_open: client.main_modal_id == TRADEMAIN,
             confirm_open: client.main_modal_id == TRADECONFIRM,
@@ -1379,6 +1399,8 @@ impl GameSnapshot {
             their_offer,
             side_pack,
             partner: trade_partner(client),
+            accept_component_id,
+            decline_component_id,
         };
         true
     }
@@ -2746,6 +2768,41 @@ fn trade_partner(client: &Client) -> Option<String> {
         None => text.trim(),
     };
     (!name.is_empty()).then(|| name.to_string())
+}
+
+/// The Accept / Decline buttons on the open trade root (`TRADEMAIN` or
+/// `TRADECONFIRM`), discovered by walking the modal tree.
+fn trade_controls(client: &Client) -> (i32, i32) {
+    let root = match client.main_modal_id {
+        TRADECONFIRM => TRADECONFIRM,
+        TRADEMAIN => TRADEMAIN,
+        _ => return (-1, -1),
+    };
+    let mut accept_id = -1;
+    let mut decline_id = -1;
+    let mut queue = vec![root];
+    let mut head = 0;
+    while head < queue.len() {
+        let id = queue[head];
+        head += 1;
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        if com.button_type != 0 {
+            let label = if !com.text.trim().is_empty() {
+                com.text.trim()
+            } else {
+                com.button_text.trim()
+            };
+            if label.eq_ignore_ascii_case("accept") {
+                accept_id = id;
+            } else if label.eq_ignore_ascii_case("decline") {
+                decline_id = id;
+            }
+        }
+        queue.extend(children_of(&com));
+    }
+    (accept_id, decline_id)
 }
 
 /// The TYPE_TEXT contents of a modal tree, in walk order (m8aq

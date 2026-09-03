@@ -511,6 +511,10 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Equipment } from '../../api/equipment/Equipment.js';",
     },
     Reexport {
+        names: &["Trade"],
+        line: "export { Trade } from '../../api/trade/Trade.js';",
+    },
+    Reexport {
         names: &["EntityQuery"],
         line: "export { default as EntityQuery } from '../../api/query/Query.js';",
     },

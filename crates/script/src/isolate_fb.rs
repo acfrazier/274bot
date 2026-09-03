@@ -59,6 +59,7 @@ const VT_ROW_ID: VOffsetT = 8;
 const VT_ROW_OPS: VOffsetT = 10;
 const VT_ROW_NOTED: VOffsetT = 12;
 const VT_ROW_CERT: VOffsetT = 14;
+const VT_ROW_COMPONENT: VOffsetT = 16;
 
 // Stat: { index, name, xp, level }
 const VT_STAT_INDEX: VOffsetT = 4;
@@ -131,6 +132,14 @@ const VT_SNAP_CAMERA_YAW: VOffsetT = 90;
 const VT_SNAP_CAMERA_PITCH: VOffsetT = 92;
 const VT_SNAP_TELEPORTS_ENABLED: VOffsetT = 94;
 const VT_SNAP_SELF_SLOT: VOffsetT = 96;
+const VT_SNAP_TRADE_OFFER_OPEN: VOffsetT = 98;
+const VT_SNAP_TRADE_CONFIRM_OPEN: VOffsetT = 100;
+const VT_SNAP_TRADE_PARTNER: VOffsetT = 102;
+const VT_SNAP_TRADE_MINE: VOffsetT = 104;
+const VT_SNAP_TRADE_THEIRS: VOffsetT = 106;
+const VT_SNAP_TRADE_SIDE: VOffsetT = 108;
+const VT_SNAP_TRADE_ACCEPT_ID: VOffsetT = 110;
+const VT_SNAP_TRADE_DECLINE_ID: VOffsetT = 112;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -259,6 +268,7 @@ pub struct ItemRowInput<'a> {
     pub ops: &'a [String],
     pub noted: bool,
     pub cert: i32,
+    pub component_id: i32,
 }
 
 impl<'a> ItemRowInput<'a> {
@@ -270,6 +280,7 @@ impl<'a> ItemRowInput<'a> {
             ops: &[],
             noted: false,
             cert: -1,
+            component_id: -1,
         }
     }
 }
@@ -404,6 +415,14 @@ pub struct SnapshotInput<'a> {
     pub teleports_enabled: bool,
     /// Local player table index (`GameSnapshot::self_slot`).
     pub self_slot: i32,
+    pub trade_offer_open: bool,
+    pub trade_confirm_open: bool,
+    pub trade_partner: Option<&'a str>,
+    pub trade_mine: &'a [ItemRowInput<'a>],
+    pub trade_theirs: &'a [ItemRowInput<'a>],
+    pub trade_side: &'a [ItemRowInput<'a>],
+    pub trade_accept_id: i32,
+    pub trade_decline_id: i32,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -486,6 +505,16 @@ impl RowReader<'_> {
     pub fn cert(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ROW_CERT, None) }.unwrap_or(-1)
     }
+    pub fn has_component_id(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_ROW_COMPONENT, None)
+                .is_some()
+        }
+    }
+    pub fn component_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ROW_COMPONENT, None) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for RowReader<'_> {
@@ -499,6 +528,7 @@ impl Verifiable for RowReader<'_> {
             )?
             .visit_field::<bool>("noted", VT_ROW_NOTED, false)?
             .visit_field::<i32>("cert", VT_ROW_CERT, false)?
+            .visit_field::<i32>("component_id", VT_ROW_COMPONENT, false)?
             .finish();
         Ok(())
     }
@@ -787,6 +817,26 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("camera_pitch", VT_SNAP_CAMERA_PITCH, false)?
             .visit_field::<bool>("teleports_enabled", VT_SNAP_TELEPORTS_ENABLED, false)?
             .visit_field::<i32>("self_slot", VT_SNAP_SELF_SLOT, false)?
+            .visit_field::<bool>("trade_offer_open", VT_SNAP_TRADE_OFFER_OPEN, false)?
+            .visit_field::<bool>("trade_confirm_open", VT_SNAP_TRADE_CONFIRM_OPEN, false)?
+            .visit_field::<ForwardsUOffset<&str>>("trade_partner", VT_SNAP_TRADE_PARTNER, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "trade_mine",
+                VT_SNAP_TRADE_MINE,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "trade_theirs",
+                VT_SNAP_TRADE_THEIRS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "trade_side",
+                VT_SNAP_TRADE_SIDE,
+                false,
+            )?
+            .visit_field::<i32>("trade_accept_id", VT_SNAP_TRADE_ACCEPT_ID, false)?
+            .visit_field::<i32>("trade_decline_id", VT_SNAP_TRADE_DECLINE_ID, false)?
             .finish();
         Ok(())
     }
@@ -929,6 +979,74 @@ impl SnapshotReader<'_> {
     }
     pub fn self_slot(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_SELF_SLOT, None) }.unwrap_or(0)
+    }
+    pub fn has_trade_offer_open(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_TRADE_OFFER_OPEN, None)
+                .is_some()
+        }
+    }
+    pub fn trade_offer_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_TRADE_OFFER_OPEN, None) }.unwrap_or(false)
+    }
+    pub fn has_trade_confirm_open(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_TRADE_CONFIRM_OPEN, None)
+                .is_some()
+        }
+    }
+    pub fn trade_confirm_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_TRADE_CONFIRM_OPEN, None) }.unwrap_or(false)
+    }
+    pub fn has_trade_partner(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_TRADE_PARTNER, None)
+                .is_some()
+        }
+    }
+    pub fn trade_partner(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_TRADE_PARTNER, None) }
+    }
+    pub fn has_trade_mine(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_MINE)
+    }
+    pub fn trade_mine(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_TRADE_MINE)
+    }
+    pub fn has_trade_theirs(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_THEIRS)
+    }
+    pub fn trade_theirs(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_TRADE_THEIRS)
+    }
+    pub fn has_trade_side(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_SIDE)
+    }
+    pub fn trade_side(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_TRADE_SIDE)
+    }
+    pub fn has_trade_accept_id(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None)
+                .is_some()
+        }
+    }
+    pub fn trade_accept_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None) }.unwrap_or(-1)
+    }
+    pub fn has_trade_decline_id(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_TRADE_DECLINE_ID, None)
+                .is_some()
+        }
+    }
+    pub fn trade_decline_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_DECLINE_ID, None) }.unwrap_or(-1)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1208,6 +1326,7 @@ pub struct ItemRowFp {
     pub ops: Vec<String>,
     pub noted: bool,
     pub cert: i32,
+    pub component_id: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1291,6 +1410,14 @@ pub struct SnapshotFingerprint {
     pub camera_pitch: i32,
     pub teleports_enabled: bool,
     pub self_slot: i32,
+    pub trade_offer_open: bool,
+    pub trade_confirm_open: bool,
+    pub trade_partner: Option<String>,
+    pub trade_mine: Vec<ItemRowFp>,
+    pub trade_theirs: Vec<ItemRowFp>,
+    pub trade_side: Vec<ItemRowFp>,
+    pub trade_accept_id: i32,
+    pub trade_decline_id: i32,
 }
 
 impl SnapshotFingerprint {
@@ -1304,6 +1431,7 @@ impl SnapshotFingerprint {
                 ops: r.ops.iter().map(|a| a.to_string()).collect(),
                 noted: r.noted,
                 cert: r.cert,
+                component_id: r.component_id,
             }
         }
         fn entity_fp(e: &SceneEntityInput<'_>) -> SceneEntityFp {
@@ -1435,6 +1563,14 @@ impl SnapshotFingerprint {
             camera_pitch: input.camera_pitch,
             teleports_enabled: input.teleports_enabled,
             self_slot: input.self_slot,
+            trade_offer_open: input.trade_offer_open,
+            trade_confirm_open: input.trade_confirm_open,
+            trade_partner: input.trade_partner.map(str::to_string),
+            trade_mine: input.trade_mine.iter().map(item_row_fp).collect(),
+            trade_theirs: input.trade_theirs.iter().map(item_row_fp).collect(),
+            trade_side: input.trade_side.iter().map(item_row_fp).collect(),
+            trade_accept_id: input.trade_accept_id,
+            trade_decline_id: input.trade_decline_id,
         }
     }
 }
@@ -1492,6 +1628,14 @@ pub struct DeltaMask {
     pub camera_pitch: bool,
     pub teleports_enabled: bool,
     pub self_slot: bool,
+    pub trade_offer_open: bool,
+    pub trade_confirm_open: bool,
+    pub trade_partner: bool,
+    pub trade_mine: bool,
+    pub trade_theirs: bool,
+    pub trade_side: bool,
+    pub trade_accept_id: bool,
+    pub trade_decline_id: bool,
 }
 
 impl DeltaMask {
@@ -1544,6 +1688,14 @@ impl DeltaMask {
             camera_pitch: true,
             teleports_enabled: true,
             self_slot: true,
+            trade_offer_open: true,
+            trade_confirm_open: true,
+            trade_partner: true,
+            trade_mine: true,
+            trade_theirs: true,
+            trade_side: true,
+            trade_accept_id: true,
+            trade_decline_id: true,
         }
     }
 
@@ -1605,6 +1757,14 @@ impl DeltaMask {
             camera_pitch: next.camera_pitch != last.camera_pitch,
             teleports_enabled: next.teleports_enabled != last.teleports_enabled,
             self_slot: next.self_slot != last.self_slot,
+            trade_offer_open: next.trade_offer_open != last.trade_offer_open,
+            trade_confirm_open: next.trade_confirm_open != last.trade_confirm_open,
+            trade_partner: next.trade_partner != last.trade_partner,
+            trade_mine: next.trade_mine != last.trade_mine,
+            trade_theirs: next.trade_theirs != last.trade_theirs,
+            trade_side: next.trade_side != last.trade_side,
+            trade_accept_id: next.trade_accept_id != last.trade_accept_id,
+            trade_decline_id: next.trade_decline_id != last.trade_decline_id,
         }
     }
 }
@@ -1892,6 +2052,41 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let trade_partner_off = if mask.trade_partner {
+        Some(b.create_string(input.trade_partner.unwrap_or("")))
+    } else {
+        None
+    };
+    let trade_mine_off = if mask.trade_mine {
+        let offs = input
+            .trade_mine
+            .iter()
+            .map(|r| row_off(b, r))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let trade_theirs_off = if mask.trade_theirs {
+        let offs = input
+            .trade_theirs
+            .iter()
+            .map(|r| row_off(b, r))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let trade_side_off = if mask.trade_side {
+        let offs = input
+            .trade_side
+            .iter()
+            .map(|r| row_off(b, r))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -2051,6 +2246,33 @@ fn encode_snapshot_masked_into(
     if mask.self_slot {
         b.push_slot_always(VT_SNAP_SELF_SLOT, input.self_slot);
     }
+    if mask.trade_offer_open {
+        b.push_slot_always(VT_SNAP_TRADE_OFFER_OPEN, input.trade_offer_open);
+    }
+    if mask.trade_confirm_open {
+        b.push_slot_always(VT_SNAP_TRADE_CONFIRM_OPEN, input.trade_confirm_open);
+    }
+    if mask.trade_partner {
+        b.push_slot_always(
+            VT_SNAP_TRADE_PARTNER,
+            trade_partner_off.expect("mask checked"),
+        );
+    }
+    if mask.trade_mine {
+        b.push_slot_always(VT_SNAP_TRADE_MINE, trade_mine_off.expect("mask checked"));
+    }
+    if mask.trade_theirs {
+        b.push_slot_always(VT_SNAP_TRADE_THEIRS, trade_theirs_off.expect("mask checked"));
+    }
+    if mask.trade_side {
+        b.push_slot_always(VT_SNAP_TRADE_SIDE, trade_side_off.expect("mask checked"));
+    }
+    if mask.trade_accept_id {
+        b.push_slot_always(VT_SNAP_TRADE_ACCEPT_ID, input.trade_accept_id);
+    }
+    if mask.trade_decline_id {
+        b.push_slot_always(VT_SNAP_TRADE_DECLINE_ID, input.trade_decline_id);
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -2076,6 +2298,7 @@ fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset
     b.push_slot_always(VT_ROW_OPS, ops_off);
     b.push_slot_always(VT_ROW_NOTED, r.noted);
     b.push_slot_always(VT_ROW_CERT, r.cert);
+    b.push_slot_always(VT_ROW_COMPONENT, r.component_id);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3219,6 +3442,14 @@ mod tests {
             camera_pitch: 0,
             teleports_enabled: false,
             self_slot: 0,
+            trade_offer_open: false,
+            trade_confirm_open: false,
+            trade_partner: None,
+            trade_mine: &[],
+            trade_theirs: &[],
+            trade_side: &[],
+            trade_accept_id: -1,
+            trade_decline_id: -1,
         }
     }
 

@@ -1416,6 +1416,7 @@ fn with_script_snapshot_input<R>(
                         ops: &[],
                         noted: false,
                         cert: -1,
+                        component_id: -1,
                     })
                     .collect()
             })
@@ -1443,6 +1444,7 @@ fn with_script_snapshot_input<R>(
                     ops: &inv_ops_store[i],
                     noted: it.def.noted,
                     cert: it.def.certificate_link,
+                    component_id: -1,
                 })
                 .collect()
         }
@@ -1457,6 +1459,7 @@ fn with_script_snapshot_input<R>(
                     ops: &[],
                     noted: false,
                     cert: -1,
+                    component_id: -1,
                 })
                 .collect()
         })
@@ -1497,6 +1500,7 @@ fn with_script_snapshot_input<R>(
                 ops: &bank_ops_store[i],
                 noted: it.def.noted,
                 cert: it.def.certificate_link,
+                component_id: -1,
             })
             .collect()
     } else {
@@ -1527,6 +1531,7 @@ fn with_script_snapshot_input<R>(
                 ops: &bank_side_ops_store[i],
                 noted: it.def.noted,
                 cert: it.def.certificate_link,
+                component_id: -1,
             })
             .collect()
     } else {
@@ -1733,10 +1738,110 @@ fn with_script_snapshot_input<R>(
                 ops: &equip_ops_store[i],
                 noted: it.def.noted,
                 cert: it.def.certificate_link,
+                component_id: -1,
             })
             .collect()
     } else {
         equip_ops_store = Vec::new();
+        Vec::new()
+    };
+    let trade_mine_ops_store: Vec<Vec<String>>;
+    let trade_mine: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        trade_mine_ops_store = s
+            .trade()
+            .my_offer
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.trade()
+            .my_offer
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &trade_mine_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+                component_id: it.component_id,
+            })
+            .collect()
+    } else {
+        trade_mine_ops_store = Vec::new();
+        Vec::new()
+    };
+    let trade_theirs_ops_store: Vec<Vec<String>>;
+    let trade_theirs: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        trade_theirs_ops_store = s
+            .trade()
+            .their_offer
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.trade()
+            .their_offer
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &trade_theirs_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+                component_id: it.component_id,
+            })
+            .collect()
+    } else {
+        trade_theirs_ops_store = Vec::new();
+        Vec::new()
+    };
+    let trade_side_ops_store: Vec<Vec<String>>;
+    let trade_side: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        trade_side_ops_store = s
+            .trade()
+            .side_pack
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.trade()
+            .side_pack
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &trade_side_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+                component_id: it.component_id,
+            })
+            .collect()
+    } else {
+        trade_side_ops_store = Vec::new();
         Vec::new()
     };
     let chat_options = snapshot.map(|s| {
@@ -1982,6 +2087,19 @@ fn with_script_snapshot_input<R>(
         camera_pitch: snapshot.map(|s| s.camera().orbit_pitch).unwrap_or(0),
         teleports_enabled,
         self_slot: snapshot.map(|s| s.self_slot()).unwrap_or(-1),
+        trade_offer_open: snapshot.is_some_and(|s| s.trade().offer_open),
+        trade_confirm_open: snapshot.is_some_and(|s| s.trade().confirm_open),
+        trade_partner: snapshot
+            .and_then(|s| s.trade().partner.as_deref()),
+        trade_mine: &trade_mine,
+        trade_theirs: &trade_theirs,
+        trade_side: &trade_side,
+        trade_accept_id: snapshot
+            .map(|s| s.trade().accept_component_id)
+            .unwrap_or(-1),
+        trade_decline_id: snapshot
+            .map(|s| s.trade().decline_component_id)
+            .unwrap_or(-1),
     };
     f(&input)
 }
