@@ -1088,11 +1088,12 @@ export default class T extends LoopingBot {
     let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
     assert_eq!(paints, 1, "onPaint runs while held");
     // JS tries to clear hold; the blob still has hold:true (unchanged delta).
-    iso.probe("__rs2b0t_host.hold = false").unwrap();
+    iso.probe("try { globalThis.__rs2b0t_host.hold = false; } catch (e) {}")
+        .unwrap();
     assert_eq!(
         iso.probe("__rs2b0t_host.hold").unwrap(),
-        false,
-        "JS assignment landed (the exploit under test)"
+        true,
+        "JS must not overwrite the posted hold gate"
     );
     iso.on_game_tick(2);
     iso.on_game_tick(3);
@@ -2550,10 +2551,19 @@ export default class T extends LoopingBot {
 #[test]
 fn isolate_live_catalog_noted_of_from_posted_cert() {
     let src = r#"
-import { liveCatalog } from '../../api/market/catalog.js';
+import { liveCatalog, notedId, unnotedId } from '../../api/market/catalog.js';
 export default class T extends LoopingBot {
     loop() {
-        globalThis.__probe = liveCatalog().notedOf.get(10);
+        const hits = [];
+        const tryHit = (fn) => {
+            try { hits.push(fn()); } catch (e) { hits.push(String(e.message || e)); }
+        };
+        tryHit(() => liveCatalog().notedOf.get(10));
+        tryHit(() => notedId(10));
+        tryHit(() => unnotedId(1234));
+        tryHit(() => notedId(999));
+        tryHit(() => unnotedId(999));
+        globalThis.__probe = JSON.stringify(hits);
     }
 }
 "#;
@@ -2572,9 +2582,21 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(
-        value, 1234,
-        "posted cert on id 10 maps notedOf.get(10) to the cert id"
+    let hits: Vec<serde_json::Value> =
+        serde_json::from_str(value.as_str().expect("probe string")).expect("json");
+    assert_eq!(hits.len(), 5, "catalog cert probes: {hits:?}");
+    assert_eq!(hits[0], 1234, "posted cert on id 10 maps notedOf.get(10)");
+    assert_eq!(hits[1], 1234, "notedId follows the posted cert link");
+    assert_eq!(hits[2], 10, "unnotedId follows the posted cert link");
+    let miss_noted = hits[3].as_str().unwrap_or("");
+    let miss_unnoted = hits[4].as_str().unwrap_or("");
+    assert!(
+        miss_noted.contains("not v1"),
+        "unknown notedId must throw not v1, got {miss_noted:?}"
+    );
+    assert!(
+        miss_unnoted.contains("not v1"),
+        "unknown unnotedId must throw not v1, got {miss_unnoted:?}"
     );
     iso.join();
 }
@@ -3011,6 +3033,31 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_event_signal_pending_ignores_js_writable_host_hold() {
+    let src = r#"
+import { EventSignal } from '../../api/execution/EventSignal.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        try { globalThis.__rs2b0t_host.hold = false; } catch (e) {}
+        try { globalThis.__rs2b0t_host.ours = false; } catch (e) {}
+        globalThis.__probe = EventSignal.pending();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value, true,
+        "pending() must not trust a JS write to host.hold"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_silent_fakes_and_policy_tables_throw_not_v1() {
     let src = r#"
 import { clientName, displayName } from '../../api/market/catalog.js';
@@ -3046,7 +3093,11 @@ export default class T extends LoopingBot {
     let parsed: serde_json::Value =
         serde_json::from_str(value.as_str().expect("probe string")).expect("json");
     let hits = parsed["hits"].as_array().expect("hits");
-    assert_eq!(hits.len(), 9, "every silent fake must be probed: {parsed:?}");
+    assert_eq!(
+        hits.len(),
+        9,
+        "every silent fake must be probed: {parsed:?}"
+    );
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
         assert!(

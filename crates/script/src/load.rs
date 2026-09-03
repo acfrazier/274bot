@@ -1254,17 +1254,17 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, obj, "hold", falsy)?;
         }
         // Mirror the host-owned gate onto `__rs2b0t_host.hold` every post
-        // (hold is re-posted every tick — SEC-004). JS writes cannot
-        // unfreeze; tick_loop gates on `host_hold`, not this property.
+        // (hold is re-posted every tick — SEC-004). READ_ONLY so JS cannot
+        // overwrite the posted value; tick_loop also gates on `host_hold`.
         let hold_host = v8::Boolean::new(&mut scope, host_hold);
-        set(&mut scope, host, "hold", hold_host.into())?;
+        set_readonly(&mut scope, host, "hold", hold_host.into())?;
         if snap.has_ours() {
             let ours = v8::Boolean::new(&mut scope, snap.ours());
             set(&mut scope, obj, "ours", ours.into())?;
-            set(&mut scope, host, "ours", ours.into())?;
+            set_readonly(&mut scope, host, "ours", ours.into())?;
         } else if !had {
             set(&mut scope, obj, "ours", falsy)?;
-            set(&mut scope, host, "ours", falsy)?;
+            set_readonly(&mut scope, host, "ours", falsy)?;
         }
         if snap.has_npcs() {
             let npcs = scene_entity_array(&mut scope, &snap.npcs())?;
@@ -1457,6 +1457,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         let key = js_string(scope, key)?;
         obj.set(scope, key, value)
             .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
+        Ok(())
+    }
+
+    fn set_readonly<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        obj: v8::Local<'s, v8::Object>,
+        key: &str,
+        value: v8::Local<'s, v8::Value>,
+    ) -> Result<(), String> {
+        let name =
+            v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+        obj.define_own_property(scope, name.into(), value, v8::PropertyAttribute::READ_ONLY)
+            .ok_or_else(|| format!("v8 define_own_property failed for {key}"))?;
         Ok(())
     }
 

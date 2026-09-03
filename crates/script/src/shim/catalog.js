@@ -42,9 +42,13 @@ export function displayName(_id) {
 }
 
 export function notedId(id) {
-    return liveCatalog().notedOf.get(id) ?? id;
+    const n = liveCatalog().notedOf.get(id);
+    if (n === undefined) throw notV1('notedId');
+    return n;
 }
 
 export function unnotedId(id) {
-    return liveCatalog().unnotedOf.get(id) ?? id;
+    const n = liveCatalog().unnotedOf.get(id);
+    if (n === undefined) throw notV1('unnotedId');
+    return n;
 }
