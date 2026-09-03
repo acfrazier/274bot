@@ -142,6 +142,7 @@ impl NpcView {
         base: (i32, i32),
         level: i32,
         distance: i32,
+        loop_cycle: i32,
         cache: &Cache,
     ) -> Self {
         let entity = &npc.entity;
@@ -173,7 +174,7 @@ impl NpcView {
             target: decode_target(entity.face_entity),
             moving: entity.route_length > 0,
             running: entity.primary_anim == entity.runanim,
-            in_combat: entity.combat_cycle > 0,
+            in_combat: actor_in_combat(entity.combat_cycle, loop_cycle),
             level: npc_level,
             size,
             x: entity.x,
@@ -1122,6 +1123,7 @@ impl GameSnapshot {
                     0, // the local player's distance to itself
                     lp.name.clone(),
                     client.player_op.to_vec(),
+                    client.loop_cycle,
                 ),
                 combat_level: lp.combat_level,
                 skill_level: lp.skill_level,
@@ -1148,6 +1150,7 @@ impl GameSnapshot {
                         distance,
                         player.name.clone(),
                         client.player_op.to_vec(),
+                        client.loop_cycle,
                     ),
                     combat_level: player.combat_level,
                     skill_level: player.skill_level,
@@ -1865,6 +1868,7 @@ impl GameSnapshot {
                     base,
                     level,
                     distance,
+                    client.loop_cycle,
                     &client.cache,
                 ));
             }
@@ -2207,6 +2211,13 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
     }
 }
 
+/// Health-bar window: the client draws it while `combatCycle > loopCycle`.
+/// `combat_cycle > 0` is wrong — after a hit the expiry tick stays a large
+/// positive number, so `Game.inCombat()` would stick true forever.
+fn actor_in_combat(combat_cycle: i32, loop_cycle: i32) -> bool {
+    combat_cycle > loop_cycle
+}
+
 /// The shared actor fields from one entity, as the m8aq `ActorSnapshot`.
 fn actor_view(
     entity: &ClientEntity,
@@ -2215,6 +2226,7 @@ fn actor_view(
     distance: i32,
     name: Option<String>,
     actions: Vec<Option<String>>,
+    loop_cycle: i32,
 ) -> ActorView {
     ActorView {
         name,
@@ -2233,7 +2245,7 @@ fn actor_view(
         target: decode_target(entity.face_entity),
         moving: entity.route_length > 0,
         running: entity.primary_anim == entity.runanim,
-        in_combat: entity.combat_cycle > 0,
+        in_combat: actor_in_combat(entity.combat_cycle, loop_cycle),
     }
 }
 

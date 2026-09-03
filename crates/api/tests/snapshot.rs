@@ -641,6 +641,48 @@ fn npc_rebuild_reads_full_actor_view() {
     assert_eq!(v.yaw, 512);
 }
 
+/// `in_combat` is the health-bar window (`combatCycle > loopCycle`), not
+/// `combat_cycle > 0`. After a hit, `combat_cycle` stays a large positive
+/// expiry tick; treating that as "still fighting" parks ChickenKiller after
+/// the first kill.
+#[test]
+fn actor_in_combat_clears_when_combat_cycle_expires() {
+    let mut c = client_with_npc();
+    c.npc[7].as_mut().unwrap().entity.combat_cycle = 50;
+    c.loop_cycle = 100;
+    c.bump_gens(ServerProt::NPC_INFO);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    assert!(
+        !snap.npcs()[0].in_combat,
+        "combat_cycle 50 is in the past of loop_cycle 100"
+    );
+
+    c.npc[7].as_mut().unwrap().entity.combat_cycle = 200;
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    assert!(
+        snap.npcs()[0].in_combat,
+        "combat_cycle 200 is still live at loop_cycle 100"
+    );
+
+    let mut local = ClientPlayer::at(20, 12);
+    local.entity.combat_cycle = 50;
+    c.local_player = Some(local);
+    c.loop_cycle = 500;
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild_family(&c, Family::Player));
+    assert!(
+        !snap
+            .local_player()
+            .expect("local")
+            .player
+            .actor
+            .in_combat,
+        "local player's expired combat_cycle must not stick Game.inCombat"
+    );
+}
+
 /// `face_entity` is decoded with the client's own scheme: NPC slots below
 /// 32768, player slots above (offset by 32768).
 #[test]
