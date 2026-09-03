@@ -169,6 +169,7 @@ fn container_items<'a>(ctx: &'a ReadContext<'a>, container: ItemContainer) -> &'
         ItemContainer::TradeMyOffer => ctx.trade_my_offer(),
         ItemContainer::TradeTheirOffer => ctx.trade_their_offer(),
         ItemContainer::TradeSidePack => ctx.trade_side_pack(),
+        ItemContainer::ShopStock => &ctx.shop().stock,
         ItemContainer::Inventory | ItemContainer::Widget => ctx.inventory(),
     }
 }

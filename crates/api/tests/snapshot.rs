@@ -390,14 +390,15 @@ fn family_index(f: Family) -> usize {
         Family::Bank => 16,
         Family::BankSide => 17,
         Family::Trade => 18,
-        Family::Widgets => 19,
-        Family::SideTabs => 20,
-        Family::ChatOptions => 21,
-        Family::MakeProducts => 22,
-        Family::QuestStatuses => 23,
-        Family::Modals => 24,
-        Family::Controls => 25,
-        Family::Menu => 26,
+        Family::Shop => 19,
+        Family::Widgets => 20,
+        Family::SideTabs => 21,
+        Family::ChatOptions => 22,
+        Family::MakeProducts => 23,
+        Family::QuestStatuses => 24,
+        Family::Modals => 25,
+        Family::Controls => 26,
+        Family::Menu => 27,
     }
 }
 
@@ -2015,6 +2016,197 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));
 }
 
+/// Packed `shop_template` from the local client jag: the main modal root
+/// and stock TYPE_INV must survive unpack so shop ids are provable.
+#[test]
+fn packed_shop_template_posts_main_and_stock_inv() {
+    let cache = client::cache_dir();
+    if !cache.join("interface").is_file() {
+        return;
+    }
+    let c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache.display().to_string(),
+        members: true,
+        lowmem: false,
+    });
+    assert!(
+        c.ifaces_len() > 0,
+        "cache interface jag unpacked no components"
+    );
+
+    const SHOPMAIN: i32 = 3824;
+    const SHOP_STOCK_INV: i32 = 3900;
+
+    let root = c
+        .if_(SHOPMAIN as usize)
+        .expect("packed IF must contain shop_template root");
+    assert_eq!(root.r#type, ComponentType::TYPE_LAYER);
+    assert_eq!(root.id, SHOPMAIN);
+    let stock = c
+        .if_(SHOP_STOCK_INV as usize)
+        .expect("packed IF must contain shop_template:inv");
+    assert_eq!(stock.r#type, ComponentType::TYPE_INV);
+    assert_eq!(stock.layer_id, SHOPMAIN);
+    assert_eq!(
+        stock.iop[1].as_deref(),
+        Some("Buy 1"),
+        "shop stock inv must expose Buy 1 at iop[1]"
+    );
+}
+
+/// Backpack items present while the shop modal is down: the shop family
+/// stays closed and never bleeds backpack stock.
+#[test]
+fn shop_view_empty_when_no_shop_modal() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 3, "Coins");
+    plant_obj(&mut c, 4, "Pot");
+    plant_obj(&mut c, 5, "Rope");
+
+    // Backpack on side tab 3.
+    let inv_id = c.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        inv_id,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![100, 0]),
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = inv_id as i32;
+
+    // Shop stock inv populated, but the shop main modal is not open.
+    set_iface(
+        &mut c,
+        3900,
+        IfType {
+            id: 3900,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Buy 1".into()),
+                Some("Buy 5".into()),
+                Some("Buy 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![6, 7, 0]),
+            link_obj_number: Some(vec![1, 2, 0]),
+            ..Default::default()
+        },
+    );
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&c, Family::Inventory));
+    assert!(snap.rebuild_family(&c, Family::Shop));
+
+    assert!(!snap.shop().open);
+    assert!(snap.shop().stock.is_empty(), "no shop bleed while modal down");
+    assert_eq!(snap.inventory().len(), 1);
+    assert_eq!(snap.inventory()[0].def.id, 3);
+    assert_eq!(snap.inventory()[0].count, 100);
+}
+
+/// With the proven shop root open, stock reads the shop TYPE_INV and
+/// `inventory()` still reads the backpack container.
+#[test]
+fn shop_view_stock_when_modal_open() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 3, "Coins");
+    plant_obj(&mut c, 4, "Pot");
+    plant_obj(&mut c, 5, "Rope");
+
+    let inv_id = c.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        inv_id,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![100, 0]),
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = inv_id as i32;
+
+    set_iface(
+        &mut c,
+        3824,
+        IfType {
+            id: 3824,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3900,
+        IfType {
+            id: 3900,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Buy 1".into()),
+                Some("Buy 5".into()),
+                Some("Buy 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![5, 6, 0]),
+            link_obj_number: Some(vec![3, 7, 0]),
+            ..Default::default()
+        },
+    );
+
+    c.main_modal_id = 3824;
+
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&c, Family::Shop));
+    assert!(snap.rebuild_family(&c, Family::Inventory));
+
+    let shop = snap.shop();
+    assert!(shop.open);
+    assert_eq!(shop.stock.len(), 2);
+    assert_eq!(shop.stock[0].def.id, 4);
+    assert_eq!(shop.stock[0].def.name.as_deref(), Some("Pot"));
+    assert_eq!(shop.stock[0].container, ItemContainer::ShopStock);
+    assert_eq!(shop.stock[0].action_family, ItemActionFamily::Component);
+    assert_eq!(shop.stock[0].component_id, 3900);
+    assert_eq!(shop.stock[0].actions[1].as_deref(), Some("Buy 1"));
+    assert_eq!(shop.stock[1].def.id, 5);
+    assert_eq!(shop.stock[1].def.name.as_deref(), Some("Rope"));
+
+    assert_eq!(snap.inventory().len(), 1);
+    assert_eq!(snap.inventory()[0].def.id, 3);
+    assert_eq!(snap.inventory()[0].container, ItemContainer::Inventory);
+}
+
 /// Chat lines read the full ring (index 0 = newest) with a monotonic
 /// sequence that bumps when the head moves.
 #[test]
@@ -2725,6 +2917,7 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
         Family::Bank,
         Family::BankSide,
         Family::Trade,
+        Family::Shop,
         Family::Widgets,
         Family::SideTabs,
         Family::ChatOptions,
@@ -2744,6 +2937,7 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
         Family::Bank,
         Family::BankSide,
         Family::Trade,
+        Family::Shop,
         Family::Widgets,
         Family::SideTabs,
     ] {
@@ -2755,6 +2949,7 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
     for family in [
         Family::Inventory,
         Family::Trade,
+        Family::Shop,
         Family::Widgets,
         Family::ChatOptions,
         Family::MakeProducts,

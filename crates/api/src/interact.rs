@@ -624,6 +624,7 @@ fn container_items(container: ItemContainer, snapshot: &GameSnapshot) -> &[ItemV
         ItemContainer::TradeMyOffer => &snapshot.trade().my_offer,
         ItemContainer::TradeTheirOffer => &snapshot.trade().their_offer,
         ItemContainer::TradeSidePack => &snapshot.trade().side_pack,
+        ItemContainer::ShopStock => &snapshot.shop().stock,
         ItemContainer::Widget => &[],
     }
 }
@@ -959,6 +960,59 @@ impl<'a> Interactions<'a> {
             return refuse(snapshot, SendReason::InvalidCount);
         }
         self.dispatch(WireCommand::Count { value }, snapshot.tick() as u64)
+    }
+
+    /// Buy `qty` of a shop stock row by name: resolve the stock item,
+    /// press the matching Buy inv-button (`Buy 1`/`Buy 5`/`Buy 10`), then
+    /// `answer_count` when a count dialog is already up and `qty` is not
+    /// one of the fixed buy amounts.
+    pub fn shop_buy(&mut self, name: &str, qty: i32) -> SendResult<'a> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        if !snapshot.shop().open {
+            return refuse(snapshot, SendReason::NoModalOpen);
+        }
+        if qty < 1 {
+            return refuse(snapshot, SendReason::InvalidCount);
+        }
+        let wanted = name.trim().to_lowercase();
+        let Some(item) = snapshot.shop().stock.iter().find(|it| {
+            it.def
+                .name
+                .as_deref()
+                .is_some_and(|n| n.trim().to_lowercase() == wanted)
+        }) else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        let target = OpTarget::Item(item);
+        if let Some(reason) = self.check_target(&target, snapshot) {
+            return refuse(snapshot, reason);
+        }
+        // iop[0]=Value, iop[1]=Buy 1, iop[2]=Buy 5, iop[3]=Buy 10.
+        let operation = match qty {
+            1 => 2,
+            5 => 3,
+            10 => 4,
+            _ => 2,
+        };
+        let result = self.dispatch(
+            WireCommand::Op {
+                target,
+                operation,
+            },
+            snapshot.tick() as u64,
+        );
+        match result {
+            SendResult::Refused { .. } => result,
+            SendResult::Sent { .. }
+                if !matches!(qty, 1 | 5 | 10) && snapshot.count_dialog_open() =>
+            {
+                self.answer_count(qty)
+            }
+            other => other,
+        }
     }
 
     pub fn walk<'t>(&mut self, tile: WorldTile) -> SendResult<'t> {

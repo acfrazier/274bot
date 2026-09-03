@@ -52,6 +52,7 @@ pub enum Family {
     Bank,
     BankSide,
     Trade,
+    Shop,
     Widgets,
     SideTabs,
     ChatOptions,
@@ -247,6 +248,7 @@ pub enum ItemContainer {
     TradeMyOffer,
     TradeTheirOffer,
     TradeSidePack,
+    ShopStock,
     Widget,
 }
 
@@ -362,6 +364,22 @@ impl Default for TradeView {
             partner: None,
             accept_component_id: -1,
             decline_component_id: -1,
+        }
+    }
+}
+
+/// The shop main modal's stock container (empty while the shop is down).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ShopView {
+    pub open: bool,
+    pub stock: Vec<ItemView>,
+}
+
+impl Default for ShopView {
+    fn default() -> Self {
+        Self {
+            open: false,
+            stock: Vec::new(),
         }
     }
 }
@@ -598,6 +616,7 @@ pub struct GameSnapshot {
     /// `bankComponentId`); -1 while no bank is open.
     bank_component_id: i32,
     trade: TradeView,
+    shop: ShopView,
     widgets: Vec<WidgetView>,
     side_tabs: Vec<SideTabView>,
     chat_lines: Vec<ChatLineView>,
@@ -630,6 +649,8 @@ pub struct GameSnapshot {
     bank_side_gate: InvIfaceGate,
     #[serde(skip)]
     trade_gate: InvIfaceGate,
+    #[serde(skip)]
+    shop_gate: InvIfaceGate,
     #[serde(skip)]
     widgets_gate: InvIfaceGate,
     #[serde(skip)]
@@ -685,6 +706,7 @@ impl Default for GameSnapshot {
             inventory_size: 0,
             bank_component_id: -1,
             trade: TradeView::default(),
+            shop: ShopView::default(),
             widgets: Vec::new(),
             side_tabs: Vec::new(),
             chat_lines: Vec::new(),
@@ -713,6 +735,7 @@ impl Default for GameSnapshot {
             bank_gate: InvIfaceGate::default(),
             bank_side_gate: InvIfaceGate::default(),
             trade_gate: InvIfaceGate::default(),
+            shop_gate: InvIfaceGate::default(),
             widgets_gate: InvIfaceGate::default(),
             side_tabs_gate: InvIfaceGate::default(),
             chat_options_gate: 0,
@@ -761,6 +784,7 @@ impl GameSnapshot {
             Family::Bank => self.rebuild_bank(client),
             Family::BankSide => self.rebuild_bank_side(client),
             Family::Trade => self.rebuild_trade(client),
+            Family::Shop => self.rebuild_shop(client),
             Family::Widgets => self.rebuild_widgets(client),
             Family::SideTabs => self.rebuild_side_tabs(client),
             Family::ChatOptions => self.rebuild_chat_options(client),
@@ -794,6 +818,7 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Bank);
         dirty |= self.rebuild_family(client, Family::BankSide);
         dirty |= self.rebuild_family(client, Family::Trade);
+        dirty |= self.rebuild_family(client, Family::Shop);
         dirty |= self.rebuild_family(client, Family::Widgets);
         dirty |= self.rebuild_family(client, Family::SideTabs);
         dirty |= self.rebuild_family(client, Family::ChatOptions);
@@ -984,6 +1009,12 @@ impl GameSnapshot {
     /// The trade state (offer/confirm open, the four containers, partner).
     pub fn trade(&self) -> &TradeView {
         &self.trade
+    }
+
+    /// The shop modal's stock (empty while the shop root is not the main
+    /// modal).
+    pub fn shop(&self) -> &ShopView {
+        &self.shop
     }
 
     /// Widget views from the last widgets rebuild, one per component
@@ -1401,6 +1432,24 @@ impl GameSnapshot {
             partner: trade_partner(client),
             accept_component_id,
             decline_component_id,
+        };
+        true
+    }
+
+    /// Shop rebuild: the packed shop main modal's stock TYPE_INV. Empty
+    /// while `main_modal_id` is not the shop root — never the backpack.
+    fn rebuild_shop(&mut self, client: &Client) -> bool {
+        if !self.shop_gate.moved(client) {
+            return false;
+        }
+        let open = client.main_modal_id == SHOPMAIN;
+        self.shop = ShopView {
+            open,
+            stock: if open {
+                inv_items(client, SHOP_STOCK_INV, ItemContainer::ShopStock).unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         };
         true
     }
@@ -2085,6 +2134,11 @@ impl<'a> ReadContext<'a> {
         &self.0.trade().side_pack
     }
 
+    /// The open shop modal's stock (empty while the shop is down).
+    pub fn shop(&self) -> &ShopView {
+        self.0.shop()
+    }
+
     /// The four open modal roots.
     pub fn modals(&self) -> &ModalView {
         self.0.modals()
@@ -2743,6 +2797,11 @@ where
     }
     None
 }
+
+/// The 274 shop iface ids (the packed `interface.order` allocation):
+/// shop_template 3824 (main modal), shop_template:inv 3900 (stock).
+const SHOPMAIN: i32 = 3824;
+const SHOP_STOCK_INV: i32 = 3900;
 
 /// The 274 trade iface ids (the packed `interface.order` allocation):
 /// trademain 3323 (offer screen), tradeconfirm 3443, trademain:inv 3415,
