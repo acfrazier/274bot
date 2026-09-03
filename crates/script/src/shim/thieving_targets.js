@@ -35,7 +35,7 @@ export function requiredThieving(target) {
     throw notV1('requiredThieving');
 }
 
-export const HOSTILE_NAMES = ['Guard', 'Knight of Ardougne', 'Paladin', 'Hero'];
+export const HOSTILE_NAMES = [];
 
 export function isHostileAttacker(_c, _maxDistance) {
     throw notV1('isHostileAttacker');

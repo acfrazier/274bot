@@ -3,6 +3,16 @@ import { notV1, proxy, snap } from '../../shim/_kernel.js';
 
 const stats = () => snap().stats || [];
 
+function mustStat(name, op) {
+    const i = stats().findIndex(
+        (row) => row && typeof row.name === 'string' && row.name.toLowerCase() === String(name).toLowerCase(),
+    );
+    if (i === -1) throw notV1(op);
+    const row = stats()[i];
+    if (!row) throw notV1(op);
+    return row;
+}
+
 export const Skills = new Proxy(
     {
         index(name) {
@@ -12,27 +22,25 @@ export const Skills = new Proxy(
             );
         },
         xp(name) {
-            const i = Skills.index(name);
-            if (i === -1) return 0;
-            const row = stats()[i];
-            return row && typeof row.xp === 'number' ? row.xp : 0;
+            const row = mustStat(name, 'Skills.xp');
+            if (typeof row.xp !== 'number') throw notV1('Skills.xp');
+            return row.xp;
         },
         level(name) {
-            const i = Skills.index(name);
-            if (i === -1) return 0;
-            const row = stats()[i];
-            return row && typeof row.level === 'number' ? row.level : 0;
+            const row = mustStat(name, 'Skills.level');
+            if (typeof row.level !== 'number') throw notV1('Skills.level');
+            return row.level;
         },
         effective(name) {
-            const i = Skills.index(name);
-            if (i === -1) return 0;
-            const row = stats()[i];
-            if (row && typeof row.effective === 'number') return row.effective;
-            return row && typeof row.level === 'number' ? row.level : 0;
+            const row = mustStat(name, 'Skills.effective');
+            if (typeof row.effective === 'number') return row.effective;
+            if (typeof row.level === 'number') return row.level;
+            throw notV1('Skills.effective');
         },
         hpFraction() {
             const base = Skills.level('hitpoints');
-            return base > 0 ? Skills.effective('hitpoints') / base : 1;
+            if (base <= 0) throw notV1('Skills.hpFraction');
+            return Skills.effective('hitpoints') / base;
         },
     },
     {

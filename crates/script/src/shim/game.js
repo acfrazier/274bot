@@ -92,7 +92,9 @@ export const Game = new Proxy(
             const row = (snap().spell_buttons || []).find(
                 (s) => s && s.label && String(s.label).toLowerCase() === wanted,
             );
-            if (!row || typeof row.component_id !== 'number') return false;
+            if (!row || typeof row.component_id !== 'number') {
+                throw notV1('Game.castOnItem');
+            }
             queue({
                 op: 'use-widget-on',
                 component_id: row.component_id,

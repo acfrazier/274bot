@@ -1476,9 +1476,9 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 5 — without a posted snapshot every read fails closed: count 0,
-// pending false, xp 0, index -1. Missing members throw `not v1` — never a
-// fake value.
+// Task 5 — without a posted snapshot inventory count is 0, pending is
+// false, Skills.index is -1. Skills.xp/level/hpFraction throw `not v1`
+// rather than a fake 0 / full HP.
 #[test]
 fn isolate_snapshot_reads_fail_closed_without_a_post() {
     let src = r#"
@@ -1487,11 +1487,16 @@ import { Skills } from '../../api/skills/Skills.js';
 import { EventSignal } from '../../api/execution/EventSignal.js';
 export default class T extends LoopingBot {
     loop() {
+        const tryHit = (fn) => {
+            try { return fn(); } catch (e) { return String(e.message || e); }
+        };
         globalThis.__probe = {
             bones: Inventory.count('Bones'),
             pending: EventSignal.pending(),
-            xp: Skills.xp('prayer'),
+            xp: tryHit(() => Skills.xp('prayer')),
             idx: Skills.index('prayer'),
+            level: tryHit(() => Skills.level('prayer')),
+            hp: tryHit(() => Skills.hpFraction()),
         };
     }
 }
@@ -1501,8 +1506,22 @@ export default class T extends LoopingBot {
     let value = iso.probe("__probe").unwrap();
     assert_eq!(value["bones"], 0, "no posted snapshot: count 0");
     assert_eq!(value["pending"], false, "no posted snapshot: not pending");
-    assert_eq!(value["xp"], 0, "no posted snapshot: xp 0");
     assert_eq!(value["idx"], -1, "no posted snapshot: index -1");
+    let xp = value["xp"].as_str().unwrap_or("");
+    let level = value["level"].as_str().unwrap_or("");
+    let hp = value["hp"].as_str().unwrap_or("");
+    assert!(
+        xp.contains("not v1"),
+        "no posted stats: xp throws, got {xp:?}"
+    );
+    assert!(
+        level.contains("not v1"),
+        "no posted stats: level throws, got {level:?}"
+    );
+    assert!(
+        hp.contains("not v1"),
+        "no posted hitpoints: hpFraction throws, got {hp:?}"
+    );
     iso.join();
 
     let src = "import { Inventory } from '../../api/inventory/Inventory.js'; export default class T extends LoopingBot { loop() { globalThis.__probe = Inventory.first('Bones'); } }";
@@ -3068,22 +3087,28 @@ import { matchesCommonBankLoot, COMMON_BANK_LOOT } from '../../api/bank/Banking.
 import { RecoveryHints } from '../../runtime/RecoveryHints.js';
 import { safeToSteal } from '../../api/thieving/stealRules.js';
 import { shouldEatFood } from '../../api/combat/food.js';
+import { Skills } from '../../api/skills/Skills.js';
+import { Game } from '../../api/game/Game.js';
+import { HOSTILE_NAMES } from '../../api/thieving/targets.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         const hits = [];
-        const tryHit = (fn) => {
-            try { fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
+        const tryHit = async (fn) => {
+            try { await fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
         };
-        tryHit(() => clientName(526));
-        tryHit(() => displayName(526));
-        tryHit(() => parseCombatStyle('no-such-style'));
-        tryHit(() => SettingsStore.globalBag());
-        tryHit(() => foodOf(null, 'Shark'));
-        tryHit(() => matchesCommonBankLoot('uncut sapphire'));
-        tryHit(() => RecoveryHints.takeAnchor());
-        tryHit(() => safeToSteal(1, 0.5, 0));
-        tryHit(() => shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }));
-        globalThis.__probe = JSON.stringify({ hits, loot: COMMON_BANK_LOOT });
+        await tryHit(() => clientName(526));
+        await tryHit(() => displayName(526));
+        await tryHit(() => parseCombatStyle('no-such-style'));
+        await tryHit(() => SettingsStore.globalBag());
+        await tryHit(() => foodOf(null, 'Shark'));
+        await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
+        await tryHit(() => RecoveryHints.takeAnchor());
+        await tryHit(() => safeToSteal(1, 0.5, 0));
+        await tryHit(() => shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }));
+        await tryHit(() => Skills.xp('prayer'));
+        await tryHit(() => Skills.hpFraction());
+        await tryHit(() => Game.castOnItem('High level alchemy', { name: 'Steel platebody' }));
+        globalThis.__probe = JSON.stringify({ hits, loot: COMMON_BANK_LOOT, hostile: HOSTILE_NAMES });
     }
 }
 "#;
@@ -3095,7 +3120,7 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        9,
+        12,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
@@ -3109,6 +3134,11 @@ export default class T extends LoopingBot {
     assert!(
         loot.is_empty(),
         "COMMON_BANK_LOOT must not ship a junk policy table: {loot:?}"
+    );
+    let hostile = parsed["hostile"].as_array().expect("HOSTILE_NAMES");
+    assert!(
+        hostile.is_empty(),
+        "HOSTILE_NAMES must not ship a hostility policy table: {hostile:?}"
     );
     iso.join();
 }
