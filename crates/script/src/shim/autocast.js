@@ -1,7 +1,7 @@
 import { actions, reader } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
 import { Game } from '../game/Game.js';
-import { notV1, snap } from '../../shim/_kernel.js';
+import { notImpl, snap } from '../../shim/_kernel.js';
 
 const COMBAT_TAB = 0;
 const STEP_MS = 3000;
@@ -32,8 +32,8 @@ export const Autocast = {
         const choose = postedCom('choose') !== -1 ? postedCom('choose') : -1;
         const toggle = postedCom('autocast') !== -1 ? postedCom('autocast') : postedCom('auto');
         if (!spell || choose === -1 || toggle === -1) {
-            log?.(`not v1: Autocast.arm needs posted coms for '${spellName}'`);
-            throw notV1('Autocast.arm');
+            log?.(`not impl: Autocast.arm needs posted coms for '${spellName}'`);
+            throw notImpl('Autocast.arm');
         }
         if (!(await Game.openSideTab(COMBAT_TAB))) {
             log?.('could not open the combat tab');

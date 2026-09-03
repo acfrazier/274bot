@@ -1,11 +1,11 @@
 // Our Banking module: `open()` is a thin name onto the host's nearest
 // Use-quickly loc interact (same plane; none fails closed). Deposit helpers
-// stay here. Missing members throw `not v1`. rs2b0t's Banking.ts / webwalk
+// stay here. Missing members throw `not impl`. rs2b0t's Banking.ts / webwalk
 // are never executed.
 import { Bank } from './Bank.js';
 import { Execution } from '../execution/Execution.js';
 
-const notV1 = (name) => new Error('not v1: ' + name);
+const notImpl = (name) => new Error('not impl: ' + name);
 
 // The rs2b0t bankRules junk list, kept as data. Names match as
 // substrings; one that is not a 274 obj never matches a posted row (the
@@ -13,14 +13,14 @@ const notV1 = (name) => new Error('not v1: ' + name);
 export const COMMON_BANK_LOOT = [];
 
 export function matchesCommonBankLoot(_name) {
-    throw notV1('matchesCommonBankLoot');
+    throw notImpl('matchesCommonBankLoot');
 }
 
 // The rs2b0t depositMatcher shape, minus the obj-id arm (posted rows
-// carry names only). Common-junk matching is not v1 — no policy table.
+// carry names only). Common-junk matching is not impl — no policy table.
 export function depositMatcher(own, includeCommon) {
     if (includeCommon) {
-        throw notV1('depositMatcher.includeCommon');
+        throw notImpl('depositMatcher.includeCommon');
     }
     return (name) => own(name);
 }
@@ -85,7 +85,7 @@ export const Banking = new Proxy(
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop in target) return target[prop];
-            throw notV1('Banking.' + String(prop));
+            throw notImpl('Banking.' + String(prop));
         },
     },
 );

@@ -36,7 +36,7 @@ class SettingsStoreImpl {
     }
 
     globalBag() {
-        throw new Error('not v1: SettingsStore.globalBag');
+        throw new Error('not impl: SettingsStore.globalBag');
     }
 }
 

@@ -669,7 +669,10 @@ fn take_ident(s: &str) -> Option<(&str, &str)> {
 /// `LOADOUT_SETTING` shim. Do not evaluate TypeScript identifiers.
 fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
     if ident == "LOADOUT_SETTING" {
-        return setting_object_body(include_str!("shim/loadout_setting.js"), "LOADOUT_SETTING");
+        return setting_object_body(
+            include_str!("shim/loadout_setting.js"),
+            "LOADOUT_SETTING",
+        );
     }
     setting_object_body(file_src, ident)
 }

@@ -48,7 +48,7 @@ fn parse_index_dts_names_only_skips_types_and_internal() {
 }
 
 /// Every fixture export is on `@rs2b0t/api` and every listed member is
-/// present (`in` / typeof function). Missing members that throw `not v1`
+/// present (`in` / typeof function). Missing members that throw `not impl`
 /// from the Proxy get-trap fail this test; calling a stub is not required.
 #[test]
 fn declared_abi_members_are_loadable() {

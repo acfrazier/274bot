@@ -103,7 +103,7 @@ pub struct JsCard {
     pub tags: Vec<String>,
     pub settings_schema: Vec<SettingDef>,
     /// First import specifier that does not remap to a registered shim.
-    /// `None` means Start may spawn; `not v1` members do not set this.
+    /// `None` means Start may spawn; `not impl` members do not set this.
     pub unloadable: Option<String>,
 }
 
@@ -1143,7 +1143,7 @@ mod isolate {
     /// Native wrapper: re-export the module's `tick` behind a global that
     /// receives the tick number and a persistent `api` object. `api` is a
     /// Proxy: the host owns it (`api.tick` is set each tick); reading or
-    /// writing any other member throws `not v1` — a script stashes its own
+    /// writing any other member throws `not impl` — a script stashes its own
     /// state elsewhere, never in host-owned slots.
     const NATIVE_MAIN: &str = r#"
 import { tick } from './bot.js';
@@ -1151,11 +1151,11 @@ const api = new Proxy({}, {
     get(target, prop) {
         if (typeof prop === 'symbol') return undefined;
         if (prop === 'tick') return target.tick;
-        throw new Error('not v1: api.' + String(prop));
+        throw new Error('not impl: api.' + String(prop));
     },
     set(target, prop, value) {
         if (prop === 'tick') { target.tick = value; return true; }
-        throw new Error('not v1: api.' + String(prop));
+        throw new Error('not impl: api.' + String(prop));
     },
 });
 globalThis.__rs_api = api;

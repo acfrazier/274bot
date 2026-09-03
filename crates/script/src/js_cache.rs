@@ -134,8 +134,9 @@ impl JsCache {
         {
             use std::os::unix::fs::PermissionsExt;
             for dir in [&self.root, &objects] {
-                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-                    .map_err(|e| format!("cache mode {}: {e}", dir.display()))?;
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(
+                    |e| format!("cache mode {}: {e}", dir.display()),
+                )?;
             }
         }
         let marker = objects.join(".keep");

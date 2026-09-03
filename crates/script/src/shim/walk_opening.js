@@ -1,16 +1,16 @@
 import { Traversal } from '../../api/walking/Traversal.js';
-import { notV1 } from '../../shim/_kernel.js';
+import { notImpl } from '../../shim/_kernel.js';
 
 export function openOp(actions) {
     return (actions || []).find((a) => /^open/i.test(String(a))) ?? null;
 }
 
 export function towardDest(_from, _here, _toward) {
-    throw notV1('towardDest');
+    throw notImpl('towardDest');
 }
 
 export function isOpenableObstacle(_name, _actions, _obstacles) {
-    throw notV1('isOpenableObstacle');
+    throw notImpl('isOpenableObstacle');
 }
 
 export async function walkOpening(dest, radius, _obstacles, log) {

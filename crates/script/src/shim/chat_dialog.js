@@ -1,6 +1,6 @@
 import { Execution } from '../../execution/Execution.js';
 import { actions, reader } from '../../../adapter/ClientAdapter.js';
-import { snap, queue, proxy, optionalText, notV1 } from '../../../shim/_kernel.js';
+import { snap, queue, proxy, optionalText, notImpl } from '../../../shim/_kernel.js';
 
 export const ChatDialog = proxy('ChatDialog', {
     isOpen() {
@@ -61,7 +61,7 @@ export const ChatDialog = proxy('ChatDialog', {
         }
         const btn = product.buttons.find((b) => b.qty === -1);
         if (!btn) {
-            throw notV1('ChatDialog.makeX');
+            throw notImpl('ChatDialog.makeX');
         }
         actions.ifButton(btn.comId);
         await Execution.delayTicks(1);
@@ -94,18 +94,18 @@ export const ChatDialog = proxy('ChatDialog', {
         );
     },
     isMainMakePanel() {
-        throw notV1('ChatDialog.isMainMakePanel');
+        throw notImpl('ChatDialog.isMainMakePanel');
     },
     mainMakeProducts() {
-        throw notV1('ChatDialog.mainMakeProducts');
+        throw notImpl('ChatDialog.mainMakeProducts');
     },
     async makeFromPanel() {
-        throw notV1('ChatDialog.makeFromPanel');
+        throw notImpl('ChatDialog.makeFromPanel');
     },
     async makeFromPanelMax() {
-        throw notV1('ChatDialog.makeFromPanelMax');
+        throw notImpl('ChatDialog.makeFromPanelMax');
     },
     async makeOne() {
-        throw notV1('ChatDialog.makeOne');
+        throw notImpl('ChatDialog.makeOne');
     },
 });

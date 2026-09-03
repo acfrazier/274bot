@@ -1,7 +1,7 @@
-// SolveClue is not v1 — every member throws on use.
-const notV1 = (name) => new Error('not v1: ' + name);
+// SolveClue is not impl — every member throws on use.
+const notImpl = (name) => new Error('not impl: ' + name);
 const throwUse = (name) => {
-    throw notV1(name);
+    throw notImpl(name);
 };
 
 export class SolveClue {

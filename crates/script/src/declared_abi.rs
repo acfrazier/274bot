@@ -536,7 +536,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     let mut out = String::from(
         "// Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.\n\
          // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored\n\
-         import { notV1, proxy } from '../../shim/_kernel.js';\n\n",
+         import { notImpl, proxy } from '../../shim/_kernel.js';\n\n",
     );
     out.push_str("export const defineBot = globalThis.defineBot;\n\n");
     covered.insert("defineBot");
@@ -577,7 +577,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
             }
             DeclaredKind::Function => {
                 out.push_str(&format!(
-                    "export function {}() {{ throw notV1('{}'); }}\n",
+                    "export function {}() {{ throw notImpl('{}'); }}\n",
                     exp.name, exp.name
                 ));
             }
@@ -588,7 +588,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                 ));
                 for m in &exp.members {
                     out.push_str(&format!(
-                        "    {}() {{ throw notV1('{}.{}'); }},\n",
+                        "    {}() {{ throw notImpl('{}.{}'); }},\n",
                         m, exp.name, m
                     ));
                 }
@@ -607,13 +607,13 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                         && matches!(m.as_str(), "rectangular" | "circular")
                     {
                         out.push_str(&format!(
-                            "    static {}() {{ throw notV1('{}.{}'); }}\n",
+                            "    static {}() {{ throw notImpl('{}.{}'); }}\n",
                             m, exp.name, m
                         ));
                         continue;
                     }
                     out.push_str(&format!(
-                        "    {}() {{ throw notV1('{}.{}'); }}\n",
+                        "    {}() {{ throw notImpl('{}.{}'); }}\n",
                         m, exp.name, m
                     ));
                 }

@@ -1,4 +1,4 @@
-import { notV1 } from '../../shim/_kernel.js';
+import { notImpl } from '../../shim/_kernel.js';
 
 export const FOOD_OPTIONS = [
     'Shark', 'Lobster', 'Swordfish', 'Tuna', 'Salmon', 'Trout', 'Pike', 'Bass', 'Herring', 'Sardine', 'Anchovies', 'Shrimps',
@@ -9,29 +9,29 @@ export const FOOD_OPTIONS = [
 export const MIN_EAT_HP = 5;
 
 export function foodForms(_foodName) {
-    throw notV1('foodForms');
+    throw notImpl('foodForms');
 }
 
 export function isFoodItem(_name, _foodName) {
-    throw notV1('isFoodItem');
+    throw notImpl('isFoodItem');
 }
 
 export function foodCount(_items, _foodName) {
-    throw notV1('foodCount');
+    throw notImpl('foodCount');
 }
 
 export function foodHealAmount(_foodName) {
-    throw notV1('foodHealAmount');
+    throw notImpl('foodHealAmount');
 }
 
 export function eatAtHpThreshold(_maxHp, _heal, _minHp) {
-    throw notV1('eatAtHpThreshold');
+    throw notImpl('eatAtHpThreshold');
 }
 
 export function shouldEatToUseFood(_opts) {
-    throw notV1('shouldEatToUseFood');
+    throw notImpl('shouldEatToUseFood');
 }
 
 export function shouldEatFood(_foodName, _opts) {
-    throw notV1('shouldEatFood');
+    throw notImpl('shouldEatFood');
 }

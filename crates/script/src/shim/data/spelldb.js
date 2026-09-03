@@ -1,4 +1,4 @@
-// SETTINGS keys only — not rune costs / ssb indices (those are not v1).
+// SETTINGS keys only — not rune costs / ssb indices (those are not impl).
 export const SPELL_DB = {
     'Wind Strike': {},
     'Water Strike': {},

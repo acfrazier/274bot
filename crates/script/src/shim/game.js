@@ -1,8 +1,8 @@
 // Our Game module. Reads the host-posted snapshot; unimplemented members
-// throw `not v1` — never a fake value.
+// throw `not impl` — never a fake value.
 import { reader, actions } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
-import { host, snap, notV1, proxy, queue, optionalText } from '../../shim/_kernel.js';
+import { host, snap, notImpl, proxy, queue, optionalText } from '../../shim/_kernel.js';
 
 const COM_MODE_VARP = 43;
 const RUN_VARP = 173;
@@ -95,12 +95,19 @@ export const Game = new Proxy(
         },
         setCombatStyle(style) {
             if (typeof style === 'number') {
-                if (!selectCombatMode(style)) throw notV1('Game.setCombatStyle');
+                if (!selectCombatMode(style)) {
+                    throw notImpl('Game.setCombatStyle', 'ifButton failed');
+                }
                 return true;
             }
-            if (!offeredCombatModes()) throw notV1('Game.setCombatStyle');
+            if (!offeredCombatModes()) {
+                throw notImpl('Game.setCombatStyle', 'combat_styles empty');
+            }
             const row = matchCombatRow(style);
-            if (!row || !selectCombatMode(row.mode)) throw notV1('Game.setCombatStyle');
+            if (!row) throw notImpl('Game.setCombatStyle', 'no matching row');
+            if (!selectCombatMode(row.mode)) {
+                throw notImpl('Game.setCombatStyle', 'ifButton failed');
+            }
             return true;
         },
         setAutoRetaliate(on) {
@@ -118,7 +125,7 @@ export const Game = new Proxy(
                 (s) => s && s.label && String(s.label).toLowerCase() === wanted,
             );
             if (!row || typeof row.component_id !== 'number') {
-                throw notV1('Game.castOnItem');
+                throw notImpl('Game.castOnItem');
             }
             queue({
                 op: 'use-widget-on',
@@ -139,7 +146,7 @@ export const Game = new Proxy(
                 (s) => s && s.label && String(s.label).toLowerCase() === wanted,
             );
             if (!row || typeof row.component_id !== 'number') {
-                throw notV1('Game.castOnLoc');
+                throw notImpl('Game.castOnLoc');
             }
             const tile = typeof loc.tile === 'function' ? loc.tile() : loc;
             queue({
@@ -155,25 +162,25 @@ export const Game = new Proxy(
             return true;
         },
         teleport() {
-            throw notV1('Game.teleport');
+            throw notImpl('Game.teleport');
         },
         energy() {
             return typeof snap().run_energy === 'number' ? snap().run_energy : 0;
         },
         weight() {
-            throw notV1('Game.weight');
+            throw notImpl('Game.weight');
         },
         cameraYaw() {
-            throw notV1('Game.cameraYaw');
+            throw notImpl('Game.cameraYaw');
         },
         cameraPitch() {
-            throw notV1('Game.cameraPitch');
+            throw notImpl('Game.cameraPitch');
         },
         setCameraYaw() {
-            throw notV1('Game.setCameraYaw');
+            throw notImpl('Game.setCameraYaw');
         },
         combatStyleMode() {
-            throw notV1('Game.combatStyleMode');
+            throw notImpl('Game.combatStyleMode');
         },
         sceneReady() {
             return snap().ingame === true && snap().scene_state === 2;
@@ -182,17 +189,17 @@ export const Game = new Proxy(
             return typeof snap().scene_state === 'number' ? snap().scene_state : 0;
         },
         attackedByPlayer() {
-            throw notV1('Game.attackedByPlayer');
+            throw notImpl('Game.attackedByPlayer');
         },
         async castOnNpc() {
-            throw notV1('Game.castOnNpc');
+            throw notImpl('Game.castOnNpc');
         },
     },
     {
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop in target) return target[prop];
-            throw notV1('Game.' + String(prop));
+            throw notImpl('Game.' + String(prop));
         },
     },
 );

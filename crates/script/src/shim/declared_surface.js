@@ -1,6 +1,6 @@
 // Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.
 // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored
-import { notV1, proxy } from '../../shim/_kernel.js';
+import { notImpl, proxy } from '../../shim/_kernel.js';
 
 export const defineBot = globalThis.defineBot;
 
@@ -34,14 +34,14 @@ export const AXE_SHOP_COSTS = [];
 export const AXE_SMITH_LEVEL = [];
 export class AcquireTask {
     constructor() {}
-    execute() { throw notV1('AcquireTask.execute'); }
-    validate() { throw notV1('AcquireTask.validate'); }
+    execute() { throw notImpl('AcquireTask.execute'); }
+    validate() { throw notImpl('AcquireTask.validate'); }
 }
 export class Area {
-    static circular() { throw notV1('Area.circular'); }
-    contains() { throw notV1('Area.contains'); }
-    getRandomTile() { throw notV1('Area.getRandomTile'); }
-    static rectangular() { throw notV1('Area.rectangular'); }
+    static circular() { throw notImpl('Area.circular'); }
+    contains() { throw notImpl('Area.contains'); }
+    getRandomTile() { throw notImpl('Area.getRandomTile'); }
+    static rectangular() { throw notImpl('Area.rectangular'); }
     constructor() {}
 }
 export const BANK_LOCATIONS = [];
@@ -49,9 +49,9 @@ export const BOB_VENDOR = '';
 export const BROKEN_AXE = '';
 export const BROKEN_PICKAXE = '';
 export class BranchTask {
-    failure() { throw notV1('BranchTask.failure'); }
-    success() { throw notV1('BranchTask.success'); }
-    validate() { throw notV1('BranchTask.validate'); }
+    failure() { throw notImpl('BranchTask.failure'); }
+    success() { throw notImpl('BranchTask.success'); }
+    validate() { throw notImpl('BranchTask.validate'); }
     constructor() {}
 }
 export const CHISEL = '';
@@ -75,18 +75,18 @@ export const GERRANT_VENDOR = '';
 export const HAMMER = '';
 export const HARRY_VENDOR = '';
 export class InvItem {
-    actions() { throw notV1('InvItem.actions'); }
-    count() { throw notV1('InvItem.count'); }
-    id() { throw notV1('InvItem.id'); }
-    interact() { throw notV1('InvItem.interact'); }
-    name() { throw notV1('InvItem.name'); }
-    slot() { throw notV1('InvItem.slot'); }
-    useOn() { throw notV1('InvItem.useOn'); }
+    actions() { throw notImpl('InvItem.actions'); }
+    count() { throw notImpl('InvItem.count'); }
+    id() { throw notImpl('InvItem.id'); }
+    interact() { throw notImpl('InvItem.interact'); }
+    name() { throw notImpl('InvItem.name'); }
+    slot() { throw notImpl('InvItem.slot'); }
+    useOn() { throw notImpl('InvItem.useOn'); }
     constructor() {}
 }
 export const KNIFE = '';
 export class LeafTask {
-    execute() { throw notV1('LeafTask.execute'); }
+    execute() { throw notImpl('LeafTask.execute'); }
     constructor() {}
 }
 export const MAP_SQUARE = -1;
@@ -99,10 +99,10 @@ export const NURMOF_VENDOR = '';
 export const PICKAXES = [];
 export const PICKAXE_SHOP_COSTS = [];
 export const Quests = proxy('Quests', {
-    all() { throw notV1('Quests.all'); },
-    journal() { throw notV1('Quests.journal'); },
-    points() { throw notV1('Quests.points'); },
-    status() { throw notV1('Quests.status'); },
+    all() { throw notImpl('Quests.all'); },
+    journal() { throw notImpl('Quests.journal'); },
+    points() { throw notImpl('Quests.points'); },
+    status() { throw notImpl('Quests.status'); },
 });
 export const RANDOM_EVENT_CASKET_ID = -1;
 export const ROCK_OPTIONS = [];
@@ -110,31 +110,31 @@ export const ROCK_TYPES = [];
 export const RUNES = [];
 export const RUNE_OPTIONS = [];
 export const Shop = proxy('Shop', {
-    buy() { throw notV1('Shop.buy'); },
-    buyById() { throw notV1('Shop.buyById'); },
-    close() { throw notV1('Shop.close'); },
-    isOpen() { throw notV1('Shop.isOpen'); },
-    open() { throw notV1('Shop.open'); },
-    sell() { throw notV1('Shop.sell'); },
-    stock() { throw notV1('Shop.stock'); },
+    buy() { throw notImpl('Shop.buy'); },
+    buyById() { throw notImpl('Shop.buyById'); },
+    close() { throw notImpl('Shop.close'); },
+    isOpen() { throw notImpl('Shop.isOpen'); },
+    open() { throw notImpl('Shop.open'); },
+    sell() { throw notImpl('Shop.sell'); },
+    stock() { throw notImpl('Shop.stock'); },
 });
 export const TINDERBOX = '';
 export const TOLL_COIN_TARGET = -1;
 export const TOOL_ACQUIRE_OPTIONS = [];
 export const TOOL_ACQUIRE_SETTING = '';
 export const Trade = proxy('Trade', {
-    accept() { throw notV1('Trade.accept'); },
-    active() { throw notV1('Trade.active'); },
-    decline() { throw notV1('Trade.decline'); },
-    myOffer() { throw notV1('Trade.myOffer'); },
-    offer() { throw notV1('Trade.offer'); },
-    offerAll() { throw notV1('Trade.offerAll'); },
-    onConfirmScreen() { throw notV1('Trade.onConfirmScreen'); },
-    onOfferScreen() { throw notV1('Trade.onOfferScreen'); },
-    partner() { throw notV1('Trade.partner'); },
-    removeAll() { throw notV1('Trade.removeAll'); },
-    request() { throw notV1('Trade.request'); },
-    theirOffer() { throw notV1('Trade.theirOffer'); },
+    accept() { throw notImpl('Trade.accept'); },
+    active() { throw notImpl('Trade.active'); },
+    decline() { throw notImpl('Trade.decline'); },
+    myOffer() { throw notImpl('Trade.myOffer'); },
+    offer() { throw notImpl('Trade.offer'); },
+    offerAll() { throw notImpl('Trade.offerAll'); },
+    onConfirmScreen() { throw notImpl('Trade.onConfirmScreen'); },
+    onOfferScreen() { throw notImpl('Trade.onOfferScreen'); },
+    partner() { throw notImpl('Trade.partner'); },
+    removeAll() { throw notImpl('Trade.removeAll'); },
+    request() { throw notImpl('Trade.request'); },
+    theirOffer() { throw notImpl('Trade.theirOffer'); },
 });
 export const VARROCK_ANVIL_BANK = '';
 export const VARROCK_ANVIL_STAND = '';
@@ -143,80 +143,80 @@ export const WALK_OPTIONS = [];
 export const WHIRLPOOL_IDS = [];
 export const WOODCUTTING_LOCATIONS = [];
 export const WOODCUTTING_LOCATION_OPTIONS = [];
-export function acquireKeepNames() { throw notV1('acquireKeepNames'); }
+export function acquireKeepNames() { throw notImpl('acquireKeepNames'); }
 export const apiVersion = 1;
-export function axeReq() { throw notV1('axeReq'); }
-export function axeShopOffers() { throw notV1('axeShopOffers'); }
-export function bankDistance() { throw notV1('bankDistance'); }
-export function bankHasBetterGatherTool() { throw notV1('bankHasBetterGatherTool'); }
-export function bankUnlocked() { throw notV1('bankUnlocked'); }
-export function bestAffordableShopTier() { throw notV1('bestAffordableShopTier'); }
-export function bestAxe() { throw notV1('bestAxe'); }
-export function bestFromTiers() { throw notV1('bestFromTiers'); }
-export function bestHeldToolNames() { throw notV1('bestHeldToolNames'); }
-export function bestOwnedTier() { throw notV1('bestOwnedTier'); }
-export function bestPickaxe() { throw notV1('bestPickaxe'); }
-export function bestSmithableAxe() { throw notV1('bestSmithableAxe'); }
-export function boothFields() { throw notV1('boothFields'); }
-export function buyPlansCost() { throw notV1('buyPlansCost'); }
-export function canFundPlan() { throw notV1('canFundPlan'); }
-export function canWieldTool() { throw notV1('canWieldTool'); }
-export function coinsToWithdraw() { throw notV1('coinsToWithdraw'); }
+export function axeReq() { throw notImpl('axeReq'); }
+export function axeShopOffers() { throw notImpl('axeShopOffers'); }
+export function bankDistance() { throw notImpl('bankDistance'); }
+export function bankHasBetterGatherTool() { throw notImpl('bankHasBetterGatherTool'); }
+export function bankUnlocked() { throw notImpl('bankUnlocked'); }
+export function bestAffordableShopTier() { throw notImpl('bestAffordableShopTier'); }
+export function bestAxe() { throw notImpl('bestAxe'); }
+export function bestFromTiers() { throw notImpl('bestFromTiers'); }
+export function bestHeldToolNames() { throw notImpl('bestHeldToolNames'); }
+export function bestOwnedTier() { throw notImpl('bestOwnedTier'); }
+export function bestPickaxe() { throw notImpl('bestPickaxe'); }
+export function bestSmithableAxe() { throw notImpl('bestSmithableAxe'); }
+export function boothFields() { throw notImpl('boothFields'); }
+export function buyPlansCost() { throw notImpl('buyPlansCost'); }
+export function canFundPlan() { throw notImpl('canFundPlan'); }
+export function canWieldTool() { throw notImpl('canWieldTool'); }
+export function coinsToWithdraw() { throw notImpl('coinsToWithdraw'); }
 export const events = proxy('events', {
-    off() { throw notV1('events.off'); },
-    on() { throw notV1('events.on'); },
+    off() { throw notImpl('events.off'); },
+    on() { throw notImpl('events.on'); },
 });
-export function exactTool() { throw notV1('exactTool'); }
-export function fishingGearShopCart() { throw notV1('fishingGearShopCart'); }
-export function fishingRestockPlan() { throw notV1('fishingRestockPlan'); }
-export function fishingShopCost() { throw notV1('fishingShopCost'); }
-export function fishingVendorFor() { throw notV1('fishingVendorFor'); }
-export function gearKeepNames() { throw notV1('gearKeepNames'); }
-export function gearLabel() { throw notV1('gearLabel'); }
-export function hasAll() { throw notV1('hasAll'); }
-export function hasAllTools() { throw notV1('hasAllTools'); }
-export function hasFishingGear() { throw notV1('hasFishingGear'); }
-export function hasToolReq() { throw notV1('hasToolReq'); }
-export function held() { throw notV1('held'); }
-export function isCowFieldLootTile() { throw notV1('isCowFieldLootTile'); }
-export function isFishingBaitPiece() { throw notV1('isFishingBaitPiece'); }
-export function locationOptions() { throw notV1('locationOptions'); }
-export function miningLocationLabel() { throw notV1('miningLocationLabel'); }
-export function missingFishingGear() { throw notV1('missingFishingGear'); }
-export function missingToolLabels() { throw notV1('missingToolLabels'); }
-export function nearestCowLocation() { throw notV1('nearestCowLocation'); }
-export function nearestUsableBank() { throw notV1('nearestUsableBank'); }
-export function needsTollCoins() { throw notV1('needsTollCoins'); }
-export function parseToolAcquireMode() { throw notV1('parseToolAcquireMode'); }
-export function pickaxeReq() { throw notV1('pickaxeReq'); }
-export function pickaxeShopOffers() { throw notV1('pickaxeShopOffers'); }
-export function planAxeAcquire() { throw notV1('planAxeAcquire'); }
-export function planBrokenToolRepair() { throw notV1('planBrokenToolRepair'); }
-export function planFishingGearAcquire() { throw notV1('planFishingGearAcquire'); }
-export function planFishingGearBuys() { throw notV1('planFishingGearBuys'); }
-export function planGatherToolAcquire() { throw notV1('planGatherToolAcquire'); }
-export function planPickaxeAcquire() { throw notV1('planPickaxeAcquire'); }
+export function exactTool() { throw notImpl('exactTool'); }
+export function fishingGearShopCart() { throw notImpl('fishingGearShopCart'); }
+export function fishingRestockPlan() { throw notImpl('fishingRestockPlan'); }
+export function fishingShopCost() { throw notImpl('fishingShopCost'); }
+export function fishingVendorFor() { throw notImpl('fishingVendorFor'); }
+export function gearKeepNames() { throw notImpl('gearKeepNames'); }
+export function gearLabel() { throw notImpl('gearLabel'); }
+export function hasAll() { throw notImpl('hasAll'); }
+export function hasAllTools() { throw notImpl('hasAllTools'); }
+export function hasFishingGear() { throw notImpl('hasFishingGear'); }
+export function hasToolReq() { throw notImpl('hasToolReq'); }
+export function held() { throw notImpl('held'); }
+export function isCowFieldLootTile() { throw notImpl('isCowFieldLootTile'); }
+export function isFishingBaitPiece() { throw notImpl('isFishingBaitPiece'); }
+export function locationOptions() { throw notImpl('locationOptions'); }
+export function miningLocationLabel() { throw notImpl('miningLocationLabel'); }
+export function missingFishingGear() { throw notImpl('missingFishingGear'); }
+export function missingToolLabels() { throw notImpl('missingToolLabels'); }
+export function nearestCowLocation() { throw notImpl('nearestCowLocation'); }
+export function nearestUsableBank() { throw notImpl('nearestUsableBank'); }
+export function needsTollCoins() { throw notImpl('needsTollCoins'); }
+export function parseToolAcquireMode() { throw notImpl('parseToolAcquireMode'); }
+export function pickaxeReq() { throw notImpl('pickaxeReq'); }
+export function pickaxeShopOffers() { throw notImpl('pickaxeShopOffers'); }
+export function planAxeAcquire() { throw notImpl('planAxeAcquire'); }
+export function planBrokenToolRepair() { throw notImpl('planBrokenToolRepair'); }
+export function planFishingGearAcquire() { throw notImpl('planFishingGearAcquire'); }
+export function planFishingGearBuys() { throw notImpl('planFishingGearBuys'); }
+export function planGatherToolAcquire() { throw notImpl('planGatherToolAcquire'); }
+export function planPickaxeAcquire() { throw notImpl('planPickaxeAcquire'); }
 export const reader = '';
-export function registerScript() { throw notV1('registerScript'); }
-export function resolveBankOpenRoute() { throw notV1('resolveBankOpenRoute'); }
-export function resolveCowLocation() { throw notV1('resolveCowLocation'); }
-export function resolveDestination() { throw notV1('resolveDestination'); }
-export function resolveFishMethod() { throw notV1('resolveFishMethod'); }
-export function resolveFishingLocation() { throw notV1('resolveFishingLocation'); }
-export function resolveGatheringLocation() { throw notV1('resolveGatheringLocation'); }
-export function resolveMiningLocation() { throw notV1('resolveMiningLocation'); }
-export function resolveRockIds() { throw notV1('resolveRockIds'); }
-export function resolveWoodcuttingLocation() { throw notV1('resolveWoodcuttingLocation'); }
-export function sameMapSquare() { throw notV1('sameMapSquare'); }
-export function shopableMissingFishingGear() { throw notV1('shopableMissingFishingGear'); }
-export function shouldBankNow() { throw notV1('shouldBankNow'); }
-export function shouldBootstrapTollCoins() { throw notV1('shouldBootstrapTollCoins'); }
-export function spotMatchesMethod() { throw notV1('spotMatchesMethod'); }
-export function surplusHeldToolNames() { throw notV1('surplusHeldToolNames'); }
-export function tinderboxReq() { throw notV1('tinderboxReq'); }
-export function toolAttackLevel() { throw notV1('toolAttackLevel'); }
-export function toolKeepNames() { throw notV1('toolKeepNames'); }
-export function toolKitLabel() { throw notV1('toolKitLabel'); }
-export function toolRestockPlan() { throw notV1('toolRestockPlan'); }
-export function toolsNeedingEquip() { throw notV1('toolsNeedingEquip'); }
-export function withBaitTarget() { throw notV1('withBaitTarget'); }
+export function registerScript() { throw notImpl('registerScript'); }
+export function resolveBankOpenRoute() { throw notImpl('resolveBankOpenRoute'); }
+export function resolveCowLocation() { throw notImpl('resolveCowLocation'); }
+export function resolveDestination() { throw notImpl('resolveDestination'); }
+export function resolveFishMethod() { throw notImpl('resolveFishMethod'); }
+export function resolveFishingLocation() { throw notImpl('resolveFishingLocation'); }
+export function resolveGatheringLocation() { throw notImpl('resolveGatheringLocation'); }
+export function resolveMiningLocation() { throw notImpl('resolveMiningLocation'); }
+export function resolveRockIds() { throw notImpl('resolveRockIds'); }
+export function resolveWoodcuttingLocation() { throw notImpl('resolveWoodcuttingLocation'); }
+export function sameMapSquare() { throw notImpl('sameMapSquare'); }
+export function shopableMissingFishingGear() { throw notImpl('shopableMissingFishingGear'); }
+export function shouldBankNow() { throw notImpl('shouldBankNow'); }
+export function shouldBootstrapTollCoins() { throw notImpl('shouldBootstrapTollCoins'); }
+export function spotMatchesMethod() { throw notImpl('spotMatchesMethod'); }
+export function surplusHeldToolNames() { throw notImpl('surplusHeldToolNames'); }
+export function tinderboxReq() { throw notImpl('tinderboxReq'); }
+export function toolAttackLevel() { throw notImpl('toolAttackLevel'); }
+export function toolKeepNames() { throw notImpl('toolKeepNames'); }
+export function toolKitLabel() { throw notImpl('toolKitLabel'); }
+export function toolRestockPlan() { throw notImpl('toolRestockPlan'); }
+export function toolsNeedingEquip() { throw notImpl('toolsNeedingEquip'); }
+export function withBaitTarget() { throw notImpl('withBaitTarget'); }

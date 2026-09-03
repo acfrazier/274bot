@@ -1,5 +1,5 @@
 // notedOf / unnotedOf are built from posted inv+bank cert links (no ITEM_DB).
-import { notV1 } from '../../shim/_kernel.js';
+import { notImpl } from '../../shim/_kernel.js';
 
 const EMPTY = {
     byId: new Map(),
@@ -34,21 +34,21 @@ export function liveCatalog() {
 }
 
 export function clientName(_id) {
-    throw notV1('clientName');
+    throw notImpl('clientName');
 }
 
 export function displayName(_id) {
-    throw notV1('displayName');
+    throw notImpl('displayName');
 }
 
 export function notedId(id) {
     const n = liveCatalog().notedOf.get(id);
-    if (n === undefined) throw notV1('notedId');
+    if (n === undefined) throw notImpl('notedId');
     return n;
 }
 
 export function unnotedId(id) {
     const n = liveCatalog().unnotedOf.get(id);
-    if (n === undefined) throw notV1('unnotedId');
+    if (n === undefined) throw notImpl('unnotedId');
     return n;
 }

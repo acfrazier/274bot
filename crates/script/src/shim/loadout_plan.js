@@ -1,25 +1,25 @@
-import { notV1 } from '../../shim/_kernel.js';
+import { notImpl } from '../../shim/_kernel.js';
 
 export function foodOf(_loadout, _fallback) {
-    throw notV1('foodOf');
+    throw notImpl('foodOf');
 }
 
 export function gearOf(_loadout) {
-    throw notV1('gearOf');
+    throw notImpl('gearOf');
 }
 
 export function suppliesOf(_loadout) {
-    throw notV1('suppliesOf');
+    throw notImpl('suppliesOf');
 }
 
 export function weaponOf(_loadout, _fallback) {
-    throw notV1('weaponOf');
+    throw notImpl('weaponOf');
 }
 
 export function scriptFood(_bag, _fallback) {
-    throw notV1('scriptFood');
+    throw notImpl('scriptFood');
 }
 
 export function scriptFoods(_bag, _fallback) {
-    throw notV1('scriptFoods');
+    throw notImpl('scriptFoods');
 }

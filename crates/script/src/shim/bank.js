@@ -1,6 +1,7 @@
 import { Execution } from '../execution/Execution.js';
 const host = () => globalThis.__rs2b0t_host || {};
-const notV1 = (name) => new Error('not v1: ' + name);
+const notImpl = (name, reason) =>
+    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 const snap = () => host().snapshot || {};
 const queue = (req) => {
     const h = host();
@@ -50,7 +51,7 @@ export const Bank = new Proxy(
         },
         // Deposit-all the named bank-side item. The deposit op is always
         // the row's "all" op (`Deposit-1/5/10/All`), the only op worth
-        // sending here; the specific-op arm is not v1.
+        // sending here; the specific-op arm is not impl.
         deposit(name) {
             const wanted = String(name).toLowerCase();
             for (const row of snap().bank_side || []) {
@@ -64,7 +65,7 @@ export const Bank = new Proxy(
         },
         depositAllMatching(predicate) {
             if (typeof predicate !== 'function') {
-                throw new Error('not v1: Bank.depositAllMatching requires a function');
+                throw notImpl('Bank.depositAllMatching', 'requires a function');
             }
             for (const row of snap().bank_side || []) {
                 if (row && typeof row.name === 'string' && predicate(row.name)) {
@@ -97,12 +98,12 @@ export const Bank = new Proxy(
         },
         async setNoteMode(on) {
             if (!Bank.isOpen()) {
-                throw notV1('Bank.setNoteMode');
+                throw notImpl('Bank.setNoteMode');
             }
             const wantOn = !!on;
             const btnId = wantOn ? snap().bank_note_on ?? -1 : snap().bank_note_off ?? -1;
             if (typeof btnId !== 'number' || btnId < 0) {
-                throw notV1('Bank.setNoteMode');
+                throw notImpl('Bank.setNoteMode');
             }
             queue({ op: 'set-note-mode', on: wantOn });
             await Execution.delayTicks(1);
@@ -125,10 +126,10 @@ export const Bank = new Proxy(
             return true;
         },
         withdrawX(_name, _count) {
-            throw notV1('Bank.withdrawX');
+            throw notImpl('Bank.withdrawX');
         },
         withdrawXById(_id, _count, _landsAsId) {
-            throw notV1('Bank.withdrawX');
+            throw notImpl('Bank.withdrawX');
         },
         // Thin names onto the host's nearest Use-quickly loc (same plane).
         // Extra rs2b0t args (stand / boothName / op / log) are ignored.
@@ -147,18 +148,18 @@ export const Bank = new Proxy(
             return Execution.delayUntil(() => Bank.ready(), ms);
         },
         snapshotReady() {
-            throw notV1('Bank.snapshotReady');
+            throw notImpl('Bank.snapshotReady');
         },
         snapshotGeneration() {
-            throw notV1('Bank.snapshotGeneration');
+            throw notImpl('Bank.snapshotGeneration');
         },
         async waitSnapshotAfter(_generation, _timeoutMs) {
-            throw notV1('Bank.waitSnapshotAfter');
+            throw notImpl('Bank.waitSnapshotAfter');
         },
         countById(id) {
             const rs = snap().bank || [];
             if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
-                throw notV1('Bank.countById');
+                throw notImpl('Bank.countById');
             }
             const want = Number(id);
             return rs
@@ -166,17 +167,17 @@ export const Bank = new Proxy(
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
         async withdrawLoad(_name) {
-            throw notV1('Bank.withdrawLoad');
+            throw notImpl('Bank.withdrawLoad');
         },
         async openNearestAccess(_access, _log) {
-            throw notV1('Bank.openNearestAccess');
+            throw notImpl('Bank.openNearestAccess');
         },
     },
     {
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop in target) return target[prop];
-            throw notV1('Bank.' + String(prop));
+            throw notImpl('Bank.' + String(prop));
         },
     },
 );

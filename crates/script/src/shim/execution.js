@@ -68,7 +68,7 @@ export const Execution = {
 
     delayUntil(cond, timeoutMs = 6000) {
         if (typeof cond !== 'function') {
-            return Promise.reject(new Error('not v1: Execution.delayUntil requires a function'));
+            return Promise.reject(new Error('not impl: Execution.delayUntil: requires a function'));
         }
         return park.enqueue({
             kind: 'cond',
@@ -78,7 +78,7 @@ export const Execution = {
     },
 
     delayUntilTicks(_cond, _maxTicks) {
-        return Promise.reject(new Error('not v1: Execution.delayUntilTicks'));
+        return Promise.reject(new Error('not impl: Execution.delayUntilTicks'));
     },
 };
 

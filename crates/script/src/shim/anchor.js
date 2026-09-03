@@ -1,16 +1,16 @@
 import Tile from '../../geometry/Tile.js';
 import { Game } from '../game/Game.js';
 import { Traversal } from '../walking/Traversal.js';
-import { host, notV1 } from '../../shim/_kernel.js';
+import { host, notImpl } from '../../shim/_kernel.js';
 
 export const HOME_ARRIVE_RADIUS = 8;
 
 export function shouldWalkHomeToGatherAnchor(_distToAnchor, _arriveRadius) {
-    throw notV1('shouldWalkHomeToGatherAnchor');
+    throw notImpl('shouldWalkHomeToGatherAnchor');
 }
 
 export function shouldSoftHomeFromGatherMiss(_distToAnchor, _leash) {
-    throw notV1('shouldSoftHomeFromGatherMiss');
+    throw notImpl('shouldSoftHomeFromGatherMiss');
 }
 
 function campTile(bot) {
@@ -25,7 +25,7 @@ function campTile(bot) {
     if (t && typeof t.x === 'number' && typeof t.z === 'number') {
         return Tile.from(t);
     }
-    throw notV1('createReturnToAnchorTask');
+    throw notImpl('createReturnToAnchorTask');
 }
 
 function distanceToAnchor(bot, here = Game.tile()) {

@@ -1,6 +1,6 @@
 // Recording Paint: begin returns a frame whose methods append to ScriptPaint
-// on the host handle. Unused widgets throw `not v1`.
-import { host, notV1 } from '../shim/_kernel.js';
+// on the host handle. Unused widgets throw `not impl`.
+import { host, notImpl } from '../shim/_kernel.js';
 
 export const Paint = {
     begin(ctx, opts) {
@@ -57,7 +57,7 @@ export const Paint = {
             get(target, prop) {
                 if (typeof prop === 'symbol') return target[prop];
                 if (prop in target) return target[prop];
-                throw notV1('Paint.' + String(prop));
+                throw notImpl('Paint.' + String(prop));
             },
         });
     },

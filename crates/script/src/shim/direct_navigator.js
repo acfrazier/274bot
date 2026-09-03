@@ -1,4 +1,4 @@
-import { queue, proxy, notV1 } from '../../shim/_kernel.js';
+import { queue, proxy, notImpl } from '../../shim/_kernel.js';
 
 // Same-scene walk click. `walk-to` is the scene packet; Traveller is `walk`.
 export const DirectNavigator = proxy('DirectNavigator', {
@@ -13,6 +13,6 @@ export const DirectNavigator = proxy('DirectNavigator', {
         return true;
     },
     walkTo() {
-        throw notV1('DirectNavigator.walkTo');
+        throw notImpl('DirectNavigator.walkTo');
     },
 });

@@ -1,6 +1,6 @@
 // Our Inventory module: reads posted inv rows; item handles queue held/use-on
-// ops on `__rs2b0t_host.interact`. Missing members throw `not v1`.
-import { snap, notV1, queue, proxy } from '../../shim/_kernel.js';
+// ops on `__rs2b0t_host.interact`. Missing members throw `not impl`.
+import { snap, notImpl, queue, proxy } from '../../shim/_kernel.js';
 
 function rows() {
     return snap().inv || [];
@@ -18,7 +18,7 @@ function useOnKind(target) {
     if (cn === 'Loc') return 'loc';
     if (cn === 'GroundItem') return 'obj';
     if (cn === 'Player') return 'player';
-    throw notV1('Inventory.useOn');
+    throw notImpl('Inventory.useOn');
 }
 
 function held(row) {
@@ -84,7 +84,7 @@ export const Inventory = new Proxy(
         countById(id) {
             const rs = rows();
             if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
-                throw notV1('Inventory.countById');
+                throw notImpl('Inventory.countById');
             }
             const want = Number(id);
             return rs
@@ -120,7 +120,7 @@ export const Inventory = new Proxy(
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop in target) return target[prop];
-            throw notV1('Inventory.' + String(prop));
+            throw notImpl('Inventory.' + String(prop));
         },
     },
 );

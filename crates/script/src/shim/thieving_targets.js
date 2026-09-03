@@ -1,5 +1,5 @@
 import Tile from '../../geometry/Tile.js';
-import { host, notV1 } from '../../shim/_kernel.js';
+import { host, notImpl } from '../../shim/_kernel.js';
 
 export const PICKPOCKET_TARGET_NAMES = [
     'Man',
@@ -23,7 +23,7 @@ export function targetSpot(target) {
     if (row && row.anchor && typeof row.anchor.x === 'number') {
         return { anchor: Tile.from(row.anchor), leash: row.leash ?? 19 };
     }
-    throw notV1('targetSpot');
+    throw notImpl('targetSpot');
 }
 
 export function requiredThieving(target) {
@@ -32,13 +32,13 @@ export function requiredThieving(target) {
     if (levels && typeof levels[target] === 'number') {
         return levels[target];
     }
-    throw notV1('requiredThieving');
+    throw notImpl('requiredThieving');
 }
 
 export const HOSTILE_NAMES = [];
 
 export function isHostileAttacker(_c, _maxDistance) {
-    throw notV1('isHostileAttacker');
+    throw notImpl('isHostileAttacker');
 }
 
 export function chooseTarget(candidatesNearestFirst, reachable) {

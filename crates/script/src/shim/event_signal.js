@@ -4,9 +4,9 @@
 // `ignoredRandoms()` reads the bot instance's method (the rs2b0t
 // `setIgnoredRandoms` source), default `[]`; the host reads the same list
 // through its knock path so it skips act on those names.
-// Every other member throws `not v1` — never a fake value.
+// Every other member throws `not impl` — never a fake value.
 const host = () => globalThis.__rs2b0t_host || {};
-const notV1 = (name) => new Error('not v1: ' + name);
+const notImpl = (name) => new Error('not impl: ' + name);
 
 export const EventSignal = new Proxy(
     {
@@ -27,7 +27,7 @@ export const EventSignal = new Proxy(
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop in target) return target[prop];
-            throw notV1('EventSignal.' + String(prop));
+            throw notImpl('EventSignal.' + String(prop));
         },
     },
 );

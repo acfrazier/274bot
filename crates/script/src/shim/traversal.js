@@ -1,4 +1,4 @@
-import { snap, queue, proxy, chebyshev, notV1 } from '../../shim/_kernel.js';
+import { snap, queue, proxy, chebyshev, notImpl } from '../../shim/_kernel.js';
 import { Execution } from '../execution/Execution.js';
 
 function allowTeleports(opts) {
@@ -46,16 +46,16 @@ export const Traversal = proxy('Traversal', {
         }, opts.timeoutMs ?? 60_000);
     },
     preload() {
-        throw notV1('Traversal.preload');
+        throw notImpl('Traversal.preload');
     },
     remaining() {
-        throw notV1('Traversal.remaining');
+        throw notImpl('Traversal.remaining');
     },
     teleportsEnabled() {
-        throw notV1('Traversal.teleportsEnabled');
+        throw notImpl('Traversal.teleportsEnabled');
     },
     requestRepath(_reason) {
-        throw notV1('Traversal.requestRepath');
+        throw notImpl('Traversal.requestRepath');
     },
     get pureWalk() {
         return { useTeleportCatalog: false, policy: { useTeleports: false } };

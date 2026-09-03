@@ -1,7 +1,8 @@
 // Shared helpers for kernel shim facades (snapshot reads + interact queue).
 export const host = () => globalThis.__rs2b0t_host || {};
 export const snap = () => host().snapshot || {};
-export const notV1 = (name) => new Error('not v1: ' + name);
+export const notImpl = (name, reason) =>
+    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 export const queue = (req) => {
     const h = host();
     h.interact = h.interact || [];
@@ -13,7 +14,7 @@ export const proxy = (ns, members) =>
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop in target) return target[prop];
-            throw notV1(ns + '.' + String(prop));
+            throw notImpl(ns + '.' + String(prop));
         },
     });
 

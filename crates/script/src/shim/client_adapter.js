@@ -1,6 +1,6 @@
 // Thin reader/actions (ClientAdapter shape). Scene views read the posted
-// snapshot; missing members throw `not v1` — never a fake value.
-import { snap, queue, proxy, optionalText, notV1 } from '../shim/_kernel.js';
+// snapshot; missing members throw `not impl` — never a fake value.
+import { snap, queue, proxy, optionalText, notImpl } from '../shim/_kernel.js';
 
 const host = () => globalThis.__rs2b0t_host || {};
 
@@ -43,7 +43,7 @@ export const reader = proxy('reader', {
         };
     },
     chatContinueComId() {
-        throw notV1('reader.chatContinueComId');
+        throw notImpl('reader.chatContinueComId');
     },
     chatOptions() {
         return (snap().chat_options || []).map((o) => ({
@@ -89,11 +89,11 @@ export const reader = proxy('reader', {
     sideTabInterface(tab) {
         const rows = snap().side_tab_ifaces;
         if (!Array.isArray(rows)) {
-            throw notV1('reader.sideTabInterface');
+            throw notImpl('reader.sideTabInterface');
         }
         const row = rows.find((r) => r && r.index === tab);
         if (!row || typeof row.id !== 'number') {
-            throw notV1('reader.sideTabInterface');
+            throw notImpl('reader.sideTabInterface');
         }
         return row.id;
     },
@@ -112,7 +112,7 @@ export const reader = proxy('reader', {
         return row ? row.component_id : -1;
     },
     bankComId() {
-        throw notV1('reader.bankComId');
+        throw notImpl('reader.bankComId');
     },
     makeProducts() {
         return (snap().make_products || []).map((p) => ({

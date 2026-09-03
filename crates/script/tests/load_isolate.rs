@@ -20,7 +20,7 @@ use script::{CompiledId, ScriptSource, SlotScript};
 
 // The brief's native fixture: exported `tick` that counts on its own
 // global (the `api` object is host-owned: `api.tick` is the only member,
-// every other read/set throws `not v1`).
+// every other read/set throws `not impl`).
 const NATIVE_TICK: &str =
     "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
 
@@ -132,7 +132,7 @@ fn post_snapshot_input(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotIn
 /// Throw-shaped isolate lines: tick errors, not-v1, Error. Ordinary
 /// `this.log` (BoneBurier status) is allowed.
 fn is_throw_shaped_log(line: &str) -> bool {
-    line.contains("not v1")
+    line.contains("not impl")
         || line.contains("Error")
         || line.contains("interrupted slow tick")
         || (line.starts_with("tick ") && line.contains(':'))
@@ -708,7 +708,7 @@ fn isolate_spawn_compat_class_ticks_and_joins() {
 
 // Task 3 — import remap: the relative `../../api/...` imports resolve to
 // our Game module (not the rs2b0t tree); ticks run clean, and
-// `Game.teleport` throws `not v1` (logged, never fatal).
+// `Game.teleport` throws `not impl` (logged, never fatal).
 #[test]
 fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.ingame(); } }";
@@ -733,8 +733,8 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     let logs = iso.drain_logs();
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("Game.teleport")),
-        "teleport throws not v1: {logs:?}"
+            .any(|l| l.contains("not impl") && l.contains("Game.teleport")),
+        "teleport throws not impl: {logs:?}"
     );
     iso.join();
 }
@@ -756,7 +756,7 @@ fn isolate_rs2b0t_api_bare_import_resolves_to_our_shim() {
 }
 
 // Task 3 — Paint.begin(title/row/gap/end) records a ScriptPaint on the
-// host handle (no canvas); the widget methods throw `not v1`.
+// host handle (no canvas); the widget methods throw `not impl`.
 #[test]
 fn isolate_paint_begin_records_script_paint() {
     let src = r#"
@@ -815,7 +815,7 @@ export default class T extends LoopingBot {
 
 // Task 3 — reader.worldTile / inventorySize and actions.closeModal are
 // thin stubs (no snapshot this tag: null / 0 / false); missing members
-// throw `not v1`.
+// throw `not impl`.
 #[test]
 fn isolate_reader_and_actions_expose_thin_stubs_and_throw_on_missing() {
     let src = r#"
@@ -845,7 +845,7 @@ export default class T extends LoopingBot {
     let logs = iso.drain_logs();
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("reader.bankOpen")),
+            .any(|l| l.contains("not impl") && l.contains("reader.bankOpen")),
         "missing reader member throws: {logs:?}"
     );
     iso.join();
@@ -1478,7 +1478,7 @@ export default class T extends LoopingBot {
 }
 
 // Task 5 — without a posted snapshot inventory count is 0, pending is
-// false, Skills.index is -1. Skills.xp/level/hpFraction throw `not v1`
+// false, Skills.index is -1. Skills.xp/level/hpFraction throw `not impl`
 // rather than a fake 0 / full HP.
 #[test]
 fn isolate_snapshot_reads_fail_closed_without_a_post() {
@@ -1512,15 +1512,15 @@ export default class T extends LoopingBot {
     let level = value["level"].as_str().unwrap_or("");
     let hp = value["hp"].as_str().unwrap_or("");
     assert!(
-        xp.contains("not v1"),
+        xp.contains("not impl"),
         "no posted stats: xp throws, got {xp:?}"
     );
     assert!(
-        level.contains("not v1"),
+        level.contains("not impl"),
         "no posted stats: level throws, got {level:?}"
     );
     assert!(
-        hp.contains("not v1"),
+        hp.contains("not impl"),
         "no posted hitpoints: hpFraction throws, got {hp:?}"
     );
     iso.join();
@@ -1649,12 +1649,12 @@ export default class T extends LoopingBot {
     let logs = iso.drain_logs();
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("chatContinueComId")),
+            .any(|l| l.contains("not impl") && l.contains("chatContinueComId")),
         "chat continue has no posted comId: {logs:?}"
     );
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("bankComId")),
+            .any(|l| l.contains("not impl") && l.contains("bankComId")),
         "bank open is not component id 1: {logs:?}"
     );
     assert!(
@@ -1776,7 +1776,7 @@ fn real_bone_burier_queues_bury_when_seeded() {
 }
 
 // Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
-// host and readable; every other member read or set throws `not v1`.
+// host and readable; every other member read or set throws `not impl`.
 #[test]
 fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
@@ -1965,8 +1965,8 @@ export default class T extends LoopingBot {
     );
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("Bank.withdrawX")),
-        "withdrawX without a host X-amount op must throw not v1: {logs:?}"
+            .any(|l| l.contains("not impl") && l.contains("Bank.withdrawX")),
+        "withdrawX without a host X-amount op must throw not impl: {logs:?}"
     );
     assert!(
         iso.drain_interacts().is_empty(),
@@ -2016,7 +2016,7 @@ export default class T extends LoopingBot {
     let logs = iso.drain_logs();
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("Banking.close")),
+            .any(|l| l.contains("not impl") && l.contains("Banking.close")),
         "missing Banking member throws: {logs:?}"
     );
     iso.join();
@@ -2171,15 +2171,15 @@ export default class T extends LoopingBot {
     assert_eq!(value, "function", "Game.autoRetaliate must be exported");
     let logs = iso.drain_logs();
     assert!(
-        logs.iter().all(|l| !l.contains("not v1")),
-        "autoRetaliate must not throw not v1: {logs:?}"
+        logs.iter().all(|l| !l.contains("not impl")),
+        "autoRetaliate must not throw not impl: {logs:?}"
     );
     iso.join();
 }
 
 // Task 9 fix — Row FB has name+count only; countById cannot observe ids.
 #[test]
-fn kernel_facade_inventory_count_by_id_throws_not_v1() {
+fn kernel_facade_inventory_count_by_id_throws_not_impl() {
     let src = r#"
 import { Inventory } from '../../api/inventory/Inventory.js';
 export default class T extends LoopingBot {
@@ -2198,8 +2198,8 @@ export default class T extends LoopingBot {
     let logs = iso.drain_logs();
     assert!(
         logs.iter()
-            .any(|l| l.contains("not v1") && l.contains("Inventory.countById")),
-        "countById must throw not v1 until ids exist: {logs:?}"
+            .any(|l| l.contains("not impl") && l.contains("Inventory.countById")),
+        "countById must throw not impl until ids exist: {logs:?}"
     );
     iso.join();
 }
@@ -2459,10 +2459,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     let is_null = value.is_null();
-    let not_v1 = value.as_str().is_some_and(|s| s.contains("not v1"));
+    let not_impl = value.as_str().is_some_and(|s| s.contains("not impl"));
     assert!(
-        is_null || not_v1,
-        "no booth → null or not v1, not a fake at here: {value:?}"
+        is_null || not_impl,
+        "no booth → null or not impl, not a fake at here: {value:?}"
     );
     if let Some(obj) = value.as_object() {
         assert!(
@@ -2526,8 +2526,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert!(
-        value.as_str().is_some_and(|s| s.contains("not v1")),
-        "bank closed must throw not v1, not queue: {value:?}"
+        value.as_str().is_some_and(|s| s.contains("not impl")),
+        "bank closed must throw not impl, not queue: {value:?}"
     );
     assert!(
         iso.drain_interacts().is_empty(),
@@ -2558,8 +2558,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert!(
-        value.as_str().is_some_and(|s| s.contains("not v1")),
-        "no Note button must throw not v1: {value:?}"
+        value.as_str().is_some_and(|s| s.contains("not impl")),
+        "no Note button must throw not impl: {value:?}"
     );
     assert!(
         iso.drain_interacts().is_empty(),
@@ -2611,12 +2611,12 @@ export default class T extends LoopingBot {
     let miss_noted = hits[3].as_str().unwrap_or("");
     let miss_unnoted = hits[4].as_str().unwrap_or("");
     assert!(
-        miss_noted.contains("not v1"),
-        "unknown notedId must throw not v1, got {miss_noted:?}"
+        miss_noted.contains("not impl"),
+        "unknown notedId must throw not impl, got {miss_noted:?}"
     );
     assert!(
-        miss_unnoted.contains("not v1"),
-        "unknown unnotedId must throw not v1, got {miss_unnoted:?}"
+        miss_unnoted.contains("not impl"),
+        "unknown unnotedId must throw not impl, got {miss_unnoted:?}"
     );
     iso.join();
 }
@@ -2920,7 +2920,7 @@ export default class T extends LoopingBot {
     let value = iso.probe("__probe").unwrap();
     let msg = value.as_str().unwrap_or("");
     assert!(
-        !msg.contains("not v1"),
+        !msg.contains("not impl"),
         "walkResilient(tile, opts) must not throw: {value:?}"
     );
     assert_eq!(
@@ -2963,7 +2963,7 @@ export default class T extends LoopingBot {
     let value = iso.probe("__probe").unwrap();
     let msg = value.as_str().unwrap_or("");
     assert!(
-        !msg.contains("not v1"),
+        !msg.contains("not impl"),
         "Traversal.walkTo is the packet walk we already ship: {value:?}"
     );
     assert_eq!(
@@ -3008,7 +3008,7 @@ export default class T extends LoopingBot {
     let value = iso.probe("__probe").unwrap();
     let msg = value.as_str().unwrap_or("");
     assert!(
-        !msg.contains("not v1"),
+        !msg.contains("not impl"),
         "walkResilient(useTeleportCatalog) must not throw: {value:?}"
     );
     assert_eq!(
@@ -3078,7 +3078,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_silent_fakes_and_policy_tables_throw_not_v1() {
+fn isolate_silent_fakes_and_policy_tables_throw_not_impl() {
     let src = r#"
 import { clientName, displayName } from '../../api/market/catalog.js';
 import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
@@ -3125,8 +3125,8 @@ export default class T extends LoopingBot {
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
         assert!(
-            s.contains("not v1"),
-            "probe {i} must throw not v1, got {s:?}"
+            s.contains("not impl"),
+            "probe {i} must throw not impl, got {s:?}"
         );
     }
     let loot = parsed["loot"].as_array().expect("COMMON_BANK_LOOT");
@@ -3247,7 +3247,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn set_combat_style_empty_rows_throws_not_v1() {
+fn set_combat_style_empty_rows_throws_not_impl() {
     let src = r#"
 import { Game } from '../../api/game/Game.js';
 export default class T extends LoopingBot {
@@ -3269,8 +3269,8 @@ export default class T extends LoopingBot {
     let probe = iso.probe("__probe").unwrap();
     let msg = probe.as_str().unwrap_or("");
     assert!(
-        msg.contains("not v1") && msg.contains("Game.setCombatStyle"),
-        "empty combat_styles must throw not v1, got {probe:?}"
+        msg.contains("not impl: Game.setCombatStyle: combat_styles empty"),
+        "empty combat_styles must throw not impl with why, got {probe:?}"
     );
     assert!(
         iso.drain_interacts().is_empty(),

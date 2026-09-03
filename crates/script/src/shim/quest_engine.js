@@ -1,12 +1,12 @@
-// QuestEngine is not v1 — every member throws on use.
-const notV1 = (name) => new Error('not v1: ' + name);
+// QuestEngine is not impl — every member throws on use.
+const notImpl = (name) => new Error('not impl: ' + name);
 
 export const QuestEngine = new Proxy(
     {},
     {
         get(_target, prop) {
             if (typeof prop === 'symbol') return undefined;
-            throw notV1('QuestEngine.' + String(prop));
+            throw notImpl('QuestEngine.' + String(prop));
         },
     },
 );

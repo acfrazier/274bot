@@ -152,7 +152,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn quest_engine_throws_not_v1_on_use() {
+fn quest_engine_throws_not_impl_on_use() {
     let src = r#"
 import { QuestEngine } from '../../api/ai/quests/engine/QuestEngine.js';
 export default class T extends LoopingBot {
@@ -169,8 +169,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let msg = iso.probe("__probe").unwrap();
     assert!(
-        msg.as_str().unwrap_or("").contains("not v1"),
-        "QuestEngine use must throw not v1, got {msg:?}"
+        msg.as_str().unwrap_or("").contains("not impl"),
+        "QuestEngine use must throw not impl, got {msg:?}"
     );
     iso.join();
 }

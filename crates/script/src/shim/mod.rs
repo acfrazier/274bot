@@ -2,7 +2,7 @@
 //! the rs2b0t api tree. Their names (`../../api/...`, `../../paint/...`,
 //! `../../runtime/...`) and the `@rs2b0t/api` bundle resolve to these
 //! modules; the rs2b0t sources are never executed. Missing members throw
-//! `not v1: <name>` — never a fake value.
+//! `not impl: <throw reason>` — never a fake value.
 
 use rustyscript::Module;
 
@@ -107,7 +107,7 @@ globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
 };
 globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
     root() {
-        throw new Error('not v1: TreeBot.root');
+        throw new Error('not impl: TreeBot.root');
     }
 };
 globalThis.__dummy_ctx = {
