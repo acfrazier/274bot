@@ -1946,11 +1946,16 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
             let gap = ui.clone_style().item_spacing()[0];
             let title_w = title_clip_width(inner, badge_w, gap);
             let badges_below = title_w < 32.0;
+            let title_color = if card.unloadable.is_some() {
+                TEXT_DIM
+            } else {
+                ACCENT
+            };
             if badges_below {
                 {
                     let _clip =
                         ui.push_clip_rect(origin, [origin[0] + inner, origin[1] + row_h], true);
-                    ui.text_colored(ACCENT, &card.name);
+                    ui.text_colored(title_color, &card.name);
                 }
                 let badge_origin = [origin[0], origin[1] + row_h];
                 ui.set_cursor_screen_pos(badge_origin);
@@ -1967,7 +1972,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                 {
                     let _clip =
                         ui.push_clip_rect(origin, [origin[0] + title_w, origin[1] + row_h], true);
-                    ui.text_colored(ACCENT, &card.name);
+                    ui.text_colored(title_color, &card.name);
                 }
                 let badge_origin = [origin[0] + title_w + gap, origin[1]];
                 ui.set_cursor_screen_pos(badge_origin);

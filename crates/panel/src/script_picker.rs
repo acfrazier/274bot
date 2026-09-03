@@ -751,6 +751,10 @@ mod tests {
             "script title uses the same accent as the selected profile/script"
         );
         assert!(
+            card.contains("TEXT_DIM") && card.contains("unloadable"),
+            "unloadable cards dim the title; selection still works"
+        );
+        assert!(
             card.contains("text_wrapped") && card.contains("tags"),
             "tags wrap"
         );

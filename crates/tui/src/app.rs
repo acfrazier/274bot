@@ -1202,6 +1202,7 @@ mod tests {
             tags: Vec::new(),
             kind: ScriptKind::Compat,
             source: ScriptSource::Catalog,
+            unloadable: None,
         }
     }
 
@@ -1657,6 +1658,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
+                unloadable: None,
             },
         ];
         app.script_category_order = vec!["Prayer".into(), "Skilling".into()];

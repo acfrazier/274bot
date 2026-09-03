@@ -7,7 +7,8 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use script::{JsCard, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
@@ -70,6 +71,7 @@ pub struct BrowseCard {
     pub tags: Vec<String>,
     pub kind: ScriptKind,
     pub source: ScriptSource,
+    pub unloadable: Option<String>,
 }
 
 impl From<&JsCard> for BrowseCard {
@@ -81,6 +83,7 @@ impl From<&JsCard> for BrowseCard {
             tags: card.tags.clone(),
             kind: card.kind,
             source: card.source,
+            unloadable: card.unloadable.clone(),
         }
     }
 }
@@ -158,18 +161,37 @@ pub fn browse_lines(
 /// Paint rows for one card (name+badges, optional description, category, tags).
 pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>> {
     let mark = if selected { "> " } else { "  " };
-    let mut out = vec![Line::from(format!(
-        "{mark}{}  [{}] [{}]",
-        card.name,
-        kind_badge(card.kind),
-        source_badge(card.source)
+    let style = if card.unloadable.is_some() {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    } else {
+        Style::default()
+    };
+    let mut out = vec![Line::from(Span::styled(
+        format!(
+            "{mark}{}  [{}] [{}]",
+            card.name,
+            kind_badge(card.kind),
+            source_badge(card.source)
+        ),
+        style,
     ))];
     if !card.description.is_empty() {
-        out.push(Line::from(format!("    {}", card.description)));
+        out.push(Line::from(Span::styled(
+            format!("    {}", card.description),
+            style,
+        )));
     }
-    out.push(Line::from(format!("    category: {}", card_category(card))));
+    out.push(Line::from(Span::styled(
+        format!("    category: {}", card_category(card)),
+        style,
+    )));
     if !card.tags.is_empty() {
-        out.push(Line::from(format!("    tags: {}", card.tags.join(", "))));
+        out.push(Line::from(Span::styled(
+            format!("    tags: {}", card.tags.join(", ")),
+            style,
+        )));
     }
     out
 }
@@ -416,8 +438,9 @@ mod tests {
     use script::{RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
     use super::{
-        browse_lines, card_category, categories_present, resolve_category_order, run_state_text,
-        BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
+        browse_lines, card_category, card_detail_lines, categories_present,
+        resolve_category_order, run_state_text, BrowseCard, BrowseLine, ScriptClick, ScriptPane,
+        SCRIPT_BUTTONS,
     };
 
     fn sample_file_card() -> BrowseCard {
@@ -428,6 +451,7 @@ mod tests {
             tags: vec!["mining".into()],
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
+            unloadable: None,
         }
     }
 
@@ -545,6 +569,21 @@ mod tests {
     }
 
     #[test]
+    fn unloadable_card_detail_lines_use_dim_style() {
+        let mut card = sample_file_card();
+        card.unloadable = Some("../../event/webwalk/Something.js".into());
+        let lines = card_detail_lines(&card, false);
+        assert!(
+            lines.iter().all(|l| {
+                l.spans
+                    .iter()
+                    .all(|s| s.style.fg == Some(ratatui::style::Color::DarkGray))
+            }),
+            "unloadable card rows must paint dim"
+        );
+    }
+
+    #[test]
     fn category_order_changes_list_grouping() {
         let cards = vec![
             BrowseCard {
@@ -554,6 +593,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
+                unloadable: None,
             },
             BrowseCard {
                 name: "B".into(),
@@ -562,6 +602,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
+                unloadable: None,
             },
         ];
         let prayer_first = browse_lines(&cards, &["Prayer".into(), "Combat".into()], false);
@@ -594,6 +635,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
+                unloadable: None,
             }]),
             vec!["Uncategorized"]
         );
@@ -605,6 +647,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
+                unloadable: None,
             }),
             "Uncategorized"
         );
@@ -620,6 +663,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
+                unloadable: None,
             },
             sample_file_card(),
         ];

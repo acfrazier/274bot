@@ -785,37 +785,44 @@ impl TuiSession {
         let result = match &self.play {
             Some(play) => match sel {
                 script::ScriptSel::Loaded(source, card_name) => {
-                    match self.js.ensure_js(*source, card_name) {
-                        Err(e) => Err(e),
-                        Ok(()) => match self.js.get(*source, card_name) {
-                            Some(card) => {
-                                let bag = self.pending_settings_bag(
-                                    *source,
-                                    card_name,
-                                    &card.settings_schema,
-                                );
-                                match script::resolve_sibling_modules(
-                                    &card.path,
-                                    &card.origin,
-                                    self.js.cache(),
-                                    script::CacheMeta {
-                                        kind: card.kind,
-                                        source: card.source,
-                                        shape: None,
-                                    },
-                                ) {
-                                    Ok(siblings) => play.script_start_load(
-                                        &name,
-                                        card.js.clone(),
-                                        card.shape,
-                                        bag,
-                                        siblings,
-                                    ),
-                                    Err(e) => Err(e),
+                    match self.js.get(*source, card_name) {
+                        Some(card) if card.unloadable.is_some() => Err(format!(
+                            "unloadable import: {}",
+                            card.unloadable.as_deref().unwrap_or("")
+                        )),
+                        Some(_) => match self.js.ensure_js(*source, card_name) {
+                            Err(e) => Err(e),
+                            Ok(()) => match self.js.get(*source, card_name) {
+                                Some(card) => {
+                                    let bag = self.pending_settings_bag(
+                                        *source,
+                                        card_name,
+                                        &card.settings_schema,
+                                    );
+                                    match script::resolve_sibling_modules(
+                                        &card.path,
+                                        &card.origin,
+                                        self.js.cache(),
+                                        script::CacheMeta {
+                                            kind: card.kind,
+                                            source: card.source,
+                                            shape: None,
+                                        },
+                                    ) {
+                                        Ok(siblings) => play.script_start_load(
+                                            &name,
+                                            card.js.clone(),
+                                            card.shape,
+                                            bag,
+                                            siblings,
+                                        ),
+                                        Err(e) => Err(e),
+                                    }
                                 }
-                            }
-                            None => Err(format!("no loaded script: {card_name}")),
+                                None => Err(format!("no loaded script: {card_name}")),
+                            },
                         },
+                        None => Err(format!("no loaded script: {card_name}")),
                     }
                 }
                 script::ScriptSel::Compiled(id) => play.script_start(&name, *id),

@@ -102,6 +102,9 @@ pub struct JsCard {
     pub category: String,
     pub tags: Vec<String>,
     pub settings_schema: Vec<SettingDef>,
+    /// First import specifier that does not remap to a registered shim.
+    /// `None` means Start may spawn; `not v1` members do not set this.
+    pub unloadable: Option<String>,
 }
 
 /// Default persisted library path (`~/.274bot/js-scripts.json`).
@@ -179,6 +182,7 @@ impl JsLibrary {
                 Err(_) => continue,
             };
             let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
+            let unloadable = first_unloadable_for_card(&origin, &path);
             self.cards.push(JsCard {
                 name: entry.name,
                 path,
@@ -192,6 +196,7 @@ impl JsLibrary {
                 category: String::new(),
                 tags: Vec::new(),
                 settings_schema,
+                unloadable,
             });
         }
         Ok(())
@@ -231,6 +236,7 @@ impl JsLibrary {
             )
             .map_err(|e| format!("{name}: {e}"))?;
         let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
+        let unloadable = first_unloadable_for_card(&origin, path);
         let card = JsCard {
             name,
             path: path.to_path_buf(),
@@ -244,6 +250,7 @@ impl JsLibrary {
             category: String::new(),
             tags: Vec::new(),
             settings_schema,
+            unloadable,
         };
         let new_cards: Vec<JsCard> = self
             .cards
@@ -306,6 +313,7 @@ impl JsLibrary {
             // Origin/classify only — no transpile, no V8. Warmth is
             // [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
             let sha256 = JsCache::origin_sha(origin.as_bytes());
+            let unloadable = first_unloadable_for_card(&origin, &path);
             self.cards
                 .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
             self.cards.push(JsCard {
@@ -321,6 +329,7 @@ impl JsLibrary {
                 category: card.category.clone(),
                 tags: card.tags.clone(),
                 settings_schema: card.settings_schema.clone(),
+                unloadable,
             });
             n += 1;
         }
@@ -357,6 +366,7 @@ impl JsLibrary {
                 },
             )
             .map_err(|e| format!("{name}: {e}"))?;
+        let unloadable = first_unloadable_for_card(&origin, &path);
         let card = &mut self.cards[idx];
         card.path = path;
         card.shape = shape;
@@ -364,6 +374,7 @@ impl JsLibrary {
         card.js = cached.js;
         card.kind = shape_to_kind(shape);
         card.sha256 = cached.sha256;
+        card.unloadable = unloadable;
         Ok(())
     }
 
@@ -461,6 +472,112 @@ pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Every `from '…'` / `from "…"` specifier, first-seen order.
+pub fn scan_import_specifiers(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for quote in ['\'', '"'] {
+        let needle = format!("from {quote}");
+        let mut rest = source;
+        while let Some(idx) = rest.find(&needle) {
+            let after = &rest[idx + needle.len()..];
+            if let Some(end) = after.find(quote) {
+                let spec = after[..end].trim();
+                if !spec.is_empty() && !out.iter().any(|x| x == spec) {
+                    out.push(spec.to_string());
+                }
+            }
+            rest = &rest[idx + 1..];
+        }
+    }
+    out
+}
+
+fn is_same_folder_specifier(spec: &str) -> bool {
+    let Some(name) = spec.strip_prefix("./") else {
+        return false;
+    };
+    (spec.ends_with(".js") || spec.ends_with(".ts"))
+        && !spec.contains("..")
+        && !name.contains('/')
+        && !name.contains('\\')
+}
+
+fn specifier_js(spec: &str) -> String {
+    if let Some(stem) = spec.strip_suffix(".ts") {
+        format!("{stem}.js")
+    } else {
+        spec.to_string()
+    }
+}
+
+fn strip_relative_prefix(spec: &str) -> &str {
+    let mut p = spec;
+    loop {
+        if let Some(rest) = p.strip_prefix("../") {
+            p = rest;
+            continue;
+        }
+        if let Some(rest) = p.strip_prefix("./") {
+            p = rest;
+            continue;
+        }
+        break;
+    }
+    p
+}
+
+fn specifier_remaps_to_shim(spec: &str) -> bool {
+    #[cfg(feature = "load")]
+    {
+        let js = specifier_js(spec);
+        let suffix = strip_relative_prefix(&js);
+        if suffix.is_empty() || suffix.starts_with('/') {
+            return false;
+        }
+        crate::shim::shim_modules().iter().any(|m| {
+            m.filename()
+                .to_str()
+                .is_some_and(|url| url.ends_with(suffix) || url.ends_with(&format!("/{suffix}")))
+        })
+    }
+    #[cfg(not(feature = "load"))]
+    {
+        let _ = spec;
+        false
+    }
+}
+
+fn specifier_is_ok(spec: &str) -> bool {
+    spec == "@rs2b0t/api" || is_same_folder_specifier(spec) || specifier_remaps_to_shim(spec)
+}
+
+/// First import specifier in `source` that is not remapped / same-folder / `@rs2b0t/api`.
+pub fn first_unloadable_specifier(source: &str) -> Option<String> {
+    scan_import_specifiers(source)
+        .into_iter()
+        .find(|s| !specifier_is_ok(s))
+}
+
+/// Card-level scan: the origin, then same-folder sibling origins that exist.
+pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<String> {
+    if let Some(spec) = first_unloadable_specifier(origin) {
+        return Some(spec);
+    }
+    let dir = card_path.parent()?;
+    for rel in scan_same_folder_js_imports(origin) {
+        let Some(sib) = resolve_sibling_path(dir, &rel) else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&sib) else {
+            continue;
+        };
+        if let Some(spec) = first_unloadable_specifier(&text) {
+            return Some(spec);
+        }
+    }
+    None
 }
 
 /// Map a `./Foo.js` import from [`BOT_MODULE`] to the synthetic module URL

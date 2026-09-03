@@ -3007,28 +3007,35 @@ impl Session {
         let result = match (self.play.as_ref(), sel) {
             (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
             (Some(play), script::ScriptSel::Loaded(source, card_name)) => {
-                match self.js.ensure_js(source, &card_name) {
-                    Err(e) => Err(e),
-                    Ok(()) => match self.js.get(source, &card_name) {
-                        Some(card) => {
-                            let bag = self.pending_settings_bag(
-                                source,
-                                &card_name,
-                                &card.settings_schema,
-                            );
-                            match self.sibling_modules_for_card(card) {
-                                Ok(siblings) => play.script_start_load(
-                                    &name,
-                                    card.js.clone(),
-                                    card.shape,
-                                    bag,
-                                    siblings,
-                                ),
-                                Err(e) => Err(e),
+                match self.js.get(source, &card_name) {
+                    Some(card) if card.unloadable.is_some() => Err(format!(
+                        "unloadable import: {}",
+                        card.unloadable.as_deref().unwrap_or("")
+                    )),
+                    Some(_) => match self.js.ensure_js(source, &card_name) {
+                        Err(e) => Err(e),
+                        Ok(()) => match self.js.get(source, &card_name) {
+                            Some(card) => {
+                                let bag = self.pending_settings_bag(
+                                    source,
+                                    &card_name,
+                                    &card.settings_schema,
+                                );
+                                match self.sibling_modules_for_card(card) {
+                                    Ok(siblings) => play.script_start_load(
+                                        &name,
+                                        card.js.clone(),
+                                        card.shape,
+                                        bag,
+                                        siblings,
+                                    ),
+                                    Err(e) => Err(e),
+                                }
                             }
-                        }
-                        None => Err(format!("no loaded script: {card_name}")),
+                            None => Err(format!("no loaded script: {card_name}")),
+                        },
                     },
+                    None => Err(format!("no loaded script: {card_name}")),
                 }
             }
             (None, _) => Err("no play".to_string()),
@@ -7155,6 +7162,36 @@ mod tests {
         s.script_start_selected();
         let err = s.error.clone().expect("no-play banner");
         assert!(err.contains("play"), "{err}");
+        assert_eq!(s.focused_script_state(), script::RunState::Idle);
+    }
+
+    #[test]
+    fn script_start_selected_refuses_unloadable_import() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-unloadable-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ghost.js");
+        std::fs::write(
+            &path,
+            "import x from '../../event/webwalk/Something.js';\nexport default class T extends LoopingBot { loop() {} }\n",
+        )
+        .unwrap();
+        let mut s = Session::new();
+        s.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+        let mut play = empty_play();
+        play.attach_arm("alice", SlotArm::new(42, false));
+        s.play = Some(play);
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        s.load_js(&path);
+        assert_eq!(s.error, None, "load still registers the card: {:?}", s.error);
+        s.script_start_selected();
+        let err = s.error.clone().expect("unloadable banner");
+        assert!(
+            err.contains("../../event/webwalk/Something.js"),
+            "error must name the specifier: {err}"
+        );
         assert_eq!(s.focused_script_state(), script::RunState::Idle);
     }
 
