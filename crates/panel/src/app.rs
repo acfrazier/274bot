@@ -3502,27 +3502,23 @@ pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
     (want && !prev, want)
 }
 
-/// Profiles spawn: MultiBox rail when that node exists, else the 274bot
-/// panel. Never the Game split — a floating `ALWAYS_AUTO_RESIZE` dialog
-/// with no dock id lands there and imgui.ini keeps it.
-fn chooser_dock_id(rail: Option<Id>, panel: Option<Id>) -> Option<Id> {
-    rail.or(panel)
+/// Profiles always dock to the 274bot panel node, never the MultiBox rail
+/// or Game split — a floating dialog with no dock id lands on Game and
+/// imgui.ini keeps it.
+fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
+    panel
 }
 
 /// Profile picker (single-bot and MultiBox). Click a row to focus it
 /// (and load onto the wall while MultiBox is on); Edit opens user/pass;
 /// ✕ deletes the vault row only. Load all is MultiBox-only.
-fn chooser_window(ui: &Ui, session: &mut Session, rail_dock: Option<Id>, panel_dock: Option<Id>) {
+fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         return;
     }
     let mut open = true;
-    if rail_dock.is_some() {
-        ui.set_next_window_class(&rail_window_class());
-    } else {
-        ui.set_next_window_class(&panel_window_class());
-    }
-    if let Some(id) = chooser_dock_id(rail_dock, panel_dock) {
+    ui.set_next_window_class(&panel_window_class());
+    if let Some(id) = chooser_dock_id(panel_dock) {
         ui.set_next_window_dock_id_with_cond(id, Condition::Appearing);
     }
     ui.window("Profiles")
@@ -3982,12 +3978,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
     // Every frame, not only while open: the prev latches must track
     // the close so the next open is a fresh rising edge.
-    chooser_window(
-        ui,
-        &mut state.session,
-        state.rail_dock_node,
-        state.panel_dock_node,
-    );
+    chooser_window(ui, &mut state.session, state.panel_dock_node);
     settings_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
@@ -4296,20 +4287,10 @@ mod tests {
     }
 
     #[test]
-    fn chooser_docks_to_rail_else_panel_never_game() {
-        let rail = Id::from(10u32);
+    fn chooser_docks_to_panel_never_rail_or_game() {
         let panel = Id::from(20u32);
-        assert_eq!(
-            super::chooser_dock_id(Some(rail), Some(panel)),
-            Some(rail),
-            "MultiBox rail is the Profiles spawn"
-        );
-        assert_eq!(
-            super::chooser_dock_id(None, Some(panel)),
-            Some(panel),
-            "single-bot Profiles is a 274bot tab"
-        );
-        assert_eq!(super::chooser_dock_id(None, None), None);
+        assert_eq!(super::chooser_dock_id(Some(panel)), Some(panel));
+        assert_eq!(super::chooser_dock_id(None), None);
         const SRC: &str = include_str!("app.rs");
         let chooser = SRC
             .split("fn chooser_window")
@@ -4319,21 +4300,12 @@ mod tests {
             .next()
             .unwrap_or("");
         assert!(
-            chooser.contains("set_next_window_dock_id"),
-            "without a dock id Profiles floats onto Game and sticks"
+            chooser.contains("panel_window_class"),
+            "Profiles must use the 274bot panel class"
         );
         assert!(
-            !chooser.contains("ALWAYS_AUTO_RESIZE"),
-            "AUTO_RESIZE fights the dock node and keeps a floating 400px dialog"
-        );
-        assert!(
-            chooser.contains("Appearing"),
-            "FirstUseEver remembers a Game dock from imgui.ini"
-        );
-        let host = SRC.split("fn dock_host").nth(1).unwrap_or("");
-        assert!(
-            host.contains("rail_dock_node"),
-            "DockBuilder must keep the rail node id for Profiles"
+            !chooser.contains("rail_window_class"),
+            "Profiles must never dock to the MultiBox rail"
         );
     }
 
