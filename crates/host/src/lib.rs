@@ -338,11 +338,9 @@ impl Host {
         // drains; it does not raise paint.
         let full_rate = input.map(|i| i.full_rate()).unwrap_or(false);
         // The backend the slot's head must be built for: the per-slot
-        // CpuPix3D latch, else the process `BOT_CPU` env (both false is
-        // GPU-first, the host default).
-        let want_cpu = input
-            .map(|i| i.prefer_cpu())
-            .unwrap_or_else(|| std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false));
+        // CpuPix3D latch **or** the process `BOT_CPU` env (both false is
+        // GPU-first, the host default). SlotInput must not hide `BOT_CPU=1`.
+        let want_cpu = slot_want_cpu(input);
         // A drawing slot lazily builds its `Renderer` on the first paint
         // tick; a headless (draw off) slot constructs none and never
         // enters a draw.
@@ -477,7 +475,13 @@ impl Host {
 /// Frame-loop cadence: a slot that captures input, is still loading (TV
 /// static re-rolls every 20 ms), or runs full-rate (the panel's sidecar-50
 /// pref, or the TV full-rate latch) keeps the fixed 20 ms loop — that loop
-/// *is* the render cadence (50 fps) and the input drain cadence. Draw-on
+fn slot_want_cpu(input: Option<&SlotInput>) -> bool {
+    let from_slot = input.map(|i| i.prefer_cpu()).unwrap_or(false);
+    let from_env = std::env::var("BOT_CPU").map(|v| v == "1").unwrap_or(false);
+    from_slot || from_env
+}
+
+/// Whether this slot's 20 ms loop is the **input** cadence (`SlotInput`
 /// but not capture/full-rate is **watch-only 1 fps**: the picture only
 /// refreshes once a second, so the slot parks on the 1 s wall-clock bound
 /// instead of holding the 20 ms sim loop for a 1 fps sidecar. `busy`
@@ -1372,6 +1376,35 @@ mod tests {
         assert_eq!(
             slot.renderer.as_ref().unwrap().backend_kind(),
             client::render::backend::BackendKind::Cpu
+        );
+    }
+
+    #[test]
+    fn bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu() {
+        force_cpu_backend();
+        let prev = std::env::var("BOT_CPU").ok();
+        std::env::set_var("BOT_CPU", "1");
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let inp = SlotInput::new();
+        inp.set_prefer_cpu(false);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+        match prev {
+            Some(v) => std::env::set_var("BOT_CPU", v),
+            None => std::env::remove_var("BOT_CPU"),
+        }
+        assert_eq!(
+            slot.renderer_prefer_cpu,
+            Some(true),
+            "BOT_CPU=1 must force CpuPix3D even when SlotInput.prefer_cpu is false"
         );
     }
 
