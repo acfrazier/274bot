@@ -4040,6 +4040,35 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_shop_buy_non_fixed_qty_queues_if_button_and_answer_count() {
+    let src = r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    loop() { Shop.buy('Lobster', 7); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.shop_open = true;
+    let stock = [item_row(377, Some("Lobster"), 100, &[], false, -1, 9201)];
+    snap.shop_stock = &stock;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![
+            script::shim::InteractReq::IfButton {
+                component_id: 9201
+            },
+            script::shim::InteractReq::AnswerCount { value: 7 },
+        ],
+        "Shop.buy('Lobster', 7) queues if-button then answer-count when qty not in {{1,5,10,all}}"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_shop_buy_by_id_throws_not_impl() {
     let src = r#"
 import { Shop } from '../../api/shop/Shop.js';
