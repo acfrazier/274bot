@@ -81,7 +81,9 @@ export const Game = new Proxy(
             return offeredCombatModes();
         },
         hasCombatStyle(style) {
-            return matchCombatRow(style) !== null;
+            const row = matchCombatRow(style);
+            if (!row) return false;
+            return Game.combatMode() === row.mode;
         },
         combatStyleResolution(style) {
             const row = matchCombatRow(style);

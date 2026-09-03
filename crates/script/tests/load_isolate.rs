@@ -3206,6 +3206,47 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn has_combat_style_strength_requires_current_mode_not_just_a_posted_row() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Game.hasCombatStyle('strength'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let styles = [script::isolate_fb::CombatStyleInput {
+        mode: 1,
+        label: "Aggressive",
+        component_id: 77,
+    }];
+    snap.combat_styles = &styles;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(
+        probe,
+        serde_json::json!(false),
+        "Accurate (mode 0, unposted varp) must not count as hasCombatStyle('strength'): {probe:?}"
+    );
+
+    let varps = [script::isolate_fb::VarpInput {
+        index: 43,
+        value: 1,
+    }];
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(
+        probe,
+        serde_json::json!(true),
+        "posted com_mode 1 plus Aggressive row is the selected strength style: {probe:?}"
+    );
+    iso.join();
+}
+
+#[test]
 fn set_combat_style_empty_rows_throws_not_v1() {
     let src = r#"
 import { Game } from '../../api/game/Game.js';
