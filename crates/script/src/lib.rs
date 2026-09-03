@@ -4,6 +4,7 @@
 //! isolate spawned only on Start.
 
 pub mod ctx;
+pub mod declared_abi;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;

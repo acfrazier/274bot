@@ -1,0 +1,1142 @@
+[
+  {
+    "name": "ALL_FISHING_GEAR_NAMES",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "AL_KHARID_BANK",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "ARDOUGNE_PICKPOCKET_TARGETS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "AXES",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "AXE_BAR_FOR",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "AXE_SHOP_COSTS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "AXE_SMITH_LEVEL",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "AbstractBot",
+    "kind": "class",
+    "members": [
+      "grindTargets",
+      "ignoredRandoms",
+      "log",
+      "loopCadence",
+      "loopDelay",
+      "on",
+      "onPaint",
+      "onPause",
+      "onResume",
+      "onStart",
+      "onStop",
+      "recoveryAnchor",
+      "settings"
+    ]
+  },
+  {
+    "name": "AcquireTask",
+    "kind": "class",
+    "members": [
+      "constructor",
+      "execute",
+      "validate"
+    ]
+  },
+  {
+    "name": "Area",
+    "kind": "class",
+    "members": [
+      "circular",
+      "contains",
+      "getRandomTile",
+      "rectangular"
+    ]
+  },
+  {
+    "name": "BANK_LOCATIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "BOB_VENDOR",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "BROKEN_AXE",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "BROKEN_PICKAXE",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "Bank",
+    "kind": "object",
+    "members": [
+      "close",
+      "count",
+      "countById",
+      "deposit",
+      "depositAllMatching",
+      "depositInventory",
+      "isOpen",
+      "items",
+      "loaded",
+      "openBooth",
+      "openNearest",
+      "openNearestAccess",
+      "ready",
+      "setNoteMode",
+      "snapshotGeneration",
+      "snapshotReady",
+      "waitReady",
+      "waitSnapshotAfter",
+      "withdraw",
+      "withdrawById",
+      "withdrawLoad",
+      "withdrawX",
+      "withdrawXById"
+    ]
+  },
+  {
+    "name": "Banking",
+    "kind": "object",
+    "members": [
+      "bankNearest",
+      "open"
+    ]
+  },
+  {
+    "name": "BranchTask",
+    "kind": "class",
+    "members": [
+      "failure",
+      "success",
+      "validate"
+    ]
+  },
+  {
+    "name": "CHISEL",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "COINS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "COMMON_BANK_LOOT",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "COW_LOCATIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "COW_LOCATION_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "ChatDialog",
+    "kind": "object",
+    "members": [
+      "canContinue",
+      "chooseOption",
+      "continue",
+      "isMainMakePanel",
+      "isMakeMenu",
+      "isOpen",
+      "mainMakeProducts",
+      "make",
+      "makeFromPanel",
+      "makeFromPanelMax",
+      "makeOne",
+      "makeProducts",
+      "makeX",
+      "options",
+      "texts"
+    ]
+  },
+  {
+    "name": "DEFAULT_BOOTH_NAME",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "DEFAULT_BOOTH_OP",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "DEFAULT_RUNE",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "DirectNavigator",
+    "kind": "object",
+    "members": [
+      "walk",
+      "walkTo"
+    ]
+  },
+  {
+    "name": "EntityQuery",
+    "kind": "class",
+    "members": [
+      "action",
+      "count",
+      "exists",
+      "first",
+      "inside",
+      "name",
+      "nearest",
+      "nearestPreferLocal",
+      "results",
+      "where",
+      "within",
+      "withinOf"
+    ]
+  },
+  {
+    "name": "Equipment",
+    "kind": "object",
+    "members": [
+      "contains",
+      "equip",
+      "items",
+      "unequip"
+    ]
+  },
+  {
+    "name": "Execution",
+    "kind": "object",
+    "members": [
+      "delay",
+      "delayTicks",
+      "delayUntil",
+      "delayUntilTicks"
+    ]
+  },
+  {
+    "name": "FISHING_LOCATIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "FISHING_LOCATION_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "FISHING_METHODS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "FISHING_METHOD_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "FISHING_SHOP_COSTS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "FORGETFUL_BANK_ODDS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "FORGETFUL_BANK_SETTING",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "GAS_ROCK_IDS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "GAS_ROCK_TICKS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "GERRANT_ONLY_FISHING",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "GERRANT_VENDOR",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "Game",
+    "kind": "object",
+    "members": [
+      "animating",
+      "attackedByPlayer",
+      "autoRetaliateOn",
+      "cameraPitch",
+      "cameraYaw",
+      "castOnItem",
+      "castOnLoc",
+      "castOnNpc",
+      "combatMode",
+      "combatStyleMode",
+      "combatStyleResolution",
+      "combatStyles",
+      "energy",
+      "hasCombatStyle",
+      "inCombat",
+      "ingame",
+      "myName",
+      "openSideTab",
+      "runEnabled",
+      "sceneReady",
+      "sceneState",
+      "setAutoRetaliate",
+      "setCameraYaw",
+      "setCombatMode",
+      "setCombatStyle",
+      "teleport",
+      "tick",
+      "tile",
+      "weight"
+    ]
+  },
+  {
+    "name": "GroundItem",
+    "kind": "class",
+    "members": [
+      "actions",
+      "count",
+      "distance",
+      "id",
+      "interact",
+      "name",
+      "tile"
+    ]
+  },
+  {
+    "name": "GroundItems",
+    "kind": "object",
+    "members": [
+      "query"
+    ]
+  },
+  {
+    "name": "HAMMER",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "HARRY_VENDOR",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "InvItem",
+    "kind": "class",
+    "members": [
+      "actions",
+      "count",
+      "id",
+      "interact",
+      "name",
+      "slot",
+      "useOn"
+    ]
+  },
+  {
+    "name": "Inventory",
+    "kind": "object",
+    "members": [
+      "contains",
+      "count",
+      "countById",
+      "first",
+      "free",
+      "isFull",
+      "items",
+      "used"
+    ]
+  },
+  {
+    "name": "KNIFE",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "LeafTask",
+    "kind": "class",
+    "members": [
+      "execute"
+    ]
+  },
+  {
+    "name": "Loc",
+    "kind": "class",
+    "members": [
+      "actions",
+      "distance",
+      "id",
+      "interact",
+      "name",
+      "tile"
+    ]
+  },
+  {
+    "name": "Locs",
+    "kind": "object",
+    "members": [
+      "query"
+    ]
+  },
+  {
+    "name": "LoopingBot",
+    "kind": "class",
+    "members": [
+      "loop"
+    ]
+  },
+  {
+    "name": "MAP_SQUARE",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "MINING_LOCATIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "MINING_LOCATION_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "MINING_LOCATION_OPTION_LABELS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "NAV_PURE_WALK",
+    "kind": "object",
+    "members": [
+      "policy",
+      "useTeleportCatalog"
+    ]
+  },
+  {
+    "name": "NAV_WITH_TELES",
+    "kind": "object",
+    "members": [
+      "policy",
+      "useTeleportCatalog"
+    ]
+  },
+  {
+    "name": "NEARBY_BANK_RADIUS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "NEEDLE",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "NURMOF_VENDOR",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "Npc",
+    "kind": "class",
+    "members": [
+      "actions",
+      "distance",
+      "health",
+      "id",
+      "inCombat",
+      "index",
+      "interact",
+      "level",
+      "name",
+      "targetsAnotherPlayer",
+      "targetsMe",
+      "tile",
+      "valid"
+    ]
+  },
+  {
+    "name": "Npcs",
+    "kind": "object",
+    "members": [
+      "all",
+      "nearest",
+      "query"
+    ]
+  },
+  {
+    "name": "PERIODIC_BANK_SETTINGS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "PICKAXES",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "PICKAXE_SHOP_COSTS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "PICKPOCKET_TARGETS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "PICKPOCKET_TARGET_NAMES",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "Player",
+    "kind": "class",
+    "members": [
+      "actions",
+      "distance",
+      "inCombat",
+      "index",
+      "name",
+      "targetsMe",
+      "tile"
+    ]
+  },
+  {
+    "name": "Players",
+    "kind": "object",
+    "members": [
+      "query"
+    ]
+  },
+  {
+    "name": "Quests",
+    "kind": "object",
+    "members": [
+      "all",
+      "journal",
+      "points",
+      "status"
+    ]
+  },
+  {
+    "name": "RANDOM_EVENT_CASKET_ID",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "ROCK_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "ROCK_TYPES",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "RUNES",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "RUNE_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "Shop",
+    "kind": "object",
+    "members": [
+      "buy",
+      "buyById",
+      "close",
+      "isOpen",
+      "open",
+      "sell",
+      "stock"
+    ]
+  },
+  {
+    "name": "Skills",
+    "kind": "object",
+    "members": [
+      "effective",
+      "hpFraction",
+      "index",
+      "level",
+      "xp"
+    ]
+  },
+  {
+    "name": "TINDERBOX",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "TOLL_COIN_TARGET",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "TOOL_ACQUIRE_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "TOOL_ACQUIRE_SETTING",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "TaskBot",
+    "kind": "class",
+    "members": [
+      "loop",
+      "protected"
+    ]
+  },
+  {
+    "name": "Tile",
+    "kind": "class",
+    "members": [
+      "constructor",
+      "distanceTo",
+      "equals",
+      "from",
+      "level",
+      "toString",
+      "translate",
+      "x",
+      "z"
+    ]
+  },
+  {
+    "name": "Trade",
+    "kind": "object",
+    "members": [
+      "accept",
+      "active",
+      "decline",
+      "myOffer",
+      "offer",
+      "offerAll",
+      "onConfirmScreen",
+      "onOfferScreen",
+      "partner",
+      "removeAll",
+      "request",
+      "theirOffer"
+    ]
+  },
+  {
+    "name": "Traversal",
+    "kind": "object",
+    "members": [
+      "preload",
+      "pureWalk",
+      "remaining",
+      "requestRepath",
+      "teleportsEnabled",
+      "walkResilient",
+      "walkTo",
+      "withTeles"
+    ]
+  },
+  {
+    "name": "TreeBot",
+    "kind": "class",
+    "members": [
+      "loop",
+      "root"
+    ]
+  },
+  {
+    "name": "VARROCK_ANVIL_BANK",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "VARROCK_ANVIL_STAND",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "WALK_DESTINATIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "WALK_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "WHIRLPOOL_IDS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "WOODCUTTING_LOCATIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "WOODCUTTING_LOCATION_OPTIONS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "acquireKeepNames",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "apiVersion",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "axeReq",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "axeShopOffers",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bankDistance",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bankHasBetterGatherTool",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bankUnlocked",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestAffordableShopTier",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestAxe",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestFromTiers",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestHeldToolNames",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestOwnedTier",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestPickaxe",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "bestSmithableAxe",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "boothFields",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "buyPlansCost",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "canFundPlan",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "canWieldTool",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "coinsToWithdraw",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "defineBot",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "depositAllExcept",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "depositMatcher",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "events",
+    "kind": "object",
+    "members": [
+      "off",
+      "on"
+    ]
+  },
+  {
+    "name": "exactTool",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "fishingGearShopCart",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "fishingRestockPlan",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "fishingShopCost",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "fishingVendorFor",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "gearKeepNames",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "gearLabel",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "hasAll",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "hasAllTools",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "hasFishingGear",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "hasToolReq",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "held",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "isCowFieldLootTile",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "isFishingBaitPiece",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "locationOptions",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "matchesCommonBankLoot",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "miningLocationLabel",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "missingFishingGear",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "missingToolLabels",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "nearestBank",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "nearestCowLocation",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "nearestUsableBank",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "needsTollCoins",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "parseBankStrategy",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "parseToolAcquireMode",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "pickaxeReq",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "pickaxeShopOffers",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "planAxeAcquire",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "planBrokenToolRepair",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "planFishingGearAcquire",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "planFishingGearBuys",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "planGatherToolAcquire",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "planPickaxeAcquire",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "reader",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "registerScript",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveBankOpenRoute",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveCowLocation",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveDestination",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveFishMethod",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveFishingLocation",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveGatheringLocation",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveMiningLocation",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveRockIds",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "resolveWoodcuttingLocation",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "sameMapSquare",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "shopableMissingFishingGear",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "shouldBankNow",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "shouldBootstrapTollCoins",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "spotMatchesMethod",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "surplusHeldToolNames",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "tinderboxReq",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "toolAttackLevel",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "toolKeepNames",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "toolKitLabel",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "toolRestockPlan",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "toolsNeedingEquip",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "withBaitTarget",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "withdrawOp",
+    "kind": "function",
+    "members": []
+  }
+]
