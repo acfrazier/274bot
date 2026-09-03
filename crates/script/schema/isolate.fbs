@@ -194,12 +194,14 @@ table Snapshot {
   trade_side: [Row];
   trade_accept_id: int;
   trade_decline_id: int;
+  shop_open: bool;
+  shop_stock: [Row];
 }
 
 // One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "walk-to" | "deposit" | "withdraw" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
-// | "continue" | "answer" | "if-button" | "close-modal" | "side-tab"
+// | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
 // Optional fields are absent (not written) when the request has none.
 table Interact {

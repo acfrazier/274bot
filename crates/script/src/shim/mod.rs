@@ -169,6 +169,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("equipment.js"),
         ),
         Module::new("/rs2b0t/bot/api/trade/Trade.js", include_str!("trade.js")),
+        Module::new("/rs2b0t/bot/api/shop/Shop.js", include_str!("shop.js")),
         Module::new(
             "/rs2b0t/bot/api/ui/dialogue/ChatDialog.js",
             include_str!("chat_dialog.js"),
@@ -456,6 +457,9 @@ pub enum InteractReq {
     /// Close the open main/side/chat modal (not the bank).
     #[serde(rename = "close-modal")]
     CloseModal,
+    /// Answer the open count dialog with `value`.
+    #[serde(rename = "answer-count")]
+    AnswerCount { value: i32 },
     /// Switch the active side tab.
     #[serde(rename = "side-tab")]
     SideTab { tab: i32 },

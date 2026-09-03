@@ -140,6 +140,8 @@ const VT_SNAP_TRADE_THEIRS: VOffsetT = 106;
 const VT_SNAP_TRADE_SIDE: VOffsetT = 108;
 const VT_SNAP_TRADE_ACCEPT_ID: VOffsetT = 110;
 const VT_SNAP_TRADE_DECLINE_ID: VOffsetT = 112;
+const VT_SNAP_SHOP_OPEN: VOffsetT = 114;
+const VT_SNAP_SHOP_STOCK: VOffsetT = 116;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -423,6 +425,8 @@ pub struct SnapshotInput<'a> {
     pub trade_side: &'a [ItemRowInput<'a>],
     pub trade_accept_id: i32,
     pub trade_decline_id: i32,
+    pub shop_open: bool,
+    pub shop_stock: &'a [ItemRowInput<'a>],
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -837,6 +841,12 @@ impl Verifiable for SnapshotReader<'_> {
             )?
             .visit_field::<i32>("trade_accept_id", VT_SNAP_TRADE_ACCEPT_ID, false)?
             .visit_field::<i32>("trade_decline_id", VT_SNAP_TRADE_DECLINE_ID, false)?
+            .visit_field::<bool>("shop_open", VT_SNAP_SHOP_OPEN, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "shop_stock",
+                VT_SNAP_SHOP_STOCK,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1047,6 +1057,18 @@ impl SnapshotReader<'_> {
     }
     pub fn trade_decline_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_DECLINE_ID, None) }.unwrap_or(-1)
+    }
+    pub fn has_shop_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_OPEN, None).is_some() }
+    }
+    pub fn shop_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_OPEN, None) }.unwrap_or(false)
+    }
+    pub fn has_shop_stock(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_SHOP_STOCK)
+    }
+    pub fn shop_stock(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_SHOP_STOCK)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1418,6 +1440,8 @@ pub struct SnapshotFingerprint {
     pub trade_side: Vec<ItemRowFp>,
     pub trade_accept_id: i32,
     pub trade_decline_id: i32,
+    pub shop_open: bool,
+    pub shop_stock: Vec<ItemRowFp>,
 }
 
 impl SnapshotFingerprint {
@@ -1571,6 +1595,8 @@ impl SnapshotFingerprint {
             trade_side: input.trade_side.iter().map(item_row_fp).collect(),
             trade_accept_id: input.trade_accept_id,
             trade_decline_id: input.trade_decline_id,
+            shop_open: input.shop_open,
+            shop_stock: input.shop_stock.iter().map(item_row_fp).collect(),
         }
     }
 }
@@ -1636,6 +1662,8 @@ pub struct DeltaMask {
     pub trade_side: bool,
     pub trade_accept_id: bool,
     pub trade_decline_id: bool,
+    pub shop_open: bool,
+    pub shop_stock: bool,
 }
 
 impl DeltaMask {
@@ -1696,6 +1724,8 @@ impl DeltaMask {
             trade_side: true,
             trade_accept_id: true,
             trade_decline_id: true,
+            shop_open: true,
+            shop_stock: true,
         }
     }
 
@@ -1765,6 +1795,8 @@ impl DeltaMask {
             trade_side: next.trade_side != last.trade_side,
             trade_accept_id: next.trade_accept_id != last.trade_accept_id,
             trade_decline_id: next.trade_decline_id != last.trade_decline_id,
+            shop_open: next.shop_open != last.shop_open,
+            shop_stock: next.shop_stock != last.shop_stock,
         }
     }
 }
@@ -2087,6 +2119,16 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let shop_stock_off = if mask.shop_stock {
+        let offs = input
+            .shop_stock
+            .iter()
+            .map(|r| row_off(b, r))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -2272,6 +2314,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.trade_decline_id {
         b.push_slot_always(VT_SNAP_TRADE_DECLINE_ID, input.trade_decline_id);
+    }
+    if mask.shop_open {
+        b.push_slot_always(VT_SNAP_SHOP_OPEN, input.shop_open);
+    }
+    if mask.shop_stock {
+        b.push_slot_always(VT_SNAP_SHOP_STOCK, shop_stock_off.expect("mask checked"));
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -3147,6 +3195,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .stand_op()
                     .ok_or_else(|| "answer has no option".to_string())?,
             }),
+            "answer-count" => out.push(crate::shim::InteractReq::AnswerCount {
+                value: row.x(),
+            }),
             "if-button" => out.push(crate::shim::InteractReq::IfButton {
                 component_id: row
                     .component_id()
@@ -3202,6 +3253,7 @@ fn interact_off<'b>(
         InteractReq::UseWidgetOn { .. } => "use-widget-on",
         InteractReq::ContinueDialog => "continue",
         InteractReq::Answer { .. } => "answer",
+        InteractReq::AnswerCount { .. } => "answer-count",
         InteractReq::IfButton { .. } => "if-button",
         InteractReq::CloseModal => "close-modal",
         InteractReq::SideTab { .. } => "side-tab",
@@ -3367,6 +3419,9 @@ fn interact_off<'b>(
         InteractReq::Answer { option } => {
             b.push_slot_always(VT_IN_STAND_OP, *option);
         }
+        InteractReq::AnswerCount { value } => {
+            b.push_slot_always(VT_IN_X, *value);
+        }
         InteractReq::IfButton { component_id } => {
             b.push_slot_always(VT_IN_COMPONENT_ID, *component_id);
         }
@@ -3450,6 +3505,8 @@ mod tests {
             trade_side: &[],
             trade_accept_id: -1,
             trade_decline_id: -1,
+            shop_open: false,
+            shop_stock: &[],
         }
     }
 

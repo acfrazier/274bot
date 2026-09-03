@@ -109,15 +109,7 @@ export const ROCK_OPTIONS = [];
 export const ROCK_TYPES = [];
 export const RUNES = [];
 export const RUNE_OPTIONS = [];
-export const Shop = proxy('Shop', {
-    buy() { throw notImpl('Shop.buy'); },
-    buyById() { throw notImpl('Shop.buyById'); },
-    close() { throw notImpl('Shop.close'); },
-    isOpen() { throw notImpl('Shop.isOpen'); },
-    open() { throw notImpl('Shop.open'); },
-    sell() { throw notImpl('Shop.sell'); },
-    stock() { throw notImpl('Shop.stock'); },
-});
+export { Shop } from '../../api/shop/Shop.js';
 export const TINDERBOX = '';
 export const TOLL_COIN_TARGET = -1;
 export const TOOL_ACQUIRE_OPTIONS = [];

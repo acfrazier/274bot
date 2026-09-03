@@ -1464,6 +1464,18 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             let trade_decline_id = num(&mut scope, -1.0);
             set(&mut scope, obj, "trade_decline_id", trade_decline_id)?;
         }
+        if snap.has_shop_open() {
+            let shop_open = v8::Boolean::new(&mut scope, snap.shop_open());
+            set(&mut scope, obj, "shop_open", shop_open.into())?;
+        } else if !had {
+            set(&mut scope, obj, "shop_open", falsy)?;
+        }
+        if snap.has_shop_stock() {
+            let shop_stock = row_array(&mut scope, &snap.shop_stock())?;
+            set(&mut scope, obj, "shop_stock", shop_stock)?;
+        } else if !had {
+            set(&mut scope, obj, "shop_stock", empty_rows)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;

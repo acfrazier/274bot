@@ -220,6 +220,8 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         trade_side: &[],
         trade_accept_id: -1,
         trade_decline_id: -1,
+        shop_open: false,
+        shop_stock: &[],
     }
 }
 
@@ -3950,6 +3952,109 @@ export default class T extends LoopingBot {
         parsed["theirs"],
         serde_json::json!([{ "name": "Coins", "count": 100 }]),
         "Trade.theirOffer() maps posted trade_theirs rows to {{name,count}}"
+    );
+    iso.join();
+}
+
+// Task 6 — Shop.* reads posted shop_open / shop_stock; buy queues IfButton.
+#[test]
+fn isolate_shop_closed_is_not_open_with_empty_stock() {
+    let src = r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            open: Shop.isOpen(),
+            stock: Shop.stock(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe.get("open"), Some(&false.into()), "closed shop is not open");
+    assert_eq!(
+        probe.get("stock"),
+        Some(&serde_json::json!([]).into()),
+        "closed shop stock is empty"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_shop_open_reads_posted_stock_row() {
+    let src = r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            open: Shop.isOpen(),
+            stock: Shop.stock(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.shop_open = true;
+    let stock = [item_row(377, Some("Lobster"), 100, &[], false, -1, 9201)];
+    snap.shop_stock = &stock;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe.get("open"), Some(&true.into()));
+    assert_eq!(
+        probe.get("stock"),
+        Some(&serde_json::json!([{ "name": "Lobster", "count": 100 }]).into()),
+        "open shop maps posted shop_stock rows"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_shop_buy_queues_if_button_on_matching_stock_row() {
+    let src = r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    loop() { Shop.buy('Lobster', 1); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.shop_open = true;
+    let stock = [item_row(377, Some("Lobster"), 100, &[], false, -1, 9201)];
+    snap.shop_stock = &stock;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::IfButton {
+            component_id: 9201
+        }],
+        "Shop.buy('Lobster', 1) queues if-button on the matching stock row"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_shop_buy_by_id_throws_not_impl() {
+    let src = r#"
+import { Shop } from '../../api/shop/Shop.js';
+export default class T extends LoopingBot {
+    loop() { Shop.buyById(377, 1); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("not impl") && l.contains("Shop.buyById")),
+        "Shop.buyById stays not impl, logs: {logs:?}"
     );
     iso.join();
 }

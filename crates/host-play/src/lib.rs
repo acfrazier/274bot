@@ -1100,6 +1100,9 @@ fn dispatch_script_interact(
             InteractReq::CloseModal => {
                 wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
             }
+            InteractReq::AnswerCount { value } => {
+                wrote |= matches!(ix.answer_count(value), SendResult::Sent { .. });
+            }
             InteractReq::SideTab { tab } => {
                 wrote |= matches!(ix.click_side_tab(tab), SendResult::Sent { .. });
             }
@@ -1844,6 +1847,39 @@ fn with_script_snapshot_input<R>(
         trade_side_ops_store = Vec::new();
         Vec::new()
     };
+    let shop_stock_ops_store: Vec<Vec<String>>;
+    let shop_stock: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        shop_stock_ops_store = s
+            .shop()
+            .stock
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.shop()
+            .stock
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &shop_stock_ops_store[i],
+                noted: it.def.noted,
+                cert: it.def.certificate_link,
+                component_id: it.component_id,
+            })
+            .collect()
+    } else {
+        shop_stock_ops_store = Vec::new();
+        Vec::new()
+    };
     let chat_options = snapshot.map(|s| {
         s.chat_options()
             .iter()
@@ -2100,6 +2136,8 @@ fn with_script_snapshot_input<R>(
         trade_decline_id: snapshot
             .map(|s| s.trade().decline_component_id)
             .unwrap_or(-1),
+        shop_open: snapshot.is_some_and(|s| s.shop().open),
+        shop_stock: &shop_stock,
     };
     f(&input)
 }
