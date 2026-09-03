@@ -5,6 +5,7 @@
 
 pub mod ctx;
 pub mod declared_abi;
+pub mod host_js;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;
