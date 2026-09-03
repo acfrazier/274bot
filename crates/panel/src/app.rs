@@ -17,8 +17,8 @@ use dear_imgui_rs::{
 
 use crate::chrome::{
     button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
-    multibox_tooltip, resolve_heading_order, BUTTON_GAP, CONFIG_MIN, CONFIG_ROW, MIN_BUTTON,
-    SCRIPT_ROW,
+    multibox_tooltip, resolve_heading_order, BUTTON_GAP, CONFIG_HOST_ROW, CONFIG_MIN,
+    CONFIG_SCRIPT_ROW, MIN_BUTTON, SCRIPT_ROW,
 };
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
@@ -1330,11 +1330,13 @@ fn panel_window(ui: &Ui, session: &mut Session) {
                     "status" => status_section(ui, session),
                     "profile" => profile_section(ui, session),
                     "script" => script_section(ui, session),
-                    "parameters" => parameters_section(ui, session),
                     "debug" => debug_section(ui, session),
                     "log" => log_section(ui, session),
                     _ => {}
                 }
+            }
+            if session.ui.show_parameters_rail {
+                parameters_section(ui, session);
             }
         });
 }
@@ -2488,20 +2490,19 @@ fn nav_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
     edited
 }
 
-/// parameters: uncollapses the selected JS card's merged settings rows,
-/// then Edit opens typed editors (honours `showIf` / `group`).
+/// parameters: read-only preview of the selected card's merged settings rows.
+/// Typed editors live in [`script_prefs_window`]; optional via
+/// `PanelUiState.show_parameters_rail`.
 fn parameters_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "parameters") {
         return;
     }
-    let mut has_schema = false;
     match &session.script_sel {
         Some(script::ScriptSel::Loaded(source, name)) => {
             if let Some(card) = session.js.get(*source, name) {
                 if card.settings_schema.is_empty() {
                     ui.text_disabled("(no parameters)");
                 } else {
-                    has_schema = true;
                     let bag = session.merged_settings_bag(*source, name, &card.settings_schema);
                     for (label, value) in script::parameter_rows(&card.settings_schema, &bag) {
                         kv_row(ui, &label, &value);
@@ -2523,184 +2524,211 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
         }
         None => ui.text_disabled("(no script selected)"),
     }
-    let w = ui.content_region_avail()[0];
-    if edit_parameters_enabled() {
-        if has_schema {
-            if ui.button_with_size("Edit parameters", [w, 0.0]) {
-                session.params_edit_open = true;
-            }
-        } else {
-            mock_button(
-                ui,
-                "Edit parameters",
-                "select a script with a schema",
-                [w, 0.0],
-            );
-        }
-    } else {
-        mock_button(ui, "Edit parameters", "not in v1", [w, 0.0]);
-    }
 }
 
-/// Modal typed editors for the selected card's settings schema.
-fn params_edit_window(ui: &Ui, session: &mut Session) {
-    let want = session.params_edit_open;
-    let mut open = want;
-    if !want {
+/// Typed editors for the selected card's settings schema (honours `showIf` / `group`).
+fn script_parameter_editors(ui: &Ui, session: &mut Session) {
+    let Some(script::ScriptSel::Loaded(source, name)) = session.script_sel.clone() else {
+        ui.text_wrapped("select a loaded script with a parameter schema");
+        return;
+    };
+    let Some(card) = session.js.get(source, &name).cloned() else {
+        ui.text_disabled("(script not found)");
+        return;
+    };
+    if card.settings_schema.is_empty() {
+        ui.text_disabled("(no parameters)");
         return;
     }
-    ui.open_popup("274bot-params");
-    if let Some(_t) = ui
-        .begin_modal_popup_config("274bot-params")
-        .opened(&mut open)
-        .begin()
-    {
-        let Some(script::ScriptSel::Loaded(source, name)) = session.script_sel.clone() else {
-            ui.close_current_popup();
-            session.params_edit_open = false;
-            return;
-        };
-        let Some(card) = session.js.get(source, &name).cloned() else {
-            ui.close_current_popup();
-            session.params_edit_open = false;
-            return;
-        };
-        if card.settings_schema.is_empty() {
-            ui.close_current_popup();
-            session.params_edit_open = false;
-            return;
+    let mut bag = session.merged_settings_bag(source, &name, &card.settings_schema);
+    let mut last_group: Option<String> = None;
+    for def in &card.settings_schema {
+        if !script::setting_visible(def.show_if.as_deref(), &bag) {
+            continue;
         }
-        let mut bag = session.merged_settings_bag(source, &name, &card.settings_schema);
-        let mut last_group: Option<String> = None;
-        for def in &card.settings_schema {
-            if !script::setting_visible(def.show_if.as_deref(), &bag) {
-                continue;
+        if def.group.as_deref().map(String::from) != last_group {
+            last_group = def.group.clone();
+            if let Some(ref g) = last_group {
+                ui.separator();
+                ui.text(g);
             }
-            if def.group.as_deref().map(String::from) != last_group {
-                last_group = def.group.clone();
-                if let Some(ref g) = last_group {
-                    ui.separator();
-                    ui.text(g);
+        }
+        let label = def.label.as_deref().unwrap_or(&def.id).to_string();
+        match def.ty.as_str() {
+            "boolean" => {
+                let mut value = bag
+                    .get(&def.id)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or_else(|| def.default.as_deref() == Some("true"));
+                if ui.checkbox(&label, &mut value) {
+                    session
+                        .script_settings
+                        .set_bool(source, &name, &def.id, value);
+                    let _ = session.script_settings.save();
+                    bag.insert(def.id.clone(), serde_json::json!(value));
                 }
             }
-            let label = def.label.as_deref().unwrap_or(&def.id).to_string();
-            match def.ty.as_str() {
-                "boolean" => {
-                    let mut value = bag
-                        .get(&def.id)
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or_else(|| def.default.as_deref() == Some("true"));
-                    if ui.checkbox(&label, &mut value) {
-                        session
-                            .script_settings
-                            .set_bool(source, &name, &def.id, value);
-                        let _ = session.script_settings.save();
-                        bag.insert(def.id.clone(), serde_json::json!(value));
-                    }
+            "number" => {
+                let mut value = bag
+                    .get(&def.id)
+                    .and_then(|v| v.as_f64())
+                    .or_else(|| def.default.as_deref().and_then(|s| s.parse::<f64>().ok()))
+                    .unwrap_or(0.0) as i32;
+                if ui.input_int(&label, &mut value) {
+                    session
+                        .script_settings
+                        .set_num(source, &name, &def.id, value as f64);
+                    let _ = session.script_settings.save();
+                    bag.insert(def.id.clone(), serde_json::json!(value));
                 }
-                "number" => {
-                    let mut value = bag
-                        .get(&def.id)
-                        .and_then(|v| v.as_f64())
-                        .or_else(|| def.default.as_deref().and_then(|s| s.parse::<f64>().ok()))
-                        .unwrap_or(0.0) as i32;
-                    if ui.input_int(&label, &mut value) {
-                        session
-                            .script_settings
-                            .set_num(source, &name, &def.id, value as f64);
-                        let _ = session.script_settings.save();
-                        bag.insert(def.id.clone(), serde_json::json!(value));
-                    }
-                }
-                "string" if !script::resolve_setting_options(def, &session.loadouts).is_empty() => {
-                    ui.text(&label);
-                    let opts = script::resolve_setting_options(def, &session.loadouts);
-                    let current = bag
-                        .get(&def.id)
-                        .and_then(|v| v.as_str())
-                        .or(def.default.as_deref())
-                        .unwrap_or("")
-                        .to_string();
-                    ui.set_next_item_width(-1.0);
-                    let combo_opts =
-                        ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
-                    if let Some(_popup) = ui.begin_combo_with_flags(
-                        &format!("##param-{id}", id = def.id),
-                        &current,
-                        combo_opts,
-                    ) {
-                        for opt in &opts {
-                            let selected = opt == &current;
-                            if ui.selectable_config(opt).selected(selected).build() {
-                                session.script_settings.set_str(source, &name, &def.id, opt);
-                                let _ = session.script_settings.save();
-                                bag.insert(def.id.clone(), serde_json::json!(opt));
-                            }
+            }
+            "string" if !script::resolve_setting_options(def, &session.loadouts).is_empty() => {
+                ui.text(&label);
+                let opts = script::resolve_setting_options(def, &session.loadouts);
+                let current = bag
+                    .get(&def.id)
+                    .and_then(|v| v.as_str())
+                    .or(def.default.as_deref())
+                    .unwrap_or("")
+                    .to_string();
+                ui.set_next_item_width(-1.0);
+                let combo_opts =
+                    ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+                if let Some(_popup) = ui.begin_combo_with_flags(
+                    &format!("##param-{id}", id = def.id),
+                    &current,
+                    combo_opts,
+                ) {
+                    for opt in &opts {
+                        let selected = opt == &current;
+                        if ui.selectable_config(opt).selected(selected).build() {
+                            session.script_settings.set_str(source, &name, &def.id, opt);
+                            let _ = session.script_settings.save();
+                            bag.insert(def.id.clone(), serde_json::json!(opt));
                         }
                     }
                 }
-                "string" | "tile" | "list" => {
-                    let mut text = bag
-                        .get(&def.id)
-                        .map(script::format_setting_value)
-                        .or(def.default.as_deref().map(String::from))
-                        .unwrap_or_default();
-                    if ui.input_text(&label, &mut text).build() {
-                        let coerced =
-                            script::coerce_setting_value(&def.ty, &serde_json::json!(text));
-                        session
-                            .script_settings
-                            .set_value(source, &name, &def.id, coerced.clone());
-                        let _ = session.script_settings.save();
-                        bag.insert(def.id.clone(), coerced);
-                    }
-                }
-                _ => {
-                    ui.text_disabled(format!("{label} (unsupported type {})", def.ty));
+            }
+            "string" | "tile" | "list" => {
+                let mut text = bag
+                    .get(&def.id)
+                    .map(script::format_setting_value)
+                    .or(def.default.as_deref().map(String::from))
+                    .unwrap_or_default();
+                if ui.input_text(&label, &mut text).build() {
+                    let coerced =
+                        script::coerce_setting_value(&def.ty, &serde_json::json!(text));
+                    session
+                        .script_settings
+                        .set_value(source, &name, &def.id, coerced.clone());
+                    let _ = session.script_settings.save();
+                    bag.insert(def.id.clone(), coerced);
                 }
             }
-            if let Some(help) = def.help.as_deref() {
-                ui.set_item_tooltip(help);
+            _ => {
+                ui.text_disabled(format!("{label} (unsupported type {})", def.ty));
             }
         }
-        if ui.button("Close") {
-            ui.close_current_popup();
+        if let Some(help) = def.help.as_deref() {
+            ui.set_item_tooltip(help);
         }
     }
-    session.params_edit_open = open;
 }
 
-/// Under WalkTo, above profile: per-slot renderer/mem, nav paints,
-/// Loadouts. Wraps so "General config" is not clipped.
+/// Script prefs window: typed parameter editors + optional rail preview toggle.
+/// FirstUseEver docks as a 274bot panel tab; undock to float.
+fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    if !session.script_prefs_open {
+        return;
+    }
+    let mut open = true;
+    let panel_class = panel_window_class();
+    ui.set_next_window_class(&panel_class);
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
+    ui.window("Script prefs")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([360.0, 480.0], Condition::FirstUseEver)
+        .build(|| {
+            if ui.checkbox(
+                "Show parameters in rail",
+                &mut session.ui.show_parameters_rail,
+            ) {
+                crate::ui_state::save(&session.ui);
+            }
+            ui.spacing();
+            if edit_parameters_enabled() {
+                script_parameter_editors(ui, session);
+            } else {
+                ui.text_disabled("parameter editors not available");
+            }
+        });
+    session.script_prefs_open = open;
+}
+
+/// Tooltip when Script prefs is disabled (empty schema or no selection).
+fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
+    match &session.script_sel {
+        None => Some("select a script first"),
+        Some(script::ScriptSel::Compiled(_)) => Some("compiled scripts have no parameter schema"),
+        Some(script::ScriptSel::Loaded(source, name)) => {
+            let empty = session
+                .js
+                .get(*source, name)
+                .is_none_or(|card| card.settings_schema.is_empty());
+            if empty {
+                Some("selected script has no parameters")
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Under WalkTo, above profile: two rows — General/Nav then Loadouts/Script prefs.
 fn slot_config_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
-    let cells = button_cells_min(avail, CONFIG_ROW.len(), CONFIG_MIN);
-    for (i, &(w, same_line)) in cells.iter().enumerate() {
-        if same_line {
-            gap_line(ui);
-        }
-        match CONFIG_ROW[i] {
-            "General config" => {
-                if ui.button_with_size("General config", [w, 0.0]) {
-                    session.global_settings_open = true;
-                }
-                ui.set_item_tooltip("slot render + global cadence / capture");
+    for row in [CONFIG_HOST_ROW, CONFIG_SCRIPT_ROW] {
+        let cells = button_cells_min(avail, row.len(), CONFIG_MIN);
+        for (i, &(w, same_line)) in cells.iter().enumerate() {
+            if same_line {
+                gap_line(ui);
             }
-            "Nav config" => {
-                if ui.button_with_size("Nav config", [w, 0.0]) {
-                    session.nav_settings_open = true;
+            match row[i] {
+                "General config" => {
+                    if ui.button_with_size("General config", [w, 0.0]) {
+                        session.global_settings_open = true;
+                    }
+                    ui.set_item_tooltip("slot render + global cadence / capture");
                 }
-                ui.set_item_tooltip("nav debug paints and labels");
-            }
-            "Loadouts" => {
-                if ui.button_with_size("Loadouts", [w, 0.0]) {
-                    session.loadouts_open = true;
-                    session.loadouts_sel = 0;
-                    sync_loadouts_scratch(session);
+                "Nav config" => {
+                    if ui.button_with_size("Nav config", [w, 0.0]) {
+                        session.nav_settings_open = true;
+                    }
+                    ui.set_item_tooltip("nav debug paints and labels");
                 }
-                ui.set_item_tooltip("equipment and inventory presets");
+                "Loadouts" => {
+                    if ui.button_with_size("Loadouts", [w, 0.0]) {
+                        session.loadouts_open = true;
+                        session.loadouts_sel = 0;
+                        sync_loadouts_scratch(session);
+                    }
+                    ui.set_item_tooltip("equipment and inventory presets");
+                }
+                "Script prefs" => {
+                    if let Some(hint) = script_prefs_disabled_hint(session) {
+                        mock_button(ui, "Script prefs", hint, [w, 0.0]);
+                    } else {
+                        if ui.button_with_size("Script prefs", [w, 0.0]) {
+                            session.script_prefs_open = true;
+                        }
+                        ui.set_item_tooltip("script parameter editors");
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 }
@@ -3964,8 +3992,8 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
+    script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     loadouts_window(ui, &mut state.session);
-    params_edit_window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
 }
 

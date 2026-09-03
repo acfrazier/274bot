@@ -776,7 +776,8 @@ pub struct Session {
     /// Persisted operator script-parameter overrides.
     pub script_settings: script::ScriptSettingsStore,
     /// Parameters editor modal open.
-    pub params_edit_open: bool,
+    /// Modal typed editors moved to Script prefs window (0.1.6).
+    pub script_prefs_open: bool,
     /// Loadouts CRUD window (non-modal).
     pub loadouts_open: bool,
     /// Selected row in the loadouts list.
@@ -928,7 +929,7 @@ impl Session {
             rs2b0t_catalog_dir: default_catalog_browse_dir(None),
             browse_category_filter: None,
             script_settings: script::ScriptSettingsStore::with_default_path(),
-            params_edit_open: false,
+            script_prefs_open: false,
             loadouts_open: false,
             loadouts_sel: 0,
             loadouts_name_scratch: String::new(),

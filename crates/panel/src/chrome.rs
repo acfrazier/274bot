@@ -26,8 +26,8 @@ pub fn sections() -> &'static [Section] {
         },
         Section {
             id: "parameters",
-            wired: false,
-            campaign_hint: Some("campaign 5"),
+            wired: true,
+            campaign_hint: None,
         },
         Section {
             id: "status",
@@ -129,7 +129,7 @@ pub fn multibox_tooltip(on: bool) -> &'static str {
 
 /// Default strip heading order. Drag a collapsing header to reorder;
 /// unknown/missing ids are filled from this list.
-pub const HEADING_ORDER: &[&str] = &["status", "profile", "script", "parameters", "debug", "log"];
+pub const HEADING_ORDER: &[&str] = &["status", "profile", "script", "debug", "log"];
 
 /// Merge a saved order with [`HEADING_ORDER`]: drop unknown ids, append
 /// any missing defaults (so old prefs still show new headings).
@@ -162,19 +162,23 @@ pub fn move_heading(order: &mut Vec<String>, from: &str, onto: &str) {
 }
 
 /// Under WalkTo, above the reorderable headings: General config, Nav
-/// config, and Loadouts are live windows.
+/// config, Loadouts, and Script prefs are live windows.
 pub const MOCK_BUTTONS: &[&str] = &[];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
-/// Under WalkTo, not credentials and not parameters.
+/// First config row under WalkTo.
+pub const CONFIG_HOST_ROW: &[&str] = &["General config", "Nav config"];
+/// Second config row: loadouts + script parameter editors.
+pub const CONFIG_SCRIPT_ROW: &[&str] = &["Loadouts", "Script prefs"];
+/// Legacy 3-up row (superseded by the two rows above).
 pub const CONFIG_ROW: &[&str] = &["General config", "Nav config", "Loadouts"];
 
 #[cfg(test)]
 mod tests {
     use crate::chrome::{
         button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
-        multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_MIN, CONFIG_ROW,
-        HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
+        multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_HOST_ROW,
+        CONFIG_MIN, CONFIG_SCRIPT_ROW, HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
     };
     use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
 
@@ -190,7 +194,7 @@ mod tests {
         let saved = vec!["log".into(), "nope".into(), "status".into()];
         assert_eq!(
             resolve_heading_order(&saved),
-            ["log", "status", "profile", "script", "parameters", "debug"]
+            ["log", "status", "profile", "script", "debug"]
         );
         let mut order = resolve_heading_order(&[]);
         move_heading(&mut order, "profile", "status");
@@ -257,8 +261,10 @@ mod tests {
     }
 
     #[test]
-    fn walkto_row_wires_slot_and_nav_and_loadouts() {
-        assert_eq!(CONFIG_ROW, ["General config", "Nav config", "Loadouts"]);
+    fn config_rows_are_two_by_two_without_parameters_heading() {
+        assert_eq!(CONFIG_HOST_ROW, ["General config", "Nav config"]);
+        assert_eq!(CONFIG_SCRIPT_ROW, ["Loadouts", "Script prefs"]);
+        assert!(!HEADING_ORDER.contains(&"parameters"));
         assert!(
             !MOCK_BUTTONS.contains(&"Nav config"),
             "Nav config is its own window"
@@ -267,6 +273,10 @@ mod tests {
         assert!(
             !MOCK_BUTTONS.contains(&"Loadouts"),
             "Loadouts opens its own window"
+        );
+        assert!(
+            !MOCK_BUTTONS.contains(&"Script prefs"),
+            "Script prefs opens its own window"
         );
     }
 
@@ -320,19 +330,15 @@ mod tests {
             assert!(MIN_BUTTON > 0.0);
         }
         assert_eq!(SCRIPT_ROW.len(), 3);
-        assert_eq!(CONFIG_ROW.len(), 3);
+        assert_eq!(CONFIG_HOST_ROW.len(), 2);
+        assert_eq!(CONFIG_SCRIPT_ROW.len(), 2);
         let script = button_cells(avail, 3);
         assert_eq!(script.len(), 3);
         assert!(script[1].1 && script[2].1, "Start/Pause/Stop stay one row");
-        let cfg = button_cells_min(avail, 3, CONFIG_MIN);
-        assert!(
-            !cfg[1].1 || !cfg[2].1,
-            "General config wraps instead of clipping"
-        );
-        assert!(
-            cfg[2].0 > cfg[0].0,
-            "leftover config button is full width like WalkTo"
-        );
+        let host = button_cells_min(avail, 2, CONFIG_MIN);
+        assert_eq!(host.len(), 2);
+        assert!(host[1].1, "General/Nav stay one row at 330px");
+        assert!((host[0].0 - host[1].0).abs() < 0.01);
     }
 
     #[test]

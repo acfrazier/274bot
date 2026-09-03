@@ -34,6 +34,9 @@ pub struct PanelUiState {
     /// Last directory visited in the catalog-import folder dialog.
     #[serde(default)]
     pub script_catalog_last_dir: Option<PathBuf>,
+    /// Read-only parameters preview in the rail (default off).
+    #[serde(default)]
+    pub show_parameters_rail: bool,
 }
 
 fn default_true() -> bool {
@@ -53,6 +56,7 @@ impl Default for PanelUiState {
             script_category_order: Vec::new(),
             script_load_last_dir: None,
             script_catalog_last_dir: None,
+            show_parameters_rail: false,
         }
     }
 }
