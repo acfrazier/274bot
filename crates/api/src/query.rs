@@ -2016,8 +2016,32 @@ pub mod widget_search {
             .unwrap_or(-1)
     }
 
+    /// True when `label` is one of the melee style names the isolate matches
+    /// (`Accurate` / `Aggressive` / `Controlled` / `Defensive`), ignoring
+    /// surrounding whitespace and parentheses. 274 combat IFs put that name
+    /// on the same row as Punch/Kick; nearest-y alone would post the action.
+    fn is_melee_style_label(label: &str) -> bool {
+        let n = label
+            .trim()
+            .trim_matches(|c: char| c == '(' || c == ')')
+            .trim()
+            .to_ascii_lowercase();
+        matches!(
+            n.as_str(),
+            "accurate" | "aggressive" | "controlled" | "defensive"
+        )
+    }
+
+    fn nearest_text<'a>(texts: &[(&'a str, i32)], y: i32) -> Option<&'a str> {
+        texts
+            .iter()
+            .min_by_key(|(_, ty)| (*ty - y).abs())
+            .map(|(t, _)| *t)
+    }
+
     /// The varp-select buttons of the root with their nearest text
-    /// labels, sorted by mode (the m8aq default varp is 43).
+    /// labels, sorted by mode (the m8aq default varp is 43). Prefers a
+    /// melee style name already on the IF over a closer action name.
     pub fn combat_style_labels(
         snapshot: &GameSnapshot,
         root_component_id: i32,
@@ -2046,14 +2070,18 @@ pub mod widget_search {
                     .map(|t| (t, w.y))
             })
             .collect();
+        let style_texts: Vec<(&str, i32)> = texts
+            .iter()
+            .copied()
+            .filter(|(t, _)| is_melee_style_label(t))
+            .collect();
         let mut out: Vec<CombatStyleLabel> = buttons
             .into_iter()
             .map(|(component_id, mode, y)| {
-                let label = texts
-                    .iter()
-                    .min_by_key(|(_, ty)| (*ty - y).abs())
-                    .map(|(t, _)| (*t).to_string())
-                    .unwrap_or_default();
+                let label = nearest_text(&style_texts, y)
+                    .or_else(|| nearest_text(&texts, y))
+                    .unwrap_or_default()
+                    .to_string();
                 CombatStyleLabel {
                     mode,
                     label,

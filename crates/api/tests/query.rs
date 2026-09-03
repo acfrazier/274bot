@@ -1339,3 +1339,193 @@ fn widget_search_finds_buttons_and_styles() {
     assert_eq!(labels[2].mode, 2);
     assert_eq!(labels[2].component_id, 1004);
 }
+
+/// 274 `combat_unarmed.if`: each SELECT sits on the same row as Punch/Kick/Block,
+/// with `(Accurate)` / `(Aggressive)` / `(Defensive)` a few pixels below. Nearest
+/// text by y is the action name; `Game.setCombatStyle('strength')` matches the
+/// style name. Posted labels must be the style names already on the IF.
+#[test]
+fn combat_style_labels_prefers_parenthetical_style_name() {
+    let mut c = Client::new(cfg());
+    // Overlay root + style layer (unarmed101) + three SELECT boxes + six texts.
+    set_iface(
+        &mut c,
+        2000,
+        IfType {
+            id: 2000,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2001]),
+            child_x: Some(vec![4]),
+            child_y: Some(vec![60]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2001,
+        IfType {
+            id: 2001,
+            layer_id: 2000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2010, 2011, 2012, 2020, 2021, 2022, 2023, 2024, 2025]),
+            child_x: Some(vec![5, 5, 5, 78, 78, 78, 78, 78, 78]),
+            child_y: Some(vec![5, 51, 97, 5, 51, 97, 18, 64, 110]),
+            ..Default::default()
+        },
+    );
+    for (id, mode) in [(2010, 0), (2011, 1), (2012, 2)] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 2001,
+                r#type: ComponentType::TYPE_GRAPHIC,
+                width: 72,
+                height: 36,
+                scripts: Some(vec![vec![5, 43, 0]]),
+                script_operand: Some(vec![mode]),
+                script_comparator: Some(vec![0]),
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_SELECT,
+                ..Default::default()
+            },
+        );
+    }
+    for (id, text) in [
+        (2020, "Punch"),
+        (2021, "Kick"),
+        (2022, "Block"),
+        (2023, "(Accurate)"),
+        (2024, "(Aggressive)"),
+        (2025, "(Defensive)"),
+    ] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 2001,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+
+    c.side_icon[0] = 2000;
+    c.bump_gens(ServerProt::IF_SETICON);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::SideTabs));
+    let labels = widget_search::combat_style_labels(&snap, 2000, 43);
+    assert_eq!(labels.len(), 3, "three varp-43 SELECT boxes");
+    assert_eq!(labels[0].mode, 0);
+    assert!(
+        labels[0].label.to_ascii_lowercase().contains("accurate"),
+        "mode 0 must post the style name, not Punch: {:?}",
+        labels[0].label
+    );
+    assert_eq!(labels[1].mode, 1);
+    assert!(
+        labels[1].label.to_ascii_lowercase().contains("aggressive"),
+        "mode 1 must post the style name, not Kick: {:?}",
+        labels[1].label
+    );
+    assert_eq!(labels[2].mode, 2);
+    assert!(
+        labels[2].label.to_ascii_lowercase().contains("defensive"),
+        "mode 2 must post the style name, not Block: {:?}",
+        labels[2].label
+    );
+}
+
+/// Packed `combat_unarmed` from the local client jag: SELECT + `pushvar com_mode`
+/// must survive unpack so live `combat_styles` is not an empty keyframe.
+#[test]
+fn packed_combat_unarmed_posts_aggressive_from_tab_0() {
+    let cache = client::cache_dir();
+    if !cache.join("interface").is_file() {
+        return;
+    }
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache.display().to_string(),
+        members: true,
+        lowmem: false,
+    });
+    assert!(
+        c.ifaces_len() > 0,
+        "cache interface jag unpacked no components"
+    );
+
+    let mut aggressive_id = None;
+    for id in 0..c.ifaces_len() {
+        let Some(com) = c.if_(id) else {
+            continue;
+        };
+        if com.text.to_ascii_lowercase().contains("aggressive") {
+            aggressive_id = Some(id);
+            break;
+        }
+    }
+    let aggressive_id = aggressive_id.expect("packed IF must contain an Aggressive label");
+    let style_layer = c.if_(aggressive_id).expect("aggressive component").layer_id;
+    let overlay = c
+        .if_(style_layer as usize)
+        .map(|com| com.layer_id)
+        .filter(|&id| id >= 0)
+        .unwrap_or(style_layer);
+
+    c.side_icon[0] = overlay;
+    c.bump_gens(ServerProt::IF_SETICON);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::SideTabs));
+    let tab = snap
+        .side_tabs()
+        .iter()
+        .find(|t| t.index == 0)
+        .expect("tab 0 row");
+    assert!(
+        !tab.widgets.is_empty(),
+        "tab 0 walk from overlay {overlay} produced no widgets (aggressive id {aggressive_id}, style layer {style_layer})"
+    );
+
+    let varps: Vec<i32> = tab
+        .widgets
+        .iter()
+        .filter(|w| w.button_type == ButtonType::BUTTON_SELECT)
+        .flat_map(|w| w.varp_bindings.iter().map(|b| b.varp))
+        .collect();
+    assert!(
+        !varps.is_empty(),
+        "packed combat SELECT buttons have no opcode-5 varp bindings; widgets={} selects={}",
+        tab.widgets.len(),
+        tab.widgets
+            .iter()
+            .filter(|w| w.button_type == ButtonType::BUTTON_SELECT)
+            .count()
+    );
+    let varp = varps[0];
+    let labels = widget_search::combat_style_labels(&snap, overlay, varp);
+    assert!(
+        labels
+            .iter()
+            .any(|l| l.label.to_ascii_lowercase().contains("aggressive")),
+        "packed combat IF varp={varp} labels={labels:?}"
+    );
+}

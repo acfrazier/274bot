@@ -6582,6 +6582,137 @@ mod tests {
         assert!(bare.ours(), "ours rides the blob for EventSignal");
     }
 
+    /// Tab 0 combat IF (274 unarmed layout) round-trips through the isolate
+    /// blob as Aggressive, not Punch/Kick — the shim matches the style name.
+    #[test]
+    fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
+        use api::snapshot::Family;
+        use client::config::if_type::{IfType, IfTypeMut};
+
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.set_iface(
+            2000,
+            IfType {
+                id: 2000,
+                layer_id: 2000,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![2001]),
+                child_x: Some(vec![4]),
+                child_y: Some(vec![60]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            2001,
+            IfType {
+                id: 2001,
+                layer_id: 2000,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![2010, 2011, 2012, 2020, 2021, 2022, 2023, 2024, 2025]),
+                child_x: Some(vec![5, 5, 5, 78, 78, 78, 78, 78, 78]),
+                child_y: Some(vec![5, 51, 97, 5, 51, 97, 18, 64, 110]),
+                ..Default::default()
+            },
+        );
+        for (id, mode) in [(2010, 0), (2011, 1), (2012, 2)] {
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: 2001,
+                    r#type: ComponentType::TYPE_GRAPHIC,
+                    width: 72,
+                    height: 36,
+                    scripts: Some(vec![vec![5, 43, 0]]),
+                    script_operand: Some(vec![mode]),
+                    script_comparator: Some(vec![0]),
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_SELECT,
+                    ..Default::default()
+                },
+            );
+        }
+        for (id, text) in [
+            (2020, "Punch"),
+            (2021, "Kick"),
+            (2022, "Block"),
+            (2023, "(Accurate)"),
+            (2024, "(Aggressive)"),
+            (2025, "(Defensive)"),
+        ] {
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: 2001,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    text: text.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        c.side_icon[0] = 2000;
+        c.bump_gens(ServerProt::IF_SETICON);
+        let mut snap = GameSnapshot::new();
+        assert!(snap.rebuild_family(&c, Family::SideTabs));
+
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            Some((3235, 3295, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        let labels: Vec<String> = view
+            .combat_styles()
+            .iter()
+            .map(|s| s.label().to_string())
+            .collect();
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.to_ascii_lowercase().contains("aggressive")),
+            "isolate combat_styles must carry the IF style name, got {labels:?}"
+        );
+        let aggressive = view
+            .combat_styles()
+            .into_iter()
+            .find(|s| s.label().to_ascii_lowercase().contains("aggressive"))
+            .expect("Aggressive row");
+        assert_eq!(aggressive.mode(), 1);
+        assert_eq!(aggressive.component_id(), 2011);
+    }
+
     /// Hop 2 — an npc behind a wall posts `reachable: false` from SceneQuery.
     #[test]
     fn script_snapshot_npc_behind_wall_posts_reachable_false() {
