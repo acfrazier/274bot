@@ -3060,12 +3060,15 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
         .unwrap_or(false);
     let desired = !closed;
     ui.set_next_item_open(desired);
-    let _text = ui.push_style_color(StyleColor::Text, ACCENT);
-    let _header = ui.push_style_color(StyleColor::Header, BG_DEEP);
-    let _header_h = ui.push_style_color(StyleColor::HeaderHovered, BG_DEEP);
-    let _header_a = ui.push_style_color(StyleColor::HeaderActive, BG_DEEP);
-    let _border = ui.push_style_color(StyleColor::Border, ACCENT);
-    let open = ui.collapsing_header(id, TreeNodeFlags::FRAME_PADDING);
+    let open = {
+        let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
+        let _text = ui.push_style_color(StyleColor::Text, ACCENT);
+        let _header = ui.push_style_color(StyleColor::Header, BG_DEEP);
+        let _header_h = ui.push_style_color(StyleColor::HeaderHovered, BG_DEEP);
+        let _header_a = ui.push_style_color(StyleColor::HeaderActive, BG_DEEP);
+        let _border = ui.push_style_color(StyleColor::Border, ACCENT);
+        ui.collapsing_header(id, TreeNodeFlags::FRAME_PADDING)
+    };
     if open != desired {
         session
             .ui
@@ -5181,6 +5184,29 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(random_status_text(&r).as_deref(), Some("lost-gear: ?"));
+    }
+
+    #[test]
+    fn config_section_scopes_accent_to_header_not_body() {
+        const SRC: &str = include_str!("app.rs");
+        let fn_src = SRC.split("fn config_section").nth(1).unwrap_or("");
+        let fn_src = fn_src
+            .split("fn global_capture_section")
+            .next()
+            .unwrap_or("");
+        assert!(
+            fn_src.contains("FrameBorderSize(1.0)"),
+            "header orange border needs a visible frame border"
+        );
+        let after_header = fn_src.split("ui.collapsing_header").nth(1).unwrap_or("");
+        assert!(
+            !after_header.contains("push_style_color(StyleColor::Text, ACCENT)"),
+            "accent text must not wrap the open section body"
+        );
+        assert!(
+            fn_src.contains("body(ui, session)"),
+            "section body runs outside header style scope"
+        );
     }
 
     #[test]
