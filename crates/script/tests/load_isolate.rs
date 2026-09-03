@@ -3177,3 +3177,100 @@ export default class T extends LoopingBot {
     assert_eq!(parsed["camp"]["z"], 3295);
     iso.join();
 }
+
+#[test]
+fn set_combat_style_strength_queues_posted_aggressive_if_button() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Game.setCombatStyle('strength'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let styles = [script::isolate_fb::CombatStyleInput {
+        mode: 1,
+        label: "Aggressive",
+        component_id: 77,
+    }];
+    snap.combat_styles = &styles;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__probe");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::IfButton { component_id: 77 }]
+    );
+    iso.join();
+}
+
+#[test]
+fn set_combat_style_empty_rows_throws_not_v1() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            Game.setCombatStyle('strength');
+            globalThis.__probe = 'ok';
+        } catch (e) {
+            globalThis.__probe = String(e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.combat_styles = &[];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    let msg = probe.as_str().unwrap_or("");
+    assert!(
+        msg.contains("not v1") && msg.contains("Game.setCombatStyle"),
+        "empty combat_styles must throw not v1, got {probe:?}"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "must not queue a button when rows are empty"
+    );
+    iso.join();
+}
+
+#[test]
+fn npc_snap_total_health_aliases_max_health() {
+    let src = r#"
+import { Npcs } from '../../api/npcs/Npcs.js';
+export default class T extends LoopingBot {
+    loop() {
+        const n = Npcs.all()[0];
+        globalThis.__probe = n && n.snap && n.snap.totalHealth;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Attack".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 42,
+        name: Some("Chicken"),
+        x: 3235,
+        z: 3295,
+        level: 0,
+        distance: 1,
+        health: 3,
+        max_health: 7,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+    }];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe, 7, "snap.totalHealth must alias posted max_health");
+    iso.join();
+}

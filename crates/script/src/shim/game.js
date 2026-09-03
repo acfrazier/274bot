@@ -9,9 +9,33 @@ const RUN_VARP = 173;
 const RETALIATE_VARP = 172;
 const MAGIC_TAB = 6;
 
+const MELEE_STYLE_LABEL = {
+    attack: 'accurate',
+    strength: 'aggressive',
+    controlled: 'controlled',
+    defence: 'defensive',
+};
+
 function offeredCombatModes() {
     const labels = reader.selectButtonLabelsByVarp(-1, COM_MODE_VARP);
     return labels.length > 0 ? labels : null;
+}
+
+function wantedCombatLabel(style) {
+    const key = String(style).toLowerCase();
+    return MELEE_STYLE_LABEL[key] || key;
+}
+
+function matchCombatRow(style) {
+    const modes = offeredCombatModes();
+    if (!modes) return null;
+    const wanted = wantedCombatLabel(style);
+    return (
+        modes.find((m) => {
+            const lab = String(m.label).toLowerCase();
+            return lab === wanted || lab.includes(wanted);
+        }) || null
+    );
 }
 
 function selectCombatMode(mode) {
@@ -57,26 +81,25 @@ export const Game = new Proxy(
             return offeredCombatModes();
         },
         hasCombatStyle(style) {
-            const modes = offeredCombatModes();
-            if (!modes) return false;
-            const wanted = String(style).toLowerCase();
-            return modes.some((m) => String(m.label).toLowerCase().includes(wanted));
+            return matchCombatRow(style) !== null;
         },
         combatStyleResolution(style) {
-            const modes = offeredCombatModes();
-            if (!modes) return null;
-            const wanted = String(style).toLowerCase();
-            const idx = modes.findIndex((m) => String(m.label).toLowerCase().includes(wanted));
-            if (idx === -1) return null;
-            return { mode: modes[idx].mode, label: modes[idx].label };
+            const row = matchCombatRow(style);
+            if (!row) return null;
+            return { mode: row.mode, label: row.label };
         },
         setCombatMode(mode) {
             return selectCombatMode(mode);
         },
         setCombatStyle(style) {
-            if (typeof style === 'number') return Game.setCombatMode(style);
-            const res = Game.combatStyleResolution(style);
-            return res ? selectCombatMode(res.mode) : false;
+            if (typeof style === 'number') {
+                if (!selectCombatMode(style)) throw notV1('Game.setCombatStyle');
+                return true;
+            }
+            if (!offeredCombatModes()) throw notV1('Game.setCombatStyle');
+            const row = matchCombatRow(style);
+            if (!row || !selectCombatMode(row.mode)) throw notV1('Game.setCombatStyle');
+            return true;
         },
         setAutoRetaliate(on) {
             return actions.setRetaliate(on);

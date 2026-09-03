@@ -1620,6 +1620,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "health", health)?;
         let max_health = num(scope, ent.max_health() as f64);
         set(scope, o, "max_health", max_health)?;
+        set(scope, o, "totalHealth", max_health)?;
         let in_combat = v8::Boolean::new(scope, ent.in_combat());
         set(scope, o, "in_combat", in_combat.into())?;
         let animating = v8::Boolean::new(scope, ent.animating());
