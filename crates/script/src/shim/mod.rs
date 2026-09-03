@@ -262,6 +262,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/walking/Traversal.js",
             include_str!("traversal.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/api/walking/DirectNavigator.js",
+            include_str!("direct_navigator.js"),
+        ),
         Module::new("/rs2b0t/bot/api/walking/Reach.js", include_str!("reach.js")),
         Module::new(
             "/rs2b0t/bot/event/webwalk/geometry/Reachability.js",

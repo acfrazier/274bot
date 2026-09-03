@@ -13,6 +13,7 @@ export { Execution } from '../../api/execution/Execution.js';
 export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';
 export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export { Traversal } from '../../api/walking/Traversal.js';
+export { DirectNavigator } from '../../api/walking/DirectNavigator.js';
 export { default as Tile } from '../../geometry/Tile.js';
 export { Npc, Npcs } from '../../api/npcs/Npcs.js';
 export { Player, Players } from '../../api/players/Players.js';
@@ -60,10 +61,6 @@ export const COW_LOCATION_OPTIONS = [];
 export const DEFAULT_BOOTH_NAME = '';
 export const DEFAULT_BOOTH_OP = '';
 export const DEFAULT_RUNE = '';
-export const DirectNavigator = proxy('DirectNavigator', {
-    walk() { throw notV1('DirectNavigator.walk'); },
-    walkTo() { throw notV1('DirectNavigator.walkTo'); },
-});
 export const FISHING_LOCATIONS = [];
 export const FISHING_LOCATION_OPTIONS = [];
 export const FISHING_METHODS = [];

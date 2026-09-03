@@ -142,8 +142,9 @@ export const Bank = new Proxy(
         async openNearest() {
             return Bank.openBooth();
         },
-        async waitReady(_timeoutMs, _log) {
-            throw notV1('Bank.waitReady');
+        async waitReady(timeoutMs, _log) {
+            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
+            return Execution.delayUntil(() => Bank.ready(), ms);
         },
         snapshotReady() {
             throw notV1('Bank.snapshotReady');
@@ -154,8 +155,15 @@ export const Bank = new Proxy(
         async waitSnapshotAfter(_generation, _timeoutMs) {
             throw notV1('Bank.waitSnapshotAfter');
         },
-        countById(_id) {
-            throw notV1('Bank.countById');
+        countById(id) {
+            const rs = snap().bank || [];
+            if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
+                throw notV1('Bank.countById');
+            }
+            const want = Number(id);
+            return rs
+                .filter((r) => r && r.id === want)
+                .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
         async withdrawLoad(_name) {
             throw notV1('Bank.withdrawLoad');

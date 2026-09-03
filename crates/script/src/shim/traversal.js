@@ -58,9 +58,9 @@ export const Traversal = proxy('Traversal', {
         throw notV1('Traversal.requestRepath');
     },
     get pureWalk() {
-        throw notV1('Traversal.pureWalk');
+        return { useTeleportCatalog: false, policy: { useTeleports: false } };
     },
     get withTeles() {
-        throw notV1('Traversal.withTeles');
+        return { useTeleportCatalog: true, policy: { useTeleports: true } };
     },
 });

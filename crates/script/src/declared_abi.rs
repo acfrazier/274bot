@@ -483,6 +483,10 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Traversal } from '../../api/walking/Traversal.js';",
     },
     Reexport {
+        names: &["DirectNavigator"],
+        line: "export { DirectNavigator } from '../../api/walking/DirectNavigator.js';",
+    },
+    Reexport {
         names: &["Tile"],
         line: "export { default as Tile } from '../../geometry/Tile.js';",
     },

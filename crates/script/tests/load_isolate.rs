@@ -3363,3 +3363,102 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn bank_count_by_id_sums_posted_ids() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = Bank.countById(526);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Withdraw 1".to_string()];
+    let bank = [item_row(526, Some("Bones"), 12, &ops, false, -1)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe, 12, "Bank.countById sums posted bank row ids");
+    iso.join();
+}
+
+#[test]
+fn bank_wait_ready_resolves_when_posted_open_and_loaded() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        try {
+            globalThis.__probe = await Bank.waitReady(1000);
+        } catch (e) {
+            globalThis.__probe = String(e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(
+        probe, true,
+        "waitReady is delayUntil of posted Bank.ready(), got {probe:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn traversal_pure_walk_and_with_teles_are_nav_flag_objects() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            pure: Traversal.pureWalk && Traversal.pureWalk.useTeleportCatalog,
+            teles: Traversal.withTeles && Traversal.withTeles.useTeleportCatalog,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe["pure"], false, "pureWalk is NAV_PURE_WALK flags");
+    assert_eq!(probe["teles"], true, "withTeles is NAV_WITH_TELES flags");
+    iso.join();
+}
+
+#[test]
+fn direct_navigator_walk_queues_scene_walk_to() {
+    let src = r#"
+import { DirectNavigator } from '@rs2b0t/api';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = DirectNavigator.walk({ x: 3222, z: 3218, level: 0 });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("__probe");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WalkTo {
+            x: 3222,
+            z: 3218,
+            level: 0
+        }],
+        "DirectNavigator.walk is the scene walk-to packet, not Traveller"
+    );
+    iso.join();
+}
