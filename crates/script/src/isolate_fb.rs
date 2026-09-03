@@ -19,8 +19,8 @@
 //! (equality, not a hash) once per slot per tick.
 
 use flatbuffers::{
-    FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT, Vector,
-    Verifiable, Verifier, VerifierOptions, WIPOffset, root_with_opts,
+    root_with_opts, FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT,
+    Vector, Verifiable, Verifier, VerifierOptions, WIPOffset,
 };
 
 /// Max shim interact rows per tick (isolate→host).
@@ -642,55 +642,83 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<ForwardsUOffset<TileReader>>("here", VT_SNAP_HERE, false)?
             .visit_field::<bool>("ingame", VT_SNAP_INGAME, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "inv", VT_SNAP_INV, false,
+                "inv",
+                VT_SNAP_INV,
+                false,
             )?
             .visit_field::<i32>("inv_size", VT_SNAP_INV_SIZE, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<StatReader>>>>(
-                "stats", VT_SNAP_STATS, false,
+                "stats",
+                VT_SNAP_STATS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<TileReader>>>>(
-                "booths", VT_SNAP_BOOTHS, false,
+                "booths",
+                VT_SNAP_BOOTHS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BankStandReader>>>>(
-                "banks", VT_SNAP_BANKS, false,
+                "banks",
+                VT_SNAP_BANKS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "bank", VT_SNAP_BANK, false,
+                "bank",
+                VT_SNAP_BANK,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "bank_side", VT_SNAP_BANK_SIDE, false,
+                "bank_side",
+                VT_SNAP_BANK_SIDE,
+                false,
             )?
             .visit_field::<bool>("bank_open", VT_SNAP_BANK_OPEN, false)?
             .visit_field::<bool>("bank_loaded", VT_SNAP_BANK_LOADED, false)?
             .visit_field::<bool>("hold", VT_SNAP_HOLD, false)?
             .visit_field::<bool>("ours", VT_SNAP_OURS, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "npcs", VT_SNAP_NPCS, false,
+                "npcs",
+                VT_SNAP_NPCS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "locs", VT_SNAP_LOCS, false,
+                "locs",
+                VT_SNAP_LOCS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "players", VT_SNAP_PLAYERS, false,
+                "players",
+                VT_SNAP_PLAYERS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SceneEntityReader>>>>(
-                "ground", VT_SNAP_GROUND, false,
+                "ground",
+                VT_SNAP_GROUND,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
-                "equipment", VT_SNAP_EQUIPMENT, false,
+                "equipment",
+                VT_SNAP_EQUIPMENT,
+                false,
             )?
             .visit_field::<bool>("chat_open", VT_SNAP_CHAT_OPEN, false)?
             .visit_field::<bool>("chat_continue", VT_SNAP_CHAT_CONTINUE, false)?
             .visit_field::<ForwardsUOffset<&str>>("chat_text", VT_SNAP_CHAT_TEXT, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatOptionReader>>>>(
-                "chat_options", VT_SNAP_CHAT_OPTIONS, false,
+                "chat_options",
+                VT_SNAP_CHAT_OPTIONS,
+                false,
             )?
             .visit_field::<i32>("side_tab", VT_SNAP_SIDE_TAB, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<VarpReader>>>>(
-                "varps", VT_SNAP_VARPS, false,
+                "varps",
+                VT_SNAP_VARPS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CombatStyleReader>>>>(
-                "combat_styles", VT_SNAP_COMBAT_STYLES, false,
+                "combat_styles",
+                VT_SNAP_COMBAT_STYLES,
+                false,
             )?
             .visit_field::<i32>("run_energy", VT_SNAP_RUN_ENERGY, false)?
             .visit_field::<bool>("run_enabled", VT_SNAP_RUN_ENABLED, false)?
@@ -701,19 +729,29 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("main_modal_id", VT_SNAP_MAIN_MODAL, false)?
             .visit_field::<i32>("chat_modal_id", VT_SNAP_CHAT_MODAL, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeProductReader>>>>(
-                "make_products", VT_SNAP_MAKE_PRODUCTS, false,
+                "make_products",
+                VT_SNAP_MAKE_PRODUCTS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<SideTabIfaceReader>>>>(
-                "side_tab_ifaces", VT_SNAP_SIDE_TAB_IFACES, false,
+                "side_tab_ifaces",
+                VT_SNAP_SIDE_TAB_IFACES,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CombatStyleReader>>>>(
-                "spell_buttons", VT_SNAP_SPELL_BUTTONS, false,
+                "spell_buttons",
+                VT_SNAP_SPELL_BUTTONS,
+                false,
             )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ChatLineReader>>>>(
-                "chat_lines", VT_SNAP_CHAT_LINES, false,
+                "chat_lines",
+                VT_SNAP_CHAT_LINES,
+                false,
             )?
             .visit_field::<ForwardsUOffset<NearestBoothReader>>(
-                "nearest_booth", VT_SNAP_NEAREST_BOOTH, false,
+                "nearest_booth",
+                VT_SNAP_NEAREST_BOOTH,
+                false,
             )?
             .visit_field::<i32>("bank_note_on", VT_SNAP_BANK_NOTE_ON, false)?
             .visit_field::<i32>("bank_note_off", VT_SNAP_BANK_NOTE_OFF, false)?
@@ -882,7 +920,10 @@ impl SnapshotReader<'_> {
         }
     }
     pub fn chat_text(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_CHAT_TEXT, None) }
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_CHAT_TEXT, None)
+        }
     }
     pub fn has_chat_options(&self) -> bool {
         rows_present::<ChatOptionReader>(&self.tab, VT_SNAP_CHAT_OPTIONS)
@@ -1032,7 +1073,11 @@ where
 }
 
 /// Like [`rows`], but rejects vectors longer than `max_len`.
-fn rows_capped<'a, T>(tab: &Table<'a>, slot: VOffsetT, max_len: usize) -> Result<Vec<T::Inner>, String>
+fn rows_capped<'a, T>(
+    tab: &Table<'a>,
+    slot: VOffsetT,
+    max_len: usize,
+) -> Result<Vec<T::Inner>, String>
 where
     T: flatbuffers::Follow<'a> + 'a,
 {
@@ -1563,11 +1608,7 @@ fn encode_snapshot_masked_into(
         None
     };
     let inv_off = if mask.inv {
-        let offs = input
-            .inv
-            .iter()
-            .map(|r| row_off(b, r))
-            .collect::<Vec<_>>();
+        let offs = input.inv.iter().map(|r| row_off(b, r)).collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
         None
@@ -1603,11 +1644,7 @@ fn encode_snapshot_masked_into(
         None
     };
     let bank_off = if mask.bank {
-        let offs = input
-            .bank
-            .iter()
-            .map(|r| row_off(b, r))
-            .collect::<Vec<_>>();
+        let offs = input.bank.iter().map(|r| row_off(b, r)).collect::<Vec<_>>();
         Some(b.create_vector(&offs))
     } else {
         None
@@ -1820,7 +1857,10 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_CHAT_TEXT, chat_text_off.expect("mask checked"));
     }
     if mask.chat_options {
-        b.push_slot_always(VT_SNAP_CHAT_OPTIONS, chat_options_off.expect("mask checked"));
+        b.push_slot_always(
+            VT_SNAP_CHAT_OPTIONS,
+            chat_options_off.expect("mask checked"),
+        );
     }
     if mask.side_tab {
         b.push_slot_always(VT_SNAP_SIDE_TAB, input.side_tab);
@@ -1829,7 +1869,10 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_VARPS, varps_off.expect("mask checked"));
     }
     if mask.combat_styles {
-        b.push_slot_always(VT_SNAP_COMBAT_STYLES, combat_styles_off.expect("mask checked"));
+        b.push_slot_always(
+            VT_SNAP_COMBAT_STYLES,
+            combat_styles_off.expect("mask checked"),
+        );
     }
     if mask.run_energy {
         b.push_slot_always(VT_SNAP_RUN_ENERGY, input.run_energy);
@@ -1894,10 +1937,7 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileRe
     WIPOffset::new(b.end_table(tab).value())
 }
 
-fn row_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    r: &ItemRowInput<'_>,
-) -> WIPOffset<RowReader<'b>> {
+fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset<RowReader<'b>> {
     let name_off = r.name.map(|n| b.create_string(n));
     let ops_offs: Vec<_> = r.ops.iter().map(|a| b.create_string(a)).collect();
     let ops_off = b.create_vector(&ops_offs);
@@ -2144,7 +2184,9 @@ impl Verifiable for SceneEntityReader<'_> {
             .visit_field::<bool>("in_combat", VT_ENT_IN_COMBAT, false)?
             .visit_field::<bool>("animating", VT_ENT_ANIMATING, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
-                "actions", VT_ENT_ACTIONS, false,
+                "actions",
+                VT_ENT_ACTIONS,
+                false,
             )?
             .visit_field::<bool>("reachable", VT_ENT_REACHABLE, false)?
             .visit_field::<bool>("reachable_adj", VT_ENT_REACHABLE_ADJ, false)?
@@ -2169,7 +2211,11 @@ impl<'a> flatbuffers::Follow<'a> for ChatOptionReader<'a> {
 
 impl ChatOptionReader<'_> {
     pub fn text(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CHAT_OPT_TEXT, None) }.unwrap_or("")
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_CHAT_OPT_TEXT, None)
+        }
+        .unwrap_or("")
     }
 }
 
@@ -2300,7 +2346,11 @@ impl MakeProductReader<'_> {
         unsafe { self.tab.get::<i32>(VT_MAKE_PROD_OID, None) }.unwrap_or(-1)
     }
     pub fn name(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_MAKE_PROD_NAME, None) }.unwrap_or("")
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_MAKE_PROD_NAME, None)
+        }
+        .unwrap_or("")
     }
     pub fn buttons(&self) -> Vec<MakeButtonReader<'_>> {
         rows::<MakeButtonReader>(&self.tab, VT_MAKE_PROD_BTNS)
@@ -2313,7 +2363,9 @@ impl Verifiable for MakeProductReader<'_> {
             .visit_field::<i32>("object_id", VT_MAKE_PROD_OID, false)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_MAKE_PROD_NAME, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<MakeButtonReader>>>>(
-                "buttons", VT_MAKE_PROD_BTNS, false,
+                "buttons",
+                VT_MAKE_PROD_BTNS,
+                false,
             )?
             .finish();
         Ok(())
@@ -2552,7 +2604,9 @@ impl Verifiable for PaintReader<'_> {
             .visit_field::<ForwardsUOffset<&str>>("title", VT_PAINT_TITLE, false)?
             .visit_field::<ForwardsUOffset<&str>>("accent", VT_PAINT_ACCENT, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
-                "lines", VT_PAINT_LINES, false,
+                "lines",
+                VT_PAINT_LINES,
+                false,
             )?
             .finish();
         Ok(())
@@ -2575,9 +2629,7 @@ impl PaintReader<'_> {
             Some(v) => {
                 let len = v.len();
                 if len > MAX_PAINT_LINES {
-                    return Err(format!(
-                        "vector length {len} exceeds cap {MAX_PAINT_LINES}"
-                    ));
+                    return Err(format!("vector length {len} exceeds cap {MAX_PAINT_LINES}"));
                 }
                 v.iter().map(str::to_string).collect()
             }
@@ -2625,6 +2677,12 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 choose: row.choose().map(str::to_string),
             }),
             "walk" => out.push(crate::shim::InteractReq::Walk {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+            }),
+            "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
@@ -2709,9 +2767,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 index: row.index(),
             }),
             "use-widget-on" => out.push(crate::shim::InteractReq::UseWidgetOn {
-                component_id: row.component_id().ok_or_else(|| {
-                    "use-widget-on has no component_id".to_string()
-                })?,
+                component_id: row
+                    .component_id()
+                    .ok_or_else(|| "use-widget-on has no component_id".to_string())?,
                 kind: row.kind().unwrap_or("").to_string(),
                 target_name: row.choose().map(str::to_string),
                 x: row.x(),
@@ -2721,16 +2779,20 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             }),
             "continue" => out.push(crate::shim::InteractReq::ContinueDialog),
             "answer" => out.push(crate::shim::InteractReq::Answer {
-                option: row.stand_op().ok_or_else(|| "answer has no option".to_string())?,
+                option: row
+                    .stand_op()
+                    .ok_or_else(|| "answer has no option".to_string())?,
             }),
             "if-button" => out.push(crate::shim::InteractReq::IfButton {
-                component_id: row.component_id().ok_or_else(|| {
-                    "if-button has no component_id".to_string()
-                })?,
+                component_id: row
+                    .component_id()
+                    .ok_or_else(|| "if-button has no component_id".to_string())?,
             }),
             "close-modal" => out.push(crate::shim::InteractReq::CloseModal),
             "side-tab" => out.push(crate::shim::InteractReq::SideTab {
-                tab: row.stand_op().ok_or_else(|| "side-tab has no tab".to_string())?,
+                tab: row
+                    .stand_op()
+                    .ok_or_else(|| "side-tab has no tab".to_string())?,
             }),
             "wear" => out.push(crate::shim::InteractReq::Wear {
                 name: row
@@ -2762,6 +2824,7 @@ fn interact_off<'b>(
         InteractReq::OpenBooth { .. } => "open-booth",
         InteractReq::OpenStand { .. } => "open-stand",
         InteractReq::Walk { .. } => "walk",
+        InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
         InteractReq::Held { .. } => "held",
@@ -2815,9 +2878,13 @@ fn interact_off<'b>(
         | InteractReq::Loc { action, .. }
         | InteractReq::Obj { action, .. }
         | InteractReq::Player { action, .. } => Some(b.create_string(action)),
-        InteractReq::SetRun { on } | InteractReq::SetRetaliate { on } | InteractReq::SetNoteMode { on } => {
-            Some(b.create_string(if *on { "on" } else { "off" }))
-        }
+        InteractReq::SetRun { on }
+        | InteractReq::SetRetaliate { on }
+        | InteractReq::SetNoteMode { on } => Some(b.create_string(if *on { "on" } else { "off" })),
+        InteractReq::Walk {
+            allow_teleports: true,
+            ..
+        } => Some(b.create_string("tele")),
         _ => None,
     };
     let tab = b.start_table();
@@ -2849,10 +2916,13 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_CHOOSE, off);
             }
         }
-        InteractReq::Walk { x, z, level } => {
+        InteractReq::Walk { x, z, level, .. } | InteractReq::WalkTo { x, z, level } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
+            if let Some(off) = action_off {
+                b.push_slot_always(VT_IN_ACTION, off);
+            }
         }
         InteractReq::Deposit { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
@@ -2893,11 +2963,7 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }
         InteractReq::UseOn {
-            x,
-            z,
-            level,
-            index,
-            ..
+            x, z, level, index, ..
         } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
@@ -2944,7 +3010,9 @@ fn interact_off<'b>(
         InteractReq::Wear { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
         }
-        InteractReq::SetRun { .. } | InteractReq::SetRetaliate { .. } | InteractReq::SetNoteMode { .. } => {
+        InteractReq::SetRun { .. }
+        | InteractReq::SetRetaliate { .. }
+        | InteractReq::SetNoteMode { .. } => {
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }
     }
@@ -3094,7 +3162,10 @@ mod tests {
         input.chat_text = None;
         let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
         let view = decode_snapshot(&delta).expect("delta");
-        assert!(view.has_chat_text(), "cleared chat_text is present in delta");
+        assert!(
+            view.has_chat_text(),
+            "cleared chat_text is present in delta"
+        );
         assert_eq!(view.chat_text(), Some(""), "None encodes as empty string");
     }
 
@@ -3133,10 +3204,23 @@ mod tests {
         let decoded = decode_paint(&pbytes).expect("paint");
         assert_eq!(decoded, paint);
 
-        let reqs = vec![InteractReq::Held {
-            name: "Bones".into(),
-            action: "Bury".into(),
-        }];
+        let reqs = vec![
+            InteractReq::Held {
+                name: "Bones".into(),
+                action: "Bury".into(),
+            },
+            InteractReq::Walk {
+                x: 1,
+                z: 2,
+                level: 0,
+                allow_teleports: true,
+            },
+            InteractReq::WalkTo {
+                x: 3,
+                z: 4,
+                level: 0,
+            },
+        ];
         let ibytes = buf.encode_interact_batch(&reqs);
         let got = decode_interact_batch(&ibytes).expect("interact");
         assert_eq!(got, reqs);
@@ -3161,7 +3245,10 @@ mod tests {
         );
         let mut bad_root = full.clone();
         bad_root[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(decode_paint(&bad_root).is_err(), "huge paint root offset should err");
+        assert!(
+            decode_paint(&bad_root).is_err(),
+            "huge paint root offset should err"
+        );
 
         let reqs = vec![InteractReq::Close];
         let ibytes = IsolateBuf::new().encode_interact_batch(&reqs);

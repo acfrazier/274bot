@@ -1,6 +1,7 @@
 # Panel: native UI (`panel-play`)
 
-`crates/panel` is the native **dear-app / ImGui** UI over the same kernel
+`crates/panel` is the native **ImGui** UI (panel-owned winit + wgpu loop)
+over the same kernel
 slots `host-play` runs ([login.md](login.md), [vault.md](vault.md)).
 Single-bot chrome plus the **MultiBox wall** (sidecar rail, grid mode,
 profile chooser). The headless twin is [`tui-play`](tui.md) (raster Off,
@@ -60,11 +61,13 @@ imgui.ini restore are off.
 rail keep a native **765×503** (logical) applet centred in the leftover
 pane. DPI is **winit + imgui `HiDpiMode::Default`** — we do not
 `ScaleAllSizes` on top of that (it would double Retina).
-Single-bot and the MultiBox **rail** hide the dock tab strip
-(`AUTO_HIDE_TAB_BAR`, `NO_TITLE_BAR` on the rail). Opening the sidecar
-**grows** the OS window if the 765×503 blit would sit under the panel or
-rail; a larger window is not shrunk. The Game blit is flush to the panel
-(right-aligned in the leftover pane).
+Single-bot hides the dock tab strip (`AUTO_HIDE_TAB_BAR`). The MultiBox
+**rail** keeps a tab so its close X is visible; closing it turns MultiBox
+off and **shrinks** the OS window by the 264px strip (same falling edge as
+the 274bot MultiBox toggle). Opening the sidecar **grows** the OS window
+if the 765×503 blit would sit under the panel or rail; a window the
+operator already stretched keeps the extra. The Game blit is flush to the
+panel (right-aligned in the leftover pane).
 The Game pane title is the focused profile name when the tab bar is visible. Closing the Game pane sets
 `game_pane_open = false` (`set_draw` off) and turns capture off. The UI
 thread is capped at **50 fps** (`RedrawMode::WaitUntil`) so it does not

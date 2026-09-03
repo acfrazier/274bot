@@ -12,10 +12,7 @@ use vault::write_private_file;
 
 /// Default operator settings path (`~/.274bot/script-settings.json`).
 pub fn default_script_settings_path() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/script-settings.json")),
-        Err(_) => PathBuf::from(".274bot/script-settings.json"),
-    }
+    crate::bot_file("script-settings.json")
 }
 
 /// Stable file key for a `(source, name)` card.
@@ -71,9 +68,7 @@ impl ScriptSettingsStore {
 
     fn card_mut(&mut self, source: ScriptSource, name: &str) -> &mut Map<String, Value> {
         self.dirty = true;
-        self.cards
-            .entry(card_key(source, name))
-            .or_default()
+        self.cards.entry(card_key(source, name)).or_default()
     }
 
     pub fn set_bool(&mut self, source: ScriptSource, name: &str, id: &str, value: bool) {
@@ -93,13 +88,7 @@ impl ScriptSettingsStore {
             .insert(id.to_string(), Value::String(value.to_string()));
     }
 
-    pub fn set_value(
-        &mut self,
-        source: ScriptSource,
-        name: &str,
-        id: &str,
-        value: Value,
-    ) {
+    pub fn set_value(&mut self, source: ScriptSource, name: &str, id: &str, value: Value) {
         self.card_mut(source, name).insert(id.to_string(), value);
     }
 
@@ -168,10 +157,7 @@ fn coerce_tile(value: &Value) -> Value {
         if obj.get("x").and_then(|v| v.as_i64()).is_some()
             && obj.get("z").and_then(|v| v.as_i64()).is_some()
         {
-            let level = obj
-                .get("level")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+            let level = obj.get("level").and_then(|v| v.as_i64()).unwrap_or(0);
             return serde_json::json!({
                 "x": obj.get("x").and_then(|v| v.as_i64()).unwrap(),
                 "z": obj.get("z").and_then(|v| v.as_i64()).unwrap(),
@@ -186,7 +172,10 @@ fn coerce_tile(value: &Value) -> Value {
         let parts: Vec<&str> = s.split(',').map(str::trim).collect();
         if parts.len() >= 2 {
             if let (Ok(x), Ok(z)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                let level = parts.get(2).and_then(|p| p.parse::<i64>().ok()).unwrap_or(0);
+                let level = parts
+                    .get(2)
+                    .and_then(|p| p.parse::<i64>().ok())
+                    .unwrap_or(0);
                 return serde_json::json!({ "x": x, "z": z, "level": level });
             }
         }

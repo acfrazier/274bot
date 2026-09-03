@@ -31,6 +31,9 @@ pub struct PanelUiState {
     /// Last directory visited in the out-of-tree Load file browser.
     #[serde(default)]
     pub script_load_last_dir: Option<PathBuf>,
+    /// Last directory visited in the catalog-import folder dialog.
+    #[serde(default)]
+    pub script_catalog_last_dir: Option<PathBuf>,
 }
 
 fn default_true() -> bool {
@@ -49,6 +52,7 @@ impl Default for PanelUiState {
             section_order: Vec::new(),
             script_category_order: Vec::new(),
             script_load_last_dir: None,
+            script_catalog_last_dir: None,
         }
     }
 }
@@ -70,10 +74,7 @@ pub fn pick_focus(names: &[String], last: Option<&str>) -> Option<String> {
 
 /// `~/.274bot/panel-ui.json` (same HOME rule as the vault path).
 pub fn path() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/panel-ui.json")),
-        Err(_) => PathBuf::from(".274bot/panel-ui.json"),
-    }
+    script::bot_file("panel-ui.json")
 }
 
 pub fn load() -> PanelUiState {
@@ -276,10 +277,8 @@ mod tests {
 
     #[test]
     fn script_category_order_persist_roundtrip() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-ui-cat-order-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-ui-cat-order-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
@@ -291,6 +290,30 @@ mod tests {
         assert_eq!(
             loaded.script_category_order,
             vec!["Prayer", "Combat", "Skilling"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn script_catalog_last_dir_persist_roundtrip() {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-ui-cat-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            script_catalog_last_dir: Some(std::path::PathBuf::from("/tmp/rs2b0t")),
+            script_load_last_dir: Some(std::path::PathBuf::from("/tmp/scripts")),
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        let loaded = load_at(&p);
+        assert_eq!(
+            loaded.script_catalog_last_dir,
+            Some(std::path::PathBuf::from("/tmp/rs2b0t"))
+        );
+        assert_eq!(
+            loaded.script_load_last_dir,
+            Some(std::path::PathBuf::from("/tmp/scripts"))
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

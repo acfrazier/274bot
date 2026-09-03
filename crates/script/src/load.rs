@@ -106,10 +106,7 @@ pub struct JsCard {
 
 /// Default persisted library path (`~/.274bot/js-scripts.json`).
 pub fn default_js_store() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/js-scripts.json")),
-        Err(_) => PathBuf::from(".274bot/js-scripts.json"),
-    }
+    crate::bot_file("js-scripts.json")
 }
 
 /// One persisted library record: only the name and the source path (the
@@ -233,8 +230,7 @@ impl JsLibrary {
             .map_err(|e| format!("{name}: {e}"))?;
         #[cfg(feature = "load")]
         {
-            isolate::validate_compiles(&cached.js, shape)
-                .map_err(|e| format!("{name}: {e}"))?;
+            isolate::validate_compiles(&cached.js, shape).map_err(|e| format!("{name}: {e}"))?;
         }
         let card = JsCard {
             name,
@@ -308,18 +304,9 @@ impl JsLibrary {
             if shape == LoadShape::Reject {
                 continue;
             }
-            let cached = self
-                .cache
-                .get_or_transpile(
-                    &path,
-                    origin.as_bytes(),
-                    CacheMeta {
-                        kind: card.kind,
-                        source: ScriptSource::Catalog,
-                        shape: Some(shape_label(shape).into()),
-                    },
-                )
-                .map_err(|e| format!("{}: {e}", card.name))?;
+            // Origin/classify only — no transpile, no V8. Warmth is
+            // [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
+            let sha256 = JsCache::origin_sha(origin.as_bytes());
             self.cards
                 .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
             self.cards.push(JsCard {
@@ -327,10 +314,10 @@ impl JsLibrary {
                 path,
                 shape,
                 origin,
-                js: cached.js,
+                js: String::new(),
                 kind: card.kind,
                 source: ScriptSource::Catalog,
-                sha256: cached.sha256,
+                sha256,
                 description: card.description.clone(),
                 category: card.category.clone(),
                 tags: card.tags.clone(),
@@ -423,6 +410,30 @@ impl JsLibrary {
     /// The SHA cache backing this library (Start sibling resolve).
     pub fn cache(&self) -> &JsCache {
         &self.cache
+    }
+
+    /// True when this card already holds transpiled JS (isolate-ready).
+    pub fn js_is_ready(&self, source: ScriptSource, name: &str) -> bool {
+        self.get(source, name).is_some_and(|c| !c.js.is_empty())
+    }
+
+    /// Catalog/file cards whose origin is not in the SHA cache yet.
+    /// Cache hits are omitted — they are a disk read, not a transpile.
+    pub fn cards_needing_transpile(&self) -> Vec<(ScriptSource, String)> {
+        self.cards
+            .iter()
+            .filter(|c| c.js.is_empty() && !self.cache.is_cached(c.origin.as_bytes()))
+            .map(|c| (c.source, c.name.clone()))
+            .collect()
+    }
+
+    /// Fill `card.js` from the SHA cache (transpile on miss). Idempotent
+    /// when already ready. Does not spawn V8 — that is Start.
+    pub fn ensure_js(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
+        if self.js_is_ready(source, name) {
+            return Ok(());
+        }
+        self.refresh(source, name)
     }
 }
 
@@ -521,8 +532,7 @@ pub fn resolve_sibling_modules(
         let Some(path) = resolve_sibling_path(card_dir, &import_rel) else {
             continue;
         };
-        let bytes = std::fs::read(&path)
-            .map_err(|e| format!("sibling {}: {e}", path.display()))?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("sibling {}: {e}", path.display()))?;
         let cached = cache.get_or_transpile(&path, &bytes, meta.clone())?;
         out.push((url, cached.js));
     }
@@ -1360,7 +1370,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
         if snap.has_retaliate_enabled() {
             let retaliate_enabled = v8::Boolean::new(&mut scope, snap.retaliate_enabled());
-            set(&mut scope, obj, "retaliate_enabled", retaliate_enabled.into())?;
+            set(
+                &mut scope,
+                obj,
+                "retaliate_enabled",
+                retaliate_enabled.into(),
+            )?;
         } else if !had {
             set(&mut scope, obj, "retaliate_enabled", falsy)?;
         }
@@ -1429,9 +1444,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
 
     fn materialize_settings_bag(runtime: &mut Runtime, json: &str) -> Result<(), String> {
         runtime
-            .eval::<()>(format!(
-                "globalThis.__rs2b0t_host.settingsBag = {json};"
-            ))
+            .eval::<()>(format!("globalThis.__rs2b0t_host.settingsBag = {json};"))
             .map_err(|e| format!("settings bag: {e}"))
     }
 
@@ -1844,8 +1857,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                             }
-                            if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold)
-                            {
+                            if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
                             }
                         }
@@ -1871,9 +1883,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     if host_hold {
                         // Paint-only tick: no loop, no pump. Use `__rs_bot`
                         // (global); module-local `inst` is not visible here.
-                        let _ = runtime.eval::<()>(&format!(
-                            "globalThis.__rs2b0t_host.tick = {n}"
-                        ));
+                        let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
                         let _ = runtime.eval::<()>(
                             "(() => { const bot = globalThis.__rs_bot; if (bot && typeof bot.onPaint === 'function') { bot.onPaint(globalThis.__dummy_ctx); } })()",
                         );
@@ -1986,12 +1996,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
                         runtime.eval("globalThis.__rs2b0t_host.paint || null");
                     if let Ok(Some(frame)) = paint {
-                        forward_paint_if_changed(
-                            &mut ipc,
-                            &out,
-                            &mut last_forwarded_paint,
-                            frame,
-                        );
+                        forward_paint_if_changed(&mut ipc, &out, &mut last_forwarded_paint, frame);
                     }
                     let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                         &mut runtime,

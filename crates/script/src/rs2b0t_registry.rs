@@ -119,7 +119,8 @@ fn resolve_under_catalog(catalog: &Path, rel_path: &str) -> Option<PathBuf> {
         match component {
             std::path::Component::Normal(part) => out.push(part),
             std::path::Component::CurDir => {}
-            std::path::Component::ParentDir | std::path::Component::RootDir
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
             | std::path::Component::Prefix(_) => return None,
         }
     }
@@ -150,10 +151,7 @@ const RS2B0T_IMPORT_DEFERRED: &str = "deferred";
 
 /// Default first-run defer flag file (`~/.274bot/rs2b0t-import`).
 pub fn default_rs2b0t_import_file() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/rs2b0t-import")),
-        Err(_) => PathBuf::from(".274bot/rs2b0t-import"),
-    }
+    crate::bot_file("rs2b0t-import")
 }
 
 /// Whether the operator chose **Not now** on the first Browse catalog prompt.
@@ -185,18 +183,15 @@ pub fn clear_rs2b0t_import_at(path: &Path) -> Result<(), String> {
 
 /// Default persisted rs2b0t root file (`~/.274bot/rs2b0t-path`).
 pub fn default_rs2b0t_path_file() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/rs2b0t-path")),
-        Err(_) => PathBuf::from(".274bot/rs2b0t-path"),
-    }
+    crate::bot_file("rs2b0t-path")
 }
 
 /// The rs2b0t checkout root: `$RS2B0T` first, else the path persisted by a
 /// previous successful parse.
 pub fn rs2b0t_root_at(path_file: &Path) -> Option<PathBuf> {
-    if let Ok(root) = std::env::var("RS2B0T") {
-        if !root.is_empty() {
-            return Some(PathBuf::from(root));
+    if let Some(root) = crate::rs2b0t_env() {
+        if !root.as_os_str().is_empty() {
+            return Some(root);
         }
     }
     let persisted = std::fs::read_to_string(path_file).ok()?;
@@ -312,12 +307,10 @@ fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
         let stmt_len = tail.find(';').unwrap_or(tail.len());
         if let Some((bindings, path)) = parse_import_stmt(&tail[..stmt_len]) {
             for (local, export_name) in bindings {
-                imports
-                    .entry(local)
-                    .or_insert_with(|| ImportBinding {
-                        rel_path: path.clone(),
-                        export_name,
-                    });
+                imports.entry(local).or_insert_with(|| ImportBinding {
+                    rel_path: path.clone(),
+                    export_name,
+                });
             }
         }
         pos = start + "import".len() + stmt_len;
@@ -385,11 +378,7 @@ fn parse_named_import_part(part: &str, bindings: &mut Vec<(String, String)>) {
             ));
         }
     } else {
-        let ident = part
-            .split_whitespace()
-            .next()
-            .unwrap_or(part)
-            .to_string();
+        let ident = part.split_whitespace().next().unwrap_or(part).to_string();
         bindings.push((ident.clone(), ident));
     }
 }

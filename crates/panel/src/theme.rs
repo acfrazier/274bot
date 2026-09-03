@@ -123,8 +123,11 @@ pub fn apply_amber(style: &mut Style) {
     style.set_color(StyleColor::ResizeGripHovered, HOVER_FILL);
     style.set_color(StyleColor::ResizeGripActive, ACTIVE_FILL);
     // Top-left orange "flag" is the dock tab-bar window-menu button, not
-    // a resize grip. Off: we own the split and AUTO_HIDE the tab strip.
+    // a resize grip. Off. Game AUTO_HIDEs its tab strip; the rail keeps a
+    // tab so its window X can close the strip. Node X stays off so a
+    // config tab cannot close the whole 274bot pane.
     style.set_window_menu_button_position(Direction::None);
+    style.set_docking_node_has_close_button(false);
     style.set_color(StyleColor::Tab, [0.14, 0.10, 0.02, 1.0]);
     style.set_color(StyleColor::TabHovered, HOVER_FILL);
     style.set_color(StyleColor::TabSelected, ACTIVE_FILL);

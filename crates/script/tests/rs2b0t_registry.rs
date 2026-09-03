@@ -113,15 +113,11 @@ fn rs2b0t_import_deferred_roundtrip() {
 
 #[test]
 fn rs2b0t_root_prefers_env_then_persisted_file() {
-    let dir = scratch("rs2b0t_root");
-    let path_file = dir.join("rs2b0t-path");
-    let env_root = dir.join("env-root");
-    let persisted = dir.join("persisted-root");
+    let iso = script::IsolatedEnv::enter("rs2b0t-root");
+    let path_file = iso.dir.join("rs2b0t-path");
+    let env_root = iso.dir.join("env-root");
+    let persisted = iso.dir.join("persisted-root");
     std::fs::create_dir_all(&env_root).unwrap();
-
-    // Env is restored afterwards; no other script test reads RS2B0T.
-    let orig = std::env::var("RS2B0T").ok();
-    std::env::remove_var("RS2B0T");
 
     assert_eq!(
         script::rs2b0t_root_at(&path_file),
@@ -136,24 +132,19 @@ fn rs2b0t_root_prefers_env_then_persisted_file() {
         "the persisted path is the fallback"
     );
 
-    std::env::set_var("RS2B0T", &env_root);
+    iso.set_rs2b0t(&env_root);
     assert_eq!(
         script::rs2b0t_root_at(&path_file).as_deref(),
         Some(env_root.as_path()),
         "$RS2B0T wins over the persisted path"
     );
 
-    std::env::remove_var("RS2B0T");
+    iso.clear_rs2b0t();
     assert_eq!(
         script::rs2b0t_root_at(&path_file).as_deref(),
         Some(persisted.as_path()),
         "env gone: the persisted fallback is back"
     );
-
-    match orig {
-        Some(v) => std::env::set_var("RS2B0T", v),
-        None => std::env::remove_var("RS2B0T"),
-    }
 }
 
 #[test]
@@ -294,7 +285,11 @@ fn script_file_path_resolves_js_import_to_ts_twin() {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
-    std::fs::write(scripts.join("BoneBurier/BoneBurier.ts"), "export default class {}").unwrap();
+    std::fs::write(
+        scripts.join("BoneBurier/BoneBurier.ts"),
+        "export default class {}",
+    )
+    .unwrap();
 
     let p = script::script_file_path(&root, "./BoneBurier/BoneBurier.js")
         .expect("valid ./ import resolves");
@@ -405,7 +400,11 @@ fn parse_registry_resolves_settings_schema_via_import_alias() {
     assert_eq!(style.label.as_deref(), Some("Combat style"));
     assert_eq!(
         style.options,
-        vec!["melee".to_string(), "ranged".to_string(), "magic".to_string()]
+        vec![
+            "melee".to_string(),
+            "ranged".to_string(),
+            "magic".to_string()
+        ]
     );
 }
 
@@ -436,7 +435,10 @@ export const ALCHER_SETTINGS = {
     assert_eq!(cards[0].settings_schema.len(), 1);
     let setting = &cards[0].settings_schema[0];
     assert_eq!(setting.id, "combatStyle");
-    assert!(setting.options.is_empty(), "identifier options are not evaluated");
+    assert!(
+        setting.options.is_empty(),
+        "identifier options are not evaluated"
+    );
 }
 
 #[test]

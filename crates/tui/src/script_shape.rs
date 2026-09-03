@@ -167,10 +167,7 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
     if !card.description.is_empty() {
         out.push(Line::from(format!("    {}", card.description)));
     }
-    out.push(Line::from(format!(
-        "    category: {}",
-        card_category(card)
-    )));
+    out.push(Line::from(format!("    category: {}", card_category(card))));
     if !card.tags.is_empty() {
         out.push(Line::from(format!("    tags: {}", card.tags.join(", "))));
     }
@@ -358,10 +355,7 @@ impl Widget for ScriptPane<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
         let state = run_state_text(self.state);
-        let sel = self
-            .sel
-            .map(|s| s.label())
-            .unwrap_or_else(|| "—".into());
+        let sel = self.sel.map(|s| s.label()).unwrap_or_else(|| "—".into());
         let buttons = SCRIPT_BUTTONS
             .iter()
             .map(|b| {
@@ -399,10 +393,7 @@ impl Widget for ScriptPane<'_> {
                         lines.push(Line::from(format!("— {cat} —")));
                     }
                     BrowseLine::Card(idx) => {
-                        let selected = self
-                            .cards
-                            .get(idx)
-                            .is_some_and(|c| self.card_selected(c));
+                        let selected = self.cards.get(idx).is_some_and(|c| self.card_selected(c));
                         if let Some(card) = self.cards.get(idx) {
                             lines.extend(card_detail_lines(card, selected));
                         }
@@ -606,14 +597,17 @@ mod tests {
             }]),
             vec!["Uncategorized"]
         );
-        assert_eq!(card_category(&BrowseCard {
-            name: "x".into(),
-            description: String::new(),
-            category: String::new(),
-            tags: Vec::new(),
-            kind: ScriptKind::Compat,
-            source: ScriptSource::File,
-        }), "Uncategorized");
+        assert_eq!(
+            card_category(&BrowseCard {
+                name: "x".into(),
+                description: String::new(),
+                category: String::new(),
+                tags: Vec::new(),
+                kind: ScriptKind::Compat,
+                source: ScriptSource::File,
+            }),
+            "Uncategorized"
+        );
     }
 
     #[test]
@@ -713,7 +707,10 @@ mod tests {
             4,
         );
         assert!(text.contains("[Resume]"), "paused paints Resume: {text:?}");
-        assert!(!text.contains("[Pause]"), "paused must not paint Pause: {text:?}");
+        assert!(
+            !text.contains("[Pause]"),
+            "paused must not paint Pause: {text:?}"
+        );
     }
 
     #[test]

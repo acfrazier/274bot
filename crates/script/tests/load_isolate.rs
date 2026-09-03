@@ -356,8 +356,12 @@ fn isolate_spawn_ticks_probe_and_joins() {
 // and ticks run `create()`'s `loop()` without throwing.
 #[test]
 fn isolate_spawn_compat_fixture_ticks_and_joins() {
-    let iso = LoadIsolate::spawn(COMPAT_FIXTURE.to_string(), LoadShape::CompatDefineBot, vec![])
-        .expect("spawn compat isolate");
+    let iso = LoadIsolate::spawn(
+        COMPAT_FIXTURE.to_string(),
+        LoadShape::CompatDefineBot,
+        vec![],
+    )
+    .expect("spawn compat isolate");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let _ = iso.probe("__rs_tick"); // round-trip: both ticks finished first
@@ -519,7 +523,11 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
 // and returns even if the interrupt were somehow not delivered.
 #[test]
 fn join_bounds_a_runaway_tick() {
-    let iso = LoadIsolate::spawn("export function tick(api) { while(true){} }".to_string(), LoadShape::NativeTick, vec![])
+    let iso = LoadIsolate::spawn(
+        "export function tick(api) { while(true){} }".to_string(),
+        LoadShape::NativeTick,
+        vec![],
+    )
     .expect("spawn runaway isolate");
     iso.on_game_tick(1);
     std::thread::sleep(std::time::Duration::from_millis(80));
@@ -622,7 +630,8 @@ fn isolate_spawn_returns_immediately_with_handle() {
     let (tx, rx) = mpsc::channel::<()>();
     let (done_tx, done_rx) = mpsc::channel::<()>();
     let t = std::thread::spawn(move || {
-        let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+        let iso =
+            LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
         tx.send(()).unwrap();
         let _ = done_rx.recv();
         iso.join();
@@ -682,7 +691,8 @@ fn transpile_ts_strips_types_and_v8_can_parse_it() {
 #[test]
 fn isolate_spawn_compat_class_ticks_and_joins() {
     let js = script::transpile_ts(CLASS_TS_FIXTURE).expect("transpile class fixture");
-    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass, vec![]).expect("spawn compat class isolate");
+    let iso =
+        LoadIsolate::spawn(js, LoadShape::CompatClass, vec![]).expect("spawn compat class isolate");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let n = iso.probe("__rs_bot.n").expect("instance readable");
@@ -701,8 +711,8 @@ fn isolate_spawn_compat_class_ticks_and_joins() {
 #[test]
 fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.ingame(); } }";
-    let iso =
-        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("remapped import loads");
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("remapped import loads");
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let _ = iso.probe("__rs_bot"); // round-trip: both ticks finished first
@@ -715,8 +725,8 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
 
     // Game.teleport is a real member that throws at runtime.
     let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.teleport('Lumbridge'); } }";
-    let iso =
-        LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("teleport bot loads");
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("teleport bot loads");
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
@@ -760,7 +770,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("paint bot loads");
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("paint bot loads");
     iso.on_game_tick(1);
     let value = iso
         .probe("__rs2b0t_host.paint")
@@ -788,7 +799,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).expect("paint bot loads");
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("paint bot loads");
     iso.on_game_tick(1);
     // The probe round-trips after the tick, so the forwarded Paint
     // message is in the channel by the time it returns.
@@ -1033,7 +1045,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(2);
     iso.on_game_tick(3);
     let loops = iso.probe("__rs_loops").unwrap();
-    assert_eq!(loops, 1, "posted hold freezes loop: count does not increase");
+    assert_eq!(
+        loops, 1,
+        "posted hold freezes loop: count does not increase"
+    );
     let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
     assert!(
         paints >= 3,
@@ -1280,9 +1295,7 @@ export default class T extends LoopingBot {
             break list;
         }
         if Instant::now() >= deadline {
-            panic!(
-                "ignored_randoms cache expected ['swarm'], got {list:?} (probe path?)"
-            );
+            panic!("ignored_randoms cache expected ['swarm'], got {list:?} (probe path?)");
         }
         thread::sleep(Duration::from_millis(5));
     };
@@ -1294,7 +1307,8 @@ export default class T extends LoopingBot {
     loop() { if (globalThis.__rs_tick >= 2) { while (true) {} } }
 }
 "#;
-    let iso_block = LoadIsolate::spawn(src_block.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso_block =
+        LoadIsolate::spawn(src_block.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso_block.on_game_tick(1);
     thread::sleep(Duration::from_millis(50));
     iso_block.on_game_tick(2);
@@ -2167,7 +2181,10 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(value["x"], 3180, "nearestBank tile is the posted booth, not here");
+    assert_eq!(
+        value["x"], 3180,
+        "nearestBank tile is the posted booth, not here"
+    );
     assert_eq!(value["z"], 3436);
     assert_eq!(value["level"], 0);
     assert_ne!(
@@ -2394,7 +2411,14 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let ops = ["Withdraw-1".to_string()];
-    let bank = [item_row(10, Some("Adamant platebody"), 1, &ops, false, 1234)];
+    let bank = [item_row(
+        10,
+        Some("Adamant platebody"),
+        1,
+        &ops,
+        false,
+        1234,
+    )];
     let mut snap = base_snapshot();
     snap.bank = &bank;
     post_snapshot_input(&iso, &snap);
@@ -2451,10 +2475,16 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(value["exact"], false, "reachable false when only adjacent is ok");
+    assert_eq!(
+        value["exact"], false,
+        "reachable false when only adjacent is ok"
+    );
     assert_eq!(value["adj"], true, "reachable_adj when adjacentOk");
     assert_eq!(value["tile"], false, "tile lookup reads the same row");
-    assert_eq!(value["missing"], false, "no row on tile is false, not Chebyshev");
+    assert_eq!(
+        value["missing"], false,
+        "no row on tile is false, not Chebyshev"
+    );
     iso.join();
 }
 
@@ -2490,8 +2520,7 @@ export default class T extends LoopingBot {
         "fixture: Chebyshev {cheb} is ≤ 400 so a fake would return true"
     );
     assert_ne!(
-        value,
-        true,
+        value, true,
         "canReach must not return true from Chebyshev ≤ 400: {value:?}"
     );
     iso.join();
@@ -2535,6 +2564,7 @@ export default class T extends LoopingBot {
             x: 3222,
             z: 3295,
             level: 0,
+            allow_teleports: false,
         }],
         "walkOpening queues Traversal.walkResilient walk"
     );
@@ -2709,8 +2739,97 @@ export default class T extends LoopingBot {
             x: 3222,
             z: 3295,
             level: 0,
+            allow_teleports: false,
         }],
         "createReturnToAnchorTask queues walkResilient(tile, opts)"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_walk_to_queues_packet_not_traveller() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__probe = 'go';
+        try {
+            await Traversal.walkTo({ x: 3222, z: 3223, level: 0 });
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let msg = value.as_str().unwrap_or("");
+    assert!(
+        !msg.contains("not v1"),
+        "Traversal.walkTo is the packet walk we already ship: {value:?}"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WalkTo {
+            x: 3222,
+            z: 3223,
+            level: 0,
+        }],
+        "walkTo queues Interactions::walk, not Traveller"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_walk_resilient_forwards_teleport_opt_in() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__probe = 'go';
+        try {
+            await Traversal.walkResilient(
+                { x: 3222, z: 3295, level: 0 },
+                { radius: 0, useTeleportCatalog: true },
+            );
+        } catch (e) {
+            globalThis.__probe = String(e.message || e);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let msg = value.as_str().unwrap_or("");
+    assert!(
+        !msg.contains("not v1"),
+        "walkResilient(useTeleportCatalog) must not throw: {value:?}"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Walk {
+            x: 3222,
+            z: 3295,
+            level: 0,
+            allow_teleports: true,
+        }],
+        "useTeleportCatalog maps onto FindOptions.allow_teleports"
     );
     iso.join();
 }

@@ -371,6 +371,82 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     );
 }
 
+fn write_two_card_catalog(dir: &std::path::Path) -> std::path::PathBuf {
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
+    std::fs::create_dir_all(scripts.join("ShopRunner")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import BoneBurier from './BoneBurier/BoneBurier.js';
+import ShopRunner from './ShopRunner/ShopRunner.js';
+ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
+ScriptRegistry.register({ name: 'ShopRunner', create: () => new ShopRunner() });
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("BoneBurier/BoneBurier.ts"),
+        "export default class BoneBurier extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("ShopRunner/ShopRunner.ts"),
+        "export default class ShopRunner extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
+    root
+}
+
+#[test]
+fn catalog_register_does_not_transpile_until_ensure_js() {
+    let dir = scratch("catalog_lazy");
+    let root = write_two_card_catalog(&dir);
+    let cache_root = dir.join("js-cache");
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), cache_root);
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog fill");
+
+    let bone = lib
+        .get(ScriptSource::Catalog, "BoneBurier")
+        .expect("BoneBurier card");
+    assert!(
+        bone.js.is_empty(),
+        "catalog fill is origin/classify only — JS must not run until the operator asks"
+    );
+    assert!(
+        !bone.sha256.is_empty(),
+        "origin SHA is known without transpile"
+    );
+    assert!(
+        !lib.cache().object_path(&bone.sha256).is_file(),
+        "no cache object until ensure_js"
+    );
+    assert_eq!(lib.cards_needing_transpile().len(), 2);
+
+    lib.ensure_js(ScriptSource::Catalog, "BoneBurier")
+        .expect("warm BoneBurier");
+    let bone = lib
+        .get(ScriptSource::Catalog, "BoneBurier")
+        .expect("BoneBurier after warm");
+    assert!(
+        !bone.js.is_empty(),
+        "ensure_js writes cached JS for that card"
+    );
+    assert!(lib.cache().object_path(&bone.sha256).is_file());
+
+    let shop = lib
+        .get(ScriptSource::Catalog, "ShopRunner")
+        .expect("ShopRunner still lazy");
+    assert!(
+        shop.js.is_empty(),
+        "warming one card must not transpile the rest of the catalog"
+    );
+    assert!(!lib.cache().object_path(&shop.sha256).is_file());
+    assert_eq!(lib.cards_needing_transpile().len(), 1);
+}
+
 #[test]
 fn load_populates_kind_source_and_sha_on_card() {
     let dir = scratch("card_fields");

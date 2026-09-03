@@ -26,7 +26,7 @@ fn wall_login_fifo_logout_all() {
         return;
     }
 
-    // Two armed slots on a shared login FIFO, no dear-app window. The
+    // Two armed slots on a shared login FIFO, no panel window. The
     // `want_login = false` arm holds each slot on the title like a wall
     // load; Login all flips it later.
     let mut play = run_with_io(&options(), vec![], |_| (None, None), |_, _, _| {});

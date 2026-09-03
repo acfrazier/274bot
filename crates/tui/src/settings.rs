@@ -278,11 +278,19 @@ mod tests {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut state = SettingsState { open: true, row: 0 };
-        let text = render(SettingsPane::new(&mut settings, &mut nav, &mut state), 60, 14);
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut state),
+            60,
+            14,
+        );
         assert!(text.contains("random events"), "row paints: {text:?}");
         assert!(text.contains("bank fetch"), "nav row paints: {text:?}");
         state.open = false;
-        let text = render(SettingsPane::new(&mut settings, &mut nav, &mut state), 60, 14);
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut state),
+            60,
+            14,
+        );
         assert!(
             !text.contains("random events"),
             "closed popup paints nothing: {text:?}"

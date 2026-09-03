@@ -11,7 +11,7 @@
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,7 +28,8 @@ use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::{
-    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, SlotArm, SlotStatus, WalkArm,
+    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, ScriptNavPaint, SlotArm,
+    SlotStatus, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -277,10 +278,7 @@ const DEFAULT_PORT: u16 = 43594;
 /// Vault path used by panel-play (`~/.274bot/vault`, the same file host-play
 /// uses).
 pub fn default_vault_path() -> PathBuf {
-    match env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/vault")),
-        Err(_) => PathBuf::from(".274bot/vault"),
-    }
+    script::bot_file("vault")
 }
 
 fn default_cache_dir() -> String {
@@ -394,16 +392,19 @@ const SCENE_TILES: i32 = 104;
 const HULL_WINDOW: usize = 48;
 
 /// Prefer the live-scenario Follow/Walk route when this slot is the
-/// driven client. WalkTo's `WalkArm` is only the fallback — a `--live
-/// script_nav_*` follow never writes that map, so painting from it
-/// alone drops the red baked path even with the toggle on.
+/// driven client. Else a catalog `walk` Traveller (Play NavBot). WalkTo's
+/// `WalkArm` is the last fallback — a script walk never writes that map,
+/// so painting from it alone drops the packed path even with the toggle on.
 fn live_or_walk_paint(
     driven: bool,
     live: (Option<Route>, Option<WorldTile>),
     walk: (Option<Route>, Option<WorldTile>),
+    script: (Option<Route>, Option<WorldTile>),
 ) -> (Option<Route>, Option<WorldTile>) {
     if driven && live.0.is_some() {
         live
+    } else if script.0.is_some() {
+        script
     } else {
         walk
     }
@@ -678,6 +679,8 @@ pub struct Session {
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`nav::traveller::Traveller::follow`]).
     pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    /// Catalog `walk` overlay; filled after [`Session::start_play`].
+    script_nav_paint: Arc<Mutex<Option<ScriptNavPaint>>>,
     /// Per-username gating facts for WalkTo routing: each slot thread
     /// publishes its live `GameSnapshot` (rebuilt incrementally — views
     /// copy only when a family's gen moved) plus the [`WorldState`]
@@ -744,6 +747,11 @@ pub struct Session {
     /// `None` until one is selected. Selecting never Starts — Start is the
     /// section button.
     pub script_sel: Option<script::ScriptSel>,
+    /// Catalog warmup: at most one `ensure_js` per armed frame.
+    pub transpile_queue: VecDeque<(script::ScriptSource, String)>,
+    transpile_armed: bool,
+    pub transpile_done: usize,
+    pub transpile_total: usize,
     /// Browse picker open flag (the Scripts window in `app.rs`).
     pub script_browse_open: bool,
     /// Load file browser open flag (the Load window in `app.rs`).
@@ -752,8 +760,15 @@ pub struct Session {
     pub script_load_dir: PathBuf,
     /// Selected row in the Load file browser.
     pub script_load_sel: usize,
+    /// Search box in the shared file dialog (Load or Import catalog).
+    pub script_dialog_search: String,
+    /// Shared file-dialog sort column.
+    pub script_dialog_sort: crate::script_picker::DialogSort,
+    pub script_dialog_sort_desc: bool,
     /// First-run rs2b0t clone-root folder picker (when `$RS2B0T` unset).
     pub rs2b0t_catalog_open: bool,
+    /// Show **Not now** (first-run only; later Import catalog… does not defer).
+    pub rs2b0t_catalog_defer_ok: bool,
     /// Current directory in the rs2b0t folder picker.
     pub rs2b0t_catalog_dir: PathBuf,
     /// Script Browse category filter (`None` = all categories).
@@ -819,10 +834,8 @@ fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
     }
 }
 
-fn default_catalog_browse_dir() -> PathBuf {
-    env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/"))
+fn default_catalog_browse_dir(last: Option<&std::path::Path>) -> PathBuf {
+    crate::script_picker::default_load_browse_dir(last)
 }
 
 impl Default for Session {
@@ -844,6 +857,8 @@ impl Session {
     /// Empty session: no vault, no slots, default `PlayOptions` (same engine
     /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
     pub fn new() -> Self {
+        #[cfg(test)]
+        script::IsolatedEnv::ensure_thread();
         Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
@@ -873,6 +888,7 @@ impl Session {
             cred_pass: String::new(),
             chooser_edit: None,
             travellers: Arc::new(Mutex::new(HashMap::new())),
+            script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
             walk_dest: None,
             walk_clear: Arc::new(AtomicBool::new(false)),
@@ -896,12 +912,20 @@ impl Session {
             multibox: false,
             ui: crate::ui_state::load(),
             script_sel: None,
+            transpile_queue: VecDeque::new(),
+            transpile_armed: false,
+            transpile_done: 0,
+            transpile_total: 0,
             script_browse_open: false,
             script_load_open: false,
             script_load_dir: crate::script_picker::default_load_browse_dir(None),
             script_load_sel: 0,
+            script_dialog_search: String::new(),
+            script_dialog_sort: crate::script_picker::DialogSort::Name,
+            script_dialog_sort_desc: false,
             rs2b0t_catalog_open: false,
-            rs2b0t_catalog_dir: default_catalog_browse_dir(),
+            rs2b0t_catalog_defer_ok: false,
+            rs2b0t_catalog_dir: default_catalog_browse_dir(None),
             browse_category_filter: None,
             script_settings: script::ScriptSettingsStore::with_default_path(),
             params_edit_open: false,
@@ -940,7 +964,8 @@ impl Session {
     /// read only here — never in [`Session::new`] — so boot and unit tests
     /// that merely construct a `Session` do not parse a real catalog or
     /// rewrite `~/.274bot/rs2b0t-path`. No V8 here: sources are read and
-    /// classified only; the isolate is spawned on Start.
+    /// classified only; the isolate is spawned on Start. Transpile is
+    /// [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
     pub fn fill_rs2b0t_cards_once(&mut self) {
         if self.rs2b0t_filled {
             return;
@@ -986,7 +1011,10 @@ impl Session {
             return;
         }
         self.rs2b0t_catalog_open = true;
-        self.rs2b0t_catalog_dir = default_catalog_browse_dir();
+        self.rs2b0t_catalog_defer_ok = true;
+        self.script_dialog_search.clear();
+        self.rs2b0t_catalog_dir =
+            default_catalog_browse_dir(self.ui.script_catalog_last_dir.as_deref());
     }
 
     /// Operator chose **Not now** on the first-run catalog prompt.
@@ -1006,8 +1034,107 @@ impl Session {
         }
         let n = self.js.register_rs2b0t(root, &self.rs2b0t_path_file())?;
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
+        self.ui.script_catalog_last_dir = Some(root.to_path_buf());
+        if self.persist_ui {
+            crate::ui_state::save(&self.ui);
+        }
         self.rs2b0t_catalog_open = false;
         Ok(n)
+    }
+
+    /// The card currently at the front of the warmup queue, if any.
+    pub fn transpile_front(&self) -> Option<(script::ScriptSource, &str)> {
+        self.transpile_queue
+            .front()
+            .map(|(source, name)| (*source, name.as_str()))
+    }
+
+    /// Select a Browse card. Transpile is deferred: cache hits fill `js`
+    /// immediately (disk read); misses enqueue **this card only**.
+    pub fn select_script_card(&mut self, source: script::ScriptSource, name: impl Into<String>) {
+        let name = name.into();
+        self.script_sel = Some(script::ScriptSel::Loaded(source, name.clone()));
+        self.enqueue_transpile(source, name, true);
+    }
+
+    /// Operator opted into warming every unwarmed card. Still one
+    /// `ensure_js` per armed frame — never a catalog-wide click.
+    pub fn queue_transpile_all(&mut self) {
+        let need = self.js.cards_needing_transpile();
+        if need.is_empty() {
+            return;
+        }
+        self.transpile_done = 0;
+        self.transpile_total = need.len();
+        for (source, name) in need {
+            if !self
+                .transpile_queue
+                .iter()
+                .any(|(s, n)| *s == source && n == &name)
+            {
+                self.transpile_queue.push_back((source, name));
+            }
+        }
+    }
+
+    /// First call after enqueue only arms (so the frame can paint
+    /// `transpiling…`). The next call runs one `ensure_js`, then arms
+    /// again if the queue still has work.
+    pub fn pump_script_transpile(&mut self) {
+        if self.transpile_armed {
+            if let Some((source, name)) = self.transpile_queue.pop_front() {
+                match self.js.ensure_js(source, &name) {
+                    Ok(()) => {
+                        self.error = None;
+                        self.transpile_done = self.transpile_done.saturating_add(1);
+                    }
+                    Err(e) => self.error = Some(format!("transpile {name}: {e}")),
+                }
+            }
+            self.transpile_armed = false;
+        }
+        if !self.transpile_queue.is_empty() {
+            self.transpile_armed = true;
+        } else {
+            self.transpile_done = 0;
+            self.transpile_total = 0;
+        }
+    }
+
+    fn enqueue_transpile(&mut self, source: script::ScriptSource, name: String, to_front: bool) {
+        if self.js.js_is_ready(source, &name) {
+            return;
+        }
+        let Some(card) = self.js.get(source, &name) else {
+            return;
+        };
+        if self.js.cache().is_cached(card.origin.as_bytes()) {
+            if let Err(e) = self.js.ensure_js(source, &name) {
+                self.error = Some(format!("transpile {name}: {e}"));
+            }
+            return;
+        }
+        if let Some(idx) = self
+            .transpile_queue
+            .iter()
+            .position(|(s, n)| *s == source && n == &name)
+        {
+            if to_front && idx > 0 {
+                if let Some(item) = self.transpile_queue.remove(idx) {
+                    self.transpile_queue.push_front(item);
+                }
+            }
+            return;
+        }
+        if self.transpile_total == 0 {
+            self.transpile_total = 1;
+            self.transpile_done = 0;
+        }
+        if to_front {
+            self.transpile_queue.push_front((source, name));
+        } else {
+            self.transpile_queue.push_back((source, name));
+        }
     }
 
     pub fn play_options(&self) -> &PlayOptions {
@@ -1267,6 +1394,9 @@ impl Session {
         // catalog is filled from `$RS2B0T` (or the persisted root) here.
         if let Some(card_name) = view.start_script {
             self.fill_rs2b0t_cards_once();
+            self.js
+                .ensure_js(script::ScriptSource::Catalog, card_name)
+                .map_err(|e| format!("transpile {card_name}: {e}"))?;
             let card = self
                 .js
                 .get(script::ScriptSource::Catalog, card_name)
@@ -1305,6 +1435,7 @@ impl Session {
         let mainland_sent = Arc::clone(&self.mainland_sent);
         let scatter = Arc::clone(&self.scatter);
         let travellers = Arc::clone(&self.travellers);
+        let script_nav_paint = Arc::clone(&self.script_nav_paint);
         let nav_states = Arc::clone(&self.nav_states);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
@@ -1348,7 +1479,13 @@ impl Session {
                     }
                     _ => (false, (None, None)),
                 };
-                let (route, click) = live_or_walk_paint(driven, live, walk);
+                let script = script_nav_paint
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|h| h.of(name))
+                    .unwrap_or((None, None));
+                let (route, click) = live_or_walk_paint(driven, live, walk, script);
                 match crate::picker::pack() {
                     Some(world) => {
                         let here = c.local_player.as_ref().map(|lp| WorldTile {
@@ -1585,6 +1722,7 @@ impl Session {
             },
         );
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
+        *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
         self.play = Some(play);
         crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
@@ -1676,18 +1814,26 @@ impl Session {
                 .unwrap()
                 .get(&s.username)
                 .and_then(|a| a.lock().unwrap().queued_tile());
-            apply_queued_walk(s, queued);
+            if queued.is_some() {
+                apply_queued_walk(s, queued);
+            }
         }
         if self.walk_clear.swap(false, Ordering::Relaxed) {
-            let keep = self.focused_name().and_then(|n| {
+            let focused = self.focused_name();
+            let keep = focused.as_ref().and_then(|n| {
                 self.travellers
                     .lock()
                     .unwrap()
-                    .get(&n)
+                    .get(n)
                     .and_then(|a| a.lock().unwrap().queued_tile())
             });
             if keep.is_none() {
                 self.walk_dest = None;
+                if let Some(name) = focused.as_deref() {
+                    if let Some(s) = self.statuses.iter_mut().find(|s| s.username == name) {
+                        apply_queued_walk(s, None);
+                    }
+                }
             }
         }
     }
@@ -2861,25 +3007,28 @@ impl Session {
         let result = match (self.play.as_ref(), sel) {
             (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
             (Some(play), script::ScriptSel::Loaded(source, card_name)) => {
-                match self.js.get(source, &card_name) {
-                    Some(card) => {
-                        let bag = self.pending_settings_bag(
-                            source,
-                            &card_name,
-                            &card.settings_schema,
-                        );
-                        match self.sibling_modules_for_card(card) {
-                            Ok(siblings) => play.script_start_load(
-                                &name,
-                                card.js.clone(),
-                                card.shape,
-                                bag,
-                                siblings,
-                            ),
-                            Err(e) => Err(e),
+                match self.js.ensure_js(source, &card_name) {
+                    Err(e) => Err(e),
+                    Ok(()) => match self.js.get(source, &card_name) {
+                        Some(card) => {
+                            let bag = self.pending_settings_bag(
+                                source,
+                                &card_name,
+                                &card.settings_schema,
+                            );
+                            match self.sibling_modules_for_card(card) {
+                                Ok(siblings) => play.script_start_load(
+                                    &name,
+                                    card.js.clone(),
+                                    card.shape,
+                                    bag,
+                                    siblings,
+                                ),
+                                Err(e) => Err(e),
+                            }
                         }
-                    }
-                    None => Err(format!("no loaded script: {card_name}")),
+                        None => Err(format!("no loaded script: {card_name}")),
+                    },
                 }
             }
             (None, _) => Err("no play".to_string()),
@@ -2931,11 +3080,13 @@ impl Session {
         }
     }
 
-    /// Open the Load file browser at the last visited directory (or `$HOME`).
+    /// Open the Load file browser at the last visited directory, else the
+    /// process working directory (where the OS started the app).
     pub fn open_script_load_browser(&mut self) {
         self.script_load_dir =
             crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
         self.script_load_sel = 0;
+        self.script_dialog_search.clear();
         self.script_load_open = true;
     }
 
@@ -3133,6 +3284,31 @@ mod tests {
     use vault::{Profile, ProfileSettings, Vault};
 
     use crate::nav_settings::{effective, NavSettings};
+    use script::IsolatedEnv;
+
+    /// `register_name` is the ScriptRegistry name; `folder` is the class
+    /// file (`{folder}/{folder}.ts`) and the JS import binding.
+    fn write_looping_catalog(dir: &Path, cards: &[(&str, &str)]) -> PathBuf {
+        let root = dir.join("rs2b0t");
+        let scripts = root.join("src/bot/scripts");
+        let mut index = String::new();
+        for (register, folder) in cards {
+            std::fs::create_dir_all(scripts.join(folder)).unwrap();
+            index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
+            index.push_str(&format!(
+                "ScriptRegistry.register({{ name: '{register}', create: () => new {folder}() }});\n"
+            ));
+            std::fs::write(
+                scripts.join(folder).join(format!("{folder}.ts")),
+                format!(
+                    "export default class {folder} extends LoopingBot {{ override loop() {{}} }}"
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(scripts.join("index.ts"), index).unwrap();
+        root
+    }
 
     #[test]
     fn live_follow_route_wins_over_empty_walkto_arm() {
@@ -3146,12 +3322,40 @@ mod tests {
             dest,
             ticks: 1.0,
         };
-        let (route, click) =
-            live_or_walk_paint(true, (Some(live_route.clone()), Some(dest)), (None, None));
+        let (route, click) = live_or_walk_paint(
+            true,
+            (Some(live_route.clone()), Some(dest)),
+            (None, None),
+            (None, None),
+        );
         assert_eq!(route.unwrap().dest, dest);
         assert_eq!(click, Some(dest));
-        let (route, _) = live_or_walk_paint(true, (None, None), (None, None));
+        let (route, _) = live_or_walk_paint(true, (None, None), (None, None), (None, None));
         assert!(route.is_none(), "no live route falls back to WalkTo");
+        let script_dest = WorldTile {
+            x: 3185,
+            z: 3440,
+            level: 0,
+        };
+        let script_route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![script_dest],
+            }],
+            dest: script_dest,
+            ticks: 1.0,
+        };
+        let (route, click) = live_or_walk_paint(
+            false,
+            (None, None),
+            (None, None),
+            (Some(script_route), Some(script_dest)),
+        );
+        assert_eq!(
+            click,
+            Some(script_dest),
+            "catalog walk paints when WalkTo is idle"
+        );
+        assert_eq!(route.unwrap().dest, script_dest);
     }
 
     #[test]
@@ -5413,35 +5617,13 @@ mod tests {
     /// card's source is what the isolate will spawn on that step.
     #[test]
     fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
+        let iso = IsolatedEnv::enter("bone-live");
         crate::ui_state::save(&crate::ui_state::PanelUiState {
             last_focus: None,
             ..Default::default()
         });
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-bone-live-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = dir.join("rs2b0t");
-        let scripts = root.join("src/bot/scripts");
-        std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
-        std::fs::write(
-            scripts.join("index.ts"),
-            r#"
-import BoneBurier from './BoneBurier/BoneBurier.js';
-ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            scripts.join("BoneBurier/BoneBurier.ts"),
-            "export default class BoneBurier extends LoopingBot { override loop() {} }",
-        )
-        .unwrap();
-
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
+        let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
+        iso.set_rs2b0t(&root);
         let mut s = Session::new();
         let result = s.live_prepare_script(scenario::get("bone_burier").expect("registered"));
         let name = s
@@ -5472,15 +5654,6 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
             script::RunState::Running,
             "isolate is not Running yet — Start waits for the StartScript step"
         );
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Thiever SETTINGS often fail to parse (`loadout: LOADOUT_SETTING`
@@ -5489,35 +5662,13 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     /// camps Men.
     #[test]
     fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
+        let iso = IsolatedEnv::enter("thiever-bag");
         crate::ui_state::save(&crate::ui_state::PanelUiState {
             last_focus: None,
             ..Default::default()
         });
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-thiever-bag-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = dir.join("rs2b0t");
-        let scripts = root.join("src/bot/scripts");
-        std::fs::create_dir_all(scripts.join("ThievingBot")).unwrap();
-        std::fs::write(
-            scripts.join("index.ts"),
-            r#"
-import ThievingBot from './ThievingBot/ThievingBot.js';
-ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            scripts.join("ThievingBot/ThievingBot.ts"),
-            "export default class ThievingBot extends LoopingBot { override loop() {} }",
-        )
-        .unwrap();
-
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
+        let root = write_looping_catalog(&iso.dir, &[("Thiever", "ThievingBot")]);
+        iso.set_rs2b0t(&root);
         let mut s = Session::new();
         s.live_prepare_script(scenario::get("thiever").expect("registered"))
             .expect("prepare");
@@ -5537,48 +5688,17 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         );
         assert_eq!(bag.get("loot"), Some(&serde_json::json!("")));
         assert_eq!(bag.get("banking"), Some(&serde_json::json!("None")));
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
+        let iso = IsolatedEnv::enter("alcher-sel");
         crate::ui_state::save(&crate::ui_state::PanelUiState {
             last_focus: None,
             ..Default::default()
         });
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-alcher-sel-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = dir.join("rs2b0t");
-        let scripts = root.join("src/bot/scripts");
-        std::fs::create_dir_all(scripts.join("Alcher")).unwrap();
-        std::fs::write(
-            scripts.join("index.ts"),
-            r#"
-import Alcher from './Alcher/Alcher.js';
-ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            scripts.join("Alcher/Alcher.ts"),
-            "export default class Alcher extends LoopingBot { override loop() {} }",
-        )
-        .unwrap();
-
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
+        let root = write_looping_catalog(&iso.dir, &[("Alcher", "Alcher")]);
+        iso.set_rs2b0t(&root);
         let mut s = Session::new();
         let mut scenario = scenario::get("alcher").expect("registered");
         scenario.settings.start_script = Some("Alcher");
@@ -5591,15 +5711,6 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
             )),
             "live_prepare_script must set script_sel to the catalog card"
         );
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -7005,7 +7116,7 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
         .unwrap();
 
         let mut s = Session::new();
-        s.js = script::JsLibrary::new(store.clone());
+        s.js = script::JsLibrary::with_cache(store.clone(), dir.join("js-cache"));
         s.load_js(&path);
         assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
         assert_eq!(
@@ -7054,63 +7165,31 @@ ScriptRegistry.register({ name: 'Alcher', create: () => new Alcher() });
         // catalog-free: the fill is first Load/Browse only, so panel unit
         // tests that merely construct a `Session` never parse a real
         // catalog or rewrite `~/.274bot/rs2b0t-path`.
-        let dir = std::env::temp_dir().join(format!("274bot-panel-rs2b0t-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = dir.join("rs2b0t");
-        let scripts = root.join("src/bot/scripts");
-        std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
-        std::fs::write(
-            scripts.join("index.ts"),
-            r#"
-import BoneBurier from './BoneBurier/BoneBurier.js';
-ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            scripts.join("BoneBurier/BoneBurier.ts"),
-            "export default class BoneBurier extends LoopingBot { override loop() {} }",
-        )
-        .unwrap();
-
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
+        let iso = IsolatedEnv::enter("rs2b0t-fill");
+        let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
+        iso.set_rs2b0t(&root);
         let mut s = Session::new();
-        // Construction alone must stay catalog-free (hermetic unit tests).
         assert!(
             s.js.get(script::ScriptSource::Catalog, "BoneBurier")
                 .is_none(),
             "Session::new must not parse $RS2B0T"
         );
         assert!(
-            !home.join(".274bot/rs2b0t-path").exists(),
+            !iso.home.join(".274bot/rs2b0t-path").exists(),
             "Session::new must not rewrite the persisted root"
         );
-        // First Browse fills once.
         s.fill_rs2b0t_cards_once();
         let card =
             s.js.get(script::ScriptSource::Catalog, "BoneBurier")
                 .expect("BoneBurier card filled on first Browse");
         assert_eq!(card.shape, script::LoadShape::CompatClass);
         assert!(
-            home.join(".274bot/rs2b0t-path").is_file(),
+            iso.home.join(".274bot/rs2b0t-path").is_file(),
             "the first successful parse persists the root path"
         );
         assert_eq!(s.js.cards().len(), 1, "once-only fill");
         s.fill_rs2b0t_cards_once();
         assert_eq!(s.js.cards().len(), 1, "a second Browse does not re-parse");
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn fake_rs2b0t_tree(dir: &Path) -> PathBuf {
@@ -7141,16 +7220,7 @@ ScriptRegistry.register({
 
     #[test]
     fn load_then_browse_still_prompts_without_rs2b0t_root() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-load-browse-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("RS2B0T");
-
+        let iso = IsolatedEnv::enter("load-browse");
         let mut s = Session::new();
         s.fill_rs2b0t_cards_once();
         s.on_script_browse_open();
@@ -7159,42 +7229,24 @@ ScriptRegistry.register({
             "Load with no root must not skip the first Browse catalog prompt"
         );
         assert!(
-            !home.join(".274bot/rs2b0t-path").exists(),
+            !iso.home.join(".274bot/rs2b0t-path").exists(),
             "Load with no root must not write rs2b0t-path"
         );
-
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
-        let dir = std::env::temp_dir().join(format!("274bot-panel-defer-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("RS2B0T");
-
+        let iso = IsolatedEnv::enter("defer");
         let mut s = Session::new();
         s.on_script_browse_open();
         assert!(s.rs2b0t_catalog_open, "first browse opens folder picker");
         s.defer_rs2b0t_catalog();
         assert!(
-            script::rs2b0t_import_deferred_at(&home.join(".274bot/rs2b0t-import")),
+            script::rs2b0t_import_deferred_at(&iso.home.join(".274bot/rs2b0t-import")),
             "defer flag written"
         );
         assert!(
-            !home.join(".274bot/rs2b0t-path").exists(),
+            !iso.home.join(".274bot/rs2b0t-path").exists(),
             "defer must not write rs2b0t-path"
         );
         assert!(
@@ -7203,64 +7255,29 @@ ScriptRegistry.register({
                 .all(|c| c.source != script::ScriptSource::Catalog),
             "zero Catalog cards after defer"
         );
-
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
-        let dir = std::env::temp_dir().join(format!("274bot-panel-import-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let root = fake_rs2b0t_tree(&dir);
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("RS2B0T");
-
+        let iso = IsolatedEnv::enter("import");
+        let root = fake_rs2b0t_tree(&iso.dir);
         let mut s = Session::new();
         let n = s.import_rs2b0t_catalog(&root).expect("import");
         assert_eq!(n, 1);
-        assert!(home.join(".274bot/rs2b0t-path").is_file());
+        assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
         let card =
             s.js.get(script::ScriptSource::Catalog, "BoneBurier")
                 .expect("catalog card");
         assert_eq!(card.category, "Prayer");
         assert_eq!(card.description, "Buries bones");
         assert_eq!(card.tags, vec!["bones"]);
-
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-browse-env-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = fake_rs2b0t_tree(&dir);
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
-
+        let iso = IsolatedEnv::enter("browse-env");
+        let root = fake_rs2b0t_tree(&iso.dir);
+        iso.set_rs2b0t(&root);
         let mut s = Session::new();
         s.on_script_browse_open();
         assert!(
@@ -7268,16 +7285,127 @@ ScriptRegistry.register({
                 .is_some(),
             "RS2B0T env still fills catalog on first browse"
         );
-        assert!(home.join(".274bot/rs2b0t-path").is_file());
+        assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
+    }
 
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
+    fn write_two_card_catalog(dir: &Path) -> PathBuf {
+        write_looping_catalog(
+            dir,
+            &[("BoneBurier", "BoneBurier"), ("ShopRunner", "ShopRunner")],
+        )
+    }
+
+    #[test]
+    fn select_script_card_queues_only_that_card_and_pumps_one_per_two_frames() {
+        let iso = IsolatedEnv::enter("transpile-click");
+        let root = write_two_card_catalog(&iso.dir);
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.js = script::JsLibrary::with_cache(
+            iso.dir.join("js-scripts.json"),
+            iso.dir.join("js-cache"),
+        );
+        s.js.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+            .expect("catalog");
+
+        s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
+        assert_eq!(
+            s.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                "BoneBurier".into()
+            ))
+        );
+        assert_eq!(s.transpile_queue.len(), 1);
+        assert_eq!(
+            s.transpile_queue.front().map(|q| q.1.as_str()),
+            Some("BoneBurier")
+        );
+        assert!(
+            s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+                .unwrap()
+                .js
+                .is_empty(),
+            "click must not transpile on the same call"
+        );
+        assert!(
+            s.js.get(script::ScriptSource::Catalog, "ShopRunner")
+                .unwrap()
+                .js
+                .is_empty(),
+            "a click must not warm the rest of the catalog"
+        );
+
+        s.pump_script_transpile();
+        assert!(
+            s.js.get(script::ScriptSource::Catalog, "BoneBurier")
+                .unwrap()
+                .js
+                .is_empty(),
+            "first pump only arms so the UI can paint transpiling…"
+        );
+
+        s.pump_script_transpile();
+        assert!(!s
+            .js
+            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap()
+            .js
+            .is_empty());
+        assert!(s
+            .js
+            .get(script::ScriptSource::Catalog, "ShopRunner")
+            .unwrap()
+            .js
+            .is_empty());
+        assert!(s.transpile_queue.is_empty());
+    }
+
+    #[test]
+    fn queue_transpile_all_warms_one_card_per_armed_frame() {
+        let iso = IsolatedEnv::enter("transpile-all");
+        let root = write_two_card_catalog(&iso.dir);
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.js = script::JsLibrary::with_cache(
+            iso.dir.join("js-scripts.json"),
+            iso.dir.join("js-cache"),
+        );
+        s.js.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+            .expect("catalog");
+
+        s.queue_transpile_all();
+        assert_eq!(s.transpile_queue.len(), 2);
+        assert_eq!(s.transpile_total, 2);
+
+        s.pump_script_transpile();
+        s.pump_script_transpile();
+        let warmed = s.js.cards().iter().filter(|c| !c.js.is_empty()).count();
+        assert_eq!(warmed, 1, "all-at-once still one file per armed frame");
+        assert_eq!(s.transpile_queue.len(), 1);
+
+        s.pump_script_transpile();
+        s.pump_script_transpile();
+        assert_eq!(s.js.cards().iter().filter(|c| !c.js.is_empty()).count(), 2);
+        assert!(s.transpile_queue.is_empty());
+    }
+
+    #[test]
+    fn select_script_card_skips_queue_on_cache_hit() {
+        let iso = IsolatedEnv::enter("transpile-hit");
+        let root = write_two_card_catalog(&iso.dir);
+        let mut s = Session::new();
+        s.persist_ui = false;
+        s.js = script::JsLibrary::with_cache(
+            iso.dir.join("js-scripts.json"),
+            iso.dir.join("js-cache"),
+        );
+        s.js.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+            .expect("catalog");
+        s.js.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
+            .unwrap();
+
+        s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
+        assert!(s.transpile_queue.is_empty());
     }
 }

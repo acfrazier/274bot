@@ -113,18 +113,9 @@ globalThis.__dummy_ctx = {
 /// `src/bot/api/...`, and the adapter lives at `src/bot/adapter/`).
 pub(crate) fn shim_modules() -> Vec<Module> {
     vec![
-        Module::new(
-            "/rs2b0t/bot/shim/_kernel.js",
-            include_str!("_kernel.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/geometry/Tile.js",
-            include_str!("tile.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/query/Query.js",
-            include_str!("query.js"),
-        ),
+        Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
+        Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
+        Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
         Module::new(
             "/rs2b0t/bot/api/execution/Execution.js",
             include_str!("execution.js"),
@@ -151,14 +142,8 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/bank/Banking.js",
             include_str!("banking.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/api/npcs/Npcs.js",
-            include_str!("npcs.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/locs/Locs.js",
-            include_str!("locs.js"),
-        ),
+        Module::new("/rs2b0t/bot/api/npcs/Npcs.js", include_str!("npcs.js")),
+        Module::new("/rs2b0t/bot/api/locs/Locs.js", include_str!("locs.js")),
         Module::new(
             "/rs2b0t/bot/api/players/Players.js",
             include_str!("players.js"),
@@ -195,10 +180,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/data/spelldb.js",
             include_str!("data/spelldb.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/data/itemdb.js",
-            include_str!("data/itemdb.js"),
-        ),
+        Module::new("/rs2b0t/bot/data/itemdb.js", include_str!("data/itemdb.js")),
         Module::new(
             "/rs2b0t/bot/data/pickpocketTargets.js",
             include_str!("data/pickpocket_targets.js"),
@@ -207,10 +189,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/combat/CombatStyleLogic.js",
             include_str!("combat_style_logic.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/api/combat/food.js",
-            include_str!("food.js"),
-        ),
+        Module::new("/rs2b0t/bot/api/combat/food.js", include_str!("food.js")),
         Module::new(
             "/rs2b0t/bot/api/magic/Autocast.js",
             include_str!("autocast.js"),
@@ -271,10 +250,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/walking/Traversal.js",
             include_str!("traversal.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/api/walking/Reach.js",
-            include_str!("reach.js"),
-        ),
+        Module::new("/rs2b0t/bot/api/walking/Reach.js", include_str!("reach.js")),
         Module::new(
             "/rs2b0t/bot/event/webwalk/geometry/Reachability.js",
             include_str!("reachability.js"),
@@ -283,10 +259,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/event/webwalk/walkOpening.js",
             include_str!("walk_opening.js"),
         ),
-        Module::new(
-            "/rs2b0t/bot/api/tasks/Anchor.js",
-            include_str!("anchor.js"),
-        ),
+        Module::new("/rs2b0t/bot/api/tasks/Anchor.js", include_str!("anchor.js")),
         Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
         Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),
         Module::new(
@@ -372,10 +345,20 @@ pub enum InteractReq {
         stand_op: Option<i32>,
         choose: Option<String>,
     },
-    /// Walk to the packed stand tile through the slot's traveller with
-    /// default options (no teleports, no wilderness, no bank fetch).
+    /// Packed nav (`Traveller` / `ScriptWalkArm`). `allow_teleports` is
+    /// the only FindOptions opt-in the catalog forwards (default off).
     #[serde(rename = "walk")]
-    Walk { x: i32, z: i32, level: i32 },
+    Walk {
+        x: i32,
+        z: i32,
+        level: i32,
+        #[serde(default)]
+        allow_teleports: bool,
+    },
+    /// Scene `try_move` packet (`Interactions::walk`). Catalog
+    /// `Traversal.walkTo` — not Traveller.
+    #[serde(rename = "walk-to")]
+    WalkTo { x: i32, z: i32, level: i32 },
     /// Deposit-all the bank-side item named `name`.
     #[serde(rename = "deposit")]
     Deposit { name: String },

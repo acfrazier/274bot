@@ -1,5 +1,5 @@
 //! Live: the panel path proven headless — `host_play::run_with_io` with a
-//! per-slot `FrameBuf` mailbox + `SlotInput`, no dear-app window. The
+//! per-slot `FrameBuf` mailbox + `SlotInput`, no panel window. The
 //! per-frame hook applies `set_draw(true)` (the panel's focus switch), the
 //! renderer proof is a non-zero pixel snapshot, then capture goes on and a
 //! click at the 3D-view center must walk the local player (operator wants

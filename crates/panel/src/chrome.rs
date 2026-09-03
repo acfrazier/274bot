@@ -368,6 +368,10 @@ mod tests {
             dear_imgui_rs::Direction::None,
             "tab-bar corner menu is off"
         );
+        assert!(
+            !ctx.style().docking_node_has_close_button(),
+            "node X would close 274bot when a config tab is open; the rail uses its window opened flag"
+        );
         let check_bg = ctx
             .style()
             .color(dear_imgui_rs::StyleColor::CheckboxSelectedBg);

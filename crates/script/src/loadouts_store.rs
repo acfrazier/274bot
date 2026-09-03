@@ -17,10 +17,7 @@ pub struct Loadout {
 
 /// Default operator loadouts path (`~/.274bot/loadouts.json`).
 pub fn default_loadouts_path() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/loadouts.json")),
-        Err(_) => PathBuf::from(".274bot/loadouts.json"),
-    }
+    crate::bot_file("loadouts.json")
 }
 
 /// Persisted loadout list.
@@ -103,7 +100,10 @@ impl LoadoutsStore {
 
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
 /// pulls names from the store.
-pub fn resolve_setting_options(def: &crate::rs2b0t_registry::SettingDef, loadouts: &LoadoutsStore) -> Vec<String> {
+pub fn resolve_setting_options(
+    def: &crate::rs2b0t_registry::SettingDef,
+    loadouts: &LoadoutsStore,
+) -> Vec<String> {
     if !def.options.is_empty() {
         return def.options.clone();
     }
@@ -161,7 +161,10 @@ mod tests {
         }
 
         let store = LoadoutsStore::at(path);
-        assert_eq!(store.names(), vec!["melee".to_string(), "range".to_string()]);
+        assert_eq!(
+            store.names(),
+            vec!["melee".to_string(), "range".to_string()]
+        );
         let melee = store.get("melee").expect("melee loadout");
         assert_eq!(melee.worn, vec!["helm", "plate"]);
         assert_eq!(melee.carry, vec!["food"]);

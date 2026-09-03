@@ -91,17 +91,9 @@ fn settings_store_round_trips_overrides_at_private_mode() {
     }
 
     let store = script::ScriptSettingsStore::at(path);
-    let bag = store.merged_bag(
-        ScriptSource::Catalog,
-        "ChickenKiller",
-        &schema,
-        None,
-    );
+    let bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
     assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
-    assert_eq!(
-        bag.get("leashRadius").and_then(|v| v.as_f64()),
-        Some(20.0)
-    );
+    assert_eq!(bag.get("leashRadius").and_then(|v| v.as_f64()), Some(20.0));
     assert_eq!(
         store.card_key(ScriptSource::File, "BoneBurier"),
         "file:BoneBurier"

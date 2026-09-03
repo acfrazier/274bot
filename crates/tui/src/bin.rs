@@ -84,10 +84,7 @@ fn value(it: &mut std::iter::Skip<env::Args>) -> String {
 }
 
 fn default_vault() -> PathBuf {
-    match env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/vault")),
-        Err(_) => PathBuf::from(".274bot/vault"),
-    }
+    script::bot_file("vault")
 }
 
 fn default_cache_dir() -> String {
@@ -344,6 +341,8 @@ impl TuiSession {
 impl TuiSession {
     /// Empty session over the default engine options.
     fn new(options: PlayOptions) -> Self {
+        #[cfg(test)]
+        script::IsolatedEnv::ensure_thread();
         let mut js = script::JsLibrary::new(script::default_js_store());
         let _ = js.restore(); // missing/broken store is not fatal here
         Self {
@@ -403,9 +402,12 @@ impl TuiSession {
     }
 
     fn default_catalog_browse_dir() -> PathBuf {
-        env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/"))
+        let home = script::bot_home();
+        if home.as_os_str() == "." {
+            PathBuf::from("/")
+        } else {
+            home
+        }
     }
 
     /// Unlock (or first-run create) the vault at `path` and start the play.
@@ -570,6 +572,9 @@ impl TuiSession {
         // catalog from `$RS2B0T`, then Start on StartScript after seed.
         if let Some(card_name) = start_script {
             self.fill_rs2b0t_cards_once();
+            self.js
+                .ensure_js(script::ScriptSource::Catalog, card_name)
+                .map_err(|e| format!("transpile {card_name}: {e}"))?;
             let card = self
                 .js
                 .get(script::ScriptSource::Catalog, card_name)
@@ -780,34 +785,37 @@ impl TuiSession {
         let result = match &self.play {
             Some(play) => match sel {
                 script::ScriptSel::Loaded(source, card_name) => {
-                    match self.js.get(*source, card_name) {
-                        Some(card) => {
-                            let bag = self.pending_settings_bag(
-                                *source,
-                                card_name,
-                                &card.settings_schema,
-                            );
-                            match script::resolve_sibling_modules(
-                                &card.path,
-                                &card.origin,
-                                self.js.cache(),
-                                script::CacheMeta {
-                                    kind: card.kind,
-                                    source: card.source,
-                                    shape: None,
-                                },
-                            ) {
-                                Ok(siblings) => play.script_start_load(
-                                    &name,
-                                    card.js.clone(),
-                                    card.shape,
-                                    bag,
-                                    siblings,
-                                ),
-                                Err(e) => Err(e),
+                    match self.js.ensure_js(*source, card_name) {
+                        Err(e) => Err(e),
+                        Ok(()) => match self.js.get(*source, card_name) {
+                            Some(card) => {
+                                let bag = self.pending_settings_bag(
+                                    *source,
+                                    card_name,
+                                    &card.settings_schema,
+                                );
+                                match script::resolve_sibling_modules(
+                                    &card.path,
+                                    &card.origin,
+                                    self.js.cache(),
+                                    script::CacheMeta {
+                                        kind: card.kind,
+                                        source: card.source,
+                                        shape: None,
+                                    },
+                                ) {
+                                    Ok(siblings) => play.script_start_load(
+                                        &name,
+                                        card.js.clone(),
+                                        card.shape,
+                                        bag,
+                                        siblings,
+                                    ),
+                                    Err(e) => Err(e),
+                                }
                             }
-                        }
-                        None => Err(format!("no loaded script: {card_name}")),
+                            None => Err(format!("no loaded script: {card_name}")),
+                        },
                     }
                 }
                 script::ScriptSel::Compiled(id) => play.script_start(&name, *id),
@@ -1298,6 +1306,7 @@ mod tests {
     use nav::grid::StepGrid;
     use nav::router::FindOptions;
     use nav::world::NavWorld;
+    use script::IsolatedEnv;
     use std::sync::Arc;
 
     fn dummy_options() -> PlayOptions {
@@ -1394,14 +1403,9 @@ ScriptRegistry.register({
 
     #[test]
     fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
-        let dir = std::env::temp_dir().join(format!("274bot-tui-bone-live-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = fake_rs2b0t_tree(&dir);
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
+        let iso = IsolatedEnv::enter("tui-bone-live");
+        let root = fake_rs2b0t_tree(&iso.dir);
+        iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
         session
             .live_prepare_script(scenario::get("bone_burier").expect("registered"))
@@ -1422,24 +1426,12 @@ ScriptRegistry.register({
             script::RunState::Running,
             "isolate is not Running yet — Start waits for the StartScript step"
         );
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-tui-thiever-bag-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        let root = dir.join("rs2b0t");
+        let iso = IsolatedEnv::enter("tui-thiever-bag");
+        let root = iso.dir.join("rs2b0t");
         let scripts = root.join("src/bot/scripts");
         std::fs::create_dir_all(scripts.join("ThievingBot")).unwrap();
         std::fs::write(
@@ -1455,10 +1447,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             "export default class ThievingBot extends LoopingBot { override loop() {} }",
         )
         .unwrap();
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::set_var("RS2B0T", &root);
+        iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
         session
             .live_prepare_script(scenario::get("thiever").expect("registered"))
@@ -1477,28 +1466,11 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             Some(&serde_json::json!("Guard")),
             "thiever inject must beat the Man fallback"
         );
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn first_browse_without_rs2b0t_opens_catalog_prompt() {
-        let dir = std::env::temp_dir().join(format!("274bot-tui-browse-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("RS2B0T");
-
+        let iso = IsolatedEnv::enter("tui-browse");
         let mut session = TuiSession::new(dummy_options());
         let mut app = TuiApp::new("274bot headless");
         app.script_browse_open = true;
@@ -1508,43 +1480,25 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             "first browse opens folder picker"
         );
         assert!(
-            !home.join(".274bot/rs2b0t-path").exists(),
+            !iso.home.join(".274bot/rs2b0t-path").exists(),
             "first browse must not write rs2b0t-path"
         );
-
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
-        let dir = std::env::temp_dir().join(format!("274bot-tui-defer-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("RS2B0T");
-
+        let iso = IsolatedEnv::enter("tui-defer");
         let mut session = TuiSession::new(dummy_options());
         let mut app = TuiApp::new("274bot headless");
         app.script_browse_open = true;
         session.on_script_browse_open(&mut app);
         session.defer_rs2b0t_catalog(&mut app);
         assert!(
-            script::rs2b0t_import_deferred_at(&home.join(".274bot/rs2b0t-import")),
+            script::rs2b0t_import_deferred_at(&iso.home.join(".274bot/rs2b0t-import")),
             "defer flag written"
         );
         assert!(
-            !home.join(".274bot/rs2b0t-path").exists(),
+            !iso.home.join(".274bot/rs2b0t-path").exists(),
             "defer must not write rs2b0t-path"
         );
         assert!(
@@ -1555,52 +1509,24 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
                 .all(|c| c.source != script::ScriptSource::Catalog),
             "zero Catalog cards after defer"
         );
-
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
-        let dir = std::env::temp_dir().join(format!("274bot-tui-import-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let root = fake_rs2b0t_tree(&dir);
-        let orig_home = std::env::var("HOME").ok();
-        let orig_rs2b0t = std::env::var("RS2B0T").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("RS2B0T");
-
+        let iso = IsolatedEnv::enter("tui-import");
+        let root = fake_rs2b0t_tree(&iso.dir);
         let mut session = TuiSession::new(dummy_options());
         let mut app = TuiApp::new("274bot headless");
         let n = session
             .import_rs2b0t_catalog(&mut app, &root)
             .expect("import");
         assert_eq!(n, 1);
-        assert!(home.join(".274bot/rs2b0t-path").is_file());
+        assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
         let card = session
             .js
             .get(script::ScriptSource::Catalog, "BoneBurier")
             .expect("catalog card");
         assert_eq!(card.description, "Buries bones");
-
-        match orig_rs2b0t {
-            Some(v) => std::env::set_var("RS2B0T", v),
-            None => std::env::remove_var("RS2B0T"),
-        }
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

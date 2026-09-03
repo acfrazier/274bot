@@ -196,7 +196,7 @@ and WalkTo are in-tree.
   `4` then remaining of 15 s per device). Local engines default
   `production: false` and do not apply those counters; the host still
   stays under them.
-- Native `panel-play` (dear-app / ImGui): profile picker, Log in / Logout,
+- Native `panel-play` (ImGui, panel-owned winit + wgpu loop): profile picker, Log in / Logout,
   WalkTo, MultiBox rail/grid, click-through capture. Panel/rail widths
   stay 330/264; host-window resize is grid-only. Non-grid Game blit is
   native 765×503. Opening MultiBox grows the OS window if the blit would

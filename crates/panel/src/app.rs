@@ -10,9 +10,9 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::window::{self, Gpu, RedrawMode, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
-    ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder, DockNodeFlags,
-    DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, TreeNodeFlags, Ui,
-    WindowClass, WindowFlags,
+    ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
+    DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
+    TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
 
 use crate::chrome::{
@@ -27,13 +27,18 @@ use crate::overlay::{draw_focused_queue_card, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
-use crate::script_picker::{
-    self, kind_badge, move_category, resolve_category_order, source_badge, BROWSE_WINDOW_TITLE,
-};
 use crate::rail::{
-    cap_title, os_window_size, rail_preview_open, rail_split_ratio, traffic_light, Light,
-    BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
-    UNFOLD_GLYPH,
+    cap_title, next_os_window_size, os_window_size, rail_preview_open, rail_split_ratio,
+    traffic_light, Light, BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH,
+    STATUS_GLYPH, TILE_H, TILE_W, UNFOLD_GLYPH,
+};
+use crate::script_picker::{
+    self, card_columns, card_desc_height, card_kind_source, card_rect_activated,
+    card_transpile_label, card_width, centered_row_x, chip_frame_padding, chip_text_color,
+    chip_wraps, dialog_date_color, display_category, format_mtime, move_category,
+    overlay_first_pos, resolve_category_order, title_clip_width, DialogMode, BROWSE_WINDOW_TITLE,
+    CARD_GAP, CARD_MIN_W, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE,
+    GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
 use host::debug_enabled;
 
@@ -109,6 +114,7 @@ struct PanelState {
     /// first init. A MultiBox toggle rebuilds the tree when this differs.
     dock_layout: Option<DockLayout>,
     game_dock_node: Option<Id>,
+    panel_dock_node: Option<Id>,
     docked_game_title: String,
     last_upload: Option<(String, u64)>,
     /// Cached queue-card overlay for the focused slot (see `overlay`).
@@ -135,8 +141,8 @@ struct PanelState {
     /// Last dock-host viewport size; a width/height change rebuilds the
     /// split so the panel stays 330 and the rail 264.
     dock_size: Option<[f32; 2]>,
-    /// winit window so MultiBox can grow the OS inner size when the rail
-    /// would cover the 765×503 blit.
+    /// winit window so MultiBox can grow and re-shrink the OS inner size
+    /// when the rail covers or leaves the 765×503 blit.
     os_window: Option<std::sync::Arc<winit::window::Window>>,
     /// Whole-window shot coordination: the scenario sink (slot thread)
     /// → the render readback (`window::ShotState`) → the shot files.
@@ -450,6 +456,7 @@ impl Default for PanelState {
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
+            panel_dock_node: None,
             docked_game_title: String::new(),
             last_upload: None,
             overlay: PathOverlay::new(),
@@ -840,20 +847,43 @@ fn live_smoke_tick(
     None
 }
 
-/// Dock leaves: no splitter, no undock, no extra splits. Tab bar hides
-/// when a node has one window.
+/// Dockspace: no splitter, no extra splits. Tab bar hides on a
+/// single-window leaf. `NO_UNDOCKING` stays off here — it would lock the
+/// panel against config tabs. Game/rail apply it via their window class.
 fn dock_flags() -> DockNodeFlags {
-    DockNodeFlags::AUTO_HIDE_TAB_BAR
-        | DockNodeFlags::NO_RESIZE
-        | DockNodeFlags::NO_UNDOCKING
-        | DockNodeFlags::NO_DOCKING_SPLIT
+    DockNodeFlags::AUTO_HIDE_TAB_BAR | DockNodeFlags::NO_RESIZE | DockNodeFlags::NO_DOCKING_SPLIT
 }
 
-/// Leaf dock nodes hide the tab bar while they host a single window.
-fn single_bot_window_class() -> WindowClass {
+/// Game leaves: locked in the split, tab bar hidden while they host a
+/// single window. Scripts may still tab onto Game if the operator docks
+/// them; they do not spawn there. The rail has its own class — it needs
+/// a visible tab so the close X can exist.
+fn game_window_class() -> WindowClass {
     WindowClass::new(Id::from(1u32))
-        .dock_node_flags_override_set(dock_flags())
+        .dock_node_flags_override_set(dock_flags() | DockNodeFlags::NO_UNDOCKING)
         .docking_always_tab_bar(false)
+}
+
+/// MultiBox sidecar: same lock-in as Game, but the tab bar stays up so
+/// the window `.opened` X is visible. Closing it turns MultiBox off;
+/// [`ensure_window_fits`] then shrinks the OS window.
+fn rail_window_class() -> WindowClass {
+    WindowClass::new(Id::from(3u32))
+        .dock_node_flags_override_set(
+            DockNodeFlags::NO_RESIZE
+                | DockNodeFlags::NO_DOCKING_SPLIT
+                | DockNodeFlags::NO_UNDOCKING,
+        )
+        .docking_always_tab_bar(true)
+}
+
+/// 274bot panel: same fixed width / no splits, but a visible tab bar so
+/// General/Nav config can spawn as sibling tabs.
+fn panel_window_class() -> WindowClass {
+    WindowClass::new(Id::from(2u32))
+        .dock_node_flags_override_set(DockNodeFlags::NO_RESIZE | DockNodeFlags::NO_DOCKING_SPLIT)
+        .docking_always_tab_bar(true)
+        .docking_allow_unclassed(true)
 }
 
 fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
@@ -863,17 +893,23 @@ fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
     }
 }
 
-/// Grow the OS window when the rail (or a too-narrow host) would cover
-/// the native blit. Never shrinks a larger window.
+/// Grow the OS window when the rail would cover the native blit. Shrink
+/// it back when the strip leaves — MultiBox off, Grid, or the rail tab
+/// X (`set_multibox(false)`). Falling edge of [`DockLayout::Rail`].
 fn ensure_window_fits(state: &mut PanelState, rail_open: bool) {
     let Some(window) = state.os_window.as_ref() else {
         return;
     };
-    let (need_w, need_h) = os_window_size(rail_open);
+    let rail_was_open = state.dock_layout == Some(DockLayout::Rail);
     let scale = window.scale_factor();
     let logical: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(scale);
-    let w = logical.width.max(need_w as f64);
-    let h = logical.height.max(need_h as f64);
+    let (need_w, need_h) = next_os_window_size(
+        (logical.width as f32, logical.height as f32),
+        rail_was_open,
+        rail_open,
+    );
+    let w = need_w as f64;
+    let h = need_h as f64;
     if (w - logical.width).abs() > 1.0 || (h - logical.height).abs() > 1.0 {
         let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w, h));
     }
@@ -928,6 +964,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         DockBuilder::dock_window(ui, PANEL_WINDOW, right);
                         DockBuilder::dock_window(ui, game_title, left);
                         state.game_dock_node = Some(left);
+                        state.panel_dock_node = Some(right);
                     }
                     DockLayout::Rail => {
                         let rail_ratio = rail_split_ratio(size[0]);
@@ -940,6 +977,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
                         DockBuilder::dock_window(ui, game_title, game);
                         state.game_dock_node = Some(game);
+                        state.panel_dock_node = Some(panel);
                     }
                 }
                 DockBuilder::finish(ui, dock_id);
@@ -1689,6 +1727,21 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .map(|sel| sel.label())
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
+    if let (Some(script::ScriptSel::Loaded(source, sel_name)), Some((front_src, front_name))) = (
+        session.script_sel.clone(),
+        session.transpile_front().map(|(s, n)| (s, n.to_string())),
+    ) {
+        if let Some(line) = card_transpile_label(
+            Some((front_src, front_name.as_str())),
+            source,
+            &sel_name,
+            session.transpile_done,
+            session.transpile_total,
+        ) {
+            ui.same_line();
+            ui.text_disabled(line);
+        }
+    }
     ui.same_line();
     let avail = ui.content_region_avail()[0];
     let (w, stack) = button_row_layout(avail, 2);
@@ -1785,16 +1838,61 @@ fn category_from_key(a: [u8; 32]) -> Option<String> {
 fn card_categories(cards: &[script::JsCard]) -> Vec<String> {
     let mut out = Vec::new();
     for card in cards {
-        let cat = if card.category.is_empty() {
-            "Uncategorized".to_string()
-        } else {
-            card.category.clone()
-        };
+        let cat = display_category(&card.category).to_string();
         if !out.iter().any(|c| c == &cat) {
             out.push(cat);
         }
     }
     out
+}
+
+fn script_category_chips(ui: &Ui, session: &mut Session, order: &[String]) {
+    let avail = ui.content_region_avail()[0];
+    let style = ui.clone_style();
+    let gap = style.item_spacing()[0];
+    let pad = chip_frame_padding(style.frame_padding());
+    let _pad = ui.push_style_var(StyleVar::FramePadding(pad));
+    let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
+    let _border = ui.push_style_color(StyleColor::Border, ACCENT);
+    let mut used = 0.0;
+    let font_sz = ui.current_font_size();
+    let all_selected = session.browse_category_filter.is_none();
+    let labels: Vec<(String, Option<String>, bool)> =
+        std::iter::once(("All".to_string(), None, all_selected))
+            .chain(order.iter().map(|cat| {
+                (
+                    cat.clone(),
+                    Some(cat.clone()),
+                    session.browse_category_filter.as_deref() == Some(cat.as_str()),
+                )
+            }))
+            .collect();
+    for (label, cat, selected) in labels {
+        let chip_w = ui
+            .current_font()
+            .calc_text_size(font_sz, f32::MAX, 0.0, &label)[0]
+            + pad[0] * 2.0;
+        if chip_wraps(used, chip_w, gap, avail) {
+            used = 0.0;
+        } else if used > 0.0 {
+            ui.same_line_with_spacing(0.0, gap);
+        }
+        let _b = selected.then(|| ui.push_style_color(StyleColor::Button, ACCENT));
+        let _h = selected.then(|| ui.push_style_color(StyleColor::ButtonHovered, ACCENT_HOVER));
+        let _a = selected.then(|| ui.push_style_color(StyleColor::ButtonActive, ACCENT));
+        let _t = ui.push_style_color(StyleColor::Text, chip_text_color(selected));
+        if ui.button(&label) {
+            session.browse_category_filter = cat.clone();
+        }
+        if let Some(cat) = cat.as_deref() {
+            category_chip_dnd(ui, session, cat);
+        }
+        used = if used == 0.0 {
+            chip_w
+        } else {
+            used + gap + chip_w
+        };
+    }
 }
 
 fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
@@ -1805,10 +1903,9 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
         ui.text(cat);
     }
     if let Some(tgt) = ui.drag_drop_target() {
-        if let Some(Ok(p)) = tgt.accept_payload::<[u8; 32], _>(
-            "274bot-script-cat",
-            DragDropTargetFlags::NONE,
-        ) {
+        if let Some(Ok(p)) =
+            tgt.accept_payload::<[u8; 32], _>("274bot-script-cat", DragDropTargetFlags::NONE)
+        {
             if p.delivery {
                 if let Some(from) = category_from_key(p.data) {
                     let present = card_categories(session.js.cards());
@@ -1823,37 +1920,120 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
     }
 }
 
-fn browse_script_card_row(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
-    let selected = session.script_sel
-        == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
-    let label = format!(
-        "{}  [{}] [{}]",
-        card.name,
-        kind_badge(card.kind),
-        source_badge(card.source)
-    );
-    if ui
-        .selectable_config(label)
-        .selected(selected)
+fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
+    let selected =
+        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
+    let id = format!("##scard-{:?}-{}", card.source, card.name);
+    let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
+    ui.child_window(&id)
         .size([w, 0.0])
-        .build()
-    {
-        session.script_sel = Some(script::ScriptSel::Loaded(
-            card.source,
-            card.name.clone(),
-        ));
+        .border(true)
+        .child_flags(ChildFlags::BORDERS | ChildFlags::AUTO_RESIZE_Y)
+        .flags(WindowFlags::NO_SCROLLBAR)
+        .build(ui, || {
+            let inner = ui.content_region_avail()[0].max(1.0);
+            let row_h = ui.text_line_height_with_spacing();
+            let origin = ui.cursor_screen_pos();
+            let badge = card_kind_source(card.kind, card.source);
+            let font_sz = ui.current_font_size();
+            let badge_w = ui
+                .current_font()
+                .calc_text_size(font_sz, f32::MAX, 0.0, &badge)[0];
+            let gap = ui.clone_style().item_spacing()[0];
+            let title_w = title_clip_width(inner, badge_w, gap);
+            let badges_below = title_w < 32.0;
+            if badges_below {
+                {
+                    let _clip =
+                        ui.push_clip_rect(origin, [origin[0] + inner, origin[1] + row_h], true);
+                    ui.text_colored(ACCENT, &card.name);
+                }
+                let badge_origin = [origin[0], origin[1] + row_h];
+                ui.set_cursor_screen_pos(badge_origin);
+                {
+                    let _clip = ui.push_clip_rect(
+                        badge_origin,
+                        [badge_origin[0] + inner, badge_origin[1] + row_h],
+                        true,
+                    );
+                    ui.text_disabled(&badge);
+                }
+                ui.set_cursor_screen_pos([origin[0], origin[1] + row_h * 2.0]);
+            } else {
+                {
+                    let _clip =
+                        ui.push_clip_rect(origin, [origin[0] + title_w, origin[1] + row_h], true);
+                    ui.text_colored(ACCENT, &card.name);
+                }
+                let badge_origin = [origin[0] + title_w + gap, origin[1]];
+                ui.set_cursor_screen_pos(badge_origin);
+                {
+                    let _clip = ui.push_clip_rect(
+                        badge_origin,
+                        [origin[0] + inner, origin[1] + row_h],
+                        true,
+                    );
+                    ui.text_disabled(&badge);
+                }
+                ui.set_cursor_screen_pos([origin[0], origin[1] + row_h]);
+            }
+            if let Some(line) = card_transpile_label(
+                session.transpile_front(),
+                card.source,
+                &card.name,
+                session.transpile_done,
+                session.transpile_total,
+            ) {
+                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                ui.text_disabled(line);
+            }
+            if !card.description.is_empty() {
+                let _wrap = ui.push_text_wrap_pos(0.0);
+                let line_h = ui.text_line_height();
+                let full = ui.current_font().calc_text_size(
+                    ui.current_font_size(),
+                    f32::MAX,
+                    inner,
+                    &card.description,
+                )[1];
+                let h = card_desc_height(line_h, selected, full).max(1.0);
+                if selected || h + 0.5 >= full {
+                    ui.text_wrapped(&card.description);
+                } else {
+                    ui.child_window("##desc")
+                        .size([inner, h])
+                        .flags(WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE)
+                        .build(ui, || {
+                            ui.text_wrapped(&card.description);
+                        });
+                }
+            }
+            if !card.tags.is_empty() {
+                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                let _wrap = ui.push_text_wrap_pos(0.0);
+                ui.text_wrapped(card.tags.join(", "));
+            }
+        });
+    let min = ui.item_rect_min();
+    let max = ui.item_rect_max();
+    if card_rect_activated(
+        ui.is_mouse_hovering_rect(min, max),
+        ui.is_mouse_released(MouseButton::Left),
+        ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0),
+    ) {
+        session.select_script_card(card.source, card.name.clone());
     }
-    if !card.description.is_empty() {
-        ui.text_disabled(&card.description);
-    }
-    let cat = if card.category.is_empty() {
-        "Uncategorized"
-    } else {
-        card.category.as_str()
-    };
-    ui.text_disabled(format!("category: {cat}"));
-    if !card.tags.is_empty() {
-        ui.text_disabled(format!("tags: {}", card.tags.join(", ")));
+}
+
+fn browse_card_grid(ui: &Ui, session: &mut Session, cards: &[&script::JsCard]) {
+    let avail = ui.content_region_avail()[0];
+    let cols = card_columns(avail, CARD_MIN_W, CARD_GAP);
+    let w = card_width(avail, cols, CARD_GAP);
+    for (i, card) in cards.iter().enumerate() {
+        if i > 0 && i % cols != 0 {
+            ui.same_line_with_spacing(0.0, CARD_GAP);
+        }
+        browse_script_card(ui, session, card, w);
     }
 }
 
@@ -1861,10 +2041,12 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
     if script::rs2b0t_import_deferred() {
         if ui.button_with_size("Import catalog…", [w, 0.0]) {
+            session.rs2b0t_catalog_defer_ok = false;
+            session.script_dialog_search.clear();
+            session.rs2b0t_catalog_dir = script_picker::default_load_browse_dir(
+                session.ui.script_catalog_last_dir.as_deref(),
+            );
             session.rs2b0t_catalog_open = true;
-            session.rs2b0t_catalog_dir = std::env::var("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("/"));
         }
         ui.spacing();
     }
@@ -1876,216 +2058,336 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         crate::ui_state::save(&session.ui);
     }
     if !order.is_empty() {
-        ui.text_disabled("categories (drag to reorder):");
-        let all_sel = session.browse_category_filter.is_none();
-        if ui.selectable_config("All").selected(all_sel).build() {
-            session.browse_category_filter = None;
-        }
-        ui.same_line();
-        for cat in &order {
-            let sel = session.browse_category_filter.as_deref() == Some(cat.as_str());
-            if ui.selectable_config(cat).selected(sel).build() {
-                session.browse_category_filter = Some(cat.clone());
-            }
-            ui.same_line();
-            category_chip_dnd(ui, session, cat);
-            ui.same_line();
-        }
-        ui.new_line();
+        script_category_chips(ui, session, &order);
         ui.spacing();
     }
-    let ids = script::compiled_ids();
-    let filter = session.browse_category_filter.clone();
-    let mut any = false;
-    for id in ids {
-        any = true;
-        let selected = session.script_sel == Some(script::ScriptSel::Compiled(*id));
-        if ui
-            .selectable_config(id.0)
-            .selected(selected)
-            .size([w, 0.0])
-            .build()
-        {
-            session.script_sel = Some(script::ScriptSel::Compiled(*id));
+    let busy = !session.transpile_queue.is_empty();
+    let need = session.js.cards_needing_transpile().len();
+    if need > 0 || busy {
+        let w = ui.content_region_avail()[0];
+        let _off = busy.then(|| ui.begin_disabled());
+        if ui.button_with_size("Transpile all", [w, 0.0]) {
+            session.queue_transpile_all();
         }
-    }
-    for card in &cards {
-        let cat = if card.category.is_empty() {
-            "Uncategorized"
-        } else {
-            card.category.as_str()
-        };
-        if filter.as_deref().is_some_and(|f| f != cat) {
-            continue;
+        drop(_off);
+        if busy {
+            if let Some((source, name)) = session.transpile_front() {
+                if let Some(line) = card_transpile_label(
+                    Some((source, name)),
+                    source,
+                    name,
+                    session.transpile_done,
+                    session.transpile_total,
+                ) {
+                    ui.text_disabled(line);
+                }
+            }
         }
-        any = true;
-        browse_script_card_row(ui, session, card, w);
+        ui.spacing();
     }
-    if !any {
-        ui.text_disabled("no scripts — Browse is empty");
-    }
+    ui.child_window("##script-list")
+        .size([0.0, ui.content_region_avail()[1].max(80.0)])
+        .build(ui, || {
+            let filter = session.browse_category_filter.clone();
+            let mut any = false;
+            for cat in &order {
+                if filter.as_deref().is_some_and(|f| f != cat.as_str()) {
+                    continue;
+                }
+                let group: Vec<&script::JsCard> = cards
+                    .iter()
+                    .filter(|c| display_category(&c.category) == cat.as_str())
+                    .collect();
+                if group.is_empty() {
+                    continue;
+                }
+                any = true;
+                if filter.is_none() {
+                    ui.text_disabled(cat);
+                }
+                browse_card_grid(ui, session, &group);
+            }
+            if !any {
+                ui.text_disabled("no scripts — Browse is empty");
+            }
+        });
 }
 
-/// Browse picker: script cards with category chips and badges. Non-modal
-/// window (same pattern as Nav config).
+fn overlay_right_strip(session: &Session) -> f32 {
+    let rail = if session.multibox && !session.wall.grid {
+        RAIL_W
+    } else {
+        0.0
+    };
+    PANEL_WIDTH + rail
+}
+
+fn overlay_spawn_pos(ui: &Ui, session: &Session, win: [f32; 2]) -> [f32; 2] {
+    let vp = ui.main_viewport();
+    overlay_first_pos(vp.pos(), vp.size(), overlay_right_strip(session), win)
+}
+
+/// Browse picker: script cards with category tabs. Non-modal window
+/// (same pattern as Nav config). FirstUseEver sits over the game pane so
+/// it does not spawn as a Game tab; the operator can still dock it later.
 fn browse_window(ui: &Ui, session: &mut Session) {
-    rs2b0t_catalog_window(ui, session);
+    file_dialog_windows(ui, session);
     if !session.script_browse_open {
         return;
     }
     let mut open = true;
+    let pos = overlay_spawn_pos(ui, session, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
     ui.window(BROWSE_WINDOW_TITLE)
         .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE)
-        .size([480.0, 520.0], Condition::FirstUseEver)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
+        .position(pos, Condition::FirstUseEver)
+        .size([SCRIPTS_FIRST_W, SCRIPTS_FIRST_H], Condition::FirstUseEver)
         .build(|| browse_window_body(ui, session));
     session.script_browse_open = open;
 }
 
-/// First-run folder browser for the rs2b0t clone root (`index.ts` required).
-fn rs2b0t_catalog_window(ui: &Ui, session: &mut Session) {
-    if !session.rs2b0t_catalog_open {
-        return;
+fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
+    match mode {
+        DialogMode::File => {
+            session.ui.script_load_last_dir = Some(session.script_load_dir.clone());
+        }
+        DialogMode::Folder => {
+            session.ui.script_catalog_last_dir = Some(session.rs2b0t_catalog_dir.clone());
+        }
     }
-    let mut open = true;
-    ui.window("Import rs2b0t catalog")
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE)
-        .size([420.0, 420.0], Condition::FirstUseEver)
-        .build(|| {
-            let w = ui.content_region_avail()[0];
-            ui.text_wrapped(
-                "Choose the rs2b0t clone root (must contain src/bot/scripts/index.ts):",
-            );
-            ui.text(&session.rs2b0t_catalog_dir.to_string_lossy());
-            ui.spacing();
-            let dir = session.rs2b0t_catalog_dir.clone();
-            if dir.parent().is_some() {
-                if ui.button_with_size("Up", [w, 0.0]) {
-                    if let Some(parent) = dir.parent() {
-                        session.rs2b0t_catalog_dir = parent.to_path_buf();
-                    }
-                }
-                ui.spacing();
-            }
-            let mut subdirs = Vec::new();
-            if let Ok(read) = std::fs::read_dir(&dir) {
-                for entry in read.flatten() {
-                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        subdirs.push(entry.path());
-                    }
-                }
-            }
-            subdirs.sort();
-            for path in subdirs {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("?");
-                if ui.selectable_config(name).build() {
-                    session.rs2b0t_catalog_dir = path;
-                }
-            }
-            ui.spacing();
-            let has_index = script_picker::rs2b0t_root_has_index(&session.rs2b0t_catalog_dir);
-            if has_index {
-                ui.text_colored(ACCENT, "catalog index found");
-            } else {
-                ui.text_disabled("no src/bot/scripts/index.ts here");
-            }
-            let half = w / 2.0 - BUTTON_GAP / 2.0;
-            if has_index {
-                if ui.button_with_size("Use this folder", [half, 0.0]) {
-                    let root = session.rs2b0t_catalog_dir.clone();
-                    if let Err(e) = session.import_rs2b0t_catalog(&root) {
-                        session.error = Some(e);
-                    } else {
-                        session.error = None;
-                    }
-                }
-                ui.same_line();
-            }
-            if ui.button_with_size("Not now", [half, 0.0]) {
-                session.defer_rs2b0t_catalog();
-            }
-        });
-    session.rs2b0t_catalog_open = open;
+    if session.persist_ui {
+        crate::ui_state::save(&session.ui);
+    }
 }
 
-/// Load window: out-of-tree file browser (`.ts`/`.js` only). Load registers
-/// the card (same name overwrites; only WalkTo reserved), persists the
-/// store, and selects the card for Start. The isolate is spawned only on
-/// Start, never here.
-fn load_window(ui: &Ui, session: &mut Session) {
-    if !session.script_load_open {
-        return;
+fn file_dialog_windows(ui: &Ui, session: &mut Session) {
+    let pos = overlay_spawn_pos(ui, session, [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H]);
+    if session.script_load_open {
+        let mut open = true;
+        ui.window("Load script")
+            .opened(&mut open)
+            .flags(WindowFlags::NO_COLLAPSE)
+            .position(pos, Condition::FirstUseEver)
+            .size(
+                [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H],
+                Condition::FirstUseEver,
+            )
+            .build(|| file_dialog_body(ui, session, DialogMode::File));
+        session.script_load_open = open;
     }
-    let mut open = true;
-    ui.window("Load script")
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE)
-        .size([420.0, 420.0], Condition::FirstUseEver)
-        .build(|| {
-            let w = ui.content_region_avail()[0];
-            ui.text_wrapped("Choose a `.ts` or `.js` bot file (out-of-tree):");
-            ui.text(&session.script_load_dir.to_string_lossy());
-            ui.spacing();
-            let entries = script_picker::load_browse_entries(&session.script_load_dir);
-            if session.script_load_sel >= entries.len() {
-                session.script_load_sel = entries.len().saturating_sub(1);
-            }
-            let dir = session.script_load_dir.clone();
-            if dir.parent().is_some() {
-                if ui.button_with_size("Up", [w, 0.0]) {
-                    if let Some(parent) = dir.parent() {
-                        session.script_load_dir = parent.to_path_buf();
-                        session.script_load_sel = 0;
+    if session.rs2b0t_catalog_open {
+        let mut open = true;
+        ui.window("Import rs2b0t catalog")
+            .opened(&mut open)
+            .flags(WindowFlags::NO_COLLAPSE)
+            .position(pos, Condition::FirstUseEver)
+            .size(
+                [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H],
+                Condition::FirstUseEver,
+            )
+            .build(|| file_dialog_body(ui, session, DialogMode::Folder));
+        session.rs2b0t_catalog_open = open;
+    }
+}
+
+fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
+    let cwd = match mode {
+        DialogMode::File => session.script_load_dir.clone(),
+        DialogMode::Folder => session.rs2b0t_catalog_dir.clone(),
+    };
+    let avail = ui.content_region_avail();
+    let side_w = 150.0_f32.min(avail[0] * 0.28).max(120.0);
+    let home = script::bot_home();
+    ui.child_window("##fd-side")
+        .size([side_w, (avail[1] - 8.0).max(80.0)])
+        .border(true)
+        .build(ui, || {
+            for place in script_picker::sidebar_places(&home) {
+                let label = format!("{}  {}", place.glyph, place.label);
+                if ui.button_with_size(&label, [-1.0, 0.0]) {
+                    match mode {
+                        DialogMode::File => session.script_load_dir = place.path.clone(),
+                        DialogMode::Folder => session.rs2b0t_catalog_dir = place.path.clone(),
                     }
+                    persist_dialog_cwd(session, mode);
                 }
-                ui.spacing();
             }
-            for (i, entry) in entries.iter().enumerate() {
-                let label = match entry {
-                    script_picker::LoadBrowseEntry::Up => "[Up]".to_string(),
-                    script_picker::LoadBrowseEntry::Subdir(name) => format!("{name}/"),
-                    script_picker::LoadBrowseEntry::File(name) => name.clone(),
-                };
-                let selected = i == session.script_load_sel;
-                if ui.selectable_config(&label).selected(selected).build() {
-                    script_picker::apply_load_browse_select(
-                        &mut session.script_load_dir,
-                        &mut session.script_load_sel,
-                        entry,
-                        i,
+        });
+    ui.same_line();
+    ui.child_window("##fd-main")
+        .size([
+            (avail[0] - side_w - 8.0).max(80.0),
+            (avail[1] - 8.0).max(80.0),
+        ])
+        .build(ui, || {
+            let crumbs = script_picker::breadcrumb_prefixes(&cwd);
+            for (i, (label, prefix)) in crumbs.iter().enumerate() {
+                if i > 0 {
+                    ui.same_line();
+                    ui.text_disabled(GLYPH_CHEVRON);
+                    ui.same_line();
+                }
+                let id = format!("{label}##crumb{i}");
+                if ui.small_button(&id) {
+                    match mode {
+                        DialogMode::File => session.script_load_dir = prefix.clone(),
+                        DialogMode::Folder => session.rs2b0t_catalog_dir = prefix.clone(),
+                    }
+                    persist_dialog_cwd(session, mode);
+                }
+            }
+            ui.input_text("##fd-search", &mut session.script_dialog_search)
+                .hint("Search")
+                .build();
+            if ui.small_button("Name") {
+                if session.script_dialog_sort == script_picker::DialogSort::Name {
+                    session.script_dialog_sort_desc = !session.script_dialog_sort_desc;
+                } else {
+                    session.script_dialog_sort = script_picker::DialogSort::Name;
+                    session.script_dialog_sort_desc = false;
+                }
+            }
+            ui.same_line();
+            if ui.small_button("Date") {
+                if session.script_dialog_sort == script_picker::DialogSort::Date {
+                    session.script_dialog_sort_desc = !session.script_dialog_sort_desc;
+                } else {
+                    session.script_dialog_sort = script_picker::DialogSort::Date;
+                    session.script_dialog_sort_desc = false;
+                }
+            }
+            let mut rows = script_picker::dialog_rows(&cwd, mode, &session.script_dialog_search);
+            script_picker::sort_dialog_rows(
+                &mut rows,
+                session.script_dialog_sort,
+                session.script_dialog_sort_desc,
+            );
+            if session.script_load_sel >= rows.len() {
+                session.script_load_sel = rows.len().saturating_sub(1);
+            }
+            let table_h = (ui.content_region_avail()[1] - 48.0).max(80.0);
+            if let Some(_t) = ui.begin_table_with_sizing(
+                "##fd-table",
+                2,
+                TableFlags::ROW_BG
+                    | TableFlags::BORDERS_INNER_H
+                    | TableFlags::SCROLL_Y
+                    | TableFlags::RESIZABLE
+                    | TableFlags::NO_SAVED_SETTINGS,
+                [0.0, table_h],
+                0.0,
+            ) {
+                ui.table_setup_column("Name", TableColumnFlags::NONE, None, None);
+                ui.table_setup_column("Date", TableColumnFlags::NONE, None, None);
+                ui.table_headers_row();
+                for (i, row) in rows.iter().enumerate() {
+                    ui.table_next_row();
+                    ui.table_next_column();
+                    let glyph = if row.is_dir { GLYPH_FOLDER } else { GLYPH_FILE };
+                    let label = format!("{glyph}  {}##fdrow{i}", row.name);
+                    let selected = i == session.script_load_sel;
+                    if ui
+                        .selectable_config(&label)
+                        .selected(selected)
+                        .span_all_columns(true)
+                        .build()
+                    {
+                        session.script_load_sel = i;
+                    }
+                    if ui.is_item_hovered() && ui.is_mouse_double_clicked(MouseButton::Left) {
+                        if row.is_dir {
+                            match mode {
+                                DialogMode::File => session.script_load_dir.push(&row.name),
+                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(&row.name),
+                            }
+                            persist_dialog_cwd(session, mode);
+                        } else if mode == DialogMode::File {
+                            session.load_js(&cwd.join(&row.name));
+                        }
+                    }
+                    ui.table_next_column();
+                    ui.text_colored(
+                        dialog_date_color(selected, i % 2 == 1),
+                        format_mtime(row.mtime),
                     );
                 }
             }
             ui.spacing();
-            let half = w / 2.0 - BUTTON_GAP / 2.0;
-            if ui.button_with_size("Load", [half, 0.0]) {
-                if let Some(script_picker::LoadBrowseEntry::File(name)) =
-                    entries.get(session.script_load_sel)
-                {
-                    let path = session.script_load_dir.join(name);
-                    session.load_js(&path);
+            let fw = ui.content_region_avail()[0];
+            let btn_w = 96.0;
+            match mode {
+                DialogMode::File => {
+                    let name = rows
+                        .get(session.script_load_sel)
+                        .filter(|r| !r.is_dir)
+                        .map(|r| r.name.as_str())
+                        .unwrap_or("");
+                    ui.text_disabled(name);
+                    let x = centered_row_x(fw, 2, btn_w, BUTTON_GAP);
+                    ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
+                    if ui.button_with_size("Load", [btn_w, 0.0]) {
+                        if let Some(row) = rows.get(session.script_load_sel).filter(|r| !r.is_dir) {
+                            session.load_js(&cwd.join(&row.name));
+                        }
+                    }
+                    ui.same_line();
+                    if ui.button_with_size("Cancel", [btn_w, 0.0]) {
+                        session.script_load_open = false;
+                    }
+                }
+                DialogMode::Folder => {
+                    let has_index = script_picker::rs2b0t_root_has_index(&cwd);
+                    if has_index {
+                        ui.text_colored(ACCENT, "catalog index found");
+                    } else {
+                        ui.text_disabled("no src/bot/scripts/index.ts here");
+                    }
+                    let n =
+                        1 + usize::from(has_index) + usize::from(session.rs2b0t_catalog_defer_ok);
+                    let folder_btn = 140.0;
+                    let x = centered_row_x(fw, n, folder_btn, BUTTON_GAP);
+                    ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
+                    if has_index {
+                        if ui.button_with_size("Use this folder", [folder_btn, 0.0]) {
+                            if let Err(e) = session.import_rs2b0t_catalog(&cwd) {
+                                session.error = Some(e);
+                            } else {
+                                session.error = None;
+                            }
+                        }
+                        ui.same_line();
+                    }
+                    if session.rs2b0t_catalog_defer_ok {
+                        if ui.button_with_size("Not now", [folder_btn, 0.0]) {
+                            session.defer_rs2b0t_catalog();
+                        }
+                        ui.same_line();
+                    }
+                    if ui.button_with_size("Cancel", [folder_btn, 0.0]) {
+                        session.rs2b0t_catalog_open = false;
+                    }
                 }
             }
-            ui.same_line();
-            if ui.button_with_size("Cancel", [half, 0.0]) {
-                session.script_load_open = false;
-            }
         });
-    session.script_load_open = open;
 }
+
+/// Load window: shared file dialog is drawn from [`browse_window`].
+fn load_window(_ui: &Ui, _session: &mut Session) {}
 
 /// Nav config window: Routing, Display, Path paint (only while the path
 /// is shown), and Debug groups. Every toggle or colour writes
-/// `session.ui.nav` + `ui_state::save`. Not a blocking modal.
-fn nav_settings_window(ui: &Ui, session: &mut Session) {
+/// `session.ui.nav` + `ui_state::save`. FirstUseEver docks as a 274bot
+/// panel tab; undock to float.
+fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.nav_settings_open {
         return;
     }
     let mut open = true;
+    let panel_class = panel_window_class();
+    ui.set_next_window_class(&panel_class);
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
     ui.window("Nav config")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
@@ -2219,7 +2521,12 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
                 session.params_edit_open = true;
             }
         } else {
-            mock_button(ui, "Edit parameters", "select a script with a schema", [w, 0.0]);
+            mock_button(
+                ui,
+                "Edit parameters",
+                "select a script with a schema",
+                [w, 0.0],
+            );
         }
     } else {
         mock_button(ui, "Edit parameters", "not in v1", [w, 0.0]);
@@ -2267,11 +2574,7 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
                     ui.text(g);
                 }
             }
-            let label = def
-                .label
-                .as_deref()
-                .unwrap_or(&def.id)
-                .to_string();
+            let label = def.label.as_deref().unwrap_or(&def.id).to_string();
             match def.ty.as_str() {
                 "boolean" => {
                     let mut value = bag
@@ -2290,11 +2593,7 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
                     let mut value = bag
                         .get(&def.id)
                         .and_then(|v| v.as_f64())
-                        .or_else(|| {
-                            def.default
-                                .as_deref()
-                                .and_then(|s| s.parse::<f64>().ok())
-                        })
+                        .or_else(|| def.default.as_deref().and_then(|s| s.parse::<f64>().ok()))
                         .unwrap_or(0.0) as i32;
                     if ui.input_int(&label, &mut value) {
                         session
@@ -2314,16 +2613,17 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
                         .unwrap_or("")
                         .to_string();
                     ui.set_next_item_width(-1.0);
-                    let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
-                    if let Some(_popup) =
-                        ui.begin_combo_with_flags(&format!("##param-{id}", id = def.id), &current, combo_opts)
-                    {
+                    let combo_opts =
+                        ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+                    if let Some(_popup) = ui.begin_combo_with_flags(
+                        &format!("##param-{id}", id = def.id),
+                        &current,
+                        combo_opts,
+                    ) {
                         for opt in &opts {
                             let selected = opt == &current;
                             if ui.selectable_config(opt).selected(selected).build() {
-                                session
-                                    .script_settings
-                                    .set_str(source, &name, &def.id, opt);
+                                session.script_settings.set_str(source, &name, &def.id, opt);
                                 let _ = session.script_settings.save();
                                 bag.insert(def.id.clone(), serde_json::json!(opt));
                             }
@@ -2462,14 +2762,23 @@ fn loadouts_window(ui: &Ui, session: &mut Session) {
             }
             ui.spacing();
             ui.text("Edit");
-            if ui.input_text("name", &mut session.loadouts_name_scratch).build() {
-                apply_loadouts_scratch(session);
-            }
-            if ui.input_text("worn (comma-separated)", &mut session.loadouts_worn_scratch).build()
+            if ui
+                .input_text("name", &mut session.loadouts_name_scratch)
+                .build()
             {
                 apply_loadouts_scratch(session);
             }
-            if ui.input_text("carry (comma-separated)", &mut session.loadouts_carry_scratch)
+            if ui
+                .input_text("worn (comma-separated)", &mut session.loadouts_worn_scratch)
+                .build()
+            {
+                apply_loadouts_scratch(session);
+            }
+            if ui
+                .input_text(
+                    "carry (comma-separated)",
+                    &mut session.loadouts_carry_scratch,
+                )
                 .build()
             {
                 apply_loadouts_scratch(session);
@@ -2775,14 +3084,19 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
 /// placeholder), `+ add bot`, and the 1 Hz resource card.
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.sample_resources();
+    let mut open = true;
     ui.window(RAIL_WINDOW)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE | WindowFlags::NO_TITLE_BAR)
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
         .build(|| {
             rail_bulk_row(ui, state);
             rail_tiles(ui, gpu, state);
             add_bot_button(ui, state);
             resource_card(ui, state);
         });
+    if !open {
+        state.session.set_multibox(false);
+    }
 }
 
 /// Apply an "only render selected" checkbox change: re-checking on is
@@ -3292,15 +3606,21 @@ fn chooser_window(ui: &Ui, session: &mut Session) {
     session.wall.chooser_open = session.wall.chooser_open && open;
 }
 
-fn settings_window(ui: &Ui, session: &mut Session) {
+fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.global_settings_open {
         return;
     }
     let mut open = true;
+    let panel_class = panel_window_class();
+    ui.set_next_window_class(&panel_class);
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
     ui.window("General config")
         .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([PANEL_WIDTH, 480.0], Condition::FirstUseEver)
+        .size_constraints([280.0, 80.0], [f32::MAX, 720.0])
         .build(|| {
             config_heading(ui, "slot");
             let slot = session.focused_name().unwrap_or_else(|| "—".into());
@@ -3343,7 +3663,9 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
     if ui.checkbox("lamp auto", &mut auto) {
         session.set_random_settings(&name, settings.random_events, &settings.lamp_skill, auto);
     }
-    ui.text_wrapped("claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).");
+    ui.text_wrapped(
+        "claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).",
+    );
     let mut skill = settings.lamp_skill.clone();
     if lamp_skill_combo(ui, &mut skill) {
         session.set_random_settings(&name, settings.random_events, &skill, settings.lamp_auto);
@@ -3556,11 +3878,12 @@ fn pump_shots(state: &mut PanelState) -> usize {
     written
 }
 
-/// The per-frame UI body (the former dear-app `on_frame` closure): session
-/// pump, live harness ticks, dock host, chrome, game pane, rail.
+/// The per-frame UI body: session pump, live harness ticks, dock host,
+/// chrome, game pane, rail.
 fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let wrote_shots = pump_shots(state);
     state.session.pump_status();
+    state.session.pump_script_transpile();
     let statuses = state.session.statuses();
     if let Some(live) = state.live.as_mut() {
         let fail = match live {
@@ -3594,22 +3917,23 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
     let title = game_window_title(state.session.focused_name().as_deref());
     dock_host(ui, state, &title);
-    let class = single_bot_window_class();
-    ui.set_next_window_class(&class);
+    let game_class = game_window_class();
+    let panel_class = panel_window_class();
+    ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session);
-    ui.set_next_window_class(&class);
+    ui.set_next_window_class(&game_class);
     game_window(ui, gpu, state, &title);
     if state.session.multibox && !state.session.wall.grid {
-        ui.set_next_window_class(&class);
+        ui.set_next_window_class(&rail_window_class());
         rail_window(ui, gpu, state);
     }
     // Every frame, not only while open: the prev latches must track
     // the close so the next open is a fresh rising edge.
     chooser_window(ui, &mut state.session);
-    settings_window(ui, &mut state.session);
+    settings_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
-    nav_settings_window(ui, &mut state.session);
+    nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     loadouts_window(ui, &mut state.session);
     params_edit_window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
@@ -3625,10 +3949,10 @@ mod tests {
         apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_for,
         capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
         edit_parameters_enabled, game_window_flags, live_null_tick, live_script_tick,
-        live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label, parse_live_args, random_status_text,
-        runner_config, smoke_settled, smoke_should_fire, sync_loadouts_scratch, Boot, LiveBoot,
-        LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H, BASE_WINDOW_W,
-        LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label, parse_live_args,
+        random_status_text, runner_config, smoke_settled, smoke_should_fire, sync_loadouts_scratch,
+        Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -3720,7 +4044,7 @@ mod tests {
 
     #[test]
     fn loadout_combo_lists_store_names() {
-        use script::{Loadout, LoadoutsStore, SettingDef, resolve_setting_options};
+        use script::{resolve_setting_options, Loadout, LoadoutsStore, SettingDef};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -3864,14 +4188,99 @@ mod tests {
 
     #[test]
     fn single_bot_window_class_hides_tab_bar() {
-        let c = super::single_bot_window_class();
+        let c = super::game_window_class();
         assert!(c
             .dock_node_flags_override_set
             .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR));
         assert!(c
             .dock_node_flags_override_set
             .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING));
         assert!(!c.docking_always_tab_bar);
+    }
+
+    #[test]
+    fn rail_window_class_shows_tab_x() {
+        let c = super::rail_window_class();
+        assert!(
+            !c.dock_node_flags_override_set
+                .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR),
+            "hidden tab strip has no X"
+        );
+        assert!(c.docking_always_tab_bar, "tab X needs a visible tab bar");
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING));
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
+        const SRC: &str = include_str!("app.rs");
+        let rail = SRC.split("fn rail_window(").nth(1).unwrap_or("");
+        let rail_fn = rail
+            .split("fn apply_only_render_selected")
+            .next()
+            .unwrap_or("");
+        assert!(
+            rail_fn.contains(".opened(") && rail_fn.contains("set_multibox(false)"),
+            "rail tab X turns MultiBox off so ensure_window_fits can shrink"
+        );
+        assert!(
+            !rail_fn.contains("NO_TITLE_BAR"),
+            "NO_TITLE_BAR hides the tab that carries the X"
+        );
+        let frame = SRC.split("fn ui_frame").nth(1).unwrap_or("");
+        assert!(
+            frame.contains("rail_window_class"),
+            "rail must not reuse the Game class that AUTO_HIDEs the tab bar"
+        );
+    }
+
+    #[test]
+    fn panel_window_class_allows_config_tabs() {
+        let c = super::panel_window_class();
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
+        assert!(c
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_DOCKING_SPLIT));
+        assert!(
+            !c.dock_node_flags_override_set
+                .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING),
+            "configs must be able to tab onto 274bot and undock later"
+        );
+        assert!(
+            c.docking_allow_unclassed,
+            "General/Nav are unclassed and must merge with the panel"
+        );
+        assert!(
+            c.docking_always_tab_bar,
+            "panel tab bar is the drop target for configs"
+        );
+    }
+
+    #[test]
+    fn dockspace_does_not_lock_undock_on_every_node() {
+        let f = super::dock_flags();
+        assert!(f.contains(dear_imgui_rs::DockNodeFlags::NO_DOCKING_SPLIT));
+        assert!(f.contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
+        assert!(
+            !f.contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING),
+            "NO_UNDOCKING on the dockspace would lock the panel against config tabs"
+        );
+    }
+
+    #[test]
+    fn ensure_window_fits_uses_rail_open_falling_edge() {
+        const SRC: &str = include_str!("app.rs");
+        let body = SRC.split("fn ensure_window_fits").nth(1).unwrap_or("");
+        let body = body.split("fn dock_host").next().unwrap_or("");
+        assert!(
+            body.contains("next_os_window_size") && body.contains("DockLayout::Rail"),
+            "MultiBox off must re-shrink via the rail falling edge, not grow-only"
+        );
     }
 
     #[test]

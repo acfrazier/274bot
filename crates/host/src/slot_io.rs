@@ -58,7 +58,7 @@ impl FrameBuf {
         out
     }
     /// Bumps on every [`FrameBuf::store`]. The panel skips uploads while
-    /// this stays unchanged (dear-app would otherwise Poll-spin).
+    /// this stays unchanged (avoids Poll-spin on a frozen blit).
     pub fn generation(&self) -> u64 {
         self.gen.load(Ordering::Relaxed)
     }

@@ -6,10 +6,7 @@ use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-gold-stubs-{name}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("274bot-gold-stubs-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -99,7 +96,8 @@ export default class T extends LoopingBot {
         );
         let logs = iso.drain_logs();
         assert!(
-            logs.iter().all(|l| !l.contains("404") && !l.contains("Module not found")),
+            logs.iter()
+                .all(|l| !l.contains("404") && !l.contains("Module not found")),
             "{name} import must not 404: {logs:?}"
         );
         iso.join();
@@ -129,10 +127,14 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, "function", "DeathRecovery must resolve as a loadable class");
+    assert_eq!(
+        value, "function",
+        "DeathRecovery must resolve as a loadable class"
+    );
     let logs = iso.drain_logs();
     assert!(
-        logs.iter().all(|l| !l.contains("404") && !l.contains("Module not found")),
+        logs.iter()
+            .all(|l| !l.contains("404") && !l.contains("Module not found")),
         "DeathRecovery import must not 404: {logs:?}"
     );
     iso.join();

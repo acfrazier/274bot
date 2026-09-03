@@ -21,13 +21,13 @@ use nav::world::NavWorld;
 use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
-use crate::map::{Map, MapAction, MapView};
 use crate::loadouts::{LoadoutsPane, LoadoutsState};
-use crate::script_shape::{
-    browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
-    ScriptPane,
-};
+use crate::map::{Map, MapAction, MapView};
 use crate::script_params::{ParamsKey, ParamsPane, ParamsState};
+use crate::script_shape::{
+    browse_lines, browse_section_height, rs2b0t_root_has_index, BrowseCard, BrowseLine,
+    ScriptClick, ScriptPane,
+};
 use crate::settings::{SettingsKey, SettingsPane, SettingsState};
 use crate::status::StatusPane;
 
@@ -35,9 +35,12 @@ use crate::status::StatusPane;
 const MAX_BROWSE_LINES: u16 = 14;
 
 fn default_catalog_browse_dir() -> std::path::PathBuf {
-    std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+    let home = script::bot_home();
+    if home.as_os_str() == "." {
+        std::path::PathBuf::from("/")
+    } else {
+        home
+    }
 }
 
 fn default_load_browse_dir(last: Option<&std::path::Path>) -> std::path::PathBuf {
@@ -471,11 +474,7 @@ impl TuiApp {
     }
 
     /// Route keys to the loadouts popup when it is open.
-    pub fn loadouts_on_key(
-        &mut self,
-        store: &mut script::LoadoutsStore,
-        key: KeyEvent,
-    ) -> bool {
+    pub fn loadouts_on_key(&mut self, store: &mut script::LoadoutsStore, key: KeyEvent) -> bool {
         if !self.loadouts_state.open {
             return false;
         }
@@ -715,11 +714,7 @@ impl TuiApp {
     /// (wrapping).
     fn move_script_sel(&mut self, step: i32) {
         let deferred = script::rs2b0t_import_deferred();
-        let lines = browse_lines(
-            &self.script_cards,
-            &self.script_category_order,
-            deferred,
-        );
+        let lines = browse_lines(&self.script_cards, &self.script_category_order, deferred);
         let card_indices: Vec<usize> = lines
             .iter()
             .filter_map(|l| match l {
@@ -734,9 +729,10 @@ impl TuiApp {
             .script_sel
             .as_ref()
             .and_then(|sel| match sel {
-                ScriptSel::Loaded(source, name) => self.script_cards.iter().position(|c| {
-                    c.source == *source && c.name == *name
-                }),
+                ScriptSel::Loaded(source, name) => self
+                    .script_cards
+                    .iter()
+                    .position(|c| c.source == *source && c.name == *name),
                 _ => None,
             })
             .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
@@ -832,10 +828,7 @@ impl TuiApp {
             ScriptClick::ImportCatalog => AppAction::ScriptImportCatalog,
             ScriptClick::Pick(idx) => {
                 if let Some(card) = self.script_cards.get(idx) {
-                    self.script_sel = Some(ScriptSel::Loaded(
-                        card.source,
-                        card.name.clone(),
-                    ));
+                    self.script_sel = Some(ScriptSel::Loaded(card.source, card.name.clone()));
                 }
                 AppAction::None
             }
@@ -844,13 +837,16 @@ impl TuiApp {
     }
 
     fn load_click(&mut self, col: u16, row: u16) -> AppAction {
-        let inner = Block::default().borders(Borders::ALL).inner(self.script_area);
+        let inner = Block::default()
+            .borders(Borders::ALL)
+            .inner(self.script_area);
         if row < inner.y + 2 {
             return AppAction::None;
         }
         let line = row - (inner.y + 2);
         let entries = self.load_entries();
-        if usize::from(line) == self.script_load_sel && entries.get(self.script_load_sel).is_some() {
+        if usize::from(line) == self.script_load_sel && entries.get(self.script_load_sel).is_some()
+        {
             self.script_load_sel = usize::from(line);
             return self.load_on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
@@ -862,7 +858,9 @@ impl TuiApp {
     }
 
     fn catalog_click(&mut self, col: u16, row: u16) -> AppAction {
-        let inner = Block::default().borders(Borders::ALL).inner(self.script_area);
+        let inner = Block::default()
+            .borders(Borders::ALL)
+            .inner(self.script_area);
         if row < inner.y + 2 {
             return AppAction::None;
         }
@@ -915,7 +913,12 @@ impl TuiApp {
             + catalog_h
             + load_h
             + u16::from(self.script_load_open && load_h == 0)
-            + u16::from(!self.params_schema.is_empty() && !self.script_browse_open && !self.rs2b0t_catalog_open && !self.script_load_open);
+            + u16::from(
+                !self.params_schema.is_empty()
+                    && !self.script_browse_open
+                    && !self.rs2b0t_catalog_open
+                    && !self.script_load_open,
+            );
         let chunks = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(8),
@@ -1102,9 +1105,7 @@ impl TuiApp {
 
     fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
         if self.script_load_open {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title("load script");
+            let block = Block::default().borders(Borders::ALL).title("load script");
             let inner = block.inner(area);
             block.render(area, frame.buffer_mut());
             let mut lines = vec![
@@ -1112,7 +1113,11 @@ impl TuiApp {
                 Line::from(self.script_load_dir.to_string_lossy().to_string()),
             ];
             for (i, entry) in self.load_entries().iter().enumerate() {
-                let mark = if i == self.script_load_sel { "> " } else { "  " };
+                let mark = if i == self.script_load_sel {
+                    "> "
+                } else {
+                    "  "
+                };
                 let label = match entry {
                     LoadEntry::Up => "[Up]".into(),
                     LoadEntry::Subdir(name) => format!("{name}/"),
@@ -1691,12 +1696,13 @@ mod tests {
     #[test]
     fn load_browser_has_no_free_text_path() {
         const APP: &str = include_str!("app.rs");
+        let prod = APP.split("#[cfg(test)]").next().unwrap();
         assert!(
-            !APP.contains("script_load_path: String"),
+            !prod.contains("script_load_path"),
             "Load must not keep a typed-path scratch buffer"
         );
         assert!(
-            APP.contains("script_load_dir"),
+            prod.contains("script_load_dir"),
             "Load must browse directories"
         );
     }
@@ -1705,17 +1711,11 @@ mod tests {
     /// produces `AppAction::ScriptLoad` with that path.
     #[test]
     fn load_browser_enter_returns_script_load() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-tui-load-browser-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-tui-load-browser-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let bot = dir.join("digbot.js");
-        std::fs::write(
-            &bot,
-            "export function tick(api) { globalThis.__rs_n = 1 }",
-        )
-        .unwrap();
+        std::fs::write(&bot, "export function tick(api) { globalThis.__rs_n = 1 }").unwrap();
 
         let mut app = TuiApp::new("274bot headless");
         app.script_load_dir = dir.clone();
@@ -1739,10 +1739,8 @@ mod tests {
     /// bool into the bag Start would post.
     #[test]
     fn script_params_click_and_space_toggle_persist_bool() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-tui-app-params-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-tui-app-params-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("script-settings.json");
         let mut store = script::ScriptSettingsStore::at(path);

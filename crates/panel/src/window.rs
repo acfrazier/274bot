@@ -1,11 +1,10 @@
-//! Panel-owned winit + wgpu + dear-imgui window loop (dear-app re-roll).
+//! Panel-owned winit + wgpu + dear-imgui window loop.
 //!
-//! Replaces `dear-app`'s scaffold: instance → window → surface →
-//! surface-compatible adapter → device/queue → surface config → imgui
-//! context (theme/ini) → platform + renderer, then a per-frame
-//! `prepare_frame` → UI body → `prepare_render_with_ui` → render pass →
-//! present cycle driven by an `ApplicationHandler` event loop. The
-//! window/GPU stack is rebuilt on render errors exactly like the original.
+//! Instance → window → surface → surface-compatible adapter → device/queue
+//! → surface config → imgui context (theme/ini) → platform + renderer,
+//! then a per-frame `prepare_frame` → UI body → `prepare_render_with_ui`
+//! → render pass → present cycle driven by an `ApplicationHandler` event
+//! loop. The window/GPU stack is rebuilt on render errors.
 
 use std::mem;
 use std::path::PathBuf;
@@ -25,7 +24,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-/// Panel window-loop error (dear-app `DearAppError` equivalent).
+/// Panel window-loop error.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PanelError {
@@ -75,7 +74,7 @@ pub struct ShotState {
     pub done: Vec<ShotCapture>,
 }
 
-/// Redraw behavior for the event loop (dear-app `RedrawMode` equivalent).
+/// Redraw behavior for the event loop.
 #[derive(Clone, Copy, Debug)]
 pub enum RedrawMode {
     /// Always redraw (ControlFlow::Poll)
@@ -94,7 +93,7 @@ pub enum Theme {
     Classic,
 }
 
-/// Docking configuration (dear-app `DockingConfig` equivalent).
+/// Docking configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct DockingConfig {
     /// Enable ImGui docking (sets `ConfigFlags::DOCKING_ENABLE`)
@@ -126,7 +125,7 @@ impl Default for DockingConfig {
     }
 }
 
-/// Panel runner configuration (dear-app `RunnerConfig` equivalent).
+/// Panel runner configuration.
 pub struct PanelConfig {
     pub window_title: String,
     pub window_size: (f64, f64),
@@ -162,9 +161,9 @@ impl Default for PanelConfig {
 }
 
 /// GPU access for the UI body: device/queue plus external-texture
-/// registration into the ImGui renderer's texture store (dear-app `GpuApi`
-/// equivalent). `device()`/`queue()` are the seam later tasks use; the
-/// texture-id calls delegate straight to the renderer.
+/// registration into the ImGui renderer's texture store.
+/// `device()`/`queue()` are the seam later tasks use; the texture-id
+/// calls delegate straight to the renderer.
 pub struct Gpu<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
@@ -358,10 +357,10 @@ impl AppWindow {
         // The rail draws U+2059 (⁙) and U+2717 (✗) as text, which the
         // default Latin-1 font cannot render: merge an embedded DejaVu
         // Sans so they rasterize. Fail loudly rather than draw '?' again.
-        let (quincunx, ballot_x, folds) = add_glyph_font(&mut context);
+        let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut context);
         assert!(
-            quincunx && ballot_x && folds,
-            "merged glyph font must cover U+2059, U+2717, U+2582, U+2585"
+            quincunx && ballot_x && folds && fa,
+            "merged glyph font must cover rail DejaVu and file-dialog FA codepoints"
         );
 
         let mut platform = imgui_winit::WinitPlatform::new(&mut context);
@@ -733,10 +732,21 @@ fn align_up(n: u32, align: u32) -> u32 {
 /// `U+2059` (⁙) and `U+2717` (✗) need a second font source.
 const GLYPH_FONT_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
 
+/// Font Awesome 6 Free Solid (SIL OFL). File-dialog chrome only; rail
+/// glyphs stay on DejaVu. Same `merge_mode` path as [`GLYPH_FONT_BYTES`].
+const FA_FONT_BYTES: &[u8] = include_bytes!("../assets/fa-solid-900.ttf");
+
 /// The two codepoints the rail draws beyond the default font's Latin-1,
 /// as a Dear ImGui `(start, end)` pair list: `U+2059` (status quincunx)
 /// and `U+2717` (remove), NUL-terminated.
 const GLYPH_FONT_RANGES: [u32; 7] = [0x2059, 0x2059, 0x2582, 0x2585, 0x2717, 0x2717, 0];
+
+/// FA PUA for Scripts file-dialog buttons (home, download, chevron,
+/// folder, file/file-lines, desktop). Tiny pairs, NUL-terminated.
+const FA_FONT_RANGES: [u32; 13] = [
+    0xf015, 0xf015, 0xf019, 0xf019, 0xf054, 0xf054, 0xf07b, 0xf07b, 0xf15b, 0xf15c, 0xf390, 0xf390,
+    0,
+];
 
 /// Merge the embedded DejaVu Sans into the atlas's default font so the
 /// rail's `U+2059` and `U+2717` glyphs rasterize (they render as `?` in
@@ -745,10 +755,10 @@ const GLYPH_FONT_RANGES: [u32; 7] = [0x2059, 0x2059, 0x2582, 0x2585, 0x2717, 0x2
 /// default font's reference size (`size_pixels: 0.0`; an explicit size
 /// would trip imgui's merge/implicit-reference-size assert). Returns the
 /// two codepoints' presence in the merged font; the unit test pins it.
-fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool) {
+fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool, bool) {
     let mut fonts = ctx.fonts();
     fonts.add_font_default(None);
-    let merged = fonts
+    let _dejavu = fonts
         .add_font_from_memory_ttf(
             GLYPH_FONT_BYTES,
             0.0,
@@ -760,11 +770,39 @@ fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool) {
             Some(&GLYPH_FONT_RANGES),
         )
         .expect("embedded DejaVu Sans is a valid TTF");
+    let merged = fonts
+        .add_font_from_memory_ttf(
+            FA_FONT_BYTES,
+            0.0,
+            Some(
+                &imgui::FontConfig::new()
+                    .merge_mode(true)
+                    .name("fa-solid (file-dialog glyphs)"),
+            ),
+            Some(&FA_FONT_RANGES),
+        )
+        .expect("embedded Font Awesome Free Solid is a valid TTF");
+    let fa = fa_dialog_glyphs_in(&merged);
     (
         merged.is_glyph_in_font('\u{2059}'),
         merged.is_glyph_in_font('\u{2717}'),
         merged.is_glyph_in_font('\u{2582}') && merged.is_glyph_in_font('\u{2585}'),
+        fa,
     )
+}
+
+fn fa_dialog_glyphs_in(font: &imgui::Font) -> bool {
+    [
+        crate::script_picker::GLYPH_HOME,
+        crate::script_picker::GLYPH_DESKTOP,
+        crate::script_picker::GLYPH_DOCUMENTS,
+        crate::script_picker::GLYPH_DOWNLOADS,
+        crate::script_picker::GLYPH_FOLDER,
+        crate::script_picker::GLYPH_FILE,
+        crate::script_picker::GLYPH_CHEVRON,
+    ]
+    .into_iter()
+    .all(|s| s.chars().all(|c| font.is_glyph_in_font(c)))
 }
 
 /// Lifecycle callbacks: style tweak after the theme, and the GPU-init hook
@@ -1095,10 +1133,10 @@ mod tests {
         );
     }
 
-    /// Docking defaults mirror dear-app's: passthru central node, no-chrome
-    /// host window. `app::runner_config` overrides both.
+    /// Docking defaults: passthru central node, no-chrome host window.
+    /// `app::runner_config` overrides both.
     #[test]
-    fn docking_config_defaults_match_dear_app() {
+    fn docking_config_defaults_passthru_no_chrome() {
         let d = DockingConfig::default();
         assert!(d.enable);
         assert!(d.auto_dockspace);
@@ -1143,12 +1181,16 @@ mod tests {
     fn glyph_font_merges_status_and_remove_codepoints() {
         let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = imgui::Context::create();
-        let (quincunx, ballot_x, folds) = add_glyph_font(&mut ctx);
+        let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut ctx);
         assert!(
             quincunx,
             "U+2059 (status dot) must resolve in the merged font"
         );
         assert!(ballot_x, "U+2717 (remove) must resolve in the merged font");
         assert!(folds, "U+2582/U+2585 (fold/unfold) must resolve");
+        assert!(
+            fa,
+            "FA Free Solid PUA (home/desktop/docs/downloads/folder/file/chevron) must resolve"
+        );
     }
 }

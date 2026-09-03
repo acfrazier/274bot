@@ -50,10 +50,7 @@ pub struct JsCache {
 
 /// Default operator cache root (`~/.274bot/js-cache`).
 pub fn default_js_cache_root() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/js-cache")),
-        Err(_) => PathBuf::from(".274bot/js-cache"),
-    }
+    crate::bot_file("js-cache")
 }
 
 impl JsCache {
@@ -67,6 +64,16 @@ impl JsCache {
 
     pub fn object_path(&self, sha256: &str) -> PathBuf {
         self.root.join("objects").join(format!("{sha256}.js"))
+    }
+
+    /// SHA-256 of origin bytes (the cache key). Does not read or write.
+    pub fn origin_sha(bytes: &[u8]) -> String {
+        hex_sha256(bytes)
+    }
+
+    /// True when `objects/<sha>.js` already exists for these origin bytes.
+    pub fn is_cached(&self, bytes: &[u8]) -> bool {
+        self.object_path(&hex_sha256(bytes)).is_file()
     }
 
     fn manifest_path(&self) -> PathBuf {
@@ -120,7 +127,10 @@ impl JsCache {
     }
 
     fn ensure_layout(&self) -> Result<(), String> {
-        let marker = self.root.join("objects").join(".keep");
+        let objects = self.root.join("objects");
+        std::fs::create_dir_all(&objects)
+            .map_err(|e| format!("cache layout {}: {e}", self.root.display()))?;
+        let marker = objects.join(".keep");
         if !marker.exists() {
             vault::write_private_file(&marker, b"")
                 .map_err(|e| format!("cache layout {}: {e}", self.root.display()))?;
@@ -137,8 +147,8 @@ impl JsCache {
     }
 
     fn write_manifest(&self, manifest: &Manifest) -> Result<(), String> {
-        let json = serde_json::to_string_pretty(manifest)
-            .map_err(|e| format!("manifest.json: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(manifest).map_err(|e| format!("manifest.json: {e}"))?;
         vault::write_private_file(&self.manifest_path(), json.as_bytes())
             .map_err(|e| format!("manifest.json: {e}"))
     }

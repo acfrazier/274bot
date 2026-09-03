@@ -6,20 +6,35 @@ pub const RAIL_W: f32 = 264.0;
 /// Cap-body tile draw size inside the rail (rs2b0t ~236×155).
 pub const TILE_W: f32 = 236.0;
 pub const TILE_H: f32 = 155.0;
-/// Default OS window without the rail (game + 330 chrome). First open
-/// only — we do not snap the window back to this on MultiBox toggles.
+/// Default OS window without the rail (game + 330 chrome).
 pub const BASE_WINDOW_W: f32 = 1120.0;
 /// Default OS window height.
 pub const BASE_WINDOW_H: f32 = 580.0;
 
 /// Minimum inner size so the native 765×503 blit is not covered by the
-/// 330px panel (and the 264px rail when open). Growing to this is OK;
-/// shrinking a larger window is not.
+/// 330px panel (and the 264px rail when open).
 pub fn os_window_size(rail_open: bool) -> (f32, f32) {
     (
         BASE_WINDOW_W + if rail_open { RAIL_W } else { 0.0 },
         BASE_WINDOW_H,
     )
+}
+
+/// Next OS inner size when the rail opens or closes. Opening grows to
+/// at least the rail-open minimum. Closing subtracts [`RAIL_W`] (the
+/// MultiBox strip on the 274bot panel) and never goes below the
+/// closed minimum — a window the operator stretched keeps the extra.
+pub fn next_os_window_size(
+    current: (f32, f32),
+    rail_was_open: bool,
+    rail_open: bool,
+) -> (f32, f32) {
+    let (need_w, need_h) = os_window_size(rail_open);
+    if rail_was_open && !rail_open {
+        ((current.0 - RAIL_W).max(need_w), current.1.max(need_h))
+    } else {
+        (current.0.max(need_w), current.1.max(need_h))
+    }
 }
 
 /// Rail split so the sidecar stays [`RAIL_W`] px at `window_w`.
@@ -158,6 +173,33 @@ mod tests {
         );
         let r = rail_split_ratio(2000.0);
         assert!((r * 2000.0 - RAIL_W).abs() < 0.01);
+    }
+
+    #[test]
+    fn next_os_window_size_shrinks_when_the_rail_closes() {
+        let base = os_window_size(false);
+        let rail = os_window_size(true);
+        assert_eq!(
+            super::next_os_window_size(base, false, true),
+            rail,
+            "MultiBox on grows by the strip"
+        );
+        assert_eq!(
+            super::next_os_window_size(rail, true, false),
+            base,
+            "MultiBox off on the 274bot panel re-shrinks by the strip"
+        );
+        let stretched = (rail.0 + 80.0, rail.1);
+        assert_eq!(
+            super::next_os_window_size(stretched, true, false),
+            (base.0 + 80.0, base.1),
+            "an operator-stretched window keeps the extra after the strip closes"
+        );
+        assert_eq!(
+            super::next_os_window_size(stretched, false, false),
+            stretched,
+            "already-closed must not keep subtracting RAIL_W every frame"
+        );
     }
 
     #[test]

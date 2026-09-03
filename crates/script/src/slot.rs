@@ -362,9 +362,11 @@ impl SlotScript {
             Some(isolate) => isolate.drain_logs(),
             None => Vec::new(),
         };
-        if let Some(err) = logs.iter().rev().find(|l| {
-            l.starts_with("tick ") || l.contains("script requested stop")
-        }) {
+        if let Some(err) = logs
+            .iter()
+            .rev()
+            .find(|l| l.starts_with("tick ") || l.contains("script requested stop"))
+        {
             self.last_error = Some(err.clone());
         }
         self.pending_logs.extend(logs.iter().cloned());

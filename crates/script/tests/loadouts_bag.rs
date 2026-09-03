@@ -19,18 +19,18 @@ fn settings_str_returns_selected_loadout_name() {
     iso.post_settings_bag(&bag);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("loadout probe readable");
-    assert_eq!(value, "melee", "str reads posted loadout name, not fallback");
+    assert_eq!(
+        value, "melee",
+        "str reads posted loadout name, not fallback"
+    );
     iso.join();
 }
 
 #[test]
 fn loadout_combo_resolves_from_store_names_in_script_crate() {
-    use script::{Loadout, LoadoutsStore, resolve_setting_options};
+    use script::{resolve_setting_options, Loadout, LoadoutsStore};
 
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-loadouts-combo-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("274bot-loadouts-combo-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("loadouts.json");
     let mut store = LoadoutsStore::at(path);

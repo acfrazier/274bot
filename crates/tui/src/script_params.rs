@@ -5,7 +5,10 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use script::{resolve_setting_options, setting_visible, LoadoutsStore, ScriptSettingsStore, ScriptSource, SettingDef};
+use script::{
+    resolve_setting_options, setting_visible, LoadoutsStore, ScriptSettingsStore, ScriptSource,
+    SettingDef,
+};
 
 /// Mutable params-pane state: whether the form is open and the cursor row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -71,8 +74,7 @@ impl<'a> ParamsPane<'a> {
                             .and_then(|v| v.as_bool())
                             .unwrap_or_else(|| def.default.as_deref() == Some("true"));
                         let next = !cur;
-                        self.store
-                            .set_bool(self.source, self.name, &def.id, next);
+                        self.store.set_bool(self.source, self.name, &def.id, next);
                         let _ = self.store.save();
                         self.bag.insert(def.id.clone(), serde_json::json!(next));
                         return ParamsKey::Toggle;
@@ -91,8 +93,7 @@ impl<'a> ParamsPane<'a> {
                             .position(|o| o == &cur)
                             .map(|i| opts[(i + 1) % opts.len()].clone())
                             .unwrap_or_else(|| opts[0].clone());
-                        self.store
-                            .set_str(self.source, self.name, &def.id, &next);
+                        self.store.set_str(self.source, self.name, &def.id, &next);
                         let _ = self.store.save();
                         self.bag.insert(def.id.clone(), serde_json::json!(next));
                         return ParamsKey::Toggle;
@@ -172,10 +173,8 @@ mod tests {
 
     #[test]
     fn params_pane_space_toggles_a_bool_param() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-tui-params-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-tui-params-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("script-settings.json");
         let mut store = ScriptSettingsStore::at(path);
@@ -202,10 +201,8 @@ mod tests {
 
     #[test]
     fn params_pane_space_cycles_loadout_combo_from_store() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-tui-loadout-combo-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-tui-loadout-combo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let settings_path = dir.join("script-settings.json");
         let loadouts_path = dir.join("loadouts.json");
