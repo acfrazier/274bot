@@ -35,8 +35,8 @@ pub use rs2b0t_registry::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
     parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
     rs2b0t_import_deferred, rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at,
-    script_file_path, set_rs2b0t_import_deferred_at, RegistryCard, ScriptKind, ScriptSource,
-    SettingDef,
+    script_file_path, set_rs2b0t_import_deferred_at, settings_schema_from_source, RegistryCard,
+    ScriptKind, ScriptSource, SettingDef,
 };
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,

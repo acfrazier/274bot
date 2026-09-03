@@ -130,6 +130,14 @@ impl JsCache {
         let objects = self.root.join("objects");
         std::fs::create_dir_all(&objects)
             .map_err(|e| format!("cache layout {}: {e}", self.root.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for dir in [&self.root, &objects] {
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|e| format!("cache mode {}: {e}", dir.display()))?;
+            }
+        }
         let marker = objects.join(".keep");
         if !marker.exists() {
             vault::write_private_file(&marker, b"")

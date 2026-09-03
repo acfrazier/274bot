@@ -34,9 +34,7 @@ export const Bank = new Proxy(
                 name: row?.name ?? null,
                 count: row?.count ?? 0,
                 id: row?.id ?? 0,
-                ops: Array.isArray(row?.ops) && row.ops.length > 0
-                    ? row.ops
-                    : ['Withdraw-1', 'Withdraw-5', 'Withdraw-10', 'Withdraw All'],
+                ops: Array.isArray(row?.ops) ? row.ops.slice() : [],
                 noted: row?.noted === true,
                 cert: row?.cert ?? -1,
             }));
@@ -126,19 +124,11 @@ export const Bank = new Proxy(
             queue({ op: 'withdraw', name: row.name, action });
             return true;
         },
-        async withdrawX(name, count) {
-            if (count <= 0) {
-                return true;
-            }
-            Bank.withdraw(name, count >= 10 ? 10 : 1);
-            return Execution.delayUntil(() => Bank.count(name) >= count, 3000);
+        withdrawX(_name, _count) {
+            throw notV1('Bank.withdrawX');
         },
-        async withdrawXById(id, count, _landsAsId = id) {
-            const row = (snap().bank || []).find((r) => r && r.id === id);
-            if (!row?.name) {
-                return false;
-            }
-            return Bank.withdrawX(row.name, count);
+        withdrawXById(_id, _count, _landsAsId) {
+            throw notV1('Bank.withdrawX');
         },
         // Thin names onto the host's nearest Use-quickly loc (same plane).
         // Extra rs2b0t args (stand / boothName / op / log) are ignored.

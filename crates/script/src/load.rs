@@ -178,6 +178,7 @@ impl JsLibrary {
                 Ok(c) => c,
                 Err(_) => continue,
             };
+            let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
             self.cards.push(JsCard {
                 name: entry.name,
                 path,
@@ -190,16 +191,17 @@ impl JsLibrary {
                 description: String::new(),
                 category: String::new(),
                 tags: Vec::new(),
-                settings_schema: Vec::new(),
+                settings_schema,
             });
         }
         Ok(())
     }
 
     /// Register a JS bot from a filesystem path. Reads the origin, caches
-    /// transpiled JS under `~/.274bot/js-cache`, validates in a throwaway
-    /// Runtime, then registers and persists. A second load with the same
-    /// `(ScriptSource::File, name)` replaces the previous card.
+    /// transpiled JS under `~/.274bot/js-cache`, and statically parses
+    /// `export const SETTINGS` for the picker schema. V8 only runs on
+    /// Start. A second load with the same `(ScriptSource::File, name)`
+    /// replaces the previous card.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
         let origin =
             std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
@@ -228,10 +230,7 @@ impl JsLibrary {
                 },
             )
             .map_err(|e| format!("{name}: {e}"))?;
-        #[cfg(feature = "load")]
-        {
-            isolate::validate_compiles(&cached.js, shape).map_err(|e| format!("{name}: {e}"))?;
-        }
+        let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
         let card = JsCard {
             name,
             path: path.to_path_buf(),
@@ -244,7 +243,7 @@ impl JsLibrary {
             description: String::new(),
             category: String::new(),
             tags: Vec::new(),
-            settings_schema: Vec::new(),
+            settings_schema,
         };
         let new_cards: Vec<JsCard> = self
             .cards
@@ -1024,21 +1023,6 @@ mod isolate {
         Ok(())
     }
 
-    /// Validate a source in a throwaway Runtime, dropped before `load()`
-    /// returns.
-    pub(crate) fn validate_compiles(source: &str, shape: LoadShape) -> Result<(), String> {
-        ensure_platform();
-        let mut runtime = Runtime::new(RuntimeOptions {
-            timeout: Duration::from_secs(2),
-            max_heap_size: Some(MAX_HEAP),
-            ..Default::default()
-        })
-        .map_err(|e| format!("js engine init: {e}"))?;
-        let result = wire_runtime(&mut runtime, source, shape, &[]);
-        drop(runtime); // compile Runtime must not outlive load()
-        result
-    }
-
     /// Native wrapper: re-export the module's `tick` behind a global that
     /// receives the tick number and a persistent `api` object. `api` is a
     /// Proxy: the host owns it (`api.tick` is set each tick); reading or
@@ -1187,6 +1171,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         if snap.has_inv_size() {
             let inv_size = num(&mut scope, snap.inv_size() as f64);
             set(&mut scope, host, "invSize", inv_size)?;
+            set(&mut scope, obj, "inv_size", inv_size)?;
         }
         if snap.has_ingame() {
             let ingame = v8::Boolean::new(&mut scope, snap.ingame());

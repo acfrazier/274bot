@@ -284,15 +284,17 @@ not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
 **Script** Browse / Start / Pause / Stop are wired ([script.md](script.md)).
-Load is enabled except while a script is active. Parameters **Edit** stays
-disabled (`not in v1`); uncollapse shows schema defaults (empty until a
-port fills them). **Nav config** is live (debug paints / labels / FindOptions
+Load is enabled except while a script is active. Parameters **Edit** is
+live for a loaded card with a settings schema (typed editors honour
+`showIf` / `group`; File Load parses `export const SETTINGS` with no V8).
+Uncollapse shows merged rows, or `(no parameters)` when the schema is
+empty. **Nav config** is live (debug paints / labels / FindOptions
 toggles) as its own non-blocking window. **General config** (under WalkTo, above profile)
 is **slot** (capture, auto-login on title), **render** (none/GPU/CPU;
 click the lowmem/highmem button for a sticky picker like Teles), and
 **global** (sidecar 50 / only-render-selected).
-**Loadouts** stays mocked until the TS
-shim. Text and buttons wrap or equal-width-squish — **no horizontal
+**Loadouts** is a live window (CRUD presets; `optionsFrom: 'loadouts'`
+combos in Parameters). Text and buttons wrap or equal-width-squish — **no horizontal
 scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
 is a live toggle), dim **build line** (`alpha 1 ·` git short SHA,

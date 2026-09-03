@@ -105,13 +105,24 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn chicken_killer_shaped_settings_validate_compiles() {
+fn file_load_parses_export_settings_without_a_throwaway_runtime() {
     let dir = temp_dir("chicken-shaped");
     let path = dir.join("ChickenShaped.ts");
     std::fs::write(&path, CHICKEN_SHAPED).unwrap();
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.load(&path)
-        .expect("ChickenKiller-shaped SETTINGS must compile in the shim isolate");
+    let card = lib
+        .load(&path)
+        .expect("ChickenKiller-shaped SETTINGS is origin parse, not a V8 compile");
+    assert!(
+        card.settings_schema.iter().any(|d| d.id == "meleeStyle"),
+        "File Load must parse export const SETTINGS: {:?}",
+        card.settings_schema
+    );
+    assert!(
+        card.settings_schema.iter().any(|d| d.id == "spell"),
+        "spell field must survive identifier-valued sibling keys: {:?}",
+        card.settings_schema
+    );
 }
 
 #[test]

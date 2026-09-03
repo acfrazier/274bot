@@ -43,12 +43,12 @@ export const reader = proxy('reader', {
         };
     },
     chatContinueComId() {
-        return snap().chat_continue === true ? 1 : -1;
+        throw notV1('reader.chatContinueComId');
     },
     chatOptions() {
-        return (snap().chat_options || []).map((o, i) => ({
+        return (snap().chat_options || []).map((o) => ({
             text: o.text,
-            comId: i + 1,
+            comId: typeof o.comId === 'number' ? o.comId : -1,
         }));
     },
     chatModalTexts() {
@@ -112,7 +112,7 @@ export const reader = proxy('reader', {
         return row ? row.component_id : -1;
     },
     bankComId() {
-        return snap().bank_open === true ? 1 : -1;
+        throw notV1('reader.bankComId');
     },
     makeProducts() {
         return (snap().make_products || []).map((p) => ({

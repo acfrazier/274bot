@@ -115,6 +115,7 @@ struct PanelState {
     dock_layout: Option<DockLayout>,
     game_dock_node: Option<Id>,
     panel_dock_node: Option<Id>,
+    rail_dock_node: Option<Id>,
     docked_game_title: String,
     last_upload: Option<(String, u64)>,
     /// Cached queue-card overlay for the focused slot (see `overlay`).
@@ -457,6 +458,7 @@ impl Default for PanelState {
             dock_layout: None,
             game_dock_node: None,
             panel_dock_node: None,
+            rail_dock_node: None,
             docked_game_title: String::new(),
             last_upload: None,
             overlay: PathOverlay::new(),
@@ -965,6 +967,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         DockBuilder::dock_window(ui, game_title, left);
                         state.game_dock_node = Some(left);
                         state.panel_dock_node = Some(right);
+                        state.rail_dock_node = None;
                     }
                     DockLayout::Rail => {
                         let rail_ratio = rail_split_ratio(size[0]);
@@ -978,6 +981,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         DockBuilder::dock_window(ui, game_title, game);
                         state.game_dock_node = Some(game);
                         state.panel_dock_node = Some(panel);
+                        state.rail_dock_node = Some(rail);
                     }
                 }
                 DockBuilder::finish(ui, dock_id);
@@ -2662,7 +2666,7 @@ fn params_edit_window(ui: &Ui, session: &mut Session) {
 }
 
 /// Under WalkTo, above profile: per-slot renderer/mem, nav paints,
-/// Loadouts (mocked until the TS shim). Wraps so "General config" is not clipped.
+/// Loadouts. Wraps so "General config" is not clipped.
 fn slot_config_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = button_cells_min(avail, CONFIG_ROW.len(), CONFIG_MIN);
@@ -3465,20 +3469,36 @@ pub fn chooser_should_open_popup(want: bool, prev: bool) -> (bool, bool) {
     (want && !prev, want)
 }
 
+/// Profiles spawn: MultiBox rail when that node exists, else the 274bot
+/// panel. Never the Game split — a floating `ALWAYS_AUTO_RESIZE` dialog
+/// with no dock id lands there and imgui.ini keeps it.
+fn chooser_dock_id(rail: Option<Id>, panel: Option<Id>) -> Option<Id> {
+    rail.or(panel)
+}
+
 /// Profile picker (single-bot and MultiBox). Click a row to focus it
 /// (and load onto the wall while MultiBox is on); Edit opens user/pass;
 /// ✕ deletes the vault row only. Load all is MultiBox-only.
-fn chooser_window(ui: &Ui, session: &mut Session) {
+fn chooser_window(ui: &Ui, session: &mut Session, rail_dock: Option<Id>, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         return;
     }
     let mut open = true;
+    if rail_dock.is_some() {
+        ui.set_next_window_class(&rail_window_class());
+    } else {
+        ui.set_next_window_class(&panel_window_class());
+    }
+    if let Some(id) = chooser_dock_id(rail_dock, panel_dock) {
+        ui.set_next_window_dock_id_with_cond(id, Condition::Appearing);
+    }
     ui.window("Profiles")
         .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints([DIALOG_W, 120.0], [DIALOG_W, 720.0])
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([RAIL_W, 480.0], Condition::FirstUseEver)
+        .size_constraints([200.0, 80.0], [f32::MAX, 720.0])
         .build(|| {
-            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            let _wrap = ui.push_text_wrap_pos(0.0);
             let names: Vec<String> = session
                 .vault
                 .as_ref()
@@ -3929,7 +3949,12 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
     // Every frame, not only while open: the prev latches must track
     // the close so the next open is a fresh rising edge.
-    chooser_window(ui, &mut state.session);
+    chooser_window(
+        ui,
+        &mut state.session,
+        state.rail_dock_node,
+        state.panel_dock_node,
+    );
     settings_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
     load_window(ui, &mut state.session);
@@ -3943,7 +3968,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
-    use dear_imgui_rs::{ConfigFlags, Key, WindowFlags};
+    use dear_imgui_rs::{ConfigFlags, Id, Key, WindowFlags};
 
     use super::{
         apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_for,
@@ -4234,6 +4259,48 @@ mod tests {
         assert!(
             frame.contains("rail_window_class"),
             "rail must not reuse the Game class that AUTO_HIDEs the tab bar"
+        );
+    }
+
+    #[test]
+    fn chooser_docks_to_rail_else_panel_never_game() {
+        let rail = Id::from(10u32);
+        let panel = Id::from(20u32);
+        assert_eq!(
+            super::chooser_dock_id(Some(rail), Some(panel)),
+            Some(rail),
+            "MultiBox rail is the Profiles spawn"
+        );
+        assert_eq!(
+            super::chooser_dock_id(None, Some(panel)),
+            Some(panel),
+            "single-bot Profiles is a 274bot tab"
+        );
+        assert_eq!(super::chooser_dock_id(None, None), None);
+        const SRC: &str = include_str!("app.rs");
+        let chooser = SRC
+            .split("fn chooser_window")
+            .nth(1)
+            .unwrap_or("")
+            .split("fn settings_window")
+            .next()
+            .unwrap_or("");
+        assert!(
+            chooser.contains("set_next_window_dock_id"),
+            "without a dock id Profiles floats onto Game and sticks"
+        );
+        assert!(
+            !chooser.contains("ALWAYS_AUTO_RESIZE"),
+            "AUTO_RESIZE fights the dock node and keeps a floating 400px dialog"
+        );
+        assert!(
+            chooser.contains("Appearing"),
+            "FirstUseEver remembers a Game dock from imgui.ini"
+        );
+        let host = SRC.split("fn dock_host").nth(1).unwrap_or("");
+        assert!(
+            host.contains("rail_dock_node"),
+            "DockBuilder must keep the rail node id for Profiles"
         );
     }
 

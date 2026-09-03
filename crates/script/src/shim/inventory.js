@@ -2,15 +2,14 @@
 // ops on `__rs2b0t_host.interact`. Missing members throw `not v1`.
 import { snap, notV1, queue, proxy } from '../../shim/_kernel.js';
 
-const BACKPACK_CAPACITY = 28;
-
 function rows() {
     return snap().inv || [];
 }
 
 function capacity() {
-    const size = typeof snap().inv_size === 'number' ? snap().inv_size : 0;
-    return size > 0 ? size : BACKPACK_CAPACITY;
+    const h = globalThis.__rs2b0t_host || {};
+    if (typeof h.invSize === 'number') return h.invSize;
+    return typeof snap().inv_size === 'number' ? snap().inv_size : 0;
 }
 
 function useOnKind(target) {

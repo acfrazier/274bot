@@ -71,6 +71,7 @@ impl IsolatedEnv {
     pub fn ensure_thread() {
         THREAD_PIN.with(|pin| {
             if pin.borrow().is_some() {
+                restore_thread_pin();
                 return;
             }
             let n = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -126,8 +127,27 @@ impl Drop for IsolatedEnv {
     fn drop(&mut self) {
         HOME_OVERRIDE.with(|c| *c.borrow_mut() = self.prev_home.clone());
         RS2B0T_OVERRIDE.with(|c| *c.borrow_mut() = self.prev_rs2b0t.clone());
+        restore_thread_pin();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+fn restore_thread_pin() {
+    THREAD_PIN.with(|pin| {
+        let Some(home) = pin.borrow().clone() else {
+            return;
+        };
+        HOME_OVERRIDE.with(|c| {
+            if c.borrow().is_none() {
+                *c.borrow_mut() = Some(home);
+            }
+        });
+        RS2B0T_OVERRIDE.with(|c| {
+            if c.borrow().is_none() {
+                *c.borrow_mut() = Some(Rs2b0tOverride::Cleared);
+            }
+        });
+    });
 }
 
 #[cfg(test)]
@@ -202,5 +222,43 @@ mod tests {
             "ensure_thread must not inherit $RS2B0T"
         );
         assert!(home.ends_with("home"));
+    }
+
+    #[test]
+    fn ensure_thread_survives_isolated_env_drop() {
+        IsolatedEnv::ensure_thread();
+        let pinned = bot_home();
+        {
+            let _iso = IsolatedEnv::enter("after-pin");
+            IsolatedEnv::ensure_thread();
+            assert_ne!(bot_home(), pinned);
+        }
+        IsolatedEnv::ensure_thread();
+        assert_eq!(
+            bot_home(),
+            pinned,
+            "Session::new on a reused cargo thread must not fall through to operator HOME"
+        );
+        if let Ok(op) = std::env::var("HOME") {
+            assert_ne!(bot_home(), Path::new(&op));
+        }
+        assert!(rs2b0t_env().is_none());
+    }
+
+    #[test]
+    fn enter_then_ensure_thread_drop_keeps_the_thread_pin() {
+        {
+            let _iso = IsolatedEnv::enter("before-pin");
+            IsolatedEnv::ensure_thread();
+        }
+        IsolatedEnv::ensure_thread();
+        if let Ok(op) = std::env::var("HOME") {
+            assert_ne!(
+                bot_home(),
+                Path::new(&op),
+                "IsolatedEnv drop must not clear ensure_thread's pin"
+            );
+        }
+        assert!(rs2b0t_env().is_none());
     }
 }

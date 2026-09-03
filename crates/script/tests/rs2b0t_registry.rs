@@ -442,6 +442,58 @@ export const ALCHER_SETTINGS = {
 }
 
 #[test]
+fn parse_registry_identifier_valued_setting_inlines_export_const() {
+    let index = r#"
+import Thiever, { SETTINGS } from './ThievingBot/ThievingBot.js';
+
+ScriptRegistry.register({
+    name: 'Thiever',
+    settingsSchema: SETTINGS,
+    create: () => new Thiever()
+});
+"#;
+    let thiever_ts = r#"
+import { LOADOUT_SETTING } from '../../api/loadout/loadoutSetting.js';
+
+export const SETTINGS = {
+    target: {
+        type: 'string',
+        default: 'Man',
+        label: 'Target',
+    },
+    loadout: LOADOUT_SETTING,
+    eatAt: {
+        type: 'number',
+        default: 10,
+        label: 'Eat at',
+    },
+};
+"#;
+    let mut sources = HashMap::new();
+    sources.insert(
+        "./ThievingBot/ThievingBot.js".to_string(),
+        thiever_ts.to_string(),
+    );
+    let cards = script::parse_registry_with_sources(index, &sources).expect("thiever parses");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(
+        cards[0].settings_schema.len(),
+        3,
+        "LOADOUT_SETTING must not abort the object walk"
+    );
+    assert_eq!(cards[0].settings_schema[0].id, "target");
+    let loadout = &cards[0].settings_schema[1];
+    assert_eq!(loadout.id, "loadout");
+    assert_eq!(loadout.ty, "string");
+    assert_eq!(
+        loadout.options_from.as_deref(),
+        Some("loadouts"),
+        "quoted optionsFrom on the inlined const"
+    );
+    assert_eq!(cards[0].settings_schema[2].id, "eatAt");
+}
+
+#[test]
 fn register_rs2b0t_skips_cards_whose_path_escapes_catalog() {
     let dir = scratch("rs2b0t_escape");
     let root = dir.join("rs2b0t");

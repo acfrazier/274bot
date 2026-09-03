@@ -1574,6 +1574,117 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_inventory_is_full_uses_posted_inv_size_not_twenty_eight() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            full: Inventory.isFull(),
+            free: Inventory.free(),
+            used: Inventory.used(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let inv = [nc(Some("Bones"), 5)];
+    snap.inv = &inv;
+    snap.inv_size = 0;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({"full": false, "free": 0, "used": 1}),
+        "inv_size 0 is tutorial-locked, not a fabricated 28-slot pack"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_reader_does_not_invent_chat_or_bank_component_ids() {
+    let src = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        try { reader.chatContinueComId(); } catch (e) { this.log(String(e)); }
+        try { reader.bankComId(); } catch (e) { this.log(String(e)); }
+        this.log('opt:' + JSON.stringify(reader.chatOptions()));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.chat_continue = true;
+    snap.bank_open = true;
+    let opts = [script::isolate_fb::ChatOptionInput { text: "Yes" }];
+    snap.chat_options = &opts;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("chatContinueComId")),
+        "chat continue has no posted comId: {logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("bankComId")),
+        "bank open is not component id 1: {logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("opt:") && l.contains("\"comId\":-1")),
+        "chat option text-only rows must not invent i+1: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_chat_dialog_make_x_clicks_posted_button_not_adjacent() {
+    let src = r#"
+import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+export default class T extends LoopingBot {
+    async loop() {
+        await ChatDialog.makeX('Cannonball', 27);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let buttons = [script::isolate_fb::MakeButtonInput {
+        qty: -1,
+        com_id: 42,
+    }];
+    let products = [script::isolate_fb::MakeProductInput {
+        object_id: 2,
+        name: "Cannonball",
+        buttons: &buttons,
+    }];
+    snap.make_products = &products;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let reqs = iso.drain_interacts();
+    assert_eq!(
+        reqs.iter()
+            .filter(|r| matches!(r, script::shim::InteractReq::IfButton { .. }))
+            .count(),
+        1,
+        "makeX must not invent comId+1: {reqs:?}"
+    );
+    assert!(
+        reqs.iter()
+            .any(|r| matches!(r, script::shim::InteractReq::IfButton { component_id: 42 })),
+        "makeX clicks the posted qty button: {reqs:?}"
+    );
+    iso.join();
+}
+
 // The live BoneBurier gold probe: when `$RS2B0T` points at a real rs2b0t
 // checkout, load the actual BoneBurier card and drive it against a
 // seeded snapshot (Bones in the inv, inv tab bound, Prayer stats). The
@@ -1802,6 +1913,43 @@ export default class T extends LoopingBot {
             },
         ],
         "depositAllMatching queues one Deposit-All per row; withdraw maps name + op"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_items_do_not_invent_ops_and_withdraw_x_throws() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        this.log('ops:' + JSON.stringify(Bank.items()[0].ops));
+        Bank.withdrawX('Bones', 25);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let bank = [nc(Some("Bones"), 40)];
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("ops:[]")),
+        "empty posted ops must stay empty, not a fabricated withdraw menu: {logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not v1") && l.contains("Bank.withdrawX")),
+        "withdrawX without a host X-amount op must throw not v1: {logs:?}"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "withdrawX must not paper a Withdraw-10"
     );
     iso.join();
 }

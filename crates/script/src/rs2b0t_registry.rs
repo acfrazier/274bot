@@ -619,6 +619,13 @@ fn scan_new_after(block: &str, key: &str) -> Option<String> {
     None
 }
 
+/// File-Load SETTINGS: static `export const SETTINGS = { … }` parse.
+/// No V8. Identifier-valued fields that the scanner cannot inline stay
+/// empty rather than aborting the walk.
+pub fn settings_schema_from_source(src: &str) -> Vec<SettingDef> {
+    parse_settings_export(src, "SETTINGS")
+}
+
 /// Parse `export const NAME = { … }` into setting definitions.
 fn parse_settings_export(file_src: &str, export_name: &str) -> Vec<SettingDef> {
     let needle = format!("export const {export_name}");
@@ -634,10 +641,40 @@ fn parse_settings_export(file_src: &str, export_name: &str) -> Vec<SettingDef> {
     let Some(obj_end) = find_matching_bracket(after, '{', '}') else {
         return Vec::new();
     };
-    parse_settings_object(&after[..=obj_end])
+    parse_settings_object(&after[..=obj_end], file_src)
 }
 
-fn parse_settings_object(obj: &str) -> Vec<SettingDef> {
+fn setting_object_body(file_src: &str, export_name: &str) -> Option<String> {
+    let needle = format!("export const {export_name}");
+    let idx = file_src.find(&needle)?;
+    let after = file_src[idx + needle.len()..].trim_start();
+    let after = after.strip_prefix('=')?.trim_start();
+    let obj_end = find_matching_bracket(after, '{', '}')?;
+    Some(after[..=obj_end].to_string())
+}
+
+fn take_ident(s: &str) -> Option<(&str, &str)> {
+    let n = s
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+        .count();
+    if n == 0 {
+        None
+    } else {
+        Some((&s[..n], &s[n..]))
+    }
+}
+
+/// Name-map only: inlined `export const` in the same file, or the host's
+/// `LOADOUT_SETTING` shim. Do not evaluate TypeScript identifiers.
+fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
+    if ident == "LOADOUT_SETTING" {
+        return setting_object_body(include_str!("shim/loadout_setting.js"), "LOADOUT_SETTING");
+    }
+    setting_object_body(file_src, ident)
+}
+
+fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
     let inner = obj.trim();
     let inner = inner.strip_prefix('{').unwrap_or(inner);
     let inner = inner.strip_suffix('}').unwrap_or(inner);
@@ -659,11 +696,20 @@ fn parse_settings_object(obj: &str) -> Vec<SettingDef> {
             break;
         }
         let after_colon = rest[colon + 1..].trim_start();
-        let Some(end) = find_matching_bracket(after_colon, '{', '}') else {
+        if after_colon.starts_with('{') {
+            let Some(end) = find_matching_bracket(after_colon, '{', '}') else {
+                break;
+            };
+            out.push(parse_setting_def(&id, &after_colon[..=end]));
+            rest = &after_colon[end + 1..];
+        } else if let Some((ident, after_ident)) = take_ident(after_colon) {
+            if let Some(body) = resolve_setting_ident(file_src, ident) {
+                out.push(parse_setting_def(&id, &body));
+            }
+            rest = after_ident;
+        } else {
             break;
-        };
-        out.push(parse_setting_def(&id, &after_colon[..=end]));
-        rest = &after_colon[end + 1..];
+        }
         rest = rest.trim_start();
         if rest.starts_with(',') {
             rest = &rest[1..];
@@ -685,7 +731,8 @@ fn parse_setting_def(id: &str, obj: &str) -> SettingDef {
         option_labels: scan_key_string_array(obj, "optionLabels").unwrap_or_default(),
         group: scan_key_quoted(obj, "group"),
         show_if: scan_key_raw_value(obj, "showIf"),
-        options_from: scan_key_ident(obj, "optionsFrom"),
+        options_from: scan_key_quoted(obj, "optionsFrom")
+            .or_else(|| scan_key_ident(obj, "optionsFrom")),
         csv_toggle: scan_key_raw_value(obj, "csvToggle"),
         help: scan_key_quoted(obj, "help"),
     }

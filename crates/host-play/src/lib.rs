@@ -1370,30 +1370,47 @@ fn with_script_snapshot_input<R>(
     };
     let inv_ops_store: Vec<Vec<String>>;
     let inv: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        inv_ops_store = s
-            .inventory()
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
+        if s.inventory().is_empty() {
+            inv_ops_store = Vec::new();
+            inv.map(|rows| {
+                rows.iter()
+                    .map(|(id, count)| ItemRowInput {
+                        name: obj_names.and_then(|names| names.name(*id)),
+                        count: *count,
+                        id: *id,
+                        ops: &[],
+                        noted: false,
+                        cert: -1,
+                    })
                     .collect()
             })
-            .collect();
-        s.inventory()
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &inv_ops_store[i],
-                noted: it.def.noted,
-                cert: it.def.certificate_link,
-            })
-            .collect()
+            .unwrap_or_default()
+        } else {
+            inv_ops_store = s
+                .inventory()
+                .iter()
+                .map(|it| {
+                    it.actions
+                        .iter()
+                        .filter_map(|a| a.as_deref().map(str::to_string))
+                        .collect()
+                })
+                .collect();
+            s.inventory()
+                .iter()
+                .enumerate()
+                .map(|(i, it)| ItemRowInput {
+                    name: obj_names
+                        .and_then(|names| names.name(it.def.id))
+                        .or(it.def.name.as_deref()),
+                    count: it.count,
+                    id: it.def.id,
+                    ops: &inv_ops_store[i],
+                    noted: it.def.noted,
+                    cert: it.def.certificate_link,
+                })
+                .collect()
+        }
     } else {
         inv_ops_store = Vec::new();
         inv.map(|rows| {
@@ -1535,21 +1552,25 @@ fn with_script_snapshot_input<R>(
         s.locs()
             .iter()
             .enumerate()
-            .map(|(i, loc)| SceneEntityInput {
-                index: loc.id,
-                id: loc.id,
-                name: loc.name.as_deref(),
-                x: loc.tile.x,
-                z: loc.tile.z,
-                level: loc.tile.level,
-                distance: loc.distance,
-                health: -1,
-                max_health: -1,
-                in_combat: false,
-                animating: loc.animation != -1,
-                actions: &loc_action_store[i],
-                reachable: false,
-                reachable_adj: false,
+            .map(|(i, loc)| {
+                let (reachable, reachable_adj) =
+                    entity_reach(loc.tile.x, loc.tile.z, loc.tile.level);
+                SceneEntityInput {
+                    index: loc.id,
+                    id: loc.id,
+                    name: loc.name.as_deref(),
+                    x: loc.tile.x,
+                    z: loc.tile.z,
+                    level: loc.tile.level,
+                    distance: loc.distance,
+                    health: -1,
+                    max_health: -1,
+                    in_combat: false,
+                    animating: loc.animation != -1,
+                    actions: &loc_action_store[i],
+                    reachable,
+                    reachable_adj,
+                }
             })
             .collect()
     } else {
@@ -1572,21 +1593,28 @@ fn with_script_snapshot_input<R>(
         s.players()
             .iter()
             .enumerate()
-            .map(|(i, player)| SceneEntityInput {
-                index: player.index as i32,
-                id: player.index as i32,
-                name: player.actor.name.as_deref(),
-                x: player.actor.tile.x,
-                z: player.actor.tile.z,
-                level: player.actor.tile.level,
-                distance: player.actor.distance,
-                health: player.actor.health,
-                max_health: player.actor.total_health,
-                in_combat: player.actor.in_combat,
-                animating: player.actor.moving || player.actor.animation != -1,
-                actions: &player_action_store[i],
-                reachable: false,
-                reachable_adj: false,
+            .map(|(i, player)| {
+                let (reachable, reachable_adj) = entity_reach(
+                    player.actor.tile.x,
+                    player.actor.tile.z,
+                    player.actor.tile.level,
+                );
+                SceneEntityInput {
+                    index: player.index as i32,
+                    id: player.index as i32,
+                    name: player.actor.name.as_deref(),
+                    x: player.actor.tile.x,
+                    z: player.actor.tile.z,
+                    level: player.actor.tile.level,
+                    distance: player.actor.distance,
+                    health: player.actor.health,
+                    max_health: player.actor.total_health,
+                    in_combat: player.actor.in_combat,
+                    animating: player.actor.moving || player.actor.animation != -1,
+                    actions: &player_action_store[i],
+                    reachable,
+                    reachable_adj,
+                }
             })
             .collect()
     } else {
@@ -1877,7 +1905,7 @@ fn with_script_snapshot_input<R>(
         run_energy: snapshot.map(|s| s.runenergy()).unwrap_or(0),
         run_enabled: snapshot.is_some_and(|s| api::snapshot::ReadContext::new(s).varp(173) != 0),
         retaliate_enabled: snapshot
-            .is_some_and(|s| api::snapshot::ReadContext::new(s).varp(172) != 0),
+            .is_some_and(|s| api::snapshot::ReadContext::new(s).varp(172) == 0),
         my_name,
         in_combat,
         animating,
@@ -6610,6 +6638,151 @@ mod tests {
         assert!(
             !npcs[0].reachable(),
             "npc behind SQ_BLOCKED tile is not reachable"
+        );
+    }
+
+    /// A loc on a blocked tile uses the same SceneQuery reach as npcs —
+    /// never a hardcoded `reachable: false`.
+    #[test]
+    fn script_snapshot_loc_behind_wall_posts_reachable_false() {
+        use client::config::LocType;
+        use client::dash3d::{ClientPlayer, CollisionFlag};
+
+        let mut c = nav_client();
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(ClientPlayer::at(5, 5));
+        c.collision[0].flags[5][6] |= CollisionFlag::SQ_BLOCKED;
+
+        let (blocked_id, here_id) = {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            let blocked_id = cache.locs.len() as i32;
+            cache.locs.push(LocType {
+                id: blocked_id,
+                name: "Wall booth".into(),
+                op: vec![Some("Use-quickly".into()), None],
+                ..Default::default()
+            });
+            let here_id = cache.locs.len() as i32;
+            cache.locs.push(LocType {
+                id: here_id,
+                name: "Open crate".into(),
+                op: vec![Some("Search".into()), None],
+                ..Default::default()
+            });
+            (blocked_id, here_id)
+        };
+        let blocked_typecode = 0x4000_0000 + (blocked_id << 14) + 5 + (6 << 7);
+        let here_typecode = 0x4000_0000 + (here_id << 14) + 5 + (5 << 7);
+        c.world
+            .set_wall(0, 5, 6, 0, 0, 0, blocked_typecode, 0, 0, 0, 0, 0);
+        c.world
+            .set_wall(0, 5, 5, 0, 0, 0, here_typecode, 0, 0, 0, 0, 0);
+
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut c, &mut snap);
+        assert_eq!(snap.locs().len(), 2, "fixture carries two locs");
+
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        let locs = view.locs();
+        assert_eq!(locs.len(), 2);
+        let blocked = locs
+            .iter()
+            .find(|l| l.name() == Some("Wall booth"))
+            .expect("blocked loc posted");
+        let here = locs
+            .iter()
+            .find(|l| l.name() == Some("Open crate"))
+            .expect("here loc posted");
+        assert!(
+            !blocked.reachable(),
+            "loc on SQ_BLOCKED tile is not reachable"
+        );
+        assert!(
+            here.reachable(),
+            "loc on the player's tile must use entity_reach, not a hardcoded false"
+        );
+    }
+
+    /// Classic varp 172: 0 is auto-retaliate on. The posted field must
+    /// match that polarity (not invert it).
+    #[test]
+    fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
+        let cache = Cache {
+            varps: (0..173)
+                .map(|_| client::config::VarpType::default())
+                .collect(),
+            ..Default::default()
+        };
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(cache),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.var = vec![0; 173];
+        c.var[172] = 0;
+        c.bump_gens(client::io::ServerProt::VARP_SYNC);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let on_bytes = script_snapshot_fb(
+            None,
+            false,
+            1,
+            None,
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+        )
+        .0;
+        let on = script::isolate_fb::decode_snapshot(&on_bytes).expect("on blob");
+        assert!(on.retaliate_enabled(), "varp(172)==0 is auto-retaliate on");
+
+        c.var[172] = 1;
+        c.bump_gens(client::io::ServerProt::VARP_SYNC);
+        snap.rebuild(&c);
+        let off_bytes = script_snapshot_fb(
+            None,
+            false,
+            2,
+            None,
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+        )
+        .0;
+        let off = script::isolate_fb::decode_snapshot(&off_bytes).expect("off blob");
+        assert!(
+            !off.retaliate_enabled(),
+            "varp(172)!=0 is auto-retaliate off"
         );
     }
 
