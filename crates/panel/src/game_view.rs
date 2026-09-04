@@ -57,6 +57,8 @@ pub struct GameView {
     /// path). wgpu handles compare by id, so re-registration happens only
     /// on a mode switch or a new client frame texture (a slot restart).
     bound: Bound,
+    /// `BOT_DEBUG` / unit-test counters for present routing.
+    pub present_stats: PresentStats,
 }
 
 /// Which texture the view's `tex_id` names. `Client` holds the client's
@@ -70,6 +72,15 @@ enum Bound {
     /// A client's frame texture (the shared-device seam), registered
     /// directly into the ImGui renderer.
     Client(wgpu::Texture),
+}
+
+/// `BOT_DEBUG=1` present counters for one [`GameView`] (rail tile or game pane).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PresentStats {
+    pub pixmap: u64,
+    pub tex: u64,
+    pub bind_noop: u64,
+    pub bind_rereg: u64,
 }
 
 impl GameView {
@@ -98,6 +109,7 @@ impl GameView {
             view,
             rgba: vec![0u8; (APPLET_W * APPLET_H * 4) as usize],
             bound: Bound::Owned,
+            present_stats: PresentStats::default(),
         }
     }
 
@@ -107,23 +119,31 @@ impl GameView {
     /// reads the frame back — the client and panel share one device.
     pub fn present(&mut self, gpu: &mut impl FrameGpu, frame: FrameOutput) {
         match frame {
-            FrameOutput::PixMap(pix) => self.upload(gpu, &pixmap_pixels(&pix)),
-            FrameOutput::Texture(handle) => self.bind(gpu, &handle),
+            FrameOutput::PixMap(pix) => {
+                self.present_stats.pixmap += 1;
+                self.upload(gpu, &pixmap_pixels(&pix));
+            }
+            FrameOutput::Texture(handle) => {
+                self.present_stats.tex += 1;
+                self.bind(gpu, &handle);
+            }
         }
     }
 
     /// Direct-bind a client GPU frame (the shared-device seam): register
     /// the client's frame-texture view with the ImGui renderer instead of
     /// reading it back, and make the Image draw it. Re-registers only when
-    /// the underlying client texture changes — a client reuses one
-    /// `frame_texture` per backend, so the per-frame case is a no-op. A
+    /// the underlying client texture changes — a stable present texture
+    /// from the GPU backend makes the per-frame case a no-op. A
     /// transition unregisters the texture the view last drew, so the
     /// renderer's texture cache stays bounded across slot restarts.
     pub fn bind(&mut self, gpu: &mut impl FrameGpu, handle: &TextureHandle) {
         let texture = handle.view.texture();
         if matches!(&self.bound, Bound::Client(held) if held == texture) {
+            self.present_stats.bind_noop += 1;
             return;
         }
+        self.present_stats.bind_rereg += 1;
         gpu.unregister_texture(self.tex_id);
         self.tex_id = gpu.register_texture(texture, &handle.view);
         self.bound = Bound::Client(texture.clone());
@@ -575,5 +595,42 @@ mod tests {
             2,
             "dispose must not re-register the panel-owned 765×503 texture"
         );
+    }
+
+    /// Two consecutive `Texture` presents of the same client texture (the
+    /// stable-present contract) must re-register once then no-op: bind_rereg
+    /// stays 1 and bind_noop climbs.
+    #[test]
+    fn stable_texture_present_bind_is_noop_after_first() {
+        let Some((device, queue)) = headless_gpu() else {
+            return;
+        };
+        let mut gpu = RecordingGpu::new(device.clone(), queue.clone());
+        let mut view = GameView::init(&mut gpu);
+        let handle = frame_handle(&device, &queue);
+        let tex = handle.view.texture().clone();
+        view.present(&mut gpu, FrameOutput::Texture(handle));
+        assert_eq!(view.present_stats.tex, 1);
+        assert_eq!(view.present_stats.bind_rereg, 1);
+        assert_eq!(view.present_stats.bind_noop, 0);
+
+        let again = TextureHandle {
+            device: device.clone(),
+            queue: queue.clone(),
+            view: tex.create_view(&Default::default()),
+            width: 2,
+            height: 2,
+        };
+        view.present(&mut gpu, FrameOutput::Texture(again));
+        assert_eq!(view.present_stats.tex, 2);
+        assert_eq!(
+            view.present_stats.bind_rereg, 1,
+            "same texture identity must not re-register"
+        );
+        assert_eq!(
+            view.present_stats.bind_noop, 1,
+            "second present of the stable texture is a bind no-op"
+        );
+        assert_eq!(gpu.registered.len(), 2, "no extra ImGui registration");
     }
 }

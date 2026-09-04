@@ -436,6 +436,13 @@ impl PanelState {
         let (rss, cpu) = sample_process();
         if debug_enabled() {
             eprintln!("[panel] rss={} traffic_sum={}", rss, sum);
+            if let Some(view) = self.game_view.as_ref() {
+                let s = view.present_stats;
+                eprintln!(
+                    "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
+                    s.pixmap, s.tex, s.bind_noop, s.bind_rereg
+                );
+            }
         }
         if rss == 0 && cpu == 0.0 {
             self.res_cpu = Metric::Error("process sample failed".into());
