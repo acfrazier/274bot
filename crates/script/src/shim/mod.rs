@@ -205,6 +205,14 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         ),
         Module::new("/rs2b0t/bot/api/combat/food.js", include_str!("food.js")),
         Module::new(
+            "/rs2b0t/bot/api/firemaking/LightFire.js",
+            include_str!("light_fire.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/firemaking/Firemaking.js",
+            include_str!("firemaking.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/magic/Autocast.js",
             include_str!("autocast.js"),
         ),

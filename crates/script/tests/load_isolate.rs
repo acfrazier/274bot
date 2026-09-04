@@ -4086,3 +4086,89 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn isolate_light_fire_queues_tinderbox_use_on_logs() {
+    let src = r#"
+import { lightFire } from '../../api/firemaking/LightFire.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = lightFire('Logs'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let inv = [nc(Some("Tinderbox"), 1), nc(Some("Logs"), 5)];
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "lightFire queues when tinderbox and logs are posted");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::UseOn {
+            name: "Tinderbox".into(),
+            kind: "inv".into(),
+            target_name: Some("Logs".into()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: None,
+        }],
+        "lightFire is tinderbox use-on logs, not a burn-lane planner"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_firemaking_spots_and_log_keys_and_find_burn_lane_not_impl() {
+    let src = r#"
+import { FIRE_SPOTS, LOG_LEVELS, findBurnLane } from '../../api/firemaking/Firemaking.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            spots: Object.keys(FIRE_SPOTS),
+            logs: Object.keys(LOG_LEVELS),
+        };
+        try { findBurnLane(); } catch (e) { globalThis.__err = String(e && e.message ? e.message : e); }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    let spots = probe
+        .get("spots")
+        .and_then(|v| v.as_array())
+        .expect("FIRE_SPOTS keys");
+    for name in ["Varrock East", "Varrock West", "Draynor", "Seers"] {
+        assert!(
+            spots.iter().any(|v| v.as_str() == Some(name)),
+            "FIRE_SPOTS must include {name}, got {spots:?}"
+        );
+    }
+    let logs = probe
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .expect("LOG_LEVELS keys");
+    for name in [
+        "Logs",
+        "Oak logs",
+        "Willow logs",
+        "Maple logs",
+        "Yew logs",
+        "Magic logs",
+    ] {
+        assert!(
+            logs.iter().any(|v| v.as_str() == Some(name)),
+            "LOG_LEVELS must include {name}, got {logs:?}"
+        );
+    }
+    let err = iso.probe("__err").unwrap();
+    let msg = err.as_str().unwrap_or("");
+    assert!(
+        msg.contains("not impl") && msg.contains("findBurnLane"),
+        "findBurnLane stays not impl, got {msg:?}"
+    );
+    iso.join();
+}

@@ -142,3 +142,13 @@ fn walk_executor_stays_unloadable() {
         Some("../../event/webwalk/WalkExecutor.js")
     );
 }
+
+#[test]
+fn firemaking_and_light_fire_import_lines_remap() {
+    let src = r#"
+import { FIRE_SPOTS, LOG_LEVELS, lightFire } from '../../api/firemaking/Firemaking.js';
+import { lightFire as light } from '../../api/firemaking/LightFire.js';
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
