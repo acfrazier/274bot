@@ -187,6 +187,8 @@ struct LiveStress {
 /// last-reported step for progress lines and latches the terminal state.
 /// PASS → the caller exits 0; FAIL → exit 1. A terminal shot holds either
 /// exit until the capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
+/// `BUDGET_S` soak: print PASS but do not latch `passed` until the budget
+/// elapses, so the window stays up.
 struct LiveScript {
     name: String,
     passed: bool,
@@ -197,6 +199,10 @@ struct LiveScript {
     /// (returning `None`) until the shot writes or [`NAV_FULL_SHOT_DRAIN`]
     /// lapses, so the screenshot lands before the process exits.
     drain_started: Option<Instant>,
+    /// `BUDGET_S` set: keep the window after proof PASS until `soak_until`.
+    soak: bool,
+    soak_until: Option<Instant>,
+    announced_pass: bool,
 }
 
 /// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
@@ -292,12 +298,16 @@ impl LiveBoot {
                     .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
                 state.session.live_prepare_script(scenario)?;
                 arm_scenario_shots(state);
+                let budget = scenario::budget_s_from_env();
                 state.live = Some(LiveHarness::Script(LiveScript {
                     name,
                     passed: false,
                     failed: None,
                     last_step: None,
                     drain_started: None,
+                    soak: budget.is_some(),
+                    soak_until: budget.map(|d| Instant::now() + d),
+                    announced_pass: false,
                 }));
             }
             LiveBoot::Smoke => {
@@ -479,7 +489,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]";
+    "usage: panel-play [--prod] [--smoke] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -745,7 +755,16 @@ fn live_script_tick(
             if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
                 return None;
             }
-            println!("PASS: live {} {}", live.name, record(&evidence));
+            if !live.announced_pass {
+                println!("PASS: live {} {}", live.name, record(&evidence));
+                live.announced_pass = true;
+            }
+            if live.soak {
+                if live.soak_until.is_some_and(|t| Instant::now() >= t) {
+                    live.passed = true;
+                }
+                return None;
+            }
             live.passed = true;
             None
         }
@@ -4933,6 +4952,9 @@ mod tests {
             failed: None,
             last_step: None,
             drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),
@@ -4940,6 +4962,21 @@ mod tests {
             "PASS latches; the caller exits 0"
         );
         assert!(live.passed);
+
+        live.passed = false;
+        live.announced_pass = false;
+        live.soak = true;
+        live.soak_until = Some(Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, 0),
+            None,
+            "BUDGET_S soak prints PASS but does not latch exit"
+        );
+        assert!(!live.passed, "window stays open after proof PASS");
+        assert!(live.announced_pass);
+        live.soak_until = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(live_script_tick(&mut live, &mut s, 0), None);
+        assert!(live.passed, "exit 0 only after BUDGET_S elapses");
 
         // FAIL: a never-satisfiable arm within a 1-tick budget.
         let fail_scenario = Scenario {
@@ -4976,6 +5013,9 @@ mod tests {
             failed: None,
             last_step: None,
             drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
         };
         // No terminal shot armed: the FAIL returns immediately.
         let msg = live_script_tick(&mut live, &mut s, 0).expect("FAIL returns the message");
@@ -5028,6 +5068,9 @@ mod tests {
             failed: None,
             last_step: None,
             drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),
@@ -5090,6 +5133,9 @@ mod tests {
             failed: None,
             last_step: None,
             drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),

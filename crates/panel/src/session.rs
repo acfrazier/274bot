@@ -1439,6 +1439,9 @@ impl Session {
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
         let mut runner = scenario::ScenarioRunner::new(scenario);
+        if let Some(budget) = scenario::budget_s_from_env() {
+            runner.set_deadline(budget);
+        }
         // The runner drives/companions the minted names, never the seed's
         // `test`/`test2` (the vault holds the fresh accounts).
         runner.set_live_names(&names);

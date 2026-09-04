@@ -576,6 +576,9 @@ impl TuiSession {
         self.unlock_at(&path, &pass)?;
         self.live_name = Some(name);
         let mut runner = scenario::ScenarioRunner::new(scenario);
+        if let Some(budget) = scenario::budget_s_from_env() {
+            runner.set_deadline(budget);
+        }
         runner.set_live_names(&names);
         if let Some(play) = &self.play {
             runner.set_obj_names(play.obj_names());

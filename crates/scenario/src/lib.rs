@@ -44,6 +44,22 @@ pub fn debug_enabled() -> bool {
 /// + proof). The headless twin uses its own outer timeout.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(180);
 
+/// rs2b0t-style `BUDGET_S` (seconds). Unset/empty/0 → `None` (use the
+/// scenario's own deadline). When `Some`, live harnesses also keep the
+/// window open after PASS until that budget elapses.
+pub fn budget_s_from_env() -> Option<Duration> {
+    budget_s_from(std::env::var("BUDGET_S").ok().as_deref())
+}
+
+pub fn budget_s_from(raw: Option<&str>) -> Option<Duration> {
+    let s = raw?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let n: u64 = s.parse().ok()?;
+    (n > 0).then_some(Duration::from_secs(n))
+}
+
 /// Boot defaults for a scenario. View knobs are headed-only; deadline /
 /// terminal shot / mainland-base gate are consumed by `ScenarioRunner`.
 /// `nav` is the session-only nav overlay (paints, camera, tickrate, find
@@ -2459,6 +2475,16 @@ pub fn default_pack_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn budget_s_from_parses_rs2b0t_style_seconds() {
+        assert_eq!(budget_s_from(None), None);
+        assert_eq!(budget_s_from(Some("")), None);
+        assert_eq!(budget_s_from(Some("0")), None);
+        assert_eq!(budget_s_from(Some("nope")), None);
+        assert_eq!(budget_s_from(Some("300")), Some(Duration::from_secs(300)));
+        assert_eq!(budget_s_from(Some(" 60 ")), Some(Duration::from_secs(60)));
+    }
 
     #[test]
     fn render_smoke_registered_as_a_one_shot_scene2_capture() {
