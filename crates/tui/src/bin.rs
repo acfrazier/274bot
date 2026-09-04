@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
 use crossterm::terminal::{
@@ -326,6 +326,9 @@ pub struct TuiSession {
     script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
+    live_soak_until: Option<Instant>,
+    live_announced_pass: bool,
     /// The Browse-selected card (catalog Start after seed, or operator Start).
     script_sel: Option<script::ScriptSel>,
     /// The out-of-tree JS library: the Browse picker's cards and the
@@ -381,6 +384,8 @@ impl TuiSession {
             pending_script: Arc::new(Mutex::new(None)),
             script_start_handle: Arc::new(Mutex::new(None)),
             live_name: None,
+            live_soak_until: None,
+            live_announced_pass: false,
             script_sel: None,
             js,
             rs2b0t_filled: false,
@@ -578,6 +583,8 @@ impl TuiSession {
         let mut runner = scenario::ScenarioRunner::new(scenario);
         if let Some(budget) = scenario::budget_s_from_env() {
             runner.set_deadline(budget);
+            self.live_soak_until = Some(Instant::now() + budget);
+            self.live_announced_pass = false;
         }
         runner.set_live_names(&names);
         if let Some(play) = &self.play {
@@ -1065,7 +1072,7 @@ impl TuiSession {
 
     /// The `--live` terminal state: `Some(exit code)` when the runner
     /// passed (0) or failed (1); `None` while it runs.
-    fn live_status(&self) -> Option<i32> {
+    fn live_status(&mut self) -> Option<i32> {
         let name = self.live_name.as_deref().unwrap_or("script");
         let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
         let evidence = self
@@ -1078,7 +1085,13 @@ impl TuiSession {
             .unwrap_or_default();
         match status {
             Some(scenario::RunnerStatus::Passed) => {
-                println!("PASS: live {name} {evidence}");
+                if !self.live_announced_pass {
+                    println!("PASS: live {name} {evidence}");
+                    self.live_announced_pass = true;
+                }
+                if self.live_soak_until.is_some_and(|t| Instant::now() < t) {
+                    return None;
+                }
                 Some(0)
             }
             Some(scenario::RunnerStatus::Failed(msg)) => {
