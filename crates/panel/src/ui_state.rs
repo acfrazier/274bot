@@ -47,6 +47,9 @@ pub struct PanelUiState {
     /// General config collapsible rows closed. Absent = open.
     #[serde(default)]
     pub config_collapsed: HashMap<String, bool>,
+    /// Panel CRT palette (named theme consts). Absent = amber defaults.
+    #[serde(default)]
+    pub chrome: crate::theme::ChromeColors,
 }
 
 /// Panel subsection ids in General config (parameters shares
@@ -93,6 +96,7 @@ impl Default for PanelUiState {
             capture: true,
             panel_sections: HashMap::new(),
             config_collapsed: HashMap::new(),
+            chrome: crate::theme::ChromeColors::default(),
         }
     }
 }
@@ -412,5 +416,31 @@ mod tests {
         save_at(&p, &state);
         assert!(!load_at(&p).capture);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chrome_defaults_match_theme_consts() {
+        use crate::theme::{rgba_to_hex, ACCENT, ACCENT_HOVER, BG, BG_DEEP, BORDER, ERROR, FRAME, GREEN, HOVER_FILL, ACTIVE_FILL, TEXT, TEXT_DIM, WARN};
+        let c = PanelUiState::default().chrome;
+        assert_eq!(c.accent, rgba_to_hex(ACCENT));
+        assert_eq!(c.accent_hover, rgba_to_hex(ACCENT_HOVER));
+        assert_eq!(c.bg, rgba_to_hex(BG));
+        assert_eq!(c.bg_deep, rgba_to_hex(BG_DEEP));
+        assert_eq!(c.text, rgba_to_hex(TEXT));
+        assert_eq!(c.text_dim, rgba_to_hex(TEXT_DIM));
+        assert_eq!(c.frame, rgba_to_hex(FRAME));
+        assert_eq!(c.hover_fill, rgba_to_hex(HOVER_FILL));
+        assert_eq!(c.active_fill, rgba_to_hex(ACTIVE_FILL));
+        assert_eq!(c.border, rgba_to_hex(BORDER));
+        assert_eq!(c.warn, rgba_to_hex(WARN));
+        assert_eq!(c.error, rgba_to_hex(ERROR));
+        assert_eq!(c.green, rgba_to_hex(GREEN));
+    }
+
+    #[test]
+    fn old_prefs_without_chrome_keep_theme_defaults() {
+        let back: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert_eq!(back.chrome, crate::theme::ChromeColors::default());
     }
 }

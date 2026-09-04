@@ -40,7 +40,7 @@ use nav::tile::Tile;
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
-use vault::{Profile, Vault};
+use vault::{Profile, ProfileSettings, Vault};
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
@@ -713,6 +713,9 @@ pub struct Session {
     /// Picker edit scratch (username/password). Empty on the strip.
     pub cred_user: String,
     pub cred_pass: String,
+    /// Draft auto-login / random / lamp for a new vault row. An existing
+    /// edit writes those through the vault immediately.
+    pub cred_settings: ProfileSettings,
     /// Profile picker edit: `None` not editing, `Some("")` new profile,
     /// `Some(name)` editing that vault row.
     pub chooser_edit: Option<String>,
@@ -930,6 +933,7 @@ impl Session {
             statuses: Vec::new(),
             cred_user: String::new(),
             cred_pass: String::new(),
+            cred_settings: ProfileSettings::default(),
             chooser_edit: None,
             travellers: Arc::new(Mutex::new(HashMap::new())),
             script_nav_paint: Arc::new(Mutex::new(None)),
@@ -2304,7 +2308,9 @@ impl Session {
                     .unwrap_or_else(|| fresh_uid(vault)),
                 username: username.clone(),
                 password: self.cred_pass.clone(),
-                settings: existing.map(|p| p.settings).unwrap_or_default(),
+                settings: existing
+                    .map(|p| p.settings)
+                    .unwrap_or_else(|| self.cred_settings.clone()),
             }
         };
         match self.vault.as_mut().expect("vault checked").upsert(profile) {
@@ -2419,12 +2425,14 @@ impl Session {
                 if let Some(p) = self.vault.as_ref().and_then(|v| v.get(n)) {
                     self.cred_user = p.username.clone();
                     self.cred_pass = p.password.clone();
+                    self.cred_settings = p.settings.clone();
                 }
                 self.chooser_edit = Some(n.to_string());
             }
             None => {
                 self.cred_user.clear();
                 self.cred_pass.clear();
+                self.cred_settings = ProfileSettings::default();
                 self.chooser_edit = Some(String::new());
             }
         }
@@ -6618,6 +6626,31 @@ mod tests {
         s.cancel_edit_profile();
         assert!(s.chooser_edit.is_none());
         assert!(s.wall.chooser_open, "cancel leaves the picker open");
+    }
+
+    #[test]
+    fn begin_edit_profile_loads_guardian_settings() {
+        let path = tmp_vault("edit-guardian.vault");
+        let mut s = Session::new();
+        s.vault = Some(Vault::create(&path, "bot").unwrap());
+        let mut p = profile("alice", "secret", 42);
+        p.settings.auto_login = true;
+        p.settings.lamp_auto = false;
+        p.settings.lamp_skill = "magic".into();
+        p.settings.random_events = false;
+        s.vault.as_mut().unwrap().upsert(p).unwrap();
+
+        s.begin_edit_profile(Some("alice"));
+        assert!(s.cred_settings.auto_login);
+        assert!(!s.cred_settings.lamp_auto);
+        assert!(!s.cred_settings.random_events);
+        assert_eq!(s.cred_settings.lamp_skill, "magic");
+
+        s.begin_edit_profile(None);
+        assert!(!s.cred_settings.auto_login);
+        assert!(s.cred_settings.lamp_auto);
+        assert!(s.cred_settings.random_events);
+        assert_eq!(s.cred_settings.lamp_skill, "strength");
     }
 
     #[test]

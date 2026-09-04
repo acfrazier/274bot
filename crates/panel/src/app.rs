@@ -50,9 +50,9 @@ use crate::session::{
     script_status_text, script_stop_enabled, stream_capture, Session, PROCESS,
 };
 use crate::theme::{
-    applet_offset, apply_amber, fit_applet, game_window_title, integer_ui_scale, native_applet,
-    panel_split_ratio, ACCENT, ACCENT_HOVER, BG, BG_DEEP, ERROR, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW,
-    TEXT, TEXT_DIM, TITLE,
+    applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
+    integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR,
+    PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, TITLE,
 };
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
@@ -93,7 +93,7 @@ pub fn apply_ui_scale(style: &mut dear_imgui_rs::Style, dpi: f32) {
 
 /// Push the amber CRT palette over Theme::Dark (kills default imgui blue).
 fn amber_style(ctx: &mut dear_imgui_rs::Context) {
-    apply_amber(ctx.style_mut());
+    apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
 }
 
 /// Dock layouts for [`dock_host`]: single-bot `[game | panel]` or the
@@ -2608,8 +2608,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .unwrap_or("")
                     .to_string();
                 ui.set_next_item_width(-1.0);
-                let combo_opts =
-                    ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+                let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
                 if let Some(_popup) = ui.begin_combo_with_flags(
                     &format!("##param-{id}", id = def.id),
                     &current,
@@ -2632,8 +2631,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .or(def.default.as_deref().map(String::from))
                     .unwrap_or_default();
                 if ui.input_text(&label, &mut text).build() {
-                    let coerced =
-                        script::coerce_setting_value(&def.ty, &serde_json::json!(text));
+                    let coerced = script::coerce_setting_value(&def.ty, &serde_json::json!(text));
                     session
                         .script_settings
                         .set_value(source, &name, &def.id, coerced.clone());
@@ -3073,20 +3071,19 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
         .unwrap_or(false);
     let desired = !closed;
     ui.set_next_item_open(desired);
+    let accent = session.ui.chrome.accent_rgba();
+    let bg_deep = session.ui.chrome.bg_deep_rgba();
     let open = {
         let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
-        let _text = ui.push_style_color(StyleColor::Text, ACCENT);
-        let _header = ui.push_style_color(StyleColor::Header, BG_DEEP);
-        let _header_h = ui.push_style_color(StyleColor::HeaderHovered, BG_DEEP);
-        let _header_a = ui.push_style_color(StyleColor::HeaderActive, BG_DEEP);
-        let _border = ui.push_style_color(StyleColor::Border, ACCENT);
+        let _text = ui.push_style_color(StyleColor::Text, accent);
+        let _header = ui.push_style_color(StyleColor::Header, bg_deep);
+        let _header_h = ui.push_style_color(StyleColor::HeaderHovered, bg_deep);
+        let _header_a = ui.push_style_color(StyleColor::HeaderActive, bg_deep);
+        let _border = ui.push_style_color(StyleColor::Border, accent);
         ui.collapsing_header(id, TreeNodeFlags::FRAME_PADDING)
     };
     if open != desired {
-        session
-            .ui
-            .config_collapsed
-            .insert(id.to_string(), !open);
+        session.ui.config_collapsed.insert(id.to_string(), !open);
         crate::ui_state::save(&session.ui);
     }
     if open {
@@ -3108,7 +3105,7 @@ fn global_capture_section(ui: &Ui, session: &mut Session) {
 }
 
 fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
-    ui.text_colored(ACCENT, "Panel");
+    ui.text_colored(session.ui.chrome.accent_rgba(), "Panel");
     for id in crate::ui_state::PANEL_SECTION_IDS {
         let mut visible = crate::ui_state::panel_section_visible(&session.ui, id);
         if ui.checkbox(*id, &mut visible) {
@@ -3116,9 +3113,52 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
             crate::ui_state::save(&session.ui);
         }
     }
+    ui.spacing();
+    let mut chrome = session.ui.chrome.clone();
+    let mut changed = false;
+    changed |= chrome_color_field(ui, "accent", &mut chrome.accent);
+    changed |= chrome_color_field(ui, "accent hover", &mut chrome.accent_hover);
+    changed |= chrome_color_field(ui, "bg", &mut chrome.bg);
+    changed |= chrome_color_field(ui, "bg deep", &mut chrome.bg_deep);
+    changed |= chrome_color_field(ui, "text", &mut chrome.text);
+    changed |= chrome_color_field(ui, "text dim", &mut chrome.text_dim);
+    changed |= chrome_color_field(ui, "frame", &mut chrome.frame);
+    changed |= chrome_color_field(ui, "hover fill", &mut chrome.hover_fill);
+    changed |= chrome_color_field(ui, "active fill", &mut chrome.active_fill);
+    changed |= chrome_color_field(ui, "border", &mut chrome.border);
+    changed |= chrome_color_field(ui, "warn", &mut chrome.warn);
+    changed |= chrome_color_field(ui, "error", &mut chrome.error);
+    changed |= chrome_color_field(ui, "green", &mut chrome.green);
+    if changed {
+        session.ui.chrome = chrome;
+        crate::ui_state::save(&session.ui);
+    }
+}
+
+fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
+    let [r, g, b] = crate::nav_settings::parse_html_color(color, [0xff, 0xb0, 0x00]);
+    let mut rgb = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+    ui.set_next_item_width(148.0);
+    let edited = ui
+        .color_edit3_config(format!("{label}##chrome-color-{label}"), &mut rgb)
+        .display_mode(ColorDisplayMode::Hex)
+        .build();
+    if edited {
+        *color = format!(
+            "#{:02X}{:02X}{:02X}",
+            (rgb[0] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (rgb[1] * 255.0).round().clamp(0.0, 255.0) as u8,
+            (rgb[2] * 255.0).round().clamp(0.0, 255.0) as u8
+        );
+    }
+    edited
 }
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
+    ui.text_colored([1.0, 1.0, 1.0, 1.0], "Slot:");
+    ui.same_line();
+    let slot = session.focused_name().unwrap_or_else(|| "—".into());
+    ui.text_colored(session.ui.chrome.accent_rgba(), slot);
     global_capture_section(ui, session);
     let mut sidecar = session.focus.lock().unwrap().sidecar_50;
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
@@ -3143,6 +3183,11 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         }
         ui.text_wrapped("every drawing slot at 50 fps; not sidecar, not capture, not saved");
     }
+    let mut focused_50 = session.focus.lock().unwrap().focused_50;
+    if ui.checkbox("focused 50 fps", &mut focused_50) {
+        session.set_focused_50(focused_50);
+    }
+    ui.text_wrapped("Game pane only; the focused client on the rail uses the rail cadence.");
     ui.spacing();
     panel_heading_toggles(ui, session);
 }
@@ -3152,23 +3197,14 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
 fn slot_render_section(ui: &Ui, session: &mut Session) {
     ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem drops + reattaches the renderer — the client stays logged in.");
     raster_picker(ui, session);
-    let mut focused_50 = session.focus.lock().unwrap().focused_50;
-    if ui.checkbox("focused 50 fps", &mut focused_50) {
-        session.set_focused_50(focused_50);
-    }
-    ui.text_wrapped("Game pane only; this client on the rail uses the rail cadence.");
 }
 
 fn slot_capture_section(ui: &Ui, session: &mut Session) {
-    let focused = session.focused_name();
-    let auto = focused
-        .as_deref()
-        .and_then(|n| session.vault.as_ref().and_then(|v| v.get(n)))
-        .map(|p| p.settings.auto_login)
-        .unwrap_or(false);
-    let mut auto_cur = auto;
+    let mut auto_cur = session.cred_settings.auto_login;
     if ui.checkbox("auto-login on title", &mut auto_cur) {
-        if let Some(name) = focused {
+        session.cred_settings.auto_login = auto_cur;
+        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+            let name = name.to_string();
             session.set_auto_login(&name, auto_cur);
         }
     }
@@ -3668,6 +3704,8 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     .password(true)
                     .hint("password")
                     .build();
+                slot_capture_section(ui, session);
+                slot_random_section(ui, session);
                 let avail = ui.content_region_avail()[0];
                 let (bw, stack) = button_row_layout(avail, 2);
                 if ui.button_with_size("Save", [bw, 0.0]) && session.save_credentials() {
@@ -3736,18 +3774,8 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 global_config_section(ui, session);
             });
             ui.spacing();
-            config_section(ui, session, "slot", |ui, session| {
-                let slot = session.focused_name().unwrap_or_else(|| "—".into());
-                ui.text_disabled(slot);
-                slot_capture_section(ui, session);
-            });
-            ui.spacing();
             config_section(ui, session, "render", |ui, session| {
                 slot_render_section(ui, session);
-            });
-            ui.spacing();
-            config_section(ui, session, "random", |ui, session| {
-                slot_random_section(ui, session);
             });
         });
     session.global_settings_open = open;
@@ -3758,31 +3786,48 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 /// straight through the vault upsert (`Session::set_random_settings`); the
 /// lamp auto rubs through the guardian when enabled (`lamp_auto`).
 fn slot_random_section(ui: &Ui, session: &mut Session) {
-    let Some(name) = session.focused_name() else {
-        ui.text_wrapped("focus a profile to edit its random-event and lamp settings");
-        return;
-    };
-    let settings = session
-        .vault
-        .as_ref()
-        .and_then(|v| v.get(&name))
-        .map(|p| p.settings.clone())
-        .unwrap_or_default();
-    let mut events = settings.random_events;
+    let mut events = session.cred_settings.random_events;
     if ui.checkbox("random events", &mut events) {
-        session.set_random_settings(&name, events, &settings.lamp_skill, settings.lamp_auto);
+        session.cred_settings.random_events = events;
+        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+            let name = name.to_string();
+            session.set_random_settings(
+                &name,
+                events,
+                &session.cred_settings.lamp_skill.clone(),
+                session.cred_settings.lamp_auto,
+            );
+        }
     }
     ui.text_wrapped("talk random events through on this profile. Off: never talk, never hold — still detects and shows the status row.");
-    let mut auto = settings.lamp_auto;
+    let mut auto = session.cred_settings.lamp_auto;
     if ui.checkbox("lamp auto", &mut auto) {
-        session.set_random_settings(&name, settings.random_events, &settings.lamp_skill, auto);
+        session.cred_settings.lamp_auto = auto;
+        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+            let name = name.to_string();
+            session.set_random_settings(
+                &name,
+                session.cred_settings.random_events,
+                &session.cred_settings.lamp_skill.clone(),
+                auto,
+            );
+        }
     }
     ui.text_wrapped(
-        "claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).",
+        "this profile; claim a lamp reward without a confirmation click (guardian rubs when lamp auto is on).",
     );
-    let mut skill = settings.lamp_skill.clone();
+    let mut skill = session.cred_settings.lamp_skill.clone();
     if lamp_skill_combo(ui, &mut skill) {
-        session.set_random_settings(&name, settings.random_events, &skill, settings.lamp_auto);
+        session.cred_settings.lamp_skill = skill.clone();
+        if let Some(name) = session.chooser_edit.as_deref().filter(|n| !n.is_empty()) {
+            let name = name.to_string();
+            session.set_random_settings(
+                &name,
+                session.cred_settings.random_events,
+                &skill,
+                session.cred_settings.lamp_auto,
+            );
+        }
     }
 }
 
@@ -3995,6 +4040,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
 /// The per-frame UI body: session pump, live harness ticks, dock host,
 /// chrome, game pane, rail.
 fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
+    apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     state.session.pump_status();
     state.session.pump_script_transpile();
@@ -5278,6 +5324,143 @@ mod tests {
         assert!(panel_section_visible(&ui, "parameters"));
         ui.show_parameters_rail = false;
         assert!(!panel_section_visible(&ui, "parameters"));
+    }
+
+    #[test]
+    fn global_config_slot_name_then_capture_then_focused_50_then_panel() {
+        const SRC: &str = include_str!("app.rs");
+        let g = SRC
+            .split("fn global_config_section")
+            .nth(1)
+            .unwrap_or("");
+        let g = g.split("\nfn ").next().unwrap_or("");
+        let slot = g.find("\"Slot:\"").expect("Slot: label above capture");
+        let capture = g
+            .find("global_capture_section")
+            .expect("capture stays in Global");
+        let focused_50 = g
+            .find("focused 50 fps")
+            .expect("focused 50 fps lives in Global");
+        let panel = g
+            .find("panel_heading_toggles")
+            .expect("Panel heading toggles stay in Global");
+        assert!(slot < capture, "Slot: sits below the heading, above capture");
+        assert!(
+            focused_50 < panel,
+            "focused 50 fps sits above the Panel subsection"
+        );
+        assert!(
+            !g.contains("auto-login"),
+            "auto-login belongs on the profile editor, not Global"
+        );
+    }
+
+    #[test]
+    fn settings_window_drops_slot_and_random_rows() {
+        const SRC: &str = include_str!("app.rs");
+        let settings = SRC
+            .split("fn settings_window")
+            .nth(1)
+            .unwrap_or("");
+        let settings = settings.split("\nfn ").next().unwrap_or("");
+        assert!(
+            settings.contains("config_section(ui, session, \"Global\""),
+            "Global row stays"
+        );
+        assert!(
+            settings.contains("config_section(ui, session, \"render\""),
+            "render (raster/mem) stays in General config"
+        );
+        assert!(
+            !settings.contains("config_section(ui, session, \"slot\""),
+            "slot row is gone; the focused name is a Global label"
+        );
+        assert!(
+            !settings.contains("config_section(ui, session, \"random\""),
+            "random/lamp belong on the profile editor"
+        );
+        assert!(
+            !settings.contains("slot_capture_section"),
+            "auto-login is not a General config control"
+        );
+        assert!(
+            !settings.contains("slot_random_section"),
+            "guardian toggles are not a General config control"
+        );
+    }
+
+    #[test]
+    fn slot_render_section_no_longer_owns_focused_50() {
+        const SRC: &str = include_str!("app.rs");
+        let r = SRC
+            .split("fn slot_render_section")
+            .nth(1)
+            .unwrap_or("");
+        let r = r.split("\nfn ").next().unwrap_or("");
+        assert!(
+            !r.contains("focused 50 fps"),
+            "focused 50 fps moved to Global, above Panel"
+        );
+        assert!(
+            r.contains("raster_picker"),
+            "Game-pane raster/mem stay under render"
+        );
+    }
+
+    #[test]
+    fn chooser_edit_hosts_per_profile_login_and_random() {
+        const SRC: &str = include_str!("app.rs");
+        let chooser = SRC
+            .split("fn chooser_window")
+            .nth(1)
+            .unwrap_or("");
+        let chooser = chooser.split("fn settings_window").next().unwrap_or("");
+        assert!(
+            chooser.contains("slot_capture_section"),
+            "auto-login moved onto the profile editor"
+        );
+        assert!(
+            chooser.contains("slot_random_section"),
+            "random/lamp moved onto the profile editor"
+        );
+        const SRC_COPY: &str = include_str!("app.rs");
+        let random = SRC_COPY
+            .split("fn slot_random_section")
+            .nth(1)
+            .unwrap_or("");
+        assert!(
+            random.contains("this profile"),
+            "copy names the edited profile, not a global slot"
+        );
+        assert!(
+            !random.contains("focus a profile to edit"),
+            "edit form is already on this profile"
+        );
+        let save = chooser
+            .find("button_with_size(\"Save\"")
+            .expect("Save stays on the editor");
+        let auto = chooser
+            .find("slot_capture_section")
+            .expect("auto-login in editor");
+        assert!(auto < save, "per-profile settings sit above Save/Cancel");
+    }
+
+    #[test]
+    fn panel_subsection_exposes_chrome_color_pickers() {
+        const SRC: &str = include_str!("app.rs");
+        let panel = SRC
+            .split("fn panel_heading_toggles")
+            .nth(1)
+            .unwrap_or("");
+        let panel = panel.split("\nfn ").next().unwrap_or("");
+        assert!(
+            panel.contains("chrome_color_field") || panel.contains("nav_color_field"),
+            "Panel chrome colours use the same hex picker pattern as Nav"
+        );
+        assert!(
+            panel.contains("accent") || panel.contains("ACCENT"),
+            "named theme consts are exposed as pickers"
+        );
     }
 
     /// File-loaded cards have empty description/tags. A trailing
