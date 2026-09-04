@@ -117,14 +117,21 @@ globalThis.__dummy_ctx = {
 };
 globalThis.__rs2b0t_call_on_paint = (bot) => {
     bot = bot || globalThis.__rs_bot;
-    if (!bot || typeof bot.onPaint !== 'function') return;
+    const h = globalThis.__rs2b0t_host;
+    if (!bot || typeof bot.onPaint !== 'function') {
+        h.paint = { title: 'onPaint', accent: '#ff5555', lines: ['no onPaint on bot'] };
+        return;
+    }
     try {
         bot.onPaint(globalThis.__dummy_ctx);
     } catch (e) {
         const msg = String((e && e.message) || e);
-        const h = globalThis.__rs2b0t_host;
         h.paint = { title: 'onPaint', accent: '#ff5555', lines: [msg] };
         h.lastError = msg;
+        return;
+    }
+    if (!h.paint) {
+        h.paint = { title: 'onPaint', lines: ['onPaint ran but Paint.end was not called'] };
     }
 };
 "#;

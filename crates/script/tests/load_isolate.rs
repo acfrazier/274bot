@@ -854,6 +854,55 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_onpaint_without_end_still_forwards_a_frame() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint() {}
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("empty onPaint loads");
+    iso.on_game_tick(1);
+    let _ = iso.probe("0");
+    let paint = iso
+        .paint()
+        .expect("empty onPaint must still forward a frame");
+    assert_eq!(paint.title.as_deref(), Some("onPaint"));
+    assert!(
+        paint
+            .lines
+            .iter()
+            .any(|l| l.contains("Paint.end") || l.contains("no frame")),
+        "must say end was skipped, got {paint:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_onstart_park_still_paints() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    async onStart() {
+        await Execution.delayUntil(() => false, 60000);
+    }
+    onPaint() {
+        const p = Paint.begin();
+        p.title('after-onStart-park');
+        p.end();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("0");
+    let paint = iso.paint().expect("onStart park must not skip onPaint");
+    assert_eq!(paint.title.as_deref(), Some("after-onStart-park"));
+    iso.join();
+}
+
 // Task 3 — reader.worldTile / inventorySize and actions.closeModal are
 // thin stubs (no snapshot this tag: null / 0 / false); missing members
 // throw `not impl`.

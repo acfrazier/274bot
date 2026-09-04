@@ -1,16 +1,15 @@
 //! Script-paint overlay for the Game Image.
 //!
-//! The focused slot's `ScriptPaint` frame renders in an ImGui window
-//! parked over the client's chatbox rect — an overlay window, never
-//! pixels on the 765×503 game texture. The `–` title row collapses to
-//! title-only; `+` expands (rs2b0t `paint:collapsed`, view-local, not a
-//! script setting). Outside the overlay rect, clicks fall through to the
-//! game unchanged.
+//! Drawn on the Game window draw list over the client's chatbox rect —
+//! never a second ImGui window (those dock into the Game node and vanish)
+//! and never pixels on the 765×503 game texture. The title row collapses
+//! to title-only (rs2b0t `paint:collapsed`, view-local).
 
-use dear_imgui_rs::{Condition, MouseButton, Ui, WindowFlags};
+use dear_imgui_rs::{MouseButton, Ui};
 use script::shim::ScriptPaint;
 
 use crate::game_view::{APPLET_H, APPLET_W};
+use crate::theme::{ACCENT, BG_DEEP, TEXT};
 
 /// Applet-space chatbox rect `(x, y, w, h)` the client reserves for game
 /// chat on the 765×503 stage.
@@ -28,19 +27,6 @@ pub fn chatbox_rect(min: [f32; 2], size: [f32; 2]) -> [f32; 4] {
         CHATBOX[2] * sx,
         CHATBOX[3] * sy,
     ]
-}
-
-/// Stable window id (hidden name; the `–`/`+` title row is the toggle).
-const PAINT_WINDOW: &str = "##274-script-paint";
-/// Pinned overlay: no decoration, no move/resize, no scroll. The window
-/// covers exactly the chatbox rect, so input outside it is untouched.
-fn paint_flags() -> WindowFlags {
-    WindowFlags::NO_TITLE_BAR
-        | WindowFlags::NO_MOVE
-        | WindowFlags::NO_RESIZE
-        | WindowFlags::NO_SCROLLBAR
-        | WindowFlags::NO_SCROLL_WITH_MOUSE
-        | WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS
 }
 
 /// Cached script-paint overlay for the focused slot.
@@ -71,43 +57,43 @@ impl PaintOverlay {
             return;
         };
         let [x, y, w, h] = chatbox_rect(min, size);
-        let row_h = ui.frame_height();
-        // The title row doubles as the collapse toggle, so the click target
-        // is the full header strip (rect hit-test + the raw click flag —
-        // same GPU-less pattern as the picker canvas).
-        let title_row = [x, y, x + w, y + row_h];
+        let row_h = ui.frame_height().max(16.0);
         let height = if self.collapsed { row_h } else { h };
-        ui.window(PAINT_WINDOW)
-            .flags(paint_flags())
-            .position([x, y], Condition::Always)
-            .size([w, height], Condition::Always)
-            .build(|| {
-                if ui.is_mouse_hovering_rect(
-                    [title_row[0], title_row[1]],
-                    [title_row[2], title_row[3]],
-                ) && ui.is_mouse_clicked(MouseButton::Left)
-                {
-                    self.collapsed = !self.collapsed;
+        if ui.is_mouse_hovering_rect([x, y], [x + w, y + row_h])
+            && ui.is_mouse_clicked(MouseButton::Left)
+        {
+            self.collapsed = !self.collapsed;
+        }
+        let dl = ui.get_window_draw_list();
+        dl.add_rect(
+            [x, y],
+            [x + w, y + height],
+            [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], 0.92],
+        )
+        .filled(true)
+        .build();
+        dl.add_rect([x, y], [x + w, y + height], ACCENT)
+            .thickness(1.0)
+            .build();
+        let glyph = if self.collapsed { "+" } else { "–" };
+        let header = match &paint.title {
+            Some(t) => format!("{glyph} {t}"),
+            None => glyph.to_string(),
+        };
+        dl.add_text([x + 6.0, y + 2.0], ACCENT, &header);
+        if !self.collapsed {
+            if let Some(title) = &paint.title {
+                self.lines.push(title.clone());
+            }
+            let mut ty = y + row_h;
+            for row in &paint.lines {
+                self.lines.push(row.clone());
+                if ty + 14.0 <= y + height {
+                    dl.add_text([x + 6.0, ty], TEXT, row);
+                    ty += 14.0;
                 }
-                let glyph = if self.collapsed { "+" } else { "–" };
-                ui.text(glyph);
-                if !self.collapsed {
-                    // Paint text: title then rows (the rs2b0t paint shape).
-                    if let Some(title) = &paint.title {
-                        ui.same_line();
-                        ui.text(title);
-                        self.lines.push(title.clone());
-                    }
-                    for row in &paint.lines {
-                        ui.text(row);
-                        self.lines.push(row.clone());
-                    }
-                } else if let Some(title) = &paint.title {
-                    // Title-only: the collapse bar keeps the paint title.
-                    ui.same_line();
-                    ui.text(title);
-                }
-            });
+            }
+        }
     }
 }
 
@@ -122,7 +108,7 @@ mod tests {
     use dear_imgui_rs::FramePrepareOptions;
     use script::shim::ScriptPaint;
 
-    use super::{chatbox_rect, PaintOverlay, CHATBOX, PAINT_WINDOW};
+    use super::{chatbox_rect, PaintOverlay, CHATBOX};
 
     fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
         ScriptPaint {
@@ -130,16 +116,6 @@ mod tests {
             accent: None,
             lines: lines.iter().map(|l| l.to_string()).collect(),
         }
-    }
-
-    /// The paint window's `(pos, size)` read straight from the ImGui
-    /// window entry (GPU-less: no renderer, just the context state).
-    fn window_rect(name: &str) -> ([f32; 2], [f32; 2]) {
-        let cname = std::ffi::CString::new(name).unwrap();
-        let win = unsafe { dear_imgui_rs::sys::igFindWindowByName(cname.as_ptr()) };
-        assert!(!win.is_null(), "paint window was not created");
-        let win = unsafe { &*win };
-        ([win.Pos.x, win.Pos.y], [win.Size.x, win.Size.y])
     }
 
     fn prepare_frame(ctx: &mut dear_imgui_rs::Context) {
@@ -172,7 +148,13 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                });
         }
         ctx.render();
         assert_eq!(
@@ -182,17 +164,7 @@ mod tests {
                 "a row".to_string(),
                 "second row".to_string()
             ],
-            "the paint title and rows are in the window text"
-        );
-        let (pos, size) = window_rect(PAINT_WINDOW);
-        assert_eq!(pos, [18.0, 365.0], "overlay sits over the chatbox origin");
-        assert!(
-            (size[0] - 506.0).abs() < 2.0,
-            "overlay spans the chatbox width"
-        );
-        assert!(
-            (size[1] - 150.0).abs() < 2.0,
-            "overlay spans the chatbox height"
+            "the paint title and rows are in the overlay text"
         );
     }
 
@@ -207,12 +179,7 @@ mod tests {
             overlay.frame(ui, None, [10.0, 20.0], [765.0, 503.0]);
         }
         ctx.render();
-        assert!(overlay.lines.is_empty(), "no paint -> no window text");
-        let cname = std::ffi::CString::new(PAINT_WINDOW).unwrap();
-        assert!(
-            unsafe { dear_imgui_rs::sys::igFindWindowByName(cname.as_ptr()) }.is_null(),
-            "no paint -> no overlay window (click-through unchanged)"
-        );
+        assert!(overlay.lines.is_empty(), "no paint -> no overlay text");
     }
 
     /// One frame with the overlay up; `mouse` + `left_down` simulate the
@@ -232,7 +199,13 @@ mod tests {
             .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, Some(p), [10.0, 20.0], [765.0, 503.0]);
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, Some(p), [10.0, 20.0], [765.0, 503.0]);
+                });
         }
         ctx.render();
     }
@@ -254,13 +227,7 @@ mod tests {
             overlay.lines.is_empty(),
             "collapsed: body rows are not shown"
         );
-        let (pos, size) = window_rect(PAINT_WINDOW);
-        assert_eq!(pos, [18.0, 365.0], "collapsed bar stays over the chatbox");
-        assert!(
-            size[1] < 60.0,
-            "collapsed rect is title-height, got {}",
-            size[1]
-        );
+        assert!(overlay.collapsed);
         // The `+` bar expands again.
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
         assert!(!overlay.collapsed, "`+` expands back");

@@ -2370,13 +2370,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         // Forward paint the same as a normal tick.
                         let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
                             runtime.eval("globalThis.__rs2b0t_host.paint || null");
-                        if let Ok(Some(frame)) = paint {
-                            forward_paint_if_changed(
-                                &mut ipc,
-                                &out,
-                                &mut last_forwarded_paint,
-                                frame,
-                            );
+                        match paint {
+                            Ok(Some(frame)) => {
+                                forward_paint_if_changed(
+                                    &mut ipc,
+                                    &out,
+                                    &mut last_forwarded_paint,
+                                    frame,
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
+                            }
                         }
                         let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                             &mut runtime,
@@ -2478,10 +2484,25 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // in place (Stop drops the whole isolate). serde_v8
                     // walks the v8 object into `ScriptPaint`; the channel
                     // carries a FlatBuffer, never a `serde_json::Value`.
+                    // onPaint is sync; the async runner may still be parked
+                    // in onStart/loop. Invoke it here so the forward always
+                    // sees this tick's frame (or the catch/placeholder).
+                    let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                     let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
                         runtime.eval("globalThis.__rs2b0t_host.paint || null");
-                    if let Ok(Some(frame)) = paint {
-                        forward_paint_if_changed(&mut ipc, &out, &mut last_forwarded_paint, frame);
+                    match paint {
+                        Ok(Some(frame)) => {
+                            forward_paint_if_changed(
+                                &mut ipc,
+                                &out,
+                                &mut last_forwarded_paint,
+                                frame,
+                            );
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
+                        }
                     }
                     let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                         &mut runtime,

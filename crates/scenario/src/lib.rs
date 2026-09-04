@@ -1882,6 +1882,7 @@ fn thiever_scenario() -> Scenario {
             start_script: Some("Thiever"),
             script_settings_inject: Some(THIEVER_INJECT),
             nav: gold_script_nav(),
+            terminal_shot: Some("thiever paint"),
             ..Default::default()
         },
     }
