@@ -147,6 +147,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("inventory.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/inventory/packRules.js",
+            include_str!("pack_rules.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/skills/Skills.js",
             include_str!("skills.js"),
         ),
@@ -212,6 +216,38 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         ),
         Module::new("/rs2b0t/bot/api/combat/food.js", include_str!("food.js")),
         Module::new(
+            "/rs2b0t/bot/api/combat/Special.js",
+            include_str!("special.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/fightUpkeep.js",
+            include_str!("fight_upkeep.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/eatTiming.js",
+            include_str!("eat_timing.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/boostPotions.js",
+            include_str!("boost_potions.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/keepList.js",
+            include_str!("keep_list.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/equipment.js",
+            include_str!("combat_equipment.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/ranged.js",
+            include_str!("ranged.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/sustain/Sustain.js",
+            include_str!("sustain.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/firemaking/LightFire.js",
             include_str!("light_fire.js"),
         ),
@@ -274,6 +310,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/api/ai/clues/SolveClue.js",
             include_str!("solve_clue.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ai/clues/cluePaint.js",
+            include_str!("clue_paint.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/walking/Traversal.js",

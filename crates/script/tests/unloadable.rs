@@ -165,3 +165,21 @@ export default class T extends LoopingBot { loop() {} }
 "#;
     assert_eq!(script::first_unloadable_specifier(src), None);
 }
+
+#[test]
+fn autofighter_shaped_combat_imports_remap() {
+    let src = r#"
+import { countMatching, matchesAny } from '../../api/inventory/packRules.js';
+import { Special } from '../../api/combat/Special.js';
+import { swingStartedThisTick, buryOneInFight } from '../../api/combat/fightUpkeep.js';
+import { shouldHoldEat } from '../../api/combat/eatTiming.js';
+import { BOOST_POTIONS } from '../../api/combat/boostPotions.js';
+import { combatKeepNames } from '../../api/combat/keepList.js';
+import { rangeLoadoutOf } from '../../api/combat/ranged.js';
+import { BOWS } from '../../api/combat/equipment.js';
+import { paintClueProgress } from '../../api/ai/clues/cluePaint.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}

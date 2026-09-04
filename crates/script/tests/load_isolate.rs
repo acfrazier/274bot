@@ -4286,3 +4286,61 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn isolate_pack_rules_matches_any_and_count_matching() {
+    let src = r#"
+import { matchesAny, countMatching, shouldEat } from '../../api/inventory/packRules.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            hit: matchesAny('Big bones', ['bones', 'hide']),
+            miss: matchesAny('Coins', ['bones']),
+            count: countMatching([{ name: 'Bones', count: 3 }, { name: 'Big bones', count: 2 }], ['bones']),
+        };
+        try { shouldEat(10, 10, 5, 1); } catch (e) { globalThis.__err = String(e && e.message ? e.message : e); }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe.get("hit"), Some(&true.into()));
+    assert_eq!(probe.get("miss"), Some(&false.into()));
+    assert_eq!(probe.get("count"), Some(&5.into()));
+    let err = iso.probe("__err").unwrap();
+    let msg = err.as_str().unwrap_or("");
+    assert!(
+        msg.contains("not impl") && msg.contains("shouldEat"),
+        "packRules food policy stays not impl, got {msg:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_bury_one_in_fight_queues_held_bury_when_idle() {
+    let src = r#"
+import { buryOneInFight } from '../../api/combat/fightUpkeep.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = buryOneInFight('Bones'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.animating = false;
+    let inv = [nc(Some("Bones"), 2)];
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "buryOneInFight queues when not animating");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Held {
+            name: "Bones".into(),
+            action: "Bury".into(),
+        }],
+    );
+    iso.join();
+}
