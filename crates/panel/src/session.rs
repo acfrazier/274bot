@@ -116,10 +116,7 @@ fn stash_pending_starts(
     if let Some(key) = inject_companion_as {
         if names.len() > 1 {
             let mut companion_bag = bag.unwrap_or_default();
-            companion_bag.insert(
-                key.to_string(),
-                serde_json::Value::String(names[0].clone()),
-            );
+            companion_bag.insert(key.to_string(), serde_json::Value::String(names[0].clone()));
             starts.push(PendingCatalogStart {
                 slot: names[1].clone(),
                 js,
@@ -136,11 +133,6 @@ fn stash_pending_starts(
 /// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
-}
-
-/// World host for a new session: `BOT_TARGET=live` points at rs2b2t.
-fn default_play_host() -> String {
-    host_play::default_world_host()
 }
 
 /// Loopback hosts get the debug heading / WalkTo Teleport. Public
@@ -173,6 +165,15 @@ pub fn parse_getvar_line(text: &str) -> Option<(&str, i32)> {
 /// Debug heading buttons. TutSkip is omitted once the profile is known
 /// skipped or still unknown (a `getvar` is in flight).
 pub fn debug_main_buttons(show_tutskip: bool) -> Vec<&'static str> {
+    debug_main_buttons_for(client::bot_target(), show_tutskip)
+}
+
+/// [`debug_main_buttons`] for an explicit target so Prod tests do not
+/// flip the process-wide `OnceLock`.
+pub fn debug_main_buttons_for(target: client::BotTarget, show_tutskip: bool) -> Vec<&'static str> {
+    if target != client::BotTarget::Local {
+        return vec!["DebugPanel"];
+    }
     let mut labels = vec!["DebugPanel"];
     if show_tutskip {
         labels.push("TutSkip");
@@ -313,8 +314,6 @@ pub fn walkto_tele_cmd(tile: Tile) -> String {
 /// Cooldown between cpal open retries after a device failure: a machine
 /// without an audio device must not re-open (and re-log) every 20 ms frame.
 const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
-
-const DEFAULT_PORT: u16 = 43594;
 
 /// Vault path used by panel-play (`~/.274bot/vault`, the same file host-play
 /// uses).
@@ -995,14 +994,17 @@ impl Session {
             script_start_handle: Arc::new(Mutex::new(None)),
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
-            options: PlayOptions {
-                host: default_play_host(),
-                port: DEFAULT_PORT,
-                cache_dir: default_cache_dir(),
-                lowmem: true,
-                // Panel per_frame queues hop from Session.mainland (env);
-                // spawn-time PlayOptions.mainland stays false.
-                mainland: false,
+            options: {
+                let (host, port) = host_play::play_endpoint_for(client::bot_target());
+                PlayOptions {
+                    host,
+                    port,
+                    cache_dir: default_cache_dir(),
+                    lowmem: true,
+                    // Panel per_frame queues hop from Session.mainland (env);
+                    // spawn-time PlayOptions.mainland stays false.
+                    mainland: false,
+                }
             },
         }
     }
@@ -3368,7 +3370,7 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use super::{
-        arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons, debug_maxme_cheats,
+        arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
         is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
         null_raster_live_entries_for_target, parse_getvar_line, publish_nav_debug, script_active,
         script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
@@ -3555,12 +3557,24 @@ mod tests {
     #[test]
     fn tutskip_button_omitted_until_known_open() {
         assert_eq!(
-            debug_main_buttons(false),
+            debug_main_buttons_for(client::BotTarget::Local, false),
             ["DebugPanel", "Lumbridge", "maxme", "Teles"]
         );
         assert_eq!(
-            debug_main_buttons(true),
+            debug_main_buttons_for(client::BotTarget::Local, true),
             ["DebugPanel", "TutSkip", "Lumbridge", "maxme", "Teles"]
+        );
+    }
+
+    #[test]
+    fn debug_main_buttons_prod_is_debug_panel_only() {
+        assert_eq!(
+            debug_main_buttons_for(client::BotTarget::Prod, true),
+            ["DebugPanel"]
+        );
+        assert_eq!(
+            debug_main_buttons_for(client::BotTarget::Prod, false),
+            ["DebugPanel"]
         );
     }
 
@@ -6306,7 +6320,10 @@ mod tests {
         let f = s.focus.lock().unwrap();
         assert!(!f.game_pane_open);
         assert!(f.capture, "pane close must not clear the capture pref");
-        assert!(s.capture_tx.is_none(), "drain drops while the pane is closed");
+        assert!(
+            s.capture_tx.is_none(),
+            "drain drops while the pane is closed"
+        );
     }
 
     #[test]
@@ -7379,10 +7396,8 @@ mod tests {
 
     #[test]
     fn script_start_selected_refuses_unloadable_import() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-unloadable-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("274bot-panel-unloadable-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ghost.js");
         std::fs::write(
@@ -7397,7 +7412,11 @@ mod tests {
         s.play = Some(play);
         s.focus.lock().unwrap().focused = Some("alice".into());
         s.load_js(&path);
-        assert_eq!(s.error, None, "load still registers the card: {:?}", s.error);
+        assert_eq!(
+            s.error, None,
+            "load still registers the card: {:?}",
+            s.error
+        );
         s.script_start_selected();
         let err = s.error.clone().expect("unloadable banner");
         assert!(

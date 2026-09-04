@@ -46,9 +46,6 @@ use crate::script_shape::{
     categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
 };
 
-/// The default engine port (same as host-play / panel).
-const DEFAULT_PORT: u16 = 43594;
-
 /// What `tui-play` should do this run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunMode {
@@ -68,19 +65,26 @@ pub struct Args {
     pub cache: String,
     pub users: Vec<String>,
     pub live: Option<String>,
+    /// `--prod`: apply Prod host/port in `main` (OnceLock, not in parse).
+    pub prod: bool,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: tui-play [--vault PATH] [--vault-pass PASS] \
-         [--host HOST] [--port PORT] [--cache DIR] \
+         [--host HOST] [--port PORT] [--cache DIR] [--prod] \
          [--live script_<name>] [--user USER]... (default user: first vault profile)"
     );
     std::process::exit(2);
 }
 
-fn value(it: &mut std::iter::Skip<env::Args>) -> String {
-    it.next().unwrap_or_else(|| usage())
+fn need_value(
+    it: &mut impl Iterator<Item = impl AsRef<str>>,
+    flag: &str,
+) -> Result<String, String> {
+    it.next()
+        .map(|s| s.as_ref().to_string())
+        .ok_or_else(|| format!("tui-play: {flag} needs a value"))
 }
 
 fn default_vault() -> PathBuf {
@@ -93,35 +97,51 @@ fn default_cache_dir() -> String {
 
 /// `--live NAME` wins over `BOT_LIVE`; empty env is ignored.
 /// `--help`/`-h` print the usage line (exit 2, the CLI family's
-/// convention).
+/// convention). `--prod` is recorded here; `main` applies the OnceLock.
 pub fn parse_args() -> Args {
-    let mut args = Args {
+    match parse_args_from(env::args().skip(1)) {
+        Ok(args) => args,
+        Err(msg) => {
+            if msg != "usage" {
+                eprintln!("{msg}");
+            }
+            usage();
+        }
+    }
+}
+
+/// Testable CLI parse. Does not flip [`client::set_bot_target`].
+pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
+    let mut parsed = Args {
         vault: default_vault(),
         pass: env::var("BOT_VAULT_PASS").ok(),
         host: host_play::default_world_host(),
-        port: DEFAULT_PORT,
+        port: client::game_port_for(client::bot_target()),
         cache: default_cache_dir(),
         users: Vec::new(),
         live: env::var("BOT_LIVE").ok().filter(|s| !s.is_empty()),
+        prod: false,
     };
-    let mut it = env::args().skip(1);
+    let mut it = args.into_iter();
     while let Some(arg) = it.next() {
-        match arg.as_str() {
-            "--vault" => args.vault = PathBuf::from(value(&mut it)),
-            "--vault-pass" => args.pass = Some(value(&mut it)),
-            "--host" => args.host = value(&mut it),
-            "--port" => args.port = value(&mut it).parse().unwrap_or_else(|_| usage()),
-            "--cache" => args.cache = value(&mut it),
-            "--user" => args.users.push(value(&mut it)),
-            "--live" => args.live = Some(value(&mut it)),
-            "--help" | "-h" => usage(),
-            other => {
-                eprintln!("tui-play: unknown {other}");
-                usage();
+        match arg.as_ref() {
+            "--vault" => parsed.vault = PathBuf::from(need_value(&mut it, "--vault")?),
+            "--vault-pass" => parsed.pass = Some(need_value(&mut it, "--vault-pass")?),
+            "--host" => parsed.host = need_value(&mut it, "--host")?,
+            "--port" => {
+                parsed.port = need_value(&mut it, "--port")?
+                    .parse()
+                    .map_err(|_| "tui-play: --port needs a number".to_string())?
             }
+            "--cache" => parsed.cache = need_value(&mut it, "--cache")?,
+            "--user" => parsed.users.push(need_value(&mut it, "--user")?),
+            "--live" => parsed.live = Some(need_value(&mut it, "--live")?),
+            "--prod" => parsed.prod = true,
+            "--help" | "-h" => return Err("usage".into()),
+            other => return Err(format!("tui-play: unknown {other}")),
         }
     }
-    args
+    Ok(parsed)
 }
 
 /// Refuse a non-loopback `--host` while local RSA is active (same bind as host-play).
@@ -1288,7 +1308,13 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
 }
 
 pub fn main() -> ExitCode {
-    let args = parse_args();
+    let mut args = parse_args();
+    if args.prod {
+        client::set_bot_target(client::BotTarget::Prod);
+        let (host, port) = host_play::play_endpoint_for(client::BotTarget::Prod);
+        args.host = host;
+        args.port = port;
+    }
     if let Err(msg) = validate_startup_host(&args.host) {
         eprintln!("{msg}");
         return ExitCode::FAILURE;
@@ -1341,6 +1367,13 @@ mod tests {
             app.world.is_some(),
             "pump copies the session nav world onto the map"
         );
+    }
+
+    #[test]
+    fn parse_args_from_prod_is_not_unknown() {
+        let args = parse_args_from(["--prod"]).expect("prod is a known flag");
+        assert!(args.prod);
+        assert!(args.live.is_none());
     }
 
     #[test]

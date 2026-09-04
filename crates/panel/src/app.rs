@@ -479,7 +479,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--smoke] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]";
+    "usage: panel-play [--prod] [--smoke] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -593,6 +593,7 @@ pub fn parse_live_args(
                 live = Some(name.as_ref().to_string());
             }
             "--smoke" => smoke = true,
+            "--prod" => {}
             "--help" | "-h" => return Err((0, LIVE_USAGE.into())),
             other => return Err((2, format!("panel-play: unknown {other}"))),
         }
@@ -4673,6 +4674,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_live_args_prod_is_interactive_not_unknown() {
+        assert_eq!(parse_live_args(["--prod"], None), Ok(RunMode::Interactive));
+        assert_eq!(
+            parse_live_args(["--prod", "--live", "script_bone_burier"], None),
+            Ok(RunMode::Live("script_bone_burier".into()))
+        );
+    }
+
+    #[test]
     fn parse_live_args_unknown_flag_and_missing_name() {
         assert_eq!(
             parse_live_args(["--wat"], None),
@@ -5339,10 +5349,7 @@ mod tests {
     #[test]
     fn global_config_slot_name_then_capture_then_focused_50_then_panel() {
         const SRC: &str = include_str!("app.rs");
-        let g = SRC
-            .split("fn global_config_section")
-            .nth(1)
-            .unwrap_or("");
+        let g = SRC.split("fn global_config_section").nth(1).unwrap_or("");
         let g = g.split("\nfn ").next().unwrap_or("");
         let slot = g.find("\"Slot:\"").expect("Slot: label above capture");
         let capture = g
@@ -5354,7 +5361,10 @@ mod tests {
         let panel = g
             .find("panel_heading_toggles")
             .expect("Panel heading toggles stay in Global");
-        assert!(slot < capture, "Slot: sits below the heading, above capture");
+        assert!(
+            slot < capture,
+            "Slot: sits below the heading, above capture"
+        );
         assert!(
             focused_50 < panel,
             "focused 50 fps sits above the Panel subsection"
@@ -5368,10 +5378,7 @@ mod tests {
     #[test]
     fn settings_window_drops_slot_and_random_rows() {
         const SRC: &str = include_str!("app.rs");
-        let settings = SRC
-            .split("fn settings_window")
-            .nth(1)
-            .unwrap_or("");
+        let settings = SRC.split("fn settings_window").nth(1).unwrap_or("");
         let settings = settings.split("\nfn ").next().unwrap_or("");
         assert!(
             settings.contains("config_section(ui, session, \"Global\""),
@@ -5402,10 +5409,7 @@ mod tests {
     #[test]
     fn slot_render_section_no_longer_owns_focused_50() {
         const SRC: &str = include_str!("app.rs");
-        let r = SRC
-            .split("fn slot_render_section")
-            .nth(1)
-            .unwrap_or("");
+        let r = SRC.split("fn slot_render_section").nth(1).unwrap_or("");
         let r = r.split("\nfn ").next().unwrap_or("");
         assert!(
             !r.contains("focused 50 fps"),
@@ -5420,10 +5424,7 @@ mod tests {
     #[test]
     fn chooser_edit_hosts_per_profile_login_and_random() {
         const SRC: &str = include_str!("app.rs");
-        let chooser = SRC
-            .split("fn chooser_window")
-            .nth(1)
-            .unwrap_or("");
+        let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
         let chooser = chooser.split("fn settings_window").next().unwrap_or("");
         assert!(
             chooser.contains("slot_capture_section"),
@@ -5458,10 +5459,7 @@ mod tests {
     #[test]
     fn chooser_locked_vault_shows_unlock_not_empty_copy() {
         const SRC: &str = include_str!("app.rs");
-        let chooser = SRC
-            .split("fn chooser_window")
-            .nth(1)
-            .unwrap_or("");
+        let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
         let chooser = chooser.split("fn settings_window").next().unwrap_or("");
         let locked = chooser
             .find("vault.is_none()")
@@ -5476,10 +5474,7 @@ mod tests {
             locked < unlock && unlock < empty,
             "unlock UI while locked; empty copy only after the vault is open"
         );
-        let profile = SRC
-            .split("fn profile_section")
-            .nth(1)
-            .unwrap_or("");
+        let profile = SRC.split("fn profile_section").nth(1).unwrap_or("");
         let profile = profile.split("\nfn ").next().unwrap_or("");
         assert!(
             profile.contains("vault_unlock_prompt"),
@@ -5494,10 +5489,7 @@ mod tests {
     #[test]
     fn panel_subsection_exposes_chrome_color_pickers() {
         const SRC: &str = include_str!("app.rs");
-        let panel = SRC
-            .split("fn panel_heading_toggles")
-            .nth(1)
-            .unwrap_or("");
+        let panel = SRC.split("fn panel_heading_toggles").nth(1).unwrap_or("");
         let panel = panel.split("\nfn ").next().unwrap_or("");
         assert!(
             panel.contains("chrome_color_field") || panel.contains("nav_color_field"),

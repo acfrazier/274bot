@@ -39,7 +39,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: host-play [--vault PATH] [--vault-pass PASS] \
          [--host HOST] [--port PORT] [--cache DIR] [--lowmem|--highmem] \
-         [--mainland] [--debug] [--user USER]... (default user: test)"
+         [--mainland] [--debug] [--prod] [--user USER]... (default user: test)"
     );
     std::process::exit(2);
 }
@@ -74,7 +74,9 @@ fn parse_args() -> Args {
             "--debug" => set_debug(true),
             "--prod" => {
                 client::set_bot_target(client::BotTarget::Prod);
-                args.host = host_play::default_world_host();
+                let (host, port) = host_play::play_endpoint_for(client::BotTarget::Prod);
+                args.host = host;
+                args.port = port;
             }
             "--help" | "-h" => usage(),
             _ => usage(),
