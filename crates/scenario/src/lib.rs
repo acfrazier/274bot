@@ -1636,7 +1636,7 @@ fn bone_burier_scenario() -> Scenario {
                     arm: Proof::Chat {
                         needle: "bury the bones",
                     },
-                    budget_ticks: 600,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             },
         ],
@@ -1647,7 +1647,7 @@ fn bone_burier_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: Duration::from_secs(300),
+            deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BoneBurier"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -1689,6 +1689,11 @@ fn script_live_seed_steps() -> Vec<Step> {
 fn gold_script_nav() -> ScenarioNav {
     ScenarioNav::default().with_tick_ms(600)
 }
+
+/// Watch window after Start (~90s at 600ms ticks). Seed/tele/relog stay longer.
+const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
+/// Seed + tele + drain + the short watch. Not a 6-minute soak.
+const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 
 /// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
 fn drain_advancestat() -> Step {
@@ -1763,7 +1768,7 @@ fn chicken_killer_scenario() -> Scenario {
                 },
                 wait: Wait {
                     arm: xp,
-                    budget_ticks: 600,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             });
             steps
@@ -1773,7 +1778,7 @@ fn chicken_killer_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: Duration::from_secs(300),
+            deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("ChickenKiller"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -1846,7 +1851,7 @@ fn thiever_scenario() -> Scenario {
                 },
                 wait: Wait {
                     arm: xp,
-                    budget_ticks: 600,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             });
             steps
@@ -1856,7 +1861,7 @@ fn thiever_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: Duration::from_secs(300),
+            deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("Thiever"),
             script_settings_inject: Some(THIEVER_INJECT),
             nav: gold_script_nav(),
@@ -1933,7 +1938,7 @@ fn alcher_scenario() -> Scenario {
                 },
                 wait: Wait {
                     arm: xp,
-                    budget_ticks: 600,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             });
             steps
@@ -1943,7 +1948,7 @@ fn alcher_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: Duration::from_secs(360),
+            deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("Alcher"),
             script_settings_inject: Some(ALCHER_INJECT),
             nav: gold_script_nav(),
@@ -2004,7 +2009,7 @@ fn bank_fletcher_scenario() -> Scenario {
                 },
                 wait: Wait {
                     arm: xp,
-                    budget_ticks: 600,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             });
             steps
@@ -2014,7 +2019,7 @@ fn bank_fletcher_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: Duration::from_secs(360),
+            deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BankFletcher"),
             script_settings_inject: Some(BANK_FLETCHER_INJECT),
             nav: gold_script_nav(),
@@ -2105,7 +2110,7 @@ fn script_trade_scenario() -> Scenario {
                         name: "Coins",
                         count: 0,
                     },
-                    budget_ticks: 600,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             },
         ],
@@ -2123,7 +2128,7 @@ fn script_trade_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: Duration::from_secs(300),
+            deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("TradeBot"),
             inject_companion_as: Some("partner"),
             nav: gold_script_nav(),
@@ -2835,6 +2840,39 @@ mod tests {
         assert_eq!(s.proof.name(), "chat(contains \"bury the bones\")");
         assert!(s.companions.is_empty());
         assert!(s.settings.require_mainland_base);
+    }
+
+    #[test]
+    fn script_gold_watch_is_a_short_agentic_budget() {
+        for name in [
+            "bone_burier",
+            "chicken_killer",
+            "thiever",
+            "alcher",
+            "bank_fletcher",
+            "script_trade",
+        ] {
+            let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(
+                s.settings.deadline, SCRIPT_GOLD_DEADLINE,
+                "{name} deadline"
+            );
+            let start = s
+                .steps
+                .iter()
+                .position(|st| matches!(st.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name} StartScript"));
+            let watch = &s.steps[start + 1];
+            assert_eq!(
+                watch.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+                "{name} watch ticks"
+            );
+            assert!(
+                watch.name.starts_with("watch "),
+                "{name} step after Start is the watch, got {}",
+                watch.name
+            );
+        }
     }
 
     #[test]
