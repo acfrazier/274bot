@@ -1720,20 +1720,12 @@ fn start_catalog_step() -> Step {
     }
 }
 
-/// Lumbridge chicken pen (east of the castle): the ChickenKiller leash
-/// anchor when started here.
-const LUMBRIDGE_CHICKENS: WorldTile = WorldTile {
-    x: 3235,
-    z: 3295,
-    level: 0,
-};
-
-/// The `chicken_killer` scenario: live ChickenKiller gold — melee defaults,
-/// DeathRecovery no-op stub, script does the fighting. Seed tele lands
-/// among Lumbridge chickens; proof is strength XP from the kill loop.
+/// The `chicken_killer` scenario: live ChickenKiller courtyard gold —
+/// mainland + tutskip + relog only (no pen tele). Melee defaults,
+/// DeathRecovery idle stub; script walks courtyard → pen via
+/// `Traversal.walkResilient` → `op: walk`. Proof is strength XP ≥ 1.
 fn chicken_killer_scenario() -> Scenario {
     let xp = Proof::StatXpGain { id: 2, min: 1 };
-    let tele = LUMBRIDGE_CHICKENS;
     Scenario {
         name: "chicken_killer",
         seed: Seed {
@@ -1742,24 +1734,6 @@ fn chicken_killer_scenario() -> Scenario {
         },
         steps: {
             let mut steps = script_live_seed_steps();
-            steps.push(Step {
-                name: "tele to Lumbridge chickens",
-                kind: StepKind::Perform {
-                    send: Box::new(move |c, _| {
-                        cheat(c, &tele_args(tele.level, tele.x, tele.z));
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::ArrivedNear {
-                        x: tele.x,
-                        z: tele.z,
-                        level: tele.level,
-                        radius: 8,
-                    },
-                    budget_ticks: 120,
-                },
-            });
             steps.push(start_catalog_step());
             steps.push(Step {
                 name: "watch the script fight chickens",
@@ -2741,22 +2715,45 @@ mod tests {
         assert_eq!(bone.steps[i].wait.arm, Proof::Stat { id: 16, min: 0 });
         assert_eq!(bone.steps[i].wait.budget_ticks, 1);
 
-        // chicken_killer: after tele ArrivedNear chickens, before watch XP
+        // chicken_killer: courtyard gold — after seed relog, no pen tele, before watch XP
         let chickens = get("chicken_killer").unwrap();
         let i = start_idx("chicken_killer");
+        assert!(
+            matches!(chickens.steps[i - 1].kind, StepKind::Relog),
+            "chicken_killer StartScript follows the seed relog (no pen tele)"
+        );
         assert_eq!(
             chickens.steps[i - 1].wait.arm,
-            Proof::ArrivedNear {
-                x: 3235,
-                z: 3295,
-                level: 0,
-                radius: 8,
-            }
+            Proof::SideTabAvailable { index: 3 }
+        );
+        assert!(
+            chickens.steps.iter().all(|st| {
+                !matches!(
+                    st.wait.arm,
+                    Proof::ArrivedNear {
+                        x: 3235,
+                        z: 3295,
+                        ..
+                    }
+                )
+            }),
+            "chicken_killer must not tele onto the pen at (3235,3295)"
         );
         assert_eq!(
             chickens.steps[i + 1].wait.arm,
             Proof::StatXpGain { id: 2, min: 1 }
         );
+        assert!(
+            chickens
+                .settings
+                .script_settings_inject
+                .as_ref()
+                .map(|rows| !rows.iter().any(|r| r.id == "banking"))
+                .unwrap_or(true),
+            "chicken_killer banking stays off (no inject)"
+        );
+        assert_eq!(chickens.settings.start_script, Some("ChickenKiller"));
+        assert!(chickens.settings.require_mainland_base);
 
         // thiever: after tele + DrainDialogs, before watch XP
         let thiever = get("thiever").unwrap();
