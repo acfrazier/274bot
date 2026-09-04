@@ -226,16 +226,9 @@ fn detect_scene(
         };
         let name = raw.to_lowercase();
         let ours = is_ours(npc, self_slot, display_name.as_deref());
-        let facing_self = npc.target
-            == Some(ActorTargetView {
-                kind: ActorKind::Player,
-                index: self_slot.max(0) as usize,
-            });
-        // The drunken dwarf is dialog until it comes for us (`target ==
-        // self`); then it is evade like the hostile guardians.
-        if ours
-            && (EVADE_NAMES.contains(&name.as_str()) || (name == "drunken dwarf" && facing_self))
-        {
+        // FACEENTITY / playerfollow is the ours tell for the dialog five
+        // (including drunken dwarf), not combat. Hostile names only here.
+        if ours && EVADE_NAMES.contains(&name.as_str()) {
             return Some(DetectedRandom {
                 kind: RandomKind::Evade,
                 name,
@@ -1818,6 +1811,21 @@ mod tests {
         plant_npc(&mut c, 0, "Swarm", -1, None);
         let snap = snap_at(&mut c);
         assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+    }
+
+    #[test]
+    fn drunken_dwarf_facing_self_is_dialog_not_evade() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        // FACEENTITY / playerfollow is the ours tell, not combat. A dwarf
+        // that has come for us is still the dialog five, not a swarm.
+        plant_npc(&mut c, 0, "Drunken dwarf", 32768, None);
+        let snap = snap_at(&mut c);
+        let ev = detect(&snap, 0, &no_cooldown()).expect("dwarf detected");
+        assert_eq!(ev.kind, RandomKind::Dialog);
+        assert_eq!(ev.name, "drunken dwarf");
+        assert!(ev.ours);
+        assert_eq!(ev.npc_index, Some(0));
     }
 
     #[test]
