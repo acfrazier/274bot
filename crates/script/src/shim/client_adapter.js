@@ -79,8 +79,8 @@ export const reader = proxy('reader', {
         return {
             name: row.name,
             xp: row.xp ?? 0,
-            base: row.level ?? 0,
-            effective: row.effective ?? row.level ?? 0,
+            base: row.base ?? 0,
+            effective: row.effective ?? 0,
         };
     },
     skillCount() {

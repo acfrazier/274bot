@@ -1405,13 +1405,15 @@ globalThis.__rs_bot = inst;
 "#;
 
     /// The shared compat tick runner (defineBot and class shapes): `onStart`
-    /// once (awaited), then `loop()` (awaited), then `onPaint` with the
-    /// dummy ctx. `__rs2b0t_tick_async` is async so an Execution wait parks
-    /// the whole runner; `__rs_tick` is the synchronous entry the thread
-    /// calls (it returns immediately — parked or not), and the wait is
-    /// settled by `__rs2b0t_pump` on later posted ticks instead of a
-    /// re-entrant `loop()`. Async errors (a cond that throws) land on the
-    /// host handle's `lastError` for the thread to log.
+    /// once (awaited), then `loop()` (awaited). `onPaint` runs on every
+    /// posted tick even while `loop` is parked on an Execution wait —
+    /// paint is not gated on `loop()` returning. `__rs2b0t_tick_async` is
+    /// async so an Execution wait parks the whole runner; `__rs_tick` is
+    /// the synchronous entry the thread calls (it returns immediately —
+    /// parked or not), and the wait is settled by `__rs2b0t_pump` on later
+    /// posted ticks instead of a re-entrant `loop()`. Async errors (a cond
+    /// that throws) land on the host handle's `lastError` for the thread
+    /// to log.
     const COMPAT_RUNNER: &str = r#"
 globalThis.__rs_tick = (n) => {
     if (!inst) return;
@@ -1438,8 +1440,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             }
         }
     }
-    if (typeof inst.loop === 'function') { await inst.loop(); }
+    // Kick loop, yield so it can park on the first await, then paint —
+    // never wait for loop() to return before onPaint.
+    const loopP = (typeof inst.loop === 'function') ? inst.loop() : Promise.resolve();
+    await Promise.resolve();
     if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
+    await loopP;
 };
 "#;
 
@@ -1998,9 +2004,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "name", name)?;
             let xp = num(scope, st.xp() as f64);
             set(scope, o, "xp", xp)?;
-            let level = num(scope, st.level() as f64);
-            set(scope, o, "level", level)?;
-            let effective = num(scope, st.level() as f64);
+            let base = num(scope, st.base() as f64);
+            set(scope, o, "base", base)?;
+            let effective = num(scope, st.effective() as f64);
             set(scope, o, "effective", effective)?;
             let obj = o.into();
             arr.set_index(scope, i as u32, obj)
@@ -2392,7 +2398,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         )
                         .unwrap_or(false);
                     let result: Result<(), rustyscript::Error> = if parked {
-                        runtime.call_function(None, "__rs2b0t_pump", json_args!(n))
+                        // Pump settles the wait (and may re-park), then
+                        // paints. Drain so await + onPaint + loop
+                        // continuation land on this tick before paint
+                        // forward.
+                        let result = runtime.call_function(None, "__rs2b0t_pump", json_args!(n));
+                        let _ = runtime.block_on_event_loop(
+                            rustyscript::deno_core::PollEventLoopOptions::default(),
+                            Some(Duration::from_millis(10)),
+                        );
+                        result
                     } else {
                         // `__rs_tick` is a synchronous entry that returns
                         // immediately (parked or not), so this cannot hang on

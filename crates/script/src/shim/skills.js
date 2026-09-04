@@ -26,16 +26,17 @@ export const Skills = new Proxy(
             if (typeof row.xp !== 'number') throw notImpl('Skills.xp');
             return row.xp;
         },
+        // Unboosted / max HP — posted `base`.
         level(name) {
             const row = mustStat(name, 'Skills.level');
-            if (typeof row.level !== 'number') throw notImpl('Skills.level');
-            return row.level;
+            if (typeof row.base !== 'number') throw notImpl('Skills.level');
+            return row.base;
         },
+        // Current / boosted — posted `effective`.
         effective(name) {
             const row = mustStat(name, 'Skills.effective');
-            if (typeof row.effective === 'number') return row.effective;
-            if (typeof row.level === 'number') return row.level;
-            throw notImpl('Skills.effective');
+            if (typeof row.effective !== 'number') throw notImpl('Skills.effective');
+            return row.effective;
         },
         hpFraction() {
             const base = Skills.level('hitpoints');

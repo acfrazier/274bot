@@ -61,11 +61,12 @@ const VT_ROW_NOTED: VOffsetT = 12;
 const VT_ROW_CERT: VOffsetT = 14;
 const VT_ROW_COMPONENT: VOffsetT = 16;
 
-// Stat: { index, name, xp, level }
+// Stat: { index, name, xp, base, effective }
 const VT_STAT_INDEX: VOffsetT = 4;
 const VT_STAT_NAME: VOffsetT = 6;
 const VT_STAT_XP: VOffsetT = 8;
-const VT_STAT_LEVEL: VOffsetT = 10;
+const VT_STAT_BASE: VOffsetT = 10;
+const VT_STAT_EFFECTIVE: VOffsetT = 12;
 
 // BankStand: { name, x, z, level, kind, op, choose }
 const VT_BANK_NAME: VOffsetT = 4;
@@ -222,13 +223,14 @@ pub struct TileInput {
     pub level: i32,
 }
 
-/// One skill row: the snapshot's stat index, name, xp, and effective level.
+/// One skill row: the snapshot's stat index, name, xp, base, and effective.
 #[derive(Clone, Copy)]
 pub struct StatInput<'a> {
     pub index: i32,
     pub name: &'a str,
     pub xp: i32,
-    pub level: i32,
+    pub base: i32,
+    pub effective: i32,
 }
 
 /// A scene entity view posted into the isolate (npc/loc/player/ground).
@@ -559,8 +561,11 @@ impl StatReader<'_> {
     pub fn xp(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_STAT_XP, None) }.unwrap_or(0)
     }
-    pub fn level(&self) -> i32 {
-        unsafe { self.tab.get::<i32>(VT_STAT_LEVEL, None) }.unwrap_or(0)
+    pub fn base(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_STAT_BASE, None) }.unwrap_or(0)
+    }
+    pub fn effective(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_STAT_EFFECTIVE, None) }.unwrap_or(0)
     }
 }
 
@@ -570,7 +575,8 @@ impl Verifiable for StatReader<'_> {
             .visit_field::<i32>("index", VT_STAT_INDEX, false)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_STAT_NAME, false)?
             .visit_field::<i32>("xp", VT_STAT_XP, false)?
-            .visit_field::<i32>("level", VT_STAT_LEVEL, false)?
+            .visit_field::<i32>("base", VT_STAT_BASE, false)?
+            .visit_field::<i32>("effective", VT_STAT_EFFECTIVE, false)?
             .finish();
         Ok(())
     }
@@ -1385,7 +1391,7 @@ pub struct SnapshotFingerprint {
     pub ingame: bool,
     pub inv: Vec<ItemRowFp>,
     pub inv_size: i32,
-    pub stats: Vec<(i32, String, i32, i32)>,
+    pub stats: Vec<(i32, String, i32, i32, i32)>,
     pub booths: Vec<TileInput>,
     pub nearest_booth: Option<NearestBoothFp>,
     pub banks: Vec<BankStandFp>,
@@ -1482,7 +1488,7 @@ impl SnapshotFingerprint {
             stats: input
                 .stats
                 .iter()
-                .map(|s| (s.index, s.name.to_string(), s.xp, s.level))
+                .map(|s| (s.index, s.name.to_string(), s.xp, s.base, s.effective))
                 .collect(),
             booths: input.booths.to_vec(),
             nearest_booth: input.nearest_booth.as_ref().map(|b| NearestBoothFp {
@@ -2354,7 +2360,8 @@ fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<S
     b.push_slot_always(VT_STAT_INDEX, s.index);
     b.push_slot_always(VT_STAT_NAME, name_off);
     b.push_slot_always(VT_STAT_XP, s.xp);
-    b.push_slot_always(VT_STAT_LEVEL, s.level);
+    b.push_slot_always(VT_STAT_BASE, s.base);
+    b.push_slot_always(VT_STAT_EFFECTIVE, s.effective);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3504,6 +3511,30 @@ mod tests {
             shop_open: false,
             shop_stock: &[],
         }
+    }
+
+    /// Stats rows carry base + effective (+ xp/name/index) through the blob.
+    #[test]
+    fn encode_decode_stat_base_and_effective() {
+        let mut input = empty_input(3);
+        let stats = [StatInput {
+            index: 3,
+            name: "hitpoints",
+            xp: 1500,
+            base: 10,
+            effective: 7,
+        }];
+        input.stats = &stats;
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot decodes");
+        assert!(view.has_stats());
+        let got = view.stats();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].index(), 3);
+        assert_eq!(got[0].name(), "hitpoints");
+        assert_eq!(got[0].xp(), 1500);
+        assert_eq!(got[0].base(), 10);
+        assert_eq!(got[0].effective(), 7);
     }
 
     /// Task 8 — an npc SceneEntity view round-trips through encode/decode.

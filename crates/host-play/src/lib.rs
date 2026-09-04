@@ -1562,7 +1562,8 @@ fn with_script_snapshot_input<R>(
                 index: st.index,
                 name: &st.name,
                 xp: st.xp,
-                level: st.effective,
+                base: st.base,
+                effective: st.effective,
             })
             .collect::<Vec<_>>()
     });
@@ -6841,9 +6842,9 @@ mod tests {
     // crates/script/schema/isolate.fbs) and carries exactly the fields the
     // shim Game/Inventory/Skills/EventSignal read: inv rows carry resolved
     // obj names (None when the table has none), stats rows the stat
-    // index/name/xp, bank flags from the snapshot, and hold/ours pass
-    // through for EventSignal.pending(). No World clone — only these
-    // fields. Round-trips through the script crate's decoder.
+    // index/name/xp/base/effective, bank flags from the snapshot, and
+    // hold/ours pass through for EventSignal.pending(). No World clone —
+    // only these fields. Round-trips through the script crate's decoder.
     #[test]
     fn script_snapshot_fb_carries_observed_fields_only() {
         let mut c = prepare_client(
@@ -6861,6 +6862,7 @@ mod tests {
         );
         c.runenergy = 42;
         c.stat_effective_level[7] = 40;
+        c.stat_base_level[7] = 35;
         c.stat_xp[7] = 1300;
         c.bump_gens(ServerProt::UPDATE_STAT);
         let mut snap = GameSnapshot::new();
@@ -6902,8 +6904,14 @@ mod tests {
         assert!(view.has_stats(), "keyframe carries stats");
         let stats = view.stats();
         assert_eq!(
-            (stats[7].index(), stats[7].name(), stats[7].xp()),
-            (7, "cooking", 1300)
+            (
+                stats[7].index(),
+                stats[7].name(),
+                stats[7].xp(),
+                stats[7].base(),
+                stats[7].effective()
+            ),
+            (7, "cooking", 1300, 35, 40)
         );
         assert!(!view.bank_open(), "no bank component in the fixture");
         assert!(!view.bank_loaded());

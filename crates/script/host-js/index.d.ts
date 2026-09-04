@@ -24,7 +24,8 @@ export interface StatRow {
   index: number;
   name: string;
   xp: number;
-  level: number;
+  base: number;
+  effective: number;
 }
 
 /** One npc/loc/player/ground row from the posted snapshot. */

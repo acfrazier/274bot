@@ -28,12 +28,13 @@ table Row {
   component_id: int;
 }
 
-// One skill row: the snapshot's stat index, name, xp, and effective level.
+// One skill row: index, name, xp, unboosted base, and current effective.
 table Stat {
   index: int;
   name: string;
   xp: int;
-  level: int;
+  base: int;
+  effective: int;
 }
 
 // A scene entity view (npc / loc / player / ground item): name, tile,

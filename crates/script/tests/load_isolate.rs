@@ -1077,6 +1077,98 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Parked Execution wait: `__rs2b0t_pump` must still call onPaint and
+// forward Paint.begin/end — do not wait for loop() to return.
+#[test]
+fn isolate_parked_wait_still_paints_each_tick() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            await Execution.delayUntil(() => Game.tick() >= 5, 6000);
+        }
+    }
+    onPaint() {
+        globalThis.__rs_paints = (globalThis.__rs_paints || 0) + 1;
+        const p = Paint.begin();
+        p.title('parked');
+        p.row('tick');
+        p.end();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1); // parks inside loop
+    assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop parks");
+    let paints_after_first: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap_or(0);
+    assert!(
+        paints_after_first >= 1,
+        "first tick must paint even when loop parks (paints={paints_after_first})"
+    );
+    iso.on_game_tick(2);
+    iso.on_game_tick(3);
+    let loops = iso.probe("__rs_loops").unwrap();
+    assert_eq!(loops, 1, "still parked: loop must not re-enter");
+    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
+    assert!(
+        paints >= 3,
+        "onPaint must run on parked pump ticks (paints={paints})"
+    );
+    let frame = iso.paint().expect("paint forwarded while parked");
+    assert_eq!(frame.title.as_deref(), Some("parked"));
+    assert!(frame.lines.iter().any(|l| l == "tick"));
+    iso.join();
+}
+
+// Posted stats carry base + effective; Skills.level→base, effective→effective,
+// hpFraction = effective(hitpoints)/level(hitpoints) when base > 0.
+#[test]
+fn isolate_skills_reads_base_effective_and_hp_fraction() {
+    let src = r#"
+import { Skills } from '../../api/skills/Skills.js';
+export default class T extends LoopingBot {
+    loop() {
+        const tryHit = (fn) => {
+            try { return fn(); } catch (e) { return String(e.message || e); }
+        };
+        globalThis.__probe = {
+            xp: tryHit(() => Skills.xp('hitpoints')),
+            level: tryHit(() => Skills.level('hitpoints')),
+            effective: tryHit(() => Skills.effective('hitpoints')),
+            hp: tryHit(() => Skills.hpFraction()),
+            missing: tryHit(() => Skills.level('no-such-skill')),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.stats = &[script::isolate_fb::StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 1500,
+        base: 10,
+        effective: 7,
+    }];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["xp"], 1500, "Skills.xp → posted xp");
+    assert_eq!(value["level"], 10, "Skills.level → posted base");
+    assert_eq!(value["effective"], 7, "Skills.effective → posted effective");
+    assert_eq!(value["hp"], 0.7, "hpFraction = effective/base");
+    let missing = value["missing"].as_str().unwrap_or("");
+    assert!(
+        missing.contains("not impl"),
+        "missing skill throws not impl, got {missing:?}"
+    );
+    iso.join();
+}
+
 // SEC-004 — while the posted blob has hold:true, JS cannot unfreeze by
 // writing __rs2b0t_host.hold = false: loop() stays frozen; onPaint may run.
 #[test]
@@ -1297,7 +1389,8 @@ export default class T extends LoopingBot {
         index: 5,
         name: "prayer",
         xp: 1300,
-        level: 10,
+        base: 10,
+        effective: 10,
     }];
     snap.hold = true;
     post_snapshot_input(&iso, &snap);
@@ -1872,7 +1965,8 @@ fn real_bone_burier_queues_bury_when_seeded() {
         index: 5,
         name: "Prayer",
         xp: 31,
-        level: 1,
+        base: 1,
+        effective: 1,
     }];
     snap.stats = &stats;
     post_snapshot_input(&iso, &snap);

@@ -98,10 +98,15 @@ export const Execution = {
 
 // The isolate tick loop calls this (through the rustyscript event loop,
 // so the resolved wait's continuation runs) on every posted tick while a
-// wait is parked: settle due waits, and the loop's continuation either
-// completes the tick or parks again.
+// wait is parked: settle due waits, let the loop continuation run one
+// microtask turn, then onPaint — paint must not wait for loop() to return.
 globalThis.__rs2b0t_pump = async (n) => {
     const state = host();
     state.tick = n;
     park.settle(n, performance.now());
+    await Promise.resolve();
+    const bot = globalThis.__rs_bot;
+    if (bot && typeof bot.onPaint === 'function') {
+        bot.onPaint(globalThis.__dummy_ctx);
+    }
 };

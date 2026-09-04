@@ -339,7 +339,13 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 doc: None,
             },
             TsField {
-                name: "level",
+                name: "base",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "effective",
                 ty: "number",
                 optional: false,
                 doc: None,
