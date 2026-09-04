@@ -4555,8 +4555,8 @@ export default class T extends LoopingBot {
             hit: matchesAny('Big bones', ['bones', 'hide']),
             miss: matchesAny('Coins', ['bones']),
             count: countMatching([{ name: 'Bones', count: 3 }, { name: 'Big bones', count: 2 }], ['bones']),
+            eat: shouldEat(10, 10, 5, 1),
         };
-        try { shouldEat(10, 10, 5, 1); } catch (e) { globalThis.__err = String(e && e.message ? e.message : e); }
     }
 }
 "#;
@@ -4567,11 +4567,10 @@ export default class T extends LoopingBot {
     assert_eq!(probe.get("hit"), Some(&true.into()));
     assert_eq!(probe.get("miss"), Some(&false.into()));
     assert_eq!(probe.get("count"), Some(&5.into()));
-    let err = iso.probe("__err").unwrap();
-    let msg = err.as_str().unwrap_or("");
-    assert!(
-        msg.contains("not impl") && msg.contains("shouldEat"),
-        "packRules food policy stays not impl, got {msg:?}"
+    assert_eq!(
+        probe.get("eat"),
+        Some(&false.into()),
+        "shouldEat is a predicate (no eat at full hp when heal would waste)"
     );
     iso.join();
 }
@@ -4582,8 +4581,6 @@ fn pack_rules_predicates() {
 import { shouldPanic, shouldBank, shouldRestock, shouldEat } from '../../api/inventory/packRules.js';
 export default class T extends LoopingBot {
     loop() {
-        let eatErr = null;
-        try { shouldEat(10, 10, 5, 1); } catch (e) { eatErr = String(e && e.message ? e.message : e); }
         globalThis.__probe = JSON.stringify({
             panicLowNoFood: shouldPanic(0.2, 0.25, 0),
             panicLowWithFood: shouldPanic(0.2, 0.25, 1),
@@ -4591,7 +4588,8 @@ export default class T extends LoopingBot {
             bankAt: shouldBank(8, 8, false),
             bankEmptyFull: shouldBank(0, 8, true),
             restock: shouldRestock(2, 5),
-            eatErr,
+            eatFloor: shouldEat(3, 10, 20, 1),
+            eatNoFood: shouldEat(3, 10, 20, 0),
         });
     }
 }
@@ -4632,10 +4630,105 @@ export default class T extends LoopingBot {
         serde_json::json!(true),
         "shouldRestock(2, 5): {parsed:?}"
     );
-    let eat = parsed["eatErr"].as_str().unwrap_or("");
+    assert_eq!(
+        parsed["eatFloor"],
+        serde_json::json!(true),
+        "shouldEat at safety floor: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["eatNoFood"],
+        serde_json::json!(false),
+        "shouldEat with no food: {parsed:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn eat_predicates() {
+    let src = r#"
+import { shouldEat } from '../../api/inventory/packRules.js';
+import { shouldEatFood, shouldEatToUseFood, foodForms, eatAtHpThreshold } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        let unknownErr = null;
+        let formsErr = null;
+        let threshErr = null;
+        try { shouldEatFood('NotARealFood', { hp: 3, maxHp: 10, foodCount: 1 }); }
+        catch (e) { unknownErr = String(e && e.message ? e.message : e); }
+        try { foodForms('Shark'); } catch (e) { formsErr = String(e && e.message ? e.message : e); }
+        try { eatAtHpThreshold(10, 20, 5); } catch (e) { threshErr = String(e && e.message ? e.message : e); }
+        const opts = { hp: 3, maxHp: 10, heal: 20, foodCount: 1 };
+        globalThis.__probe = JSON.stringify({
+            shouldEat: shouldEat(3, 10, 20, 1),
+            shouldEatFood: shouldEatFood('Shark', { hp: 3, maxHp: 10, foodCount: 1 }),
+            shouldEatToUseFood: shouldEatToUseFood(opts),
+            typeofShouldEat: typeof shouldEat(3, 10, 20, 1),
+            typeofShouldEatFood: typeof shouldEatFood('Shark', { hp: 3, maxHp: 10, foodCount: 1 }),
+            unknownErr,
+            formsErr,
+            threshErr,
+        });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(value.as_str().expect("probe string")).expect("json");
+    assert_eq!(
+        parsed["typeofShouldEat"],
+        serde_json::json!("boolean"),
+        "shouldEat returns boolean: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["typeofShouldEatFood"],
+        serde_json::json!("boolean"),
+        "shouldEatFood returns boolean: {parsed:?}"
+    );
     assert!(
-        eat.contains("not impl") && eat.contains("shouldEat"),
-        "shouldEat stays not impl until Task 3, got {eat:?}"
+        parsed["shouldEat"].is_boolean(),
+        "shouldEat boolean value: {parsed:?}"
+    );
+    assert!(
+        parsed["shouldEatFood"].is_boolean(),
+        "shouldEatFood boolean value: {parsed:?}"
+    );
+    assert!(
+        parsed["shouldEatToUseFood"].is_boolean(),
+        "shouldEatToUseFood boolean value: {parsed:?}"
+    );
+    // hp=3 at safety floor with Shark heal 20 → eat
+    assert_eq!(
+        parsed["shouldEat"],
+        serde_json::json!(true),
+        "shouldEat(3,10,20,1) at floor: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["shouldEatFood"],
+        serde_json::json!(true),
+        "shouldEatFood Shark at floor: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["shouldEatToUseFood"],
+        serde_json::json!(true),
+        "shouldEatToUseFood at floor: {parsed:?}"
+    );
+    let unknown = parsed["unknownErr"].as_str().unwrap_or("");
+    assert!(
+        unknown.contains("not impl") && unknown.contains("foodHealAmount"),
+        "unknown food still not impl foodHealAmount, got {unknown:?}"
+    );
+    let forms = parsed["formsErr"].as_str().unwrap_or("");
+    assert!(
+        forms.contains("not impl") && forms.contains("foodForms"),
+        "foodForms stays not impl, got {forms:?}"
+    );
+    let thresh = parsed["threshErr"].as_str().unwrap_or("");
+    assert!(
+        thresh.contains("not impl") && thresh.contains("eatAtHpThreshold"),
+        "eatAtHpThreshold stays not impl, got {thresh:?}"
     );
     iso.join();
 }

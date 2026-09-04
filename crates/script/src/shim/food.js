@@ -64,10 +64,32 @@ export function eatAtHpThreshold(_maxHp, _heal, _minHp) {
     throw notImpl('eatAtHpThreshold');
 }
 
-export function shouldEatToUseFood(_opts) {
-    throw notImpl('shouldEatToUseFood');
+/** Eat when a full heal fits, or HP is at/below the safety floor. Posted opts only. */
+export function shouldEatToUseFood(opts) {
+    const o = opts || {};
+    const hp = o.hp;
+    const maxHp = o.maxHp;
+    const heal = o.heal;
+    const foodCount = o.foodCount;
+    if (foodCount <= 0 || hp <= 0 || maxHp <= 0) {
+        return false;
+    }
+    const minHp = o.minHp != null ? o.minHp : MIN_EAT_HP;
+    if (hp <= minHp) {
+        return true;
+    }
+    const h = Math.max(0, heal);
+    // full heal fits (no overheal waste)
+    return hp + h <= maxHp;
 }
 
-export function shouldEatFood(_foodName, _opts) {
-    throw notImpl('shouldEatFood');
+export function shouldEatFood(foodName, opts) {
+    const o = opts || {};
+    return shouldEatToUseFood({
+        hp: o.hp,
+        maxHp: o.maxHp,
+        heal: foodHealAmount(foodName),
+        foodCount: o.foodCount,
+        minHp: o.minHp,
+    });
 }

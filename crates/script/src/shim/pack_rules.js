@@ -1,5 +1,5 @@
-// String contains pack filters. Food / bank policy stays not impl.
-import { notImpl } from '../../shim/_kernel.js';
+// String contains pack filters + posted HP/count predicates.
+import { shouldEatToUseFood } from '../combat/food.js';
 
 export function matchesAny(name, patterns) {
     if (name == null) return false;
@@ -28,8 +28,8 @@ export function shouldRestock(foodCount, threshold) {
     return foodCount < threshold;
 }
 
-export function shouldEat() {
-    throw notImpl('packRules.shouldEat');
+export function shouldEat(hp, maxHp, heal, foodCount) {
+    return shouldEatToUseFood({ hp, maxHp, heal, foodCount });
 }
 
 export function shouldPanic(hpFrac, gate, foodCount) {

@@ -146,6 +146,8 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/inventory/Inventory.js",
             include_str!("inventory.js"),
         ),
+        // food before packRules: packRules.shouldEat forwards to shouldEatToUseFood
+        Module::new("/rs2b0t/bot/api/combat/food.js", include_str!("food.js")),
         Module::new(
             "/rs2b0t/bot/api/inventory/packRules.js",
             include_str!("pack_rules.js"),
@@ -276,7 +278,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/combat/CombatStyleLogic.js",
             include_str!("combat_style_logic.js"),
         ),
-        Module::new("/rs2b0t/bot/api/combat/food.js", include_str!("food.js")),
+        // food.js registered earlier (before packRules)
         Module::new(
             "/rs2b0t/bot/api/combat/Special.js",
             include_str!("special.js"),
