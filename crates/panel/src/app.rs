@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -1846,10 +1846,6 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// True while the script Load picker was wanted last frame (same rising-
-/// edge latch as the chooser and Browse).
-static PREV_LOAD: AtomicBool = AtomicBool::new(false);
-
 fn category_key(cat: &str) -> [u8; 32] {
     let mut a = [0u8; 32];
     let b = cat.as_bytes();
@@ -2617,7 +2613,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 ui.set_next_item_width(-1.0);
                 let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
                 if let Some(_popup) = ui.begin_combo_with_flags(
-                    &format!("##param-{id}", id = def.id),
+                    format!("##param-{id}", id = def.id),
                     &current,
                     combo_opts,
                 ) {
@@ -2631,7 +2627,44 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     }
                 }
             }
-            "string" | "tile" | "list" => {
+            "string[]" if !script::resolve_setting_options(def, &session.loadouts).is_empty() => {
+                ui.text(&label);
+                let opts = script::resolve_setting_options(def, &session.loadouts);
+                let mut selected: Vec<String> = bag
+                    .get(&def.id)
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mut changed = false;
+                for opt in &opts {
+                    let mut on = selected.iter().any(|s| s == opt);
+                    if ui.checkbox(format!("{opt}##param-{id}-{opt}", id = def.id), &mut on) {
+                        changed = true;
+                        if on {
+                            if !selected.iter().any(|s| s == opt) {
+                                selected.push(opt.clone());
+                            }
+                        } else {
+                            selected.retain(|s| s != opt);
+                        }
+                    }
+                }
+                if changed {
+                    let coerced =
+                        script::coerce_setting_value(&def.ty, &serde_json::json!(selected));
+                    session
+                        .script_settings
+                        .set_value(source, &name, &def.id, coerced.clone());
+                    let _ = session.script_settings.save();
+                    bag.insert(def.id.clone(), coerced);
+                }
+            }
+            "string" | "tile" | "list" | "string[]" => {
                 let mut text = bag
                     .get(&def.id)
                     .map(script::format_setting_value)

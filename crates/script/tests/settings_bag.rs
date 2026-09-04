@@ -165,6 +165,36 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
 }
 
 #[test]
+fn merge_bag_coerces_string_array_default_to_json_array() {
+    let schema = vec![SettingDef {
+        id: "items".into(),
+        ty: "string[]".into(),
+        default: Some("Maple longbow,Yew longbow".into()),
+        label: Some("Items to alch".into()),
+        min: None,
+        max: None,
+        step: None,
+        options: vec![
+            "Maple longbow".into(),
+            "Yew longbow".into(),
+            "Custom".into(),
+        ],
+        option_labels: Vec::new(),
+        group: None,
+        show_if: None,
+        options_from: None,
+        csv_toggle: None,
+        help: None,
+    }];
+    let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+    assert_eq!(
+        bag.get("items"),
+        Some(&serde_json::json!(["Maple longbow", "Yew longbow"])),
+        "string[] defaults must post as arrays, not a free-text string"
+    );
+}
+
+#[test]
 fn merged_bag_from_spread_schema_posts_inject_over_defaults() {
     let src = r#"
 export const SETTINGS = {

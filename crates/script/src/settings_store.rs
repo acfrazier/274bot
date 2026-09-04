@@ -147,7 +147,7 @@ pub fn merge_bag(
 pub fn coerce_setting_value(ty: &str, value: &Value) -> Value {
     match ty {
         "tile" => coerce_tile(value),
-        "list" => coerce_list(value),
+        "list" | "string[]" => coerce_list(value),
         _ => value.clone(),
     }
 }
@@ -223,7 +223,7 @@ fn default_for_type(ty: &str, default: &str) -> Value {
             .map(Value::Number)
             .unwrap_or_else(|| Value::Number(0.into())),
         "string" => Value::String(default.to_string()),
-        "tile" | "list" => {
+        "tile" | "list" | "string[]" => {
             let raw = if default.starts_with('{') || default.starts_with('[') {
                 serde_json::from_str(default).unwrap_or_else(|_| Value::String(default.to_string()))
             } else {
@@ -259,13 +259,11 @@ pub fn setting_visible(show_if: Option<&str>, bag: &Map<String, Value>) -> bool 
 fn extract_quoted(raw: &str, field: &str) -> Option<String> {
     let needle = format!("{field}:");
     let after = raw.split(&needle).nth(1)?.trim_start();
-    if after.starts_with('\'') {
-        let rest = &after[1..];
+    if let Some(rest) = after.strip_prefix('\'') {
         let end = rest.find('\'')?;
         return Some(rest[..end].to_string());
     }
-    if after.starts_with('"') {
-        let rest = &after[1..];
+    if let Some(rest) = after.strip_prefix('"') {
         let end = rest.find('"')?;
         return Some(rest[..end].to_string());
     }
@@ -283,9 +281,9 @@ fn extract_any_of(raw: &str) -> Option<Vec<String>> {
     let mut out = Vec::new();
     for part in inner.split(',') {
         let part = part.trim();
-        if part.starts_with('\'') && part.ends_with('\'') && part.len() >= 2 {
-            out.push(part[1..part.len() - 1].to_string());
-        } else if part.starts_with('"') && part.ends_with('"') && part.len() >= 2 {
+        let quoted = (part.starts_with('\'') && part.ends_with('\''))
+            || (part.starts_with('"') && part.ends_with('"'));
+        if quoted && part.len() >= 2 {
             out.push(part[1..part.len() - 1].to_string());
         }
     }
