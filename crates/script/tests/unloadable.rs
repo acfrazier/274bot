@@ -121,3 +121,24 @@ ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
         .expect("CookBot listed");
     assert_eq!(cook.unloadable, None, "CookBot is not name-locked");
 }
+
+#[test]
+fn event_webwalk_direct_navigator_remaps() {
+    let src = "import { DirectNavigator } from '../../event/webwalk/DirectNavigator.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn hash_bot_shop_remaps() {
+    let src = "import { Shop } from '#/bot/api/shop/Shop.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn walk_executor_stays_unloadable() {
+    let src = "import x from '../../event/webwalk/WalkExecutor.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(
+        script::first_unloadable_specifier(src).as_deref(),
+        Some("../../event/webwalk/WalkExecutor.js")
+    );
+}

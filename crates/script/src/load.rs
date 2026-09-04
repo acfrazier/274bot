@@ -554,14 +554,18 @@ fn specifier_remaps_to_shim(spec: &str) -> bool {
     #[cfg(feature = "load")]
     {
         let js = specifier_js(spec);
-        let suffix = strip_relative_prefix(&js);
+        let suffix = if let Some(rest) = js.strip_prefix("#/bot/") {
+            rest.to_string()
+        } else {
+            strip_relative_prefix(&js).to_string()
+        };
         if suffix.is_empty() || suffix.starts_with('/') {
             return false;
         }
         crate::shim::shim_modules().iter().any(|m| {
             m.filename()
                 .to_str()
-                .is_some_and(|url| url.ends_with(suffix) || url.ends_with(&format!("/{suffix}")))
+                .is_some_and(|url| url.ends_with(&suffix) || url.ends_with(&format!("/{suffix}")))
         })
     }
     #[cfg(not(feature = "load"))]
