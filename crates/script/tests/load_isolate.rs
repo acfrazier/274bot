@@ -4503,3 +4503,118 @@ export default class T extends LoopingBot {
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
+
+#[test]
+fn isolate_host_content_posts_rust_coordinate_tables() {
+    let src = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const c = globalThis.__rs2b0t_host.content || {};
+        globalThis.__probe = {
+            cows: (c.cow_fields || []).map((f) => f.name),
+            fires: (c.fire_plots || []).map((p) => p.name),
+            cooks: (c.cook_stands || []).map((s) => s.name),
+            rocks: c.rock_type_names || [],
+            ve_x: ((c.fire_plots || []).find((p) => p.name === 'Varrock East') || {}).bank?.x,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    let cow_names: Vec<&str> = api::content::COW_FIELDS.iter().map(|f| f.name).collect();
+    let fire_names: Vec<&str> = api::content::FIRE_PLOTS.iter().map(|p| p.name).collect();
+    let cook_names: Vec<&str> = api::content::COOK_STANDS.iter().map(|s| s.name).collect();
+    assert_eq!(
+        probe.get("cows").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+        }),
+        Some(cow_names),
+        "handle.content.cow_fields must be the Rust table: {probe:?}"
+    );
+    assert_eq!(
+        probe.get("fires").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+        }),
+        Some(fire_names),
+        "handle.content.fire_plots must be the Rust table: {probe:?}"
+    );
+    assert_eq!(
+        probe.get("cooks").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+        }),
+        Some(cook_names),
+        "handle.content.cook_stands must be the Rust table: {probe:?}"
+    );
+    assert_eq!(
+        probe.get("rocks").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+        }),
+        Some(api::content::ROCK_TYPE_NAMES.to_vec()),
+        "handle.content.rock_type_names must be the Rust table: {probe:?}"
+    );
+    let ve = api::content::FIRE_PLOTS
+        .iter()
+        .find(|p| p.name == "Varrock East")
+        .expect("Varrock East");
+    assert_eq!(probe.get("ve_x"), Some(&serde_json::json!(ve.bank.x)));
+    iso.join();
+}
+
+#[test]
+fn isolate_fire_spots_bank_tiles_match_host_content() {
+    let src = r#"
+import { FIRE_SPOTS } from '../../api/firemaking/Firemaking.js';
+export default class T extends LoopingBot {
+    loop() {
+        const c = globalThis.__rs2b0t_host.content;
+        const rust = (c.fire_plots || []).find((p) => p.name === 'Varrock East');
+        const js = FIRE_SPOTS['Varrock East'];
+        globalThis.__probe = {
+            rust: rust && rust.bank && rust.bank.x,
+            js: js && js.bank && js.bank.x,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    let rust = probe.get("rust").and_then(|v| v.as_i64());
+    let js = probe.get("js").and_then(|v| v.as_i64());
+    assert!(rust.is_some(), "Rust fire plot must be on the handle: {probe:?}");
+    assert_eq!(js, rust, "FIRE_SPOTS must read handle content, not a JS duplicate: {probe:?}");
+    iso.join();
+}
+
+#[test]
+fn isolate_quests_all_throws_without_posted_journal() {
+    let src = r#"
+import { Quests } from '../../api/ui/questlog/Quests.js';
+export default class T extends LoopingBot {
+    loop() { Quests.all(); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not impl") && l.contains("Quests")),
+        "Quests.all must not invent an empty journal: {logs:?}"
+    );
+    iso.join();
+}

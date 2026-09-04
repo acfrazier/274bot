@@ -1,7 +1,11 @@
 import { snap, proxy, notImpl } from '../../../shim/_kernel.js';
 
 function rows() {
-    return snap().quest_statuses || [];
+    const rs = snap().quest_statuses;
+    if (!Array.isArray(rs)) {
+        throw notImpl('Quests');
+    }
+    return rs;
 }
 
 export const Quests = proxy('Quests', {

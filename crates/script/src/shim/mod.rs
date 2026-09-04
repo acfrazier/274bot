@@ -494,6 +494,33 @@ pub(crate) fn remap_catalog_imports(source: &str) -> String {
     remap_hash_bot(&remap_rs2b0t_api(source))
 }
 
+/// Host-owned coordinate tables posted once onto `__rs2b0t_host.content`.
+/// Catalog data modules read this instead of duplicating tiles in JS.
+pub(crate) fn content_json() -> String {
+    use api::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, ROCK_TYPE_NAMES};
+    serde_json::json!({
+        "cow_fields": COW_FIELDS.iter().map(|f| {
+            serde_json::json!({"name": f.name, "x": f.x, "z": f.z, "level": f.level})
+        }).collect::<Vec<_>>(),
+        "fire_plots": FIRE_PLOTS.iter().map(|p| {
+            serde_json::json!({
+                "name": p.name,
+                "bank": {"x": p.bank.x, "z": p.bank.z, "level": p.bank.level},
+                "x0": p.x0, "x1": p.x1, "z0": p.z0, "z1": p.z1
+            })
+        }).collect::<Vec<_>>(),
+        "cook_stands": COOK_STANDS.iter().map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "bank": {"x": s.bank.x, "z": s.bank.z, "level": s.bank.level},
+                "range": {"x": s.range.x, "z": s.range.z, "level": s.range.level}
+            })
+        }).collect::<Vec<_>>(),
+        "rock_type_names": ROCK_TYPE_NAMES,
+    })
+    .to_string()
+}
+
 /// One recorded paint frame (`Paint.begin(...)` ... `end()`): the title,
 /// the accent colour, and the rows (gap rows are empty lines). No canvas —
 /// the host reads it off `__rs2b0t_host.paint` for the script paint views.

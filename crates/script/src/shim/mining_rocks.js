@@ -1,15 +1,6 @@
-export const ROCK_OPTIONS = [
-    'Clay',
-    'Copper',
-    'Tin',
-    'Iron',
-    'Silver',
-    'Coal',
-    'Gold',
-    'Mithril',
-    'Adamantite',
-    'Runite',
-];
+import { host } from '../shim/_kernel.js';
+
+export const ROCK_OPTIONS = [...((host().content && host().content.rock_type_names) || [])];
 
 export const ROCK_TYPES = Object.fromEntries(ROCK_OPTIONS.map((n) => [n, []]));
 export const QUEST_ROCK_TYPES = {};

@@ -1225,6 +1225,13 @@ mod isolate {
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
+        let content = format!(
+            "globalThis.__rs2b0t_host.content = {};",
+            crate::shim::content_json()
+        );
+        runtime
+            .eval::<()>(content.as_str())
+            .map_err(|e| format!("content: {e}"))?;
         let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
         let main = match shape {
             LoadShape::NativeTick => {
