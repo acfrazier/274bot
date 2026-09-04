@@ -48,6 +48,36 @@ pub fn debug_enabled() -> bool {
 /// The 274 client's frame time: one `mainloop` pass every 20 ms.
 const FRAME_MS: Duration = Duration::from_millis(20);
 
+/// `BOT_DEBUG=1` summaries: every N `client_frame`s, **not** per game tick.
+const DEBUG_SUMMARY_EVERY: u32 = 50;
+/// One `client_frame` over this (µs) is a hitch vs the 20 ms cadence.
+/// Logged as `[host] hitch` only — default `BOT_DEBUG=1` stays a window summary.
+const HITCH_US: u64 = 50_000;
+
+#[derive(Clone, Copy, Default)]
+struct DebugSnap {
+    loop_ns: u64,
+    raster_ns: u64,
+    paint_n: u64,
+    skip_n: u64,
+    tick_n: u64,
+}
+
+/// Deltas since the last summary, in µs / counts.
+fn debug_window_delta(prev: DebugSnap, now: DebugSnap) -> (u64, u64, u64, u64, u64) {
+    (
+        now.loop_ns.wrapping_sub(prev.loop_ns) / 1000,
+        now.raster_ns.wrapping_sub(prev.raster_ns) / 1000,
+        now.paint_n.wrapping_sub(prev.paint_n),
+        now.skip_n.wrapping_sub(prev.skip_n),
+        now.tick_n.wrapping_sub(prev.tick_n),
+    )
+}
+
+fn debug_hitch_us(frame_us: u64) -> Option<u64> {
+    (frame_us >= HITCH_US).then_some(frame_us)
+}
+
 /// Park bound for an idle slot: the 274 server's game-tick cadence
 /// (`PLAYER_INFO` every ~600 ms), so a missed/absent packet never leaves a
 /// parked slot asleep past one tick.
@@ -447,15 +477,30 @@ impl Host {
         if should_emit_tick(result.player_info) {
             slot.tick_n = slot.tick_n.wrapping_add(1);
         }
-        if debug_enabled() && slot.log_n.is_multiple_of(50) {
-            eprintln!(
-                "[host] slot {username}: loop_us={} raster_us={} paints={} skips={} ticks={}",
-                slot.loop_ns / 1000,
-                slot.raster_ns / 1000,
-                slot.paint_n,
-                slot.skip_n,
-                slot.tick_n
-            );
+        if debug_enabled() {
+            let frame_us = t_loop.elapsed().as_micros() as u64;
+            if let Some(us) = debug_hitch_us(frame_us) {
+                eprintln!(
+                    "[host] hitch {username}: frame_us={us} paints={} skips={} ticks={}",
+                    slot.paint_n, slot.skip_n, slot.tick_n
+                );
+            }
+            if slot.log_n.is_multiple_of(DEBUG_SUMMARY_EVERY) {
+                let now = DebugSnap {
+                    loop_ns: slot.loop_ns,
+                    raster_ns: slot.raster_ns,
+                    paint_n: slot.paint_n,
+                    skip_n: slot.skip_n,
+                    tick_n: slot.tick_n,
+                };
+                let (d_loop, d_raster, d_paint, d_skip, d_tick) = debug_window_delta(slot.dbg, now);
+                let window_ms = slot.dbg_at.map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                eprintln!(
+                    "[host] slot {username}: d_loop_us={d_loop} d_raster_us={d_raster} d_paints={d_paint} d_skips={d_skip} d_ticks={d_tick} window_ms={window_ms}"
+                );
+                slot.dbg = now;
+                slot.dbg_at = Some(Instant::now());
+            }
         }
         // The whole `FrameOutput` lands in the mailbox, not just the
         // packed pixels: the panel takes the `FrameOutput::Texture` (GPU
@@ -682,6 +727,9 @@ struct SlotLoop {
     /// printed in the 50-frame summary, not per tick.
     tick_n: u64,
     log_n: u32,
+    /// Totals at the last `BOT_DEBUG` window line (deltas, not cumulatives).
+    dbg: DebugSnap,
+    dbg_at: Option<Instant>,
 }
 
 impl SlotLoop {
@@ -708,6 +756,8 @@ impl SlotLoop {
             skip_n: 0,
             tick_n: 0,
             log_n: 0,
+            dbg: DebugSnap::default(),
+            dbg_at: None,
         }
     }
 
@@ -1563,6 +1613,37 @@ mod tests {
             gen,
             "renderer off must not store a frame this tick"
         );
+    }
+
+    #[test]
+    fn debug_window_delta_is_since_last_summary_not_lifetime() {
+        let prev = DebugSnap {
+            loop_ns: 1_000_000,
+            raster_ns: 2_000_000,
+            paint_n: 50,
+            skip_n: 10,
+            tick_n: 3,
+        };
+        let now = DebugSnap {
+            loop_ns: 1_500_000,
+            raster_ns: 2_400_000,
+            paint_n: 100,
+            skip_n: 10,
+            tick_n: 5,
+        };
+        assert_eq!(
+            debug_window_delta(prev, now),
+            (500, 400, 50, 0, 2),
+            "summary must be a window, not cumulative totals"
+        );
+    }
+
+    #[test]
+    fn debug_hitch_is_one_frame_over_50ms_not_every_tick() {
+        assert_eq!(debug_hitch_us(20_000), None);
+        assert_eq!(debug_hitch_us(49_999), None);
+        assert_eq!(debug_hitch_us(50_000), Some(50_000));
+        assert_eq!(debug_hitch_us(120_000), Some(120_000));
     }
 
     #[test]
