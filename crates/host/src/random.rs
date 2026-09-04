@@ -720,17 +720,38 @@ impl Guardian {
             // Rising-edge knock: ask the running script once per detected
             // event. A vanished event resets the claim to Host (the host
             // owns whatever appears next). No knock supplied → Host.
+            // An inert leftover lamp (`lamp_auto` off) does not knock —
+            // it is XP in the pack, not a handler latch.
             let sig = ev.as_ref().map(|e| format!("{:?}:{}", e.kind, e.name));
             if sig != self.sig {
                 self.sig = sig;
                 self.claim = match (&ev, knock) {
-                    (Some(ev), Some(knock)) => knock(ev),
+                    (Some(ev), Some(knock))
+                        if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) =>
+                    {
+                        knock(ev)
+                    }
                     _ => RandomClaim::Host,
                 };
             }
         }
 
-        if fresh && active && settings.random_events && self.claim == RandomClaim::Host {
+        let inert_lamp = ev
+            .as_ref()
+            .is_some_and(|e| e.kind == RandomKind::Lamp)
+            && !settings.lamp_auto;
+        if inert_lamp {
+            // Drop a previous auto-on latch the moment the operator
+            // turns lamp auto off with the lamp still in inv.
+            self.acting = false;
+        }
+
+        if fresh
+            && active
+            && settings.random_events
+            && self.claim == RandomClaim::Host
+            && !inert_lamp
+        {
             self.act(driver, snap, ev.as_ref(), settings, now_ms);
         }
         self.last_tick = tick;
@@ -742,7 +763,9 @@ impl Guardian {
         RandomStatus {
             kind: ev.as_ref().map(|e| e.kind),
             name: ev.as_ref().map(|e| e.name.clone()),
-            ours: ev.as_ref().map(|e| e.ours).unwrap_or(false),
+            // Inert leftover lamp still detects for the status row, but
+            // must not publish ours — EventSignal.pending is hold OR ours.
+            ours: !inert_lamp && ev.as_ref().map(|e| e.ours).unwrap_or(false),
             handling: self.in_flight,
             hold: settings.random_events
                 && self.claim == RandomClaim::Host
@@ -1219,6 +1242,8 @@ impl Guardian {
         settings: &ProfileSettings,
     ) {
         if !settings.lamp_auto {
+            // Detect-only: tick() already skipped act + ours. Keep the
+            // latch down if we still land here (live toggle mid-step).
             self.acting = false;
             return;
         }
@@ -2240,6 +2265,30 @@ mod tests {
         assert!(drv.menus.is_empty(), "lamp_auto off: no Rub");
         assert!(drv.actions.is_empty());
         assert!(!status.hold, "leftover lamp with auto off does not hold");
+        assert!(
+            !status.ours,
+            "lamp auto off must not publish ours — EventSignal.pending is hold OR ours"
+        );
+        assert!(!status.handling, "inert lamp must not latch the handler");
+    }
+
+    #[test]
+    fn tick_skips_act_and_ours_for_inert_lamp() {
+        const SRC: &str = include_str!("random.rs");
+        let tick = SRC.split("pub fn tick").nth(1).unwrap_or("");
+        let tick = tick.split("fn act<").next().unwrap_or("");
+        assert!(
+            tick.contains("inert_lamp"),
+            "leftover lamp with auto off is a named skip, not a solver latch"
+        );
+        assert!(
+            tick.contains("&& !inert_lamp"),
+            "inert lamp must not enter act()"
+        );
+        assert!(
+            tick.contains("ours: !inert_lamp"),
+            "inert lamp must not publish ours (EventSignal.pending is hold OR ours)"
+        );
     }
 
     /// Plant obj `obj_id` into the inventory TYPE_INV iface (the shape

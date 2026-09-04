@@ -8086,6 +8086,11 @@ export default class T extends LoopingBot {
         assert_eq!(status.kind, Some(api::random::RandomKind::Lamp));
         assert_eq!(status.name.as_deref(), Some("lamp"));
         assert!(!status.hold, "leftover lamp must not keep the slot held");
+        assert!(
+            !status.ours,
+            "lamp auto off: leftover lamp must not latch EventSignal.pending via ours"
+        );
+        assert!(!status.handling, "inert lamp must not latch the handler");
         assert!(drv.menus.is_empty(), "a lamp is never talked to");
     }
 
