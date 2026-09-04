@@ -183,3 +183,15 @@ export default class T extends LoopingBot { loop() {} }
 "#;
     assert_eq!(script::first_unloadable_specifier(src), None);
 }
+
+#[test]
+fn log_from_who_is_not_an_import_specifier() {
+    let src = "export default class T extends LoopingBot { loop() { this.log(`declining a trade from '${who}'`); } }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn herb_cleaner_parent_sibling_remaps() {
+    let src = "import { HERBS } from '../HerbCleaner/HerbCleanerLogic.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}

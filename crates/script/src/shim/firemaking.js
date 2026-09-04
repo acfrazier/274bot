@@ -7,18 +7,15 @@ export { lightFire } from './LightFire.js';
 export const TINDERBOX = 'Tinderbox';
 export const CANT_LIGHT = /can't light a fire here/i;
 
-function stand(x, z) {
-    return { bank: new Tile(x, z, 0), x0: x, x1: x, z0: z, z1: z };
+function stand(x, z, x0, x1, z0, z1) {
+    return { bank: new Tile(x, z, 0), x0, x1, z0, z1 };
 }
 
-// Bank tiles from host stands (Varrock West scenario, Draynor/Seers walk pins;
-// Varrock East is the east-bank plaza on the same meridian as Aubury 3253,3401).
-// Plot AABB is the stand tile; findBurnLane stays not impl.
 export const FIRE_SPOTS = {
-    'Varrock East': stand(3253, 3420),
-    'Varrock West': stand(3185, 3440),
-    Draynor: stand(3093, 3243),
-    Seers: stand(2725, 3491),
+    'Varrock East': stand(3253, 3420, 3235, 3275, 3418, 3432),
+    'Varrock West': stand(3185, 3440, 3170, 3205, 3426, 3444),
+    Draynor: stand(3093, 3243, 3078, 3098, 3240, 3252),
+    Seers: stand(2725, 3491, 2710, 2735, 3482, 3494),
 };
 
 export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);

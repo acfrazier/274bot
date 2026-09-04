@@ -497,6 +497,7 @@ pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
 }
 
 /// Every `from '…'` / `from "…"` specifier, first-seen order.
+/// Template fragments inside log strings (`from '${who}'`) are not imports.
 pub fn scan_import_specifiers(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     for quote in ['\'', '"'] {
@@ -506,7 +507,7 @@ pub fn scan_import_specifiers(source: &str) -> Vec<String> {
             let after = &rest[idx + needle.len()..];
             if let Some(end) = after.find(quote) {
                 let spec = after[..end].trim();
-                if !spec.is_empty() && !out.iter().any(|x| x == spec) {
+                if looks_like_module_specifier(spec) && !out.iter().any(|x| x == spec) {
                     out.push(spec.to_string());
                 }
             }
@@ -514,6 +515,23 @@ pub fn scan_import_specifiers(source: &str) -> Vec<String> {
         }
     }
     out
+}
+
+fn looks_like_module_specifier(spec: &str) -> bool {
+    !spec.is_empty()
+        && !spec.contains('$')
+        && !spec.contains('{')
+        && (spec.starts_with('.')
+            || spec.starts_with('#')
+            || spec.starts_with('@')
+            || spec.starts_with('/'))
+}
+
+pub fn scan_scripts_sibling_js_imports(source: &str) -> Vec<String> {
+    scan_import_specifiers(source)
+        .into_iter()
+        .filter(|s| is_scripts_sibling_specifier(s))
+        .collect()
 }
 
 fn is_same_folder_specifier(spec: &str) -> bool {
@@ -576,7 +594,28 @@ fn specifier_remaps_to_shim(spec: &str) -> bool {
 }
 
 fn specifier_is_ok(spec: &str) -> bool {
-    spec == "@rs2b0t/api" || is_same_folder_specifier(spec) || specifier_remaps_to_shim(spec)
+    spec == "@rs2b0t/api"
+        || is_same_folder_specifier(spec)
+        || is_scripts_sibling_specifier(spec)
+        || specifier_remaps_to_shim(spec)
+}
+
+/// `../HerbCleaner/HerbCleanerLogic.js` from a script folder: one hop up
+/// into `src/bot/scripts`, not out of the clone.
+fn is_scripts_sibling_specifier(spec: &str) -> bool {
+    let Some(rest) = spec.strip_prefix("../") else {
+        return false;
+    };
+    if rest.contains("..") {
+        return false;
+    }
+    let mut parts = rest.split('/');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(folder), Some(file), None)
+            if !folder.is_empty()
+                && (file.ends_with(".js") || file.ends_with(".ts"))
+    )
 }
 
 /// First import specifier in `source` that is not remapped / same-folder / `@rs2b0t/api`.
@@ -603,42 +642,64 @@ pub fn first_unloadable_for_card(origin: &str, card_path: &Path) -> Option<Strin
             return Some(spec);
         }
     }
+    for rel in scan_scripts_sibling_js_imports(origin) {
+        let Some(sib) = resolve_sibling_path(dir, &rel) else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&sib) else {
+            continue;
+        };
+        if let Some(spec) = first_unloadable_specifier(&text) {
+            return Some(spec);
+        }
+    }
     None
 }
 
 /// Map a `./Foo.js` import from [`BOT_MODULE`] to the synthetic module URL
 /// rustyscript resolves.
 pub fn sibling_module_url(import_rel: &str) -> Option<String> {
-    let name = import_rel.strip_prefix("./")?;
-    if name.contains("..") || name.contains('/') || name.contains('\\') {
-        return None;
-    }
-    Some(format!("/rs2b0t/bot/scripts/bot/{name}"))
-}
-
-/// Resolve a same-folder `./Foo.js` import beside `card_path`. The `.ts`
-/// twin wins when the verbatim `.js` path is absent. Rejects `..` and
-/// paths outside `card_dir` (Load has no catalog sandbox, but siblings
-/// must stay beside the picked file).
-pub fn resolve_sibling_path(card_dir: &Path, import_rel: &str) -> Option<PathBuf> {
-    let rel = import_rel.strip_prefix("./")?;
-    if rel.contains("..") {
-        return None;
-    }
-    let verbatim = card_dir.join(rel);
-    let candidate = if verbatim.is_file() {
-        verbatim
-    } else if let Some(stem) = rel.strip_suffix(".js") {
-        let ts = card_dir.join(format!("{stem}.ts"));
-        if ts.is_file() {
-            ts
-        } else {
+    if let Some(name) = import_rel.strip_prefix("./") {
+        if name.contains("..") || name.contains('/') || name.contains('\\') {
             return None;
         }
-    } else {
-        return None;
-    };
-    canonical_under_dir(card_dir, &candidate)
+        return Some(format!("/rs2b0t/bot/scripts/bot/{name}"));
+    }
+    if is_scripts_sibling_specifier(import_rel) {
+        let js = specifier_js(import_rel.trim_start_matches("../"));
+        return Some(format!("/rs2b0t/bot/scripts/{js}"));
+    }
+    None
+}
+
+/// Resolve a same-folder `./Foo.js` import beside `card_path`, or a
+/// `../Other/File.js` import under the parent `scripts/` folder.
+pub fn resolve_sibling_path(card_dir: &Path, import_rel: &str) -> Option<PathBuf> {
+    if let Some(rel) = import_rel.strip_prefix("./") {
+        if rel.contains("..") {
+            return None;
+        }
+        let verbatim = card_dir.join(rel);
+        let candidate = file_or_ts_twin(card_dir, rel, verbatim)?;
+        return canonical_under_dir(card_dir, &candidate);
+    }
+    if is_scripts_sibling_specifier(import_rel) {
+        let rest = import_rel.strip_prefix("../")?;
+        let scripts_root = card_dir.parent()?;
+        let verbatim = scripts_root.join(rest);
+        let candidate = file_or_ts_twin(scripts_root, rest, verbatim)?;
+        return canonical_under_dir(scripts_root, &candidate);
+    }
+    None
+}
+
+fn file_or_ts_twin(root: &Path, rel: &str, verbatim: PathBuf) -> Option<PathBuf> {
+    if verbatim.is_file() {
+        return Some(verbatim);
+    }
+    let stem = rel.strip_suffix(".js")?;
+    let ts = root.join(format!("{stem}.ts"));
+    ts.is_file().then_some(ts)
 }
 
 fn canonical_under_dir(dir: &Path, path: &Path) -> Option<PathBuf> {
@@ -667,7 +728,10 @@ pub fn resolve_sibling_modules(
         .parent()
         .ok_or_else(|| format!("no parent dir for {}", card_path.display()))?;
     let mut out = Vec::new();
-    for import_rel in scan_same_folder_js_imports(origin) {
+    for import_rel in scan_same_folder_js_imports(origin)
+        .into_iter()
+        .chain(scan_scripts_sibling_js_imports(origin))
+    {
         let Some(url) = sibling_module_url(&import_rel) else {
             continue;
         };

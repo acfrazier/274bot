@@ -151,13 +151,37 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("pack_rules.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/acquisition/Tools.js",
+            include_str!("tools.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/skills/Skills.js",
             include_str!("skills.js"),
         ),
         Module::new("/rs2b0t/bot/api/bank/Bank.js", include_str!("bank.js")),
         Module::new(
+            "/rs2b0t/bot/api/bank/bankOps.js",
+            include_str!("bank_ops.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/bank/bankSortRules.js",
+            include_str!("bank_sort_rules.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/bank/Banking.js",
             include_str!("banking.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/bank/bankRules.js",
+            include_str!("bank_rules.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/bank/bankSort.js",
+            include_str!("bank_sort.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/bank/bankQuestJunk.js",
+            include_str!("bank_quest_junk.js"),
         ),
         Module::new("/rs2b0t/bot/api/npcs/Npcs.js", include_str!("npcs.js")),
         Module::new("/rs2b0t/bot/api/model/Npc.js", include_str!("model_npc.js")),
@@ -180,10 +204,30 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("equipment.js"),
         ),
         Module::new("/rs2b0t/bot/api/trade/Trade.js", include_str!("trade.js")),
+        Module::new(
+            "/rs2b0t/bot/api/trade/drivePartnerTrade.js",
+            include_str!("drive_partner_trade.js"),
+        ),
         Module::new("/rs2b0t/bot/api/shop/Shop.js", include_str!("shop.js")),
+        Module::new(
+            "/rs2b0t/bot/api/shop/types.js",
+            include_str!("shop_types.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/shop/BuyoutLogic.js",
+            include_str!("buyout_logic.js"),
+        ),
         Module::new(
             "/rs2b0t/bot/api/ui/dialogue/ChatDialog.js",
             include_str!("chat_dialog.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ui/widgets/Modals.js",
+            include_str!("modals.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ui/questlog/Quests.js",
+            include_str!("quests.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/tasks/ContinueDialog.js",
@@ -206,6 +250,24 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("data/spelldb.js"),
         ),
         Module::new("/rs2b0t/bot/data/itemdb.js", include_str!("data/itemdb.js")),
+        Module::new("/rs2b0t/bot/data/dropdb.js", include_str!("dropdb.js")),
+        Module::new(
+            "/rs2b0t/bot/data/cowKillerLocations.js",
+            include_str!("cow_killer_locations.js"),
+        ),
+        Module::new("/rs2b0t/bot/data/shopdb.js", include_str!("shopdb.js")),
+        Module::new(
+            "/rs2b0t/bot/data/miningRocks.js",
+            include_str!("mining_rocks.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/cookLocations.js",
+            include_str!("cook_locations_data.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/data/runeCraftLocations.js",
+            include_str!("rune_craft_locations.js"),
+        ),
         Module::new(
             "/rs2b0t/bot/data/pickpocketTargets.js",
             include_str!("data/pickpocket_targets.js"),
@@ -272,12 +334,24 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("bank_locations.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/cooking/CookLocations.js",
+            include_str!("cook_locations.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/thieving/targets.js",
             include_str!("thieving_targets.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/thieving/stealRules.js",
             include_str!("steal_rules.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/thieving/cakeStallData.js",
+            include_str!("cake_stall_data.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/thieving/CakeStall.js",
+            include_str!("cake_stall.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/loadout/loadoutSetting.js",
@@ -316,8 +390,16 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("clue_paint.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/ai/clues/data/cluedb.js",
+            include_str!("cluedb.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/walking/Traversal.js",
             include_str!("traversal.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/ai/quests/exec/primitives.js",
+            include_str!("primitives.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/walking/DirectNavigator.js",
