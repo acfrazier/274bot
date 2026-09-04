@@ -1210,7 +1210,7 @@ mod isolate {
         if shape == LoadShape::Reject {
             return Err("not a bot shape".to_string());
         }
-        let source = crate::shim::remap_rs2b0t_api(source);
+        let source = crate::shim::remap_catalog_imports(source);
         runtime
             .register_function(
                 "__rs2b0t_now",
@@ -1243,7 +1243,11 @@ mod isolate {
         // Side modules load in order, so the shim modules (which the bot
         // imports) must precede the bot's own module.
         let mut side = crate::shim::shim_modules();
-        for (url, src) in siblings {
+        let siblings: Vec<(String, String)> = siblings
+            .iter()
+            .map(|(url, src)| (url.clone(), crate::shim::remap_catalog_imports(src)))
+            .collect();
+        for (url, src) in &siblings {
             side.push(rustyscript::Module::new(url, src));
         }
         side.push(bot);

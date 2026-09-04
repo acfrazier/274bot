@@ -465,6 +465,35 @@ pub(crate) fn remap_rs2b0t_api(source: &str) -> String {
     out
 }
 
+/// Rewrite quoted `#/bot/` import prefixes to the absolute shim URLs
+/// rustyscript can resolve (`/rs2b0t/bot/...`). The unloadable scan already
+/// treats hash paths as remapped; Start still has to rewrite the source or
+/// the loader rejects the specifier as a relative path.
+pub(crate) fn remap_hash_bot(source: &str) -> String {
+    const FROM: &str = "#/bot/";
+    const TO: &str = "/rs2b0t/bot/";
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(idx) = rest.find(FROM) {
+        let before = rest[..idx].chars().next_back();
+        out.push_str(&rest[..idx]);
+        if matches!(before, Some('\'' | '"')) {
+            out.push_str(TO);
+        } else {
+            out.push_str(FROM);
+        }
+        rest = &rest[idx + FROM.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Catalog import rewrites that must happen before rustyscript resolves
+/// the bot (and any scripts-folder siblings).
+pub(crate) fn remap_catalog_imports(source: &str) -> String {
+    remap_hash_bot(&remap_rs2b0t_api(source))
+}
+
 /// One recorded paint frame (`Paint.begin(...)` ... `end()`): the title,
 /// the accent colour, and the rows (gap rows are empty lines). No canvas —
 /// the host reads it off `__rs2b0t_host.paint` for the script paint views.

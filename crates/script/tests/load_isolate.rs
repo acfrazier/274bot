@@ -4344,3 +4344,162 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn isolate_hash_bot_shop_import_resolves_at_start() {
+    let src = r#"
+import { Shop } from '#/bot/api/shop/Shop.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = typeof Shop.open; }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("#/bot/ Shop must resolve at Start, not only in the unloadable scan");
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value.as_str(),
+        Some("function"),
+        "hash Shop import loads the existing Shop module"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_input_held_op_matches_posted_id_not_array_index() {
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Input.heldOp(1511, 0, 0, 1); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let bury = ["Bury".to_string()];
+    let use_op = ["Use".to_string()];
+    let inv = [
+        item_row(526, Some("Bones"), 1, &bury, false, -1, -1),
+        item_row(1511, Some("Logs"), 1, &use_op, false, -1, -1),
+    ];
+    let mut snap = base_snapshot();
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "heldOp finds the posted id in a sparse inv");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Held {
+            name: "Logs".into(),
+            action: "Use".into(),
+        }],
+        "heldOp must not treat slot as a packed-array index"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_swing_started_this_tick_is_a_rising_edge() {
+    let src = r#"
+import { swingStartedThisTick } from '../../api/combat/fightUpkeep.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = swingStartedThisTick(); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.tick = 10;
+    snap.animating = false;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), false);
+
+    snap.tick = 11;
+    snap.animating = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        true,
+        "first animating tick is the swing start"
+    );
+
+    snap.tick = 12;
+    snap.animating = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        false,
+        "still animating is not swingStartedThisTick"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_special_energy_throws_without_posted_varp() {
+    let src = r#"
+import { Special } from '../../api/combat/Special.js';
+export default class T extends LoopingBot {
+    loop() { Special.energy(); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not impl") && l.contains("Special")),
+        "Special.energy must not invent 0 when sa_energy was never posted: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_special_energy_reads_posted_varp() {
+    let src = r#"
+import { Special } from '../../api/combat/Special.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Special.energy(); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let varps = [script::isolate_fb::VarpInput {
+        index: 300,
+        value: 500,
+    }];
+    let mut snap = base_snapshot();
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), 500);
+    iso.join();
+}
+
+#[test]
+fn isolate_input_held_op_throws_without_posted_ids() {
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() { Input.heldOp(1511, 0, 0, 1); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Use".to_string()];
+    let inv = [item_row(0, Some("Logs"), 1, &ops, false, -1, -1)];
+    let mut snap = base_snapshot();
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("__rs_bot");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("not impl") && l.contains("Input.heldOp")),
+        "heldOp must not invent a slot when inv ids were never posted: {logs:?}"
+    );
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}

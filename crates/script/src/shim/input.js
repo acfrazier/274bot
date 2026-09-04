@@ -1,5 +1,5 @@
 // Name-map catalog Input onto Interactions. No MiniMenuAction / client opcodes.
-import { snap, queue, proxy, presentOps } from '../shim/_kernel.js';
+import { snap, queue, proxy, presentOps, notImpl } from '../shim/_kernel.js';
 
 function npcRow(index) {
     return (snap().npcs || []).find((n) => n && n.index === index) || null;
@@ -11,14 +11,6 @@ function locRow(x, z) {
 
 function objRow(x, z) {
     return (snap().ground || []).find((o) => o && o.x === x && o.z === z) || null;
-}
-
-function invRow(slot) {
-    const rs = snap().inv || [];
-    if (typeof slot === 'number' && slot >= 0 && slot < rs.length) {
-        return rs[slot] || null;
-    }
-    return rs.find((r) => r && r.slot === slot) || null;
 }
 
 function actionAt(row, op) {
@@ -78,8 +70,11 @@ export const Input = proxy('Input', {
         });
         return true;
     },
-    heldOp(_objId, slot, _comId, op) {
-        const row = invRow(slot);
+    heldOp(objId, _slot, _comId, op) {
+        const rs = snap().inv || [];
+        const hasId = rs.some((r) => r && typeof r.id === 'number' && r.id !== 0);
+        if (!hasId) throw notImpl('Input.heldOp');
+        const row = rs.find((r) => r && r.id === objId) || null;
         if (!row) return false;
         const ops = presentOps(row.ops || row.actions);
         const action = ops[Number(op) - 1];

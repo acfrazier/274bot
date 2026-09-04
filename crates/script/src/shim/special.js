@@ -8,7 +8,10 @@ export const SA_MAX_ENERGY = 1000;
 
 function varp(index) {
     const row = (snap().varps || []).find((v) => v && v.index === index);
-    return row && typeof row.value === 'number' ? row.value : 0;
+    if (!row || typeof row.value !== 'number') {
+        throw notImpl('Special');
+    }
+    return row.value;
 }
 
 export const Special = proxy('Special', {
