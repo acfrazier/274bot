@@ -4172,3 +4172,117 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn isolate_bot_host_tick_count_reads_posted_tick() {
+    let src = r#"
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = BotHost.tickCount; }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.tick = 42;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value.as_i64(),
+        Some(42),
+        "BotHost.tickCount is the posted snapshot tick, not a packet listener"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_input_interact_npc_queues_posted_op() {
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Input.interactNpc(7, 1); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let talk = ["Talk-to".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 7,
+        id: 1,
+        name: Some("Hans"),
+        x: 3222,
+        z: 3218,
+        level: 0,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &talk,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, true, "interactNpc queues when the posted npc has that op");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Npc {
+            name: "Hans".into(),
+            action: "Talk-to".into(),
+            index: Some(7),
+        }],
+        "Input.interactNpc hits Interactions, not MiniMenuAction"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_model_npc_is_the_existing_class() {
+    let src = r#"
+import { Npc as ModelNpc } from '../../api/model/Npc.js';
+import { Npcs } from '../../api/npcs/Npcs.js';
+export default class T extends LoopingBot {
+    loop() {
+        const a = Npcs.nearest(1)[0];
+        globalThis.__probe = a instanceof ModelNpc;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let talk = ["Talk-to".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 1,
+        name: Some("Hans"),
+        x: 3222,
+        z: 3218,
+        level: 0,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &talk,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value, true,
+        "api/model/Npc is the same class npcs.js already exports"
+    );
+    iso.join();
+}

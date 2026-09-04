@@ -140,6 +140,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/adapter/ClientAdapter.js",
             include_str!("client_adapter.js"),
         ),
+        Module::new("/rs2b0t/bot/input/Input.js", include_str!("input.js")),
         Module::new("/rs2b0t/bot/api/game/Game.js", include_str!("game.js")),
         Module::new(
             "/rs2b0t/bot/api/inventory/Inventory.js",
@@ -155,10 +156,16 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("banking.js"),
         ),
         Module::new("/rs2b0t/bot/api/npcs/Npcs.js", include_str!("npcs.js")),
+        Module::new("/rs2b0t/bot/api/model/Npc.js", include_str!("model_npc.js")),
         Module::new("/rs2b0t/bot/api/locs/Locs.js", include_str!("locs.js")),
+        Module::new("/rs2b0t/bot/api/model/Loc.js", include_str!("model_loc.js")),
         Module::new(
             "/rs2b0t/bot/api/players/Players.js",
             include_str!("players.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/model/Player.js",
+            include_str!("model_player.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/grounditems/GroundItems.js",
@@ -300,6 +307,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/runtime/ScriptRunner.js",
             include_str!("script_runner.js"),
         ),
+        Module::new("/rs2b0t/bot/runtime/BotHost.js", include_str!("bot_host.js")),
         Module::new(
             "/rs2b0t/bot/scripts/bot/declared_surface.js",
             include_str!("declared_surface.js"),

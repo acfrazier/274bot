@@ -152,3 +152,16 @@ export default class T extends LoopingBot { loop() {} }
 "#;
     assert_eq!(script::first_unloadable_specifier(src), None);
 }
+
+#[test]
+fn input_bothost_and_model_paths_remap() {
+    let src = r#"
+import { Input } from '../../input/Input.js';
+import { BotHost } from '../../runtime/BotHost.js';
+import { Npc } from '../../api/model/Npc.js';
+import { Loc } from '../../api/model/Loc.js';
+import { Player } from '../../api/model/Player.js';
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
