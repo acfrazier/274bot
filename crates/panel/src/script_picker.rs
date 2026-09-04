@@ -895,6 +895,12 @@ mod tests {
             grid.contains("same_line_with_spacing") && grid.contains("CARD_GAP"),
             "card rows must use CARD_GAP, not default item spacing"
         );
+        assert!(
+            !card_fn.contains("set_cursor_screen_pos([origin[0], origin[1] + row_h])")
+                && !card_fn
+                    .contains("set_cursor_screen_pos([origin[0], origin[1] + row_h * 2.0])"),
+            "no dangling SetCursorScreenPos after the badge item (imgui 5548 abort on File cards)"
+        );
     }
 
     #[test]

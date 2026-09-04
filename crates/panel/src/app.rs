@@ -1972,7 +1972,9 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                     );
                     ui.text_disabled(&badge);
                 }
-                ui.set_cursor_screen_pos([origin[0], origin[1] + row_h * 2.0]);
+                // Badge ItemSize advances the cursor. A trailing
+                // SetCursorScreenPos to the next line with no following item
+                // aborts File cards (empty desc/tags) — imgui issue 5548.
             } else {
                 {
                     let _clip =
@@ -1989,7 +1991,6 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
                     );
                     ui.text_disabled(&badge);
                 }
-                ui.set_cursor_screen_pos([origin[0], origin[1] + row_h]);
             }
             if let Some(line) = card_transpile_label(
                 session.transpile_front(),
@@ -5228,5 +5229,47 @@ mod tests {
         assert!(panel_section_visible(&ui, "parameters"));
         ui.show_parameters_rail = false;
         assert!(!panel_section_visible(&ui, "parameters"));
+    }
+
+    /// File-loaded cards have empty description/tags. A trailing
+    /// SetCursorScreenPos after the badge used to EndChild past CursorMaxPos
+    /// and abort ErrorCheckUsingSetCursorPosToExtendParentBoundaries
+    /// (panel-play SIGABRT on Browse, window `##scard-File-trade_bot`).
+    #[test]
+    fn browse_file_card_without_desc_does_not_assert_on_endchild() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let iso = script::IsolatedEnv::enter("browse-scard-assert");
+        let path = iso.dir.join("trade_bot.js");
+        std::fs::write(
+            &path,
+            "export default class TradeBot extends LoopingBot { loop() {} }\n",
+        )
+        .unwrap();
+        let mut s = crate::session::Session::new();
+        s.js = script::JsLibrary::with_cache(
+            iso.dir.join("js-scripts.json"),
+            iso.dir.join("js-cache"),
+        );
+        s.load_js(&path);
+        assert_eq!(s.error, None, "load: {:?}", s.error);
+        assert_eq!(
+            s.js.cards()[0].description,
+            "",
+            "File cards have no registry description — this is the abort path"
+        );
+        s.script_browse_open = true;
+        let mut ctx = dear_imgui_rs::Context::create();
+        // AUTO_RESIZE_Y measures on frame 1 and applies on frame 2.
+        for _ in 0..3 {
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                super::browse_window(ui, &mut s);
+            }
+            ctx.render();
+        }
     }
 }
