@@ -124,9 +124,9 @@ const VT_SNAP_SIDE_TAB_IFACES: VOffsetT = 74;
 const VT_SNAP_SPELL_BUTTONS: VOffsetT = 76;
 const VT_SNAP_CHAT_LINES: VOffsetT = 78;
 const VT_SNAP_NEAREST_BOOTH: VOffsetT = 80;
-    const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
-    const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
-    const VT_SNAP_SCENE_STATE: VOffsetT = 86;
+const VT_SNAP_BANK_NOTE_ON: VOffsetT = 82;
+const VT_SNAP_BANK_NOTE_OFF: VOffsetT = 84;
+const VT_SNAP_SCENE_STATE: VOffsetT = 86;
 const VT_SNAP_WEIGHT: VOffsetT = 88;
 const VT_SNAP_CAMERA_YAW: VOffsetT = 90;
 const VT_SNAP_CAMERA_PITCH: VOffsetT = 92;
@@ -510,11 +510,7 @@ impl RowReader<'_> {
         unsafe { self.tab.get::<i32>(VT_ROW_CERT, None) }.unwrap_or(-1)
     }
     pub fn has_component_id(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i32>(VT_ROW_COMPONENT, None)
-                .is_some()
-        }
+        unsafe { self.tab.get::<i32>(VT_ROW_COMPONENT, None).is_some() }
     }
     pub fn component_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ROW_COMPONENT, None) }.unwrap_or(-1)
@@ -1018,7 +1014,10 @@ impl SnapshotReader<'_> {
         }
     }
     pub fn trade_partner(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_TRADE_PARTNER, None) }
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_TRADE_PARTNER, None)
+        }
     }
     pub fn has_trade_mine(&self) -> bool {
         rows_present::<RowReader>(&self.tab, VT_SNAP_TRADE_MINE)
@@ -1039,11 +1038,7 @@ impl SnapshotReader<'_> {
         rows::<RowReader>(&self.tab, VT_SNAP_TRADE_SIDE)
     }
     pub fn has_trade_accept_id(&self) -> bool {
-        unsafe {
-            self.tab
-                .get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None)
-                .is_some()
-        }
+        unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None).is_some() }
     }
     pub fn trade_accept_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_TRADE_ACCEPT_ID, None) }.unwrap_or(-1)
@@ -2304,7 +2299,10 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_TRADE_MINE, trade_mine_off.expect("mask checked"));
     }
     if mask.trade_theirs {
-        b.push_slot_always(VT_SNAP_TRADE_THEIRS, trade_theirs_off.expect("mask checked"));
+        b.push_slot_always(
+            VT_SNAP_TRADE_THEIRS,
+            trade_theirs_off.expect("mask checked"),
+        );
     }
     if mask.trade_side {
         b.push_slot_always(VT_SNAP_TRADE_SIDE, trade_side_off.expect("mask checked"));
@@ -3195,9 +3193,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .stand_op()
                     .ok_or_else(|| "answer has no option".to_string())?,
             }),
-            "answer-count" => out.push(crate::shim::InteractReq::AnswerCount {
-                value: row.x(),
-            }),
+            "answer-count" => out.push(crate::shim::InteractReq::AnswerCount { value: row.x() }),
             "if-button" => out.push(crate::shim::InteractReq::IfButton {
                 component_id: row
                     .component_id()

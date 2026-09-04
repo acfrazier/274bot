@@ -327,10 +327,14 @@ impl<'a> ScriptPane<'a> {
                 cursor += label.len() as u16 + 3;
             }
         }
-        if self.params_available && !self.browse_open && !self.load_open && row == inner.y + 2 {
-            if col >= inner.x && col < inner.x + 8 {
-                return ScriptClick::Params;
-            }
+        if self.params_available
+            && !self.browse_open
+            && !self.load_open
+            && row == inner.y + 2
+            && col >= inner.x
+            && col < inner.x + 8
+        {
+            return ScriptClick::Params;
         }
         if self.browse_open {
             let list_top = inner.y + 2;
@@ -438,9 +442,8 @@ mod tests {
     use script::{RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
     use super::{
-        browse_lines, card_category, card_detail_lines, categories_present,
-        resolve_category_order, run_state_text, BrowseCard, BrowseLine, ScriptClick, ScriptPane,
-        SCRIPT_BUTTONS,
+        browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
+        run_state_text, BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
     };
 
     fn sample_file_card() -> BrowseCard {

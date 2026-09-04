@@ -24,7 +24,7 @@ pub mod shot;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::interact::{cheat, op_loc, tele_args, Interactions, SendResult, Driver, MAXME_SETSTATS};
+use api::interact::{cheat, op_loc, tele_args, Driver, Interactions, SendResult, MAXME_SETSTATS};
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use serde_json::{Map, Value};
@@ -2186,11 +2186,7 @@ fn stage_trade_companion_tele(c: &mut Client, here: WorldTile, s: &mut TradeAcce
     }
     cheat(
         c,
-        &tele_args(
-            TRADE_COURTYARD.level,
-            TRADE_COURTYARD.x,
-            TRADE_COURTYARD.z,
-        ),
+        &tele_args(TRADE_COURTYARD.level, TRADE_COURTYARD.x, TRADE_COURTYARD.z),
     );
     s.tele_sent = true;
     true
@@ -2536,7 +2532,10 @@ mod tests {
         let s = get("script_trade").expect("script_trade is registered");
         assert_eq!(s.name, "script_trade");
         assert_eq!(s.seed.profiles, [("test", "test"), ("test2", "test2")]);
-        assert!(s.seed.mainland, "the hop lands both bots before the trade tele");
+        assert!(
+            s.seed.mainland,
+            "the hop lands both bots before the trade tele"
+        );
         assert_eq!(
             s.steps.len(),
             5,
@@ -2559,7 +2558,11 @@ mod tests {
             "has_item(Coins)<=0",
             "terminal proof is zero coins on the driven slot"
         );
-        assert_eq!(s.companions.len(), 1, "profile 1 rust-teles and rust-accepts");
+        assert_eq!(
+            s.companions.len(),
+            1,
+            "profile 1 rust-teles and rust-accepts"
+        );
         assert_eq!(s.companions[0].profile, 1);
         assert_eq!(s.settings.start_script, Some("TradeBot"));
         assert_eq!(s.settings.inject_companion_as, Some("partner"));
@@ -2853,10 +2856,7 @@ mod tests {
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
-            assert_eq!(
-                s.settings.deadline, SCRIPT_GOLD_DEADLINE,
-                "{name} deadline"
-            );
+            assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE, "{name} deadline");
             let start = s
                 .steps
                 .iter()

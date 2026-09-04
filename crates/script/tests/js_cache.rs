@@ -1,6 +1,6 @@
 //! Task 2: SHA content-addressed JS cache + hot-reload (never write `$RS2B0T`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -31,7 +31,7 @@ export default class Burier extends LoopingBot {
 }
 "#;
 
-fn write_file(dir: &PathBuf, name: &str, body: &str) -> PathBuf {
+fn write_file(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();

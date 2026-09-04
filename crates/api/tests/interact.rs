@@ -2012,15 +2012,14 @@ fn bank_withdraw_sends_while_count_dialog_open() {
     s.client.dialog_input_open = true;
     let snap = rebuild(&mut s.client);
     assert!(snap.count_dialog_open());
-    let item = snap
-        .bank()
-        .first()
-        .expect("planted withdraw row")
-        .clone();
+    let item = snap.bank().first().expect("planted withdraw row").clone();
     let mut rec = Recorder::default();
     {
         let mut ix = Interactions::new(&snap, &mut rec);
-        match ix.interact(OpTarget::Item(&item), ActionSpec::Label("Withdraw X".into())) {
+        match ix.interact(
+            OpTarget::Item(&item),
+            ActionSpec::Label("Withdraw X".into()),
+        ) {
             SendResult::Sent { .. } => {}
             SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
         }
@@ -2669,7 +2668,10 @@ fn set_note_mode_presses_select_graphics_under_note_item_labels() {
         .bank_note_controls()
         .expect("Note/Item labels must bind the SELECT graphics");
     assert_eq!(controls.on_component_id, 693, "Note sits on com_93 graphic");
-    assert_eq!(controls.off_component_id, 694, "Item sits on com_94 graphic");
+    assert_eq!(
+        controls.off_component_id, 694,
+        "Item sits on com_94 graphic"
+    );
     let mut rec = Recorder::default();
     {
         let mut ix = Interactions::new(&snap, &mut rec);

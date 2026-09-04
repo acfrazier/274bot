@@ -167,8 +167,14 @@ export function travelTo() { return true; }
         urls.iter().any(|u| u.ends_with("/walking.js")),
         "transitive walking.js must load: {urls:?}"
     );
-    let walk_at = urls.iter().position(|u| u.ends_with("/walking.js")).unwrap();
-    let pick_at = urls.iter().position(|u| u.ends_with("/picking.js")).unwrap();
+    let walk_at = urls
+        .iter()
+        .position(|u| u.ends_with("/walking.js"))
+        .unwrap();
+    let pick_at = urls
+        .iter()
+        .position(|u| u.ends_with("/picking.js"))
+        .unwrap();
     assert!(
         walk_at < pick_at,
         "walking.js must load before picking.js (rustyscript side order): {urls:?}"
@@ -252,9 +258,18 @@ fn flaxaio_catalog_siblings_include_walking() {
         urls.iter().any(|u| u.ends_with("/banking.js")),
         "Flax banking.js sibling: {urls:?}"
     );
-    let walk_at = urls.iter().position(|u| u.ends_with("/walking.js")).unwrap();
-    let pick_at = urls.iter().position(|u| u.ends_with("/picking.js")).unwrap();
-    let bank_at = urls.iter().position(|u| u.ends_with("/banking.js")).unwrap();
+    let walk_at = urls
+        .iter()
+        .position(|u| u.ends_with("/walking.js"))
+        .unwrap();
+    let pick_at = urls
+        .iter()
+        .position(|u| u.ends_with("/picking.js"))
+        .unwrap();
+    let bank_at = urls
+        .iter()
+        .position(|u| u.ends_with("/banking.js"))
+        .unwrap();
     assert!(
         walk_at < pick_at && walk_at < bank_at,
         "walking before picking/banking: {urls:?}"
@@ -269,7 +284,6 @@ fn flaxaio_catalog_siblings_include_walking() {
         "type-only flaxaio import must be stripped:\n{walking_js}"
     );
     let js = script::transpile_ts(&origin).expect("transpile flaxaio");
-    LoadIsolate::spawn(js, LoadShape::CompatClass, siblings).unwrap_or_else(|e| {
-        panic!("FlaxAIO isolate Start: {e}; sibs={urls:?}")
-    });
+    LoadIsolate::spawn(js, LoadShape::CompatClass, siblings)
+        .unwrap_or_else(|e| panic!("FlaxAIO isolate Start: {e}; sibs={urls:?}"));
 }

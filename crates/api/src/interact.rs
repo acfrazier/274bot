@@ -1018,10 +1018,7 @@ impl<'a> Interactions<'a> {
             _ => 2,
         };
         let result = self.dispatch(
-            WireCommand::Op {
-                target,
-                operation,
-            },
+            WireCommand::Op { target, operation },
             snapshot.tick() as u64,
         );
         match result {

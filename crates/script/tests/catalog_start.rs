@@ -183,9 +183,6 @@ fn bright_catalog_cards_start_without_not_impl() {
         "bright catalog Start threw ({} cards, {} hits):\n{}",
         names.len(),
         hits.len(),
-        hits.iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n")
+        hits.iter().cloned().collect::<Vec<_>>().join("\n")
     );
 }

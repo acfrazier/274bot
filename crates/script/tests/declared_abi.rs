@@ -30,7 +30,7 @@ fn parse_index_dts_names_only_skips_types_and_internal() {
     assert!(names.contains(&"Game"));
     assert!(names.contains(&"Tile"));
     assert!(names.contains(&"withdrawOp"));
-    assert!(!names.iter().any(|n| *n == "MeleeCombatStyle"));
+    assert!(!names.contains(&"MeleeCombatStyle"));
     let game = got.iter().find(|e| e.name == "Game").unwrap();
     assert_eq!(game.kind, DeclaredKind::Object);
     assert!(game.members.iter().any(|m| m == "ingame"));
@@ -110,9 +110,7 @@ export default class T extends LoopingBot {
             }
             DeclaredKind::Object | DeclaredKind::Class => {
                 for m in &exp.members {
-                    body.push_str(&format!(
-                        "        checkMember({name:?}, _{name}, {m:?});\n"
-                    ));
+                    body.push_str(&format!("        checkMember({name:?}, _{name}, {m:?});\n"));
                 }
             }
         }
@@ -173,7 +171,8 @@ fn declared_abi_fixture_matches_local_dts() {
 fn regen_js_declared_abi() {
     let root = script::rs2b0t_root().expect("regen needs $RS2B0T (or persisted rs2b0t-path)");
     let path = catalog_index_dts(&root);
-    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let src =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let exports = parse_index_dts(&src);
     assert!(
         !exports.is_empty(),
@@ -189,4 +188,3 @@ fn regen_js_declared_abi() {
         script::declared_abi::declared_surface_path().display()
     );
 }
-

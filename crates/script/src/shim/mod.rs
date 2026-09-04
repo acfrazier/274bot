@@ -429,7 +429,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/runtime/ScriptRunner.js",
             include_str!("script_runner.js"),
         ),
-        Module::new("/rs2b0t/bot/runtime/BotHost.js", include_str!("bot_host.js")),
+        Module::new(
+            "/rs2b0t/bot/runtime/BotHost.js",
+            include_str!("bot_host.js"),
+        ),
         Module::new(
             "/rs2b0t/bot/scripts/bot/declared_surface.js",
             include_str!("declared_surface.js"),

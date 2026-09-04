@@ -674,12 +674,7 @@ fn actor_in_combat_clears_when_combat_cycle_expires() {
     c.bump_gens(ServerProt::PLAYER_INFO);
     assert!(snap.rebuild_family(&c, Family::Player));
     assert!(
-        !snap
-            .local_player()
-            .expect("local")
-            .player
-            .actor
-            .in_combat,
+        !snap.local_player().expect("local").player.actor.in_combat,
         "local player's expired combat_cycle must not stick Game.inCombat"
     );
 }
@@ -2115,7 +2110,10 @@ fn shop_view_empty_when_no_shop_modal() {
     assert!(snap.rebuild_family(&c, Family::Shop));
 
     assert!(!snap.shop().open);
-    assert!(snap.shop().stock.is_empty(), "no shop bleed while modal down");
+    assert!(
+        snap.shop().stock.is_empty(),
+        "no shop bleed while modal down"
+    );
     assert_eq!(snap.inventory().len(), 1);
     assert_eq!(snap.inventory()[0].def.id, 3);
     assert_eq!(snap.inventory()[0].count, 100);

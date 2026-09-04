@@ -148,9 +148,9 @@ fn item_row<'a>(
     count: i32,
     ops: &'a [String],
     noted: bool,
-        cert: i32,
-        component_id: i32,
-    ) -> script::isolate_fb::ItemRowInput<'a> {
+    cert: i32,
+    component_id: i32,
+) -> script::isolate_fb::ItemRowInput<'a> {
     script::isolate_fb::ItemRowInput {
         name,
         count,
@@ -341,7 +341,6 @@ fn js_library_rejects_non_bot_shape_and_missing_file() {
 #[test]
 fn js_library_restore_reads_persisted_paths() {
     let dir = scratch("restore");
-    let store = dir.join("js-scripts.json");
     let path = write_file(&dir, "tickbot.js", NATIVE_TICK);
     {
         let mut lib = test_library(&dir);
@@ -1238,10 +1237,17 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     let pending = iso.probe("__rs_ok").unwrap();
-    assert_eq!(pending, serde_json::Value::Null, "still parked before tick 3");
+    assert_eq!(
+        pending,
+        serde_json::Value::Null,
+        "still parked before tick 3"
+    );
     iso.on_game_tick(3);
     let ok = iso.probe("__rs_ok").unwrap();
-    assert_eq!(ok, true, "delayUntilTicks resolves true when the cond holds");
+    assert_eq!(
+        ok, true,
+        "delayUntilTicks resolves true when the cond holds"
+    );
     iso.join();
 }
 
@@ -3451,8 +3457,7 @@ export default class T extends LoopingBot {
         "takeAnchor must not invent a camp tile: {parsed:?}"
     );
     assert_eq!(
-        parsed["camp"]["x"],
-        3235,
+        parsed["camp"]["x"], 3235,
         "takeAnchor() ?? here must keep the live tele tile: {parsed:?}"
     );
     assert_eq!(parsed["camp"]["z"], 3295);
@@ -3745,7 +3750,10 @@ export default class T extends LoopingBot {
     snap.weight = 24;
     snap.camera_yaw = 512;
     snap.camera_pitch = 200;
-    snap.varps = &[script::isolate_fb::VarpInput { index: 43, value: 1 }];
+    snap.varps = &[script::isolate_fb::VarpInput {
+        index: 43,
+        value: 1,
+    }];
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let v = iso.probe("__probe").unwrap();
@@ -3955,7 +3963,11 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
-    assert_eq!(probe.get("active"), Some(&false.into()), "empty trade is inactive");
+    assert_eq!(
+        probe.get("active"),
+        Some(&false.into()),
+        "empty trade is inactive"
+    );
     assert!(
         probe.get("partner").map(|v| v.is_null()).unwrap_or(false),
         "empty trade has no partner"
@@ -3984,10 +3996,7 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
     assert_eq!(probe.get("onOffer"), Some(&true.into()));
-    assert_eq!(
-        probe.get("partner").and_then(|v| v.as_str()),
-        Some("bob")
-    );
+    assert_eq!(probe.get("partner").and_then(|v| v.as_str()), Some("bob"));
     iso.join();
 }
 
@@ -4033,9 +4042,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton {
-            component_id: 9001
-        }],
+        vec![script::shim::InteractReq::IfButton { component_id: 9001 }],
         "Trade.accept queues if-button on posted trade_accept_id"
     );
     iso.join();
@@ -4057,9 +4064,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton {
-            component_id: 9002
-        }],
+        vec![script::shim::InteractReq::IfButton { component_id: 9002 }],
         "Trade.decline queues if-button on posted trade_decline_id"
     );
     iso.join();
@@ -4085,9 +4090,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton {
-            component_id: 9101
-        }],
+        vec![script::shim::InteractReq::IfButton { component_id: 9101 }],
         "Trade.offer presses the first matching trade_side row component_id"
     );
     iso.join();
@@ -4114,12 +4117,8 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![
-            script::shim::InteractReq::IfButton {
-                component_id: 9101
-            },
-            script::shim::InteractReq::IfButton {
-                component_id: 9102
-            },
+            script::shim::InteractReq::IfButton { component_id: 9101 },
+            script::shim::InteractReq::IfButton { component_id: 9102 },
         ],
         "Trade.offerAll presses every matching trade_side row"
     );
@@ -4147,12 +4146,8 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![
-            script::shim::InteractReq::IfButton {
-                component_id: 9201
-            },
-            script::shim::InteractReq::IfButton {
-                component_id: 9202
-            },
+            script::shim::InteractReq::IfButton { component_id: 9201 },
+            script::shim::InteractReq::IfButton { component_id: 9202 },
         ],
         "Trade.removeAll presses every matching trade_mine row"
     );
@@ -4214,10 +4209,14 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
-    assert_eq!(probe.get("open"), Some(&false.into()), "closed shop is not open");
+    assert_eq!(
+        probe.get("open"),
+        Some(&false.into()),
+        "closed shop is not open"
+    );
     assert_eq!(
         probe.get("stock"),
-        Some(&serde_json::json!([]).into()),
+        Some(&serde_json::json!([])),
         "closed shop stock is empty"
     );
     iso.join();
@@ -4247,7 +4246,7 @@ export default class T extends LoopingBot {
     assert_eq!(probe.get("open"), Some(&true.into()));
     assert_eq!(
         probe.get("stock"),
-        Some(&serde_json::json!([{ "name": "Lobster", "count": 100 }]).into()),
+        Some(&serde_json::json!([{ "name": "Lobster", "count": 100 }])),
         "open shop maps posted shop_stock rows"
     );
     iso.join();
@@ -4271,9 +4270,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton {
-            component_id: 9201
-        }],
+        vec![script::shim::InteractReq::IfButton { component_id: 9201 }],
         "Shop.buy('Lobster', 1) queues if-button on the matching stock row"
     );
     iso.join();
@@ -4298,9 +4295,7 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![
-            script::shim::InteractReq::IfButton {
-                component_id: 9201
-            },
+            script::shim::InteractReq::IfButton { component_id: 9201 },
             script::shim::InteractReq::AnswerCount { value: 7 },
         ],
         "Shop.buy('Lobster', 7) queues if-button then answer-count when qty not in {{1,5,10,all}}"
@@ -4322,7 +4317,8 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
     assert!(
-        logs.iter().any(|l| l.contains("not impl") && l.contains("Shop.buyById")),
+        logs.iter()
+            .any(|l| l.contains("not impl") && l.contains("Shop.buyById")),
         "Shop.buyById stays not impl, logs: {logs:?}"
     );
     iso.join();
@@ -4343,7 +4339,10 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, true, "lightFire queues when tinderbox and logs are posted");
+    assert_eq!(
+        value, true,
+        "lightFire queues when tinderbox and logs are posted"
+    );
     assert_eq!(
         iso.drain_interacts(),
         vec![script::shim::InteractReq::UseOn {
@@ -4470,7 +4469,10 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
-    assert_eq!(value, true, "interactNpc queues when the posted npc has that op");
+    assert_eq!(
+        value, true,
+        "interactNpc queues when the posted npc has that op"
+    );
     assert_eq!(
         iso.drain_interacts(),
         vec![script::shim::InteractReq::Npc {
@@ -4769,38 +4771,34 @@ export default class T extends LoopingBot {
     let fire_names: Vec<&str> = api::content::FIRE_PLOTS.iter().map(|p| p.name).collect();
     let cook_names: Vec<&str> = api::content::COOK_STANDS.iter().map(|s| s.name).collect();
     assert_eq!(
-        probe.get("cows").and_then(|v| v.as_array()).map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-        }),
+        probe
+            .get("cows")
+            .and_then(|v| v.as_array())
+            .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(cow_names),
         "handle.content.cow_fields must be the Rust table: {probe:?}"
     );
     assert_eq!(
-        probe.get("fires").and_then(|v| v.as_array()).map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-        }),
+        probe
+            .get("fires")
+            .and_then(|v| v.as_array())
+            .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(fire_names),
         "handle.content.fire_plots must be the Rust table: {probe:?}"
     );
     assert_eq!(
-        probe.get("cooks").and_then(|v| v.as_array()).map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-        }),
+        probe
+            .get("cooks")
+            .and_then(|v| v.as_array())
+            .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(cook_names),
         "handle.content.cook_stands must be the Rust table: {probe:?}"
     );
     assert_eq!(
-        probe.get("rocks").and_then(|v| v.as_array()).map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-        }),
+        probe
+            .get("rocks")
+            .and_then(|v| v.as_array())
+            .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(api::content::ROCK_TYPE_NAMES.to_vec()),
         "handle.content.rock_type_names must be the Rust table: {probe:?}"
     );
@@ -4834,8 +4832,14 @@ export default class T extends LoopingBot {
     let probe = iso.probe("__probe").unwrap();
     let rust = probe.get("rust").and_then(|v| v.as_i64());
     let js = probe.get("js").and_then(|v| v.as_i64());
-    assert!(rust.is_some(), "Rust fire plot must be on the handle: {probe:?}");
-    assert_eq!(js, rust, "FIRE_SPOTS must read handle content, not a JS duplicate: {probe:?}");
+    assert!(
+        rust.is_some(),
+        "Rust fire plot must be on the handle: {probe:?}"
+    );
+    assert_eq!(
+        js, rust,
+        "FIRE_SPOTS must read handle content, not a JS duplicate: {probe:?}"
+    );
     iso.join();
 }
 

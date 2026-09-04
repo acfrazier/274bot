@@ -611,7 +611,7 @@ mod tests {
         let files = dialog_rows(&dir, DialogMode::File, "");
         let names: Vec<_> = files.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"src") && names.contains(&"bot.ts"));
-        assert!(!names.iter().any(|n| *n == "readme.md"));
+        assert!(!names.contains(&"readme.md"));
         let folders = dialog_rows(&dir, DialogMode::Folder, "");
         assert!(folders.iter().all(|r| r.is_dir));
         let filtered = dialog_rows(&dir, DialogMode::File, "BOT");
@@ -897,8 +897,7 @@ mod tests {
         );
         assert!(
             !card_fn.contains("set_cursor_screen_pos([origin[0], origin[1] + row_h])")
-                && !card_fn
-                    .contains("set_cursor_screen_pos([origin[0], origin[1] + row_h * 2.0])"),
+                && !card_fn.contains("set_cursor_screen_pos([origin[0], origin[1] + row_h * 2.0])"),
             "no dangling SetCursorScreenPos after the badge item (imgui 5548 abort on File cards)"
         );
     }
@@ -967,7 +966,9 @@ mod tests {
 
     #[test]
     fn chip_frame_padding_keeps_descenders() {
-        assert!(CHIP_PAD_Y >= 4.0);
+        const {
+            assert!(CHIP_PAD_Y >= 4.0);
+        }
         assert_eq!(chip_frame_padding([4.0, 0.0]), [4.0, CHIP_PAD_Y]);
         assert_eq!(chip_frame_padding([4.0, 8.0]), [4.0, 8.0]);
     }

@@ -64,7 +64,9 @@ pub fn render_host_js_dts() -> String {
         &mut out,
         &TsInterface {
             name: "Camera",
-            doc: Some("Orbit camera read from the posted snapshot (`camera_yaw` / `camera_pitch`)."),
+            doc: Some(
+                "Orbit camera read from the posted snapshot (`camera_yaw` / `camera_pitch`).",
+            ),
             fields: &[
                 TsField {
                     name: "yaw",
@@ -216,12 +218,14 @@ fn render_interface(out: &mut String, iface: &TsInterface) {
 }
 
 fn render_interact_union(out: &mut String) {
-    out.push_str("/** One interact queued on the host handle; dispatched through the slot Driver. */\n");
+    out.push_str(
+        "/** One interact queued on the host handle; dispatched through the slot Driver. */\n",
+    );
     out.push_str("export type InteractReq =\n");
     for (i, variant) in INTERACT_VARIANTS.iter().enumerate() {
         out.push_str("  | { op: '");
         out.push_str(variant.op);
-        out.push_str("'");
+        out.push('\'');
         for field in variant.fields {
             out.push_str("; ");
             out.push_str(field.name);

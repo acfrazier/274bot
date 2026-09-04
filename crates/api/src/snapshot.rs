@@ -369,19 +369,10 @@ impl Default for TradeView {
 }
 
 /// The shop main modal's stock container (empty while the shop is down).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct ShopView {
     pub open: bool,
     pub stock: Vec<ItemView>,
-}
-
-impl Default for ShopView {
-    fn default() -> Self {
-        Self {
-            open: false,
-            stock: Vec::new(),
-        }
-    }
 }
 
 /// One chat history line. The ring's index 0 is the newest line;

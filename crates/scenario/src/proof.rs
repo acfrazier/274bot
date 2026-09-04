@@ -246,10 +246,7 @@ impl Proof {
 
 /// XP for skill `id` from the snapshot stat table (`None` when absent).
 fn stat_xp(snap: &GameSnapshot, id: i32) -> Option<i32> {
-    snap.stats()
-        .iter()
-        .find(|s| s.index == id)
-        .map(|s| s.xp)
+    snap.stats().iter().find(|s| s.index == id).map(|s| s.xp)
 }
 
 /// A decoded stat-family value: run energy (id 16) from the run energy
@@ -787,18 +784,22 @@ mod tests {
         c.stat_xp[17] = 100;
         let s = snap(&mut c);
         let baselines: &[(i32, i32)] = &[];
-        assert!(!Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
-            &s,
-            None,
-            Some(baselines)
-        ));
+        assert!(
+            !Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+                &s,
+                None,
+                Some(baselines)
+            )
+        );
         c.stat_xp[17] = 146;
         let s = snap(&mut c);
-        assert!(!Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
-            &s,
-            None,
-            Some(baselines)
-        ));
+        assert!(
+            !Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+                &s,
+                None,
+                Some(baselines)
+            )
+        );
     }
 
     #[test]
@@ -807,23 +808,29 @@ mod tests {
         c.stat_xp[17] = 100;
         let s = snap(&mut c);
         let baselines = [(17, 100)];
-        assert!(!Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
-            &s,
-            None,
-            Some(&baselines)
-        ));
+        assert!(
+            !Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+                &s,
+                None,
+                Some(&baselines)
+            )
+        );
         c.stat_xp[17] = 146;
         let s = snap(&mut c);
-        assert!(Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
-            &s,
-            None,
-            Some(&baselines)
-        ));
-        assert!(!Proof::StatXpGain { id: 17, min: 50 }.check_with_xp_baselines(
-            &s,
-            None,
-            Some(&baselines)
-        ));
+        assert!(
+            Proof::StatXpGain { id: 17, min: 1 }.check_with_xp_baselines(
+                &s,
+                None,
+                Some(&baselines)
+            )
+        );
+        assert!(
+            !Proof::StatXpGain { id: 17, min: 50 }.check_with_xp_baselines(
+                &s,
+                None,
+                Some(&baselines)
+            )
+        );
     }
 
     #[test]

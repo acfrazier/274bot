@@ -420,7 +420,10 @@ mod tests {
 
     #[test]
     fn chrome_defaults_match_theme_consts() {
-        use crate::theme::{rgba_to_hex, ACCENT, ACCENT_HOVER, BG, BG_DEEP, BORDER, ERROR, FRAME, GREEN, HOVER_FILL, ACTIVE_FILL, TEXT, TEXT_DIM, WARN};
+        use crate::theme::{
+            rgba_to_hex, ACCENT, ACCENT_HOVER, ACTIVE_FILL, BG, BG_DEEP, BORDER, ERROR, FRAME,
+            GREEN, HOVER_FILL, TEXT, TEXT_DIM, WARN,
+        };
         let c = PanelUiState::default().chrome;
         assert_eq!(c.accent, rgba_to_hex(ACCENT));
         assert_eq!(c.accent_hover, rgba_to_hex(ACCENT_HOVER));

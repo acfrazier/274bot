@@ -231,10 +231,7 @@ mod tests {
     #[test]
     fn fire_plots_are_the_four_named_stands() {
         let names: Vec<_> = FIRE_PLOTS.iter().map(|p| p.name).collect();
-        assert_eq!(
-            names,
-            ["Varrock East", "Varrock West", "Draynor", "Seers"]
-        );
+        assert_eq!(names, ["Varrock East", "Varrock West", "Draynor", "Seers"]);
     }
 
     #[test]

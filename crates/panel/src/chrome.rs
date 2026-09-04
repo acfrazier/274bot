@@ -177,8 +177,8 @@ pub const CONFIG_ROW: &[&str] = &["General config", "Nav config", "Loadouts"];
 mod tests {
     use crate::chrome::{
         button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
-        multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_HOST_ROW,
-        CONFIG_MIN, CONFIG_SCRIPT_ROW, HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
+        multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_HOST_ROW, CONFIG_MIN,
+        CONFIG_SCRIPT_ROW, HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
     };
     use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
 

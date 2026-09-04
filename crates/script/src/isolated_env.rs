@@ -198,7 +198,7 @@ mod tests {
     fn isolated_env_is_thread_local() {
         let iso = IsolatedEnv::enter("tls");
         let pinned = iso.home.clone();
-        let other = std::thread::spawn(|| bot_home()).join().unwrap();
+        let other = std::thread::spawn(bot_home).join().unwrap();
         assert_eq!(bot_home(), pinned);
         assert_ne!(
             other, pinned,

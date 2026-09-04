@@ -285,8 +285,10 @@ mod tests {
     fn apply_amber_honours_chrome_accent() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
-        let mut chrome = ChromeColors::default();
-        chrome.accent = "#00FF00".into();
+        let chrome = ChromeColors {
+            accent: "#00FF00".into(),
+            ..Default::default()
+        };
         apply_amber(ctx.style_mut(), &chrome);
         let check = ctx.style().color(dear_imgui_rs::StyleColor::CheckMark);
         assert!((check[1] - 1.0).abs() < 0.01, "custom accent is checkmark");

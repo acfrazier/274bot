@@ -271,7 +271,7 @@ fn skip_member_tail(src: &str, mut i: usize, end: usize) -> usize {
             i = close + 1;
         }
         i = skip_trivia(src, i);
-        // Return type may contain `{` / `(` — skip until `;` or next member at depth 0 of this object… 
+        // Return type may contain `{` / `(` — skip until `;` or next member at depth 0 of this object…
         // Members are separated by `;` or newline-then-ident. Consume until `;` at paren/brace depth 0.
         return skip_until_semi_or_member(src, i, end);
     }

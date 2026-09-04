@@ -782,7 +782,7 @@ fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool, bool) {
             Some(&FA_FONT_RANGES),
         )
         .expect("embedded Font Awesome Free Solid is a valid TTF");
-    let fa = fa_dialog_glyphs_in(&merged);
+    let fa = fa_dialog_glyphs_in(merged);
     (
         merged.is_glyph_in_font('\u{2059}'),
         merged.is_glyph_in_font('\u{2717}'),

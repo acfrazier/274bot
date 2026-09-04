@@ -729,10 +729,8 @@ impl Guardian {
             }
         }
 
-        let inert_lamp = ev
-            .as_ref()
-            .is_some_and(|e| e.kind == RandomKind::Lamp)
-            && !settings.lamp_auto;
+        let inert_lamp =
+            ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp) && !settings.lamp_auto;
         if inert_lamp {
             // Drop a previous auto-on latch the moment the operator
             // turns lamp auto off with the lamp still in inv.
@@ -1253,10 +1251,7 @@ impl Guardian {
                     press(driver, btn);
                     self.lamp_skill_sent = true;
                 } else if crate::debug_enabled() {
-                    eprintln!(
-                        "[host] lamp: unknown skill {:?}",
-                        settings.lamp_skill
-                    );
+                    eprintln!("[host] lamp: unknown skill {:?}", settings.lamp_skill);
                 }
                 return;
             }
@@ -2712,10 +2707,7 @@ mod tests {
         c.main_modal_id = -1;
         tick_at(&mut c, &mut snap);
         g.tick(&mut drv, &snap, &settings, 0, None);
-        assert!(
-            drv.menus.is_empty(),
-            "pending cube IF: no second Open"
-        );
+        assert!(drv.menus.is_empty(), "pending cube IF: no second Open");
         assert!(drv.actions.is_empty());
 
         // Tick 3: cube IF opens → IF_BUTTON answer, no Open.
