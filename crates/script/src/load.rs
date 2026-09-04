@@ -7,7 +7,7 @@
 //! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, Once, OnceLock};
@@ -715,6 +715,16 @@ fn canonical_under_dir(dir: &Path, path: &Path) -> Option<PathBuf> {
     Some(path.to_path_buf())
 }
 
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
 /// Same-folder `./Foo.js` imports beside `card_path`: read the `.ts` twin
 /// (or `.js` origin), cache under `js-cache`, return `(module_url, js)` pairs
 /// for extra rustyscript modules at Start.
@@ -727,22 +737,91 @@ pub fn resolve_sibling_modules(
     let card_dir = card_path
         .parent()
         .ok_or_else(|| format!("no parent dir for {}", card_path.display()))?;
-    let mut out = Vec::new();
-    for import_rel in scan_same_folder_js_imports(origin)
+    let mut pending: Vec<String> = scan_same_folder_js_imports(origin)
         .into_iter()
         .chain(scan_scripts_sibling_js_imports(origin))
-    {
+        .collect();
+    let mut seen = HashSet::new();
+    let mut nodes: Vec<(String, String, String, String)> = Vec::new();
+    while let Some(import_rel) = pending.pop() {
+        if !seen.insert(import_rel.clone()) {
+            continue;
+        }
         let Some(url) = sibling_module_url(&import_rel) else {
             continue;
         };
         let Some(path) = resolve_sibling_path(card_dir, &import_rel) else {
             continue;
         };
+        if same_path(&path, card_path) {
+            continue;
+        }
         let bytes = std::fs::read(&path).map_err(|e| format!("sibling {}: {e}", path.display()))?;
+        let origin_text = String::from_utf8_lossy(&bytes).into_owned();
+        pending.extend(scan_same_folder_js_imports(&origin_text));
+        pending.extend(scan_scripts_sibling_js_imports(&origin_text));
         let cached = cache.get_or_transpile(&path, &bytes, meta.clone())?;
-        out.push((url, cached.js));
+        nodes.push((import_rel, url, cached.js, origin_text));
     }
-    Ok(out)
+    Ok(order_siblings_deps_first(nodes))
+}
+
+/// rustyscript evaluates side modules in vec order. An importer whose
+/// `./dep.js` is later in the list gets "module … is not loaded".
+fn order_siblings_deps_first(
+    nodes: Vec<(String, String, String, String)>,
+) -> Vec<(String, String)> {
+    if nodes.len() <= 1 {
+        return nodes.into_iter().map(|(_, url, js, _)| (url, js)).collect();
+    }
+    let rels: HashSet<String> = nodes.iter().map(|(rel, _, _, _)| rel.clone()).collect();
+    let mut deps: HashMap<String, Vec<String>> = HashMap::new();
+    for (rel, _, _, origin) in &nodes {
+        let mut needed = Vec::new();
+        for imp in scan_same_folder_js_imports(origin)
+            .into_iter()
+            .chain(scan_scripts_sibling_js_imports(origin))
+        {
+            if rels.contains(&imp) && imp != *rel {
+                needed.push(imp);
+            }
+        }
+        deps.insert(rel.clone(), needed);
+    }
+    let mut remaining: HashSet<String> = rels;
+    let mut sorted_rels = Vec::new();
+    while !remaining.is_empty() {
+        let ready: Vec<String> = remaining
+            .iter()
+            .filter(|r| {
+                deps.get(*r)
+                    .into_iter()
+                    .flatten()
+                    .all(|d| !remaining.contains(d))
+            })
+            .cloned()
+            .collect();
+        if ready.is_empty() {
+            let mut rest: Vec<String> = remaining.iter().cloned().collect();
+            rest.sort();
+            sorted_rels.extend(rest);
+            break;
+        }
+        let mut ready = ready;
+        ready.sort();
+        for r in ready {
+            remaining.remove(&r);
+            sorted_rels.push(r);
+        }
+    }
+    let mut by_rel: HashMap<String, (String, String)> = nodes
+        .into_iter()
+        .map(|(rel, url, js, _)| (rel, (url, js)))
+        .collect();
+    sorted_rels
+        .into_iter()
+        .filter_map(|rel| by_rel.remove(&rel))
+        .collect()
 }
 
 /// True when `name` collides with a reserved picker id. Only WalkTo is

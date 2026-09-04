@@ -26,6 +26,27 @@ export function tryParseCombatStyle(name) {
     return COMBAT_STYLE[String(name).trim().toLowerCase()] ?? null;
 }
 
+/** SETTINGS split: a leftover melee token in combatStyle is kind melee. */
+export function resolveSplitCombatSettings(rawCombatStyle, rawMeleeStyle) {
+    const legacy = tryParseCombatStyle(rawCombatStyle);
+    if (legacy !== null) {
+        return {
+            kind: 'melee',
+            meleeStyle: rawMeleeStyle !== undefined ? parseCombatStyle(rawMeleeStyle) : legacy,
+            legacyMigrated: rawMeleeStyle === undefined ? legacy : null,
+        };
+    }
+    const kindRaw = String(rawCombatStyle || '')
+        .trim()
+        .toLowerCase();
+    const kind = kindRaw === 'mage' || kindRaw === 'range' ? kindRaw : 'melee';
+    return {
+        kind,
+        meleeStyle: parseCombatStyle(rawMeleeStyle ?? 'strength'),
+        legacyMigrated: null,
+    };
+}
+
 export function parseRangeStyle(name) {
     const n = String(name).trim().toLowerCase();
     const idx = RANGE_STYLE_OPTIONS.indexOf(n);

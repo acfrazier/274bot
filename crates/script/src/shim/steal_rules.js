@@ -16,26 +16,36 @@ export async function closeBankAndConfirmCount(_expected, _count) {
     throw notImpl('closeBankAndConfirmCount');
 }
 
-export function autoFoodBanking(_mode) {
-    throw notImpl('autoFoodBanking');
+export function autoFoodBanking(mode) {
+    return String(mode || '').trim().toLowerCase() === 'auto';
 }
 
-export function foodMatches(_name, _keyword) {
-    throw notImpl('foodMatches');
+export function foodMatches(name, keyword) {
+    const wanted = String(keyword || '').trim().toLowerCase();
+    return wanted.length > 0 && String(name ?? '').toLowerCase().includes(wanted);
 }
 
-export function countFood(_items, _keyword) {
-    throw notImpl('countFood');
+export function countFood(items, keyword) {
+    if (!Array.isArray(items)) {
+        return 0;
+    }
+    return items.reduce((sum, item) => {
+        if (!item || !foodMatches(item.name, keyword)) {
+            return sum;
+        }
+        const n = Number(item.count);
+        return sum + (Number.isFinite(n) ? n : 0);
+    }, 0);
 }
 
-export function shouldRestockFood(_enabled, _foodCount, _restockAt, _bankablePackFull) {
-    throw notImpl('shouldRestockFood');
+export function shouldRestockFood(enabled, foodCount, restockAt, bankablePackFull) {
+    return Boolean(enabled) && (foodCount <= restockAt || Boolean(bankablePackFull));
 }
 
-export function safeToSteal(_hpFraction, _eatAt, _foodCount) {
-    throw notImpl('safeToSteal');
+export function safeToSteal(hpFraction, eatAt, foodCount) {
+    return hpFraction >= eatAt || foodCount > 0;
 }
 
-export function canStealNow(_foodCount, _hp, _minEatHp, _suicide) {
-    throw notImpl('canStealNow');
+export function canStealNow(foodCount, hp, minEatHp, suicide) {
+    return Boolean(suicide) || foodCount > 0 || hp > minEatHp;
 }

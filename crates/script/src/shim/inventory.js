@@ -83,6 +83,9 @@ export const Inventory = new Proxy(
         },
         countById(id) {
             const rs = rows();
+            if (rs.length === 0) {
+                return 0;
+            }
             if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
                 throw notImpl('Inventory.countById');
             }

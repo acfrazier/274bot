@@ -109,9 +109,12 @@ export const Bank = new Proxy(
             await Execution.delayTicks(1);
             return true;
         },
-        close() {
+        async close() {
+            if (!Bank.isOpen()) {
+                return true;
+            }
             queue({ op: 'close' });
-            return Promise.resolve(true);
+            return Execution.delayUntil(() => !Bank.isOpen(), 3000);
         },
         async withdrawById(id, op = 'Withdraw-1') {
             const row = (snap().bank || []).find((r) => r && r.id === id);
@@ -125,11 +128,37 @@ export const Bank = new Proxy(
             queue({ op: 'withdraw', name: row.name, action });
             return true;
         },
-        withdrawX(_name, _count) {
-            throw notImpl('Bank.withdrawX');
+        withdrawX(name, count) {
+            const wanted = String(name).toLowerCase();
+            const row = (snap().bank || []).find(
+                (r) => r && typeof r.name === 'string' && r.name.toLowerCase() === wanted,
+            );
+            const ops = Array.isArray(row?.ops) ? row.ops : [];
+            const xOp = ops.find(
+                (a) =>
+                    a &&
+                    String(a)
+                        .replace(/-/g, ' ')
+                        .trim()
+                        .toLowerCase() === 'withdraw x',
+            );
+            if (!row || !xOp) {
+                throw notImpl('Bank.withdrawX');
+            }
+            return (async () => {
+                queue({ op: 'withdraw', name: row.name, action: String(xOp) });
+                await Execution.delayTicks(1);
+                queue({ op: 'answer-count', value: Number(count) || 0 });
+                await Execution.delayTicks(1);
+                return true;
+            })();
         },
-        withdrawXById(_id, _count, _landsAsId) {
-            throw notImpl('Bank.withdrawX');
+        async withdrawXById(id, count, _landsAsId) {
+            const row = (snap().bank || []).find((r) => r && r.id === id);
+            if (!row?.name) {
+                return false;
+            }
+            return Bank.withdrawX(row.name, count);
         },
         // Thin names onto the host's nearest Use-quickly loc (same plane).
         // Extra rs2b0t args (stand / boothName / op / log) are ignored.
@@ -158,6 +187,9 @@ export const Bank = new Proxy(
         },
         countById(id) {
             const rs = snap().bank || [];
+            if (rs.length === 0) {
+                return 0;
+            }
             if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
                 throw notImpl('Bank.countById');
             }

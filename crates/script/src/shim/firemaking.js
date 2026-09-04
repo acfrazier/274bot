@@ -1,6 +1,6 @@
 // Catalog Firemaking URL: SETTINGS keys + lightFire. Burn-lane search is not impl.
 import Tile from '../../geometry/Tile.js';
-import { host, notImpl } from '../../shim/_kernel.js';
+import { host, snap, notImpl } from '../../shim/_kernel.js';
 
 export { lightFire } from './LightFire.js';
 
@@ -24,6 +24,41 @@ function fireSpots() {
 export const FIRE_SPOTS = fireSpots();
 
 export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);
+
+/** Posted fire-plot AABB containing `origin`, else a half-tile box around it. */
+export function localFirePlot(origin, half = 4) {
+    const o = origin || snap().here || {};
+    const x = o.x;
+    const z = o.z;
+    const level = o.level ?? 0;
+    if (typeof x !== 'number' || typeof z !== 'number') {
+        throw notImpl('localFirePlot');
+    }
+    const plots = (host().content && host().content.fire_plots) || [];
+    for (const p of plots) {
+        const lv = (p.bank && p.bank.level) ?? 0;
+        if (lv !== level) {
+            continue;
+        }
+        if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1) {
+            return {
+                bank: new Tile(p.bank.x, p.bank.z, lv),
+                x0: p.x0,
+                x1: p.x1,
+                z0: p.z0,
+                z1: p.z1,
+            };
+        }
+    }
+    const h = Math.max(0, Math.floor(Number(half) || 4));
+    return {
+        bank: new Tile(x, z, level),
+        x0: x - h,
+        x1: x + h,
+        z0: z - h,
+        z1: z + h,
+    };
+}
 
 export const LOG_LEVELS = {
     Logs: 1,

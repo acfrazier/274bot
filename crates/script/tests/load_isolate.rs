@@ -1216,6 +1216,35 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_execution_delay_until_ticks_resolves_on_cond_or_budget() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__rs_loops = (globalThis.__rs_loops || 0) + 1;
+        if (globalThis.__rs_loops === 1) {
+            globalThis.__rs_ok = null;
+            globalThis.__rs_ok = await Execution.delayUntilTicks(
+                () => Game.tick() >= 3,
+                4,
+            );
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let pending = iso.probe("__rs_ok").unwrap();
+    assert_eq!(pending, serde_json::Value::Null, "still parked before tick 3");
+    iso.on_game_tick(3);
+    let ok = iso.probe("__rs_ok").unwrap();
+    assert_eq!(ok, true, "delayUntilTicks resolves true when the cond holds");
+    iso.join();
+}
+
 // Task 9b — a posted FlatBuffer snapshot is what Game/Inventory/Skills/
 // EventSignal read: `Inventory.count` sums the inv rows by name
 // (case-insensitive), `EventSignal.pending()` is hold OR ours as posted,
@@ -1723,6 +1752,78 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_equipment_equip_queues_wear_when_inv_ops_empty() {
+    let src = r#"
+import { Equipment } from '../../api/equipment/Equipment.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Equipment.equip('Staff of fire');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let inv = [item_row(1387, Some("Staff of fire"), 1, &[], false, -1, 0)];
+    snap.inv = &inv;
+    snap.inv_size = 28;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Wear {
+            name: "Staff of fire".into()
+        }],
+        "empty posted ops must still name-map onto host Wear"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_chat_dialog_make_x_queues_answer_count_after_button() {
+    let src = r#"
+import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await ChatDialog.makeX('Willow shortbow', 27);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let buttons = [script::isolate_fb::MakeButtonInput {
+        qty: -1,
+        com_id: 42,
+    }];
+    let products = [script::isolate_fb::MakeProductInput {
+        object_id: 50,
+        name: "Willow shortbow",
+        buttons: &buttons,
+    }];
+    snap.make_products = &products;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::IfButton { component_id: 42 }],
+        "first tick clicks the posted Make-X button"
+    );
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::AnswerCount { value: 27 }],
+        "next tick answers the count dialog"
+    );
+    iso.join();
+}
+
 // The live BoneBurier gold probe: when `$RS2B0T` points at a real rs2b0t
 // checkout, load the actual BoneBurier card and drive it against a
 // seeded snapshot (Bones in the inv, inv tab bound, Prayer stats). The
@@ -1989,6 +2090,89 @@ export default class T extends LoopingBot {
         iso.drain_interacts().is_empty(),
         "withdrawX must not paper a Withdraw-10"
     );
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_withdraw_x_queues_x_op_then_answer_count() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.withdrawX('Bones', 25);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let ops = ["Withdraw 1".into(), "Withdraw-X".into()];
+    let bank = [item_row(526, Some("Bones"), 40, &ops, false, -1, 0)];
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Withdraw {
+            name: "Bones".into(),
+            action: "Withdraw-X".into()
+        }],
+        "first tick queues the posted Withdraw-X op"
+    );
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::AnswerCount { value: 25 }],
+        "next tick answers the count dialog"
+    );
+    iso.on_game_tick(3);
+    let ok = iso.probe("__ok").unwrap();
+    assert_eq!(ok, true, "withdrawX resolves after the count answer");
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_close_waits_until_posted_shut() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await Bank.close();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Close],
+        "close queues the host Close verb"
+    );
+    let pending = iso.probe("__ok").unwrap();
+    assert_eq!(
+        pending,
+        serde_json::Value::Null,
+        "close must not resolve while the posted bank is still open"
+    );
+    snap.bank_open = false;
+    snap.bank_loaded = false;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let ok = iso.probe("__ok").unwrap();
+    assert_eq!(ok, true, "close resolves after the posted bank shuts");
     iso.join();
 }
 
@@ -2657,6 +2841,39 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_live_catalog_noted_inv_row_maps_unnoted_to_note() {
+    let src = r#"
+import { notedId } from '../../api/market/catalog.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = notedId(1113);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Drop".to_string()];
+    let inv = [item_row(
+        1114,
+        Some("Rune chainbody"),
+        27,
+        &ops,
+        true,
+        1113,
+        -1,
+    )];
+    let mut snap = base_snapshot();
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value, 1114,
+        "a posted noted inv row maps notedId(unnoted) to the note id"
+    );
+    iso.join();
+}
+
 // Hop 2 — Reachability.canReach reads posted reachable / reachable_adj.
 #[test]
 fn isolate_reachability_can_reach_reads_posted_flags() {
@@ -2846,6 +3063,30 @@ export default class T extends LoopingBot {
     assert_ne!(
         value, "Lobster",
         "SettingsStore must not return schema defaults as if they were set: {value:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_inventory_count_by_id_empty_inv_is_zero() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = Inventory.countById(1113);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value, 0, "empty posted inv is zero of any id, not not-impl");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("not impl")),
+        "countById on empty inv must not throw: {logs:?}"
     );
     iso.join();
 }

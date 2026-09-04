@@ -497,7 +497,9 @@ pub(crate) fn remap_catalog_imports(source: &str) -> String {
 /// Host-owned coordinate tables posted once onto `__rs2b0t_host.content`.
 /// Catalog data modules read this instead of duplicating tiles in JS.
 pub(crate) fn content_json() -> String {
-    use api::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, ROCK_TYPE_NAMES};
+    use api::content::{
+        COOK_STANDS, COW_FIELDS, FIRE_PLOTS, ITEMS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES,
+    };
     serde_json::json!({
         "cow_fields": COW_FIELDS.iter().map(|f| {
             serde_json::json!({"name": f.name, "x": f.x, "z": f.z, "level": f.level})
@@ -516,7 +518,25 @@ pub(crate) fn content_json() -> String {
                 "range": {"x": s.range.x, "z": s.range.z, "level": s.range.level}
             })
         }).collect::<Vec<_>>(),
+        "items": ITEMS.iter().map(|i| {
+            serde_json::json!({
+                "obj": i.obj,
+                "id": i.id,
+                "name": i.name,
+                "cost": i.cost
+            })
+        }).collect::<Vec<_>>(),
         "rock_type_names": ROCK_TYPE_NAMES,
+        "pickpocket_spots": PICKPOCKET_SPOTS.iter().map(|p| {
+            serde_json::json!({
+                "name": p.name,
+                "x": p.x,
+                "z": p.z,
+                "level": p.level,
+                "leash": p.leash,
+                "required_thieving": p.required_thieving
+            })
+        }).collect::<Vec<_>>(),
     })
     .to_string()
 }

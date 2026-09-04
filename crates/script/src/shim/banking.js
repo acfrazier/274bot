@@ -12,6 +12,9 @@ const notImpl = (name) => new Error('not impl: ' + name);
 // host resolves names through ObjNames), so it drops itself.
 export const COMMON_BANK_LOOT = [];
 
+/** Never matches a posted obj id. Catalog compares against this sentinel. */
+export const RANDOM_EVENT_CASKET_ID = -1;
+
 export function matchesCommonBankLoot(_name) {
     throw notImpl('matchesCommonBankLoot');
 }

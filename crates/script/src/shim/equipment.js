@@ -22,8 +22,11 @@ export const Equipment = proxy('Equipment', {
         const item = Inventory.first(name);
         if (!item) return false;
         const op = item.actions().find((o) => /wield|wear|equip/i.test(o));
-        if (!op) return false;
-        if (!(await item.interact(op))) return false;
+        if (op) {
+            if (!(await item.interact(op))) return false;
+        } else {
+            queue({ op: 'wear', name: String(name) });
+        }
         return Execution.delayUntil(() => Equipment.contains(name), 3000);
     },
     async unequip(name) {

@@ -50,6 +50,10 @@ const park = {
             wait.reject(err instanceof Error ? err : new Error(String(err)));
             return;
         }
+        if (wait.kind === 'cond-ticks') {
+            if (tick >= wait.dueTick) done(false);
+            return;
+        }
         if (wait.timeoutAt !== null && now >= wait.timeoutAt) done(false);
     },
 };
@@ -77,8 +81,18 @@ export const Execution = {
         });
     },
 
-    delayUntilTicks(_cond, _maxTicks) {
-        return Promise.reject(new Error('not impl: Execution.delayUntilTicks'));
+    delayUntilTicks(cond, maxTicks) {
+        if (typeof cond !== 'function') {
+            return Promise.reject(
+                new Error('not impl: Execution.delayUntilTicks: requires a function'),
+            );
+        }
+        return park.enqueue({
+            kind: 'cond-ticks',
+            cond,
+            dueTick: (host().tick || 0) + Math.max(0, Math.floor(maxTicks)),
+            timeoutAt: null,
+        });
     },
 };
 

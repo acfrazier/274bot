@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use script::load::{resolve_sibling_modules, scan_same_folder_js_imports, sibling_module_url};
+use script::load::{
+    resolve_sibling_modules, scan_same_folder_js_imports, sibling_module_url, LoadIsolate,
+    LoadShape,
+};
 use script::{CacheMeta, JsCache, JsLibrary, ScriptKind, ScriptSource};
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -120,4 +123,153 @@ ScriptRegistry.register({ name: 'CatalogOnly', create: () => new X() });
         "Load must not parse index.ts / register catalog cards"
     );
     assert_eq!(lib.cards().len(), 1);
+}
+
+#[test]
+fn resolve_sibling_modules_follows_same_folder_imports_of_siblings() {
+    let dir = temp_dir("transitive");
+    let cache = JsCache::new(dir.join("js-cache"));
+    let card_dir = dir.join("Flax");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    let main = r#"
+import { PickTask } from './picking.js';
+export default class Main extends LoopingBot {
+    loop() { globalThis.__pick = typeof PickTask(); }
+}
+"#;
+    let picking = r#"
+import { travelTo } from './walking.js';
+export function PickTask() { return travelTo; }
+"#;
+    let walking = r#"
+export function travelTo() { return true; }
+"#;
+    std::fs::write(card_dir.join("Main.ts"), main).unwrap();
+    std::fs::write(card_dir.join("picking.ts"), picking).unwrap();
+    std::fs::write(card_dir.join("walking.ts"), walking).unwrap();
+    let siblings = resolve_sibling_modules(
+        &card_dir.join("Main.ts"),
+        main,
+        &cache,
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::File,
+            shape: Some("CompatClass".into()),
+        },
+    )
+    .expect("resolve");
+    let urls: Vec<&str> = siblings.iter().map(|(u, _)| u.as_str()).collect();
+    assert!(
+        urls.iter().any(|u| u.ends_with("/picking.js")),
+        "direct sibling: {urls:?}"
+    );
+    assert!(
+        urls.iter().any(|u| u.ends_with("/walking.js")),
+        "transitive walking.js must load: {urls:?}"
+    );
+    let walk_at = urls.iter().position(|u| u.ends_with("/walking.js")).unwrap();
+    let pick_at = urls.iter().position(|u| u.ends_with("/picking.js")).unwrap();
+    assert!(
+        walk_at < pick_at,
+        "walking.js must load before picking.js (rustyscript side order): {urls:?}"
+    );
+    let js = script::transpile_ts(main).expect("transpile main");
+    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass, siblings).expect("spawn");
+    iso.on_game_tick(1);
+    let kind = iso.probe("__pick").expect("probe");
+    assert_eq!(
+        kind.as_str().unwrap_or(""),
+        "function",
+        "PickTask must close over walking.travelTo, got {kind:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn resolve_sibling_modules_skips_the_card_origin() {
+    let dir = temp_dir("skip-card");
+    let cache = JsCache::new(dir.join("js-cache"));
+    let card_dir = dir.join("Flax");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    let main = r#"
+import { BankTask } from './banking.js';
+export default class Main extends LoopingBot { loop() {} }
+"#;
+    let banking = r#"
+import type Main from './Main.js';
+export function BankTask() { return true; }
+"#;
+    std::fs::write(card_dir.join("Main.ts"), main).unwrap();
+    std::fs::write(card_dir.join("banking.ts"), banking).unwrap();
+    let siblings = resolve_sibling_modules(
+        &card_dir.join("Main.ts"),
+        main,
+        &cache,
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::File,
+            shape: Some("CompatClass".into()),
+        },
+    )
+    .expect("resolve");
+    let urls: Vec<&str> = siblings.iter().map(|(u, _)| u.as_str()).collect();
+    assert!(
+        urls.iter().any(|u| u.ends_with("/banking.js")),
+        "banking sibling: {urls:?}"
+    );
+    assert!(
+        urls.iter().all(|u| !u.ends_with("/Main.js")),
+        "card origin must not re-register: {urls:?}"
+    );
+}
+
+#[test]
+fn flaxaio_catalog_siblings_include_walking() {
+    let Some(root) = script::rs2b0t_root() else {
+        return;
+    };
+    let dir = temp_dir("flax-real");
+    let cache = JsCache::new(dir.join("js-cache"));
+    let card = root.join("src/bot/scripts/FlaxAIO/flaxaio.ts");
+    let origin = std::fs::read_to_string(&card).expect("flaxaio.ts");
+    let siblings = resolve_sibling_modules(
+        &card,
+        &origin,
+        &cache,
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::Catalog,
+            shape: Some("CompatClass".into()),
+        },
+    )
+    .expect("resolve FlaxAIO siblings");
+    let urls: Vec<String> = siblings.iter().map(|(u, _)| u.clone()).collect();
+    assert!(
+        urls.iter().any(|u| u.ends_with("/walking.js")),
+        "Flax walking.js sibling: {urls:?}"
+    );
+    assert!(
+        urls.iter().any(|u| u.ends_with("/banking.js")),
+        "Flax banking.js sibling: {urls:?}"
+    );
+    let walk_at = urls.iter().position(|u| u.ends_with("/walking.js")).unwrap();
+    let pick_at = urls.iter().position(|u| u.ends_with("/picking.js")).unwrap();
+    let bank_at = urls.iter().position(|u| u.ends_with("/banking.js")).unwrap();
+    assert!(
+        walk_at < pick_at && walk_at < bank_at,
+        "walking before picking/banking: {urls:?}"
+    );
+    let walking_js = siblings
+        .iter()
+        .find(|(u, _)| u.ends_with("/walking.js"))
+        .map(|(_, js)| js.clone())
+        .unwrap_or_default();
+    assert!(
+        !walking_js.contains("flaxaio"),
+        "type-only flaxaio import must be stripped:\n{walking_js}"
+    );
+    let js = script::transpile_ts(&origin).expect("transpile flaxaio");
+    LoadIsolate::spawn(js, LoadShape::CompatClass, siblings).unwrap_or_else(|e| {
+        panic!("FlaxAIO isolate Start: {e}; sibs={urls:?}")
+    });
 }

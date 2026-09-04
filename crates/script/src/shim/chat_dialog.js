@@ -65,6 +65,8 @@ export const ChatDialog = proxy('ChatDialog', {
         }
         actions.ifButton(btn.comId);
         await Execution.delayTicks(1);
+        queue({ op: 'answer-count', value: Number(count) || 0 });
+        await Execution.delayTicks(1);
         return Execution.delayUntil(() => !ChatDialog.isMakeMenu(), 5000);
     },
     async continue() {

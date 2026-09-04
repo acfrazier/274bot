@@ -16,6 +16,8 @@ const AXE_NAMES = [
     'Rune axe',
 ];
 
+export const AXES = AXE_NAMES.map((name) => ({ name, id: 0 }));
+
 export function exactTool(name) {
     return { name: String(name) };
 }

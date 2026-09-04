@@ -1,5 +1,13 @@
 import { entitySnapView, notImpl } from '../../shim/_kernel.js';
 
+/** Case-insensitive trim compare of posted entity names. */
+export function matchesEntityName(actual, configured) {
+    if (actual == null || configured == null) {
+        return false;
+    }
+    return String(actual).trim().toLowerCase() === String(configured).trim().toLowerCase();
+}
+
 export default class EntityQuery {
     constructor(supplySnaps, wrap) {
         this.supplySnaps = supplySnaps;

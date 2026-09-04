@@ -20,8 +20,13 @@ function certMapsFromSnapshot() {
             if (!row || typeof row.id !== 'number') continue;
             const cert = row.cert ?? -1;
             if (cert >= 0) {
-                notedOf.set(row.id, cert);
-                unnotedOf.set(cert, row.id);
+                if (row.noted === true) {
+                    notedOf.set(cert, row.id);
+                    unnotedOf.set(row.id, cert);
+                } else {
+                    notedOf.set(row.id, cert);
+                    unnotedOf.set(cert, row.id);
+                }
             }
         }
     }

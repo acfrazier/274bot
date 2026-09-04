@@ -227,3 +227,76 @@ fn alcher_logic_sibling_is_sha_cached_at_start() {
     assert_eq!(n, 2, "AlcherLogic sibling must load at Start");
     iso.join();
 }
+
+/// Thiever onStart reads `scriptFood` + `autoFoodBanking` after the
+/// ingame gate; the steal loop then uses `canStealNow` / `countFood`.
+/// A one-tick catalog Start parks on `delayUntil(..., 0)` and misses these.
+#[test]
+fn thiever_start_helpers_read_posted_bag_without_not_impl() {
+    let src = r#"
+import { scriptFood } from '../../api/loadout/loadoutPlan.js';
+import {
+    autoFoodBanking,
+    canStealNow,
+    countFood,
+    foodMatches,
+    safeToSteal,
+    shouldRestockFood,
+} from '../../api/thieving/stealRules.js';
+export default class T extends LoopingBot {
+    onStart() {
+        this.food = scriptFood(this.settings, '').toLowerCase();
+        this.autoBank = autoFoodBanking(this.settings.str('banking', 'None'));
+    }
+    loop() {
+        const n = countFood([{ name: 'Lobster', count: 10 }], this.food);
+        globalThis.__probe = {
+            food: this.food,
+            auto: this.autoBank,
+            steal: canStealNow(0, 50, 5, false),
+            match: foodMatches('Lobster', this.food),
+            restock: shouldRestockFood(this.autoBank, n, 0, false),
+            safe: safeToSteal(1, 0.4, n),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut bag = serde_json::Map::new();
+    bag.insert("banking".into(), serde_json::json!("None"));
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("not impl")),
+        "Thiever Start helpers must not throw not impl: {logs:?}"
+    );
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe["food"], "", "no loadout → scriptFood fallback");
+    assert_eq!(probe["auto"], false, "banking None is not Auto");
+    assert_eq!(probe["steal"], true, "HP above minEatHp can steal");
+    assert_eq!(probe["match"], false, "empty food keyword matches nothing");
+    assert_eq!(probe["restock"], false, "banking off does not restock");
+    assert_eq!(probe["safe"], true, "full HP is safe to steal");
+    iso.join();
+}
+
+#[test]
+fn item_db_reads_host_content_alcher_gold_row() {
+    let src = r#"
+import { ITEM_DB } from '../../data/itemdb.js';
+export default class T extends LoopingBot {
+    loop() {
+        const row = ITEM_DB.find((r) => r && r.obj === 'rune_chainbody');
+        globalThis.__probe = row ? { id: row.id, name: row.name, cost: row.cost } : null;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let row = iso.probe("__probe").unwrap();
+    assert_eq!(row["id"], 1113, "ITEM_DB rune_chainbody id");
+    assert_eq!(row["name"], "Rune chainbody");
+    iso.join();
+}
