@@ -27,7 +27,7 @@ pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 #[cfg(feature = "load")]
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 pub use load::{
-    default_js_store, detect_shape, first_unloadable_specifier, is_reserved,
+    default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
     live_file_fixture_path, live_file_fixture_stem, resolve_sibling_modules,
     scan_import_specifiers, scan_same_folder_js_imports, sibling_module_url, JsCard, JsLibrary,
     LoadShape, ScriptSel,

@@ -57,3 +57,67 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
         "ChickenKiller gold imports must stay loadable"
     );
 }
+
+#[test]
+fn catalog_dim_names_are_locked() {
+    for name in [
+        "AIOQuester",
+        "ClueSolver",
+        "Woodcutter",
+        "Miner",
+        "Fisher",
+        "ArravSupplier",
+        "Barcrawl",
+        "RoguesPurse",
+        "MarketMaker",
+    ] {
+        assert!(script::is_catalog_dim(name), "{name}");
+    }
+    assert!(!script::is_catalog_dim("CookBot"));
+    assert!(!script::is_catalog_dim("ChickenKiller"));
+    assert!(!script::is_catalog_dim("WalkTo"));
+    assert!(script::is_reserved("WalkTo"));
+}
+
+#[test]
+fn catalog_dim_register_stamps_unloadable_even_when_imports_remap() {
+    use script::load::JsLibrary;
+    use script::ScriptSource;
+
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-catalog-dim-{}-{}",
+        std::process::id(),
+        "stamp"
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts/Woodcutter");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        root.join("src/bot/scripts/index.ts"),
+        r#"
+import Woodcutter from './Woodcutter/Woodcutter.js';
+import CookBot from './CookBot/CookBot.js';
+ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });
+ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
+"#,
+    )
+    .unwrap();
+    let body = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(scripts.join("Woodcutter.ts"), body).unwrap();
+    std::fs::create_dir_all(root.join("src/bot/scripts/CookBot")).unwrap();
+    std::fs::write(root.join("src/bot/scripts/CookBot/CookBot.ts"), body).unwrap();
+
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("registry fills");
+    let wood = lib
+        .get(ScriptSource::Catalog, "Woodcutter")
+        .expect("Woodcutter listed");
+    assert_eq!(wood.unloadable.as_deref(), Some("dim: Woodcutter"));
+    let cook = lib
+        .get(ScriptSource::Catalog, "CookBot")
+        .expect("CookBot listed");
+    assert_eq!(cook.unloadable, None, "CookBot is not name-locked");
+}

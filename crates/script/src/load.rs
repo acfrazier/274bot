@@ -330,7 +330,11 @@ impl JsLibrary {
             // Origin/classify only — no transpile, no V8. Warmth is
             // [`JsLibrary::ensure_js`] on first click / Start / Transpile all.
             let sha256 = JsCache::origin_sha(origin.as_bytes());
-            let unloadable = first_unloadable_for_card(&origin, &path);
+            let unloadable = catalog_unloadable(
+                &card.name,
+                ScriptSource::Catalog,
+                first_unloadable_for_card(&origin, &path),
+            );
             self.cards
                 .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
             self.cards.push(JsCard {
@@ -383,7 +387,8 @@ impl JsLibrary {
                 },
             )
             .map_err(|e| format!("{name}: {e}"))?;
-        let unloadable = first_unloadable_for_card(&origin, &path);
+        let unloadable =
+            catalog_unloadable(name, source, first_unloadable_for_card(&origin, &path));
         let card = &mut self.cards[idx];
         card.path = path;
         card.shape = shape;
@@ -677,6 +682,33 @@ pub fn resolve_sibling_modules(
 /// smokes (`BoneBurier` …) are free again — the shim catalog Loads them.
 pub fn is_reserved(name: &str) -> bool {
     name == "WalkTo"
+}
+
+/// Catalog picker names that stay dim even if their imports later remap.
+/// GatheringBot rows, quest-def cards, ClueSolver, MarketMaker.
+pub const CATALOG_DIM: &[&str] = &[
+    "AIOQuester",
+    "ClueSolver",
+    "Woodcutter",
+    "Miner",
+    "Fisher",
+    "ArravSupplier",
+    "Barcrawl",
+    "RoguesPurse",
+    "MarketMaker",
+];
+
+/// True when a **catalog** card of this register name must not Start.
+pub fn is_catalog_dim(name: &str) -> bool {
+    CATALOG_DIM.contains(&name)
+}
+
+fn catalog_unloadable(name: &str, source: ScriptSource, scanned: Option<String>) -> Option<String> {
+    if source == ScriptSource::Catalog && is_catalog_dim(name) {
+        Some(format!("dim: {name}"))
+    } else {
+        scanned
+    }
 }
 
 /// A picker selection: a compiled id or a loaded JS card by `(source, name)`.
@@ -1411,7 +1443,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
         if snap.has_teleports_enabled() {
             let teleports_enabled = v8::Boolean::new(&mut scope, snap.teleports_enabled());
-            set(&mut scope, obj, "teleports_enabled", teleports_enabled.into())?;
+            set(
+                &mut scope,
+                obj,
+                "teleports_enabled",
+                teleports_enabled.into(),
+            )?;
         } else if !had {
             set(&mut scope, obj, "teleports_enabled", falsy)?;
         }
@@ -1430,7 +1467,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
         if snap.has_trade_confirm_open() {
             let trade_confirm_open = v8::Boolean::new(&mut scope, snap.trade_confirm_open());
-            set(&mut scope, obj, "trade_confirm_open", trade_confirm_open.into())?;
+            set(
+                &mut scope,
+                obj,
+                "trade_confirm_open",
+                trade_confirm_open.into(),
+            )?;
         } else if !had {
             set(&mut scope, obj, "trade_confirm_open", falsy)?;
         }
