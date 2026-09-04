@@ -62,6 +62,29 @@ fn item_def_view_maps_empty_name_and_cert_links() {
     assert!(!names.item(0).expect("id 0 present").noted);
 }
 
+/// Unnoted objs have `certlink == -1`; the note sibling (`certtemplate`
+/// set, `certlink` pointing back) is the id bank note-mode lands as.
+#[test]
+fn unnoted_item_certificate_link_is_the_note_sibling() {
+    let mut objs = vec![client::config::ObjType::default(); 12];
+    objs[10].id = 10;
+    objs[10].name = "Rune chainbody".into();
+    objs[11].id = 11;
+    objs[11].name = "Rune chainbody".into();
+    objs[11].certlink = 10;
+    objs[11].certtemplate = 799;
+    let names = api::obj_names::ObjNames::from_objs(&objs);
+    let unnoted = names.item(10).expect("unnoted");
+    assert!(!unnoted.noted);
+    assert_eq!(
+        unnoted.certificate_link, 11,
+        "unnoted rows must name the note id so notedOf.get(unnoted) works"
+    );
+    let note = names.item(11).expect("note");
+    assert!(note.noted);
+    assert_eq!(note.certificate_link, 10);
+}
+
 /// The compat shim survives the generalization: the script crate still
 /// resolves ids to names off the same table.
 #[test]

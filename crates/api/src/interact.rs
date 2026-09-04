@@ -262,6 +262,9 @@ pub const MAXME_SETSTATS: &[&str] = &[
 ];
 
 pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
+    if !cheat_allowed(client::bot_target()) {
+        return false;
+    }
     let out = driver.out();
     out.p1_enc(ClientProt::CLIENT_CHEAT.id);
     out.p1((cmd.len() + 1) as i32);
@@ -269,11 +272,19 @@ pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
     true
 }
 
+/// `CLIENT_CHEAT`, TutSkip, and mainland hop stay on the local engine.
+pub fn cheat_allowed(target: client::BotTarget) -> bool {
+    target == client::BotTarget::Local
+}
+
 /// Tutorial-skip hop used by rs2b0t `mainlandAccount`: tele off the island
 /// then `setvar tutorial 1000`. Call after `ingame && scene_state == 2`.
 /// Does **not** relog — side icons stay tutorial-locked until a clean
 /// IF_BUTTON logout + login (scenario `StepKind::Relog`).
 pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
+    if !cheat_allowed(client::bot_target()) {
+        return;
+    }
     let tele = format!("tele {OFF_ISLAND_TELE}");
     cheat(driver, &tele);
     cheat(driver, "setvar tutorial 1000");
@@ -726,7 +737,13 @@ impl<'a> Interactions<'a> {
 
     pub fn interact<'t>(&mut self, target: OpTarget<'t>, action: ActionSpec) -> SendResult<'t> {
         let snapshot = self.snapshot;
-        if let Some(reason) = self.precondition(snapshot, false) {
+        let allow_count_dialog = matches!(
+            &target,
+            OpTarget::Item(item)
+                if item.container == ItemContainer::Bank
+                    || item.container == ItemContainer::BankSide
+        );
+        if let Some(reason) = self.precondition(snapshot, allow_count_dialog) {
             return refuse(snapshot, reason);
         }
         if let Some(reason) = self.check_target(&target, snapshot) {
@@ -936,7 +953,10 @@ impl<'a> Interactions<'a> {
 
     pub fn close_modal<'t>(&mut self) -> SendResult<'t> {
         let snapshot = self.snapshot;
-        if let Some(reason) = self.precondition(snapshot, false) {
+        // CLOSE_BUTTON is the client's path off an enter-amount dialog
+        // (`doAction` always drops `dialog_input_open`). Refusing here
+        // left Bank.close stuck after Withdraw-X.
+        if let Some(reason) = self.precondition(snapshot, true) {
             return refuse(snapshot, reason);
         }
         let modals = snapshot.modals();

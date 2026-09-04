@@ -121,6 +121,87 @@ pub const COOK_STANDS: &[CookStand] = &[CookStand {
     },
 }];
 
+/// East Ardougne market pickpocket stands (Thiever / ArdyThiever Start).
+/// Guard tile is the live-gold tele; other names share that plaza.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PickpocketSpot {
+    pub name: &'static str,
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub leash: i32,
+    pub required_thieving: i32,
+}
+
+pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
+    PickpocketSpot {
+        name: "Guard",
+        x: 2661,
+        z: 3306,
+        level: 0,
+        leash: 19,
+        required_thieving: 40,
+    },
+    PickpocketSpot {
+        name: "Knight of Ardougne",
+        x: 2661,
+        z: 3306,
+        level: 0,
+        leash: 29,
+        required_thieving: 55,
+    },
+    PickpocketSpot {
+        name: "Paladin",
+        x: 2661,
+        z: 3306,
+        level: 0,
+        leash: 12,
+        required_thieving: 70,
+    },
+    PickpocketSpot {
+        name: "Hero",
+        x: 2661,
+        z: 3306,
+        level: 0,
+        leash: 17,
+        required_thieving: 80,
+    },
+    PickpocketSpot {
+        name: "Man",
+        x: 3222,
+        z: 3222,
+        level: 0,
+        leash: 19,
+        required_thieving: 1,
+    },
+    PickpocketSpot {
+        name: "Woman",
+        x: 3222,
+        z: 3222,
+        level: 0,
+        leash: 19,
+        required_thieving: 1,
+    },
+];
+
+/// Obj-debug name, client id, display name, shop cost. Gold scripts that
+/// still import `ITEM_DB` (AlcherLogic) read these at module eval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemRecord {
+    pub obj: &'static str,
+    pub id: i32,
+    pub name: &'static str,
+    pub cost: i32,
+}
+
+/// Live-gold alch fodder only — not a clone of the catalog item database.
+pub const ITEMS: &[ItemRecord] = &[ItemRecord {
+    obj: "rune_chainbody",
+    id: 1113,
+    name: "Rune chainbody",
+    cost: 50000,
+}];
+
 pub const ROCK_TYPE_NAMES: &[&str] = &[
     "Clay",
     "Copper",
@@ -163,5 +244,25 @@ mod tests {
             (COOK_STANDS[0].range.x, COOK_STANDS[0].range.z),
             (2817, 3443)
         );
+    }
+
+    #[test]
+    fn pickpocket_guard_is_ardougne_market_gold_tile() {
+        let guard = PICKPOCKET_SPOTS
+            .iter()
+            .find(|p| p.name == "Guard")
+            .expect("Guard");
+        assert_eq!((guard.x, guard.z, guard.level), (2661, 3306, 0));
+        assert_eq!(guard.required_thieving, 40);
+    }
+
+    #[test]
+    fn items_include_alcher_gold_rune_chainbody() {
+        let row = ITEMS
+            .iter()
+            .find(|i| i.obj == "rune_chainbody")
+            .expect("rune_chainbody");
+        assert_eq!(row.id, 1113);
+        assert_eq!(row.name, "Rune chainbody");
     }
 }

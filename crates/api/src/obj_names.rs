@@ -89,6 +89,17 @@ impl ObjNames {
                 items[o.id as usize] = Some(ItemDefView::from_obj(o));
             }
         }
+        for o in objs {
+            if o.certtemplate == -1 || o.certlink < 0 {
+                continue;
+            }
+            let unnoted = o.certlink as usize;
+            if let Some(Some(view)) = items.get_mut(unnoted) {
+                if !view.noted && view.certificate_link < 0 {
+                    view.certificate_link = o.id;
+                }
+            }
+        }
         Self { items }
     }
 

@@ -5,10 +5,10 @@
 // `client/tests/gens.rs` — no network).
 
 use api::interact::{
-    answer_count, cheat, close_modal, create_interactions, interact, login, mainland_hop,
-    offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present, tele_args,
-    walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult, WireCommand,
-    MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
+    answer_count, cheat, cheat_allowed, close_modal, create_interactions, interact, login,
+    mainland_hop, offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present,
+    tele_args, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
+    WireCommand, MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
 };
 use api::obj_names::ItemDefView;
 use api::prot::{LegalSend, LEGAL_SEND};
@@ -371,6 +371,12 @@ fn cheat_writes_client_cheat_without_colon_prefix() {
             OutByte::Jstr("ping".into()),
         ]
     );
+}
+
+#[test]
+fn cheat_allowed_only_on_local_target() {
+    assert!(cheat_allowed(client::BotTarget::Local));
+    assert!(!cheat_allowed(client::BotTarget::Prod));
 }
 
 /// `mainland_hop` queues tele + setvar tutorial 1000 (no relog).
@@ -1938,6 +1944,89 @@ fn close_modal_dispatches_close_button_and_refuses_with_none_open() {
     assert!(rec.out.0.is_empty());
 }
 
+/// CLOSE_BUTTON is how the client clears an enter-amount dialog (`doAction`
+/// always drops `dialog_input_open`). Refusing close while that dialog is
+/// up leaves the bank stuck after Withdraw-X.
+#[test]
+fn close_modal_sends_while_count_dialog_open() {
+    let mut s = scene();
+    plant_modal(&mut s.client);
+    s.client.dialog_input_open = true;
+    let snap = rebuild(&mut s.client);
+    assert!(snap.count_dialog_open());
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.close_modal() {
+            SendResult::Sent { command, .. } => assert!(matches!(command, WireCommand::Close)),
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)]);
+}
+
+/// `doAction` clears the enter-amount dialog before the next op. A second
+/// Withdraw-X (Alcher nature runes after noted stock) must not refuse
+/// `CountDialogOpen`.
+#[test]
+fn bank_withdraw_sends_while_count_dialog_open() {
+    let mut s = scene();
+    set_iface(
+        &mut s.client,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut s.client,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Withdraw 1".into()),
+                Some("Withdraw 5".into()),
+                Some("Withdraw 10".into()),
+                Some("Withdraw All".into()),
+                Some("Withdraw X".into()),
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut s.client,
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
+        },
+    );
+    s.client.main_modal_id = 600;
+    s.client.dialog_input_open = true;
+    let snap = rebuild(&mut s.client);
+    assert!(snap.count_dialog_open());
+    let item = snap
+        .bank()
+        .first()
+        .expect("planted withdraw row")
+        .clone();
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.interact(OpTarget::Item(&item), ActionSpec::Label("Withdraw X".into())) {
+            SendResult::Sent { .. } => {}
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+}
+
 /// `answer_count` writes RESUME_P_COUNTDIALOG for a valid count and
 /// refuses when no count dialog is open or the count is negative.
 #[test]
@@ -2482,6 +2571,125 @@ fn set_note_mode_presses_bank_note_toggle_and_refuses_without_controls() {
         ));
     }
     assert!(rec.actions.is_empty());
+}
+
+/// 274 `bank_main.if`: Note/Item are unpressable TYPE_TEXT labels sitting
+/// on TYPE_GRAPHIC SELECT boxes (`bankcert`). The snapshot must map those
+/// boxes, not refuse because the labels have `button_type == 0`.
+#[test]
+fn set_note_mode_presses_select_graphics_under_note_item_labels() {
+    let mut s = scene();
+    set_iface(
+        &mut s.client,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601, 693, 694, 696, 698]),
+            child_x: Some(vec![0, 364, 291, 315, 387]),
+            child_y: Some(vec![0, 291, 291, 301, 301]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut s.client,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Withdraw 1".into()),
+                Some("Withdraw 5".into()),
+                Some("Withdraw 10".into()),
+                Some("Withdraw All".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut s.client,
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
+        },
+    );
+    for (id, text) in [(693, ""), (694, "")] {
+        set_iface(
+            &mut s.client,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_GRAPHIC,
+                width: 72,
+                height: 36,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut s.client,
+            id,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_SELECT,
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    for (id, w, text) in [(696, 24, "Item"), (698, 27, "Note")] {
+        set_iface(
+            &mut s.client,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_TEXT,
+                width: w,
+                height: 14,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut s.client,
+            id,
+            IfTypeMut {
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    s.client.main_modal_id = 600;
+    let snap = rebuild(&mut s.client);
+    let controls = snap
+        .bank_note_controls()
+        .expect("Note/Item labels must bind the SELECT graphics");
+    assert_eq!(controls.on_component_id, 693, "Note sits on com_93 graphic");
+    assert_eq!(controls.off_component_id, 694, "Item sits on com_94 graphic");
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.set_note_mode(true) {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(
+                    command,
+                    WireCommand::Button {
+                        component_id: 693,
+                        ..
+                    }
+                ));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::SELECT_BUTTON, 0, 0, 693)]
+    );
 }
 
 /// `create_interactions` wires the same snapshot + driver pair.

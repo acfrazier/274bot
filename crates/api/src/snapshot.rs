@@ -2887,43 +2887,97 @@ fn modal_texts(client: &Client, root: i32) -> Vec<String> {
     out
 }
 
-/// The Note/Item toggle pair on the open bank main modal: pressable
-/// TYPE_TEXT descendants labeled "Note" (on) and "Item" (off).
+/// The Note/Item toggle pair on the open bank main modal.
+///
+/// Two packed shapes:
+/// - pressable TYPE_TEXT labeled "Note" / "Item" (unit fixtures)
+/// - 274 `bank_main.if`: unpressable labels sitting on TYPE_GRAPHIC
+///   SELECT boxes (`bankcert`); the snapshot maps those boxes.
 fn bank_note_controls(client: &Client, main_root: i32) -> Option<ToggleControlsView> {
     if main_root == -1 {
         return None;
     }
     let mut note_id = -1;
     let mut item_id = -1;
-    let mut queue = vec![main_root];
+    let mut note_label: Option<(i32, i32)> = None;
+    let mut item_label: Option<(i32, i32)> = None;
+    let mut selects: Vec<(i32, i32, i32, i32, i32)> = Vec::new();
+    let mut queue: Vec<(i32, i32, i32)> = vec![(main_root, 0, 0)];
     let mut head = 0;
     while head < queue.len() {
-        let id = queue[head];
+        let (id, x, y) = queue[head];
         head += 1;
         let Some(com) = client.if_(id as usize) else {
             continue;
         };
-        if com.button_type != 0 {
-            let label = if !com.text.trim().is_empty() {
-                com.text.trim()
-            } else {
-                com.button_text.trim()
-            };
-            if label.eq_ignore_ascii_case("note") {
+        let label = if !com.text.trim().is_empty() {
+            com.text.trim()
+        } else {
+            com.button_text.trim()
+        };
+        if label.eq_ignore_ascii_case("note") {
+            if com.button_type != 0 {
                 note_id = id;
-            } else if label.eq_ignore_ascii_case("item") {
+            }
+            note_label = Some((x + com.width / 2, y + com.height / 2));
+        } else if label.eq_ignore_ascii_case("item") {
+            if com.button_type != 0 {
                 item_id = id;
             }
+            item_label = Some((x + com.width / 2, y + com.height / 2));
         }
-        queue.extend(children_of(&com));
+        if com.button_type == ButtonType::BUTTON_SELECT
+            || com.button_type == ButtonType::BUTTON_TOGGLE
+        {
+            selects.push((id, x, y, com.width, com.height));
+        }
+        if let Some(children) = &com.children {
+            for (i, child) in children.iter().enumerate() {
+                let cx = com
+                    .child_x
+                    .as_ref()
+                    .and_then(|xs| xs.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                let cy = com
+                    .child_y
+                    .as_ref()
+                    .and_then(|ys| ys.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                queue.push((*child, x + cx, y + cy));
+            }
+        }
     }
     if note_id >= 0 && item_id >= 0 {
-        Some(ToggleControlsView {
+        return Some(ToggleControlsView {
             on_component_id: note_id,
             off_component_id: item_id,
-        })
-    } else {
-        None
+        });
+    }
+    let contains = |cx: i32, cy: i32, x: i32, y: i32, w: i32, h: i32| -> bool {
+        cx >= x && cy >= y && cx < x + w && cy < y + h
+    };
+    let pick = |center: (i32, i32)| -> Option<i32> {
+        let (cx, cy) = center;
+        selects
+            .iter()
+            .find(|(_, x, y, w, h)| contains(cx, cy, *x, *y, *w, *h))
+            .map(|(id, ..)| *id)
+    };
+    match (note_label, item_label) {
+        (Some(note), Some(item)) => {
+            let on = pick(note)?;
+            let off = pick(item)?;
+            if on == off {
+                return None;
+            }
+            Some(ToggleControlsView {
+                on_component_id: on,
+                off_component_id: off,
+            })
+        }
+        _ => None,
     }
 }
 
