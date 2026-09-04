@@ -627,30 +627,51 @@ pub fn settings_schema_from_source(src: &str) -> Vec<SettingDef> {
 }
 
 /// Parse `export const NAME = { … }` into setting definitions.
+/// Catalog golds type the export (`export const SETTINGS: SettingsSchema = {`).
 fn parse_settings_export(file_src: &str, export_name: &str) -> Vec<SettingDef> {
-    let needle = format!("export const {export_name}");
-    let Some(idx) = file_src.find(&needle) else {
+    let Some(obj) = settings_export_object(file_src, export_name) else {
         return Vec::new();
     };
-    let after = &file_src[idx + needle.len()..];
-    let after = after.trim_start();
-    let after = match after.strip_prefix('=') {
-        Some(a) => a.trim_start(),
-        None => return Vec::new(),
-    };
-    let Some(obj_end) = find_matching_bracket(after, '{', '}') else {
-        return Vec::new();
-    };
-    parse_settings_object(&after[..=obj_end], file_src)
+    parse_settings_object(obj, file_src)
 }
 
 fn setting_object_body(file_src: &str, export_name: &str) -> Option<String> {
+    settings_export_object(file_src, export_name).map(str::to_string)
+}
+
+/// Body of `export const NAME[: Type] = { … }`, including the braces.
+fn settings_export_object<'a>(file_src: &'a str, export_name: &str) -> Option<&'a str> {
     let needle = format!("export const {export_name}");
     let idx = file_src.find(&needle)?;
-    let after = file_src[idx + needle.len()..].trim_start();
+    let mut after = file_src[idx + needle.len()..].trim_start();
+    if after.starts_with(':') {
+        after = skip_ts_type_to_eq(after)?;
+    }
     let after = after.strip_prefix('=')?.trim_start();
     let obj_end = find_matching_bracket(after, '{', '}')?;
-    Some(after[..=obj_end].to_string())
+    Some(&after[..=obj_end])
+}
+
+/// `s` starts with `:`. Return the suffix at the assignment `=`, or `None`.
+fn skip_ts_type_to_eq(s: &str) -> Option<&str> {
+    let mut angle = 0i32;
+    let mut paren = 0i32;
+    let mut square = 0i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => square += 1,
+            ']' => square = square.saturating_sub(1),
+            '=' if i > 0 && angle == 0 && paren == 0 && square == 0 => {
+                return Some(&s[i..]);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn take_ident(s: &str) -> Option<(&str, &str)> {
@@ -669,16 +690,10 @@ fn take_ident(s: &str) -> Option<(&str, &str)> {
 /// `LOADOUT_SETTING` shim. Do not evaluate TypeScript identifiers.
 fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
     if ident == "LOADOUT_SETTING" {
-        return setting_object_body(
-            include_str!("shim/loadout_setting.js"),
-            "LOADOUT_SETTING",
-        );
+        return setting_object_body(include_str!("shim/loadout_setting.js"), "LOADOUT_SETTING");
     }
     if ident == "PERIODIC_BANK_SETTINGS" {
-        return setting_object_body(
-            include_str!("shim/banking.js"),
-            "PERIODIC_BANK_SETTINGS",
-        );
+        return setting_object_body(include_str!("shim/banking.js"), "PERIODIC_BANK_SETTINGS");
     }
     setting_object_body(file_src, ident)
 }

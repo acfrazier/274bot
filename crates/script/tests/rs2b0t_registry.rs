@@ -494,6 +494,31 @@ export const SETTINGS = {
 }
 
 #[test]
+fn parse_settings_skips_typescript_type_annotation() {
+    let src = r#"
+export const SETTINGS: SettingsSchema = {
+    thieveTarget: { type: 'string', default: 'Guard', label: 'Pickpocket target' },
+    guardResponse: { type: 'string', default: 'Flee', label: 'Guard response' },
+    ...PERIODIC_BANK_SETTINGS
+};
+"#;
+    let schema = script::settings_schema_from_source(src);
+    let ids: Vec<&str> = schema.iter().map(|s| s.id.as_str()).collect();
+    assert!(
+        ids.contains(&"thieveTarget"),
+        "ArdyThiever-shaped SETTINGS: Type annotation must not empty the schema: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"guardResponse"),
+        "fields after thieveTarget must survive: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"bankStrategy"),
+        "...PERIODIC_BANK_SETTINGS after a typed SETTINGS must still inline: {ids:?}"
+    );
+}
+
+#[test]
 fn parse_settings_inlines_same_file_and_shim_spreads() {
     let src = r#"
 export const EXTRA = {
