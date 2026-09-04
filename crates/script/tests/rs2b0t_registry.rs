@@ -494,6 +494,38 @@ export const SETTINGS = {
 }
 
 #[test]
+fn parse_settings_inlines_same_file_and_shim_spreads() {
+    let src = r#"
+export const EXTRA = {
+    panicHp: { type: 'number', default: 25, label: 'Panic HP' },
+};
+export const SETTINGS = {
+    target: { type: 'string', default: 'Man', label: 'Target' },
+    ...EXTRA,
+    ...PERIODIC_BANK_SETTINGS,
+};
+"#;
+    let schema = script::settings_schema_from_source(src);
+    let ids: Vec<&str> = schema.iter().map(|s| s.id.as_str()).collect();
+    assert!(
+        ids.contains(&"target"),
+        "own fields survive a spread: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"panicHp"),
+        "same-file ...EXTRA must inline: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"bankStrategy"),
+        "...PERIODIC_BANK_SETTINGS must inline the banking shim: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"bankEveryItems"),
+        "spread must not drop fields after PERIODIC_BANK_SETTINGS: {ids:?}"
+    );
+}
+
+#[test]
 fn register_rs2b0t_skips_cards_whose_path_escapes_catalog() {
     let dir = scratch("rs2b0t_escape");
     let root = dir.join("rs2b0t");

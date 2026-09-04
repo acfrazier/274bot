@@ -163,3 +163,50 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
     );
     iso.join();
 }
+
+#[test]
+fn merged_bag_from_spread_schema_posts_inject_over_defaults() {
+    let src = r#"
+export const SETTINGS = {
+    target: { type: 'string', default: 'Man', label: 'Target' },
+    ...PERIODIC_BANK_SETTINGS,
+};
+"#;
+    let schema = script::settings_schema_from_source(src);
+    assert!(
+        schema.iter().any(|s| s.id == "bankStrategy"),
+        "schema must include spread banking ids for Script prefs"
+    );
+    let mut inject = serde_json::Map::new();
+    inject.insert("target".into(), serde_json::json!("Guard"));
+    inject.insert("banking".into(), serde_json::json!("None"));
+    let bag = script::merge_bag(&schema, &serde_json::Map::new(), Some(&inject));
+    assert_eq!(bag.get("target"), Some(&serde_json::json!("Guard")));
+    assert_eq!(
+        bag.get("bankStrategy"),
+        Some(&serde_json::json!("Off")),
+        "spread defaults land even when inject omits them"
+    );
+
+    let iso = LoadIsolate::spawn(
+        r#"
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = this.settings.str('target', 'Man');
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .expect("spawn");
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        "Guard",
+        "Start bag must beat SETTINGS default Man"
+    );
+    iso.join();
+}

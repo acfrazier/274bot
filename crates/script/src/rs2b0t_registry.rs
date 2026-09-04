@@ -674,6 +674,12 @@ fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
             "LOADOUT_SETTING",
         );
     }
+    if ident == "PERIODIC_BANK_SETTINGS" {
+        return setting_object_body(
+            include_str!("shim/banking.js"),
+            "PERIODIC_BANK_SETTINGS",
+        );
+    }
     setting_object_body(file_src, ident)
 }
 
@@ -687,6 +693,19 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
         rest = rest.trim_start();
         if rest.starts_with('}') || rest.is_empty() {
             break;
+        }
+        if let Some(after_dots) = rest.strip_prefix("...") {
+            if let Some((ident, after_ident)) = take_ident(after_dots.trim_start()) {
+                if let Some(body) = resolve_setting_ident(file_src, ident) {
+                    out.extend(parse_settings_object(&body, file_src));
+                }
+                rest = after_ident;
+                rest = rest.trim_start();
+                if rest.starts_with(',') {
+                    rest = &rest[1..];
+                }
+                continue;
+            }
         }
         let Some(colon) = rest.find(':') else {
             break;
