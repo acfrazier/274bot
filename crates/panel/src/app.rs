@@ -1484,6 +1484,47 @@ fn clamp_hop_label_px(px: i32) -> i32 {
     px.clamp(8, 28)
 }
 
+/// Unlock / create / reset the default vault. Shared by the profile
+/// heading and the Profiles window so a locked vault is not shown as empty.
+fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
+    ui.input_text("##vault-pass", &mut session.pass_scratch)
+        .password(true)
+        .hint("vault passphrase")
+        .build();
+    let w = ui.content_region_avail()[0];
+    let exists = Session::default_vault_exists();
+    let label = if exists {
+        "Unlock vault"
+    } else {
+        "Create vault"
+    };
+    if ui.button_with_size(label, [w, 0.0]) {
+        let pass = session.pass_scratch.trim().to_string();
+        if !pass.is_empty() {
+            session.unlock(&pass);
+            session.pass_scratch.clear();
+        }
+    }
+    if exists {
+        if ui.button_with_size("Reset vault", [w, 0.0]) {
+            session.vault_reset_understood = false;
+            ui.open_popup(VAULT_RESET_POPUP);
+        }
+        ui.set_item_tooltip("delete the vault file — forgotten passphrase");
+    }
+    if scary_confirm_popup(
+        ui,
+        VAULT_RESET_POPUP,
+        "This deletes the vault file on disk. Every saved profile is gone. \
+         You will Create vault with a new passphrase. Wrong-passphrase unlock \
+         never does this on its own.",
+        "Reset",
+        &mut session.vault_reset_understood,
+    ) {
+        session.reset_vault();
+    }
+}
+
 /// profile: orange current name (like script) plus Profiles (opens the
 /// picker). Unlock prompt until the vault is open. Sits under WalkTo /
 /// config, above debug.
@@ -1492,42 +1533,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
         return;
     }
     if session.vault.is_none() {
-        ui.input_text("##vault-pass", &mut session.pass_scratch)
-            .password(true)
-            .hint("vault passphrase")
-            .build();
-        let w = ui.content_region_avail()[0];
-        let exists = Session::default_vault_exists();
-        let label = if exists {
-            "Unlock vault"
-        } else {
-            "Create vault"
-        };
-        if ui.button_with_size(label, [w, 0.0]) {
-            let pass = session.pass_scratch.trim().to_string();
-            if !pass.is_empty() {
-                session.unlock(&pass);
-                session.pass_scratch.clear();
-            }
-        }
-        if exists {
-            if ui.button_with_size("Reset vault", [w, 0.0]) {
-                session.vault_reset_understood = false;
-                ui.open_popup(VAULT_RESET_POPUP);
-            }
-            ui.set_item_tooltip("delete the vault file — forgotten passphrase");
-        }
-        if scary_confirm_popup(
-            ui,
-            VAULT_RESET_POPUP,
-            "This deletes the vault file on disk. Every saved profile is gone. \
-             You will Create vault with a new passphrase. Wrong-passphrase unlock \
-             never does this on its own.",
-            "Reset",
-            &mut session.vault_reset_understood,
-        ) {
-            session.reset_vault();
-        }
+        vault_unlock_prompt(ui, session);
         return;
     }
     profile_combo(ui, session);
@@ -3625,6 +3631,9 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .size_constraints([200.0, 80.0], [f32::MAX, 720.0])
         .build(|| {
             let _wrap = ui.push_text_wrap_pos(0.0);
+            if session.vault.is_none() {
+                vault_unlock_prompt(ui, session);
+            } else {
             let names: Vec<String> = session
                 .vault
                 .as_ref()
@@ -3717,6 +3726,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 if ui.button_with_size("Cancel", [bw, 0.0]) {
                     session.cancel_edit_profile();
                 }
+            }
             }
             ui.spacing();
             let w = ui.content_region_avail()[0];
@@ -5443,6 +5453,42 @@ mod tests {
             .find("slot_capture_section")
             .expect("auto-login in editor");
         assert!(auto < save, "per-profile settings sit above Save/Cancel");
+    }
+
+    #[test]
+    fn chooser_locked_vault_shows_unlock_not_empty_copy() {
+        const SRC: &str = include_str!("app.rs");
+        let chooser = SRC
+            .split("fn chooser_window")
+            .nth(1)
+            .unwrap_or("");
+        let chooser = chooser.split("fn settings_window").next().unwrap_or("");
+        let locked = chooser
+            .find("vault.is_none()")
+            .expect("Profiles must branch on a locked vault");
+        let unlock = chooser
+            .find("vault_unlock_prompt")
+            .expect("locked Profiles reuses the panel unlock UI");
+        let empty = chooser
+            .find("vault is empty")
+            .expect("empty copy stays for a truly empty unlocked vault");
+        assert!(
+            locked < unlock && unlock < empty,
+            "unlock UI while locked; empty copy only after the vault is open"
+        );
+        let profile = SRC
+            .split("fn profile_section")
+            .nth(1)
+            .unwrap_or("");
+        let profile = profile.split("\nfn ").next().unwrap_or("");
+        assert!(
+            profile.contains("vault_unlock_prompt"),
+            "panel profile heading and Profiles share one unlock prompt"
+        );
+        assert!(
+            !profile.contains("##vault-pass"),
+            "pass field lives in the shared prompt, not forked in profile_section"
+        );
     }
 
     #[test]
