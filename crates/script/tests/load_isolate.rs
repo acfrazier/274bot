@@ -3386,14 +3386,19 @@ export default class T extends LoopingBot {
         await tryHit(() => displayName(526));
         await tryHit(() => parseCombatStyle('no-such-style'));
         await tryHit(() => SettingsStore.globalBag());
-        await tryHit(() => foodOf(null, 'Shark'));
+        await tryHit(() => foodOf({ carry: ['Shark'] }, 'Shark'));
         await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
-        await tryHit(() => safeToSteal(1, 0.5, 0));
         await tryHit(() => shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }));
         await tryHit(() => Skills.xp('prayer'));
         await tryHit(() => Skills.hpFraction());
         await tryHit(() => Game.castOnItem('High level alchemy', { name: 'Steel platebody' }));
-        globalThis.__probe = JSON.stringify({ hits, loot: COMMON_BANK_LOOT, hostile: HOSTILE_NAMES });
+        globalThis.__probe = JSON.stringify({
+            hits,
+            loot: COMMON_BANK_LOOT,
+            hostile: HOSTILE_NAMES,
+            stealOk: safeToSteal(1, 0.5, 0),
+            foodFallback: foodOf(null, 'Shark'),
+        });
     }
 }
 "#;
@@ -3405,7 +3410,7 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        11,
+        10,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
@@ -3424,6 +3429,16 @@ export default class T extends LoopingBot {
     assert!(
         hostile.is_empty(),
         "HOSTILE_NAMES must not ship a hostility policy table: {hostile:?}"
+    );
+    assert_eq!(
+        parsed["stealOk"],
+        serde_json::json!(true),
+        "safeToSteal is a host predicate, not a cloned policy table: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["foodFallback"],
+        serde_json::json!("Shark"),
+        "foodOf without a carry loadout returns the fallback: {parsed:?}"
     );
     iso.join();
 }
