@@ -253,7 +253,7 @@ pub fn parse_registry_with_sources(
             .as_ref()
             .and_then(|ident| {
                 let binding = imports.get(ident)?;
-                let src = lookup_source(sources, &binding.rel_path)?;
+                let src = settings_blob(sources, &binding.rel_path)?;
                 Some(parse_settings_export(&src, &binding.export_name))
             })
             .unwrap_or_default();
@@ -288,6 +288,40 @@ fn lookup_source(sources: &HashMap<String, String>, rel_path: &str) -> Option<St
     None
 }
 
+fn rel_dir(rel: &str) -> Option<&str> {
+    let rel = rel.strip_prefix("./").unwrap_or(rel);
+    rel.rsplit_once('/').map(|(d, _)| d)
+}
+
+/// Script text plus same-directory siblings (BankFletcherLogic, AlcherLogic).
+fn settings_blob(sources: &HashMap<String, String>, rel_path: &str) -> Option<String> {
+    let primary = lookup_source(sources, rel_path)?;
+    let Some(dir) = rel_dir(rel_path) else {
+        return Some(primary);
+    };
+    let mut blob = primary;
+    for (path, text) in sources {
+        if path == rel_path {
+            continue;
+        }
+        if rel_dir(path) == Some(dir) {
+            blob.push('\n');
+            blob.push_str(text);
+        }
+    }
+    Some(blob)
+}
+
+/// `import … from './Logic.js'` next to `./Folder/Script.js` → `./Folder/Logic.js`.
+pub(crate) fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String> {
+    let import = import_rel.strip_prefix("./")?;
+    if import.contains('/') || import.contains('\\') || import.contains("..") {
+        return None;
+    }
+    let dir = rel_dir(script_rel)?;
+    Some(format!("./{dir}/{import}"))
+}
+
 /// `ident -> import binding` for every default and named import of a relative
 /// module under `./`. Parent-dir and absolute imports are ignored.
 fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
@@ -316,6 +350,18 @@ fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
         pos = start + "import".len() + stmt_len;
     }
     imports
+}
+
+pub(crate) fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for binding in scan_imports(src).into_values() {
+        if let Some(sib) = same_dir_import_rel(script_rel, &binding.rel_path) {
+            if !out.contains(&sib) {
+                out.push(sib);
+            }
+        }
+    }
+    out
 }
 
 /// Parse one import statement body (the text after `import`, before `;`).
@@ -383,17 +429,39 @@ fn parse_named_import_part(part: &str, bindings: &mut Vec<(String, String)>) {
     }
 }
 
-/// The first `'…'` or `"…"` string in `s`.
+/// The first `'…'` or `"…"` string in `s`, unescaping `\'` `\"` `\\`.
 fn quoted_after(s: &str) -> Option<String> {
-    let s = s.trim_start();
-    let q = s.chars().next()?;
+    scan_quoted(s).map(|(value, _)| value)
+}
+
+/// Quoted literal at the start of `s` (after leading whitespace).
+/// Returns unescaped content and the byte length consumed from `s`.
+fn scan_quoted(s: &str) -> Option<(String, usize)> {
+    let trimmed = s.trim_start();
+    let pad = s.len() - trimmed.len();
+    let q = trimmed.chars().next()?;
     if q != '\'' && q != '"' {
         return None;
     }
-    for (i, c) in s[1..].char_indices() {
-        if c == q {
-            return Some(s[1..1 + i].to_string());
+    let q_len = q.len_utf8();
+    let mut out = String::new();
+    let mut chars = trimmed[q_len..].char_indices();
+    while let Some((rel, c)) = chars.next() {
+        if c == '\\' {
+            let (_, next) = chars.next()?;
+            out.push(match next {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                other => other,
+            });
+            continue;
         }
+        if c == q {
+            let consumed = pad + q_len + rel + q_len;
+            return Some((out, consumed));
+        }
+        out.push(c);
     }
     None
 }
@@ -547,12 +615,11 @@ fn parse_string_array(s: &str) -> Option<Vec<String>> {
         if q != '\'' && q != '"' {
             break;
         }
-        let Some(value) = quoted_after(rest) else {
+        let Some((value, n)) = scan_quoted(rest) else {
             break;
         };
         out.push(value);
-        let close_idx = rest[1..].find(q)?;
-        rest = &rest[1 + close_idx + 1..];
+        rest = &rest[n..];
         rest = rest.trim_start();
         if rest.starts_with(',') {
             rest = &rest[1..];
@@ -566,9 +633,15 @@ fn parse_string_array(s: &str) -> Option<Vec<String>> {
 fn find_matching_bracket(s: &str, open: char, close: char) -> Option<usize> {
     let mut depth = 0i32;
     let mut in_str: Option<char> = None;
+    let mut skip = false;
     for (i, c) in s.char_indices() {
+        if skip {
+            skip = false;
+            continue;
+        }
         if let Some(q) = in_str {
             if c == '\\' {
+                skip = true;
                 continue;
             }
             if c == q {
@@ -698,6 +771,156 @@ fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
     setting_object_body(file_src, ident)
 }
 
+/// Static `const NAME = ['a', 'b']` (or a same-file / shim alias of one).
+/// Does not evaluate `Object.keys(...)` or other TypeScript.
+fn resolve_string_array_ident(file_src: &str, ident: &str) -> Option<Vec<String>> {
+    resolve_string_array_ident_visited(file_src, ident, &mut Vec::new())
+}
+
+fn resolve_string_array_ident_visited(
+    file_src: &str,
+    ident: &str,
+    stack: &mut Vec<String>,
+) -> Option<Vec<String>> {
+    if stack.iter().any(|s| s == ident) {
+        return None;
+    }
+    stack.push(ident.to_string());
+    if let Some(arr) = string_array_literal_in(file_src, ident) {
+        return Some(arr);
+    }
+    if let Some(alias) = string_array_alias_in(file_src, ident) {
+        return resolve_string_array_ident_visited(file_src, &alias, stack);
+    }
+    for shim in [
+        include_str!("shim/banking.js"),
+        include_str!("shim/combat_style.js"),
+        include_str!("shim/thieving_targets.js"),
+        include_str!("shim/food.js"),
+        include_str!("shim/steal_rules.js"),
+    ] {
+        if let Some(arr) = string_array_literal_in(shim, ident) {
+            return Some(arr);
+        }
+        if let Some(alias) = string_array_alias_in(shim, ident) {
+            return resolve_string_array_ident_visited(shim, &alias, stack);
+        }
+    }
+    None
+}
+
+fn const_eq_rhs<'a>(src: &'a str, ident: &str) -> Option<&'a str> {
+    let needles = [format!("export const {ident}"), format!("const {ident}")];
+    for needle in needles {
+        let mut search = src;
+        while let Some(idx) = search.find(&needle) {
+            let after = &search[idx + needle.len()..];
+            let cont = after
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+            if cont {
+                search = &search[idx + 1..];
+                continue;
+            }
+            let mut rest = after.trim_start();
+            if rest.starts_with(':') {
+                rest = skip_ts_type_to_eq(rest)?;
+            }
+            let rest = rest.strip_prefix('=')?.trim_start();
+            return Some(rest);
+        }
+    }
+    None
+}
+
+fn string_array_literal_in(src: &str, ident: &str) -> Option<Vec<String>> {
+    let rhs = const_eq_rhs(src, ident)?;
+    parse_string_array(rhs)
+}
+
+fn string_array_alias_in(src: &str, ident: &str) -> Option<String> {
+    let rhs = const_eq_rhs(src, ident)?;
+    if rhs.starts_with('[') {
+        return None;
+    }
+    let (alias, rest) = take_ident(rhs)?;
+    if alias == "Object" || alias == "new" {
+        return None;
+    }
+    let rest = rest.trim_start();
+    if rest.starts_with('.') || rest.starts_with('(') {
+        return None;
+    }
+    Some(alias.to_string())
+}
+
+fn object_keys_call(after: &str, file_src: &str) -> Option<Vec<String>> {
+    let rest = after.strip_prefix("Object.keys(")?.trim_start();
+    let (ident, _) = take_ident(rest)?;
+    if let Some(keys) = object_keys_in(file_src, ident) {
+        return Some(keys);
+    }
+    object_keys_in(include_str!("shim/data/spelldb.js"), ident)
+}
+
+fn object_keys_in(src: &str, ident: &str) -> Option<Vec<String>> {
+    let rhs = const_eq_rhs(src, ident)?;
+    quoted_keys_in_object(rhs)
+}
+
+fn quoted_keys_in_object(rhs: &str) -> Option<Vec<String>> {
+    if !rhs.starts_with('{') {
+        return None;
+    }
+    let end = find_matching_bracket(rhs, '{', '}')?;
+    let mut rest = rhs[1..end].trim_start();
+    let mut keys = Vec::new();
+    while !rest.is_empty() {
+        let Some((k, n)) = scan_quoted(rest) else {
+            break;
+        };
+        keys.push(k);
+        rest = rest[n..].trim_start();
+        if !rest.starts_with(':') {
+            break;
+        }
+        rest = rest[1..].trim_start();
+        if rest.starts_with('{') {
+            let e = find_matching_bracket(rest, '{', '}')?;
+            rest = rest[e + 1..].trim_start();
+        } else if rest.starts_with('[') {
+            let e = find_matching_bracket(rest, '[', ']')?;
+            rest = rest[e + 1..].trim_start();
+        } else if let Some((_, n)) = scan_quoted(rest) {
+            rest = rest[n..].trim_start();
+        } else if let Some(comma) = rest.find(',') {
+            rest = rest[comma..].trim_start();
+        } else {
+            break;
+        }
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        }
+    }
+    Some(keys)
+}
+
+fn scan_key_show_if(obj: &str, file_src: &str) -> Option<String> {
+    let raw = scan_key_raw_value(obj, "showIf")?;
+    if raw.starts_with('{') {
+        return Some(raw);
+    }
+    if let Some(rhs) = const_eq_rhs(file_src, &raw) {
+        if rhs.starts_with('{') {
+            if let Some(end) = find_matching_bracket(rhs, '{', '}') {
+                return Some(rhs[..=end].to_string());
+            }
+        }
+    }
+    Some(raw)
+}
+
 fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
     let inner = obj.trim();
     let inner = inner.strip_prefix('{').unwrap_or(inner);
@@ -737,11 +960,11 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
             let Some(end) = find_matching_bracket(after_colon, '{', '}') else {
                 break;
             };
-            out.push(parse_setting_def(&id, &after_colon[..=end]));
+            out.push(parse_setting_def(&id, &after_colon[..=end], file_src));
             rest = &after_colon[end + 1..];
         } else if let Some((ident, after_ident)) = take_ident(after_colon) {
             if let Some(body) = resolve_setting_ident(file_src, ident) {
-                out.push(parse_setting_def(&id, &body));
+                out.push(parse_setting_def(&id, &body, file_src));
             }
             rest = after_ident;
         } else {
@@ -755,7 +978,7 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
     out
 }
 
-fn parse_setting_def(id: &str, obj: &str) -> SettingDef {
+fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
     SettingDef {
         id: id.to_string(),
         ty: scan_key_quoted(obj, "type").unwrap_or_default(),
@@ -764,10 +987,10 @@ fn parse_setting_def(id: &str, obj: &str) -> SettingDef {
         min: scan_key_number(obj, "min"),
         max: scan_key_number(obj, "max"),
         step: scan_key_number(obj, "step"),
-        options: scan_key_options(obj, "options"),
+        options: scan_key_options(obj, "options", file_src),
         option_labels: scan_key_string_array(obj, "optionLabels").unwrap_or_default(),
         group: scan_key_quoted(obj, "group"),
-        show_if: scan_key_raw_value(obj, "showIf"),
+        show_if: scan_key_show_if(obj, file_src),
         options_from: scan_key_quoted(obj, "optionsFrom")
             .or_else(|| scan_key_ident(obj, "optionsFrom")),
         csv_toggle: scan_key_raw_value(obj, "csvToggle"),
@@ -812,7 +1035,7 @@ fn scan_key_number(block: &str, key: &str) -> Option<String> {
     scan_key_literal(block, key)
 }
 
-fn scan_key_options(block: &str, key: &str) -> Vec<String> {
+fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
     let mut rest = block;
     while let Some(idx) = rest.find(key) {
         let after = &rest[idx + key.len()..];
@@ -827,7 +1050,12 @@ fn scan_key_options(block: &str, key: &str) -> Vec<String> {
         if let Some(arr) = parse_string_array(after) {
             return arr;
         }
-        // Identifier reference — do not evaluate TypeScript.
+        if let Some(keys) = object_keys_call(after, file_src) {
+            return keys;
+        }
+        if let Some((ident, _)) = take_ident(after) {
+            return resolve_string_array_ident(file_src, ident).unwrap_or_default();
+        }
         return Vec::new();
     }
     Vec::new()

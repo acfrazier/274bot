@@ -310,6 +310,21 @@ impl JsLibrary {
                 sources.insert(reg.rel_path.clone(), text);
             }
         }
+        let sibling_rels: Vec<String> = sources
+            .iter()
+            .flat_map(|(rel, text)| crate::rs2b0t_registry::same_dir_import_rels(rel, text))
+            .collect();
+        for sib in sibling_rels {
+            if sources.contains_key(&sib) {
+                continue;
+            }
+            let Some(path) = script_file_path(root, &sib) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                sources.insert(sib, text);
+            }
+        }
         let cards = parse_registry_with_sources(&index_ts, &sources)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut n = 0;

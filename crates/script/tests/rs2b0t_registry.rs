@@ -424,7 +424,7 @@ export const ALCHER_SETTINGS = {
     combatStyle: {
         type: 'string',
         default: 'melee',
-        options: COMBAT_STYLE_OPTIONS,
+        options: NO_SUCH_OPTIONS,
     },
 };
 "#;
@@ -435,9 +435,10 @@ export const ALCHER_SETTINGS = {
     assert_eq!(cards[0].settings_schema.len(), 1);
     let setting = &cards[0].settings_schema[0];
     assert_eq!(setting.id, "combatStyle");
-    assert!(
-        setting.options.is_empty(),
-        "identifier options are not evaluated"
+    assert_eq!(
+        setting.options.len(),
+        0,
+        "unknown identifier options are not evaluated"
     );
 }
 
@@ -494,11 +495,32 @@ export const SETTINGS = {
 }
 
 #[test]
+fn parse_registry_unescapes_apostrophe_in_description() {
+    let index = r#"
+import ArdyCakes from './ArdyCakes/ArdyCakes.js';
+
+ScriptRegistry.register({
+    name: 'ArdyCakes',
+    description: 'Baker\'s-stall cake thiever — steals on the golden stand',
+    create: () => new ArdyCakes()
+});
+"#;
+    let cards = script::parse_registry(index).expect("index parses");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(
+        cards[0].description, "Baker's-stall cake thiever — steals on the golden stand",
+        "\\' in a catalog description must not stop at the backslash: {:?}",
+        cards[0].description
+    );
+}
+
+#[test]
 fn parse_settings_skips_typescript_type_annotation() {
     let src = r#"
+const TARGET_OPTIONS = ARDOUGNE_PICKPOCKET_TARGETS;
 export const SETTINGS: SettingsSchema = {
-    thieveTarget: { type: 'string', default: 'Guard', label: 'Pickpocket target' },
-    guardResponse: { type: 'string', default: 'Flee', label: 'Guard response' },
+    thieveTarget: { type: 'string', default: 'Guard', options: TARGET_OPTIONS, label: 'Pickpocket target', help: 'the bot knows each target\'s market spot — no anchor to place' },
+    guardResponse: { type: 'string', default: 'Flee', options: ['Flee', 'Fight'], label: 'Guard response' },
     ...PERIODIC_BANK_SETTINGS
 };
 "#;
@@ -512,9 +534,30 @@ export const SETTINGS: SettingsSchema = {
         ids.contains(&"guardResponse"),
         "fields after thieveTarget must survive: {ids:?}"
     );
+    let target = schema.iter().find(|s| s.id == "thieveTarget").unwrap();
+    assert_eq!(
+        target.help.as_deref(),
+        Some("the bot knows each target's market spot — no anchor to place"),
+        "help \\' must not abort the SETTINGS object walk: {:?}",
+        target.help
+    );
     assert!(
         ids.contains(&"bankStrategy"),
         "...PERIODIC_BANK_SETTINGS after a typed SETTINGS must still inline: {ids:?}"
+    );
+    let bank = schema.iter().find(|s| s.id == "bankStrategy").unwrap();
+    assert_eq!(
+        bank.options,
+        vec!["Off", "Loot count", "Time", "Either"],
+        "Periodic bank must be a combo, not a free-text string: {:?}",
+        bank.options
+    );
+    let target = schema.iter().find(|s| s.id == "thieveTarget").unwrap();
+    assert_eq!(
+        target.options,
+        vec!["Guard", "Knight of Ardougne", "Paladin", "Hero"],
+        "options: TARGET_OPTIONS must inline the Ardougne name list: {:?}",
+        target.options
     );
 }
 
@@ -582,4 +625,90 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     assert_eq!(n, 1, "escaped path must not register as a card");
     assert!(lib.get(ScriptSource::Catalog, "Outside").is_none());
     assert!(lib.get(ScriptSource::Catalog, "BoneBurier").is_some());
+}
+
+#[test]
+fn parse_settings_inlines_shim_food_banking_and_spell_keys() {
+    let src = r#"
+const SHOW_MELEE = { key: 'combatStyle', anyOf: ['melee'] };
+export const SETTINGS = {
+    combatStyle: { type: 'string', default: 'melee', options: ['melee', 'mage', 'range'] },
+    meleeStyle: { type: 'string', default: 'strength', options: COMBAT_STYLE_OPTIONS, showIf: SHOW_MELEE },
+    spell: { type: 'string', default: 'Wind Strike', options: Object.keys(SPELL_DB) },
+    food: { type: 'string', default: 'Lobster', options: FOOD_OPTIONS },
+    banking: { type: 'string', default: 'None', options: THIEVER_BANKING_OPTIONS },
+};
+"#;
+    let schema = script::settings_schema_from_source(src);
+    let melee = schema.iter().find(|s| s.id == "meleeStyle").unwrap();
+    assert!(
+        melee
+            .show_if
+            .as_deref()
+            .is_some_and(|s| s.starts_with('{') && s.contains("combatStyle")),
+        "showIf: SHOW_MELEE must inline the object, got {:?}",
+        melee.show_if
+    );
+    let mut bag = serde_json::Map::new();
+    bag.insert("combatStyle".into(), serde_json::json!("mage"));
+    assert!(
+        !script::setting_visible(melee.show_if.as_deref(), &bag),
+        "mage must hide meleeStyle"
+    );
+    let spell = schema.iter().find(|s| s.id == "spell").unwrap();
+    assert!(
+        spell.options.contains(&"Wind Strike".to_string())
+            && spell.options.contains(&"Fire Wave".to_string()),
+        "Object.keys(SPELL_DB) must be the SETTINGS-key stub: {:?}",
+        spell.options
+    );
+    let food = schema.iter().find(|s| s.id == "food").unwrap();
+    assert!(
+        food.options.contains(&"Shark".to_string())
+            && food.options.contains(&"Lobster".to_string()),
+        "FOOD_OPTIONS must inline: {:?}",
+        food.options
+    );
+    let banking = schema.iter().find(|s| s.id == "banking").unwrap();
+    assert_eq!(banking.options, vec!["None", "Auto"]);
+}
+
+#[test]
+fn parse_registry_inlines_same_dir_logic_option_arrays() {
+    let index = r#"
+import Fletcher, { SETTINGS } from './Fletcher/Fletcher.js';
+ScriptRegistry.register({
+    name: 'Fletcher',
+    settingsSchema: SETTINGS,
+    create: () => new Fletcher()
+});
+"#;
+    let fletcher = r#"
+import { LOG_OPTIONS, PRODUCT_OPTIONS } from './FletcherLogic.js';
+export const SETTINGS = {
+    material: { type: 'string', default: 'Logs', options: LOG_OPTIONS },
+    product: { type: 'string', default: 'Arrow shafts', options: PRODUCT_OPTIONS },
+};
+export default class Fletcher {}
+"#;
+    let logic = r#"
+export const LOG_OPTIONS = ['Logs', 'Oak logs'];
+export const PRODUCT_OPTIONS = ['Arrow shafts', 'Short bow'];
+"#;
+    let mut sources = HashMap::new();
+    sources.insert("./Fletcher/Fletcher.js".to_string(), fletcher.to_string());
+    sources.insert("./Fletcher/FletcherLogic.js".to_string(), logic.to_string());
+    let cards = script::parse_registry_with_sources(index, &sources).expect("fletcher parses");
+    let material = cards[0]
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "material")
+        .unwrap();
+    assert_eq!(material.options, vec!["Logs", "Oak logs"]);
+    let product = cards[0]
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "product")
+        .unwrap();
+    assert_eq!(product.options, vec!["Arrow shafts", "Short bow"]);
 }
