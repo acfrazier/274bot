@@ -895,6 +895,18 @@ fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
     }
 }
 
+/// 274bot panel sibling tabs. `dock_host` rebuilds the tree when the
+/// MultiBox rail toggles or the OS window size changes; SetNextWindowDockID
+/// with Appearing/FirstUseEver is ignored while those windows are already
+/// visible, so they must be `DockBuilder::dock_window`'d onto the new leaf
+/// or they float over the panel with a leftover tab bar.
+fn dock_panel_tabs(ui: &Ui, panel: Id) {
+    DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
+    for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
+        DockBuilder::dock_window(ui, title, panel);
+    }
+}
+
 /// Grow the OS window when the rail would cover the native blit. Shrink
 /// it back when the strip leaves — MultiBox off, Grid, or the rail tab
 /// X (`set_multibox(false)`). Falling edge of [`DockLayout::Rail`].
@@ -963,7 +975,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         let ratio = panel_split_ratio(size[0]);
                         let (right, left) =
                             DockBuilder::split_node(ui, dock_id, SplitDirection::Right, ratio);
-                        DockBuilder::dock_window(ui, PANEL_WINDOW, right);
+                        dock_panel_tabs(ui, right);
                         DockBuilder::dock_window(ui, game_title, left);
                         state.game_dock_node = Some(left);
                         state.panel_dock_node = Some(right);
@@ -977,7 +989,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         let (panel, game) =
                             DockBuilder::split_node(ui, main, SplitDirection::Right, panel_ratio);
                         DockBuilder::dock_window(ui, RAIL_WINDOW, rail);
-                        DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
+                        dock_panel_tabs(ui, panel);
                         DockBuilder::dock_window(ui, game_title, game);
                         state.game_dock_node = Some(game);
                         state.panel_dock_node = Some(panel);
@@ -4359,6 +4371,43 @@ mod tests {
         assert!(
             !chooser.contains("rail_window_class"),
             "Profiles must never dock to the MultiBox rail"
+        );
+        assert!(
+            chooser.contains("Appearing"),
+            "spawn docks on the hidden→visible edge; rebuild must re-dock by name"
+        );
+    }
+
+    #[test]
+    fn dock_host_redocks_profiles_onto_the_panel_node() {
+        const SRC: &str = include_str!("app.rs");
+        let host = SRC
+            .split("fn dock_host")
+            .nth(1)
+            .unwrap_or("")
+            .split("fn game_window_flags")
+            .next()
+            .unwrap_or("");
+        assert!(
+            host.contains("dock_panel_tabs"),
+            "MultiBox rail / OS resize rebuild must re-dock Profiles onto the 274bot leaf"
+        );
+        let tabs = SRC
+            .split("fn dock_panel_tabs")
+            .nth(1)
+            .unwrap_or("")
+            .split("fn dock_host")
+            .next()
+            .unwrap_or("");
+        for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
+            assert!(
+                tabs.contains(title),
+                "panel tab {title} must be DockBuilder::dock_window'd after a tree rebuild"
+            );
+        }
+        assert!(
+            !tabs.contains("Scripts") && !tabs.contains("Loadouts"),
+            "overlay pickers stay floating over Game"
         );
     }
 
