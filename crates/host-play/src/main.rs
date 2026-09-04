@@ -8,7 +8,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use host_play::{open_vault, profile_password, run, set_debug, PlayOptions};
+use host_play::{default_vault_path, open_vault, profile_password, run, set_debug, PlayOptions};
 use vault::{Profile, ProfileSettings, VaultError};
 
 const DEFAULT_PORT: u16 = 43594;
@@ -18,10 +18,7 @@ fn default_cache_dir() -> String {
 }
 
 fn default_vault() -> PathBuf {
-    match env::var("HOME") {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/vault")),
-        Err(_) => PathBuf::from(".274bot/vault"),
-    }
+    default_vault_path()
 }
 
 struct Args {
@@ -77,6 +74,7 @@ fn parse_args() -> Args {
                 let (host, port) = host_play::play_endpoint_for(client::BotTarget::Prod);
                 args.host = host;
                 args.port = port;
+                args.cache = client::cache_dir().display().to_string();
             }
             "--help" | "-h" => usage(),
             _ => usage(),

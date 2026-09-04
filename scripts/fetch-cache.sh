@@ -3,7 +3,8 @@
 set -eu
 if [ "${1:-}" = "--prod" ]; then
     echo "prod cache is fetched on first --prod boot"
-    echo "(HTTPS /crc + jags on w1.rs2b2t.com:443 into \$ENGINE_DIR/data/pack/client)"
+    echo "(HTTPS /crc + jags on w1.rs2b2t.com:443 into \$HOME/.274bot/unpack)"
+    echo "versioned snapshots (models.bin) stay in unpack/<sha256(versionlist)[:8]>/"
     echo "then: cargo run --release -p host-play -- --prod --user YOUR_NAME"
     exit 0
 fi

@@ -315,10 +315,10 @@ pub fn walkto_tele_cmd(tile: Tile) -> String {
 /// without an audio device must not re-open (and re-log) every 20 ms frame.
 const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
 
-/// Vault path used by panel-play (`~/.274bot/vault`, the same file host-play
-/// uses).
+/// Vault path used by panel-play (`~/.274bot/vault` local, `vault-prod` on
+/// `--prod`). The same helper host-play and tui-play use.
 pub fn default_vault_path() -> PathBuf {
-    script::bot_file("vault")
+    host_play::default_vault_path()
 }
 
 fn default_cache_dir() -> String {

@@ -29,8 +29,8 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use host_play::{
-    arm_walk_on, live_vault_passphrase, mint_live_entries, mint_live_names, open_vault,
-    player_here_tile, profile_password, run_with_io, step_walk_arm_bank_fetch,
+    arm_walk_on, default_vault_path, live_vault_passphrase, mint_live_entries, mint_live_names,
+    open_vault, player_here_tile, profile_password, run_with_io, step_walk_arm_bank_fetch,
     walk_arm_bank_fetch_freezes_follow, Play, PlayOptions, SlotArm, WalkArm, WireCmd,
 };
 use nav::tile::Tile;
@@ -88,7 +88,7 @@ fn need_value(
 }
 
 fn default_vault() -> PathBuf {
-    script::bot_file("vault")
+    default_vault_path()
 }
 
 fn default_cache_dir() -> String {
@@ -1176,7 +1176,7 @@ impl TuiSession {
             .unwrap_or(274_000_001);
         let profile = Profile {
             username: username.into(),
-            password: profile_password(username).into(),
+            password: profile_password(username),
             uid,
             settings: vault::ProfileSettings::default(),
         };
@@ -1288,10 +1288,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
-            app.error = match session.import_rs2b0t_catalog(app, &root) {
-                Ok(_) => None,
-                Err(e) => Some(e),
-            };
+            app.error = session.import_rs2b0t_catalog(app, &root).err();
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => app.open_script_params(&session.script_settings),
@@ -1314,6 +1311,7 @@ pub fn main() -> ExitCode {
         let (host, port) = host_play::play_endpoint_for(client::BotTarget::Prod);
         args.host = host;
         args.port = port;
+        args.cache = client::cache_dir().display().to_string();
     }
     if let Err(msg) = validate_startup_host(&args.host) {
         eprintln!("{msg}");
@@ -1956,8 +1954,10 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             final_route: final_route.clone(),
         };
 
-        let mut arm = WalkArm::default();
-        arm.bank_fetch = Some(pending.clone());
+        let mut arm = WalkArm {
+            bank_fetch: Some(pending.clone()),
+            ..Default::default()
+        };
         step_walk_arm_bank_fetch(&mut c, &snap, &mut arm, None, Some(here));
         assert_eq!(
             arm.route.as_ref().map(|r| r.dest),
@@ -1969,8 +1969,10 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             "stand Walk must clear bank_fetch when here matches plane 1"
         );
 
-        let mut arm_ground = WalkArm::default();
-        arm_ground.bank_fetch = Some(pending);
+        let mut arm_ground = WalkArm {
+            bank_fetch: Some(pending),
+            ..Default::default()
+        };
         step_walk_arm_bank_fetch(
             &mut c,
             &snap,
@@ -2007,30 +2009,32 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             legs: vec![],
             ticks: 0.0,
         };
-        let mut arm = WalkArm::default();
-        arm.bank_fetch = Some(PendingBankFetch {
-            steps: VecDeque::from([
-                BankStep::DepositAll,
-                BankStep::Withdraw { id: 2, count: 1 },
-                BankStep::Close,
-            ]),
-            dest: WorldTile {
-                x: 4,
-                z: 4,
-                level: 0,
-            },
-            opts: FindOptions::default(),
-            final_route: final_route.clone(),
-        });
-        arm.route = Some(Route {
-            dest: WorldTile {
-                x: 0,
-                z: 4,
-                level: 0,
-            },
-            legs: vec![],
-            ticks: 0.0,
-        });
+        let mut arm = WalkArm {
+            bank_fetch: Some(PendingBankFetch {
+                steps: VecDeque::from([
+                    BankStep::DepositAll,
+                    BankStep::Withdraw { id: 2, count: 1 },
+                    BankStep::Close,
+                ]),
+                dest: WorldTile {
+                    x: 4,
+                    z: 4,
+                    level: 0,
+                },
+                opts: FindOptions::default(),
+                final_route: final_route.clone(),
+            }),
+            route: Some(Route {
+                dest: WorldTile {
+                    x: 0,
+                    z: 4,
+                    level: 0,
+                },
+                legs: vec![],
+                ticks: 0.0,
+            }),
+            ..Default::default()
+        };
         let before = c.out.pos;
         step_walk_arm_follow(&mut c, &snap, &mut arm, Some(world.as_ref()), (0, 4, 0));
         assert!(

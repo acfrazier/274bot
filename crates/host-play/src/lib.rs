@@ -88,6 +88,25 @@ fn mint_high_entropy_secret() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Default vault filename for a play target. Prod must not reuse the local
+/// blob (username-as-password accounts).
+pub fn default_vault_rel(target: BotTarget) -> &'static str {
+    match target {
+        BotTarget::Local => "vault",
+        BotTarget::Prod => "vault-prod",
+    }
+}
+
+/// `~/.274bot/vault` or `~/.274bot/vault-prod`.
+pub fn default_vault_path_for(target: BotTarget) -> std::path::PathBuf {
+    script::bot_file(default_vault_rel(target))
+}
+
+/// [`default_vault_path_for`] for the active [`client::bot_target`].
+pub fn default_vault_path() -> std::path::PathBuf {
+    default_vault_path_for(client::bot_target())
+}
+
 /// Profile login password for a freshly minted or missing account.
 /// Local keeps username-as-password (Lost City auto-register); prod refuses it.
 pub fn profile_password_for(username: &str, target: BotTarget) -> String {
@@ -350,6 +369,7 @@ pub struct NoPath;
 /// item/worn reqs, a [`PendingBankFetch`] is latched and the post-session
 /// route is armed. Returns `Err(NoPath)` when no path (and no session)
 /// exists.
+#[allow(clippy::too_many_arguments)]
 pub fn arm_walk_on(
     world: &NavWorld,
     from: Tile,
@@ -743,7 +763,7 @@ fn script_observe(
                 wrote = true;
             }
         }
-        emit_script_debug_logs(&mut *slot, name);
+        emit_script_debug_logs(&mut slot, name);
         // Fold the isolate's forwarded shim interact requests (queued
         // by the tick's Bank/Banking calls) on every frame — they land
         // a frame after the tick that produced them, tick edge or not —
@@ -1202,6 +1222,7 @@ fn dispatch_script_interact(
     wrote
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_op_target<'a>(
     snapshot: &'a GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
@@ -4026,6 +4047,23 @@ mod tests {
     }
 
     #[test]
+    fn default_vault_path_prod_is_not_the_local_file() {
+        assert_eq!(
+            default_vault_path_for(client::BotTarget::Local),
+            script::bot_file("vault")
+        );
+        assert_eq!(
+            default_vault_path_for(client::BotTarget::Prod),
+            script::bot_file("vault-prod")
+        );
+        assert_ne!(
+            default_vault_path_for(client::BotTarget::Local),
+            default_vault_path_for(client::BotTarget::Prod),
+            "prod must not reuse the local vault blob"
+        );
+    }
+
+    #[test]
     fn profile_password_prod_is_not_username() {
         let pass = profile_password_for("alice", client::BotTarget::Prod);
         assert_ne!(pass, "alice");
@@ -5919,21 +5957,23 @@ mod tests {
             },
             ticks: 1.0,
         };
-        let mut bot = NavBot::default();
-        bot.bank_fetch = Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Walk {
-                x: 10,
-                z: 20,
-                level: 1,
-            }]),
-            dest: WorldTile {
-                x: 99,
-                z: 99,
-                level: 0,
-            },
-            opts: FindOptions::default(),
-            final_route: final_route.clone(),
-        });
+        let mut bot = NavBot {
+            bank_fetch: Some(PendingBankFetch {
+                steps: VecDeque::from([BankStep::Walk {
+                    x: 10,
+                    z: 20,
+                    level: 1,
+                }]),
+                dest: WorldTile {
+                    x: 99,
+                    z: 99,
+                    level: 0,
+                },
+                opts: FindOptions::default(),
+                final_route: final_route.clone(),
+            }),
+            ..Default::default()
+        };
         let snap = GameSnapshot::new();
         let mut driver = bank_fetch_client();
         step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 1)));

@@ -11,9 +11,11 @@
 
 ## Cache and nav pack
 
-Pack cache is `$ENGINE_DIR/data/pack/client` (`--cache` overrides). First `maininit` GETs `/crc` and jags from the engine HTTP into that directory; later boots reuse disk.
+Pack cache for **local** is `$ENGINE_DIR/data/pack/client` (`--cache` overrides). First `maininit` GETs `/crc` and jags from the engine HTTP into that directory; later boots reuse disk.
 
-If the cache directory is empty, run [`scripts/fetch-cache.sh`](scripts/fetch-cache.sh) (copies from `$ENGINE_DIR` if files exist, otherwise tells you to boot once against the local engine). Prod boots with no local engine fetch `/crc` and jags over **HTTPS :443** on first `maininit`.
+If the cache directory is empty, run [`scripts/fetch-cache.sh`](scripts/fetch-cache.sh) (copies from `$ENGINE_DIR` if files exist, otherwise tells you to boot once against the local engine).
+
+**Prod** downloads `/crc` and jags into **`~/.274bot/unpack`** (not the engine pack). Versioned model/anim snapshots from `unpack-cache` live in a child folder named the first 8 hex bytes of SHA-256(`versionlist`) — e.g. `~/.274bot/unpack/2faf336eeb0462ed/` — not the `/crc` table.
 
 Nav pack: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`. Output is `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **8**). Rebake after a version bump.
 
@@ -53,4 +55,4 @@ cargo run --release -p tui --bin tui-play -- --prod
 # or: BOT_TARGET=prod
 ```
 
-Prod fetches `/crc` and jags over **HTTPS :443** and the game stream is **WSS** (`binary` subprotocol) on `w1.rs2b2t.com`. Local stays TCP `:43594` + HTTP `:80`. Live `--prod` login is the ship gate, not a unit substitute.
+Prod fetches `/crc` and jags over **HTTPS :443** into `~/.274bot/unpack` and the game stream is **WSS** (`binary` subprotocol) on `w1.rs2b2t.com`. Local stays TCP `:43594` + HTTP `:80`. Profiles for `--prod` live in `~/.274bot/vault-prod` (local stays `~/.274bot/vault`); `--vault PATH` still wins. Live `--prod` login is the ship gate, not a unit substitute.
