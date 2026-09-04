@@ -53,21 +53,26 @@ const DEBUG_SUMMARY_EVERY: u32 = 50;
 /// One `client_frame` over this (µs) is a hitch vs the 20 ms cadence.
 /// Logged as `[host] hitch` only — default `BOT_DEBUG=1` stays a window summary.
 const HITCH_US: u64 = 50_000;
+/// Observe sits in front of present. One missed ~60 fps frame is enough
+/// to feel, and the 50 ms `client_frame` hitch never sees it.
+const OBSERVE_HITCH_US: u64 = 16_000;
 
 #[derive(Clone, Copy, Default)]
 struct DebugSnap {
     loop_ns: u64,
     raster_ns: u64,
+    observe_ns: u64,
     paint_n: u64,
     skip_n: u64,
     tick_n: u64,
 }
 
 /// Deltas since the last summary, in µs / counts.
-fn debug_window_delta(prev: DebugSnap, now: DebugSnap) -> (u64, u64, u64, u64, u64) {
+fn debug_window_delta(prev: DebugSnap, now: DebugSnap) -> (u64, u64, u64, u64, u64, u64) {
     (
         now.loop_ns.wrapping_sub(prev.loop_ns) / 1000,
         now.raster_ns.wrapping_sub(prev.raster_ns) / 1000,
+        now.observe_ns.wrapping_sub(prev.observe_ns) / 1000,
         now.paint_n.wrapping_sub(prev.paint_n),
         now.skip_n.wrapping_sub(prev.skip_n),
         now.tick_n.wrapping_sub(prev.tick_n),
@@ -76,6 +81,10 @@ fn debug_window_delta(prev: DebugSnap, now: DebugSnap) -> (u64, u64, u64, u64, u
 
 fn debug_hitch_us(frame_us: u64) -> Option<u64> {
     (frame_us >= HITCH_US).then_some(frame_us)
+}
+
+fn debug_observe_hitch_us(observe_us: u64) -> Option<u64> {
+    (observe_us >= OBSERVE_HITCH_US).then_some(observe_us)
 }
 
 /// Park bound for an idle slot: the 274 server's game-tick cadence
@@ -318,7 +327,21 @@ impl Host {
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
     {
+        let t_obs = Instant::now();
         let busy = observe(client, username, *run_sends, prev_status);
+        let observe_ns = t_obs.elapsed().as_nanos() as u64;
+        slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
+        if observe_ns > slot.observe_max_ns {
+            slot.observe_max_ns = observe_ns;
+        }
+        if debug_enabled() {
+            if let Some(us) = debug_observe_hitch_us(observe_ns / 1000) {
+                eprintln!(
+                    "[host] hitch {username}: observe_us={us} paints={} skips={} ticks={}",
+                    slot.paint_n, slot.skip_n, slot.tick_n
+                );
+            }
+        }
         let status = Self::client_frame(client, slot, username, input, mailbox, run_sends, knock);
         (busy, status)
     }
@@ -489,17 +512,21 @@ impl Host {
                 let now = DebugSnap {
                     loop_ns: slot.loop_ns,
                     raster_ns: slot.raster_ns,
+                    observe_ns: slot.observe_ns,
                     paint_n: slot.paint_n,
                     skip_n: slot.skip_n,
                     tick_n: slot.tick_n,
                 };
-                let (d_loop, d_raster, d_paint, d_skip, d_tick) = debug_window_delta(slot.dbg, now);
+                let (d_loop, d_raster, d_observe, d_paint, d_skip, d_tick) =
+                    debug_window_delta(slot.dbg, now);
                 let window_ms = slot.dbg_at.map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                let max_observe_us = slot.observe_max_ns / 1000;
                 eprintln!(
-                    "[host] slot {username}: d_loop_us={d_loop} d_raster_us={d_raster} d_paints={d_paint} d_skips={d_skip} d_ticks={d_tick} window_ms={window_ms}"
+                    "[host] slot {username}: d_loop_us={d_loop} d_raster_us={d_raster} d_observe_us={d_observe} max_observe_us={max_observe_us} d_paints={d_paint} d_skips={d_skip} d_ticks={d_tick} window_ms={window_ms}"
                 );
                 slot.dbg = now;
                 slot.dbg_at = Some(Instant::now());
+                slot.observe_max_ns = 0;
             }
         }
         // The whole `FrameOutput` lands in the mailbox, not just the
@@ -721,6 +748,10 @@ struct SlotLoop {
     draw_was_on: bool,
     loop_ns: u64,
     raster_ns: u64,
+    /// Wall time of the observe hook (`script_observe` + snapshot encode).
+    observe_ns: u64,
+    /// Max single observe in the current `BOT_DEBUG` window.
+    observe_max_ns: u64,
     paint_n: u64,
     skip_n: u64,
     /// Game-tick edges (`PLAYER_INFO` this drain). Counted internally;
@@ -752,6 +783,8 @@ impl SlotLoop {
             draw_was_on: false,
             loop_ns: 0,
             raster_ns: 0,
+            observe_ns: 0,
+            observe_max_ns: 0,
             paint_n: 0,
             skip_n: 0,
             tick_n: 0,
@@ -1620,6 +1653,7 @@ mod tests {
         let prev = DebugSnap {
             loop_ns: 1_000_000,
             raster_ns: 2_000_000,
+            observe_ns: 100_000,
             paint_n: 50,
             skip_n: 10,
             tick_n: 3,
@@ -1627,13 +1661,14 @@ mod tests {
         let now = DebugSnap {
             loop_ns: 1_500_000,
             raster_ns: 2_400_000,
+            observe_ns: 400_000,
             paint_n: 100,
             skip_n: 10,
             tick_n: 5,
         };
         assert_eq!(
             debug_window_delta(prev, now),
-            (500, 400, 50, 0, 2),
+            (500, 400, 300, 50, 0, 2),
             "summary must be a window, not cumulative totals"
         );
     }
@@ -1644,6 +1679,13 @@ mod tests {
         assert_eq!(debug_hitch_us(49_999), None);
         assert_eq!(debug_hitch_us(50_000), Some(50_000));
         assert_eq!(debug_hitch_us(120_000), Some(120_000));
+    }
+
+    #[test]
+    fn debug_observe_hitch_is_one_missed_frame_not_every_tick() {
+        assert_eq!(debug_observe_hitch_us(15_999), None);
+        assert_eq!(debug_observe_hitch_us(16_000), Some(16_000));
+        assert_eq!(debug_observe_hitch_us(40_000), Some(40_000));
     }
 
     #[test]
