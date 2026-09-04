@@ -1921,6 +1921,111 @@ impl<'a> SceneQuery<'a> {
             options.adjacent_ok,
         )
     }
+
+    /// One scene-bounded flood from the local player. Posted isolate
+    /// `reachable` / `reachable_adj` bits use this — not N× [`Self::can_reach`].
+    /// No 400-step cap: the build (typically 104×104) is the bound.
+    pub fn flood_reach(&self) -> Option<ReachFlood> {
+        let scene = self.0;
+        if !scene.available {
+            return None;
+        }
+        let player = self.1?;
+        if player.level != scene.level {
+            return None;
+        }
+        let from = self.to_local(player)?;
+        let flags = |lx: i32, lz: i32| self.collision_at_local(LocalTile { lx, lz });
+        if flags(from.lx, from.lz).is_none() {
+            return None;
+        }
+        let width = scene.width;
+        let height = scene.height;
+        let n = (width as usize) * (height as usize);
+        let words = n.div_ceil(64);
+        let mut reachable = vec![0u64; words];
+        let mut reachable_adj = vec![0u64; words];
+        let idx = |lx: i32, lz: i32| (lx as usize) * (height as usize) + (lz as usize);
+        let bit = |bits: &[u64], i: usize| bits[i / 64] & (1u64 << (i % 64)) != 0;
+        let set = |bits: &mut [u64], i: usize| {
+            bits[i / 64] |= 1u64 << (i % 64);
+        };
+
+        let mut queue = vec![(from.lx, from.lz)];
+        set(&mut reachable, idx(from.lx, from.lz));
+        let mut head = 0usize;
+        while head < queue.len() {
+            let (lx, lz) = queue[head];
+            head += 1;
+            for (dx, dz) in DIRS {
+                let nx = lx + dx;
+                let nz = lz + dz;
+                if nx < 0 || nz < 0 || nx >= width || nz >= height {
+                    continue;
+                }
+                let i = idx(nx, nz);
+                if bit(&reachable, i) {
+                    continue;
+                }
+                if can_step_local(&flags, lx, lz, dx, dz) {
+                    set(&mut reachable, i);
+                    queue.push((nx, nz));
+                }
+            }
+        }
+        reachable_adj.copy_from_slice(&reachable);
+        const ORTHO: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+        for &(lx, lz) in &queue {
+            for (dx, dz) in ORTHO {
+                let nx = lx + dx;
+                let nz = lz + dz;
+                if nx < 0 || nz < 0 || nx >= width || nz >= height {
+                    continue;
+                }
+                if can_reach_adjacent_tile(&flags, nx, nz, dx, dz) {
+                    set(&mut reachable_adj, idx(nx, nz));
+                }
+            }
+        }
+        Some(ReachFlood {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width,
+            height,
+            reachable,
+            reachable_adj,
+        })
+    }
+}
+
+/// Bitsets from [`SceneQuery::flood_reach`]: O(1) per entity after one BFS.
+#[derive(Debug, Clone)]
+pub struct ReachFlood {
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    width: i32,
+    height: i32,
+    reachable: Vec<u64>,
+    reachable_adj: Vec<u64>,
+}
+
+impl ReachFlood {
+    /// `(reachable, reachable_adj)` for a world tile; both false if off-scene.
+    pub fn at(&self, tile: &WorldTile) -> (bool, bool) {
+        if tile.level != self.level {
+            return (false, false);
+        }
+        let lx = tile.x - self.base_x;
+        let lz = tile.z - self.base_z;
+        if lx < 0 || lz < 0 || lx >= self.width || lz >= self.height {
+            return (false, false);
+        }
+        let i = (lx as usize) * (self.height as usize) + (lz as usize);
+        let bit = |bits: &[u64]| bits[i / 64] & (1u64 << (i % 64)) != 0;
+        (bit(&self.reachable), bit(&self.reachable_adj))
+    }
 }
 
 // --- widget_search / loc_approach -----------------------------------------

@@ -1467,41 +1467,19 @@ fn with_script_snapshot_input<R>(
         SnapshotInput, StatInput, TileInput, VarpInput,
     };
 
+    let flood = snapshot.and_then(|s| {
+        let (x, z, level) = here?;
+        if !s.scene().available {
+            return None;
+        }
+        api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
+    });
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {
-        let Some(s) = snapshot else {
-            return (false, false);
-        };
-        let Some(h) = here else {
-            return (false, false);
-        };
-        if !s.scene().available {
-            return (false, false);
-        }
-        let sq = api::query::SceneQuery::new(
-            s.scene(),
-            Some(WorldTile {
-                x: h.x,
-                z: h.z,
-                level: h.level,
-            }),
-        );
-        let dest = WorldTile { x, z, level };
-        let reach = sq.can_reach(
-            dest,
-            &api::query::SceneReachOptions {
-                max_steps: None,
-                adjacent_ok: false,
-            },
-        );
-        let reach_adj = sq.can_reach(
-            dest,
-            &api::query::SceneReachOptions {
-                max_steps: None,
-                adjacent_ok: true,
-            },
-        );
-        (reach, reach_adj)
+        flood
+            .as_ref()
+            .map(|f| f.at(&WorldTile { x, z, level }))
+            .unwrap_or((false, false))
     };
     let scene_entity_target = |target: Option<&api::snapshot::ActorTargetView>| -> (i32, i32) {
         match target {
@@ -2814,6 +2792,26 @@ fn inventory_from_ifaces(client: &Client) -> Option<Vec<(i32, i32)>> {
     )
 }
 
+/// Isolate inv zip: once per server tick while Running. Off-tick and
+/// idle observes must not touch the iface.
+fn observe_script_inv(running: bool, tick_edge: bool, client: &Client) -> Option<Vec<(i32, i32)>> {
+    if running && tick_edge {
+        inventory_from_ifaces(client)
+    } else {
+        None
+    }
+}
+
+/// Snapshot rebuild for script/nav: once per server tick. Off-tick
+/// observe keeps the last blob.
+fn observe_rebuild_snapshot(snap: &mut GameSnapshot, client: &Client, tick_edge: bool) -> bool {
+    if !tick_edge {
+        return false;
+    }
+    snap.rebuild(client);
+    true
+}
+
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
@@ -3724,22 +3722,8 @@ fn spawn_slot_thread(
                                 (up, here)
                             };
                             let running = script_running(&slot_scripts, name);
-                            // Inventory view: zip the TYPE_INV iface's obj
-                            // ids/counts, rebuilt each observe while the
-                            // script is Running (the idle-skip gate).
-                            let inv = if running {
-                                inventory_from_ifaces(c)
-                            } else {
-                                None
-                            };
-                            // The slot's per-tick nav snapshot, rebuilt when
-                            // a family's gen moved (the incremental rebuild
-                            // is cheap when nothing changed). The walk arm
-                            // gates its routes on the same facts the
-                            // snapshot proves — a slot with coins on the
-                            // player can cross a toll, a player without
-                            // them cannot.
-                            nav_snapshot.rebuild(c);
+                            let inv = observe_script_inv(running, tick_edge, c);
+                            observe_rebuild_snapshot(&mut nav_snapshot, c, tick_edge);
                             let nav_armed = slot_navs.lock().unwrap().get(name).is_some_and(|b| {
                                 b.route.is_some() || b.bank_fetch.is_some()
                             });
@@ -7501,6 +7485,80 @@ mod tests {
         };
         assert!(ctx.has_item("Bones"));
         assert!(!ctx.has_item("Vial"));
+    }
+
+    #[test]
+    fn observe_script_inv_zips_only_on_running_tick_edge() {
+        let mut ifaces = vec![None; 3];
+        ifaces[1] = Some(Box::new(IfType {
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            ..Default::default()
+        }));
+        let mut ifaces_mut = vec![None; 3];
+        ifaces_mut[1] = Some(Arc::new(IfTypeMut {
+            link_obj_type: Some(vec![2, 0, 1]),
+            link_obj_number: Some(vec![3, 0, 1]),
+            ..Default::default()
+        }));
+        let mut client = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(ifaces),
+            ifaces_mut,
+        );
+        client.side_icon[3] = 1;
+        assert!(
+            observe_script_inv(true, false, &client).is_none(),
+            "20 ms observe must not zip inv"
+        );
+        assert!(
+            observe_script_inv(false, true, &client).is_none(),
+            "idle slot must not zip inv"
+        );
+        assert_eq!(
+            observe_script_inv(true, true, &client).as_deref(),
+            Some(&[(1, 3), (0, 1)][..])
+        );
+    }
+
+    #[test]
+    fn observe_rebuild_snapshot_skips_off_tick_edge() {
+        let mut client = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        let mut snap = GameSnapshot::new();
+        assert!(
+            !observe_rebuild_snapshot(&mut snap, &client, false),
+            "off tick_edge must not rebuild"
+        );
+        assert!(
+            !snap.scene().available,
+            "stale snapshot stays until the server tick"
+        );
+        assert!(
+            observe_rebuild_snapshot(&mut snap, &client, true),
+            "tick_edge rebuilds from the client"
+        );
     }
 
     // --- Task 5: guardian hold + knock plumbing over `host::Guardian` ---

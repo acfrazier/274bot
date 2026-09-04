@@ -977,6 +977,63 @@ fn scene_query_collision_and_reach() {
 }
 
 #[test]
+fn flood_reach_matches_one_shot_can_reach_without_step_cap() {
+    let mut scene = open_scene();
+    scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
+    let player = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&scene, Some(player));
+    let flood = sq.flood_reach().expect("player in scene floods");
+    assert!(
+        SceneQuery::new(&scene, None).flood_reach().is_none(),
+        "no player → no flood"
+    );
+
+    let unlimited = SceneReachOptions {
+        max_steps: Some(104 * 104),
+        adjacent_ok: false,
+    };
+    let unlimited_adj = SceneReachOptions {
+        max_steps: Some(104 * 104),
+        adjacent_ok: true,
+    };
+    let samples = [
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        },
+        WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0,
+        },
+        WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        },
+        WorldTile {
+            x: 3290,
+            z: 3290,
+            level: 0,
+        },
+    ];
+    for dest in samples {
+        let (r, a) = flood.at(&dest);
+        assert_eq!(r, sq.can_reach(dest, &unlimited), "reachable {dest:?}");
+        assert_eq!(
+            a,
+            sq.can_reach(dest, &unlimited_adj),
+            "reachable_adj {dest:?}"
+        );
+    }
+}
+
+#[test]
 fn loc_approach_operability() {
     let scene = open_scene();
     let tree = fixture_loc(10, 0, 5, 5, 1, 1);
