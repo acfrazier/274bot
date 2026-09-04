@@ -115,6 +115,18 @@ globalThis.__dummy_ctx = {
     fillText() {},
     measureText() { return { width: 7 }; },
 };
+globalThis.__rs2b0t_call_on_paint = (bot) => {
+    bot = bot || globalThis.__rs_bot;
+    if (!bot || typeof bot.onPaint !== 'function') return;
+    try {
+        bot.onPaint(globalThis.__dummy_ctx);
+    } catch (e) {
+        const msg = String((e && e.message) || e);
+        const h = globalThis.__rs2b0t_host;
+        h.paint = { title: 'onPaint', accent: '#ff5555', lines: [msg] };
+        h.lastError = msg;
+    }
+};
 "#;
 
 /// The extra modules that make rs2b0t imports hit our shim, in load order

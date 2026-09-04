@@ -829,6 +829,31 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_onpaint_throw_paints_the_not_impl() {
+    let src = r#"
+import { notImpl } from '../../shim/_kernel.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        throw notImpl('Date.now');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("paint-throw bot loads");
+    iso.on_game_tick(1);
+    let _ = iso.probe("0");
+    let paint = iso
+        .paint()
+        .expect("onPaint throw must still forward a paint frame");
+    assert_eq!(paint.title.as_deref(), Some("onPaint"));
+    assert!(
+        paint.lines.iter().any(|l| l.contains("not impl: Date.now")),
+        "overlay must name the missing verb, got {paint:?}"
+    );
+    iso.join();
+}
+
 // Task 3 — reader.worldTile / inventorySize and actions.closeModal are
 // thin stubs (no snapshot this tag: null / 0 / false); missing members
 // throw `not impl`.

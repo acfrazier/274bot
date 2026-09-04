@@ -1444,7 +1444,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     // never wait for loop() to return before onPaint.
     const loopP = (typeof inst.loop === 'function') ? inst.loop() : Promise.resolve();
     await Promise.resolve();
-    if (typeof inst.onPaint === 'function') { inst.onPaint(globalThis.__dummy_ctx); }
+    globalThis.__rs2b0t_call_on_paint(inst);
     await loopP;
 };
 "#;
@@ -2362,9 +2362,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         // Paint-only tick: no loop, no pump. Use `__rs_bot`
                         // (global); module-local `inst` is not visible here.
                         let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
-                        let _ = runtime.eval::<()>(
-                            "(() => { const bot = globalThis.__rs_bot; if (bot && typeof bot.onPaint === 'function') { bot.onPaint(globalThis.__dummy_ctx); } })()",
-                        );
+                        let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                         let _ = runtime.block_on_event_loop(
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),

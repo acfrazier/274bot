@@ -105,8 +105,5 @@ globalThis.__rs2b0t_pump = async (n) => {
     state.tick = n;
     park.settle(n, performance.now());
     await Promise.resolve();
-    const bot = globalThis.__rs_bot;
-    if (bot && typeof bot.onPaint === 'function') {
-        bot.onPaint(globalThis.__dummy_ctx);
-    }
+    globalThis.__rs2b0t_call_on_paint();
 };
