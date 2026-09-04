@@ -152,6 +152,35 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn solve_clue_construct_is_idle_not_impl() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new SolveClue({}));
+        globalThis.__probe = this._tasks[0].clueStatus();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut bag = serde_json::Map::new();
+    bag.insert("solveClues".into(), serde_json::json!(false));
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(1);
+    let status = iso.probe("__probe").unwrap();
+    assert_eq!(
+        status, "idle",
+        "new SolveClue() must not throw when clue drops are off: {status:?}"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("not impl")),
+        "SolveClue must not fire not impl with solveClues false: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
 fn quest_engine_throws_not_impl_on_use() {
     let src = r#"
 import { QuestEngine } from '../../api/ai/quests/engine/QuestEngine.js';
