@@ -4577,6 +4577,70 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn pack_rules_predicates() {
+    let src = r#"
+import { shouldPanic, shouldBank, shouldRestock, shouldEat } from '../../api/inventory/packRules.js';
+export default class T extends LoopingBot {
+    loop() {
+        let eatErr = null;
+        try { shouldEat(10, 10, 5, 1); } catch (e) { eatErr = String(e && e.message ? e.message : e); }
+        globalThis.__probe = JSON.stringify({
+            panicLowNoFood: shouldPanic(0.2, 0.25, 0),
+            panicLowWithFood: shouldPanic(0.2, 0.25, 1),
+            panicAtGate: shouldPanic(0.25, 0.25, 0),
+            bankAt: shouldBank(8, 8, false),
+            bankEmptyFull: shouldBank(0, 8, true),
+            restock: shouldRestock(2, 5),
+            eatErr,
+        });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(value.as_str().expect("probe string")).expect("json");
+    assert_eq!(
+        parsed["panicLowNoFood"],
+        serde_json::json!(true),
+        "shouldPanic(0.2, 0.25, 0): {parsed:?}"
+    );
+    assert_eq!(
+        parsed["panicLowWithFood"],
+        serde_json::json!(false),
+        "shouldPanic(0.2, 0.25, 1): {parsed:?}"
+    );
+    assert_eq!(
+        parsed["panicAtGate"],
+        serde_json::json!(false),
+        "shouldPanic(0.25, 0.25, 0): {parsed:?}"
+    );
+    assert_eq!(
+        parsed["bankAt"],
+        serde_json::json!(true),
+        "shouldBank(8, 8, false): {parsed:?}"
+    );
+    assert_eq!(
+        parsed["bankEmptyFull"],
+        serde_json::json!(false),
+        "shouldBank(0, 8, true): {parsed:?}"
+    );
+    assert_eq!(
+        parsed["restock"],
+        serde_json::json!(true),
+        "shouldRestock(2, 5): {parsed:?}"
+    );
+    let eat = parsed["eatErr"].as_str().unwrap_or("");
+    assert!(
+        eat.contains("not impl") && eat.contains("shouldEat"),
+        "shouldEat stays not impl until Task 3, got {eat:?}"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_bury_one_in_fight_queues_held_bury_when_idle() {
     let src = r#"
 import { buryOneInFight } from '../../api/combat/fightUpkeep.js';

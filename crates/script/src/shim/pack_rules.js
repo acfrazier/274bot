@@ -20,18 +20,18 @@ export function slotsMatching(items, patterns) {
     return (items || []).filter((i) => i && matchesAny(i.name, patterns)).length;
 }
 
-export function shouldBank() {
-    throw notImpl('packRules.shouldBank');
+export function shouldBank(lootSlots, bankAt, invFull) {
+    return lootSlots >= bankAt || (invFull && lootSlots > 0);
 }
 
-export function shouldRestock() {
-    throw notImpl('packRules.shouldRestock');
+export function shouldRestock(foodCount, threshold) {
+    return foodCount < threshold;
 }
 
 export function shouldEat() {
     throw notImpl('packRules.shouldEat');
 }
 
-export function shouldPanic() {
-    throw notImpl('packRules.shouldPanic');
+export function shouldPanic(hpFrac, gate, foodCount) {
+    return hpFrac < gate && foodCount === 0;
 }
