@@ -3388,7 +3388,6 @@ export default class T extends LoopingBot {
         await tryHit(() => SettingsStore.globalBag());
         await tryHit(() => foodOf({ carry: ['Shark'] }, 'Shark'));
         await tryHit(() => matchesCommonBankLoot('uncut sapphire'));
-        await tryHit(() => shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }));
         await tryHit(() => Skills.xp('prayer'));
         await tryHit(() => Skills.hpFraction());
         await tryHit(() => Game.castOnItem('High level alchemy', { name: 'Steel platebody' }));
@@ -3398,6 +3397,7 @@ export default class T extends LoopingBot {
             hostile: HOSTILE_NAMES,
             stealOk: safeToSteal(1, 0.5, 0),
             foodFallback: foodOf(null, 'Shark'),
+            eatOk: shouldEatFood('Shark', { foodCount: 1, hp: 3, maxHp: 10 }),
         });
     }
 }
@@ -3410,7 +3410,7 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        10,
+        9,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
@@ -3439,6 +3439,11 @@ export default class T extends LoopingBot {
         parsed["foodFallback"],
         serde_json::json!("Shark"),
         "foodOf without a carry loadout returns the fallback: {parsed:?}"
+    );
+    assert_eq!(
+        parsed["eatOk"],
+        serde_json::json!(true),
+        "shouldEatFood is a host predicate, not a silent fake: {parsed:?}"
     );
     iso.join();
 }
