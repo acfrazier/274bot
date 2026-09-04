@@ -48,6 +48,14 @@ pub fn world_host_for_bot_target(target: Option<&str>) -> String {
     client::bot_target::world_host_for(client::bot_target::bot_target_from_env(target)).into()
 }
 
+/// Host and game port for a target. Prod is WSS `:443`; local is TCP `:43594`.
+pub fn play_endpoint_for(target: BotTarget) -> (String, u16) {
+    (
+        client::world_host_for(target).into(),
+        client::game_port_for(target),
+    )
+}
+
 /// Active world host (`BOT_TARGET` / `--prod`).
 pub fn default_world_host() -> String {
     client::world_host()
@@ -916,11 +924,22 @@ fn dispatch_script_interact(
                         .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
                 }) {
                     if let Some(op) = action_slot(&item.actions, &action) {
-                        wrote |= matches!(
-                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                            SendResult::Sent { .. }
-                        );
+                        let res = ix.interact(OpTarget::Item(item), ActionSpec::Operation(op));
+                        if host::debug_enabled() {
+                            let outcome = match &res {
+                                SendResult::Sent { .. } => "sent".to_string(),
+                                SendResult::Refused { reason, .. } => {
+                                    format!("refused {reason:?}")
+                                }
+                            };
+                            eprintln!("[shim-withdraw] {name} {action} -> {outcome}");
+                        }
+                        wrote |= matches!(res, SendResult::Sent { .. });
+                    } else if host::debug_enabled() {
+                        eprintln!("[shim-withdraw] {name} {action} -> no op slot");
                     }
+                } else if host::debug_enabled() {
+                    eprintln!("[shim-withdraw] {name} {action} -> no bank row");
                 }
             }
             InteractReq::Held { name, action } => {
@@ -949,7 +968,16 @@ fn dispatch_script_interact(
                 }
             }
             InteractReq::Close => {
-                wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
+                let res = ix.close_modal();
+                if host::debug_enabled() {
+                    match &res {
+                        SendResult::Sent { .. } => eprintln!("[shim-close] sent"),
+                        SendResult::Refused { reason, .. } => {
+                            eprintln!("[shim-close] refused {reason:?}")
+                        }
+                    }
+                }
+                wrote |= matches!(res, SendResult::Sent { .. });
             }
             InteractReq::Npc {
                 name,
@@ -1101,20 +1129,50 @@ fn dispatch_script_interact(
                 wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
             }
             InteractReq::AnswerCount { value } => {
-                wrote |= matches!(ix.answer_count(value), SendResult::Sent { .. });
+                let res = ix.answer_count(value);
+                if host::debug_enabled() {
+                    match &res {
+                        SendResult::Sent { .. } => {
+                            eprintln!("[shim-count] {value} sent")
+                        }
+                        SendResult::Refused { reason, .. } => {
+                            eprintln!("[shim-count] {value} refused {reason:?}")
+                        }
+                    }
+                }
+                wrote |= matches!(res, SendResult::Sent { .. });
             }
             InteractReq::SideTab { tab } => {
                 wrote |= matches!(ix.click_side_tab(tab), SendResult::Sent { .. });
             }
             InteractReq::Wear { name } => {
                 let wanted = name.to_lowercase();
-                if let Some(id) = snapshot.inventory().iter().find_map(|it| {
+                let id = snapshot.inventory().iter().find_map(|it| {
                     obj_names
                         .and_then(|n| n.name(it.def.id))
                         .filter(|n| n.eq_ignore_ascii_case(&wanted))
                         .map(|_| it.def.id)
-                }) {
-                    wrote |= matches!(ix.wear(id), SendResult::Sent { .. });
+                });
+                if let Some(id) = id {
+                    let res = ix.wear(id);
+                    if host::debug_enabled() {
+                        let outcome = match &res {
+                            SendResult::Sent { .. } => "sent".to_string(),
+                            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+                        };
+                        eprintln!(
+                            "[shim-wear] {name} id={id} inv={} zip={} -> {outcome}",
+                            snapshot.inventory().len(),
+                            snapshot.inv().len()
+                        );
+                    }
+                    wrote |= matches!(res, SendResult::Sent { .. });
+                } else if host::debug_enabled() {
+                    eprintln!(
+                        "[shim-wear] {name} no inventory() row inv={} zip={:?}",
+                        snapshot.inventory().len(),
+                        snapshot.inv()
+                    );
                 }
             }
             InteractReq::SetRun { on } => {
@@ -1124,7 +1182,16 @@ fn dispatch_script_interact(
                 wrote |= matches!(ix.set_retaliate(on), SendResult::Sent { .. });
             }
             InteractReq::SetNoteMode { on } => {
-                wrote |= matches!(ix.set_note_mode(on), SendResult::Sent { .. });
+                let res = ix.set_note_mode(on);
+                if host::debug_enabled() {
+                    match &res {
+                        SendResult::Sent { .. } => eprintln!("[shim-note] on={on} sent"),
+                        SendResult::Refused { reason, .. } => {
+                            eprintln!("[shim-note] on={on} refused {reason:?}")
+                        }
+                    }
+                }
+                wrote |= matches!(res, SendResult::Sent { .. });
             }
             InteractReq::SetCameraYaw { .. } => {}
         }
@@ -1335,6 +1402,27 @@ fn script_snapshot_fb(
     )
 }
 
+/// Note-mode landing id for an unnoted obj (`ObjNames` reverse cert), else
+/// the snapshot def's raw `certlink`.
+fn posted_cert(
+    obj_names: Option<&api::obj_names::ObjNames>,
+    def: &api::obj_names::ItemDefView,
+) -> i32 {
+    obj_names
+        .and_then(|n| n.item(def.id))
+        .map(|d| d.certificate_link)
+        .filter(|&c| c >= 0)
+        .unwrap_or(def.certificate_link)
+}
+
+fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 {
+    obj_names
+        .and_then(|n| n.item(id))
+        .map(|d| d.certificate_link)
+        .filter(|&c| c >= 0)
+        .unwrap_or(-1)
+}
+
 /// Build the observed snapshot input and hand it to `f`. The live observe
 /// path encodes through the slot's reusable [`script::isolate_fb::IsolateBuf`];
 /// tests encode through a one-shot builder via [`script_snapshot_fb`].
@@ -1418,7 +1506,7 @@ fn with_script_snapshot_input<R>(
                         id: *id,
                         ops: &[],
                         noted: false,
-                        cert: -1,
+                        cert: posted_cert_id(obj_names, *id),
                         component_id: -1,
                     })
                     .collect()
@@ -1446,7 +1534,7 @@ fn with_script_snapshot_input<R>(
                     id: it.def.id,
                     ops: &inv_ops_store[i],
                     noted: it.def.noted,
-                    cert: it.def.certificate_link,
+                    cert: posted_cert(obj_names, &it.def),
                     component_id: -1,
                 })
                 .collect()
@@ -1461,7 +1549,7 @@ fn with_script_snapshot_input<R>(
                     id: *id,
                     ops: &[],
                     noted: false,
-                    cert: -1,
+                    cert: posted_cert_id(obj_names, *id),
                     component_id: -1,
                 })
                 .collect()
@@ -1502,7 +1590,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &bank_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: -1,
             })
             .collect()
@@ -1533,7 +1621,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &bank_side_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: -1,
             })
             .collect()
@@ -1649,8 +1737,7 @@ fn with_script_snapshot_input<R>(
                     player.actor.tile.z,
                     player.actor.tile.level,
                 );
-                let (target_kind, target_index) =
-                    scene_entity_target(player.actor.target.as_ref());
+                let (target_kind, target_index) = scene_entity_target(player.actor.target.as_ref());
                 SceneEntityInput {
                     index: player.index as i32,
                     id: player.index as i32,
@@ -1740,7 +1827,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &equip_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: -1,
             })
             .collect()
@@ -1773,7 +1860,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &trade_mine_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
             })
             .collect()
@@ -1806,7 +1893,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &trade_theirs_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
             })
             .collect()
@@ -1839,7 +1926,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &trade_side_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
             })
             .collect()
@@ -1872,7 +1959,7 @@ fn with_script_snapshot_input<R>(
                 id: it.def.id,
                 ops: &shop_stock_ops_store[i],
                 noted: it.def.noted,
-                cert: it.def.certificate_link,
+                cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
             })
             .collect()
@@ -2125,8 +2212,7 @@ fn with_script_snapshot_input<R>(
         self_slot: snapshot.map(|s| s.self_slot()).unwrap_or(-1),
         trade_offer_open: snapshot.is_some_and(|s| s.trade().offer_open),
         trade_confirm_open: snapshot.is_some_and(|s| s.trade().confirm_open),
-        trade_partner: snapshot
-            .and_then(|s| s.trade().partner.as_deref()),
+        trade_partner: snapshot.and_then(|s| s.trade().partner.as_deref()),
         trade_mine: &trade_mine,
         trade_theirs: &trade_theirs,
         trade_side: &trade_side,
@@ -3146,8 +3232,11 @@ impl Play {
 
     /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread
     /// writes `CLIENT_CHEAT` through the slot's Driver and flushes. No-op
-    /// when the user is not a running slot.
+    /// when the user is not a running slot, or when the target is Prod.
     pub fn cheat(&self, user: &str, cmd: &str) {
+        if !api::interact::cheat_allowed(client::bot_target()) {
+            return;
+        }
         if let Some(q) = self.cheats.lock().unwrap().get_mut(user) {
             q.push_back(cmd.to_string());
         }
@@ -3982,6 +4071,18 @@ mod tests {
     fn validate_play_host_non_loopback_err_with_local_rsa() {
         assert!(validate_play_host("attacker.example", BotTarget::Local).is_err());
         assert!(validate_play_host("w1.rs2b2t.com", BotTarget::Local).is_err());
+    }
+
+    #[test]
+    fn play_endpoint_for_prod_is_wss_443() {
+        assert_eq!(
+            play_endpoint_for(BotTarget::Prod),
+            ("w1.rs2b2t.com".into(), 443)
+        );
+        assert_eq!(
+            play_endpoint_for(BotTarget::Local),
+            ("127.0.0.1".into(), 43594)
+        );
     }
 
     #[test]
