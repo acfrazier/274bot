@@ -9268,3 +9268,6 @@ export default class T extends LoopingBot {
         );
     }
 }
+
+#[cfg(feature = "memory-profile")]
+pub mod memory;

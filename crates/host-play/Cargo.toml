@@ -14,3 +14,8 @@ serde_json = "=1.0.140"
 libc = "0.2"
 vault = { path = "../vault" }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
+
+[features]
+# Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
+# Frontend binaries install CountingAllocator later (T3).
+memory-profile = ["script/memory-profile"]
