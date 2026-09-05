@@ -10,6 +10,8 @@ p.add_argument('--nav-captures', action='store_true', help='Diagnostic only: cap
 p.add_argument('--single-renderer', action='store_true', help='Panel: fixed slot zero draws; other slots simulate only')
 p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')
 p.add_argument('--debug', action='store_true')
+p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
+p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
 p.add_argument('--sustain', action='store_true')
 p.add_argument('--stack-logging', action='store_true')
 p.add_argument('--observe', type=int, default=600)
@@ -19,14 +21,14 @@ if a.nav_captures and (a.frontend != "panel" or not a.single_renderer): p.error(
 if a.single_renderer and a.frontend != "panel": p.error("--single-renderer requires panel")
 terminal = a.frontend == 'tui' and not a.headless
 root = pathlib.Path(__file__).resolve().parents[2]
-binary = root / 'target/release' / (a.frontend+'-play')
+binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
 run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
 run.mkdir(parents=True, exist_ok=False)
 env = os.environ.copy()
 for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_NAV_CAPTURES']:
     env.pop(k, None)
 env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
-           BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='1',
+           BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
            BOT_MEMORY_WARMUP_S=str(a.warmup), BOT_MEMORY_OBSERVE_S=str(a.observe))
 env.setdefault('RS2B0T','/Users/acfrazier/experiments/rs2b0t')
 if a.debug: env['BOT_DEBUG'] = '1'
@@ -49,7 +51,7 @@ def source_digest(directory):
         if path.is_file(): digest.update(name+b'\0'+path.read_bytes()+b'\0')
     return digest.hexdigest()
 meta = dict(host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
-            diagnostic_only=True,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging,binary=str(binary),
+            diagnostic_only=True,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging,binary=str(binary),
             binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
             host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
             host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),

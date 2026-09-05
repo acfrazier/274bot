@@ -1,0 +1,33 @@
+APPROVE
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 0d23d82 plus dirty host tree, untracked measurement source included) and vendor/fr-client-rust (codex/memory-sprite-reuse @ b555f84, clean). Source only. Tests/live not re-run here and are not evidence. No memory or CPU savings.
+
+New hop (measurement-only CPU screen)
+
+Allocator: memory-profile-no-alloc pulls memory-profile and aliases BenchmarkAllocator/BENCHMARK_ALLOCATOR to System. Panel and tui install that type behind the existing memory-profile global_allocator cfg, so the installed allocator and sample cfg cannot diverge in those bins. Default memory-profile still CountingAllocator. rust_* fields are None iff that feature is on; allocation_counting is the same cfg. CountingAllocator remains compiled but is not installed. Default binaries without memory-profile still have no global_allocator and do not compile this module.
+
+CPU: getrusage(RUSAGE_SELF) user/system seconds are additive JSON fields, not mixed into wall timers. Failure is JSON null; the Python driver refuses that. Deltas are last-minus-first observe rows, so warmup is excluded. Unix-only, which matches this host.
+
+Qualification: samples.qualification.jsonl is always created for a memory-profile Run. observe-start runs after the ready/seed/XP/active gate and before observing starts; observe-end runs before script_stop. The write only reads script_state, last_error, and memory_progress (paint included). It does not drain logs or send actions. Existing error returns, lifecycle cadence, and diagnostic sidecar gating are unchanged.
+
+Launcher: --binary uses a saved frontend; --no-diagnostics sets BOT_MEMORY_DIAGNOSTICS=0 and records diagnostic_sidecar. Nav captures and malloc stack logging stay off unless those flags are passed; cpu_screen does not pass them. Each cell is a new process, so mint_live_names / throwaway vault still give fresh accounts. --sustain is the existing level-50 / 4 lobster / 2000 banked Guard fixture (doc “target22” is that inject, target=Guard).
+
+Driver: 2×2 counting × diagnostics at n=1 then n=32 with reversed mode order at 32. Stops on nonzero exit or unqualified cell. Qualification requires exit 0, observe span within 5s of requested duration, ready==active==n on every observe row, instrumentation flags and rust_* presence matching the requested mode, exactly one start and one end record, Running + no error + Steals: delta > 0 per slot, and monotonic CPU counters. Unavailable/mismatched evidence cannot qualify. Six Python tests cover the pass path plus wrong mode, ready drop, no progress, missing boundary, and nonmonotonic CPU.
+
+Whole dirty branch
+
+Door-approach and the previously approved prerequisite / instrumentation / sprite-reuse / stun / panel-one / nav-capture stack are not in this dirty set. 0d23d82 is docs/receipts only. Client pin is the already-reviewed sprite-reuse + GPU byte/duration work; this hop does not touch it.
+
+Non-blocking
+
+cpu_screen hashes --counted-binary/--system-binary against the caller cwd; run_diagnostic resolves --binary against the repo root. Use absolute saved paths.
+
+A qualification slot with runtime JSON null would throw in steals() rather than marked unqualified. Active Thiever slots should be maps.
+
+no-alloc is System via #[global_allocator], not an attribute-free production bin. That is the right control for CountingAllocator atomics.
+
+host-play memory-profile comment still says frontends install CountingAllocator.
+
+Not accepted from this review
+
+No live screen result, no overhead magnitude, no claim that this 2×2 is a repeated baseline or a significance test.

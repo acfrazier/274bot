@@ -23,6 +23,31 @@ static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 /// V8 / native / GPU allocators.
 pub struct CountingAllocator;
 
+#[cfg(not(feature = "memory-profile-no-alloc"))]
+pub type BenchmarkAllocator = CountingAllocator;
+#[cfg(not(feature = "memory-profile-no-alloc"))]
+pub const BENCHMARK_ALLOCATOR: BenchmarkAllocator = CountingAllocator;
+#[cfg(feature = "memory-profile-no-alloc")]
+pub type BenchmarkAllocator = System;
+#[cfg(feature = "memory-profile-no-alloc")]
+pub const BENCHMARK_ALLOCATOR: BenchmarkAllocator = System;
+
+/// Process CPU time, distinct from overlapping per-thread wall durations.
+fn process_cpu_seconds() -> Option<(f64, f64)> {
+    #[cfg(unix)]
+    {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+            return None;
+        }
+        let seconds = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1_000_000.0;
+        Some((seconds(usage.ru_utime), seconds(usage.ru_stime)))
+    }
+    #[cfg(not(unix))]
+    None
+}
+
+
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let p = System.alloc(layout);
@@ -253,6 +278,7 @@ pub struct Run {
     diagnostics: bool,
     pub single_renderer: bool,
     diagnostic_output: Option<std::fs::File>,
+    qualification_output: std::fs::File,
 }
 
 impl Run {
@@ -347,6 +373,10 @@ impl Run {
             .create_new(true)
             .open(&output_path)
             .map_err(|e| format!("{}: {e}", output_path.display()))?;
+        let qualification_output = std::fs::OpenOptions::new()
+            .write(true).create_new(true)
+            .open(output_path.with_extension("qualification.jsonl"))
+            .map_err(|e| e.to_string())?;
         let diagnostic_output = if diagnostics {
             Some(
                 std::fs::OpenOptions::new()
@@ -381,6 +411,7 @@ impl Run {
             output,
             diagnostics,
             diagnostic_output,
+            qualification_output,
             single_renderer: std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1"),
         })
     }
@@ -507,6 +538,7 @@ impl Run {
             if !established {
                 return Err("workload did not remain ready through warmup".into());
             }
+            self.write_qualification(play, "observe-start")?;
             self.observing = Some(now);
         }
         if let Some(observing) = self.observing {
@@ -526,6 +558,7 @@ impl Run {
                 }
             }
             if observing.elapsed() >= self.config.observe && self.teardown.is_none() {
+                self.write_qualification(play, "observe-end")?;
                 for name in &self.names {
                     play.script_stop(name);
                 }
@@ -562,9 +595,9 @@ impl Run {
                 active,
                 resident_bytes: crate::current_resident_bytes(),
                 peak_resident_bytes: Some(crate::sample_process().0),
-                rust_allocations: Some(allocs),
-                rust_allocated_bytes: Some(alloc_bytes),
-                rust_live_bytes: Some(live_bytes),
+                rust_allocations: (!cfg!(feature = "memory-profile-no-alloc")).then_some(allocs),
+                rust_allocated_bytes: (!cfg!(feature = "memory-profile-no-alloc")).then_some(alloc_bytes),
+                rust_live_bytes: (!cfg!(feature = "memory-profile-no-alloc")).then_some(live_bytes),
                 snapshot_inflight_bytes: Some(sum("snapshot_inflight_bytes")),
                 snapshot_inflight_capacity: Some(sum("snapshot_inflight_capacity")),
                 v8_used_bytes: (live==sampled).then(||sum("v8_used_bytes")),
@@ -572,6 +605,11 @@ impl Run {
                 gpu_tracked_bytes: Some(gpu.buffers+gpu.textures),
             };
             let mut value = sample.to_json();
+            let cpu = process_cpu_seconds();
+            value["process_cpu_user_s"] = cpu.map(|v| v.0).into();
+            value["process_cpu_system_s"] = cpu.map(|v| v.1).into();
+            value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
+            value["diagnostic_sidecar"] = self.diagnostics.into();
             value["gpu_buffer_bytes"] = gpu.buffers.into();
             value["gpu_texture_bytes"] = gpu.textures.into();
             value["gpu_peak_tracked_bytes"] = gpu.peak.into();
@@ -596,6 +634,19 @@ impl Run {
         Ok(self
             .teardown
             .is_some_and(|t| t.elapsed() >= Duration::from_secs(60)))
+    }
+
+    // Two boundary reads preserve script progress evidence when verbose
+    // diagnostic collection is disabled. Never drains logs or sends actions.
+    fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
+        let slots: Vec<_> = self.names.iter().map(|name| serde_json::json!({
+            "name": name,
+            "state": format!("{:?}", play.script_state(name)),
+            "error": play.script_last_error(name),
+            "runtime": play.memory_script_progress(name),
+        })).collect();
+        let value = serde_json::json!({"phase":phase,"elapsed_s":self.started.elapsed().as_secs_f64(),"slots":slots});
+        writeln!(self.qualification_output, "{value}").map_err(|e|e.to_string())
     }
 
     fn write_diagnostics(&mut self, play: &Play, failure: Option<&str>) -> Result<(), String> {
@@ -655,6 +706,15 @@ mod tests {
                 std::env::remove_var(k);
             }
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn process_cpu_time_is_available_and_monotonic() {
+        let before = process_cpu_seconds().expect("getrusage");
+        let after = process_cpu_seconds().expect("getrusage");
+        assert!(before.0 >= 0.0 && before.1 >= 0.0);
+        assert!(after.0 >= before.0 && after.1 >= before.1);
     }
 
     #[test]

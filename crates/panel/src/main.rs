@@ -1,6 +1,6 @@
 #[cfg(feature = "memory-profile")]
 #[global_allocator]
-static ALLOCATOR: host_play::memory::CountingAllocator = host_play::memory::CountingAllocator;
+static ALLOCATOR: host_play::memory::BenchmarkAllocator = host_play::memory::BENCHMARK_ALLOCATOR;
 
 fn parse_mode() -> panel::RunMode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
