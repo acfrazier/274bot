@@ -1,0 +1,13 @@
+# Scalar animation-delay experiment
+
+The operator requested the next experiment selected by the CPU overhead screen. SeqType previously cloned an owned AnimFrame, its transform vectors, and its AnimBase just to read delay. The candidate reads the scalar under the same process-wide mutex. Public owned-frame lookup and rendering callers remain unchanged; archive replacement remains visible on every lookup.
+
+Regression added before implementation: one nonempty frame, 100 delay lookups. All semantic assertions passed on the original implementation, then the allocation assertion failed with700 allocations. With the scalar query it passes with0. Cases cover explicit/zero sequence delays, stored zero, absent arrays, missing/negative/out-of-range IDs and indices, grow-only initialization, replacement publication, and independent owned frame mutation/retention. Targeted integration tests passed: seq_delay1, inject7, zone45; client library65 passed separately.
+
+An initial broad client integration invocation, compiled before the SeqType call-site change, failed four GPU iface_model cases (modal opacity/cube/ship journey overlays). This records existing failures rather than claiming the entire client suite passes. Other integration binaries executed before that failure passed. No renderer code changed.
+
+Protocol: immutable saved control and candidate release binaries using memory-profile-no-alloc (System), diagnostics off, panel with one drawing slot and remaining simulation slots. Fresh sustained level50 Thiever accounts,120-second warmup,180-second observation,60-second teardown. Two matched repetitions at each of1 and32; reverse ordering between repetitions. No concurrent builds, reviews, captures, or stack sampling during measurements. Each cell must qualify ready/active counts and every bot's script progress. This is a bounded CPU experiment, not the eventual repeated ten-minute memory baseline or128-slot acceptance.
+
+Control: diagnostics/cpu-overhead-builds/panel-play-system, SHA2569321b1469784decd5048d4d8cf4c439673c6a2794e88791101407940046bbc35. Candidate: diagnostics/scalar-delay-builds/panel-play-system, SHA2569370cdec9a20b55d71b83aafbf95238c0786de86c07164750d87745c215d58bd. Build manifests retain source digests. Per-run binary-build-provenance.json identifies actual build sources; launch metadata source digests describe the current checkout and must not be mistaken for the old control binary's build sources.
+
+Whole-branch grok-4.6 review APPROVE; completed model receipt retained beside this report. Live results pending. No fleet saving accepted yet. System runs do not measure allocation counts; the regression proves removal of lookup allocations, not an application-wide allocation rate or retained-memory saving.

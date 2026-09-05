@@ -1,0 +1,35 @@
+APPROVE
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ b2d28d4, dirty only the client submodule plus empty untracked grok-4.6-scalar-delay-review.txt) and vendor/fr-client-rust (codex/memory-sprite-reuse @ b555f84 plus uncommitted seq delay experiment). Source only. Tests/live not re-run here and are not evidence. No CPU or allocation savings.
+
+New hop (scalar AnimFrame delay)
+
+SeqType::get_delay still returns the sequence delay when nonzero. On zero it still indexes frames with frame.max(0), then reads only transform.delay. AnimFrame::delay is pub(crate), same store().lock().unwrap() as get, copies i32, does not clone AnimBase or the four transform vecs. Presence matches get: missing slot / OOB / negative id as usize all yield None, so the existing return-1 fallback is unchanged; stored delay 0 still returns 0. Public AnimFrame::get is untouched (owned clone, lock dropped before the caller holds the frame). unpack still overwrites by id; init remains grow-only. No memo into SeqType.delay, so a later archive publish is visible on the next get_delay.
+
+Call sites: only seq_type.rs uses delay(). Model::animate / mask_animate still clone via get(). entity_anim / loc / proj / spot / draw still call get_delay, so the profiled ClientEntity::entity_anim path is the one that stops cloning under the process-wide mutex.
+
+seq_delay.rs is a separate integration binary (own global allocator, does not contaminate zone/inject). It covers explicit sequence delay, unpublished/invalid/negative frame ids, empty frames, absent frames/delay arrays, grow-only init, later unpack publication, owned-clone independence after mutation, stored zero vs fallback one, and 100 delay-only lookups asserting 0 allocs. Pre-change 700 = 7 clones per lookup (AnimBase type + labels + inner group + ti/tx/ty/tz) matches this fixture. I did not re-run it.
+
+Proposed screen (not executed here)
+
+System vs System, diagnostics off, panel --single-renderer, n=1 and n=32, warmup 120 / observe 180 / teardown 60 (teardown is already hardcoded 60s). Repeat matched cells in reverse order. Qualify with the existing driver rules (exit 0, observe span, ready==active==n, System rust_* null, steal delta > 0, monotonic CPU). Do not use cpu_screen.py as-is; that script is the old 2x2 counting matrix.
+
+Launch metadata is not compile provenance: client_commit stays b555f84 while the experiment is dirty; git diff HEAD on the host is a 0-line submodule change; client_sources_sha256 hashes the launch worktree, so a baseline binary started from this dirty tree would carry candidate source hashes. Keep the build manifest (binary sha256 + inputs at compile time) as the record; treat launch checkout hashes as secondary.
+
+Whole branch
+
+Host measurement/navigation stack already approved (c4943a7 / 72804cd / receipts through b2d28d4). This hop does not touch it. Client gitlink remains b555f84 (sprite-reuse + GPU byte/duration). CountingAllocator still amplifies AnimFrame mutex wait; keep it off for this CPU pair. 31 sim clients still run entity_anim; one renderer still calls Model::get. GPU iface_model failures named as pre-SeqType-edit are outside this diff.
+
+Non-blocking
+
+Alloc loop does not assert get_delay(0)==7, so a future skip of the fallback would still report 0 allocs. Earlier asserts in the same test do cover that path today.
+
+get_delay is still invoked twice per while-iteration (pre-existing).
+
+Model clones remain on the same mutex; a small or null delta at 32 does not prove the delay path is free, only that leftover get() / other work still dominates.
+
+latest-build.json still names the door-approach review as `review`.
+
+Not accepted from this review
+
+No live pair, no overhead percentage, no production claim, no shared-Arc frame store, no 128. Candidate System binary is not in latest-build.json yet.
