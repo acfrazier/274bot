@@ -23,3 +23,7 @@ No CPU code was changed in this sidebar.
 ## Operator-approved measurement order
 
 On 2026-09-05 the operator agreed to defer the full 128-bot benchmark until after the identified waste and instrumentation overhead are addressed at 1 and 32 bots. Finish and commit the current stability correction, separate measurement overhead from application cost, then optimize measured problems in small commits. Return to 128 for scaling validation afterward. A short capacity check is optional if a specific threshold question requires it. No 128-slot acceptance is claimed; the original eventual scaling requirement remains outstanding.
+
+## Completed overhead screening
+
+See [cpu-overhead-screen.md](cpu-overhead-screen.md) for eight qualified1/32 cells and a separate uncounted profile. Counting substantially increases CPU use at32 in both diagnostic configurations; sidecar effects are inconsistent in this single pass. Use System mode for CPU comparisons and separately matched counted runs for allocation measurements. The new profile narrows the next candidate to a scalar animation-delay query that preserves the owned-frame API; broad shared-store redesign remains deferred.
