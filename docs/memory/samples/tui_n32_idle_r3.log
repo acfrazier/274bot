@@ -1,0 +1,6 @@
+=== START tui_n32_idle_r3 2026-09-05T09:24:10Z ===
+memory benchmark tui: 32 slots idle; /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/samples/tui_n32_idle_r3.jsonl
+274bot: loaded snapshot (4556 models, 336 anim records)
+PASS: memory tui observation complete
+=== END tui_n32_idle_r3 exit=0 2026-09-05T09:38:12Z ===
+4:PASS: memory tui observation complete

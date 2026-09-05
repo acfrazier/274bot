@@ -1,0 +1,295 @@
+file=docs/memory/samples/panel_cpu_n1_idle_r1.jsonl
+fe=panel n=1 wl=idle samples=713 ready_max=1
+observe_n=545 teardown_n=55
+rss_mid_observe=488562688 rust_live_mid=323593183
+peak_resident_any=534691840 start_peak=450707456 observe_peak=527089664
+teardown_last_rss=533118976 teardown_last_live=323648980
+observe0_rss=449265664 observe0_live=249205693 ready=1 active=0
+teardown0_rss=525615104
+---
+file=docs/memory/samples/panel_n1_active_r1.jsonl
+fe=panel n=1 wl=active samples=790 ready_max=1
+observe_n=581 teardown_n=58
+rss_mid_observe=624574464 rust_live_mid=515511022
+peak_resident_any=736116736 start_peak=613318656 observe_peak=725991424
+teardown_last_rss=734789632 teardown_last_live=713919364
+observe0_rss=564936704 observe0_live=416292782 ready=1 active=1
+teardown0_rss=715358208
+---
+file=docs/memory/samples/panel_n1_active_r2.jsonl
+fe=panel n=1 wl=active samples=778 ready_max=1
+observe_n=567 teardown_n=56
+rss_mid_observe=649117696 rust_live_mid=515400264
+peak_resident_any=731906048 start_peak=607535104 observe_peak=722386944
+teardown_last_rss=730906624 teardown_last_live=712641285
+observe0_rss=563314688 observe0_live=416214872 ready=1 active=1
+teardown0_rss=714670080
+---
+file=docs/memory/samples/panel_n1_active_r3.jsonl
+fe=panel n=1 wl=active samples=799 ready_max=1
+observe_n=582 teardown_n=58
+rss_mid_observe=734822400 rust_live_mid=515571460
+peak_resident_any=843743232 start_peak=651132928 observe_peak=829652992
+teardown_last_rss=842924032 teardown_last_live=712819167
+observe0_rss=649854976 observe0_live=368286079 ready=1 active=1
+teardown0_rss=819806208
+---
+file=docs/memory/samples/panel_n1_idle_r1.jsonl
+fe=panel n=1 wl=idle samples=755 ready_max=1
+observe_n=577 teardown_n=58
+rss_mid_observe=514727936 rust_live_mid=422965641
+peak_resident_any=602996736 start_peak=475398144 observe_peak=587743232
+teardown_last_rss=602554368 teardown_last_live=422970048
+observe0_rss=473858048 observe0_live=272956849 ready=1 active=0
+teardown0_rss=587546624
+---
+file=docs/memory/samples/panel_n1_idle_r2.jsonl
+fe=panel n=1 wl=idle samples=749 ready_max=1
+observe_n=573 teardown_n=56
+rss_mid_observe=547307520 rust_live_mid=422982302
+peak_resident_any=605569024 start_peak=469450752 observe_peak=596819968
+teardown_last_rss=605126656 teardown_last_live=422987051
+observe0_rss=468467712 observe0_live=273620854 ready=1 active=0
+teardown0_rss=596525056
+---
+file=docs/memory/samples/panel_n1_idle_r3.jsonl
+fe=panel n=1 wl=idle samples=760 ready_max=1
+observe_n=581 teardown_n=58
+rss_mid_observe=420904960 rust_live_mid=422964440
+peak_resident_any=491978752 start_peak=470335488 observe_peak=476921856
+teardown_last_rss=491520000 teardown_last_live=422972017
+observe0_rss=438190080 observe0_live=274299531 ready=1 active=0
+teardown0_rss=476692480
+---
+file=docs/memory/samples/panel_n1_lifecycle_r1.jsonl
+fe=panel n=1 wl=lifecycle samples=774 ready_max=1
+observe_n=582 teardown_n=58
+rss_mid_observe=708960256 rust_live_mid=515585229
+peak_resident_any=770621440 start_peak=651001856 observe_peak=770621440
+teardown_last_rss=627785728 teardown_last_live=712468187
+observe0_rss=620953600 observe0_live=417548454 ready=1 active=1
+teardown0_rss=615301120
+---
+file=docs/memory/samples/panel_n1_lifecycle_r2.jsonl
+fe=panel n=1 wl=lifecycle samples=743 ready_max=1
+observe_n=556 teardown_n=57
+rss_mid_observe=566640640 rust_live_mid=515193287
+peak_resident_any=643170304 start_peak=623738880 observe_peak=637288448
+teardown_last_rss=642301952 teardown_last_live=712471518
+observe0_rss=593559552 observe0_live=366879862 ready=1 active=1
+teardown0_rss=636649472
+---
+file=docs/memory/samples/panel_n1_lifecycle_r3.jsonl
+fe=panel n=1 wl=lifecycle samples=749 ready_max=1
+observe_n=557 teardown_n=58
+rss_mid_observe=567386112 rust_live_mid=514510008
+peak_resident_any=638648320 start_peak=624361472 observe_peak=627490816
+teardown_last_rss=637681664 teardown_last_live=712351557
+observe0_rss=605405184 observe0_live=366735817 ready=1 active=1
+teardown0_rss=624132096
+---
+file=docs/memory/samples/panel_n32_active_r1.jsonl
+fe=panel n=32 wl=active samples=891 ready_max=32
+observe_n=564 teardown_n=56
+rss_mid_observe=7327981568 rust_live_mid=6727856880
+peak_resident_any=7567933440 start_peak=7224426496 observe_peak=7567933440
+teardown_last_rss=7339180032 teardown_last_live=7205554581
+observe0_rss=7221608448 observe0_live=6164254645 ready=32 active=32
+teardown0_rss=7296434176
+---
+file=docs/memory/samples/panel_n32_active_r2.jsonl
+fe=panel n=32 wl=active samples=891 ready_max=32
+observe_n=564 teardown_n=56
+rss_mid_observe=7454556160 rust_live_mid=6318719326
+peak_resident_any=7660732416 start_peak=7358971904 observe_peak=7660732416
+teardown_last_rss=7388594176 teardown_last_live=6797872003
+observe0_rss=7356612608 observe0_live=6145199513 ready=32 active=32
+teardown0_rss=7350403072
+---
+file=docs/memory/samples/panel_n32_active_r3.jsonl
+fe=panel n=32 wl=active samples=856 ready_max=32
+observe_n=562 teardown_n=55
+rss_mid_observe=7393722368 rust_live_mid=6751888383
+peak_resident_any=7645036544 start_peak=7175766016 observe_peak=7645036544
+teardown_last_rss=7382319104 teardown_last_live=7179850610
+observe0_rss=7171784704 observe0_live=6002381513 ready=32 active=32
+teardown0_rss=7342325760
+---
+file=docs/memory/samples/panel_n32_idle_r1.jsonl
+fe=panel n=32 wl=idle samples=786 ready_max=32
+observe_n=557 teardown_n=56
+rss_mid_observe=3558391808 rust_live_mid=3101749737
+peak_resident_any=3730636800 start_peak=3426631680 observe_peak=3702702080
+teardown_last_rss=3729440768 teardown_last_live=3543470252
+observe0_rss=3422994432 observe0_live=2945631809 ready=32 active=0
+teardown0_rss=3701866496
+---
+file=docs/memory/samples/panel_n32_idle_r2.jsonl
+fe=panel n=32 wl=idle samples=781 ready_max=32
+observe_n=556 teardown_n=55
+rss_mid_observe=3560833024 rust_live_mid=3107259658
+peak_resident_any=3790503936 start_peak=3439427584 observe_peak=3759325184
+teardown_last_rss=3788111872 teardown_last_live=3502548816
+observe0_rss=3435741184 observe0_live=2954038657 ready=32 active=0
+teardown0_rss=3757326336
+---
+file=docs/memory/samples/panel_n32_idle_r3.jsonl
+fe=panel n=32 wl=idle samples=781 ready_max=32
+observe_n=555 teardown_n=55
+rss_mid_observe=3538141184 rust_live_mid=3106074970
+peak_resident_any=3724410880 start_peak=3424337920 observe_peak=3692576768
+teardown_last_rss=3722903552 teardown_last_live=3545884897
+observe0_rss=3418734592 observe0_live=2954246980 ready=32 active=0
+teardown0_rss=3691905024
+---
+file=docs/memory/samples/panel_n32_lifecycle_r1.jsonl
+fe=panel n=32 wl=lifecycle samples=904 ready_max=32
+observe_n=561 teardown_n=56
+rss_mid_observe=7414431744 rust_live_mid=6769893590
+peak_resident_any=7567474688 start_peak=7364689920 observe_peak=7567474688
+teardown_last_rss=7414251520 teardown_last_live=7178227398
+observe0_rss=7361757184 observe0_live=6168397359 ready=32 active=32
+teardown0_rss=7387217920
+---
+file=docs/memory/samples/panel_n32_lifecycle_r2.jsonl
+fe=panel n=32 wl=lifecycle samples=861 ready_max=32
+observe_n=567 teardown_n=55
+rss_mid_observe=7218364416 rust_live_mid=6299978386
+peak_resident_any=7509360640 start_peak=7233060864 observe_peak=7509360640
+teardown_last_rss=7329120256 teardown_last_live=7091411669
+observe0_rss=7200751616 observe0_live=5977872811 ready=32 active=32
+teardown0_rss=7309508608
+---
+file=docs/memory/samples/panel_n32_lifecycle_r3.jsonl
+fe=panel n=32 wl=lifecycle samples=858 ready_max=32
+observe_n=561 teardown_n=55
+rss_mid_observe=7256932352 rust_live_mid=6291931747
+peak_resident_any=7575027712 start_peak=7219200000 observe_peak=7555301376
+teardown_last_rss=7409418240 teardown_last_live=7144540795
+observe0_rss=7213809664 observe0_live=6000629159 ready=32 active=32
+teardown0_rss=7405404160
+---
+file=docs/memory/samples/tui_n1_active_r1.jsonl
+fe=tui n=1 wl=active samples=734 ready_max=1
+observe_n=552 teardown_n=56
+rss_mid_observe=375029760 rust_live_mid=224362535
+peak_resident_any=381288448 start_peak=373981184 observe_peak=381255680
+teardown_last_rss=369917952 teardown_last_live=223406139
+observe0_rss=373997568 observe0_live=224341884 ready=1 active=1
+teardown0_rss=369917952
+---
+file=docs/memory/samples/tui_n1_active_r2.jsonl
+fe=tui n=1 wl=active samples=742 ready_max=1
+observe_n=552 teardown_n=55
+rss_mid_observe=376127488 rust_live_mid=224357344
+peak_resident_any=381632512 start_peak=377569280 observe_peak=381632512
+teardown_last_rss=371179520 teardown_last_live=223406844
+observe0_rss=377569280 observe0_live=224349333 ready=1 active=1
+teardown0_rss=371179520
+---
+file=docs/memory/samples/tui_n1_active_r3.jsonl
+fe=tui n=1 wl=active samples=738 ready_max=1
+observe_n=553 teardown_n=55
+rss_mid_observe=374603776 rust_live_mid=224365160
+peak_resident_any=385155072 start_peak=375767040 observe_peak=385155072
+teardown_last_rss=370540544 teardown_last_live=223413081
+observe0_rss=375767040 observe0_live=224354648 ready=1 active=1
+teardown0_rss=370540544
+---
+file=docs/memory/samples/tui_n1_idle_r1.jsonl
+fe=tui n=1 wl=idle samples=731 ready_max=1
+observe_n=559 teardown_n=57
+rss_mid_observe=249724928 rust_live_mid=142988858
+peak_resident_any=249987072 start_peak=248987648 observe_peak=249987072
+teardown_last_rss=249987072 teardown_last_live=142991945
+observe0_rss=248987648 observe0_live=142988539 ready=1 active=0
+teardown0_rss=249987072
+---
+file=docs/memory/samples/tui_n1_idle_r2.jsonl
+fe=tui n=1 wl=idle samples=728 ready_max=1
+observe_n=557 teardown_n=56
+rss_mid_observe=248807424 rust_live_mid=142993564
+peak_resident_any=249331712 start_peak=248266752 observe_peak=249315328
+teardown_last_rss=249331712 teardown_last_live=142995427
+observe0_rss=248266752 observe0_live=142993333 ready=1 active=0
+teardown0_rss=249315328
+---
+file=docs/memory/samples/tui_n1_idle_r3.jsonl
+fe=tui n=1 wl=idle samples=720 ready_max=1
+observe_n=553 teardown_n=55
+rss_mid_observe=249085952 rust_live_mid=142997089
+peak_resident_any=249282560 start_peak=248463360 observe_peak=249282560
+teardown_last_rss=249282560 teardown_last_live=142999774
+observe0_rss=248463360 observe0_live=142988140 ready=1 active=0
+teardown0_rss=249282560
+---
+file=docs/memory/samples/tui_n1_lifecycle_r1.jsonl
+fe=tui n=1 wl=lifecycle samples=734 ready_max=1
+observe_n=552 teardown_n=55
+rss_mid_observe=369606656 rust_live_mid=223618033
+peak_resident_any=381911040 start_peak=376176640 observe_peak=381911040
+teardown_last_rss=370540544 teardown_last_live=223020032
+observe0_rss=376193024 observe0_live=224353260 ready=1 active=1
+teardown0_rss=370540544
+---
+file=docs/memory/samples/tui_n1_lifecycle_r2.jsonl
+fe=tui n=1 wl=lifecycle samples=743 ready_max=1
+observe_n=551 teardown_n=57
+rss_mid_observe=374816768 rust_live_mid=223410984
+peak_resident_any=386416640 start_peak=382058496 observe_peak=386416640
+teardown_last_rss=377208832 teardown_last_live=223022022
+observe0_rss=382271488 observe0_live=224357607 ready=1 active=1
+teardown0_rss=377208832
+---
+file=docs/memory/samples/tui_n1_lifecycle_r3.jsonl
+fe=tui n=1 wl=lifecycle samples=743 ready_max=1
+observe_n=551 teardown_n=56
+rss_mid_observe=368877568 rust_live_mid=223883142
+peak_resident_any=379551744 start_peak=375963648 observe_peak=379551744
+teardown_last_rss=367689728 teardown_last_live=223018308
+observe0_rss=375963648 observe0_live=224352194 ready=1 active=1
+teardown0_rss=367689728
+---
+file=docs/memory/samples/tui_n32_active_r1.jsonl
+fe=tui n=32 wl=active samples=849 ready_max=32
+observe_n=556 teardown_n=56
+rss_mid_observe=3989471232 rust_live_mid=3098564247
+peak_resident_any=4062576640 start_peak=4004839424 observe_peak=4062576640
+teardown_last_rss=3769270272 teardown_last_live=3068000361
+observe0_rss=3991011328 observe0_live=3098569129 ready=32 active=32
+teardown0_rss=3769270272
+---
+file=docs/memory/samples/tui_n32_active_r2.jsonl
+fe=tui n=32 wl=active samples=144 ready_max=32
+observe_n=0 teardown_n=0
+rss_mid_observe=None rust_live_mid=None
+peak_resident_any=3913416704 start_peak=3913416704 observe_peak=None
+teardown_last_rss=None teardown_last_live=None
+---
+file=docs/memory/samples/tui_n32_idle_r1.jsonl
+fe=tui n=32 wl=idle samples=774 ready_max=32
+observe_n=552 teardown_n=55
+rss_mid_observe=863879168 rust_live_mid=525571884
+peak_resident_any=863911936 start_peak=862863360 observe_peak=863911936
+teardown_last_rss=863911936 teardown_last_live=525636401
+observe0_rss=862879744 observe0_live=527972585 ready=32 active=0
+teardown0_rss=863911936
+---
+file=docs/memory/samples/tui_n32_idle_r2.jsonl
+fe=tui n=32 wl=idle samples=775 ready_max=32
+observe_n=551 teardown_n=56
+rss_mid_observe=872349696 rust_live_mid=528454492
+peak_resident_any=872448000 start_peak=869892096 observe_peak=872448000
+teardown_last_rss=872448000 teardown_last_live=528457462
+observe0_rss=869892096 observe0_live=528467102 ready=32 active=0
+teardown0_rss=872448000
+---
+file=docs/memory/samples/tui_n32_idle_r3.jsonl
+fe=tui n=32 wl=idle samples=775 ready_max=32
+observe_n=552 teardown_n=55
+rss_mid_observe=880295936 rust_live_mid=527976577
+peak_resident_any=880328704 start_peak=878837760 observe_peak=880328704
+teardown_last_rss=880328704 teardown_last_live=528059665
+observe0_rss=878837760 observe0_live=527977953 ready=32 active=0
+teardown0_rss=880328704
+---

@@ -1,0 +1,6 @@
+=== START panel_n32_active_r3 2026-09-05T07:54:10Z ===
+memory benchmark panel: 32 slots active; /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/samples/panel_n32_active_r3.jsonl
+274bot: loaded snapshot (4556 models, 336 anim records)
+PASS: memory panel observation complete
+=== END panel_n32_active_r3 exit=0 2026-09-05T08:09:26Z ===
+4:PASS: memory panel observation complete

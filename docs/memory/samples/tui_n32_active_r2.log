@@ -1,0 +1,6 @@
+=== START tui_n32_active_r2 2026-09-05T09:53:30Z ===
+memory benchmark tui: 32 slots active; /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/samples/tui_n32_active_r2.jsonl
+274bot: loaded snapshot (4556 models, 336 anim records)
+FAIL: memory tui: Thiever seed/proof failed for live773e0_17: step 6 (watch the script pickpocket guards): stat_xp_gain(17)>=1 not seen within 150 ticks
+=== END tui_n32_active_r2 exit=1 2026-09-05T09:56:05Z ===
+4:FAIL: memory tui: Thiever seed/proof failed for live773e0_17: step 6 (watch the script pickpocket guards): stat_xp_gain(17)>=1 not seen within 150 ticks

@@ -1,0 +1,80 @@
+## Per-run stats then cell medians
+
+### panel N=1 active (3 files)
+  - panel_n1_active_r1.jsonl: ready_max=1 rss_mid=624.6 MiB live_mid=515.5 MiB peak=736.1 MiB start_peak=613.3 MiB td_rss=734.8 MiB observe=True
+  - panel_n1_active_r2.jsonl: ready_max=1 rss_mid=649.1 MiB live_mid=515.4 MiB peak=731.9 MiB start_peak=607.5 MiB td_rss=730.9 MiB observe=True
+  - panel_n1_active_r3.jsonl: ready_max=1 rss_mid=734.8 MiB live_mid=515.6 MiB peak=843.7 MiB start_peak=651.1 MiB td_rss=842.9 MiB observe=True
+  MEDIAN rss_mid=649.1 MiB live_mid=515.5 MiB peak=736.1 MiB start_peak=613.3 MiB td_rss=734.8 MiB
+
+### panel N=1 idle (3 files)
+  - panel_n1_idle_r1.jsonl: ready_max=1 rss_mid=514.7 MiB live_mid=423.0 MiB peak=603.0 MiB start_peak=475.4 MiB td_rss=602.6 MiB observe=True
+  - panel_n1_idle_r2.jsonl: ready_max=1 rss_mid=547.3 MiB live_mid=423.0 MiB peak=605.6 MiB start_peak=469.5 MiB td_rss=605.1 MiB observe=True
+  - panel_n1_idle_r3.jsonl: ready_max=1 rss_mid=420.9 MiB live_mid=423.0 MiB peak=492.0 MiB start_peak=470.3 MiB td_rss=491.5 MiB observe=True
+  MEDIAN rss_mid=514.7 MiB live_mid=423.0 MiB peak=603.0 MiB start_peak=470.3 MiB td_rss=602.6 MiB
+
+### panel N=1 lifecycle (3 files)
+  - panel_n1_lifecycle_r1.jsonl: ready_max=1 rss_mid=709.0 MiB live_mid=515.6 MiB peak=770.6 MiB start_peak=651.0 MiB td_rss=627.8 MiB observe=True
+  - panel_n1_lifecycle_r2.jsonl: ready_max=1 rss_mid=566.6 MiB live_mid=515.2 MiB peak=643.2 MiB start_peak=623.7 MiB td_rss=642.3 MiB observe=True
+  - panel_n1_lifecycle_r3.jsonl: ready_max=1 rss_mid=567.4 MiB live_mid=514.5 MiB peak=638.6 MiB start_peak=624.4 MiB td_rss=637.7 MiB observe=True
+  MEDIAN rss_mid=567.4 MiB live_mid=515.2 MiB peak=643.2 MiB start_peak=624.4 MiB td_rss=637.7 MiB
+
+### panel N=32 active (3 files)
+  - panel_n32_active_r1.jsonl: ready_max=32 rss_mid=7.33 GiB live_mid=6.73 GiB peak=7.57 GiB start_peak=7.22 GiB td_rss=7.34 GiB observe=True
+  - panel_n32_active_r2.jsonl: ready_max=32 rss_mid=7.45 GiB live_mid=6.32 GiB peak=7.66 GiB start_peak=7.36 GiB td_rss=7.39 GiB observe=True
+  - panel_n32_active_r3.jsonl: ready_max=32 rss_mid=7.39 GiB live_mid=6.75 GiB peak=7.65 GiB start_peak=7.18 GiB td_rss=7.38 GiB observe=True
+  MEDIAN rss_mid=7.39 GiB live_mid=6.73 GiB peak=7.65 GiB start_peak=7.22 GiB td_rss=7.38 GiB
+
+### panel N=32 idle (3 files)
+  - panel_n32_idle_r1.jsonl: ready_max=32 rss_mid=3.56 GiB live_mid=3.10 GiB peak=3.73 GiB start_peak=3.43 GiB td_rss=3.73 GiB observe=True
+  - panel_n32_idle_r2.jsonl: ready_max=32 rss_mid=3.56 GiB live_mid=3.11 GiB peak=3.79 GiB start_peak=3.44 GiB td_rss=3.79 GiB observe=True
+  - panel_n32_idle_r3.jsonl: ready_max=32 rss_mid=3.54 GiB live_mid=3.11 GiB peak=3.72 GiB start_peak=3.42 GiB td_rss=3.72 GiB observe=True
+  MEDIAN rss_mid=3.56 GiB live_mid=3.11 GiB peak=3.73 GiB start_peak=3.43 GiB td_rss=3.73 GiB
+
+### panel N=32 lifecycle (3 files)
+  - panel_n32_lifecycle_r1.jsonl: ready_max=32 rss_mid=7.41 GiB live_mid=6.77 GiB peak=7.57 GiB start_peak=7.36 GiB td_rss=7.41 GiB observe=True
+  - panel_n32_lifecycle_r2.jsonl: ready_max=32 rss_mid=7.22 GiB live_mid=6.30 GiB peak=7.51 GiB start_peak=7.23 GiB td_rss=7.33 GiB observe=True
+  - panel_n32_lifecycle_r3.jsonl: ready_max=32 rss_mid=7.26 GiB live_mid=6.29 GiB peak=7.58 GiB start_peak=7.22 GiB td_rss=7.41 GiB observe=True
+  MEDIAN rss_mid=7.26 GiB live_mid=6.30 GiB peak=7.57 GiB start_peak=7.23 GiB td_rss=7.41 GiB
+
+### panel-cpu N=1 idle (1 files)
+  - panel_cpu_n1_idle_r1.jsonl: ready_max=1 rss_mid=488.6 MiB live_mid=323.6 MiB peak=534.7 MiB start_peak=450.7 MiB td_rss=533.1 MiB observe=True
+  MEDIAN rss_mid=488.6 MiB live_mid=323.6 MiB peak=534.7 MiB start_peak=450.7 MiB td_rss=533.1 MiB
+
+### tui N=1 active (3 files)
+  - tui_n1_active_r1.jsonl: ready_max=1 rss_mid=375.0 MiB live_mid=224.4 MiB peak=381.3 MiB start_peak=374.0 MiB td_rss=369.9 MiB observe=True
+  - tui_n1_active_r2.jsonl: ready_max=1 rss_mid=376.1 MiB live_mid=224.4 MiB peak=381.6 MiB start_peak=377.6 MiB td_rss=371.2 MiB observe=True
+  - tui_n1_active_r3.jsonl: ready_max=1 rss_mid=374.6 MiB live_mid=224.4 MiB peak=385.2 MiB start_peak=375.8 MiB td_rss=370.5 MiB observe=True
+  MEDIAN rss_mid=375.0 MiB live_mid=224.4 MiB peak=381.6 MiB start_peak=375.8 MiB td_rss=370.5 MiB
+
+### tui N=1 idle (3 files)
+  - tui_n1_idle_r1.jsonl: ready_max=1 rss_mid=249.7 MiB live_mid=143.0 MiB peak=250.0 MiB start_peak=249.0 MiB td_rss=250.0 MiB observe=True
+  - tui_n1_idle_r2.jsonl: ready_max=1 rss_mid=248.8 MiB live_mid=143.0 MiB peak=249.3 MiB start_peak=248.3 MiB td_rss=249.3 MiB observe=True
+  - tui_n1_idle_r3.jsonl: ready_max=1 rss_mid=249.1 MiB live_mid=143.0 MiB peak=249.3 MiB start_peak=248.5 MiB td_rss=249.3 MiB observe=True
+  MEDIAN rss_mid=249.1 MiB live_mid=143.0 MiB peak=249.3 MiB start_peak=248.5 MiB td_rss=249.3 MiB
+
+### tui N=1 lifecycle (3 files)
+  - tui_n1_lifecycle_r1.jsonl: ready_max=1 rss_mid=369.6 MiB live_mid=223.6 MiB peak=381.9 MiB start_peak=376.2 MiB td_rss=370.5 MiB observe=True
+  - tui_n1_lifecycle_r2.jsonl: ready_max=1 rss_mid=374.8 MiB live_mid=223.4 MiB peak=386.4 MiB start_peak=382.1 MiB td_rss=377.2 MiB observe=True
+  - tui_n1_lifecycle_r3.jsonl: ready_max=1 rss_mid=368.9 MiB live_mid=223.9 MiB peak=379.6 MiB start_peak=376.0 MiB td_rss=367.7 MiB observe=True
+  MEDIAN rss_mid=369.6 MiB live_mid=223.6 MiB peak=381.9 MiB start_peak=376.2 MiB td_rss=370.5 MiB
+
+### tui N=32 active (2 files)
+  - tui_n32_active_r1.jsonl: ready_max=32 rss_mid=3.99 GiB live_mid=3.10 GiB peak=4.06 GiB start_peak=4.00 GiB td_rss=3.77 GiB observe=True
+  - tui_n32_active_r2.jsonl: ready_max=32 rss_mid=n/a live_mid=n/a peak=3.91 GiB start_peak=3.91 GiB td_rss=n/a observe=False
+  MEDIAN rss_mid=3.99 GiB live_mid=3.10 GiB peak=4.06 GiB start_peak=4.00 GiB td_rss=3.77 GiB
+
+### tui N=32 idle (3 files)
+  - tui_n32_idle_r1.jsonl: ready_max=32 rss_mid=863.9 MiB live_mid=525.6 MiB peak=863.9 MiB start_peak=862.9 MiB td_rss=863.9 MiB observe=True
+  - tui_n32_idle_r2.jsonl: ready_max=32 rss_mid=872.3 MiB live_mid=528.5 MiB peak=872.4 MiB start_peak=869.9 MiB td_rss=872.4 MiB observe=True
+  - tui_n32_idle_r3.jsonl: ready_max=32 rss_mid=880.3 MiB live_mid=528.0 MiB peak=880.3 MiB start_peak=878.8 MiB td_rss=880.3 MiB observe=True
+  MEDIAN rss_mid=872.3 MiB live_mid=528.0 MiB peak=872.4 MiB start_peak=869.9 MiB td_rss=872.4 MiB
+
+## Bytes per additional ready bot (idle mid-observe RSS median)
+
+panel idle: RSS/add=98.2 MiB  rust_live/add=86.6 MiB  (from N1=514.7 MiB N32=3.56 GiB; do not equate domains)
+tui idle: RSS/add=20.1 MiB  rust_live/add=12.4 MiB  (from N1=249.1 MiB N32=872.3 MiB; do not equate domains)
+
+## Bytes per additional ready bot (active mid-observe RSS median)
+
+panel active: RSS/add=217.6 MiB  rust_live/add=200.4 MiB  (N1=649.1 MiB N32=7.39 GiB)
+tui active: RSS/add=116.6 MiB  rust_live/add=92.7 MiB  (N1=375.0 MiB N32=3.99 GiB)

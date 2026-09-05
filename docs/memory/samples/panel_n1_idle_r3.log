@@ -1,0 +1,6 @@
+=== START panel_n1_idle_r3 2026-09-05T02:53:43Z ===
+memory benchmark panel: 1 slots idle; /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/samples/panel_n1_idle_r3.jsonl
+274bot: loaded snapshot (4556 models, 336 anim records)
+PASS: memory panel observation complete
+=== END panel_n1_idle_r3 exit=0 2026-09-05T03:06:48Z ===
+4:PASS: memory panel observation complete

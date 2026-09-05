@@ -1,0 +1,34 @@
+frontend	n	workload	run	exit	status	ready_last	note	stamp
+panel	1	idle	2	0	PASS	1		2026-09-05T02:53:43Z
+panel	1	idle	3	0	PASS	1		2026-09-05T03:06:48Z
+panel	1	active	1	0	PASS	1		2026-09-05T03:20:24Z
+panel	1	active	2	0	PASS	1		2026-09-05T03:34:03Z
+panel	1	active	3	0	PASS	1		2026-09-05T03:47:53Z
+panel	1	lifecycle	1	0	PASS	1		2026-09-05T04:01:11Z
+panel	1	lifecycle	2	0	PASS	1		2026-09-05T04:14:30Z
+panel	1	lifecycle	3	0	PASS	1		2026-09-05T04:27:52Z
+tui	1	idle	1	0	PASS	1		2026-09-05T04:40:54Z
+tui	1	idle	2	0	PASS	1		2026-09-05T04:53:56Z
+tui	1	idle	3	0	PASS	1		2026-09-05T05:06:58Z
+tui	1	active	1	0	PASS	1		2026-09-05T05:20:14Z
+tui	1	active	2	0	PASS	1		2026-09-05T05:33:41Z
+tui	1	active	3	0	PASS	1		2026-09-05T05:47:02Z
+tui	1	lifecycle	1	0	PASS	1		2026-09-05T06:00:21Z
+tui	1	lifecycle	2	0	PASS	1		2026-09-05T06:13:47Z
+tui	1	lifecycle	3	0	PASS	1		2026-09-05T06:27:14Z
+panel-cpu	1	idle	1	0	PASS	1		2026-09-05T06:40:18Z
+panel	32	idle	1	0	PASS	32		2026-09-05T06:54:23Z
+panel	32	idle	2	0	PASS	32		2026-09-05T07:08:28Z
+panel	32	idle	3	0	PASS	32		2026-09-05T07:22:33Z
+panel	32	active	1	0	PASS	32		2026-09-05T07:38:22Z
+panel	32	active	2	0	PASS	32		2026-09-05T07:54:10Z
+panel	32	active	3	0	PASS	32		2026-09-05T08:09:26Z
+panel	32	lifecycle	1	0	PASS	31		2026-09-05T08:25:31Z
+panel	32	lifecycle	2	0	PASS	32		2026-09-05T08:40:47Z
+panel	32	lifecycle	3	0	PASS	32		2026-09-05T08:56:04Z
+tui	32	idle	1	0	PASS	32		2026-09-05T09:10:06Z
+tui	32	idle	2	0	PASS	32		2026-09-05T09:24:10Z
+tui	32	idle	3	0	PASS	32		2026-09-05T09:38:12Z
+tui	32	active	1	0	PASS	32		2026-09-05T09:53:30Z
+tui	32	active	2	1	FAIL	32	FAIL: memory tui: Thiever seed/proof failed for live773e0_17: step 6 (watch the script pickpocket guards): stat_xp_gain(17)>=1 not seen within 150 ticks	2026-09-05T09:56:05Z
+STOP: honest FAIL or non-blocked error on tui_n32_active_r2

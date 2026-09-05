@@ -1,0 +1,6 @@
+=== START tui_n1_active_r3 2026-09-05T05:33:42Z ===
+memory benchmark tui: 1 slots active; /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/samples/tui_n1_active_r3.jsonl
+274bot: loaded snapshot (4556 models, 336 anim records)
+PASS: memory tui observation complete
+=== END tui_n1_active_r3 exit=0 2026-09-05T05:47:02Z ===
+4:PASS: memory tui observation complete
