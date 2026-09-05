@@ -1,0 +1,29 @@
+APPROVE
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48 plus dirty host tree, untracked source included) and vendor/fr-client-rust (codex/memory-sprite-reuse @ 4f2048e-dirty). Source only. Tests/live not re-run here and are not evidence. No memory baseline.
+
+New hop (troll_door approach)
+
+Open-state bypass: approach runs only when cheb(here, edge.at) > 1 and the loc family does not read open. An open door sends the exit walk from outside radius 1 instead of countermanding it with approach_tile. Closed + far still approaches; closed + adjacent still Open. Cheap-hop lapse into troll, loc-wait/hop budgets, and the existing closer tests’ Open-then-walk-on-open-tick sequence are intact. Fallback is not removed.
+
+Crossed side/level: crossed is edge.dir.is_some() && here.level == edge.to.level && door_crossed. That is the same half-plane + level predicate as the directional arrival arm, not a path-history proof. Packed door/web/gate edges always carry Some(dir) from placement angle; directionless cannot take this shortcut (documented, and correct versus door_crossed(None) == true). On dest half-plane a closer behind cannot pull Open/approach. False “around the wall on the dest half-plane” still walks to `to` without reopening — right for this edge’s `to`.
+
+Arrival/action: crossed and within close_enough sends nothing and yields to settle. Crossed and not yet there walks hop.to, then settle. Directional closed-behind test covers all four dirs and asserts no extra loc/walk on the arrival poll.
+
+Closed-door recovery: not crossed + closed + far → approach; not crossed + closed + adjacent → Open; open → walk, never OP_LOC1 (Close). Offset-leaf lookup unchanged.
+
+Tests added match the described regressions (open multi-snapshot with/without dir; four-dir closed-behind; no action at arrival). Existing closer/open-without-click/offset/stun/transport tests are still in the file. Traveller.rs is the only source file newer than the nav-capture approval; client dirty set is unchanged.
+
+Whole dirty branch
+
+Prerequisite, instrumentation, sprite reuse, stun recovery, panel one-renderer, and nav-capture match the prior APPROVE. No new blocking defect in that stack.
+
+Non-blocking
+
+Fixture door_edge() is directionless; a closed door behind a walker still approaches there. Live packed doors are not that case.
+
+edge_loc_open’s Close-action fallback can skip approach when ids do not match, then loc-wait in place. Same ids would have blocked after approach before; not a successful-path change.
+
+Not accepted from this review
+
+No live closer/panel32 result, no memory/latency baseline, no claim that door_crossed is a path-history proof.

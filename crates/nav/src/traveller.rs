@@ -1745,9 +1745,8 @@ impl FollowRun {
     }
 
     /// One door-troll poll: read the door's open/closed state from the
-    /// snapshot's locs and re-send — `op_loc` always, plus the same-tick
-    /// walk when the door reads open — so a tick-perfect closer cannot
-    /// slam the door between the open and the walk. Returns a terminal
+    /// snapshot's locs: Open a closed door, walk through an open door,
+    /// and continue to the exit once crossed without reopening behind us. Returns a terminal
     /// outcome (a refused send, or a missing-loc block after the loc-wait
     /// budget) or `None` to keep polling.
     fn troll_door<D: Driver>(
@@ -1771,12 +1770,32 @@ impl FollowRun {
                 self.loc_wait
             );
         }
-        // The game only accepts an `op_loc` from adjacent: while the
-        // player is outside chebyshev 1 of the door (the cheap hop may
-        // have lapsed while still approaching), re-send the approach walk
-        // instead of the interact. Only once adjacent does the troll
-        // re-send `op_loc` + the same-tick walk.
-        if cheb(here, edge.at) > 1 {
+        // Once on the destination side, a closer behind us must not pull
+        // us back. Use the same directional/level evidence as arrival;
+        // directionless edges cannot establish crossing from position.
+        let crossed = edge.dir.is_some()
+            && here.level == edge.to.level
+            && door_crossed(&edge, here);
+        if crossed {
+            self.loc_wait = 0;
+            if cheb(here, hop.to) <= self.close_enough {
+                return None; // Let the normal settle arm finish the leg.
+            }
+            let mut ix = Interactions::new(snapshot, d);
+            let result = ix.walk(hop.to);
+            report_walk(options, snapshot, here, hop.to, &result);
+            return match result {
+                SendResult::Sent { .. } => None,
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    Some(TravelOutcome::Refused { at: here, reason })
+                }
+            };
+        }
+        // Adjacency is needed to Open a closed door, not to walk through
+        // an open one. Re-approaching an open door countermanded the exit
+        // walk whenever its destination was several tiles beyond the door.
+        if cheb(here, edge.at) > 1 && !edge_loc_open(snapshot, &edge) {
             let Some(approach) = approach_tile(snapshot, edge.at, here) else {
                 // No standable tile adjacent to the door in the loaded
                 // scene: keep waiting, bounded by the hop budget.
@@ -6072,6 +6091,77 @@ mod tests {
             rec.walked.contains(&(3, 0)),
             "troll walks through the open door"
         );
+    }
+
+    #[test]
+    fn troll_open_door_progress_does_not_reverse_to_approach() {
+        // A far-side target takes several snapshots to reach. Recovery must
+        // not replace the forward walk with an approach once outside radius1.
+        for dir in [None, Some(DoorDir::E)] {
+            let mut c = scene_client();
+            plant_door(&mut c, true, 1);
+            let mut snap = snap_at(&mut c, 0, 0);
+            let mut edge = door_edge();
+            edge.dir = dir;
+            edge.open_loc_id = Some(1531);
+            edge.to.x = 3205;
+            let route = Route { legs: vec![Leg::Transport { edge: edge.clone() }], dest: edge.to, ticks: 1.0 };
+            let mut options = TravelOptions { close_enough: 0, ..TravelOptions::default() };
+            let mut run = FollowRun::start(route, &options);
+            let leg = run.legs.pop_front().unwrap();
+            run.transport = Some(TransportHop {
+                leg, to: edge.to, ticks_waited: 0, sent_tile: None,
+                tries: 0, troll: true, chat_seq: 0, dialog_page: None, approach: None,
+            });
+            let mut rec = FollowRec { route: Some((0, 0)), ..FollowRec::default() };
+            for x in [0, 2, 3, 4] {
+                plant_player(&mut c, x, 0);
+                bump_rebuild(&mut c, &mut snap);
+                let before = rec.walked.len();
+                assert!(matches!(run.poll_transport(&mut rec, &snap, &mut options, &mut None), Poll::Watching));
+                assert_eq!(&rec.walked[before..], &[(5, 0)], "forward progress at x={x}, dir={dir:?}");
+                assert_eq!(rec.loc_ops, 0);
+            }
+            plant_player(&mut c, 5, 0);
+            bump_rebuild(&mut c, &mut snap);
+            assert!(matches!(run.poll_transport(&mut rec, &snap, &mut options, &mut None), Poll::LegDone));
+        }
+    }
+
+    #[test]
+    fn troll_does_not_reopen_a_door_behind_the_walker() {
+        for (dir, player, target) in [
+            (DoorDir::E, (6, 4), (8, 4)),
+            (DoorDir::W, (2, 4), (0, 4)),
+            (DoorDir::N, (4, 6), (4, 8)),
+            (DoorDir::S, (4, 2), (4, 0)),
+        ] {
+            let mut c = scene_client();
+            plant_door_at(&mut c, false, 4, 4);
+            let mut snap = snap_at(&mut c, player.0, player.1);
+            let mut edge = door_edge();
+            edge.at = WorldTile { x: 3204, z: 3204, level: 0 };
+            edge.dir = Some(dir);
+            edge.open_loc_id = Some(1531);
+            edge.to = WorldTile { x: 3200 + target.0, z: 3200 + target.1, level: 0 };
+            let route = Route { legs: vec![Leg::Transport { edge: edge.clone() }], dest: edge.to, ticks: 1.0 };
+            let mut options = TravelOptions { close_enough: 0, ..TravelOptions::default() };
+            let mut run = FollowRun::start(route, &options);
+            let leg = run.legs.pop_front().unwrap();
+            run.transport = Some(TransportHop {
+                leg, to: edge.to, ticks_waited: 0, sent_tile: None,
+                tries: 0, troll: true, chat_seq: 0, dialog_page: None, approach: None,
+            });
+            let mut rec = FollowRec { route: Some((0, 0)), ..FollowRec::default() };
+            assert!(matches!(run.poll_transport(&mut rec, &snap, &mut options, &mut None), Poll::Watching));
+            assert_eq!(rec.walked, vec![target], "direction {dir:?}");
+            assert_eq!(rec.loc_ops, 0);
+            plant_player(&mut c, target.0, target.1);
+            bump_rebuild(&mut c, &mut snap);
+            assert!(matches!(run.poll_transport(&mut rec, &snap, &mut options, &mut None), Poll::LegDone));
+            assert_eq!(rec.walked, vec![target], "arrival must not send another action");
+            assert_eq!(rec.loc_ops, 0);
+        }
     }
 
     #[test]
