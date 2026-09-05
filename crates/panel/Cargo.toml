@@ -26,3 +26,6 @@ pollster = "0.4"
 [[bin]]
 name = "panel-play"
 path = "src/main.rs"
+
+[features]
+memory-profile = ["host-play/memory-profile"]

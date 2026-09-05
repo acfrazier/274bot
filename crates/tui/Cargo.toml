@@ -22,3 +22,6 @@ host = { path = "../host" }
 [[bin]]
 name = "tui-play"
 path = "src/main.rs"
+
+[features]
+memory-profile = ["host-play/memory-profile"]

@@ -1,3 +1,7 @@
+#[cfg(feature = "memory-profile")]
+#[global_allocator]
+static ALLOCATOR: host_play::memory::CountingAllocator = host_play::memory::CountingAllocator;
+
 fn parse_mode() -> panel::RunMode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.iter().any(|a| a == "--prod") {

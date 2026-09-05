@@ -293,6 +293,8 @@ fn fire_pending_catalog_start(
 /// publication, and the per-username walk arms (the same `WalkArm` map
 /// `host_play::arm_walk_on` latches and the panel drives).
 pub struct TuiSession {
+    #[cfg(feature = "memory-profile")]
+    memory: Option<host_play::memory::Run>,
     play: Option<Play>,
     vault: Option<Vault>,
     pub error: Option<String>,
@@ -369,6 +371,8 @@ impl TuiSession {
         let mut js = script::JsLibrary::new(script::default_js_store());
         let _ = js.restore(); // missing/broken store is not fatal here
         Self {
+            #[cfg(feature = "memory-profile")]
+            memory: None,
             play: None,
             vault: None,
             error: None,
@@ -934,6 +938,25 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        #[cfg(feature = "memory-profile")]
+        if let Some(run) = self.memory.as_mut() {
+            app.focused = Some(run.focus_index());
+            if let Some(play) = self.play.as_mut() {
+                play.focus(&run.names[run.focus_index()]);
+                match run.poll(play) {
+                    Ok(true) => {
+                        eprintln!("PASS: memory tui observation complete");
+                        std::process::exit(0);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!("FAIL: memory tui: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+
         let statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         // Running slots join the strip even when they are not in the
         // vault (live minted names).
@@ -1127,6 +1150,22 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         lowmem: true,
         mainland: false,
     });
+
+    #[cfg(feature = "memory-profile")]
+    if let Some(config) = host_play::memory::Config::from_env()? {
+        host_play::memory::require_live_benchmark()?;
+        let run = host_play::memory::Run::prepare(config, "tui")?;
+        session.options.mainland = true;
+        session.unlock_at(&run.vault, &run.pass)?;
+        session.names = run.names.clone();
+        session.spawn_all();
+        session.focus(&run.names[0]);
+        let mut app = TuiApp::new("274bot memory benchmark");
+        app.names = run.names.clone();
+        app.focused = Some(0);
+        session.memory = Some(run);
+        return run_loop(session, app);
+    }
 
     match mode {
         RunMode::Live(name) => {

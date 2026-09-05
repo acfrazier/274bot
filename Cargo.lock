@@ -2320,6 +2320,7 @@ dependencies = [
  "libc",
  "nav",
  "rand_core",
+ "scenario",
  "script",
  "serde_json",
  "vault",

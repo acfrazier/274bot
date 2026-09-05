@@ -1293,6 +1293,44 @@ impl Session {
         Ok(())
     }
 
+    #[cfg(feature = "memory-profile")]
+    pub fn prepare_memory(&mut self, run: &host_play::memory::Run) -> Result<(), String> {
+        self.persist_ui = false;
+        self.mainland.store(true, Ordering::Relaxed);
+        self.scatter.store(false, Ordering::Relaxed);
+        if !self.start_vault(&run.vault, &run.pass) {
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| "benchmark vault failed".into()));
+        }
+        self.set_multibox(true);
+        for name in &run.names {
+            let _ = self.wall.load(name);
+            self.ensure_slot(name, self.arm_for_profile(name));
+        }
+        self.sync_wall_focus();
+        self.wall.chooser_open = false;
+        self.memory_focus(run);
+        self.login_all();
+        Ok(())
+    }
+
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_focus(&mut self, run: &host_play::memory::Run) {
+        let index = run.focus_index();
+        let name = &run.names[index];
+        if self.focus.lock().unwrap().focused.as_ref() != Some(name) {
+            self.select(name);
+        }
+        let mut focus = self.focus.lock().unwrap();
+        focus.renderer = true;
+        focus.only_render_selected = false;
+        for name in &run.names {
+            focus.renderer_by.insert(name.clone(), true);
+        }
+    }
+
     /// Live `stress50` RAM watch: temp vault `s00`…`s49` (password =
     /// username, uids `274_000_100 + i`). Every member is a full `Client`
     /// (flat model — no lean extras / channel-head). `s00` is FIFO head +

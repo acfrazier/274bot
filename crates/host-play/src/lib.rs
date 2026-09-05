@@ -3668,6 +3668,8 @@ fn spawn_slot_thread(
                             let name = &obs_name;
                             // Panel/TUI WalkArm + scenario follow gate on the
                             // same hold as step_nav_bot (prev-frame status).
+                            #[cfg(feature = "memory-profile")]
+                            memory::client_frame(c, name, status.hold);
                             slot_frame(c, name, status.hold);
                             if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                                 api::interact::mainland_hop(c);
