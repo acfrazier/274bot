@@ -41,13 +41,14 @@ pub struct QueuePos {
     pub total: u32,
 }
 
-/// FIFO queue of login permit requests.
+/// Login FIFO with focused-slot priority when that slot requests a permit.
 #[derive(Debug)]
 pub struct LoginQueue {
     spacing: Duration,
     ip_cap: usize,
     ip_window: Duration,
     queue: VecDeque<i32>,
+    preferred: Option<i32>,
     last_grant: Option<Instant>,
     window: VecDeque<Instant>,
     by_uid: HashMap<i32, UidState>,
@@ -66,6 +67,7 @@ impl LoginQueue {
             ip_cap,
             ip_window,
             queue: VecDeque::new(),
+            preferred: None,
             last_grant: None,
             window: VecDeque::new(),
             by_uid: HashMap::new(),
@@ -78,7 +80,11 @@ impl LoginQueue {
     pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
         self.prune_uid(now);
         if !self.queue.contains(&uid) {
-            self.queue.push_back(uid);
+            if self.preferred == Some(uid) {
+                self.queue.push_front(uid);
+            } else {
+                self.queue.push_back(uid);
+            }
         }
         if self.queue.front() != Some(&uid) {
             return Permit::Wait(QUEUE_POLL.max(self.spacing));
@@ -108,10 +114,24 @@ impl LoginQueue {
     }
 
     /// Put `uid` at the front of the FIFO (TV head logs in first). If it
-    /// was already queued, it is moved; if not, it is inserted.
+    /// was already queued, it is moved; if not, it is inserted. Priority
+    /// persists for later requests until focus changes.
     pub fn prefer(&mut self, uid: i32) {
+        self.preferred = Some(uid);
         self.queue.retain(|&u| u != uid);
         self.queue.push_front(uid);
+    }
+
+    /// Remember the focused uid for subsequent handshakes. An online or
+    /// unarmed slot must not reserve a FIFO entry and block other logins.
+    pub fn set_preferred(&mut self, uid: Option<i32>) {
+        self.preferred = uid;
+        if let Some(uid) = uid {
+            if self.queue.contains(&uid) {
+                self.queue.retain(|&queued| queued != uid);
+                self.queue.push_front(uid);
+            }
+        }
     }
 
     /// Front-first copy of the FIFO (tests / panel TV-first assert).
@@ -251,6 +271,40 @@ mod tests {
             })
             .max()
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn preferred_uid_retains_priority_after_first_login() {
+        let now = Instant::now();
+        let mut q = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
+        q.prefer(1);
+        assert_eq!(q.request_permit(1, now), Permit::Grant);
+        assert!(q.queued_uids().is_empty());
+        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
+        assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+        assert_eq!(q.queued_uids(), vec![1, 2]);
+        assert_eq!(q.request_permit(1, now + Duration::from_secs(1)), Permit::Grant);
+        assert_eq!(q.request_permit(2, now + Duration::from_secs(2)), Permit::Grant);
+    }
+
+    #[test]
+    fn focus_changes_do_not_reserve_online_slots_or_bypass_limits() {
+        let now = Instant::now();
+        let mut q = LoginQueue::new(Duration::from_secs(1), 1, Duration::from_secs(60));
+        q.set_preferred(Some(1));
+        assert!(q.queued_uids().is_empty());
+        assert_eq!(q.request_permit(2, now), Permit::Grant);
+        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
+        assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+        q.set_preferred(Some(3));
+        assert_eq!(q.queued_uids(), vec![3, 1]);
+        assert!(matches!(q.request_permit(3, now + Duration::from_secs(1)), Permit::Wait(_)));
+        q.leave(3);
+        q.leave(1);
+        q.set_preferred(None);
+        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
+        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
+        assert_eq!(q.queued_uids(), vec![2, 3]);
     }
 
     #[test]
