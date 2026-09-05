@@ -3065,6 +3065,8 @@ impl Play {
     /// `set_draw` on the next tick).
     pub fn focus(&mut self, name: &str) {
         self.focused = Some(name.to_string());
+        let uid = self.arms.get(name).map(|arm| arm.uid.load(Ordering::Relaxed));
+        self.queue.lock().unwrap().set_preferred(uid);
         self.wake(name);
     }
 
@@ -3324,6 +3326,7 @@ impl Play {
         self.wires.lock().unwrap().remove(name);
         if self.focused.as_deref() == Some(name) {
             self.focused = None;
+            self.queue.lock().unwrap().set_preferred(None);
         }
         // Wake a parked thread so its next probe sees `stop`; the wake end
         // stays alive (removed after the join) so the poll cannot miss it.
@@ -4726,9 +4729,22 @@ mod tests {
             |_, _, _| {},
         );
         assert_eq!(play.focused(), None, "no slot is focused before focus()");
+        play.arms.insert("b".into(), SlotArm::new(11, false));
+        play.arms.insert("c".into(), SlotArm::new(12, false));
+        *play.queue.lock().unwrap() = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
         play.focus("b");
         assert_eq!(play.focused().as_deref(), Some("b"));
+        let now = Instant::now();
+        {
+            let mut q = play.queue.lock().unwrap();
+            assert!(q.queued_uids().is_empty(), "focus must not reserve a login");
+            assert_eq!(q.request_permit(11, now), Permit::Grant);
+            assert!(matches!(q.request_permit(12, now), Permit::Wait(_)));
+            assert!(matches!(q.request_permit(11, now), Permit::Wait(_)));
+            assert_eq!(q.queued_uids(), vec![11, 12], "focused reconnect has priority");
+        }
         play.focus("c");
+        assert_eq!(play.login_queue_uids(), vec![12, 11]);
         assert_eq!(
             play.focused().as_deref(),
             Some("c"),
