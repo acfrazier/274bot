@@ -1,0 +1,36 @@
+APPROVE
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48 plus dirty host tree) and vendor/fr-client-rust (codex/memory-sprite-reuse @ 4f2048e-dirty). Source only. No live claim. nav249 / api5 / host-play129 taken as given; frontend/build/live still pending.
+
+Stun recovery
+
+Native onset is PLAYER_INFO-tied. rebuild_player only runs when the player gen moves, then increments snapshot.tick and records id 245 keyed by spotanim_last_cycle. Visual expiry does not clear it; logout/no-local-player does. Fields are #[serde(skip)]. Getter requires ingame plus a local player view.
+
+crates/api/src/snapshot.rs:537-544, 834-842, 1154-1171
+
+Packed id is 245=stunned_thieving in Server content/pack/spotanim.pack. thieving.rs2 plays that spotanim one p_delay before %stunned / walktrigger. movecheck.rs2 cancels with p_walk(coord) while map_clock < %stunned. Decoder stamps last_cycle on every SPOTANIM (client.rs ~7071-7078), including a same-id restart. Window of 11 distinct snapshot ticks is 10 plus the animation lead; 8-tick guards wait two extra ticks by design.
+
+FollowRun waits on snapshot.tick wrapping_sub onset, not poll count. Duplicate snapshots do not consume the window. One recovery per run; a later 245 does not extend it. Pending walk is rearmed with sent=false using the retained hop and Interactions::walk (local collision), not find/BFS. Already inside the hop radius is left sent. Guardian/hold skips step_nav_bot while snapshots keep rebuilding; release rearms or arrives without replaying a finished walk. Disconnect clears stun_wait and falls into existing settle expiry on that same poll. Transport sets retry_pending and re-walks the approach before loc interact. OffScene/Unreachable/SceneUnavailable still watch; other refusals still terminal. send_walk_hop refusal ordering is unchanged.
+
+crates/nav/src/traveller.rs:624-735, 1522-1587, 1600-1638, 3548-3728, 5687-5767
+crates/host-play/src/lib.rs:2411-2415, 3684-3818
+
+Public JS / FB: isolate Snapshot table has no stun fields. Additive walk-near only. JS interact still serde-tags radius, then FB stores it in index. walkResilient queues one walk/walk-near and waits; it does not re-BFS every tick. Same-dest requested_route latch also blocks repeat searches.
+
+crates/script/schema/isolate.fbs Snapshot / Interact
+crates/script/src/shim/traversal.js walkResilient
+crates/host-play/src/lib.rs:2326-2340
+
+Diagnostics: cfg memory-profile plus BOT_MEMORY_DIAGNOSTICS. Rings of 32 × 512 chars. FindStart/FindEnd, WalkAttempt, StunDeferred/StunResumed, FollowEnd. Sidecar has spotanim id + last_cycle. create_new sidecars do not clobber samples.jsonl. Normal builds keep on_event = None; stun logic itself is always on, as authorized.
+
+crates/host-play/src/memory_diagnostics.rs
+crates/host-play/src/lib.rs:2456-2478
+crates/host-play/src/memory.rs prepare/write_diagnostics
+
+Tests cover duplicate-tick deferral, one-recovery + ordinary stall, hold/arrival, onset vs visual expiry vs new packet, transport rearm before interact, disconnect without another game tick. That matches the brief. No live proof that 11 ticks is enough on the bank walk.
+
+Whole dirty branch (prereq + instrumentation + sprite reuse)
+
+Route ownership: one worker, generation token, publish only on a real path, NoPath/spawn failure clears requested_route, stale publish ignored. Adjacent booth does not re-queue walk-near. Fixture loadouts avoid operator disk on the sustain path. foodOf/selectedLoadout/withdrawTo are host-owned. Instrumentation leases/timers stay opt-in no-ops until enable(); panel enables profiling before inject_device. Client dynamic sprites recycle completed indices only; static stay; double-teardown does not double-free. No new blocking defect in that stack relative to the prior approved reviews.
+
+Non-blocking: script Pause still does not freeze Traveller (only guardian hold does). Recovery-on-release is the skip-follow path; pause continues to poll and will wait in real time. Residual live/frontend/build work is unchanged.

@@ -1,0 +1,14 @@
+{
+  "note": "Door approach fix approved by grok-4.6; live closer and full captured panel32 diagnostic passed. Diagnostic only: captures, concurrent review and CPU sampling. 128 deferred by operator.",
+  "binary_sha256": {
+    "tui-play": "e8eceb5564044b012832eaaccae0d48c559f039efcdc3b065bbaa1b580c6678d",
+    "panel-play": "37937992cbfd08f346bae60dd58b8be2dd61b29971651280617178c0e594d635"
+  },
+  "latest_measurement": "diagnostics/20260905T191752Z_panel_n32_active",
+  "latest_measurement_exit_code": 0,
+  "review": "grok-4.6-door-approach-review.txt",
+  "report": "door-approach-fix.md",
+  "committed_host_code": "72804cd",
+  "committed_client_code": "b555f84b21c7156905f1413512ed54a530ae97b5",
+  "commit_note": "Commits created after measurement; source bytes match the measured dirty build."
+}

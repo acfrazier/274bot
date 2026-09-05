@@ -1,0 +1,21 @@
+Reviewer: grok-4.6 (this session). Read-only. No live/memory/scale acceptance.
+
+Checkout: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48, dirty, untracked source included). Client: vendor/fr-client-rust @ 4f2048e on codex/memory-sprite-reuse, dirty.
+
+Verdict: approved for code review. No remaining actionable code defects.
+
+Last fix
+
+publish_route NoPath now clears requested_route after the generation check. Spawn failure clears it only while the spawn token still owns the slot. Stale publish still returns on generation mismatch before touching requested_route, route, or traveller.
+
+The same-key predicate is unchanged:
+
+  requested_route == key && (route_worker.is_some() || route.is_some())
+
+That is what made a retained unrelated follow look like a satisfied booth search. After NoPath the latch is gone, so a later same (tile, radius, teleports) arms a new generation while keeping the old route.
+
+failed_radius_search_can_retry_same_destination_with_old_route_retained drives that path: two async NoPath searches to an out-of-grid dest with an unrelated route retained; it requires generation 1 then 2 and would have stayed at 1 before the clear. route_publication_rejects_stale_results_and_preserves_route_on_failure still covers stale Routed vs current NoPath vs current Routed.
+
+Not accepted from this review
+
+Host-play 129 was not re-run here. 20260905T132433Z is mapping evidence and predates this latch. 20260905T133145Z is a prior binary. Diagnostic JSONL is not a memory baseline.

@@ -1,0 +1,33 @@
+APPROVE
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48 plus dirty host tree, untracked source included) and vendor/fr-client-rust (codex/memory-sprite-reuse @ 4f2048e-dirty). Source only. No live claim. Tests/builds not re-run.
+
+New hop (panel one drawing / 31 sim)
+
+Opt-in only. Run.single_renderer is BOT_MEMORY_SINGLE_RENDERER=="1", read in Run::prepare. Without BOT_MEMORY_N, Config::from_env is None and this path never runs. Normal interactive panel/TUI is unchanged.
+
+focus_index returns 0 when single_renderer, else the existing 30s rotation. panel memory_focus still runs every UI frame: select(names[index]) then memory_draw_policy. That pins Game to slot zero and re-applies policy so a mid-run checkbox cannot grow heads.
+
+memory_draw_policy (memory-profile only):
+- single: renderer on, game pane open, only_render_selected on, renderer_by Off for every name including the focused rail bit. Focused seat still draws because renderer_for ignores per-slot Off. Unfocused stay Off even if only_render_selected is flipped.
+- default: only_render_selected off, renderer_by On for all names, game_pane_open left alone (Session default is open). Same all-render / rotating-focus cell as before.
+
+prepare_memory still sets persist_ui=false. select/last_focus/ui_state::save stay gated on that. No operator disk settings.
+
+Launcher pops BOT_MEMORY_SINGLE_RENDERER (and the other diagnostic knobs) then sets it only for --single-renderer. Flag is panel-only. Metadata records single_renderer and render_policy fixed-one vs rotating-all vs TUI none.
+
+Diagnostics snapshot includes client.draw (sampled on the existing 1Hz frame capture). Slot threads still set_draw from draw_for_slot; draw-off still drops the GPU head. Thiever level 50 is still advancestat thieving 50 on both catalog and sustain fixtures. Focused_50 is untouched.
+
+Tests: memory_single_renderer_keeps_other_thirty_one_heads_off covers 32 names, one draw, rail override, and all-render 32. TUI parity doc is a proposal only; no layout/code from it.
+
+Whole dirty branch
+
+Prerequisite (route ownership / NoPath latch, fixture loadouts, WalkNear, bank sequencer), instrumentation, sprite reuse, and stun recovery match the prior approved reviews. No new blocking defect in that stack.
+
+Non-blocking
+
+Diagnostics sample c.draw before the same-tick slot_frame set_draw; after the first apply it is stable through observation. Run unit tests do not assert the env/focus pin (the policy test does). TUI would honor the env if set outside the launcher; the launcher will not.
+
+Not accepted from this review
+
+No live panel cell, no measurement, no savings/scale claim.

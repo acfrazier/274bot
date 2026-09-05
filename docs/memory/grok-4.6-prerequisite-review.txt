@@ -1,0 +1,97 @@
+Reviewer: grok-4.6. Checkout: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48, dirty). Client submodule: vendor/fr-client-rust @ 4f2048e, dirty. Read-only; no approval.
+
+The authorized slice is real: Thiever food/loadout/banking is mapped onto host APIs (not a cloned JS policy), walk-near is a new interact op, and dynamic sprites now recycle. Unit tests named in the brief do not cover the handoff races below. Live acceptance is still pending.
+
+---
+
+High — stale walk-near workers / no in-flight ownership
+crates/host-play/src/lib.rs:2330-2408
+
+Exact walk still refuses when bot.route is Some. Radius walk does the opposite: it clears route + Traveller and always spawns. The worker writes NavBot.route with no generation. The lock is dropped before spawn, so a second walk-near (retry, same-tick batch, or the next await) spawns another worker.
+
+Failure: openNearestAccess arms walk-near to the booth; delayUntil succeeds; catalog walkResilient(radius>0) back to the guard stand and spawns worker B. Worker A finishes later and installs the booth route. The player walks back to the bank mid-pickpocket. Same pattern for createReturnToAnchorTask (radius 8) overlapping a bank approach.
+
+---
+
+High — walk-near tears down nav before a path exists
+crates/host-play/src/lib.rs:2340, 2384-2405
+
+route_with_radius clears the armed route first. If every approach_tiles candidate is NoPath, the worker stores nothing.
+
+Failure: nearest_booth is on a blocked/unloaded tile set, or spawn fails after the clear. An in-progress return-to-guards route is dropped and never replaced. The script sits in delayUntil for up to 60s with no follow.
+
+---
+
+High — openNearestAccess queues walk-near even when already adjacent
+crates/script/src/shim/bank.js:204-216
+(contrast crates/script/src/shim/traversal.js:35)
+
+Traversal.walkResilient returns true without queueing when already inside radius. Bank.openNearestAccess always queues walk-near, then waits.
+
+Failure: player is already Chebyshev 1 from the Ardougne booth (seeded stand, or a previous approach that already arrived). The new walk-near clears Traveller and may path onto/off the booth tile while openBooth is in flight. Use-quickly misses; bank never loads; restock aborts.
+
+---
+
+Medium — withdrawTo treats one late snapshot as terminal failure
+crates/script/src/bank_withdraw.rs:19
+crates/script/src/shim/steal_rules.js:22-23
+
+After phase "op", !ok returns done with whatever count-start is. JS sets ok from Execution.delayUntil(..., 2500) on Inventory.count.
+
+Failure: BOT_DEBUG hitch / slow isolate / bank packet lands after 2.5s. First Withdraw-10 did apply on the next snapshot, but withdrawTo already returned 0. Thiever thinks foodWithdraw 10 failed, re-enters banking, or keeps stealing with 0 food and dies. The 40-round cap never runs because the first miss exits.
+
+Need>10 also calls Bank.withdrawX, which throws notImpl when the posted bank row has no "Withdraw X" op (bank.js:145-146). foodWithdraw 10 stays on Withdraw-10; a larger target hits that throw.
+
+---
+
+Medium — nextWithdrawChunk is still notImpl
+crates/script/src/shim/steal_rules.js:9-11
+
+withdrawTo is the new Rust sequencer; nextWithdrawChunk still throws. If the unchanged catalog script still calls nextWithdrawChunk, restock never reaches withdrawTo. That matches prior honest live failures on missing mappings. Not asking for a foreign-runtime clone; the shim still throws.
+
+---
+
+Medium — loadout overlay is racy with start_load’s disk snapshot
+crates/script/src/slot.rs:125
+crates/host-play/src/memory.rs:389-406
+crates/script/src/loadouts_store.rs:249-251
+
+Every start_load posts ~/.274bot/loadouts.json into that isolate. The sustain path then posts a one-row "Memory food" list. Commands are ordered on the isolate channel, but selected_compat_loadout falls back to rows.first() when the wanted name is missing.
+
+Failure: onStart/first loop runs after disk loadouts and before the Memory food post (or panel bag loadout name does not match). scriptFood resolves the first disk carry, or foodHealAmount throws notImpl. Two panel slots share the disk file; per-slot isolation is only the later post_loadouts, which panel play does not do.
+
+---
+
+Medium — approach_tiles prefers standing on the target when that tile is walkable
+crates/host-play/src/lib.rs:9311-9328
+
+Sort key is (Chebyshev to target, then to from). The occupied-target unit test only holds because the fixture sets collision.blocked on the center. NPC/stand tiles are often walkable.
+
+Failure: walk-near radius 1 to a Guard or a walkable booth tile pathfinds onto the target first. Interact range/path then fails, or the player steps off the Use-quickly tile as above.
+
+---
+
+Client sprite reuse (4f2048e dirty) — no high defect
+
+crates/client/src/core/world.rs:876-944, 1023-1068
+crates/client/src/render/world.rs:475-487, 1226-1235
+
+Dynamics pop free_dynamic_sprites; statics always append; release_dynamic_sprite del_sprite then frees; remove_sprites also stamps i32::MIN / model None. add_dynamic and remove_sprites both live in scene() and both skip when scene_state != 2, so last-FBO freeze does not append without release. The 1000-frame unit test matches the intended bound (one static + one reused dynamic).
+
+Low: last_sprite_index is not cleared on release (world.rs:833 vs 1025). Anything attaching via last_sprite_index after remove_sprites hits a freed hole until the next set_sprite. Entity passes that use add_dynamic’s return value are fine.
+
+Low: release trusts the dynamic_sprites list. A static index in that list would be recycled. Current add_dynamic/set_sprite(dynamic=true) is the only writer.
+
+---
+
+Not defects in this hop
+
+load_isolate first-tick paint 1→2 matches existing cadence; assertion only.
+FOOD_HEAL is filled after content_json and before user modules; gold food/eat path is consistent with that.
+WalkNear radius packed in Interact.index is op-tagged; isolate_fb roundtrip includes radius 3.
+docs/memory/diagnostics is sidecar-only; not a baseline.
+AGENTS.md dirty text is out of this functional scope.
+
+---
+
+Verdict: not approved. Map-and-measure work is in the right layer (Rust sequencer + existing Bank/Traversal ops + client arena reuse), but walk-near is not a safe handoff: it does not own in-flight workers, it drops nav before a path exists, and bank approach re-arms when already adjacent. Bank withdrawal converges only on the happy snapshot timing. Loadout isolation depends on a second post after a process-wide disk read. Sprite reuse looks correct for the measured append-only leak; do not treat diagnostic JSONL as an accepted memory baseline. Live still has to prove a sustained Thiever restock without the stale-route failure above.

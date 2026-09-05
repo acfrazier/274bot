@@ -1,0 +1,53 @@
+# Memory instrumentation — 2026-09-05
+
+This is observational instrumentation, not a memory optimization. The final 32-slot rerun must use a fresh joint panel/TUI release build with memory-profile. Earlier redirected TUI runs used the no-terminal path and did not draw the UI; the launcher now supplies a controlling 120×40 pseudo-terminal and records terminal=true. --headless explicitly retains the old diagnostic path. No keystrokes or operator settings are supplied.
+
+## Measurement domains
+
+- Existing resident, peak-resident and Rust allocator fields keep their meanings. Do not add overlapping memory domains together.
+- snapshot_inflight_bytes/capacity count the actual Vec payload/allocation from immediately before channel send until decoding/materialization ends. A drop lease handles send errors, malformed input and receiver teardown. They include queued plus currently decoding messages. snapshot_sum_isolate_peak_capacity sums per-isolate high-water marks; it is explicitly not a simultaneous process peak.
+- v8_used_bytes/total_bytes sum V8 heap statistics for script isolates, sampled on their owning threads at most once per second during normal command processing. No probes, extra messages, forced GC, heap-limit changes or timeout changes. Coverage and maximum sample age accompany the totals. A process-wide weak registry retains visibility of detached threads without retaining their ownership; heap gauges clear at actual runtime teardown. Throwaway script-validation runtimes, V8 external allocations and native engine overhead are outside this heap metric.
+- gpu_buffer_bytes and gpu_texture_bytes track logical client backend/atlas ownership using descriptor payload sizes. They include shared model/font/sprite atlases once, backend scene/depth/frame/chrome/minimap textures, uniform/vertex buffers, growth replacement overlap and synchronous readback buffers. gpu_tracked_bytes is their sum; gpu_peak_tracked_bytes is the tracked high-water mark. Zero is valid for TUI/CPU operation. These are not physical VRAM figures: driver padding, pipelines/bind groups, pending GPU submissions, host UI/surface resources, and views retained outside a dropped client backend are excluded. No GPU wait/readback is added by profiling.
+- client_tick_count/total_ns/max_ns measure the host client-tick work including observe and frame work, excluding scheduled idle wait. This is not the server tick interval.
+- script_tick_count/total_ns/max_ns measure the existing timed JS execution portion, preserving the original slow-tick boundary. They exclude subsequent paint/log forwarding and V8 sampling. They sum current registered isolate counters and can decrease after Stop/restart; only difference them within a stable active workload.
+- ui_draw_* measure UI construction; ui_frame_* additionally include the synchronous TUI draw/terminal flush or panel render/submit/present call. They exclude the between-frame scheduler wait and are CPU wall durations, not GPU timestamp-query execution times. Client/UI counters are process-cumulative. Maxima are lifetime maxima, so observation means should difference count/total but maxima retain startup hitches.
+
+Instrumentation is bounded (atomics, one weak entry per extant isolate, resource-lifetime leases). Client timers and GPU accounting are disabled until the benchmark enables them before client creation; script counters are compiled only under memory-profile. Rendering cadence, script APIs, wire payloads, command ordering and lifecycle policy are unchanged.
+
+## Verification
+
+The snapshot unit regression exercises queued/consuming/drop/send-failure accounting including Vec capacity. Heap/weak-registration tests cover runtime teardown and registry non-retention. The live-isolate regression posts malformed bytes, preserves command ordering via an existing probe barrier in the test only, checks heap coverage and tick timing, and verifies teardown zeros. All145 existing/new isolate integration tests passed, including slow tick, guardian and pause/resume scenarios. Client lib65 and integration tests draw2, overlays6, render_backend5, world26 and actual GPU atlas accounting1 passed. The GPU test requires an adapter and verifies descriptor bytes through atlas growth and drop.
+
+A short pseudo-terminal TUI1 pilot (20260905T145857Z) completed with real UI draw samples, populated V8 metrics, a nonzero snapshot-capacity high-water mark and zero heap/queue gauges after Stop. It predates the extra full-frame timer and is instrumentation smoke evidence only. Final build/tests and whole-branch grok-4.6 review are required before the requested 32-slot measurement.
+
+Panel pilot20260905T150430Z revealed shared GPU assets were constructed by inject_device before deferred Run::prepare enabled accounting. The panel's opt-in memory config branch now enables profiling before window/GPU initialization; Run::prepare still enables TUI/client tick accounting. The first panel pilot's GPU totals exclude those early assets and are not accepted measurements. A fresh pilot must verify corrected startup accounting. No rendering logic changes.
+
+Corrected panel pilot20260905T150716Z completed: client GPU payload18292776 bytes (buffers1048784, textures17243992), including early shared assets. UI draw and full-frame counters advance. The earlier pilot tracked only8680896 bytes, exposing the startup omission; both artifacts are retained. CUA could not attach to the unbundled panel executable, so no new visual screenshot proof is claimed. Existing client rendering regressions passed.
+
+Whole-branch grok-4.6 review approved the code with no actionable defects (grok-4.6-instrumentation-review.txt; usage confirms completed grok-4.6 session). Corrected a comment about mip counts; accounting already iterates all8 model-atlas mips. Guardian hold paint-only ticks continue before the existing JS execution timer and are excluded from script_tick counters. Panel371 and TUI87 tests also pass. No savings or scale acceptance is implied by code review.
+
+## Requested instrumented 32-slot measurement
+
+20260905T151355Z_tui_n32_active used a fresh joint release build with a real120×40 TUI terminal. Exit1 at359.42s: live112ad_15 stopped with “could not reach Bank booth bank”. All32 initial proofs passed and all90 observation samples had ready32/active32 and complete32-isolate V8 coverage, but only91.37s of the requested600s observation were collected. No normal teardown measurement occurred. This is failed workload evidence, not a passing scale result or accepted baseline. Source/client/binary hashes remained unchanged and no build/reviewer/other benchmark ran during this measurement.
+
+Partial observations only: median RSS3878445056 bytes; median V8 used201459744 and total354549760 bytes. V8 sample age max1254ms. Sampled snapshot capacity median0/max282392 bytes; sum of isolate capacity high-water marks9134464 bytes (not a simultaneous peak). Client GPU buffers/textures0 on TUI. Observation mean CPU durations: client tick11.6577ms, script JS execution0.1538ms, UI construction0.1415ms, full TUI draw/flush0.2352ms. Lifetime maxima include startup and are preserved separately in qualification-summary.json. No memory domain is summed with RSS.
+
+The failing bot queued one WalkNear to(2656,3286,0), radius3, then stayed at(2659,3311,0) from179.4s until the180-second bank-walk timeout. It retained3 food and48/50HP. The trace overlaps a failed pickpocket/stun, but cannot prove a stun caused the walk failure. Its JS kept completing ticks; queues drained, and no memory/slow-tick error was reported. We cannot distinguish NoPath from a stalled/rejected route with current route diagnostics. No automatic retry, timeout extension or workload change was introduced. Next prerequisite is a focused Rust navigation outcome/dispatch reproduction before attempting another baseline. The original Thiever supplies attempts:4; the existing compatibility walkResilient currently queues a single host request and waits. This remains an unverified compatibility gap relevant to the route failure.
+
+Detailed failed slot state is in failure-detail.json; raw samples, diagnostics, PTY log, metadata and qualification-summary.json remain intact. Instrumentation and all affected tests pass; grok-4.6 approved the code, not this failed run.
+
+## Update: bounded stun recovery and completed TUI32 run
+
+See [stun-recovery.md](stun-recovery.md) for implementation, grok-4.6 approval, tests and the successful 20260905T165834Z actual-TUI32 diagnostic. All 32 banked and gained XP through the full observation period; teardown cleared V8 and queued snapshots. No stun recovery event occurred in this run, so that specific live proof remains outstanding. This supersedes the latest-run failure status above, not the requirement for repeated baselines.
+
+## Panel one-renderer follow-up
+
+See [panel-single-renderer.md](panel-single-renderer.md). The panel32 run verified one drawing/31 sim clients but failed on bot12 returning from the bank. Preserve as failed diagnostic evidence; the earlier TUI32 pass remains valid as one diagnostic cell. Built-in F12 screenshots were saved and inspected. A controlled return-route scenario with embedded screenshot checkpoints is the next proposed diagnostic.
+
+## Automated navigation captures: reproduced return-door oscillation
+
+See [nav-capture-diagnostic.md](nav-capture-diagnostic.md). The opt-in panel32 diagnostic saved all five native-snapshot/PNG checkpoints and reproduced a failed return route. Successful sends alternate between the door approach and the far-side destination until the hop expires; the final movement reaches the leg target after route teardown. This provides a focused regression target before another stability run. The same run naturally verified pre-send stun deferral and subsequent arrival on another bot. Host/client/binary provenance matches launch. Grok-4.6 approved the whole dirty branch; affected tests and joint release build passed. The run failed with only82.93s of observation and concurrent review, so it is not an accepted memory baseline.
+
+## Door approach corrected; captured panel32 passed
+
+See [door-approach-fix.md](door-approach-fix.md). The retained closer recovery now preserves forward movement through an open door and does not reopen behind a directional crossing. Red/green regressions, live one-tick closer, full 32-bot panel observation and Stop retention check passed. Grok-4.6 approved. All bots banked and gained XP. This is diagnostic stability evidence, not an accepted memory baseline. The operator agreed to address measurement overhead and measured waste at 1/32 before returning to 128; see [CPU follow-up](cpu-follow-up.md).

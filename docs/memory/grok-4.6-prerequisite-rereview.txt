@@ -1,0 +1,74 @@
+Reviewer: grok-4.6 (this session). Read-only. No approval for live/memory/scale.
+
+Checkout: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48, dirty). Client: vendor/fr-client-rust @ 4f2048e on codex/memory-sprite-reuse, dirty. Untracked bank_withdraw.rs and memory_diagnostics.rs included.
+
+Verdict: not approved for code review.
+
+Previous highs are actually fixed in the new worker/publish path. One new medium remains in that same ownership latch. Live Thiever 20260905T131423Z is still mapping evidence, not this diff.
+
+---
+
+Defects
+
+Medium — same-key walk-near is treated as satisfied whenever any route exists
+
+crates/host-play/src/lib.rs route_with_radius:
+
+  if requested_route == key && (route_worker.is_some() || route.is_some()) { return true }
+
+requested_route is written before the search. publish_route on NoPath returns without touching it. Spawn failure clears worker/pending only. Follow-clear of route (arrive/stall) also leaves the latch.
+
+After a failed radius search the retained route is the previous dest, not this key. A later walk-near with the same (tile, radius, teleports) then returns true and never spawns.
+
+Failure: guards (or any) route is armed; openNearestAccess walk-near to the booth gets NoPath (blocked/unloaded approaches — this is what the 125910Z/130551Z runs were seeing); old follow is kept, which is the intended retain-on-failure. The next same booth walk-near — second restock call, or another walkResilient to that booth while that follow is still live — is a no-op. The player keeps walking the unrelated route. JS openNearestAccess only queues once per call, so this is not an intra-delayUntil retry; it is the next arm of the same dest.
+
+The unit test only feeds publish_route. It never drives requested_route + retained route + a second route_with_radius.
+
+---
+
+Previous highs (checked against current code)
+
+One worker per slot: if route_worker is Some, a new request only replaces pending_route and bumps generation.
+Bounded latest pending: pending_route = Some(...) overwrites.
+Generation publish: worker publishes request.generation; mismatch is ignored.
+Arc token: worker returns unless ptr_eq; spawn failure clears only if the token still owns the slot.
+NoPath / spawn failure do not clear the armed route.
+Traveller.clear only on a published Routed/BankSession.
+Bank.openNearestAccess skips walk-near when Chebyshev to nearest_booth is already <= 1; gold_stubs covers that.
+Fixture start uses start_load_with_loadouts with an in-memory "Memory food" row; it does not read the operator loadouts file.
+Approach sort is (Chebyshev to from, then to target). Occupied center is excluded only when not standable; the test blocks the center bit and keeps a face-wall floor tile. That matches the claimed regression, not “never step on a walkable NPC/booth tile.”
+
+---
+
+Client (4f2048e dirty) — no defect in this hop
+
+Dynamics pop free_dynamic_sprites; statics always append; release_dynamic_sprite del_sprite then frees and refuses a second enqueue on a None slot; remove_sprites stamps i32::MIN and clears the model. 1000-frame test: sprites.len()==2, free list stays 1, reset_map clears reuse state. last_sprite_index stays the last insert after teardown (freed hole). That is the historical observable; left alone as requested.
+
+Low only: release trusts dynamic_sprites. Current writers are add_dynamic / set_sprite(dynamic=true).
+
+---
+
+Not defects here
+
+2500ms withdraw confirmation: catalog stealRules returns on that timeout; changing it is out of scope.
+nextWithdrawChunk still notImpl: Thiever imports withdrawTo; stub deferred.
+withdrawTo X-then-Withdraw-10 fallback and no-progress/full stop: bank_withdraw.rs tests that sequencer. JS Bank.withdrawX still throws if the posted row has no Withdraw-X op; live 131423Z had X. Not a sequencer bug.
+FOOD_HEAL is filled from content_json before shim modules load.
+WalkNear radius round-trips through Interact.index (radius 3 in isolate_fb).
+docs/memory/diagnostics and run_diagnostic.py are sidecars, not a baseline.
+AGENTS.md dirty text is out of functional scope.
+Panel start_load still snapshots ~/.274bot/loadouts.json. The claimed fixture overload does not.
+
+---
+
+Missing acceptance evidence (not defects)
+
+No test that a second worker cannot spawn, that a replaced pending is the one published, or that the Arc token ignores a recreated slot.
+No test for the requested_route latch above.
+Host lib128 / script lib37+gold10+isolate144 / client lib64+world26+overlays+draw+render_backend were not re-run here (read-only).
+20260905T131423Z predates this ownership diff; it does not accept this walk-near code.
+Diagnostic JSONL is not an accepted memory baseline. No approval for memory savings or scale.
+
+---
+
+Do not treat this as live or memory acceptance. Re-review if the requested_route predicate is fixed (clear the latch on NoPath/spawn failure, or require the live route to belong to that key).

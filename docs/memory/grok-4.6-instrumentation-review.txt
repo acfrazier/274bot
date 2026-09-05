@@ -1,0 +1,38 @@
+Reviewer: grok-4.6 (this session). Read-only. No live/memory/scale acceptance.
+
+Checkout: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48, dirty, untracked source included). Client: vendor/fr-client-rust @ 4f2048e on codex/memory-sprite-reuse, dirty.
+
+Verdict: approved for code review. No remaining actionable code defects. Not a memory-savings or scale approval. Final 32-slot instrumented measurement is still pending evidence.
+
+This session is grok-4.6 (xai-oauth).
+
+What this hop does
+
+Passive gauges only. No forced GC, no extra isolate commands, no queue coalescing, no timeout or lifecycle-policy edits. Loadouts / WalkNear / bank sequencing are the previously approved prerequisite dirty tree, not new dispatch policy here.
+
+Snapshot leases
+Lease is taken in post_snapshot from Vec len/capacity immediately before send, carried on the message, released on Drop after decode/materialize, send failure, or receiver teardown. Per-isolate peak is a high-water of that isolate’s capacity; host snapshot_sum_isolate_peak_capacity sums those and is not a simultaneous process peak. Incomplete is not faked as a live queue: inflight 0 after drain is a real empty queue.
+
+V8
+Owning-thread get_heap_statistics, ≤1 Hz, before the next recv, not inside the timed tick. Weak registry never owns the isolate; detached threads stay visible until HeapLifetime drops at actual runtime teardown and zeros used/total/live. Host publishes v8_used_bytes/v8_total_bytes only when live==sampled; otherwise JSON null. v8_max_sample_age_ms is Null with no live isolates, not 0. Throwaway runtimes that never call registered() stay outside the metric.
+
+Script tick
+counters.tick covers the existing JS call + event-loop drain, then paint/log/interact forwarding and heap sampling run after. Guardian hold paint-only ticks are not counted (they continue before tick()). Matches the documented slow-tick JS portion. Counters are a sum of current registered isolates and can fall after Stop/restart; the summarizer refuses a mean if the observe series is non-monotonic.
+
+GPU
+Descriptor payload sizes via Allocation leases on GpuBackend textures/buffers, vertex growth, GpuAtlas (including LayerAtlas layers and font), shared GpuAssets model array (8 mips counted), and the existing synchronous readback buffer for its function lifetime. Replacement overlap is in the peak by construction. enable() runs before inject_device on panel and at Run::prepare before TUI spawn_all. Zero is valid for TUI/CPU. Not VRAM: no pipelines/bind groups/samplers, no host imgui/surface, no driver padding, no views kept after a dropped backend. texture_bytes does not add GPU waits; Depth32Float block_copy_size is 4 in wgpu 29, so the expect path does not panic on current formats.
+
+Timers
+CLIENT_TICK wraps Host::client_tick (observe + client_frame) and drops before the 20 ms leftover sleep and before idle park. UI_DRAW is construction; UI_FRAME additionally includes TUI terminal.draw flush or panel submit/present. TUI event::poll(50 ms) is outside UI_FRAME. Disabled until enable(): Timer::start is an atomic load and no Instant. Cadence unchanged.
+
+PTY
+Default TUI path is 120x40 slave, setsid + TIOCSCTTY, drain on master, join after wait. --headless keeps the old stdout-log / enable_raw_mode-fail no-draw loop. ioctl failure is not checked, but that path is visible: metadata.terminal=true with ui_draw observation_count 0. The T1 pilot had real UI timings, so this machine’s happy path works. Not a dispatch defect.
+
+Launcher/summarizer
+create_new samples; diagnostics sidecar is a separate record type. Summarizer skips a truncated last JSONL line, differences count/total for means, keeps lifetime maxima, and treats missing v8 as unavailable rather than 0.
+
+Not defects here
+Prerequisite dirty files (bank_withdraw, loadouts, WalkNear latch, sprite reuse) match the prior grok-4.6-prerequisite-final-review.txt approval. profiling.rs “one mip” comment is stale versus the 8-mip model array; the byte math still walks mips. UI_DRAW includes one-shot boot_execute; observation means difference it out, maxima keep startup hitches as documented. Tests listed in the request were not re-run in this read-only pass.
+
+Not accepted from this review
+20260905T145857Z is instrumentation smoke only and predates ui_frame. Joint panel/TUI memory-profile builds and unit/integration counts are operator-reported, not re-verified here. Final 32-slot instrumented run is still pending. No approval for memory savings, scale, or treating any diagnostic JSONL as a baseline.

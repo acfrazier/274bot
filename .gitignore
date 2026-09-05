@@ -6,3 +6,6 @@ docs/superpowers/
 .DS_Store
 imgui.ini
 274bot-panel.ini
+
+# Local diagnostic runs: raw samples, profiles and screenshots.
+/docs/memory/diagnostics/

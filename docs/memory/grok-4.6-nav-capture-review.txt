@@ -1,0 +1,35 @@
+APPROVE
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 71b8e48 plus dirty host tree, untracked source included) and vendor/fr-client-rust (codex/memory-sprite-reuse @ 4f2048e-dirty). Source only. No live claim. Tests/builds not re-run. Concurrent 32-bot diagnostic is not evidence.
+
+New hop (nav-capture diagnostic)
+
+Opt-in only. Run::prepare calls nav_capture::enable for panel; enable returns unless BOT_NAV_CAPTURES=="1". enabled() is STATE.is_some(). Launcher pops that env and sets it only with --nav-captures, which requires panel --single-renderer. 274BOT_SMOKE_DIR is the existing shot root. Without the env, observe/route/failure/take are OnceLock misses. Default panel/TUI and memory runs without the flag keep the old PASS/FAIL path (tick skipped, busy false, poll exits as before).
+
+Traveller: TravelEvent + TravelOptions.on_event default None. report_walk / TransportAttempt / TransportState wrap existing sends and return the same SendResult; match arms and send_walk_hop OffScene/Unreachable/SceneUnavailable retry order are unchanged. Callbacks do not arm hops. on_event/on_leg are installed in step_nav_bot only when memory_diagnostics::enabled(). Stun recovery is the previously approved hop, not this one.
+
+Host: observe uses the existing per-slot nav_snapshot (rebuild still tick_edge-only). Ordinary ticks store a small tick/tile/scene/ingame/drawing view, not a GameSnapshot clone. Full snapshot is serde'd only in State::push at checkpoints. Queue cap 5; label containing "failure" goes to front after pop_back. scene-ready / bank-arrival latch on watched bot zero while running+ingame+scene 2. return-route-start is first follow poll after bank seen and bank_component_id==-1 (workload-specific, as documented). First non-Arrived follow outcome on any bot is nav-failure; Arrived and None (including stun wait) are not. request_terminal parses "{name}:" once; next observe of that slot still pushes script-failure even if !running.
+
+Panel: one active checkpoint; select + renderer/game_pane_open/only_render_selected each tick; wait 2s plus view scene_state==2 / ingame / drawing; JSON pairs event snapshot/tick with capture_request_state and an explicit async-pixel caveat. GPU path is ShotState requests → wanted → readback → pump_shots write. written() only on matching submitted label; F12/manual cannot ack. 20s in-flight timeout calls failed(); terminal_ready returns the original error when !busy or after 25s. Ok(true) cannot PASS while busy(); capture timeout cannot PASS. After drain, memory_focus pins slot zero again. Clients keep ticking on slot threads while poll is held.
+
+Tests taken as given: host queue+retained snapshot; panel matching-write + drain deadline; traveller transport events with unchanged walk/loc send counts.
+
+Whole dirty branch
+
+Prerequisite (route ownership / NoPath latch, fixture loadouts, WalkNear, bank sequencer), instrumentation, sprite reuse, stun recovery, and panel one-renderer match the prior approved reviews. No new blocking defect in that stack.
+
+Non-blocking
+
+crates/nav/src/traveller.rs:877-900 — already-open door walk-through at hop arm has no report_walk (poll cheap-door and troll walks do). Diagnostic gap only.
+
+Overflow drops newest (pop_back), not oldest. Intended max is 3 milestones + nav-failure + script-failure.
+
+Checkpoint serde of GameSnapshot runs under the capture mutex.
+
+Thiever seed/proof errors are not "{name}:..." so they fail immediately without a named terminal snapshot.
+
+create_run_dir still nests <stamp>_<pid> under 274BOT_SMOKE_DIR.
+
+Not accepted from this review
+
+No live cell, no pixel-tick alignment, no navigation fix, no memory/latency baseline.

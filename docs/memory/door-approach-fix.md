@@ -21,4 +21,3 @@ Stop left active0, V8 used0, queued snapshot bytes0 and ready32 clients. Median 
 Source and binary hashes matched launch through completion (provenance-check.json). Commits were created afterward without changing those source bytes. CPU leads and the operator-approved deferral of 128-bot measurements are recorded in cpu-follow-up.md.
 
 Whole-branch grok-4.6 returned APPROVE; the usage receipt confirms completed=true, failed=false, model=grok-4.6. See grok-4.6-door-approach-review.txt. No push or merge is implied by this qualification.
-

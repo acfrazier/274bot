@@ -1,0 +1,18 @@
+{
+  "estimated_cost_usd": 0.0,
+  "cost_status": "unknown",
+  "cost_source": "none",
+  "input_tokens": 140339,
+  "output_tokens": 17680,
+  "cache_read_tokens": 842240,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 13720,
+  "total_tokens": 1000259,
+  "api_calls": 24,
+  "model": "grok-4.6",
+  "provider": "xai-oauth",
+  "session_id": "20260905_093508_bc338e",
+  "completed": true,
+  "failed": false,
+  "service_tier": null
+}
