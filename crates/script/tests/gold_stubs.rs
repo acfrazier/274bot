@@ -329,3 +329,44 @@ export default class T extends LoopingBot {
     assert_eq!(row["name"], "Rune chainbody");
     iso.join();
 }
+
+#[test]
+fn thiever_resolves_food_from_host_loadout_and_queues_eat() {
+    let src = r#"
+import { scriptFood } from '../../api/loadout/loadoutPlan.js';
+import { foodHealAmount, shouldEatFood } from '../../api/combat/food.js';
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        const food = scriptFood(this.settings, '');
+        globalThis.__food = [food, foodHealAmount(food)];
+        if (shouldEatFood(food, {hp: 30, maxHp: 50, foodCount: 1})) Inventory.items()[0].interact('Eat');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.post_loadouts(&[script::Loadout { name: "Food".into(), worn: vec![], carry: vec!["Coins".into(), "Lobster".into()] }]);
+    iso.probe("globalThis.__rs2b0t_host.snapshot = {inv: [{name:'Lobster',count:1}]}; true").unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__food").unwrap(), serde_json::json!(["Lobster",12]));
+    assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action} if name=="Lobster" && action=="Eat")));
+    iso.join();
+}
+
+#[test]
+fn bank_access_already_adjacent_does_not_rearm_navigation() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
+}
+"#;
+    let iso=LoadIsolate::spawn(src.into(),LoadShape::CompatClass,vec![]).unwrap();
+    iso.probe("globalThis.__rs2b0t_host.snapshot={here:{x:10,z:10,level:0},nearest_booth:{x:11,z:10,level:0},bank_open:false,bank_loaded:false};true").unwrap();
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let requests=iso.drain_interacts();
+    assert_eq!(requests.len(),1);
+    assert!(matches!(requests[0],script::shim::InteractReq::OpenBooth{..}));
+    iso.join();
+}

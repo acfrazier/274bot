@@ -29,3 +29,6 @@ pub use theme::*;
 /// active at a time (`Context::create` panics on `ContextAlreadyActive`),
 /// so parallel tests that each create one race.
 pub(crate) static IMGUI_CTX_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(feature="memory-profile")]
+mod nav_capture;

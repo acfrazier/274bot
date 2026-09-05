@@ -113,6 +113,14 @@ impl SlotScript {
         shape: LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
+        let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
+        self.start_load_with_loadouts(source, shape, siblings, loadouts.loadouts())
+    }
+
+    /// Start with explicit loadouts, avoiding operator filesystem inputs in
+    /// disposable live fixtures. Commands are posted before the first tick.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_loadouts(&mut self, source: String, shape: LoadShape, siblings: Vec<(String,String)>, loadouts: &[crate::loadouts_store::Loadout]) -> Result<(),String> {
         match self.state {
             RunState::Running | RunState::Paused | RunState::Stopping => {
                 Err("script already active: stop it first".to_string())
@@ -122,6 +130,7 @@ impl SlotScript {
                     return Err("compiled script active: stop it first".to_string());
                 }
                 let isolate = LoadIsolate::spawn(source, shape, siblings)?;
+                isolate.post_loadouts(loadouts);
                 self.load = Some(isolate);
                 self.want_run = true;
                 self.last_error = None;
@@ -207,6 +216,11 @@ impl SlotScript {
         if let Some(isolate) = &self.load {
             isolate.post_settings_bag(bag);
         }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+        if let Some(isolate) = &self.load { isolate.post_loadouts(loadouts); }
     }
 
     /// Start a JS Load isolate and optionally post the operator settings bag.
@@ -348,6 +362,22 @@ impl SlotScript {
             // JS Load isolate: the knock has no JS arm this tag.
             None => RandomClaim::Host,
         }
+    }
+
+    #[cfg(all(feature = "memory-profile", feature = "load"))]
+    pub fn memory_metrics(&self) -> Option<serde_json::Value> { self.load.as_ref().map(|i|i.memory_metrics()) }
+
+    #[cfg(all(feature = "memory-profile", feature = "load"))]
+    pub fn memory_progress(&self) -> serde_json::Value {
+        let mut value = self.load.as_ref().map(|i|i.memory_progress()).unwrap_or(serde_json::json!({}));
+        if let Some(fp) = &self.last_snapshot {
+            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| rs.iter().take(32).map(|r|serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops})).collect::<Vec<_>>();
+            value["inventory"] = serde_json::json!(rows(&fp.inv));
+            value["bank"] = serde_json::json!(rows(&fp.bank));
+            value["bank_open"] = serde_json::json!(fp.bank_open);
+            value["bank_loaded"] = serde_json::json!(fp.bank_loaded);
+        }
+        value
     }
 
     pub fn last_error(&self) -> Option<&str> {

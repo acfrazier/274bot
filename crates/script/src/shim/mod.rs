@@ -525,6 +525,7 @@ pub(crate) fn content_json() -> String {
         COOK_STANDS, COW_FIELDS, FIRE_PLOTS, ITEMS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES,
     };
     serde_json::json!({
+        "food_heals": api::content::FOOD_HEALS,
         "cow_fields": COW_FIELDS.iter().map(|f| {
             serde_json::json!({"name": f.name, "x": f.x, "z": f.z, "level": f.level})
         }).collect::<Vec<_>>(),
@@ -619,6 +620,9 @@ pub enum InteractReq {
         #[serde(default)]
         allow_teleports: bool,
     },
+    /// Packed navigation to a reachable tile within the requested radius.
+    #[serde(rename = "walk-near")]
+    WalkNear { x: i32, z: i32, level: i32, radius: i32, #[serde(default)] allow_teleports: bool },
     /// Scene `try_move` packet (`Interactions::walk`). Catalog
     /// `Traversal.walkTo` — not Traveller.
     #[serde(rename = "walk-to")]

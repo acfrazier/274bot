@@ -1127,7 +1127,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop runs");
     let paints_after_first = iso.probe("__rs_paints").unwrap();
-    assert_eq!(paints_after_first, 1, "first tick paints");
+    // Existing runner paints once inside the loop wrapper and once when forwarding.
+    assert_eq!(paints_after_first, 2, "preserve the existing first-tick paint cadence");
     // Post hold via the FlatBuffer — never poke `__rs2b0t_host.hold`.
     let mut snap = base_snapshot();
     snap.hold = true;
@@ -5207,4 +5208,30 @@ export default class T extends LoopingBot {
         "Quests.all must not invent an empty journal: {logs:?}"
     );
     iso.join();
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn passive_metrics_count_decode_lifetime_heap_and_teardown() {
+    let iso=LoadIsolate::spawn(NATIVE_TICK.into(),LoadShape::NativeTick,vec![]).unwrap();
+    iso.probe("1").unwrap();
+    let before=iso.memory_metrics();
+    assert_eq!(before["v8_live"],1);
+    assert!(before["v8_heap_samples"].as_u64().unwrap()>0);
+    assert!(before["v8_used_bytes"].as_u64().unwrap()>0);
+    assert!(before["v8_total_bytes"].as_u64().unwrap()>=before["v8_used_bytes"].as_u64().unwrap());
+    let mut malformed=Vec::with_capacity(4096);malformed.extend_from_slice(&[1,2,3]);
+    iso.post_snapshot(malformed);
+    iso.on_game_tick(1);
+    iso.probe("1").unwrap(); // Existing command ordering is the completion barrier.
+    let after=iso.memory_metrics();
+    assert_eq!(after["snapshot_inflight_bytes"],0);
+    assert_eq!(after["snapshot_inflight_capacity"],0);
+    assert!(after["snapshot_peak_capacity"].as_u64().unwrap()>=4096);
+    assert_eq!(after["script_tick_count"],1);
+    assert!(after["script_tick_total_ns"].as_u64().unwrap()>0);
+    let counters=iso.memory_metrics_handle();
+    iso.join();
+    let stopped=counters.snapshot();
+    assert_eq!(stopped["v8_live"],0);assert_eq!(stopped["v8_used_bytes"],0);assert_eq!(stopped["v8_total_bytes"],0);
 }

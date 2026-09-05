@@ -154,6 +154,8 @@ struct PanelState {
     /// `--live script_*` run starts or lazily on the first write (the
     /// interactive F12 capture has no run start to hook).
     shot_dir: Option<PathBuf>,
+    #[cfg(feature="memory-profile")]
+    nav_captures:crate::nav_capture::Captures,
 }
 
 /// Headed live harness: null_raster (2 slots), stress50 / stress50_full
@@ -504,6 +506,8 @@ impl Default for PanelState {
             os_window: None,
             shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
             shot_dir: None,
+            #[cfg(feature="memory-profile")]
+            nav_captures:Default::default(),
         }
     }
 }
@@ -4018,6 +4022,8 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
     #[cfg(feature = "memory-profile")]
     match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {
+            // inject_device constructs shared GPU assets before deferred Run::prepare.
+            client::profiling::enable();
             if let Err(error) = host_play::memory::require_live_benchmark() {
                 eprintln!("FAIL: {error}");
                 std::process::exit(1);
@@ -4053,6 +4059,7 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
         },
         Arc::clone(&state.shot_state),
         move |ui, gpu| {
+            let _profile_draw = client::profiling::UI_DRAW.start();
             // Frame 0 presents chrome with no slots. Frame 1+ runs boot so
             // a blocking `maininit` cannot hide the window.
             if presented {
@@ -4106,6 +4113,8 @@ fn pump_shots(state: &mut PanelState) -> usize {
                 &cap.snapshot_json,
             ) {
                 Ok(path) => {
+                    #[cfg(feature="memory-profile")]
+                    state.nav_captures.written(&cap.label);
                     println!("[panel] shot {} -> {}", cap.label, path.display());
                     written += 1;
                 }
@@ -4143,19 +4152,22 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.session.pump_status();
     #[cfg(feature = "memory-profile")]
     if let Some(run) = state.memory.as_mut() {
-        state.session.memory_focus(run);
-        if let Some(play) = state.session.play.as_ref() {
-            match run.poll(play) {
-                Ok(true) => {
-                    eprintln!("PASS: memory panel observation complete");
-                    std::process::exit(0);
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    eprintln!("FAIL: memory panel: {error}");
-                    std::process::exit(1);
+        if host_play::nav_capture::enabled() {
+            state.nav_captures.tick(&mut state.session,&state.shot_state);
+        }
+        if !state.nav_captures.busy() {state.session.memory_focus(run);}
+        if !state.nav_captures.has_terminal() {
+            if let Some(play) = state.session.play.as_ref() {
+                match run.poll(play) {
+                    Ok(true) if !state.nav_captures.busy() => {eprintln!("PASS: memory panel observation complete");std::process::exit(0);}
+                    Ok(_) => {}
+                    Err(error) if host_play::nav_capture::enabled() => {state.nav_captures.failed(error);}
+                    Err(error) => {eprintln!("FAIL: memory panel: {error}");std::process::exit(1);}
                 }
             }
+        }
+        if let Some(error)=state.nav_captures.terminal_ready() {
+            eprintln!("FAIL: memory panel: {error}; diagnostic capture drain complete or timed out");std::process::exit(1);
         }
     }
     state.session.pump_script_transpile();

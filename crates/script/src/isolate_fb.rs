@@ -3099,6 +3099,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
             }),
+            "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
+                x: row.x(), z: row.z(), level: row.level(), radius: row.index().unwrap_or(0),
+                allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+            }),
             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
@@ -3243,6 +3247,7 @@ fn interact_off<'b>(
         InteractReq::OpenBooth { .. } => "open-booth",
         InteractReq::OpenStand { .. } => "open-stand",
         InteractReq::Walk { .. } => "walk",
+        InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
@@ -3305,7 +3310,7 @@ fn interact_off<'b>(
         InteractReq::Walk {
             allow_teleports: true,
             ..
-        } => Some(b.create_string("tele")),
+        } | InteractReq::WalkNear { allow_teleports: true, .. } => Some(b.create_string("tele")),
         _ => None,
     };
     let tab = b.start_table();
@@ -3336,6 +3341,13 @@ fn interact_off<'b>(
             if let Some(off) = choose_off {
                 b.push_slot_always(VT_IN_CHOOSE, off);
             }
+        }
+        InteractReq::WalkNear { x, z, level, radius, .. } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_INDEX, *radius);
+            if let Some(off) = action_off { b.push_slot_always(VT_IN_ACTION, off); }
         }
         InteractReq::Walk { x, z, level, .. } | InteractReq::WalkTo { x, z, level } => {
             b.push_slot_always(VT_IN_X, *x);
@@ -3688,6 +3700,7 @@ mod tests {
                 level: 0,
                 allow_teleports: true,
             },
+            InteractReq::WalkNear {x:2656,z:3286,level:0,radius:3,allow_teleports:false},
             InteractReq::WalkTo {
                 x: 3,
                 z: 4,

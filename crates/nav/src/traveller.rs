@@ -200,12 +200,55 @@ pub enum LegPhase {
     Failed,
 }
 
+/// Navigation observations for optional diagnostics. The receiver controls retention.
+#[derive(Debug)]
+pub enum TravelEvent {
+    TransportState {
+        tick: u32,
+        at: WorldTile,
+        kind: TransportKind,
+        loc_id: i32,
+        from: WorldTile,
+        to: WorldTile,
+        open: bool,
+        approach: bool,
+        troll: bool,
+        waited: u32,
+        loc_wait: u32,
+        budget: u32,
+        live_loc: Option<(i32, WorldTile)>,
+    },
+    TransportAttempt {
+        tick: u32,
+        kind: TransportKind,
+        expected_id: i32,
+        actual_id: i32,
+        target: WorldTile,
+        option: i32,
+        refusal: Option<SendReason>,
+    },
+    StunDeferred {
+        observed_tick: u32,
+        resume_tick: u32,
+    },
+    StunResumed {
+        tick: u32,
+    },
+    WalkAttempt {
+        tick: u32,
+        at: WorldTile,
+        aim: WorldTile,
+        refusal: Option<SendReason>,
+    },
+}
+
 /// How a [`Traveller::follow`] run is parameterized. `on_leg` fires once
-/// per phase transition; the same `TravelOptions` is passed on every poll,
-/// so the callback stays with the caller across ticks.
+/// per phase transition; the same options are passed on every poll.
 pub struct TravelOptions<'a> {
     /// Chebyshev radius treated as "arrived" for a hop target (default 2).
     pub close_enough: i32,
+    /// Optional observations; does not select actions or retry policy.
+    pub on_event: Option<Box<dyn FnMut(TravelEvent) + 'a>>,
     /// Tick budget for one hop (a walk send or a transport interact;
     /// default 60).
     pub budget_ticks_per_hop: u32,
@@ -232,6 +275,7 @@ impl Default for TravelOptions<'_> {
     fn default() -> Self {
         TravelOptions {
             close_enough: 2,
+            on_event: None,
             budget_ticks_per_hop: 60,
             max_hops: 60,
             teleports: None,
@@ -601,10 +645,15 @@ impl Default for Traveller {
 // The follow run (Task 14): the legs still to work plus the per-hop state.
 // ---------------------------------------------------------------------------
 
-/// The legs still to work and the current hop's state. `close_enough`,
-/// `budget_ticks_per_hop` and `max_hops` are captured when the run starts;
-/// the `on_leg` callback stays with the caller's `TravelOptions`.
+// Server thieving stuns last 8 or 10 ticks; their visual starts one tick
+// before the lock. One window/recovery per route bounds this inference.
+const THIEVING_STUN_WINDOW: u32 = 11;
+
+/// The legs still to work and current hop state. Budgets are captured at
+/// start; callbacks stay with the caller's options.
 struct FollowRun {
+    stun_wait: Option<u32>,
+    stun_recovery_used: bool,
     legs: VecDeque<Leg>,
     /// The index (in the original route) of the leg being worked, reported
     /// in `Blocked`; grows as legs complete.
@@ -623,6 +672,8 @@ struct FollowRun {
 impl FollowRun {
     fn start(route: Route, options: &TravelOptions<'_>) -> FollowRun {
         FollowRun {
+            stun_wait: None,
+            stun_recovery_used: false,
             legs: route.legs.into(),
             leg_index: 0,
             hops: 0,
@@ -648,6 +699,63 @@ impl FollowRun {
         options: &mut TravelOptions<'_>,
         essence: &mut Option<EssenceSession>,
     ) -> Option<TravelOutcome> {
+        if snapshot.ingame() && snapshot.attached() {
+            if !self.stun_recovery_used {
+                if let Some(observed) = snapshot.thieving_stun_tick() {
+                    let after_send = |sent: u32| observed.wrapping_sub(sent) < (1u32 << 31);
+                    let pending_was_affected = self
+                        .walk
+                        .as_ref()
+                        .is_some_and(|h| h.sent && after_send(h.sent_tick))
+                        || self
+                            .transport
+                            .as_ref()
+                            .and_then(|h| h.approach.as_ref())
+                            .is_some_and(|a| after_send(a.sent_tick));
+                    if snapshot.tick().wrapping_sub(observed) < THIEVING_STUN_WINDOW
+                        || pending_was_affected
+                    {
+                        self.stun_recovery_used = true;
+                        self.stun_wait = Some(observed);
+                        if let Some(cb) = options.on_event.as_mut() {
+                            cb(TravelEvent::StunDeferred {
+                                observed_tick: observed,
+                                resume_tick: observed.wrapping_add(THIEVING_STUN_WINDOW),
+                            });
+                        }
+                    }
+                }
+            }
+            if let Some(observed) = self.stun_wait {
+                if snapshot.tick().wrapping_sub(observed) < THIEVING_STUN_WINDOW {
+                    return None;
+                }
+                self.stun_wait = None;
+                let at = here(snapshot);
+                if let Some(hop) = self.walk.as_mut() {
+                    let radius = if hop.aim_index + 1 >= hop.tiles().len() {
+                        0
+                    } else {
+                        self.close_enough.max(2)
+                    };
+                    if hop.sent && (at.level != hop.aim.level || cheb(at, hop.aim) > radius) {
+                        hop.sent = false;
+                    }
+                }
+                if let Some(approach) = self.transport.as_mut().and_then(|h| h.approach.as_mut()) {
+                    approach.retry_pending = true;
+                }
+                if let Some(cb) = options.on_event.as_mut() {
+                    cb(TravelEvent::StunResumed {
+                        tick: snapshot.tick(),
+                    });
+                }
+            }
+        } else {
+            // Keep existing disconnect/refusal handling reachable even when
+            // no further PLAYER_INFO ticks arrive to advance the stun window.
+            self.stun_wait = None;
+        }
         loop {
             if self.walk.is_some() {
                 match self.poll_walk(d, snapshot, options) {
@@ -690,6 +798,7 @@ impl FollowRun {
                         sent: false,
                         ticks_waited: 0,
                         sent_tile: None,
+                        sent_tick: snapshot.tick(),
                         tries: 0,
                     };
                     match self.send_walk_hop(d, snapshot, options, hop, here) {
@@ -852,7 +961,9 @@ impl FollowRun {
                         };
                         let to = edge.to;
                         let mut ix = Interactions::new(snapshot, d);
-                        match ix.walk(approach) {
+                        let result = ix.walk(approach);
+                        report_walk(options, snapshot, here, approach, &result);
+                        match result {
                             SendResult::Sent { .. } => {
                                 self.loc_wait = 0;
                                 self.transport = Some(TransportHop {
@@ -868,6 +979,8 @@ impl FollowRun {
                                         tile: approach,
                                         at: approach_at,
                                         ticks_waited: 0,
+                                        sent_tick: snapshot.tick(),
+                                        retry_pending: false,
                                     }),
                                 });
                                 return None;
@@ -882,7 +995,7 @@ impl FollowRun {
                         Some(target) => {
                             let to = edge.to;
                             let mut ix = Interactions::new(snapshot, d);
-                            match interact_transport(snapshot, &mut ix, target, edge) {
+                            match interact_transport(snapshot, &mut ix, target, edge, options) {
                                 SendResult::Sent { .. } => {
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
@@ -1047,6 +1160,23 @@ impl FollowRun {
     ) -> Poll {
         let mut hop = self.transport.take().expect("transport hop present");
         let here = here(snapshot);
+        if let (Some(cb), Leg::Transport { edge }) = (options.on_event.as_mut(), &hop.leg) {
+            cb(TravelEvent::TransportState {
+                tick: snapshot.tick(),
+                at: here,
+                kind: edge.kind,
+                loc_id: edge.loc_id,
+                from: edge.at,
+                to: edge.to,
+                open: edge_loc_open(snapshot, edge),
+                approach: hop.approach.is_some(),
+                troll: hop.troll,
+                waited: hop.ticks_waited,
+                loc_wait: self.loc_wait,
+                budget: self.budget,
+                live_loc: find_transport_loc(snapshot, edge).map(|l| (l.id, l.tile)),
+            });
+        }
         if hop.troll {
             if let Some(outcome) = self.troll_door(d, snapshot, &mut hop, options) {
                 return Poll::Terminal(outcome);
@@ -1061,7 +1191,9 @@ impl FollowRun {
                     && !door_crossed(edge, here)
                 {
                     let mut ix = Interactions::new(snapshot, d);
-                    match ix.walk(hop.to) {
+                    let result = ix.walk(hop.to);
+                    report_walk(options, snapshot, here, hop.to, &result);
+                    match result {
                         SendResult::Sent { .. } => {
                             if crate::debug_enabled() {
                                 eprintln!("[nav-transport] cheap hop walk-through to {:?}", hop.to);
@@ -1083,7 +1215,7 @@ impl FollowRun {
         // arrive arm; only once adjacent does the hop find the target,
         // interact, and settle `arrived(to)`.
         if hop.approach.is_some() {
-            match self.poll_approach(snapshot, &mut hop, options) {
+            match self.poll_approach(d, snapshot, &mut hop, options) {
                 Poll::Watching => {
                     self.transport = Some(hop);
                     return Poll::Watching;
@@ -1100,7 +1232,7 @@ impl FollowRun {
             return match find_transport_target(snapshot, &edge) {
                 Some(target) => {
                     let mut ix = Interactions::new(snapshot, d);
-                    match interact_transport(snapshot, &mut ix, target, &edge) {
+                    match interact_transport(snapshot, &mut ix, target, &edge, options) {
                         SendResult::Sent { .. } => {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
@@ -1458,12 +1590,15 @@ impl FollowRun {
                 return Poll::Watching;
             }
             let mut ix = Interactions::new(snapshot, d);
-            match ix.walk(aim) {
+            let result = ix.walk(aim);
+            report_walk(options, snapshot, here, aim, &result);
+            match result {
                 SendResult::Sent { .. } => {
                     self.hops += 1;
                     hop.aim = aim;
                     hop.aim_index = idx;
                     hop.sent = true;
+                    hop.sent_tick = snapshot.tick();
                     hop.ticks_waited = 0;
                     hop.sent_tile = Some(here);
                     self.walk = Some(hop);
@@ -1504,15 +1639,42 @@ impl FollowRun {
     /// (the cheap hop lapsed before its first interact — the troll walks
     /// the player to the door too); only a non-door transport lapses to
     /// the real `Stalled`. The approach walk itself was sent when the hop
-    /// was armed, so this method only settles.
-    fn poll_approach(
+    /// was armed; a known stun may rearm that walk once before settling.
+    fn poll_approach<D: Driver>(
         &mut self,
+        d: &mut D,
         snapshot: &GameSnapshot,
         hop: &mut TransportHop,
         options: &mut TravelOptions<'_>,
     ) -> Poll {
         let mut approach = hop.approach.take().expect("approach hop present");
         let here = here(snapshot);
+        if approach.retry_pending
+            && (here.level != approach.at.level || cheb(here, approach.at) > 1)
+        {
+            let mut ix = Interactions::new(snapshot, d);
+            let result = ix.walk(approach.tile);
+            report_walk(options, snapshot, here, approach.tile, &result);
+            match result {
+                SendResult::Sent { .. } => {
+                    approach.retry_pending = false;
+                    approach.ticks_waited = 0;
+                    approach.sent_tick = snapshot.tick();
+                    hop.sent_tile = Some(here);
+                    hop.approach = Some(approach);
+                    return Poll::Watching;
+                }
+                SendResult::Refused {
+                    reason:
+                        SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable,
+                    ..
+                } => {}
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
+                }
+            }
+        }
         let arms = [("arrived", arrived(approach.at, 1))];
         let mut settle = Settle::new(
             SettleOptions {
@@ -1633,7 +1795,9 @@ impl FollowRun {
                 return None;
             };
             let mut ix = Interactions::new(snapshot, d);
-            match ix.walk(approach) {
+            let result = ix.walk(approach);
+            report_walk(options, snapshot, here, approach, &result);
+            match result {
                 SendResult::Sent { .. } => {}
                 SendResult::Refused { reason, .. } => {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -1692,7 +1856,7 @@ impl FollowRun {
         // through this tick (do not click — that slams it in the walker's
         // face and they turn back to the door).
         if !open {
-            match interact_transport(snapshot, &mut ix, TransportTarget::Loc(loc), &edge) {
+            match interact_transport(snapshot, &mut ix, TransportTarget::Loc(loc), &edge, options) {
                 SendResult::Sent { .. } => {
                     if crate::debug_enabled() {
                         eprintln!("[nav-troll] Open SENT");
@@ -1705,7 +1869,9 @@ impl FollowRun {
             }
             return None;
         }
-        match ix.walk(hop.to) {
+        let result = ix.walk(hop.to);
+        report_walk(options, snapshot, here, hop.to, &result);
+        match result {
             SendResult::Sent { .. } => {
                 if crate::debug_enabled() {
                     eprintln!("[nav-troll] walk-through SENT to {:?}", hop.to);
@@ -1741,6 +1907,7 @@ struct WalkHop {
     /// Whether the walk for `aim` has been sent; a matched mid-leg hop is
     /// re-armed with `sent: false` and sent on the same poll (click-ahead).
     sent: bool,
+    sent_tick: u32,
     ticks_waited: u32,
     /// The player's tile when the hop's walk was sent (stall detection).
     sent_tile: Option<WorldTile>,
@@ -1795,9 +1962,32 @@ struct TransportHop {
 /// of the edge's `at` (the walk target), the `at` the adjacency settle is
 /// measured against, and the stall clock.
 struct ApproachHop {
+    sent_tick: u32,
+    retry_pending: bool,
     tile: WorldTile,
     at: WorldTile,
     ticks_waited: u32,
+}
+
+fn report_walk(
+    options: &mut TravelOptions<'_>,
+    snapshot: &GameSnapshot,
+    at: WorldTile,
+    aim: WorldTile,
+    result: &SendResult<'_>,
+) {
+    if let Some(cb) = options.on_event.as_mut() {
+        let refusal = match result {
+            SendResult::Sent { .. } => None,
+            SendResult::Refused { reason, .. } => Some(*reason),
+        };
+        cb(TravelEvent::WalkAttempt {
+            tick: snapshot.tick(),
+            at,
+            aim,
+            refusal,
+        });
+    }
 }
 
 /// The player's world tile from the snapshot: the canonical route-based
@@ -2237,8 +2427,13 @@ fn interact_transport<'t>(
     ix: &mut Interactions<'t>,
     target: TransportTarget<'t>,
     edge: &TransportEdge,
+    options: &mut TravelOptions<'_>,
 ) -> SendResult<'t> {
-    match target {
+    let (actual_id, tile) = match &target {
+        TransportTarget::Loc(l) => (l.id, l.tile),
+        TransportTarget::Npc(n) => (n.r#type.map(|id| id as i32).unwrap_or(-1), n.tile),
+    };
+    let result = match target {
         TransportTarget::Loc(loc) if uses_held_on_loc(edge) => {
             let id = edge.item_req[0].0;
             match snapshot.inventory().iter().find(|it| it.def.id == id) {
@@ -2255,7 +2450,23 @@ fn interact_transport<'t>(
         TransportTarget::Npc(npc) => {
             ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(edge.option))
         }
+    };
+    if let Some(cb) = options.on_event.as_mut() {
+        let refusal = match &result {
+            SendResult::Sent { .. } => None,
+            SendResult::Refused { reason, .. } => Some(*reason),
+        };
+        cb(TravelEvent::TransportAttempt {
+            tick: snapshot.tick(),
+            kind: edge.kind,
+            expected_id: edge.loc_id,
+            actual_id,
+            target: tile,
+            option: edge.option,
+            refusal,
+        });
     }
+    result
 }
 
 /// Knife-on-web: `option` 0 + an `item_req` means `oplocu`, not `oploc1`.
@@ -2372,6 +2583,7 @@ fn fire_leg(options: &mut TravelOptions<'_>, leg: &Leg, phase: LegPhase) {
 
 #[cfg(test)]
 mod tests {
+    use super::TravelEvent;
     use api::interact::{Driver, SendReason};
     use api::prot::Out;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -3403,6 +3615,186 @@ mod tests {
             on_tick(c);
             bump_rebuild(c, snap);
         }
+    }
+
+    #[test]
+    fn follow_defers_known_thieving_stun_on_distinct_ticks_then_walks() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        c.local_player.as_mut().unwrap().spotanim_id = 245;
+        c.local_player.as_mut().unwrap().spotanim_last_cycle = 100;
+        bump_rebuild(&mut c, &mut snap);
+        let route = Route {
+            legs: vec![walk_leg(&[(3200, 3200), (3200, 3201)])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3201,
+                level: 0,
+            },
+            ticks: 0.5,
+        };
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..Default::default()
+        };
+        let mut t = Traveller::new();
+        let mut options = TravelOptions::default();
+        for _ in 0..30 {
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert!(
+            rec.walked.is_empty(),
+            "duplicate snapshots must not consume the stun wait"
+        );
+        // The visual may disappear while the server movement lock remains.
+        c.local_player.as_mut().unwrap().spotanim_id = -1;
+        for _ in 0..10 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+            assert!(rec.walked.is_empty());
+        }
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        plant_player(&mut c, 0, 1);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Arrived { .. })
+        ));
+    }
+
+    #[test]
+    fn stun_recovery_resends_pending_walk_once_and_still_expires() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let route = Route {
+            legs: vec![walk_leg(&[(3200, 3200), (3200, 3201)])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3201,
+                level: 0,
+            },
+            ticks: 0.5,
+        };
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..Default::default()
+        };
+        let mut t = Traveller::new();
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 3,
+            ..Default::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        c.local_player.as_mut().unwrap().spotanim_id = 245;
+        c.local_player.as_mut().unwrap().spotanim_last_cycle = 100;
+        bump_rebuild(&mut c, &mut snap);
+        for _ in 0..11 {
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+            assert_eq!(rec.walked.len(), 1);
+            bump_rebuild(&mut c, &mut snap);
+        }
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked, vec![(0, 1), (0, 1)]);
+        // A second animation must not keep extending this route indefinitely.
+        c.local_player.as_mut().unwrap().spotanim_last_cycle = 200;
+        bump_rebuild(&mut c, &mut snap);
+        let mut outcome = None;
+        for _ in 0..5 {
+            outcome = t.follow(&mut rec, &snap, route.clone(), &mut options);
+            if outcome.is_some() {
+                break;
+            }
+            bump_rebuild(&mut c, &mut snap);
+        }
+        assert!(matches!(outcome, Some(TravelOutcome::Stalled { .. })));
+        assert_eq!(rec.walked.len(), 2);
+    }
+
+    #[test]
+    fn stun_seen_during_guardian_hold_recovers_without_replaying_arrived_walk() {
+        for arrived in [false, true] {
+            let mut c = scene_client();
+            let mut snap = snap_at(&mut c, 0, 0);
+            let route = Route {
+                legs: vec![walk_leg(&[(3200, 3200), (3200, 3201)])],
+                dest: WorldTile {
+                    x: 3200,
+                    z: 3201,
+                    level: 0,
+                },
+                ticks: 0.5,
+            };
+            let mut rec = FollowRec {
+                route: Some((0, 0)),
+                ..Default::default()
+            };
+            let mut t = Traveller::new();
+            let mut options = TravelOptions::default();
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+            c.local_player.as_mut().unwrap().spotanim_id = 245;
+            c.local_player.as_mut().unwrap().spotanim_last_cycle = 100;
+            bump_rebuild(&mut c, &mut snap);
+            c.local_player.as_mut().unwrap().spotanim_id = -1;
+            // The host keeps rebuilding snapshots while follow is held/paused.
+            for _ in 0..15 {
+                bump_rebuild(&mut c, &mut snap);
+            }
+            if arrived {
+                plant_player(&mut c, 0, 1);
+                bump_rebuild(&mut c, &mut snap);
+            }
+            let outcome = t.follow(&mut rec, &snap, route, &mut options);
+            if arrived {
+                assert!(matches!(outcome, Some(TravelOutcome::Arrived { .. })));
+                assert_eq!(rec.walked.len(), 1);
+            } else {
+                assert!(outcome.is_none());
+                assert_eq!(rec.walked.len(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn stun_observation_retains_onset_and_refreshes_only_for_new_stun_packet() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        c.local_player.as_mut().unwrap().spotanim_id = 244;
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(snap.thieving_stun_tick(), None);
+        c.local_player.as_mut().unwrap().spotanim_id = 245;
+        c.local_player.as_mut().unwrap().spotanim_last_cycle = 100;
+        bump_rebuild(&mut c, &mut snap);
+        let first = snap.thieving_stun_tick();
+        assert_eq!(first, Some(snap.tick()));
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(snap.thieving_stun_tick(), first);
+        c.local_player.as_mut().unwrap().spotanim_id = -1;
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(snap.thieving_stun_tick(), first);
+        c.local_player.as_mut().unwrap().spotanim_id = 245;
+        c.local_player.as_mut().unwrap().spotanim_last_cycle = 200;
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(snap.thieving_stun_tick(), Some(snap.tick()));
+        c.ingame = false;
+        bump_rebuild(&mut c, &mut snap);
+        assert_eq!(snap.thieving_stun_tick(), None);
     }
 
     #[test]
@@ -5365,6 +5757,95 @@ mod tests {
     }
 
     #[test]
+    fn stun_recovery_rearms_transport_approach_before_interacting() {
+        let mut c = scene_client();
+        plant_ladder(&mut c, Some("Climb"));
+        let mut snap = snap_at(&mut c, 2, 1);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..Default::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: ladder_edge(),
+            }],
+            dest: WorldTile {
+                x: 3202,
+                z: 3205,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions::default();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        c.local_player.as_mut().unwrap().spotanim_id = 245;
+        c.local_player.as_mut().unwrap().spotanim_last_cycle = 100;
+        bump_rebuild(&mut c, &mut snap);
+        for _ in 0..11 {
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+            assert_eq!(rec.walked.len(), 1);
+            assert_eq!(rec.loc_ops, 0);
+            bump_rebuild(&mut c, &mut snap);
+        }
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked, vec![(2, 3), (2, 3)]);
+        assert_eq!(rec.loc_ops, 0);
+        plant_player(&mut c, 2, 3);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1);
+        plant_player(&mut c, 2, 5);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Arrived { .. })
+        ));
+    }
+
+    #[test]
+    fn disconnect_during_stun_wait_does_not_wait_for_another_game_tick() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..Default::default()
+        };
+        let mut t = Traveller::new();
+        let mut options = TravelOptions::default();
+        let route = Route {
+            legs: vec![walk_leg(&[(3200, 3200), (3200, 3201)])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3201,
+                level: 0,
+            },
+            ticks: 0.5,
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        c.local_player.as_mut().unwrap().spotanim_id = 245;
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        c.stream = None;
+        c.ingame = false;
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t.follow(&mut rec, &snap, route, &mut options).is_some());
+        assert_eq!(rec.walked.len(), 1);
+    }
+
+    #[test]
     fn follow_approaches_a_transport_loc_before_interacting() {
         // The router arms a transport leg from an adjacent take-off. This
         // test starts 3 tiles south of the ladder (a follow that still has
@@ -5393,7 +5874,11 @@ mod tests {
             },
             ticks: 2.0, // the ladder edge's ticks
         };
-        let mut options = TravelOptions::default();
+        let events = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            on_event: Some(Box::new(|e| events.borrow_mut().push(e))),
+            ..Default::default()
+        };
         // Poll 1: the hop walks to the adjacent standable tile, never the
         // interact (the click would be dropped from 3 tiles away).
         assert!(t
@@ -5424,6 +5909,25 @@ mod tests {
             }
             other => panic!("expected Arrived, got {other:?}"),
         }
+        let events = events.borrow();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TravelEvent::TransportState { approach: true, .. })));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            TravelEvent::TransportAttempt {
+                actual_id: 1,
+                option: 1,
+                refusal: None,
+                ..
+            }
+        )));
+        assert_eq!(
+            rec.walked.len(),
+            1,
+            "diagnostics must not add movement sends"
+        );
+        assert_eq!(rec.loc_ops, 1, "diagnostics must not add transport sends");
     }
 
     #[test]

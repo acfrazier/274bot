@@ -201,8 +201,22 @@ export const Bank = new Proxy(
         async withdrawLoad(_name) {
             throw notImpl('Bank.withdrawLoad');
         },
-        async openNearestAccess(_access, _log) {
-            throw notImpl('Bank.openNearestAccess');
+        async openNearestAccess(access, _log) {
+            if ((access?.name ?? 'Bank booth').toLowerCase() !== 'bank booth' ||
+                (access?.op ?? 'Use-quickly').toLowerCase() !== 'use-quickly') {
+                throw notImpl('Bank.openNearestAccess', 'unsupported bank access');
+            }
+            const row = snap().nearest_booth;
+            if (!row) return false;
+            const adjacent = () => {
+                const h = snap().here;
+                return h && h.level === (row.level ?? 0) && Math.max(Math.abs(h.x-row.x), Math.abs(h.z-row.z)) <= 1;
+            };
+            if (!adjacent()) {
+                queue({op:'walk-near',x:row.x,z:row.z,level:row.level ?? 0,radius:1,allow_teleports:false});
+                if (!(await Execution.delayUntil(adjacent, 60000))) return false;
+            }
+            return Bank.openBooth();
         },
     },
     {

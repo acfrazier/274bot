@@ -263,3 +263,32 @@ mod tests {
         assert_eq!(row.name, "Rune chainbody");
     }
 }
+
+/// Existing supported food heals, shared by compatibility readers.
+pub const FOOD_HEALS: &[(&str, i32)] = &[
+    ("Shark", 20),
+    ("Lobster", 12),
+    ("Swordfish", 14),
+    ("Tuna", 10),
+    ("Salmon", 9),
+    ("Trout", 7),
+    ("Pike", 8),
+    ("Bass", 13),
+    ("Herring", 5),
+    ("Sardine", 4),
+    ("Anchovies", 1),
+    ("Shrimps", 3),
+    ("Cooked meat", 3),
+    ("Cooked chicken", 3),
+    ("Bread", 5),
+    ("Stew", 11),
+    ("Cake", 4),
+    ("Chocolate cake", 5),
+    ("Plain pizza", 7),
+    ("Meat pizza", 8),
+    ("Anchovy pizza", 9),
+    ("Pineapple pizza", 11),
+    ("Redberry pie", 6),
+    ("Meat pie", 6),
+    ("Apple pie", 7),
+];

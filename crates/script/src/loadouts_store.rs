@@ -232,3 +232,21 @@ mod tests {
         assert!(store.get("melee2").is_some());
     }
 }
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    #[test]
+    fn selected_loadout_matches_case_and_falls_back_to_first() {
+        let rows = vec![Loadout { name: "First".into(), worn: vec![], carry: vec!["Coins".into(), "Lobster".into()] }, Loadout { name: "Second".into(), worn: vec![], carry: vec!["Shark".into()] }];
+        assert_eq!(selected_compat_loadout(&rows, " SECOND ")["name"], "Second");
+        assert_eq!(selected_compat_loadout(&rows, "missing")["carry"][1]["item"], "Lobster");
+        assert!(selected_compat_loadout(&[], "").is_null());
+    }
+}
+
+/// Adapt the host's persisted loadout shape without changing its wire format.
+pub fn selected_compat_loadout(rows: &[Loadout], wanted: &str) -> serde_json::Value {
+    let Some(row) = rows.iter().find(|r| r.name.eq_ignore_ascii_case(wanted.trim())).or_else(|| rows.first()) else { return serde_json::Value::Null; };
+    serde_json::json!({"name":row.name,"worn":row.worn,"carry":row.carry.iter().map(|item| serde_json::json!({"item":item})).collect::<Vec<_>>()})
+}

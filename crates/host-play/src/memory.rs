@@ -213,6 +213,7 @@ static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None
 /// Called from the existing frontend slot observe hook. Drives the Thiever
 /// scenario seed/proof; idle installs no seeds.
 pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: bool) {
+    crate::memory_diagnostics::frame(c, name, hold);
     let seed = {
         let seeds = SEEDS.lock().unwrap();
         seeds.as_ref().and_then(|m| m.get(name).cloned())
@@ -249,15 +250,24 @@ pub struct Run {
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     output: std::fs::File,
+    diagnostics: bool,
+    pub single_renderer: bool,
+    diagnostic_output: Option<std::fs::File>,
 }
 
 impl Run {
     /// Mint ephemeral accounts, throwaway vault, optional Thiever card.
     /// Idle: no card, no RS2B0T. Active/lifecycle: RS2B0T required.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
+        client::profiling::enable();
         use vault::{Profile, ProfileSettings, Vault};
 
         let names = crate::mint_live_names(config.n);
+        if frontend=="panel" {crate::nav_capture::enable(&names);}
+        let diagnostics = std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1");
+        if diagnostics {
+            crate::memory_diagnostics::enable(&names);
+        }
         let pass = crate::live_vault_passphrase();
         let dir = std::env::temp_dir().join(format!("274bot-memory-{}", names[0]));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -278,8 +288,9 @@ impl Run {
                 .map_err(|e| e.to_string())?;
 
             if config.workload != Workload::Idle {
-                let mut scenario =
-                    scenario::get("thiever").ok_or("missing Thiever scenario")?;
+                let mut scenario = if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
+                    scenario::thiever_sustained_scenario()
+                } else { scenario::get("thiever").ok_or("missing Thiever scenario")? };
                 scenario.settings.terminal_shot = None;
                 let mut runner = scenario::ScenarioRunner::new(scenario);
                 runner.set_live_names(&[name.clone()]);
@@ -333,10 +344,20 @@ impl Run {
             .unwrap_or_else(|| dir.join("samples.jsonl"));
         let output = std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(&output_path)
             .map_err(|e| format!("{}: {e}", output_path.display()))?;
+        let diagnostic_output = if diagnostics {
+            Some(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(output_path.with_extension("diagnostics.jsonl"))
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
         eprintln!(
             "memory benchmark {frontend}: {} slots {}; {}",
             config.n,
@@ -358,6 +379,9 @@ impl Run {
             teardown: None,
             card,
             output,
+            diagnostics,
+            diagnostic_output,
+            single_renderer: std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1"),
         })
     }
 
@@ -369,6 +393,20 @@ impl Run {
         let Some((card, bag, siblings)) = &self.card else {
             return Ok(());
         };
+        if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
+            let mut bag = bag.clone();
+            bag.insert("banking".into(), serde_json::json!("Auto"));
+            bag.insert("loadout".into(), serde_json::json!("Memory food"));
+            bag.insert("foodWithdraw".into(), serde_json::json!(22));
+            bag.insert("bankAtFood".into(), serde_json::json!(3));
+            let slot = crate::script_slot_or_insert(&play.scripts, name);
+            let mut slot = slot.lock().unwrap();
+            slot.start_load_with_loadouts(card.js.clone(), card.shape, siblings.clone(), &[script::Loadout { name: "Memory food".into(), worn: vec![], carry: vec!["Lobster".into()] }])?;
+            slot.post_settings_bag(&bag);
+            drop(slot);
+            play.wake(name);
+            return Ok(());
+        }
         play.script_start_load(
             name,
             card.js.clone(),
@@ -412,7 +450,11 @@ impl Run {
                 };
                 match status {
                     scenario::RunnerStatus::Failed(msg) => {
-                        return Err(format!("Thiever seed/proof failed for {name}: {msg}"));
+                        let failure = format!("Thiever seed/proof failed for {name}: {msg}");
+                        if self.diagnostics {
+                            self.write_diagnostics(play, Some(&failure))?;
+                        }
+                        return Err(failure);
                     }
                     scenario::RunnerStatus::Passed => {
                         seeded += 1;
@@ -428,7 +470,9 @@ impl Run {
                     _ => {}
                 }
                 if let Some(error) = play.script_last_error(name) {
-                    return Err(format!("{name}: {error}"));
+                    let failure = format!("{name}: {error}");
+                    if self.diagnostics { self.write_diagnostics(play, Some(&failure))?; }
+                    return Err(failure);
                 }
             }
         }
@@ -495,7 +539,11 @@ impl Run {
             .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
         {
             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
-            // Isolate/GPU counters stay null until their hooks land (T2 contract).
+            let metrics = script::memory_profile::snapshots();
+            let sum = |key:&str|metrics.iter().filter_map(|m|m[key].as_u64()).sum::<u64>();
+            let live = sum("v8_live");
+            let sampled = metrics.iter().filter(|m|m["v8_live"]==1 && m["v8_heap_samples"].as_u64().unwrap_or(0)>0).count() as u64;
+            let gpu = client::profiling::gpu_bytes();
             let sample = Sample {
                 frontend: self.frontend.into(),
                 n: self.config.n,
@@ -517,13 +565,31 @@ impl Run {
                 rust_allocations: Some(allocs),
                 rust_allocated_bytes: Some(alloc_bytes),
                 rust_live_bytes: Some(live_bytes),
-                snapshot_inflight_bytes: None,
-                snapshot_inflight_capacity: None,
-                v8_used_bytes: None,
-                v8_total_bytes: None,
-                gpu_tracked_bytes: None,
+                snapshot_inflight_bytes: Some(sum("snapshot_inflight_bytes")),
+                snapshot_inflight_capacity: Some(sum("snapshot_inflight_capacity")),
+                v8_used_bytes: (live==sampled).then(||sum("v8_used_bytes")),
+                v8_total_bytes: (live==sampled).then(||sum("v8_total_bytes")),
+                gpu_tracked_bytes: Some(gpu.buffers+gpu.textures),
             };
-            writeln!(self.output, "{}", sample.to_json()).map_err(|e| e.to_string())?;
+            let mut value = sample.to_json();
+            value["gpu_buffer_bytes"] = gpu.buffers.into();
+            value["gpu_texture_bytes"] = gpu.textures.into();
+            value["gpu_peak_tracked_bytes"] = gpu.peak.into();
+            value["v8_live_isolates"] = live.into();
+            value["v8_sampled_isolates"] = sampled.into();
+            let now_ms=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+            value["v8_max_sample_age_ms"] = metrics.iter().filter(|m|m["v8_live"]==1).filter_map(|m|m["v8_updated_ms"].as_u64()).map(|t|now_ms.saturating_sub(t)).max().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null);
+            for key in ["script_tick_count","script_tick_total_ns"] {value[key]=sum(key).into();}
+            value["script_tick_max_ns"]=metrics.iter().filter_map(|m|m["script_tick_max_ns"].as_u64()).max().unwrap_or(0).into();
+            value["snapshot_sum_isolate_peak_capacity"] = sum("snapshot_peak_capacity").into();
+            for (key,counter) in [("client_tick",&client::profiling::CLIENT_TICK),("ui_draw",&client::profiling::UI_DRAW),("ui_frame",&client::profiling::UI_FRAME)] {
+                let (count,total,max)=counter.read();
+                value[format!("{key}_count")]=count.into();value[format!("{key}_total_ns")]=total.into();value[format!("{key}_max_ns")]=max.into();
+            }
+            writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
+            if self.diagnostics {
+                self.write_diagnostics(play, None)?;
+            }
             self.last_sample = Some(now);
         }
 
@@ -532,8 +598,29 @@ impl Run {
             .is_some_and(|t| t.elapsed() >= Duration::from_secs(60)))
     }
 
-    /// Rotate focus every 30s across `0..n`.
+    fn write_diagnostics(&mut self, play: &Play, failure: Option<&str>) -> Result<(), String> {
+        let mut slots = Vec::with_capacity(self.names.len());
+        let seeds = SEEDS.lock().unwrap();
+        for name in &self.names {
+            let seed = seeds.as_ref().and_then(|s| s.get(name)).map(|s| {
+                let s = s.lock().unwrap();
+                serde_json::json!({"status":format!("{:?}",s.runner.status()),"started":s.started})
+            });
+            slots.push(serde_json::json!({"name":name,"seed":seed,"state":format!("{:?}",play.script_state(name)),"error":play.script_last_error(name),"runtime":play.memory_script_progress(name),"diagnostics":crate::memory_diagnostics::sample(name)}));
+        }
+        let row = serde_json::json!({"record":"diagnostics","elapsed_s":self.started.elapsed().as_secs_f64(),"failure":failure,"slots":slots});
+        // A separate record type in the diagnostic-only sidecar keeps original
+        // Sample consumers and baseline JSONL unchanged.
+        writeln!(
+            self.diagnostic_output.as_mut().expect("diagnostic output"),
+            "{row}"
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// Rotate focus every 30s, or keep slot zero for the single-renderer cell.
     pub fn focus_index(&self) -> usize {
+        if self.single_renderer { return 0; }
         let n = self.names.len().max(1);
         (self.started.elapsed().as_secs() / 30) as usize % n
     }
@@ -775,7 +862,11 @@ mod tests {
         );
         assert!(!run.has_script_card(), "idle must not load a script card");
         let idx = run.focus_index();
-        assert!(idx < run.names.len(), "focus_index {idx} out of 0..{}", run.names.len());
+        assert!(
+            idx < run.names.len(),
+            "focus_index {idx} out of 0..{}",
+            run.names.len()
+        );
     }
 
     #[test]

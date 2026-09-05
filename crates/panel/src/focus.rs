@@ -85,11 +85,59 @@ pub fn should_capture(f: &Focus) -> bool {
     should_draw(f) && f.capture
 }
 
+/// Opt-in benchmark policy. Single-renderer runs keep one fixed Game seat
+/// and deny all rail heads, including if the rail is expanded.
+#[cfg(feature = "memory-profile")]
+pub fn memory_draw_policy(f: &mut Focus, names: &[String], single: bool) {
+    f.renderer = true;
+    if single {
+        f.game_pane_open = true;
+    }
+    f.only_render_selected = single;
+    for name in names {
+        f.renderer_by.insert(name.clone(), !single);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use super::{draw_for_slot, full_rate_for, should_capture, should_draw, Focus};
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_single_renderer_keeps_other_thirty_one_heads_off() {
+        let names: Vec<_> = (0..32).map(|i| format!("bot{i}")).collect();
+        let mut f = Focus {
+            focused: Some(names[0].clone()),
+            renderer: false,
+            game_pane_open: false,
+            capture: false,
+            only_render_selected: false,
+            sidecar_50: false,
+            live_full_rate: false,
+            focused_50: true,
+            wall_open: true,
+            wall: names.clone(),
+            renderer_by: HashMap::new(),
+        };
+        super::memory_draw_policy(&mut f, &names, true);
+        assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 1);
+        assert!(draw_for_slot(&f, &names[0]));
+        f.only_render_selected = false;
+        assert_eq!(
+            names.iter().filter(|n| draw_for_slot(&f, n)).count(),
+            1,
+            "rail override stays off"
+        );
+        super::memory_draw_policy(&mut f, &names, false);
+        assert_eq!(
+            names.iter().filter(|n| draw_for_slot(&f, n)).count(),
+            32,
+            "existing all-render mode"
+        );
+    }
 
     #[test]
     fn draw_requires_focus_pane_and_renderer() {

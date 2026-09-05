@@ -590,6 +590,8 @@ fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot {
 /// `BOT_DEBUG=1`. Tick errors also become [`SlotScript::last_error`].
 fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
     let logs = slot.drain_logs();
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::logs(name, &logs);
     if !debug_enabled() {
         return;
     }
@@ -824,6 +826,8 @@ fn dispatch_script_interact(
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::shim::InteractReq;
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::requests(name, &reqs);
     let mut wrote = false;
     let camera_yaws: Vec<i32> = reqs
         .iter()
@@ -918,6 +922,10 @@ fn dispatch_script_interact(
                         ..FindOptions::default()
                     },
                 );
+            }
+            InteractReq::WalkNear { x, z, level, radius, allow_teleports } => {
+                let arm = ScriptWalkArm { here, world: world.clone(), navs: Arc::clone(navs), name: name.to_string(), state: state.clone(), bank: snapshot.bank().iter().map(|it|(it.def.id,it.count)).collect() };
+                wrote |= arm.route_with_radius(x,z,level,FindOptions {allow_teleports,..FindOptions::default()},radius);
             }
             InteractReq::WalkTo { x, z, level } => {
                 wrote |= matches!(ix.walk(WorldTile { x, z, level }), SendResult::Sent { .. });
@@ -1219,6 +1227,8 @@ fn dispatch_script_interact(
     for yaw in camera_yaws {
         wrote |= driver.set_orbit_camera_yaw(yaw);
     }
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::sent(name, wrote);
     wrote
 }
 
@@ -2274,6 +2284,10 @@ fn publish_script_paint(status: &mut SlotStatus, paint: Option<&script::shim::Sc
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 struct NavBot {
+    route_generation: u64,
+    route_worker: Option<Arc<()>>,
+    pending_route: Option<ScriptRouteRequest>,
+    requested_route: Option<(WorldTile, i32, bool)>,
     traveller: Traveller,
     route: Option<Route>,
     bank_fetch: Option<PendingBankFetch>,
@@ -2309,83 +2323,66 @@ impl ScriptWalkArm {
     /// no player tile, no nav world, or a route/session already queued;
     /// the worker stores the outcome on the uid's nav bot. Returns whether
     /// the worker was spawned — not whether a path exists.
-    fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
-        let Some((hx, hz, hl)) = self.here else {
-            return false;
-        };
-        let Some(world) = self.world.as_ref() else {
-            return false;
-        };
-        // One route/session in flight per uid: a script spamming walk
-        // every tick must not spawn a worker each tick.
-        if self
-            .navs
-            .lock()
-            .unwrap()
-            .get(&self.name)
-            .is_some_and(|b| b.route.is_some() || b.bank_fetch.is_some())
-        {
-            return false;
-        }
-        let from = WorldTile {
-            x: hx,
-            z: hz,
-            level: hl,
-        };
+    fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool { self.route_with_radius(x,z,level,opts,0) }
+    fn route_with_radius(&self, x: i32, z: i32, level: i32, mut opts: FindOptions, radius: i32) -> bool {
+        let Some((hx, hz, hl)) = self.here else { return false; };
+        let Some(world) = self.world.as_ref() else { return false; };
+        let from = WorldTile { x: hx, z: hz, level: hl };
         let to = WorldTile { x, z, level };
-        // The uid's latched essence-mine session lets a script walk out
-        // of the mine through the exit portal's return hop; a uid with no
-        // latch keeps the mine sealed (fail-closed, exactly like the
-        // packed graph). The bot's own latch wins over a caller-supplied
-        // `opts.essence` (the script `FindOptions` carries none).
-        let mut opts = opts;
-        if let Some(ess) = self
-            .navs
-            .lock()
-            .unwrap()
-            .get(&self.name)
-            .and_then(|b| b.traveller.essence())
-        {
-            opts.essence = Some(ess);
-        }
-        self.navs
-            .lock()
-            .unwrap()
-            .entry(self.name.clone())
-            .or_default()
-            .allow_teleports = opts.allow_teleports;
-        let world = Arc::clone(world);
+        let token = {
+            let mut navs = self.navs.lock().unwrap();
+            let bot = navs.entry(self.name.clone()).or_default();
+            if bot.bank_fetch.is_some() || (radius <= 0 && (bot.route.is_some() || bot.route_worker.is_some())) { return false; }
+            let key = (to, radius, opts.allow_teleports);
+            if bot.requested_route == Some(key) && (bot.route_worker.is_some() || bot.route.is_some()) { return true; }
+            if let Some(ess) = bot.traveller.essence() { opts.essence = Some(ess); }
+            bot.route_generation = bot.route_generation.wrapping_add(1);
+            bot.requested_route = Some(key);
+            bot.pending_route = Some(ScriptRouteRequest {
+                generation: bot.route_generation, world: Arc::clone(world), from, to, radius,
+                opts, state: self.state.clone(), bank: self.bank.clone(),
+            });
+            if bot.route_worker.is_some() { return true; }
+            let token = Arc::new(());
+            bot.route_worker = Some(Arc::clone(&token));
+            token
+        };
         let navs = Arc::clone(&self.navs);
         let name = self.name.clone();
-        let state = self.state.clone();
-        let bank = self.bank.clone();
-        // Routing is the expensive part: run `find_with` / BankBudget
-        // planning off-pump on a short-lived worker. The worker is
-        // detached and exits right after storing the outcome; it never
-        // touches the scripts map (lock order stays scripts → navs).
-        thread::Builder::new()
-            .name(format!("nav-find-{name}"))
-            .spawn(move || {
-                let empty = WorldState::empty();
-                let state = state.as_ref().unwrap_or(&empty);
-                match route_or_bank_fetch(&world, from, to, opts, state, &bank) {
-                    RouteOutcome::Routed(route) => {
-                        let mut guard = navs.lock().unwrap();
-                        let bot = guard.entry(name).or_default();
-                        bot.bank_fetch = None;
-                        bot.route = Some(route);
-                    }
-                    RouteOutcome::BankSession { pending, route } => {
-                        let mut guard = navs.lock().unwrap();
-                        let bot = guard.entry(name).or_default();
-                        bot.bank_fetch = Some(pending);
-                        bot.route = Some(route);
-                    }
-                    RouteOutcome::NoPath => {}
+        let worker_token = Arc::clone(&token);
+        let spawned = thread::Builder::new().name(format!("nav-find-{name}")).spawn(move || loop {
+            let request = {
+                let mut all = navs.lock().unwrap();
+                let Some(bot) = all.get_mut(&name) else { return; };
+                if !bot.route_worker.as_ref().is_some_and(|t|Arc::ptr_eq(t,&worker_token)) { return; }
+                let Some(request) = bot.pending_route.take() else { bot.route_worker = None; return; };
+                request
+            };
+            #[cfg(feature="memory-profile")]
+            memory_diagnostics::navigation(&name,||format!("FindStart generation={} from={:?} to={:?} radius={}",request.generation,request.from,request.to,request.radius));
+            let outcome = request.calculate();
+            #[cfg(feature="memory-profile")]
+            memory_diagnostics::navigation(&name,|| {
+                let kind=match &outcome {RouteOutcome::Routed(_)=>"Routed",RouteOutcome::BankSession{..}=>"BankSession",RouteOutcome::NoPath=>"NoPath"};
+                format!("FindEnd generation={} outcome={kind}",request.generation)
+            });
+            let mut all = navs.lock().unwrap();
+            let Some(bot) = all.get_mut(&name) else { return; };
+            if !bot.route_worker.as_ref().is_some_and(|t|Arc::ptr_eq(t,&worker_token)) { return; }
+            bot.publish_route(request.generation, request.opts.allow_teleports, outcome);
+        }).is_ok();
+        if !spawned {
+            if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
+                if bot.route_worker.as_ref().is_some_and(|t|Arc::ptr_eq(t,&token)) {
+                    bot.route_worker = None;
+                    bot.pending_route = None;
+                    bot.requested_route = None;
                 }
-            })
-            .is_ok()
+            }
+        }
+        spawned
     }
+
 }
 
 /// One pump step of a uid's nav bot: advance a pending BankBudget session
@@ -2456,6 +2453,14 @@ fn step_nav_bot<D: Driver>(
         edges: world.map(|w| w.graph.edges.as_slice()),
         ..TravelOptions::default()
     };
+    #[cfg(feature="memory-profile")]
+    if memory_diagnostics::enabled() {
+        options.on_event=Some(Box::new(|event|memory_diagnostics::navigation(name,||format!("{event:?}"))));
+        options.on_leg=Some(Box::new(|leg,phase|memory_diagnostics::navigation(name,||match leg {
+            nav::router::Leg::Walk{tiles,..}=>format!("Leg {phase:?} Walk tiles={} from={:?} to={:?}",tiles.len(),tiles.first(),tiles.last()),
+            nav::router::Leg::Transport{edge}=>format!("Leg {phase:?} {:?} id={} open_id={:?} from={:?} to={:?} option={}",edge.kind,edge.loc_id,edge.open_loc_id,edge.at,edge.to,edge.option),
+        })));
+    }
     let queued = {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
@@ -2471,7 +2476,17 @@ fn step_nav_bot<D: Driver>(
                     if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
             )
         });
-        match bot.traveller.follow(driver, snapshot, route, &mut options) {
+        #[cfg(feature="memory-profile")]
+        nav_capture::route(name,snapshot,route.dest,bot.route_generation);
+        let outcome=bot.traveller.follow(driver, snapshot, route, &mut options);
+        #[cfg(feature="memory-profile")]
+        if let Some(outcome)=&outcome {
+            memory_diagnostics::navigation(name,||format!("FollowEnd tick={} generation={} outcome={outcome:?}",snapshot.tick(),bot.route_generation));
+            if !matches!(outcome,nav::traveller::TravelOutcome::Arrived{..}) {
+                nav_capture::failure(name,snapshot,serde_json::json!({"generation":bot.route_generation,"outcome":format!("{outcome:?}")}));
+            }
+        }
+        match outcome {
             Some(nav::traveller::TravelOutcome::Arrived { .. }) => {
                 bot.route = None;
             }
@@ -2659,6 +2674,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
         route: arm.route.clone(),
         bank_fetch: arm.bank_fetch.take(),
         allow_teleports: false,
+        ..Default::default()
     };
     let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here);
     arm.bank_fetch = bot.bank_fetch;
@@ -2680,6 +2696,7 @@ pub fn walk_arm_bank_fetch_freezes_follow(arm: &WalkArm) -> bool {
         route: arm.route.clone(),
         bank_fetch: arm.bank_fetch.clone(),
         allow_teleports: false,
+        ..Default::default()
     })
 }
 
@@ -3237,6 +3254,16 @@ impl Play {
             .unwrap_or(script::RunState::Idle)
     }
 
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_script_metrics(&self, name:&str) -> Option<serde_json::Value> {
+        script_slot(&self.scripts,name).and_then(|slot|slot.lock().unwrap().memory_metrics())
+    }
+
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_script_progress(&self, name:&str) -> serde_json::Value {
+        script_slot(&self.scripts,name).map(|slot|slot.lock().unwrap().memory_progress()).unwrap_or(serde_json::Value::Null)
+    }
+
     /// `name`'s script `last_error`; `None` when the slot has none.
     pub fn script_last_error(&self, name: &str) -> Option<String> {
         script_slot(&self.scripts, name)
@@ -3727,6 +3754,8 @@ fn spawn_slot_thread(
                             let running = script_running(&slot_scripts, name);
                             let inv = observe_script_inv(running, tick_edge, c);
                             observe_rebuild_snapshot(&mut nav_snapshot, c, tick_edge);
+                            #[cfg(feature="memory-profile")]
+                            nav_capture::observe(name,&nav_snapshot,c.draw,running);
                             let nav_armed = slot_navs.lock().unwrap().get(name).is_some_and(|b| {
                                 b.route.is_some() || b.bank_fetch.is_some()
                             });
@@ -4808,6 +4837,61 @@ mod tests {
             TransportGraph::default(),
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
+        let old = Route { legs: vec![], dest: WorldTile{x:1,z:1,level:0}, ticks:0.0 };
+        let next = Route { legs: vec![], dest: WorldTile{x:2,z:2,level:0}, ticks:0.0 };
+        let mut bot = NavBot { route:Some(old.clone()),route_generation:2,..Default::default() };
+        bot.publish_route(1,true,RouteOutcome::Routed(next.clone()));
+        assert_eq!(bot.route,Some(old.clone()));
+        bot.publish_route(2,true,RouteOutcome::NoPath);
+        assert_eq!(bot.route,Some(old));
+        bot.publish_route(2,true,RouteOutcome::Routed(next.clone()));
+        assert_eq!(bot.route,Some(next));
+        assert!(bot.allow_teleports);
+    }
+
+    #[test]
+    fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
+        let old = Route { legs: vec![], dest: WorldTile{x:1,z:1,level:0}, ticks:0.0 };
+        let navs = Arc::new(Mutex::new(HashMap::from([("retry".to_string(), NavBot {
+            route: Some(old.clone()), ..Default::default()
+        })])));
+        let arm = ScriptWalkArm {
+            here: Some((0,0,0)), world: Some(Arc::new(open_world(3,3))),
+            navs: Arc::clone(&navs), name: "retry".into(), state: None, bank: vec![],
+        };
+        // Both searches have no in-world approach tile. Each call must actually
+        // run a new search, while retaining the unrelated route on failure.
+        for expected_generation in 1..=2 {
+            assert!(arm.route_with_radius(100,100,0,FindOptions::default(),1));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let all = navs.lock().unwrap();
+                let bot = &all["retry"];
+                assert_eq!(bot.route_generation, expected_generation);
+                assert_eq!(bot.route, Some(old.clone()));
+                if bot.route_worker.is_none() { break; }
+                drop(all);
+                assert!(std::time::Instant::now() < deadline, "route worker did not finish");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+    }
+
+    #[test]
+    fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
+        let mut world = open_world(7,7);
+        world.collision.blocked[0] |= 1 << (3*7+3);
+        world.collision.walk[3*7+2] = 1; // A face wall does not occupy its floor tile.
+        let target = WorldTile {x:3,z:3,level:0};
+        let candidates = approach_tiles(&world, WorldTile{x:0,z:3,level:0}, target, 1);
+        assert_eq!(candidates.len(),8);
+        assert!(candidates.iter().all(|t|*t != target && (t.x-3).abs() <= 1 && (t.z-3).abs() <= 1));
+        assert_eq!(candidates[0].x,2);
+        assert!(approach_tiles(&world,target,target,0).is_empty());
     }
 
     #[test]
@@ -9007,6 +9091,7 @@ export default class T extends LoopingBot {
                 route: None,
                 bank_fetch: None,
                 allow_teleports: false,
+                ..Default::default()
             },
         );
         // The walk target is Aubury's anchor; the origin is the mine pad.
@@ -9273,3 +9358,63 @@ export default class T extends LoopingBot {
 
 #[cfg(feature = "memory-profile")]
 pub mod memory;
+#[cfg(feature="memory-profile")]
+pub mod nav_capture;
+
+#[cfg(feature = "memory-profile")]
+mod memory_diagnostics;
+
+/// Candidate destinations for an explicit radius request. Exact walks retain
+/// their old routing behavior. Bound enumeration to the loaded scene size.
+fn approach_tiles(world: &NavWorld, from: WorldTile, to: WorldTile, radius: i32) -> Vec<WorldTile> {
+    let r = radius.clamp(0, 104);
+    let mut tiles = Vec::new();
+    for dx in -r..=r { for dz in -r..=r {
+        let t=WorldTile { x:to.x+dx,z:to.z+dz,level:to.level };
+        if world.collision.standable(t) {tiles.push(t);}
+    }}
+    tiles.sort_by_key(|t| ((t.x-from.x).abs().max((t.z-from.z).abs()),(t.x-to.x).abs().max((t.z-to.z).abs()),t.x,t.z));
+    tiles
+}
+
+struct ScriptRouteRequest {
+    generation: u64,
+    world: Arc<NavWorld>,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+    opts: FindOptions,
+    state: Option<WorldState>,
+    bank: Vec<(i32,i32)>,
+}
+impl ScriptRouteRequest {
+    fn calculate(&self) -> RouteOutcome {
+        let empty = WorldState::empty();
+        let state = self.state.as_ref().unwrap_or(&empty);
+        if self.radius <= 0 { return route_or_bank_fetch(&self.world,self.from,self.to,self.opts.clone(),state,&self.bank); }
+        for target in approach_tiles(&self.world,self.from,self.to,self.radius) {
+            let outcome = route_or_bank_fetch(&self.world,self.from,target,self.opts.clone(),state,&self.bank);
+            if !matches!(outcome,RouteOutcome::NoPath) { return outcome; }
+        }
+        RouteOutcome::NoPath
+    }
+}
+impl NavBot {
+    fn publish_route(&mut self, generation: u64, allow_teleports: bool, outcome: RouteOutcome) {
+        if self.route_generation != generation { return; }
+        let (route, pending) = match outcome {
+            RouteOutcome::Routed(route) => (route,None),
+            RouteOutcome::BankSession {pending,route} => (route,Some(pending)),
+            RouteOutcome::NoPath => {
+                // The retained route belongs to the previous request. A later
+                // request for this failed destination must be allowed to retry.
+                self.requested_route = None;
+                return;
+            }
+        };
+        self.traveller.clear();
+        self.route = Some(route);
+        self.bank_fetch = pending;
+        self.allow_teleports = allow_teleports;
+    }
+}
