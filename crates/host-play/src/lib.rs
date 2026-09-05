@@ -40,7 +40,7 @@ use nav::tile::Tile;
 use nav::traveller::{TravelOptions, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
-pub use rss::{count_tcp_to, parse_lsof_established, sample_process};
+pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 
 /// [`client::bot_target::world_host_for`] from a `BOT_TARGET` string.
