@@ -1,0 +1,53 @@
+APPROVE
+
+Commit a96902e (parent 0af4481) is docs-only: adds `docs/memory/runner-clean-pair.md` and `docs/memory/runner-clean-pair.json` only (+521). No code, builds, or live launch content.
+
+Scope checked (read-only)
+- Raw dirs: `docs/memory/diagnostics/20260906T163141Z_panel_n32_active` and `.../20260906T163734Z_panel_n32_active`
+- Against: metadata.json, memory-summary.json, samples.jsonl, samples.qualification.jsonl, run.log, operator-observation.txt, on-disk binary SHAs, prior evidence (`corrected-controls-reassessment`, `shared-nav-stop-reassessment`, `snapshot-consumer-audit`, `runner-release-live`, `targeted-allocation-owners`)
+
+Findings
+
+1. Docs-only / pair fidelity
+   - Pair JSON matches both memory-summary blobs for qualification, meta, groups, memory, teardown, timing means, peaks.
+   - Meta matches raw metadata.json; binary SHAs match files on disk:
+     - before `616196ac…6c9b` = `shared-stop-build/panel-play-system`
+     - after `df54511e…74ae` = `runner-boundary-build/panel-play-system`
+   - Both exit 0, qualified true, errors [], PASS in run.log.
+   - Observation spans 118.812s / 119.041s; observe-start and observe-end qualification samples present (“boundary proofs”).
+   - Observe samples stay ready32/active32; final teardown ready32/active0, v8_live 0, v8_used 0, inflight 0/0.
+   - Sequential: after start is ~0.20s after before end.
+
+2. RSS deltas, timing table, overruns, gains, gauges
+   - Table values all round-trip from raw bytes/means (MiB = 1,048,576).
+   - Lead deltas: median −62.625 MiB, teardown30 −63.922 MiB; lifetime peak −59,867,136 B.
+   - JSON `deltas_after_minus_before` matches those byte deltas (teardown uses last-30s median, consistent with MD definition).
+   - Observation-window work_overruns are 0 for sim and drawing (startup drawing overruns 14/7 are outside observe; MD wording is correctly scoped).
+   - Steal gains from qual paint: before 5–21, after 3–18 (32 slots).
+   - V8 used medians 229,511,432 / 218,242,408; GPU tracked medians 18,528,464 / 18,550,064 — stated as overlapping gauges, not extra savings.
+   - Rust allocation counters null/unavailable as claimed.
+   - Drawing work +0.711 ms called out; cadence alone not treated as latency equivalence.
+   - Lag-49 batching caveat matches established scheduling docs.
+
+3. Provenance (required distinction holds)
+   - Launch metadata on both runs: `host_commit=0af4481`, `host_sources_sha256=dc8b85e9…` (checkout at launch).
+   - `binary_provenance` correctly records older before source: `source_commit=6a25d115…`, `host_sources_sha256=9a4089c2…` for binary `616196ac…`, matching prior corrected-controls / shared-nav evidence for that saved binary.
+   - After provenance: `0e909b9…` / `dc8b85e9…` / `df54511e…`, matching runner-boundary / snapshot-consumer-audit / runner-release-live.
+   - MD explicitly states launch host commit/source digest describe the checkout, not an older saved binary’s source; JSON separates the two. This is accurate and necessary.
+   - Client source `27246deb…`, nav pack `2f393138…`, empty host_diff `e3b0c442…` match previous evidence.
+
+4. Prior-evidence cross-checks
+   - Native selected runner removal 46.141 MiB (= 48,381,952 B) matches snapshot-consumer-audit / runner-release-live.
+   - Corrected active A/B median spread 211.789 MiB matches corrected-controls table (1830.445 − 1618.656).
+   - Single-pair caveats, unmerged candidate, no whole-branch grok-4.6 approval: present and consistent with the data (RSS delta ≪ prior repeat noise).
+
+5. Operator bank-booth note
+   - Retained in before-run `operator-observation.txt` and JSON; text matches.
+   - `nav_captures=false`, `diagnostic_sidecar=false`, stack/verbose diagnostics off.
+   - Framed as uncausal; no mid-pair nav/instrumentation change claimed. Appropriate.
+
+Nits (non-blocking)
+- JSON key `teardown_resident_bytes` is the 30s-median delta, not `teardown.resident_bytes` last sample (−71,843,840). MD defines the metric; no reader-facing error.
+- “Boundary proofs” is local jargon for observe-start/end qual samples; both exist.
+
+Verdict: APPROVE. Numbers, qualification, provenance split (616196ac↔9a4089c2 vs launch dc8b85e9/0af4481), single-pair honesty, gauges, overruns, gains, and uncausal nav note all check out against raw diagnostics and prior records.
