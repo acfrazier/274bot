@@ -1,0 +1,16 @@
+APPROVE
+
+Commit 05b0334 (docs only: corrected-controls-reassessment.md/.json) is consistent with the five named diagnostics and the bounded ownership evidence.
+
+Verified against raw metadata, memory-summary.json, samples.jsonl, samples.qualification.jsonl, and the reassessment JSON:
+
+- All five cells: binary SHA-256 616196ac…6c9b, matching host/client source digests, nav pack digest, client/rs2b0t commits; host_diff empty tree; first two at 6a25d11, three new at 747e81e; exit 0; qualified with empty errors.
+- Observe ready/active as claimed (Idle32 32/0, Active32 A/B 32/32, Idle1 1/0, Active1 1/1); observe-start/end proofs present; teardown ready=N, active0, isolates0, V8 used0, inflight bytes/capacity0; rust counters null.
+- Gains: A 48–92, B 44–91, Active1 53. New observation spans 599.124 / 599.003 / 598.836s.
+- Measurement table and finite differences match raw medians/peaks/teardown-30s/CPU/ticks (half-up MiB display). FD: idle 19,810,370 B (18.893 MiB); active 33,328,756–40,492,527 B (31.785–38.617 MiB); post-Stop 26,812,945–32,603,367 B (25.571–31.093 MiB). JSON FD floats match exact (RSS32−RSS1)/31.
+- B vs A: +211.789 MiB median; minute slopes −75.328 / +41.250 MiB; V8/GPU gauges as stated and not treated as RSS decomposition. B sim/draw means, 3/788,750 sim overruns, zero draw overruns — match.
+- Teardown excess over Idle32: 234.703–405.891 MiB.
+- Caveats hold: provisional scale only; not full baseline/acceptance; not pure client sizes or ×1000 projection; FD ranges not CIs; single corrected samples called out; RSS/V8/GPU must not be summed; no leak claim.
+- Owners: client-construction 4,325,376×32 and 512KiB/339,840 snapshot stacks from allocation-ownership; encode_snapshot_delta still builds owned fingerprint + copy_finished to_vec; seed runners retain GameSnapshot after Done; heightmap 4×105×105 i32 = 176,400 B with clone / world.groundh.clone_from — correctly framed as small residual, not primary RSS.
+
+No numerical or overclaim defects requiring changes. Code was out of scope.
