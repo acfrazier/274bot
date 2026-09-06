@@ -1,0 +1,48 @@
+REQUEST CHANGES
+
+Reviewed: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f (codex/memory-diagnostics @ 2421aea, dirty host-play focus/stop + login_queue + submodule gitlink) and vendor/fr-client-rust (codex/memory-sprite-reuse @ bc8bb4e vs 12c2061). Source only. Tests/live not re-run. No CPU or retained-memory claim.
+
+Authorized hop (viewport overlays)
+
+scene_overlay_changed walks the 512x334 scene window against chrome_rgba. Alpha is overlay_coverage; RGB is compared only when coverage != 0, so removal still invalidates and invisible RGB does not. No extra buffer. overlay_changed is gated on scene_ready && chrome_uploaded, so the first atlas upload still comes from chrome_upload_pending / !chrome_uploaded. Frozen scenes keep scene_ready and can pick up modal/nav pixels. Scene rect (4,4)-(516,338) does not overlap the minimap punch (550,4)-(722,160). Compare and fill use the same origin/stride.
+
+That part matches the write-up. The upload it shares does not.
+
+Blocking: freeze minimap
+
+finish still does punch_minimap = minimap_live, and any chrome upload with !punch_minimap clears minimap_held.
+
+Live: minimap_live=true, punch stays, overlay motion is fine.
+Freeze (scene_state==1): chrome() sets minimap_live=false. Loading/modals still draw_scene_overlays + blit into draw_area. That is almost always a coverage/RGB change vs the last live atlas, so overlay_changed is true, finish re-uploads an unpunched atlas, drops the held 172x156 layer, and composites without it.
+
+Previously freeze kept the punched atlas and the last minimap because chrome stayed clean. 54cfcf8 / freeze_keeps_last_minimap_after_punched_chrome is that contract. The new overlay test never sets minimap_live/held. The freeze minimap test never sets scene_ready and never changes coverage, so overlay_changed stays false.
+
+Title/sealed unpunch on chrome_upload_pending must stay (a held punch on title would hole the flames). Overlay-only freeze uploads need punch while minimap_held and must not clear it. Add a regression: punched live minimap, scene_ready, freeze, move/clear a scene overlay, assert last minimap pixels remain and overlay pixels update.
+
+Authorized hop (focused reconnect)
+
+preferred survives grant. request_permit inserts preferred at front only when that uid actually requests; already-queued uids are not duplicated. set_preferred(Some) reorders only if present; set_preferred(None) does not invent a slot. Grant still pops; spacing, IP window, and UID_GRANT_CAP still run on the head. An in-flight Grant is already out of the FIFO.
+
+Play.focus reads the arm uid and set_preferred; no queue reservation. Play.stop_slot leave() then, if that name was focused, set_preferred(None). Panel select -> play.focus; tui focus too. Mainland hop returns through wait_for_permit, which is the reconnect that used to land FIFO-back.
+
+prefer() / prefer_login() still insert. That is the Login-all / run_channels wave, not TV focus.
+
+Non-blocking
+
+Full 512x334 compare every scene_ready frame with a stable overlay. Authorized (no extra dirty storage). Not a perf approval.
+
+viewport_overlay_moves_and_clears_without_chrome_redraw expects a GPU; gpu_backend.rs skips with no adapter.
+
+stop_slot_clears_focus_on_the_stopped_name does not assert later permit order.
+
+Play.focus on a name with no arm set_preferred(None) and clears a previous uid. select/spawn paths typically arm first.
+
+login_all still prefer_login-inserts the TV uid. Fine when that uid will handshake; still a phantom if it is already ingame and never enters wait_for_permit.
+
+Whole branch
+
+Scalar delay / sprite-reuse / GPU byte tracking / freeze-last-scene helpers are unchanged in intent from grok-4.6-scalar-delay-review.txt. This hop does not reopen them except the freeze+overlay interaction above. Host 118 / client 66+10+5 / four iface_model fixture failures are taken as reported, not re-run. Mixed scalar-delay timing and live captured-32 remain out of scope.
+
+Not accepted from this review
+
+No live visual, no 32-bot cell, no merge, no 128.

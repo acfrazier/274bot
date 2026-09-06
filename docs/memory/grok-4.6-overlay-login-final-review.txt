@@ -1,0 +1,24 @@
+APPROVE
+
+Worktree: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f
+Host c63fc76 (codex/memory-diagnostics) vs 2421aea. Client 451759f vs bc8bb4e. Source only. Tests not re-run.
+
+Blocker (from grok-4.6-overlay-login-review.txt)
+
+Closed. finish now punches with
+
+  minimap_live || (overlay_changed && !chrome_upload_pending && minimap_held)
+
+Overlay-only freeze upload (chrome already uploaded, no atlas dirty) keeps the 172x156 layer. Explicit chrome_upload_pending (title / sealed / chat-side redraw) still unpunches and clears minimap_held. Same fill path; scene rect and minimap punch still do not overlap.
+
+viewport_overlay_moves_and_clears_without_chrome_redraw now seeds area_map 0x0000ff, uploads live, then minimap_live=false, moves/clears overlay, asserts minimap pixel stays 0x0000ff. /tmp/overlay-freeze-red.log: left 0 vs 255 (black, not blue) before 451759f. /tmp/overlay-freeze-green.log after the patch: that test ok; client lib 66, gpu_backend 10 (including freeze_keeps_last_minimap_after_punched_chrome), render_backend 5. Release build left in progress as instructed.
+
+Host (unchanged since the earlier accept)
+
+preferred survives grant; request_permit push_front only for that uid on a real request; set_preferred does not invent a slot; Grant still pops; spacing / IP / UID cap still run on the head. Play.focus maps the arm uid; stop_slot leave then set_preferred(None) if that name was focused.
+
+Non-blocking (same as the prior receipt, not reopened)
+
+Play.focus with no arm still set_preferred(None). stop_slot_clears_focus_on_the_stopped_name still does not assert later permit order. login_all prefer_login still inserts. 512x334 compare every scene_ready frame is authorized, not a perf sign-off. Overlay GPU test still needs an adapter.
+
+Out of scope: scalar-delay / sprite-reuse / GPU byte tracking receipts; live visual; merge.
