@@ -21,6 +21,7 @@ def build_parser():
     stack_logging.add_argument('--stack-logging', action='store_true')
     stack_logging.add_argument('--stack-logging-lite', action='store_true', help='Native diagnostic: retain only current allocation stacks')
     p.add_argument('--scheduling-profile', action='store_true', help='Collect batched active-loop work/sleep/interval diagnostics')
+    p.add_argument('--render-profile', action='store_true', help='Collect per-slot renderer residency and host paint cadence')
     p.add_argument('--observe', type=int, default=600)
     p.add_argument('--warmup', type=int, default=120)
     return p
@@ -57,7 +58,7 @@ def main(argv=None):
     run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
     run.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
-    for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_MEMORY_RENDER_POLICY','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE']:
+    for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_MEMORY_RENDER_POLICY','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE','BOT_RENDER_PROFILE']:
         env.pop(k, None)
     env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
                BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
@@ -77,6 +78,7 @@ def main(argv=None):
     if a.stack_logging: env['MallocStackLogging'] = '1'
     if a.stack_logging_lite: env['MallocStackLogging'] = 'lite'
     if a.scheduling_profile: env['BOT_SCHEDULING_PROFILE'] = '1'
+    if a.render_profile: env['BOT_RENDER_PROFILE'] = '1'
     def git(*args):
         return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
     def source_digest(directory):
@@ -94,7 +96,7 @@ def main(argv=None):
     render_policy = requested_render_policy(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
                 nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
-                diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
+                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                 host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),

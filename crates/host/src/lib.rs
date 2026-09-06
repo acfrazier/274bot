@@ -4,6 +4,7 @@ mod auto_run;
 pub mod cadence;
 pub mod login_queue;
 mod random;
+pub mod render_profile;
 mod slot;
 mod slot_io;
 
@@ -228,6 +229,7 @@ impl Host {
             random_events,
             lamp_auto,
             lamp_skill,
+            render_prof: render_profile::Local::new(render_profile::slot_id_for(username)),
             ..SlotLoop::new()
         };
         let mut run_sends = 0u32;
@@ -488,6 +490,22 @@ impl Host {
             slot.paint_n = slot.paint_n.wrapping_add(1);
         } else {
             slot.skip_n = slot.skip_n.wrapping_add(1);
+        }
+        if let Some(prof) = slot.render_prof.as_mut() {
+            let present = slot.renderer.is_some();
+            let kind = slot.renderer.as_ref().map(|r| r.backend_kind());
+            let prefer = slot.renderer_prefer_cpu;
+            prof.record(render_profile::FrameObs {
+                now: t_loop,
+                painted: paint,
+                renderer_present: present,
+                backend: render_profile::classify_backend(present, prefer, kind),
+                prefer_cpu: prefer,
+                ingame: client.ingame,
+                scene_state: client.scene_state,
+                draw: client.draw,
+                full_rate,
+            });
         }
         slot.log_n = slot.log_n.wrapping_add(1);
         let result = slot.after_drain(client);
@@ -772,6 +790,8 @@ struct SlotLoop {
     /// Totals at the last `BOT_DEBUG` window line (deltas, not cumulatives).
     dbg: DebugSnap,
     dbg_at: Option<Instant>,
+    /// Opt-in renderer residency/paint counters; `None` while profiling off.
+    render_prof: Option<render_profile::Local>,
 }
 
 impl SlotLoop {
@@ -802,6 +822,7 @@ impl SlotLoop {
             log_n: 0,
             dbg: DebugSnap::default(),
             dbg_at: None,
+            render_prof: None,
         }
     }
 
@@ -1283,6 +1304,45 @@ mod tests {
         c.set_draw(true);
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(slot.renderer.is_some(), "attach at any time");
+    }
+
+    #[test]
+    fn render_profile_observes_attach_detach_and_cpu_backend() {
+        force_cpu_backend();
+        render_profile::enable();
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let mut slot = SlotLoop::new();
+        slot.render_prof = render_profile::Local::new(render_profile::slot_id_for("profile-t"));
+        let gen = slot.render_prof.as_ref().unwrap().generation();
+        let mut sends = 0u32;
+        c.set_draw(true);
+        Host::client_frame(&mut c, &mut slot, "profile-t", None, None, &mut sends, None);
+        assert!(slot.renderer.is_some());
+        c.set_draw(false);
+        Host::client_frame(&mut c, &mut slot, "profile-t", None, None, &mut sends, None);
+        assert!(slot.renderer.is_none());
+        // Drop publishes ended=true into the registry.
+        drop(slot);
+        let snap = render_profile::read().expect("enabled");
+        let row = snap
+            .iter()
+            .find(|s| s.generation == gen)
+            .expect("slot observation");
+        assert!(row.ended);
+        assert!(row.paint_n >= 1);
+        assert!(row.skip_n >= 1);
+        assert!(row.attach_n >= 1);
+        assert!(row.detach_n >= 1);
+        assert_eq!(row.backend, render_profile::BackendObs::Absent);
+        // Prefer-cpu false + force-no-gpu lands CpuFallback when attached;
+        // after detach backend is Absent. paint path under force_cpu uses Cpu.
+        assert!(row.client_loop_n >= 2);
     }
 
     /// Draw-off (only-render-selected, 49 heads dropping) must drain the

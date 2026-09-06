@@ -74,6 +74,18 @@ class RunDiagnosticCli(unittest.TestCase):
             self.assertEqual(rd.requested_render_policy(a), policy, args)
             self.assertEqual(a.single_renderer, single, args)
 
+    def test_render_profile_flag_independent_and_scrubbed(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a = p.parse_args(["panel", "1", "idle", "--render-profile"])
+        rd.validate_args(a, p)
+        self.assertTrue(a.render_profile)
+        a2 = p.parse_args(["panel", "1", "idle"])
+        self.assertFalse(a2.render_profile)
+        help_proc = run_cli("--help")
+        self.assertIn("--render-profile", help_proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
