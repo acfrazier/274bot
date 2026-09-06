@@ -1,0 +1,36 @@
+## APPROVE
+
+Docs-only `5911a99` (`b5cd6da` → `5911a99`): adds
+`docs/memory/snapshot-consumer-audit.md` and
+`docs/memory/runner-release-live.json` only (+1021 / −0). No code, builds, or live runs.
+
+### Scope and prior code review
+- Diff is strictly those two memory docs.
+- Receipt `docs/memory/grok-4.5-runner-boundary-review.txt` is **APPROVE** for `317b5ec..0e909b9` (runner.rs terminal-tick deferral / same-tick continuation preserved). Audit cites that range and does not widen the change set.
+
+### Native recomputation (streaming selective parse)
+WidgetView/LocView groups whose stacks include `ScenarioRunner` / `tick_with_hold`:
+
+| Report | Runner WidgetView/LocView bytes | SHA-256 |
+|---|---:|---|
+| before observe `20260906T154457Z` | **48,381,952** (46.141MiB) | `20f6ee9581…` matches JSON `before.report_sha256` |
+| before teardown `20260906T154457Z` | **48,381,952** | (not required by audit headline; consistent) |
+| after observe `20260906T161339Z` | **0** (0 matching groups) | `4c0dd9fe5c…` matches JSON; **21,538** groups match |
+| after teardown `20260906T161339Z` | **0** | `66f9c5f4bb…` matches JSON; 19,642 groups match |
+
+Before observe runner total matches audit/JSON exactly (`25264128+19300352+3047424+622592+98304+49152`). After observe still has some non-Widget/Loc `ScenarioRunner` stacks; **zero** WidgetView/LocView on that path — as claimed.
+
+### Metadata / qualification / captures
+- Final run metadata: exit **0**, n=32, panel/active, warmup 30s, observe 120s, lite stack logging, `single_renderer` / fixed-one, host `0e909b9`, binary SHA `df54511ef56a2ad31b2a9d3aae76ffda07e774735e1adcf42bb808f9773f74ae` (on-disk binary matches).
+- Qualification: `qualified=true`, `errors=[]`, observation_s **118.838**, cpu_cores **14.43**.
+- Steal gains from paint `Steals:` observe-start→end: **32/32 bots, min 2 max 17**, exact match to JSON; all slots `Running`, no errors at both qual edges.
+- Receipts: observe+teardown vmmap/allocations all **exit 0**; observe samples ready/active **32/32**; teardown ready 32 active 0 (post-Stop).
+- Failed `20260906T160707Z_panel_n32_active` retained on disk and in JSON (`exit_code=1`, XP proof failure on `live1262a_15`); correctly excluded from allocation comparison.
+
+### Overclaim check
+Audit claims removal of **runner-owned WidgetView/LocView vector records**, not RSS drop or production-slot savings. Explicitly requires a clean run for RSS/latency acceptance; notes stack-logging perturbation (14.43 cores); states candidate unmerged. No RSS/latency acceptance overclaim found.
+
+### Terminal-tick / narrow-fix narrative
+Docs match the approved boundary story: release after full terminal tick returns; no nav/script view narrowing; other owners remain; harness-only owner removal. Consistent with the prior APPROVE receipt.
+
+**Verdict: APPROVE** — audit figures and disclaimers check out against the bounded native evidence and the docs-only diff.
