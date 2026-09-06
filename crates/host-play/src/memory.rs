@@ -161,9 +161,68 @@ impl Config {
 pub fn parse_n(n: &str) -> Result<usize, String> {
     match n {
         "1" => Ok(1),
+        "16" => Ok(16),
         "32" => Ok(32),
         "128" => Ok(128),
-        _ => Err("BOT_MEMORY_N must be 1, 32, or 128".into()),
+        _ => Err("BOT_MEMORY_N must be 1, 16, 32, or 128".into()),
+    }
+}
+
+/// Requested panel render cell. Logged as requested metadata, not observed GPU proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderPolicy {
+    /// Default panel benchmark: members may draw; focus rotates every 30s.
+    RotatingAll,
+    /// Historical `BOT_MEMORY_SINGLE_RENDERER`: fixed focus 0, only selected draws.
+    FixedOne,
+    /// Explicit low-end: fixed focus 0 full-rate GPU; others simulation-only.
+    FocusedOne,
+    /// Explicit low-end: fixed focus 0 full-rate; others 1 fps skip-paint.
+    FocusedPlusBackground,
+}
+
+impl RenderPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RotatingAll => "rotating-all",
+            Self::FixedOne => "fixed-one",
+            Self::FocusedOne => "focused-one",
+            Self::FocusedPlusBackground => "focused-plus-background",
+        }
+    }
+
+    /// Fixed slot-zero focus for single-seat and background-renderer cells.
+    pub fn pins_focus(self) -> bool {
+        !matches!(self, Self::RotatingAll)
+    }
+}
+
+/// Parse requested panel policy from env. Panel-only flags on TUI error before run.
+pub fn parse_render_policy(frontend: &str) -> Result<RenderPolicy, String> {
+    let single = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
+    let policy = std::env::var("BOT_MEMORY_RENDER_POLICY").ok();
+    let policy = policy
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if frontend == "tui" && (single || policy.is_some()) {
+        return Err(
+            "BOT_MEMORY_SINGLE_RENDERER / BOT_MEMORY_RENDER_POLICY require panel frontend".into(),
+        );
+    }
+    match (single, policy) {
+        (false, None) => Ok(RenderPolicy::RotatingAll),
+        (true, None) => Ok(RenderPolicy::FixedOne),
+        (false, Some("fixed-one")) => Ok(RenderPolicy::FixedOne),
+        (false, Some("focused-one")) => Ok(RenderPolicy::FocusedOne),
+        (false, Some("focused-plus-background")) => Ok(RenderPolicy::FocusedPlusBackground),
+        (false, Some("rotating-all")) => Ok(RenderPolicy::RotatingAll),
+        (true, Some(_)) => Err(
+            "BOT_MEMORY_SINGLE_RENDERER conflicts with BOT_MEMORY_RENDER_POLICY".into(),
+        ),
+        (false, Some(other)) => Err(format!(
+            "BOT_MEMORY_RENDER_POLICY must be rotating-all, fixed-one, focused-one, or focused-plus-background; got {other}"
+        )),
     }
 }
 
@@ -299,7 +358,10 @@ pub struct Run {
     card: Option<ScriptCard>,
     output: std::fs::File,
     diagnostics: bool,
+    /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
     pub single_renderer: bool,
+    /// Requested panel draw/focus cell; TUI leaves this at [`RenderPolicy::RotatingAll`].
+    pub render_policy: RenderPolicy,
     diagnostic_output: Option<std::fs::File>,
     qualification_output: std::fs::File,
 }
@@ -309,6 +371,10 @@ impl Run {
     /// Idle modes: no card or RS2B0T. SeededIdle runs the Thiever setup only.
     /// Active/lifecycle: RS2B0T required.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
+        // Fail closed on panel-only / conflicting flags before minting vaults.
+        let render_policy = parse_render_policy(frontend)?;
+        let single_renderer =
+            std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
         client::profiling::enable();
         if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
         use vault::{Profile, ProfileSettings, Vault};
@@ -441,7 +507,8 @@ impl Run {
             diagnostics,
             diagnostic_output,
             qualification_output,
-            single_renderer: std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1"),
+            single_renderer,
+            render_policy,
         })
     }
 
@@ -642,6 +709,10 @@ impl Run {
             value["process_cpu_system_s"] = cpu.map(|v| v.1).into();
             value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
             value["diagnostic_sidecar"] = self.diagnostics.into();
+            // Requested mode metadata only — not observed GPU/cadence proof.
+            value["single_renderer"] = self.single_renderer.into();
+            value["render_policy"] = self.render_policy.as_str().into();
+            value["render_policy_requested"] = true.into();
             value["gpu_buffer_bytes"] = gpu.buffers.into();
             value["gpu_texture_bytes"] = gpu.textures.into();
             value["gpu_peak_tracked_bytes"] = gpu.peak.into();
@@ -711,9 +782,11 @@ impl Run {
         .map_err(|e| e.to_string())
     }
 
-    /// Rotate focus every 30s, or keep slot zero for the single-renderer cell.
+    /// Rotate focus every 30s, or keep slot zero for fixed-focus panel cells.
     pub fn focus_index(&self) -> usize {
-        if self.single_renderer { return 0; }
+        if self.render_policy.pins_focus() {
+            return 0;
+        }
         let n = self.names.len().max(1);
         (self.started.elapsed().as_secs() / 30) as usize % n
     }
@@ -760,8 +833,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_n_accepts_1_32_128() {
+    fn parse_n_accepts_1_16_32_128() {
         assert_eq!(parse_n("1").unwrap(), 1);
+        assert_eq!(parse_n("16").unwrap(), 16);
         assert_eq!(parse_n("32").unwrap(), 32);
         assert_eq!(parse_n("128").unwrap(), 128);
     }
@@ -771,6 +845,150 @@ mod tests {
         for s in ["0", "2", "50", "", "-1"] {
             assert!(parse_n(s).is_err(), "expected err for {s:?}");
         }
+    }
+
+    fn clear_render_env() -> EnvGuard {
+        EnvGuard::clear(&[
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ])
+    }
+
+    #[test]
+    fn parse_render_policy_defaults_rotating_all() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = clear_render_env();
+        assert_eq!(
+            parse_render_policy("panel").unwrap(),
+            RenderPolicy::RotatingAll
+        );
+        assert_eq!(
+            parse_render_policy("tui").unwrap(),
+            RenderPolicy::RotatingAll
+        );
+    }
+
+    #[test]
+    fn parse_render_policy_legacy_single_renderer() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = clear_render_env();
+        std::env::set_var("BOT_MEMORY_SINGLE_RENDERER", "1");
+        assert_eq!(
+            parse_render_policy("panel").unwrap(),
+            RenderPolicy::FixedOne
+        );
+        assert!(parse_render_policy("tui").is_err());
+    }
+
+    #[test]
+    fn parse_render_policy_explicit_modes() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = clear_render_env();
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-one");
+        assert_eq!(
+            parse_render_policy("panel").unwrap(),
+            RenderPolicy::FocusedOne
+        );
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-plus-background");
+        assert_eq!(
+            parse_render_policy("panel").unwrap(),
+            RenderPolicy::FocusedPlusBackground
+        );
+        assert!(parse_render_policy("tui").is_err());
+    }
+
+    #[test]
+    fn parse_render_policy_rejects_conflict_and_unknown() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = clear_render_env();
+        std::env::set_var("BOT_MEMORY_SINGLE_RENDERER", "1");
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-one");
+        assert!(parse_render_policy("panel").is_err());
+        std::env::remove_var("BOT_MEMORY_SINGLE_RENDERER");
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "nope");
+        assert!(parse_render_policy("panel").is_err());
+    }
+
+    #[test]
+    fn prepare_reads_focused_one_policy_and_pins_focus() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ]);
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-one");
+        let run = Run::prepare(unit_config(1, Workload::Idle), "panel").expect("prepare");
+        assert_eq!(run.render_policy, RenderPolicy::FocusedOne);
+        assert!(!run.single_renderer);
+        assert_eq!(run.focus_index(), 0);
+    }
+
+    #[test]
+    fn config_from_env_accepts_n16() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "BOT_MEMORY_N",
+            "BOT_MEMORY_WORKLOAD",
+            "BOT_MEMORY_WARMUP_S",
+            "BOT_MEMORY_OBSERVE_S",
+        ]);
+        std::env::set_var("BOT_MEMORY_N", "16");
+        let cfg = Config::from_env().unwrap().expect("Some");
+        assert_eq!(cfg.n, 16);
+    }
+
+    #[test]
+    fn prepare_background_policy_pins_focus() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ]);
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-plus-background");
+        let run = Run::prepare(unit_config(1, Workload::Idle), "panel").expect("prepare");
+        assert_eq!(run.render_policy, RenderPolicy::FocusedPlusBackground);
+        assert!(!run.single_renderer);
+        assert_eq!(run.focus_index(), 0);
+    }
+
+    #[test]
+    fn prepare_legacy_single_renderer_keeps_flag() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ]);
+        std::env::set_var("BOT_MEMORY_SINGLE_RENDERER", "1");
+        let run = Run::prepare(unit_config(1, Workload::Idle), "panel").expect("prepare");
+        assert!(run.single_renderer);
+        assert_eq!(run.render_policy, RenderPolicy::FixedOne);
+        assert_eq!(run.focus_index(), 0);
+    }
+
+    #[test]
+    fn prepare_tui_rejects_panel_render_policy() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ]);
+        std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-plus-background");
+        let err = match Run::prepare(unit_config(1, Workload::Idle), "tui") {
+            Err(e) => e,
+            Ok(_) => panic!("expected panel-only error"),
+        };
+        assert!(
+            err.contains("panel frontend"),
+            "expected panel-only error, got {err}"
+        );
     }
 
     #[test]

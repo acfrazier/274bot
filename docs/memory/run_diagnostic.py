@@ -2,103 +2,141 @@
 """Run one diagnostic cell without overwriting the T4 baseline artifacts."""
 import argparse, hashlib, json, os, pathlib, signal, subprocess, sys, time
 import errno, fcntl, pty, struct, termios, threading
-p = argparse.ArgumentParser()
-p.add_argument('frontend', choices=['panel','tui'])
-p.add_argument('n', type=int, choices=[1,32,128])
-p.add_argument('workload', choices=['idle','seeded-idle','active','lifecycle'])
-p.add_argument('--nav-captures', action='store_true', help='Diagnostic only: capture navigation checkpoints and failure, temporarily focusing affected bot')
-p.add_argument('--single-renderer', action='store_true', help='Panel: fixed slot zero draws; other slots simulate only')
-p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')
-p.add_argument('--debug', action='store_true')
-p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
-p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
-p.add_argument('--sustain', action='store_true')
-stack_logging = p.add_mutually_exclusive_group()
-stack_logging.add_argument('--stack-logging', action='store_true')
-stack_logging.add_argument('--stack-logging-lite', action='store_true', help='Native diagnostic: retain only current allocation stacks')
-p.add_argument('--scheduling-profile', action='store_true', help='Collect batched active-loop work/sleep/interval diagnostics')
-p.add_argument('--observe', type=int, default=600)
-p.add_argument('--warmup', type=int, default=120)
-a = p.parse_args()
-if a.nav_captures and (a.frontend != "panel" or not a.single_renderer): p.error("--nav-captures requires panel --single-renderer")
-if a.single_renderer and a.frontend != "panel": p.error("--single-renderer requires panel")
-terminal = a.frontend == 'tui' and not a.headless
-root = pathlib.Path(__file__).resolve().parents[2]
-binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
-run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
-run.mkdir(parents=True, exist_ok=False)
-env = os.environ.copy()
-for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE']:
-    env.pop(k, None)
-env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
-           BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
-           BOT_MEMORY_WARMUP_S=str(a.warmup), BOT_MEMORY_OBSERVE_S=str(a.observe))
-env.setdefault('RS2B0T','/Users/acfrazier/experiments/rs2b0t')
-if a.debug: env['BOT_DEBUG'] = '1'
-if a.nav_captures:
-    env['BOT_NAV_CAPTURES'] = '1'
-    env['274BOT_SMOKE_DIR'] = str(run/'captures')
-if a.single_renderer: env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
-if a.sustain: env['BOT_MEMORY_SUSTAIN'] = '1'
-if a.stack_logging: env['MallocStackLogging'] = '1'
-if a.stack_logging_lite: env['MallocStackLogging'] = 'lite'
-if a.scheduling_profile: env['BOT_SCHEDULING_PROFILE'] = '1'
-def git(*args):
-    return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
-def source_digest(directory):
-    files = subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=directory).split(b'\0')
-    digest = hashlib.sha256()
-    for name in sorted(set(files)):
-        if not name: continue
-        relative = pathlib.Path(os.fsdecode(name))
-        if not (relative.parts[0] == 'crates' or relative.name in ('Cargo.toml','Cargo.lock')): continue
-        path = directory / relative
-        if path.is_file(): digest.update(name+b'\0'+path.read_bytes()+b'\0')
-    return digest.hexdigest()
-nav_pack = pathlib.Path(env.get('NAV_PACK', str(pathlib.Path.home()/'.274bot/274bot.navpack'))).resolve()
-nav_flags = pathlib.Path(env.get('NAV_FLAGS', str(nav_pack.with_suffix('.navflags')))).resolve()
-meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
-            nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
-            diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
-            binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
-            host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
-            host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
-            rs2b0t_commit=subprocess.check_output(['git','-C',env['RS2B0T'],'rev-parse','HEAD'],text=True).strip(),
-            run_dir=str(run),started_unix=time.time())
-with (run/'run.log').open('xb') as log:
-    reader = None
-    if terminal:
-        master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',40,120,0,0))
-        env['TERM']='xterm-256color'
-        def terminal_session():
-            os.setsid()
-            fcntl.ioctl(slave,termios.TIOCSCTTY,0)
-        child=subprocess.Popen([str(binary)],cwd=root,env=env,stdin=slave,stdout=slave,stderr=slave,preexec_fn=terminal_session)
-        os.close(slave)
-        def drain_terminal():
-            try:
-                while True:
-                    try: data=os.read(master,65536)
-                    except OSError as error:
-                        if error.errno==errno.EIO: break
-                        raise
-                    if not data: break
-                    log.write(data)
-            finally: os.close(master)
-        reader=threading.Thread(target=drain_terminal)
-        reader.start()
-    else:
-        child = subprocess.Popen([str(binary)],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT)
-    meta['pid']=child.pid
+
+def build_parser():
+    p = argparse.ArgumentParser()
+    p.add_argument('frontend', choices=['panel','tui'])
+    p.add_argument('n', type=int, choices=[1,16,32,128])
+    p.add_argument('workload', choices=['idle','seeded-idle','active','lifecycle'])
+    p.add_argument('--nav-captures', action='store_true', help='Diagnostic only: capture navigation checkpoints and failure, temporarily focusing affected bot')
+    p.add_argument('--single-renderer', action='store_true', help='Panel legacy: fixed slot zero draws; other slots simulate only (BOT_MEMORY_SINGLE_RENDERER)')
+    p.add_argument('--focused-one', action='store_true', help='Panel: fixed slot0 full-rate GPU; others simulation-only (deterministic prefs)')
+    p.add_argument('--focused-background', action='store_true', help='Panel: fixed slot0 full-rate; other slots draw at 1 fps skip-paint')
+    p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')
+    p.add_argument('--debug', action='store_true')
+    p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
+    p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
+    p.add_argument('--sustain', action='store_true')
+    stack_logging = p.add_mutually_exclusive_group()
+    stack_logging.add_argument('--stack-logging', action='store_true')
+    stack_logging.add_argument('--stack-logging-lite', action='store_true', help='Native diagnostic: retain only current allocation stacks')
+    p.add_argument('--scheduling-profile', action='store_true', help='Collect batched active-loop work/sleep/interval diagnostics')
+    p.add_argument('--observe', type=int, default=600)
+    p.add_argument('--warmup', type=int, default=120)
+    return p
+
+def validate_args(a, parser):
+    """Reject invalid flag combinations before any process start or run dir."""
+    panel_modes = [a.single_renderer, a.focused_one, a.focused_background]
+    if sum(bool(x) for x in panel_modes) > 1:
+        parser.error('--single-renderer, --focused-one, and --focused-background are mutually exclusive')
+    if a.frontend != 'panel' and any(panel_modes):
+        parser.error('panel render flags require frontend panel')
+    one_draw = a.single_renderer or a.focused_one
+    if a.nav_captures and (a.frontend != 'panel' or not one_draw):
+        parser.error('--nav-captures requires panel --single-renderer or --focused-one')
+
+def requested_render_policy(a):
+    if a.frontend != 'panel':
+        return 'none'
+    if a.single_renderer:
+        return 'fixed-one'
+    if a.focused_one:
+        return 'focused-one'
+    if a.focused_background:
+        return 'focused-plus-background'
+    return 'rotating-all'
+
+def main(argv=None):
+    p = build_parser()
+    a = p.parse_args(argv)
+    validate_args(a, p)
+    terminal = a.frontend == 'tui' and not a.headless
+    root = pathlib.Path(__file__).resolve().parents[2]
+    binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
+    run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
+    run.mkdir(parents=True, exist_ok=False)
+    env = os.environ.copy()
+    for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_MEMORY_RENDER_POLICY','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE']:
+        env.pop(k, None)
+    env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
+               BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
+               BOT_MEMORY_WARMUP_S=str(a.warmup), BOT_MEMORY_OBSERVE_S=str(a.observe))
+    env.setdefault('RS2B0T','/Users/acfrazier/experiments/rs2b0t')
+    if a.debug: env['BOT_DEBUG'] = '1'
+    if a.nav_captures:
+        env['BOT_NAV_CAPTURES'] = '1'
+        env['274BOT_SMOKE_DIR'] = str(run/'captures')
+    if a.single_renderer:
+        env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
+    elif a.focused_one:
+        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-one'
+    elif a.focused_background:
+        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-plus-background'
+    if a.sustain: env['BOT_MEMORY_SUSTAIN'] = '1'
+    if a.stack_logging: env['MallocStackLogging'] = '1'
+    if a.stack_logging_lite: env['MallocStackLogging'] = 'lite'
+    if a.scheduling_profile: env['BOT_SCHEDULING_PROFILE'] = '1'
+    def git(*args):
+        return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
+    def source_digest(directory):
+        files = subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=directory).split(b'\0')
+        digest = hashlib.sha256()
+        for name in sorted(set(files)):
+            if not name: continue
+            relative = pathlib.Path(os.fsdecode(name))
+            if not (relative.parts[0] == 'crates' or relative.name in ('Cargo.toml','Cargo.lock')): continue
+            path = directory / relative
+            if path.is_file(): digest.update(name+b'\0'+path.read_bytes()+b'\0')
+        return digest.hexdigest()
+    nav_pack = pathlib.Path(env.get('NAV_PACK', str(pathlib.Path.home()/'.274bot/274bot.navpack'))).resolve()
+    nav_flags = pathlib.Path(env.get('NAV_FLAGS', str(nav_pack.with_suffix('.navflags')))).resolve()
+    render_policy = requested_render_policy(a)
+    meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
+                nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
+                diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
+                binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+                host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
+                host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
+                rs2b0t_commit=subprocess.check_output(['git','-C',env['RS2B0T'],'rev-parse','HEAD'],text=True).strip(),
+                run_dir=str(run),started_unix=time.time())
+    with (run/'run.log').open('xb') as log:
+        reader = None
+        if terminal:
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',40,120,0,0))
+            env['TERM']='xterm-256color'
+            def terminal_session():
+                os.setsid()
+                fcntl.ioctl(slave,termios.TIOCSCTTY,0)
+            child=subprocess.Popen([str(binary)],cwd=root,env=env,stdin=slave,stdout=slave,stderr=slave,preexec_fn=terminal_session)
+            os.close(slave)
+            def drain_terminal():
+                try:
+                    while True:
+                        try: data=os.read(master,65536)
+                        except OSError as error:
+                            if error.errno==errno.EIO: break
+                            raise
+                        if not data: break
+                        log.write(data)
+                finally: os.close(master)
+            reader=threading.Thread(target=drain_terminal)
+            reader.start()
+        else:
+            child = subprocess.Popen([str(binary)],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT)
+        meta['pid']=child.pid
+        (run/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
+        print(json.dumps(meta),flush=True)
+        def stop(sig,frame): child.terminate()
+        signal.signal(signal.SIGTERM,stop)
+        signal.signal(signal.SIGINT,stop)
+        rc=child.wait()
+        if reader: reader.join()
+    meta.update(exit_code=rc,ended_unix=time.time())
     (run/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
-    print(json.dumps(meta),flush=True)
-    def stop(sig,frame): child.terminate()
-    signal.signal(signal.SIGTERM,stop)
-    signal.signal(signal.SIGINT,stop)
-    rc=child.wait()
-    if reader: reader.join()
-meta.update(exit_code=rc,ended_unix=time.time())
-(run/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
-print(json.dumps({'run_dir':str(run),'exit_code':rc}),flush=True)
-sys.exit(rc if rc >= 0 else 128-rc)
+    print(json.dumps({'run_dir':str(run),'exit_code':rc}),flush=True)
+    sys.exit(rc if rc >= 0 else 128-rc)
+
+if __name__ == '__main__':
+    main()

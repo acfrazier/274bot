@@ -85,17 +85,57 @@ pub fn should_capture(f: &Focus) -> bool {
     should_draw(f) && f.capture
 }
 
-/// Opt-in benchmark policy. Single-renderer runs keep one fixed Game seat
-/// and deny all rail heads, including if the rail is expanded.
+/// Opt-in benchmark draw policy from the requested [`host_play::memory::RenderPolicy`].
+/// New low-end modes force Game pane, wall membership, cadence knobs and per-slot
+/// renderer bits so adverse persisted prefs cannot change the requested cell.
+/// Legacy fixed-one / rotating-all paths keep their historical field writes.
 #[cfg(feature = "memory-profile")]
-pub fn memory_draw_policy(f: &mut Focus, names: &[String], single: bool) {
+pub fn memory_draw_policy(
+    f: &mut Focus,
+    names: &[String],
+    policy: host_play::memory::RenderPolicy,
+) {
+    use host_play::memory::RenderPolicy;
     f.renderer = true;
-    if single {
-        f.game_pane_open = true;
-    }
-    f.only_render_selected = single;
-    for name in names {
-        f.renderer_by.insert(name.clone(), !single);
+    match policy {
+        RenderPolicy::RotatingAll => {
+            f.only_render_selected = false;
+            for name in names {
+                f.renderer_by.insert(name.clone(), true);
+            }
+        }
+        RenderPolicy::FixedOne => {
+            // Historical --single-renderer / BOT_MEMORY_SINGLE_RENDERER path.
+            f.game_pane_open = true;
+            f.only_render_selected = true;
+            for name in names {
+                f.renderer_by.insert(name.clone(), false);
+            }
+        }
+        RenderPolicy::FocusedOne => {
+            f.game_pane_open = true;
+            f.only_render_selected = true;
+            f.focused_50 = true;
+            f.sidecar_50 = false;
+            f.live_full_rate = false;
+            f.wall_open = true;
+            f.wall = names.to_vec();
+            for name in names {
+                f.renderer_by.insert(name.clone(), false);
+            }
+        }
+        RenderPolicy::FocusedPlusBackground => {
+            f.game_pane_open = true;
+            f.only_render_selected = false;
+            f.focused_50 = true;
+            f.sidecar_50 = false;
+            f.live_full_rate = false;
+            f.wall_open = true;
+            f.wall = names.to_vec();
+            for name in names {
+                f.renderer_by.insert(name.clone(), true);
+            }
+        }
     }
 }
 
@@ -106,8 +146,26 @@ mod tests {
     use super::{draw_for_slot, full_rate_for, should_capture, should_draw, Focus};
 
     #[cfg(feature = "memory-profile")]
+    fn adverse_focus(names: &[String]) -> Focus {
+        Focus {
+            focused: Some(names[0].clone()),
+            renderer: false,
+            game_pane_open: false,
+            capture: false,
+            only_render_selected: false,
+            sidecar_50: true,
+            live_full_rate: true,
+            focused_50: false,
+            wall_open: false,
+            wall: vec![],
+            renderer_by: HashMap::from([(names[0].clone(), false)]),
+        }
+    }
+
+    #[cfg(feature = "memory-profile")]
     #[test]
     fn memory_single_renderer_keeps_other_thirty_one_heads_off() {
+        use host_play::memory::RenderPolicy;
         let names: Vec<_> = (0..32).map(|i| format!("bot{i}")).collect();
         let mut f = Focus {
             focused: Some(names[0].clone()),
@@ -122,7 +180,7 @@ mod tests {
             wall: names.clone(),
             renderer_by: HashMap::new(),
         };
-        super::memory_draw_policy(&mut f, &names, true);
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::FixedOne);
         assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 1);
         assert!(draw_for_slot(&f, &names[0]));
         f.only_render_selected = false;
@@ -131,12 +189,86 @@ mod tests {
             1,
             "rail override stays off"
         );
-        super::memory_draw_policy(&mut f, &names, false);
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::RotatingAll);
         assert_eq!(
             names.iter().filter(|n| draw_for_slot(&f, n)).count(),
             32,
             "existing all-render mode"
         );
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focused_one_is_deterministic_for_one_and_sixteen() {
+        use host_play::memory::RenderPolicy;
+        for n in [1usize, 16] {
+            let names: Vec<_> = (0..n).map(|i| format!("bot{i}")).collect();
+            let mut f = adverse_focus(&names);
+            super::memory_draw_policy(&mut f, &names, RenderPolicy::FocusedOne);
+            assert!(f.game_pane_open);
+            assert!(f.only_render_selected);
+            assert!(f.focused_50);
+            assert!(!f.sidecar_50);
+            assert!(!f.live_full_rate);
+            assert_eq!(f.wall, names);
+            assert!(f.wall_open);
+            assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 1);
+            assert!(draw_for_slot(&f, &names[0]));
+            assert!(full_rate_for(&f, &names[0]), "focused seat full-rate");
+            for name in names.iter().skip(1) {
+                assert!(!draw_for_slot(&f, name), "{name} sim-only");
+                assert!(!full_rate_for(&f, name));
+            }
+        }
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focused_plus_background_is_deterministic_for_one_and_sixteen() {
+        use host_play::memory::RenderPolicy;
+        for n in [1usize, 16] {
+            let names: Vec<_> = (0..n).map(|i| format!("bot{i}")).collect();
+            let mut f = adverse_focus(&names);
+            super::memory_draw_policy(&mut f, &names, RenderPolicy::FocusedPlusBackground);
+            assert!(f.game_pane_open);
+            assert!(!f.only_render_selected);
+            assert!(f.focused_50);
+            assert!(!f.sidecar_50);
+            assert!(!f.live_full_rate);
+            assert!(f.wall_open);
+            assert_eq!(f.wall, names);
+            assert_eq!(
+                names.iter().filter(|n| draw_for_slot(&f, n)).count(),
+                n,
+                "every requested slot draws"
+            );
+            assert!(full_rate_for(&f, &names[0]), "focused full-rate");
+            for name in names.iter().skip(1) {
+                assert!(draw_for_slot(&f, name), "{name} draws");
+                assert!(
+                    !full_rate_for(&f, name),
+                    "{name} stays 1 fps skip-paint cadence"
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_policy_switch_between_modes() {
+        use host_play::memory::RenderPolicy;
+        let names: Vec<_> = (0..16).map(|i| format!("bot{i}")).collect();
+        let mut f = adverse_focus(&names);
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::FocusedOne);
+        assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 1);
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::FocusedPlusBackground);
+        assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 16);
+        assert!(full_rate_for(&f, &names[0]));
+        assert!(!full_rate_for(&f, &names[1]));
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::FixedOne);
+        assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 1);
+        super::memory_draw_policy(&mut f, &names, RenderPolicy::RotatingAll);
+        assert_eq!(names.iter().filter(|n| draw_for_slot(&f, n)).count(), 16);
     }
 
     #[test]

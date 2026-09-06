@@ -1324,7 +1324,7 @@ impl Session {
             self.select(name);
         }
         let mut focus = self.focus.lock().unwrap();
-        crate::focus::memory_draw_policy(&mut focus, &run.names, run.single_renderer);
+        crate::focus::memory_draw_policy(&mut focus, &run.names, run.render_policy);
     }
 
     /// Live `stress50` RAM watch: temp vault `s00`…`s49` (password =
