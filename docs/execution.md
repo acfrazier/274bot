@@ -38,6 +38,11 @@ a summary, and test evidence. It then stops; it does not call complete after the
 handoff. Hermes dispatches the same card in the review lane, using that profile.
 Do not also create a routine child reviewer card.
 
+Immediately inspect the handoff: the assignee must be the profile name
+`reviewer`, not the model name `grok-4.5`. A model string in the profile field can
+leave the card waiting without a worker. Correct that assignment and verify a
+review run actually starts before reporting it as running.
+
 The reviewer verifies the named commit and evidence, then completes on approval
 or requests changes back to the implementer. Check the actual model, commit and
 verdict before accepting the result; an assignee label alone is insufficient.
