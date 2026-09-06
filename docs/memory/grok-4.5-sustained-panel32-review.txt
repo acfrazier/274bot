@@ -1,0 +1,13 @@
+APPROVE
+
+Commit c743a0f is docs-only (`sustained-panel32-memory.md` / `.json`). Recomputed against `diagnostics/20260906T023123Z_panel_n32_active` metadata, samples, qualification boundaries, and `summarize(..., counting=False, diagnostics=False)`.
+
+Verified
+- Qualified: exit 0; observe ready/active always 32/32; steal gains 47–83 all >0; final states Running, no errors; titles only pickpocketing / eating / stunned—waiting (no banking); both qual boundaries present (Δ≈600.02s).
+- Sampled observe span 598.195s; wall observe target 600s — report states this correctly.
+- Memory arithmetic/units (GiB/MiB, 1024): median/range/peak/teardown/drift/RSSΔ, V8, snapshot, GPU buffer+texture=tracked — match raw samples; JSON ≡ run `memory-summary` (minus `final_statuses`).
+- Categories kept separate; no sum-to-total; GPU incomplete; retained RSS with ready=32 not shutdown; single cell, not baseline/savings/%.
+- Stop: final teardown active/isolates/V8/snapshots/capacity 0; peak whole-run 3.855 GiB.
+- Scheduling: work+requested_sleep = 20.0 ms both groups; work_overruns 0; actual sleep excess ≈5.83 / 4.84 ms; means/CPU/ticks match; lag-49 note consistent with prior scheduling docs; not treated as failed-run baseline.
+
+No concrete arithmetic, unit, qualification, Stop, or overstatement defects in scope.
