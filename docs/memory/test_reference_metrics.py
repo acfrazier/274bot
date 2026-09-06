@@ -205,6 +205,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         base_s = {
             "slot_id": 7,
             "generation": 1,
+            "sample_age_ms": 12,
             "decode_latency_buckets": list(buckets_s),
             "input_latency_buckets": list(buckets_s),
             "decode_dropped_n": 0,
@@ -293,6 +294,50 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         )
         g = rm.evaluate_input(meta, [start, end])
         self.assertEqual(g["slots"][0]["reason"], "visible_ack_unavailable")
+        self.assertFalse(rm.gate_satisfies_require(g))
+
+    def test_input_visible_ack_absent_no_false_pass(self):
+        """Absent/malformed visible_ack must not allow input require pass."""
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair()
+        del end["responsiveness_profile"][0]["visible_ack"]
+        del start["responsiveness_profile"][0]["visible_ack"]
+        g = rm.evaluate_input(meta, [start, end])
+        self.assertEqual(g["slots"][0]["reason"], "visible_ack_absent")
+        self.assertEqual(g["status"], "unavailable")
+        self.assertFalse(rm.gate_satisfies_require(g))
+
+    def test_input_visible_ack_malformed_no_false_pass(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair(visible_ack="yes")
+        g = rm.evaluate_input(meta, [start, end])
+        self.assertEqual(g["slots"][0]["reason"], "visible_ack_absent")
+        self.assertFalse(rm.gate_satisfies_require(g))
+
+    def test_input_visible_ack_available_missing_key_no_false_pass(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair(visible_ack={"endpoint": "test"})
+        g = rm.evaluate_input(meta, [start, end])
+        self.assertEqual(g["slots"][0]["reason"], "visible_ack_unavailable")
+        self.assertFalse(rm.gate_satisfies_require(g))
+
+    def test_decode_sample_age_absent_no_false_pass(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair()
+        del end["responsiveness_profile"][0]["sample_age_ms"]
+        del start["responsiveness_profile"][0]["sample_age_ms"]
+        g = rm.evaluate_decode(meta, [start, end], target_ms=40)
+        self.assertEqual(g["slots"][0]["reason"], "sample_age_ms_absent")
+        self.assertEqual(g["status"], "unavailable")
+        self.assertFalse(rm.gate_satisfies_require(g))
+
+    def test_input_sample_age_null_no_false_pass(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair()
+        end["responsiveness_profile"][0]["sample_age_ms"] = None
+        g = rm.evaluate_input(meta, [start, end], target_ms=40)
+        self.assertEqual(g["slots"][0]["reason"], "sample_age_ms_absent")
+        self.assertFalse(rm.gate_satisfies_require(g))
 
     def test_gpu_never_paint_proxy_when_disabled(self):
         meta = _meta(render_profile=True, gpu_completion_profile=False)
@@ -341,6 +386,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
             return {
                 "slot_id": 3,
                 "generation": 1,
+                "sample_age_ms": 8,
                 "gpu_completion": {
                     "enabled": enabled,
                     "dropped_n": 0,
@@ -381,6 +427,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
                 {
                     "slot_id": 1,
                     "generation": 1,
+                    "sample_age_ms": 5,
                     "gpu_completion": {
                         "enabled": True,
                         "dropped_n": 0,
@@ -401,6 +448,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
                 {
                     "slot_id": 1,
                     "generation": 1,
+                    "sample_age_ms": 5,
                     "gpu_completion": {
                         "enabled": True,
                         "dropped_n": 0,
@@ -584,6 +632,7 @@ class CliAndRealCellTests(unittest.TestCase):
             row_s = {
                 "slot_id": 1,
                 "generation": 1,
+                "sample_age_ms": 3,
                 "decode_latency_buckets": buckets_s,
                 "decode_dropped_n": 0,
                 "decode_canceled_n": 0,

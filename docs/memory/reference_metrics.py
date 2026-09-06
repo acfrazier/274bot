@@ -46,6 +46,28 @@ def _ok(**fields: Any) -> dict:
     return out
 
 
+def _sample_age_reason(row: Optional[dict]) -> Optional[str]:
+    """Fail-closed freshness: host emits sample_age_ms on profile slot rows.
+
+    Absent/null/non-finite age cannot prove the observe sample is live → reason
+    string; None means present and finite (including 0).
+    """
+    if not isinstance(row, dict):
+        return "sample_age_ms_absent"
+    if "sample_age_ms" not in row:
+        return "sample_age_ms_absent"
+    age = row.get("sample_age_ms")
+    if age is None:
+        return "sample_age_ms_absent"
+    if isinstance(age, bool) or not isinstance(age, (int, float)):
+        return "sample_age_ms_invalid"
+    if age != age or age in (float("inf"), float("-inf")):  # NaN / inf
+        return "sample_age_ms_invalid"
+    if age < 0:
+        return "sample_age_ms_invalid"
+    return None
+
+
 def load_json(path: pathlib.Path) -> Any:
     return json.loads(path.read_text())
 
@@ -512,6 +534,21 @@ def evaluate_decode(
             )
             continue
 
+        # Freshness: sample_age_ms on end responsiveness row (host publish age).
+        age_err = _sample_age_reason(erow)
+        if age_err:
+            slots.append(
+                _unavailable(
+                    age_err,
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="decode",
+                    sample_age_ms=erow.get("sample_age_ms") if isinstance(erow, dict) else None,
+                    freshness_field="sample_age_ms",
+                )
+            )
+            continue
+
         delta, err = _slot_hist_delta(srow, erow, "decode_latency_buckets")
         if err:
             slots.append(
@@ -536,6 +573,8 @@ def evaluate_decode(
             "target_ms": target_ms,
             "target_verdict": verdict,
             "decode_coverage_complete": coverage,
+            "sample_age_ms": erow.get("sample_age_ms"),
+            "freshness_field": "sample_age_ms",
         }
         if bounds.get("status") == "available" and verdict == "meet":
             row["status"] = "available"
@@ -675,9 +714,22 @@ def evaluate_input(
             )
             continue
 
-        # visible_ack must not silently pass when unavailable
-        ack = erow.get("visible_ack") or srow.get("visible_ack")
-        if isinstance(ack, dict) and ack.get("available") is False:
+        # visible_ack: require explicit end-row dict with available is True.
+        # Absent/malformed/False must not false-pass (serializer always emits
+        # the object when profile on; core still fail-closed if missing).
+        ack = erow.get("visible_ack")
+        if not isinstance(ack, dict):
+            slots.append(
+                _unavailable(
+                    "visible_ack_absent",
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="input",
+                    visible_ack=ack,
+                )
+            )
+            continue
+        if ack.get("available") is not True:
             slots.append(
                 _unavailable(
                     "visible_ack_unavailable",
@@ -685,6 +737,21 @@ def evaluate_input(
                     generation=key[1],
                     gate="input",
                     visible_ack=ack,
+                )
+            )
+            continue
+
+        # Freshness: sample_age_ms on end responsiveness row.
+        age_err = _sample_age_reason(erow)
+        if age_err:
+            slots.append(
+                _unavailable(
+                    age_err,
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="input",
+                    sample_age_ms=erow.get("sample_age_ms"),
+                    freshness_field="sample_age_ms",
                 )
             )
             continue
@@ -710,6 +777,9 @@ def evaluate_input(
             "target_ms": target_ms,
             "target_verdict": verdict,
             "input_coverage_complete": coverage,
+            "visible_ack_available": True,
+            "sample_age_ms": erow.get("sample_age_ms"),
+            "freshness_field": "sample_age_ms",
         }
         if bounds.get("status") == "available":
             row["status"] = "available"
@@ -910,6 +980,21 @@ def evaluate_gpu(
             )
             continue
 
+        # Freshness on renderer_profile row (gpu_completion has no sample_age_ms).
+        age_err = _sample_age_reason(erow)
+        if age_err:
+            slots.append(
+                _unavailable(
+                    age_err,
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="gpu",
+                    sample_age_ms=erow.get("sample_age_ms") if isinstance(erow, dict) else None,
+                    freshness_field="sample_age_ms",
+                )
+            )
+            continue
+
         if not isinstance(sg, dict):
             slots.append(
                 _unavailable(
@@ -958,6 +1043,8 @@ def evaluate_gpu(
             "target_verdict": verdict,
             "registration_complete": reg_ok,
             "completion_coverage_complete": cov_ok,
+            "sample_age_ms": erow.get("sample_age_ms"),
+            "freshness_field": "sample_age_ms",
             "paint_proxy_used": False,
             "not_product_frame_cadence": True,
         }

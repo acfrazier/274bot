@@ -30,7 +30,14 @@ histogram productization, etc.) are **next card** work — not fabricated here.
    mismatch, negative counts, and **overflow** → `status=unavailable`.
 5. **Fail-closed integrity** — drops / cancels / lost / pending / coverage flags
    cannot produce a gate pass. **Absent** coverage flags → `coverage_flag_absent`
-   (unavailable), not default-true. Disabled profiles and null input → unavailable.
+   (unavailable), not default-true. **Input `visible_ack`** must be an explicit
+   end-row dict with `available is True`; absent/malformed → `visible_ack_absent`,
+   `available` not True → `visible_ack_unavailable` (no false-pass). **Freshness**
+   field enforced: host `sample_age_ms` on end responsiveness / renderer slot
+   rows must be present and finite; absent/null/non-finite →
+   `sample_age_ms_absent` / `sample_age_ms_invalid` (GPU diagnostic uses the
+   parent `renderer_profile` row age; nested `gpu_completion` has no age field).
+   Disabled profiles and null input → unavailable.
 6. **Scheduling** — excess bins `[1,2,5,10,20]` ms + overflow; absolute interval
    mapping uses fixed **20 ms** budget. **First excess bucket lower absolute bound
    is 0**, not 20: `interval.saturating_sub(budget)` puts sub-budget intervals in
@@ -56,6 +63,21 @@ histogram productization, etc.) are **next card** work — not fabricated here.
      no overwrite (immutable evidence)
    - `final_acceptance_claim` always `false`
 
+## Cumulative end-snapshot cancel / pending (warmup limitation)
+
+Core integrity for decode / input / gpu uses **end-snapshot** counters
+(`*_canceled_n`, `*_dropped_n`, `*_lost_n`, `*_pending_n`, coverage flags) on the
+observe-end row — **not** observe-window deltas and **not** boundary pending
+accounting. Startup warmup cancellations that remain in the cumulative end
+snapshot can therefore **conservatively** make decode/input/gpu **unavailable**
+even when the steady observe-window delta would be clean. This is intentional
+fail-closed for the narrow core.
+
+A later window adapter should compare observation deltas and account for
+boundary pending rather than reject all valid steady data solely because of
+canceled startup. Until that adapter exists, canceled/pending end-snapshot
+counts remain a hard unavailable path.
+
 ## Target verdicts
 
 | Verdict | Meaning |
@@ -72,16 +94,17 @@ Product `gpu` never reaches that path on completion-latency alone.
 
 ```text
 python3 docs/memory/test_reference_metrics.py
-→ 37 passed
+→ 42 passed
 ```
 
 Coverage includes: empty/overflow/missing histograms; counter reset; generation
-mismatch; duplicate/disappearing slots; absent coverage flags; scheduling
-first-bucket lower=0; process-wide cannot meet per-slot; decode/input
-coverage-lost and no-input; GPU disabled ≠ paint proxy; GPU product gate not
-meet on completion latency (diagnostic only); GPU lost; exclusive `--output`;
-contamination intersection; CLI inspect exit 0; require exit 1; **one real
-reviewed** flags-off cell
+mismatch; duplicate/disappearing slots; absent coverage flags; visible_ack
+absent/malformed/False; sample_age_ms absent/null; scheduling first-bucket
+lower=0; process-wide cannot meet per-slot; decode/input coverage-lost and
+no-input; GPU disabled ≠ paint proxy; GPU product gate not meet on completion
+latency (diagnostic only); GPU lost; exclusive `--output`; contamination
+intersection; CLI inspect exit 0; require exit 1; **one real reviewed**
+flags-off cell
 `diagnostics/low-end-reference-screen-20260906T220129Z/tui_n1_active`
 (`scheduling_profile` / `responsiveness_profile` / `gpu_completion_profile` false)
 proves `--require scheduling,decode,input,gpu` **exit 1** with all four gates
@@ -99,6 +122,8 @@ grants acceptance).
   (product `--require gpu` remains unavailable until that adapter).
 - No live paired overhead runs; no budget acceptance; no STATE update on this card.
 - Flags-off reference cells cannot prove missing p99 — they correctly fail require.
+- No observe-window delta / boundary-pending cancel accounting yet (see warmup
+  limitation above).
 
 ## Example
 
