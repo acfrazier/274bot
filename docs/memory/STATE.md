@@ -34,9 +34,14 @@ verify it on resume because a worker may finish after this snapshot.
    Independent checks passed: host 141 plus explicitly executed real GPU smoke,
    host-play 143, launcher 8. Bounded queue-completion observations are opt-in
    and distinguish CPU callback delivery from hardware timestamps/scanout.
-   No live panel/TUI performance result was produced. The board has no pending
-   cards at this boundary. Next build immutable release binaries and qualify the
-   three approved modes live. Precise responsiveness measurements remain separate work.
+   No live panel/TUI performance result was produced. The next four cards are queued in review-gated sequence: `t_79e1e21f`
+   adds bounded responsiveness observations; `t_dac0878e` verifies and freezes
+   release builds; `t_672f4ac3` runs the six live 1/16 active reference cells
+   plus separate overhead/functional checks; `t_6ffdc227` attributes qualified
+   fixed/incremental costs and proposes one next change. Failed or unavailable
+   metrics remain unresolved, even if an evidence report passes review.
+   Each card uses profile defaults and the same campaign checkout; dependent
+   cards wait for parent review completion. No final matrix/capacity claim yet.
 5. Continue approved single-client fixed-cost attribution and measured N/N+x
    costs. Terminal-runner cleanup performance acceptance remains pending; do not
    launch more blind repeats. Final whole-branch Grok4.6 review remains required.
