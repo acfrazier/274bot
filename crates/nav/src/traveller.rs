@@ -831,6 +831,7 @@ impl FollowRun {
                                     sent_tile: Some(here),
                                     tries: 0,
                                     troll: false,
+                                    open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: None,
@@ -887,6 +888,7 @@ impl FollowRun {
                                     sent_tile: Some(here),
                                     tries: 0,
                                     troll: false,
+                                    open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: None,
@@ -973,6 +975,7 @@ impl FollowRun {
                                     sent_tile: Some(here),
                                     tries: 0,
                                     troll: false,
+                                    open_sent_tick: None,
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: Some(ApproachHop {
@@ -1005,6 +1008,7 @@ impl FollowRun {
                                         sent_tile: Some(here),
                                         tries: 0,
                                         troll: false,
+                                        open_sent_tick: None,
                                         chat_seq: chat_seq(snapshot),
                                         dialog_page: None,
                                         approach: None,
@@ -1792,6 +1796,29 @@ impl FollowRun {
                 }
             };
         }
+        if let Some(sent_tick) = hop.open_sent_tick.take() {
+            if snapshot.tick() == sent_tick {
+                hop.open_sent_tick = Some(sent_tick);
+                return None;
+            }
+            if here == edge.at
+                && edge.to.level == here.level
+                && here.x.abs_diff(edge.to.x) + here.z.abs_diff(edge.to.z) == 1
+                && edge.dir.is_some()
+                && door_crossed(&edge, edge.to)
+            {
+                let mut ix = Interactions::new(snapshot, d);
+                let result = ix.pending_door_step(edge.to);
+                report_walk(options, snapshot, here, edge.to, &result);
+                return match result {
+                    SendResult::Sent { .. } => None,
+                    SendResult::Refused { reason, .. } => {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        Some(TravelOutcome::Refused { at: here, reason })
+                    }
+                };
+            }
+        }
         // Adjacency is needed to Open a closed door, not to walk through
         // an open one. Re-approaching an open door countermanded the exit
         // walk whenever its destination was several tiles beyond the door.
@@ -1877,6 +1904,7 @@ impl FollowRun {
         if !open {
             match interact_transport(snapshot, &mut ix, TransportTarget::Loc(loc), &edge, options) {
                 SendResult::Sent { .. } => {
+                    hop.open_sent_tick = Some(snapshot.tick());
                     if crate::debug_enabled() {
                         eprintln!("[nav-troll] Open SENT");
                     }
@@ -1965,6 +1993,8 @@ struct TransportHop {
     sent_tile: Option<WorldTile>,
     tries: u32,
     troll: bool,
+    /// One crossing probe on the next delivered tick after Open.
+    open_sent_tick: Option<u32>,
     chat_seq: i32,
     /// The chat option-page last answered (joined option texts). A new
     /// page (spirit-tree dest list after "Where can I go?") is answered;
@@ -6111,7 +6141,7 @@ mod tests {
             let leg = run.legs.pop_front().unwrap();
             run.transport = Some(TransportHop {
                 leg, to: edge.to, ticks_waited: 0, sent_tile: None,
-                tries: 0, troll: true, chat_seq: 0, dialog_page: None, approach: None,
+                tries: 0, troll: true, open_sent_tick: None, chat_seq: 0, dialog_page: None, approach: None,
             });
             let mut rec = FollowRec { route: Some((0, 0)), ..FollowRec::default() };
             for x in [0, 2, 3, 4] {
@@ -6126,6 +6156,70 @@ mod tests {
             bump_rebuild(&mut c, &mut snap);
             assert!(matches!(run.poll_transport(&mut rec, &snap, &mut options, &mut None), Poll::LegDone));
         }
+    }
+
+    #[test]
+    fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
+        let mut c = scene_client();
+        plant_door(&mut c, false, 1);
+        let mut snap = snap_at(&mut c, 1, 0);
+        let mut edge = door_edge();
+        edge.to.x = 3202;
+        edge.dir = Some(DoorDir::E);
+        edge.open_loc_id = Some(1531);
+        let route = Route {
+            legs: vec![Leg::Transport { edge: edge.clone() }],
+            dest: edge.to,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
+        let mut run = FollowRun::start(route, &options);
+        run.transport = Some(TransportHop {
+            leg: run.legs.pop_front().unwrap(),
+            to: edge.to,
+            ticks_waited: 0,
+            sent_tile: None,
+            tries: 0,
+            troll: true,
+            open_sent_tick: None,
+            chat_seq: 0,
+            dialog_page: None,
+            approach: None,
+        });
+        let mut rec = FollowRec {
+            route: Some((1, 0)),
+            ..FollowRec::default()
+        };
+        assert!(matches!(
+            run.poll_transport(&mut rec, &snap, &mut options, &mut None),
+            Poll::Watching
+        ));
+        assert_eq!(rec.loc_ops, 1);
+        // Server has opened; the delivered snapshot still shows closed.
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            run.poll_transport(&mut rec, &snap, &mut options, &mut None),
+            Poll::Watching
+        ));
+        assert_eq!(
+            rec.loc_ops, 1,
+            "do not replace the crossing with another Open approach"
+        );
+        assert_eq!(
+            rec.sink.steps,
+            vec![client::io::ClientProt::MOVE_GAMECLICK.id, 5, 0, 3202, 3200]
+        );
+        // Submission does not report arrival. A closed server door can reject it;
+        // the existing retry budget remains active until a position update.
+        plant_player(&mut c, 2, 0);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            run.poll_transport(&mut rec, &snap, &mut options, &mut None),
+            Poll::LegDone
+        ));
     }
 
     #[test]
@@ -6150,7 +6244,7 @@ mod tests {
             let leg = run.legs.pop_front().unwrap();
             run.transport = Some(TransportHop {
                 leg, to: edge.to, ticks_waited: 0, sent_tile: None,
-                tries: 0, troll: true, chat_seq: 0, dialog_page: None, approach: None,
+                tries: 0, troll: true, open_sent_tick: None, chat_seq: 0, dialog_page: None, approach: None,
             });
             let mut rec = FollowRec { route: Some((0, 0)), ..FollowRec::default() };
             assert!(matches!(run.poll_transport(&mut rec, &snap, &mut options, &mut None), Poll::Watching));
@@ -7139,6 +7233,7 @@ mod tests {
             }),
             tries: 0,
             troll: false,
+            open_sent_tick: None,
             chat_seq: 0,
             dialog_page: None,
             approach: None,
@@ -7234,12 +7329,13 @@ mod tests {
     #[derive(Default)]
     struct Sink {
         strings: Vec<String>,
+        steps: Vec<i32>,
     }
 
     impl Out for Sink {
-        fn p1_enc(&mut self, _opcode: i32) {}
-        fn p1(&mut self, _value: i32) {}
-        fn p2(&mut self, _value: i32) {}
+        fn p1_enc(&mut self, opcode: i32) { self.steps.push(opcode); }
+        fn p1(&mut self, value: i32) { self.steps.push(value); }
+        fn p2(&mut self, value: i32) { self.steps.push(value); }
         fn p4(&mut self, _value: i32) {}
         fn pjstr(&mut self, s: &str) {
             self.strings.push(s.to_string());

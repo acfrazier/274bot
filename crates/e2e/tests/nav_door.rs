@@ -35,11 +35,15 @@ fn nav_door() {
     // The headless twin never writes shots: explicit no-op sink (the same
     // behavior as the runner's default). Both fleet slots get minted
     // per-run accounts — never the shared `test`/`test2` saves.
-    let entries = {
+    let mut entries = {
         let mut r = runner.lock().unwrap();
         r.set_shot_sink(Box::new(|_, _| {}));
         mint_seed(&mut r, n)
     };
+    // Diagnostic control: preserve roles, change only their login order.
+    if std::env::var("BOT_NAV_DOOR_REVERSE_LOGIN").as_deref() == Ok("1") {
+        entries.reverse();
+    }
     let mut opts = options();
     opts.mainland = mainland;
     let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
