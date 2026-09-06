@@ -1,0 +1,48 @@
+## Verdict: APPROVE
+
+Commit `94adac4` — `fix(nav): probe adjacent crossing after door Open`
+
+### What changed
+Scoped troll-only fix for the closer race: after a door Open, the next delivered snapshot may still show closed. Old path re-issued Open/`MOVE_OPCLICK` on the current tile and burned the open window; the real walk landed a tick later after the closer slammed.
+
+New path:
+1. Record `open_sent_tick` when troll Open is sent
+2. Same snapshot tick → no further door action
+3. Next tick, if `here == edge.at`, dest is cardinal-adjacent, same level, `dir` present, and `door_crossed(&edge, edge.to)` → one `pending_door_step` → `MOVE_GAMECLICK` via `WalkStep`
+4. Arrival still waits on real position; hop budget unchanged
+
+### Safety / semantics
+- Gates match the stated contract; general nav still uses `walk`/`try_move`
+- Encoding matches client one-tile `MOVE_GAMECLICK` (size 5, ctrl 0, absolute x/z) — pinned against real `walk()`
+- Server still validates collision; this only skips stale client BFS
+- Troll-only; cheap hop / non-door transports untouched
+- Directionless edges never probe (`dir.is_some()`)
+- `here == edge.at` is the right take-off: Open’s `interact_with_loc` `tryMove` targets the loc tile, so the post-Open tile is often `at`; that is also where a duplicate Open became a zero-step `MOVE_OPCLICK`
+
+### Retry lifecycle
+- `open_sent_tick`: set on Open, held on same tick, consumed on first later snapshot (probe or miss)
+- Miss (not on `at`, bad geometry) clears the latch and falls back to normal troll Open/walk — budget still counts
+- Probe does not claim arrival; settle/`arrived` still own completion
+- Fits host polling: troll send then fall through to existing settle arm
+
+### Protocol / API
+- `WireCommand::DoorStep` + `WalkStep::write` are minimal and correct
+- `pending_door_step` reuses normal preconditions (attached/ingame/scene ready/level/scene bounds) plus manhattan-1
+- No JS/client changes
+
+### Tests (ran here)
+- `pending_door_step_is_one_cardinal_packet_with_normal_gates` — packet + noncardinal/level/scene1 refuse
+- `pending_door_packet_matches_client_one_tile_walk`
+- `troll_probes_crossing_after_open_before_snapshot_catches_up` — one Open, then GAMECLICK, arrival only after position
+- Sibling troll tests still green
+
+Scenario runner logging and `BOT_NAV_DOOR_REVERSE_LOGIN` are diagnostics only.
+
+### Residuals (non-blocking)
+- Soft probe refusals (`SceneUnavailable`, etc.) fail the leg immediately rather than wait like walk hops
+- If the first post-Open snapshot is not yet on `at`, the one-shot latch drops until the next Open cycle
+- After a successful probe, a still-closed snap can re-Open and theoretically countermand a slow walk; live closer trace (Open T, cross T+1) makes that narrow
+
+Reverse-login live control remaining is process, not a code defect in this diff.
+
+**APPROVE**

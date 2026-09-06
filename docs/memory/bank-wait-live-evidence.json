@@ -1,0 +1,261 @@
+{
+  "run": "20260906T020818Z_panel_n32_active",
+  "slots": [
+    {
+      "slot": "live57970_0",
+      "return_arrived": true,
+      "steals_after_return": 17,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_2",
+      "return_arrived": true,
+      "steals_after_return": 30,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_3",
+      "return_arrived": true,
+      "steals_after_return": 24,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_4",
+      "return_arrived": true,
+      "steals_after_return": 22,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_5",
+      "return_arrived": true,
+      "steals_after_return": 30,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_7",
+      "return_arrived": true,
+      "steals_after_return": 23,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_10",
+      "return_arrived": true,
+      "steals_after_return": 29,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_12",
+      "return_arrived": true,
+      "steals_after_return": 19,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_14",
+      "return_arrived": true,
+      "steals_after_return": 17,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_16",
+      "return_arrived": true,
+      "steals_after_return": 18,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_19",
+      "return_arrived": true,
+      "steals_after_return": 15,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_21",
+      "return_arrived": true,
+      "steals_after_return": 16,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_22",
+      "return_arrived": true,
+      "steals_after_return": 23,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_23",
+      "return_arrived": true,
+      "steals_after_return": 29,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_25",
+      "return_arrived": true,
+      "steals_after_return": 11,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_27",
+      "return_arrived": true,
+      "steals_after_return": 18,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_29",
+      "return_arrived": true,
+      "steals_after_return": 24,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_30",
+      "return_arrived": true,
+      "steals_after_return": 26,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_1",
+      "return_arrived": true,
+      "steals_after_return": 29,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_8",
+      "return_arrived": true,
+      "steals_after_return": 28,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_11",
+      "return_arrived": true,
+      "steals_after_return": 32,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_13",
+      "return_arrived": true,
+      "steals_after_return": 23,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_15",
+      "return_arrived": true,
+      "steals_after_return": 19,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_26",
+      "return_arrived": true,
+      "steals_after_return": 31,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_28",
+      "return_arrived": true,
+      "steals_after_return": 20,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_31",
+      "return_arrived": true,
+      "steals_after_return": 29,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_9",
+      "return_arrived": true,
+      "steals_after_return": 49,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_18",
+      "return_arrived": true,
+      "steals_after_return": 15,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_17",
+      "return_arrived": true,
+      "steals_after_return": 16,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_24",
+      "return_arrived": true,
+      "steals_after_return": 23,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_6",
+      "return_arrived": true,
+      "steals_after_return": 21,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    },
+    {
+      "slot": "live57970_20",
+      "return_arrived": true,
+      "steals_after_return": 10,
+      "restock": [
+        "food restock complete: carrying 22 'lobster' food"
+      ]
+    }
+  ]
+}

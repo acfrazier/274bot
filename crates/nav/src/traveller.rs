@@ -601,7 +601,7 @@ impl Traveller {
     /// `Interactions` and `Settle` are built fresh from it each call, so
     /// each call performs at most one driver send (walk or transport op)
     /// plus one settle poll — except the door-troll fallback, which sends
-    /// `op_loc` and the same-tick walk together on an open door.
+    /// Open followed by a bounded adjacent crossing probe, or a walk when open.
     pub fn follow<D: Driver>(
         &mut self,
         d: &mut D,
@@ -1531,9 +1531,9 @@ impl FollowRun {
                     // The cheap one-interact door hop lapsed: a door the
                     // closer keeps slamming can never cross that way, so
                     // escalate this same leg to the automatic troll
-                    // instead of stalling. Re-send every tick (op_loc
-                    // always, plus the same-tick walk when the door reads
-                    // open); only a troll hop that lapses again — or a
+                    // instead of stalling. Re-open while closed, probe the
+                    // adjacent crossing after Open, and walk when open; only
+                    // a troll hop that lapses again — or a
                     // non-door transport — returns the real `Stalled`.
                     let door_leg = matches!(
                         &hop.leg,
@@ -1981,7 +1981,7 @@ impl WalkHop {
 /// One transport-leg hop: the edge (for the phase callback) plus the
 /// arrival target and the stall clock. `troll` marks the automatic
 /// door-troll fallback: the hop re-reads the door's state and re-sends
-/// every poll (op_loc always, plus the same-tick walk when open) after
+/// while closed, probes after Open, and walks when open after
 /// the cheap one-interact hop lapsed its budget. `chat_seq` is the chat
 /// ring's latest sequence when the hop started: the watermark for the
 /// "I can't reach that!" fast-fail watch (`settle::said`'s sequence

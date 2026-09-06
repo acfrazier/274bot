@@ -1,0 +1,43 @@
+BOUNDED REVIEW — HEAD 1211d0a vs 734e020
+Scope: committed Bank.withdrawX wait + direct call sites/tests only
+
+Verdict: APPROVE
+
+What changed
+- bank.js withdrawX: after Withdraw-X + answer-count, no longer delayTicks(1) + return true.
+- Waits via Execution.delayUntil (4000ms) until Inventory.count(name) >= before+min(count, bankRow.count), or partial progress with Inventory.isFull().
+- before/target sampled once at entry; cond re-reads Inventory on each pump.
+- withdrawXById still delegates to withdrawX (inherits wait).
+- Tests: gold_stubs regression (result stays undefined until inv 3→22); load_isolate no longer treats count-answer as success.
+
+Compatibility
+- Direct consumer is steal_rules.withdrawTo → ok = await Bank.withdrawX(...); Rust bank_withdraw.step treats phase "x" with !(ok && count > before) as fallback (Withdraw-10 path). Premature true + stale count was exactly add10-on-delayed19. Fix makes ok track publication/partial-full, which matches sequencer intent.
+- Op queue order unchanged (withdraw X, then answer-count next tick). ABI/surface unchanged.
+- Return type still boolean; false on timeout is a real semantic shift vs old always-true, and is the correct signal for the sequencer. Other Bank.withdraw* paths untouched.
+
+Stale snapshots
+- Wait is observation-driven on posted inv, same model as Bank.close / openBooth delayUntil. Good.
+- before/target frozen from the entry snapshot; live checks use later posts — avoids succeeding on the answer alone while host still shows old rows.
+- isFull() needs inv_size / host.invSize; without capacity, full-backpack arm never fires and only the target arm or timeout applies. Acceptable under existing inventory helpers; live thiever path posts capacity.
+- No snapshot generation token (snapshotReady still not impl); consistent with the rest of the bank shim, not a regression in this patch.
+
+Return semantics
+- delayUntil: true on cond, false on timeout (park.settle). Aligns with withdrawTo/Rust ok.
+- Partial + full → true stops fallback and further withdraw rounds when backpack is full — addresses idle-at-full-HP fallout from over-fill.
+- Timeout with no progress → false → controlled fallback/done, not silent success.
+- delayUntil is armed after answer-count on the post-delayTicks continuation; first cond check is the next pump (tests’ tick 3 still pending) — correct.
+
+Tests
+- Regression locks “sent count ≠ completed withdrawal.”
+- load_isolate updated message and posts inv before resolve — matches new contract.
+- User note: full script suite + load passed after fixing the old premature-success assert. No need to re-run here.
+- Gaps (non-blocking): no unit coverage for timeout→false or isFull partial arm; gold_stubs path is enough for the reported failure mode.
+
+Non-issues / ignored
+- Uncommitted closer diagnostics and dirty nav_door/runner left out of scope as requested.
+- count<=0 → target==before → immediate true still possible; pre-existing edge, not this bug.
+
+Summary
+Fix is minimal, matches the failure mode, composes correctly with withdrawTo + bank_withdraw, and tests pin the new completion rule. No change requests in reviewed scope.
+
+APPROVE
