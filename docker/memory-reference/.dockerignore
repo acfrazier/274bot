@@ -1,0 +1,17 @@
+# Context is the repo root. Keep the build context small and free of secrets.
+**/.git
+**/.git/**
+**/target
+**/target/**
+vendor/fr-client-rust/target
+vendor/fr-client-rust/target/**
+**/.DS_Store
+**/*.pem
+**/*secret*
+**/.env
+**/.env.*
+docs/memory/diagnostics
+docs/superpowers
+**/.274bot
+**/.cargo
+**/node_modules

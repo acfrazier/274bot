@@ -1,0 +1,132 @@
+# 274bot Linux memory-reference compose (preparation).
+#
+# Profiles:
+#   (default)  build/test/tui — no desktop helpers
+#   desktop    optional Xvfb + Openbox + x11vnc + noVNC (loopback publish only)
+#
+# Platforms: set MEMORY_REF_PLATFORM=linux/amd64|linux/arm64 (required explicit).
+# Caches are named per-arch so Linux outputs never share macOS target/ or each other.
+#
+# Do not start this file until the orch unblocks after native attribution isolation.
+# Preparation validated structure only; daemon was absent at prep time.
+
+name: memory-reference
+
+x-common-env: &common-env
+  BOT_TARGET: local
+  CARGO_HOME: /cargo-home
+  CARGO_TARGET_DIR: /target
+  # HOME inside the container points at the bind-mounted operator runtime dir
+  # (vault, navpack, js-scripts) — never baked into the image.
+  HOME: /runtime/home
+  ENGINE_DIR: /runtime/engine
+  # Host engine endpoint as seen from the container network namespace.
+  # Docker Desktop Mac provides host.docker.internal; Linux needs extra_hosts below.
+  MEMORY_REF_HOST_ENGINE: ${MEMORY_REF_HOST_ENGINE:-host.docker.internal}
+  MEMORY_REF_GAME_PORT: ${MEMORY_REF_GAME_PORT:-43594}
+  MEMORY_REF_JAG_PORT: ${MEMORY_REF_JAG_PORT:-80}
+  # Keep app on loopback (local RSA policy). Relay maps 127.0.0.1 → host engine.
+  MEMORY_REF_RELAY: ${MEMORY_REF_RELAY:-1}
+  RUST_BACKTRACE: "1"
+
+x-common-volumes: &common-volumes
+  # Checkout: RW so diagnostic scripts can write under docs/memory/diagnostics.
+  # CARGO_TARGET_DIR=/target keeps object files off the macOS tree.
+  - ../..:/work
+  - ${MEMORY_REF_HOME:-${HOME}/.274bot}:/runtime/home/.274bot:ro
+  # Optional engine pack/RSA — operator supplies path; default matches FIRST-START.
+  - ${ENGINE_DIR:-${HOME}/experiments/Server/engine}:/runtime/engine:ro
+  - type: volume
+    source: cargo-home-${MEMORY_REF_ARCH:-amd64}
+    target: /cargo-home
+  - type: volume
+    source: target-${MEMORY_REF_ARCH:-amd64}
+    target: /target
+
+services:
+  ref:
+    image: ${MEMORY_REF_IMAGE:-274bot-memory-ref:1.98.0-bookworm-${MEMORY_REF_ARCH:-amd64}}
+    platform: ${MEMORY_REF_PLATFORM:-linux/amd64}
+    build:
+      context: ../..
+      dockerfile: docker/memory-reference/Dockerfile
+      args:
+        RUST_IMAGE: rust:1.98.0-bookworm
+        WITH_DESKTOP: "0"
+      platforms:
+        - ${MEMORY_REF_PLATFORM:-linux/amd64}
+    working_dir: /work
+    environment:
+      <<: *common-env
+      MEMORY_REF_PROFILE: build
+      # Optional: BOT_VAULT_PASS, RS2B0T, NAV_PACK — pass at run time only.
+      BOT_VAULT_PASS: ${BOT_VAULT_PASS:-}
+      RS2B0T: ${RS2B0T:-}
+      BOT_CPU: ${BOT_CPU:-}
+      SKIP_GPU: ${SKIP_GPU:-1}
+    volumes: *common-volumes
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # No published ports in the default profile (build/test/tui over exec/pty).
+    stdin_open: true
+    tty: true
+    # Plan §1 VPS TUI working target: 2 CPU / 4 GiB.
+    cpus: ${MEMORY_REF_CPUS:-2.0}
+    mem_limit: ${MEMORY_REF_MEM:-4g}
+    memswap_limit: ${MEMORY_REF_MEM:-4g}
+    # init reaps socat/desktop children cleanly
+    init: true
+
+  ref-desktop:
+    profiles: ["desktop"]
+    image: ${MEMORY_REF_DESKTOP_IMAGE:-274bot-memory-ref:1.98.0-bookworm-desktop-${MEMORY_REF_ARCH:-amd64}}
+    platform: ${MEMORY_REF_PLATFORM:-linux/amd64}
+    build:
+      context: ../..
+      dockerfile: docker/memory-reference/Dockerfile
+      args:
+        RUST_IMAGE: rust:1.98.0-bookworm
+        WITH_DESKTOP: "1"
+      platforms:
+        - ${MEMORY_REF_PLATFORM:-linux/amd64}
+    working_dir: /work
+    environment:
+      <<: *common-env
+      MEMORY_REF_PROFILE: desktop
+      MEMORY_REF_DESKTOP: "1"
+      DISPLAY: ":99"
+      VNC_GEOMETRY: ${VNC_GEOMETRY:-1280x800}
+      VNC_DEPTH: ${VNC_DEPTH:-24}
+      # noVNC listens inside the container; host publish is loopback-only below.
+      NOVNC_PORT: "6080"
+      VNC_PORT: "5900"
+      BOT_VAULT_PASS: ${BOT_VAULT_PASS:-}
+      RS2B0T: ${RS2B0T:-}
+      # Panel may try GPU; Docker Desktop Mac does not establish native Linux GPU.
+      # Prefer BOT_CPU=1 for honest software-renderer evidence inside this profile.
+      BOT_CPU: ${BOT_CPU:-1}
+      SKIP_GPU: ${SKIP_GPU:-1}
+    volumes: *common-volumes
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Browser viewer on host loopback only — not 0.0.0.0.
+      - "127.0.0.1:6080:6080"
+    stdin_open: true
+    tty: true
+    # Desktop helpers consume extra CPU/RSS; do not use this service for clean
+    # 2c/4GiB TUI budget cells. Separate accounting required when enabled.
+    cpus: ${MEMORY_REF_DESKTOP_CPUS:-2.0}
+    mem_limit: ${MEMORY_REF_DESKTOP_MEM:-4g}
+    memswap_limit: ${MEMORY_REF_DESKTOP_MEM:-4g}
+    init: true
+
+volumes:
+  cargo-home-amd64:
+    name: 274bot-memory-ref-cargo-amd64
+  cargo-home-arm64:
+    name: 274bot-memory-ref-cargo-arm64
+  target-amd64:
+    name: 274bot-memory-ref-target-amd64
+  target-arm64:
+    name: 274bot-memory-ref-target-arm64
