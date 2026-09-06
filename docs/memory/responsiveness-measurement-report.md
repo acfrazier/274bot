@@ -92,9 +92,8 @@ Existing `renderer_profile` / `scheduling_profile` / `gpu_completion` meanings a
 ## Tests run (this task)
 
 - `cargo test -p host --lib` → 154 passed, 1 ignored (existing GPU smoke)
-- `cargo test -p host --lib responsiveness_profile` → 13 passed (disabled, pair/order, delay, cancel, overflow, bridge, panel present, TUI draw, headless unavailable, p99 buckets, deferred bind, stale bridge on restart)
-- `cargo test -p host-play --lib` → 114 passed
-- `cargo test -p host-play --lib --features memory-profile` → (re-run at commit)
+- `cargo test -p host --lib responsiveness_profile` → 13 passed (disabled, pair/order, delay, cancel, overflow, bridge, panel present, TUI draw, headless unavailable, p99 buckets, deferred bind after skip-paint, stale bridge on restart)
+- `cargo test -p host-play --lib --features memory-profile` → 143 passed
 - `cargo check -p panel` / `cargo check -p tui` → ok
 - `python3 docs/memory/test_run_diagnostic.py` → 9 passed
 
