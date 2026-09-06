@@ -1,0 +1,34 @@
+Verdict: APPROVE
+
+Commit df8608a (parent 7f73fb0) only adds:
+- docs/memory/sustained-panel32-repeat.md
+- docs/memory/sustained-panel32-repeat.json
+
+Scope checked against raw run docs/memory/diagnostics/20260906T030558Z_panel_n32_active and first-cell sustained-panel32-memory.md/.json.
+
+Provenance / qualification
+- Tracked JSON matches run memory-summary.json on all shared fields (final_statuses intentionally omitted, same pattern as first tracked summary).
+- metadata exit_code 0; binary/source/client/nav/rs2b0t hashes match sample one; same saved binary SHA 781b93eb…bf76f.
+- Host 7f73fb0 is only docs(memory) commits after measured host 5e0f3ec; empty host_diff both runs.
+- Qualification: qualified true, errors [], n=32, both observe-start/observe-end boundaries present.
+- Steal gains 46–83 over the observation window (not end totals 65–113); matches qualification.
+- Observe samples: ready=32 and active=32 on all 595 samples; span 599.107559s (MD 599.108).
+- End titles are only pickpocket / stunned-waiting; no errors; bank_open false (bank-trips counters in paint are not banking status).
+
+Units / arithmetic
+- GiB/MiB use 1024^n; table and prose percentages/deltas recompute cleanly from JSON (RSS +0.390%, teardown −4.45 MiB, V8 total +10.2%, first→last minute +17.203 MiB, scheduling means and sleep excesses).
+- CPU cores = cpu_seconds/observation_s; tick means and ticks/slot-s match observe first→last counters.
+- Memory first/last/min/median/p95/max, minute medians, teardown 30s median, whole-run peak, V8 isolate min/age all match summarize.py definitions on samples.
+
+Stop
+- Teardown samples: active=0, v8_live_isolates=0, v8_used=0, snapshot inflight bytes/capacity=0, ready=32 throughout; final teardown row matches tracked teardown. Retained-RSS caveats are appropriate.
+
+Scheduling interpretation
+- Groups are observe-window counter deltas (not whole-process absolutes); one sim work overrun, zero draw overruns; actual sleep > requested sleep restated without OS-cause claim; lag/no-tail-latency limits preserved.
+
+Comparison / overstatement
+- Two-run framing is hedged (agreement only, not noise bound, not savings, third repeat still required).
+- Overlap warning present; no summed memory categories.
+- No optimization acceptance, tail-latency equivalence, or whole-branch completion claim.
+
+No concrete blockers.
