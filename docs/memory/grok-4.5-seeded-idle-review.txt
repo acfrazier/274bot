@@ -1,0 +1,31 @@
+APPROVE
+
+Commit: d3abfb49a5a492f1dd920ac06a4b03fcf41e6fa2
+Parent: dcece07ffb6c701dedec00e1d291de53dd9ae96c
+Subject: test(memory): add seeded idle controls without script startup
+
+Scope (this commit only)
+  crates/host-play/src/memory.rs
+  docs/memory/cpu_screen.py
+  docs/memory/run_diagnostic.py
+  docs/memory/test_cpu_screen.py
+  No scenario/client/API surface edits.
+
+Behavior
+  Workload::SeededIdle / "seeded-idle" is additive. Idle still mints with no seeds and no card; active/lifecycle still require RS2B0T + Thiever card and the prior ready/seeded/proved/active gate.
+  seeded_idle_scenario() clones thiever_sustained_scenario(), truncates at StartScript, sets proof to the seed step ArrivedNear (2661,3306,r=10), clears start_script/terminal_shot. Last kept step is DrainDialogs. Matches the stated reuse / end-before-script rule.
+  prepare: SeededIdle installs seed runners, no catalog card, no RS2B0T. Poll established: ready==n && seeded==n && active==0, with seeded only on RunnerStatus::Passed (no StartScript path). Unseeded idle remains ready-only via card.is_none().
+  write_qualification adds a client snapshot from existing Play::statuses (ingame/scene/tile). Additive for active; required for seeded-idle scene checks. Not a foreign API change.
+  cpu_screen.summarize: seeded-idle expects active=0, zero isolate/inflight snapshot counters, Idle script state, guard-stand client bounds, empty steal_gains; active path unchanged. run_diagnostic accepts the new choice and already records workload in metadata.
+
+Tests / receipts
+  Rust: scenario shape + prepare without catalog.
+  Python: SeededIdleTests (14 total with parent cases) cover qualify, active leak, wrong scene, live isolate.
+  Red logs match pre-implementation failure modes (unknown workload; runtime=None falling into steals). Stated greens accepted; no re-run (read-only).
+
+Nits (non-blocking)
+  SEEDS / client_frame comments still say seeds are active/lifecycle-only; SeededIdle also installs them.
+  Guard tile constants are duplicated in Python/Rust tests vs scenario; same pattern as existing thiever coupling.
+  Live seeded-idle evidence still outstanding by your note — not a commit defect.
+
+Verdict: APPROVE
