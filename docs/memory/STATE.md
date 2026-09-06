@@ -27,9 +27,10 @@ verify it on resume because a worker may finish after this snapshot.
    the model string as reviewer profile; orch reassigned to `reviewer` and
    verified the real review completed. Use profile names in handoffs. Its scope does not prove actual GPU backend,
    completed-frame cadence or responsiveness, and includes no live run.
-4. Renderer observations are in implementation task `t_2dfa7342` (actual
-   per-slot residency/backend and host paint cadence). Dependent task
-   `t_bd7960b8` adds bounded GPU queue-completion coverage. These are opt-in, do not change rendering,
+4. Renderer observations `15c4fc4` + hardening `316c2a2` passed Grok4.5 review
+   `t_2dfa7342` (actual per-slot residency/backend and host paint cadence);
+   [receipt](grok-4.5-renderer-observation-review.txt). Task `t_bd7960b8` is now
+   implementing bounded GPU queue-completion coverage. These are opt-in, do not change rendering,
    and distinguish CPU callback delivery from hardware timestamps/scanout.
    After review, build immutable release binaries and qualify the three approved
    modes live. Precise responsiveness measurements remain separate work.
@@ -70,3 +71,16 @@ Keep failed artifacts. Do not duplicate the plan or Git policy here. The primary
 checkout's gitignored `docs/superpowers/STATE.md` only points here; update that
 pointer if the campaign moves. After memory completion, it also identifies the
 preserved historical context for resuming the remaining compatibility work.
+
+## Runtime handoff caveat (2026-09-06)
+
+The installed Hermes `agent/kanban_stop.py` stop nudge recognizes complete/block,
+but not request-review. Run45 continued after its handoff and made a scoped
+follow-up commit. Orch stopped its stale process; reviewer independently approved
+the final `316c2a2` code. Documentation alone does not fix this runtime guard.
+Until corrected in Hermes, verify the ended implementer process exits at handoff
+and stop that exact old process if necessary, without reclaiming the new reviewer.
+For run47/task `t_bd7960b8`, orch started a bounded supervisor that checks run
+outcome and original PID identity before terminating only an ended implementer.
+No Hermes source, auth or provider configuration was changed. Keep this execution
+limitation visible; never accept a review while its producer is still editing.
