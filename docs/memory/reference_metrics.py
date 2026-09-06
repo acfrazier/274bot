@@ -857,6 +857,7 @@ def _gpu_backend_present(row: dict) -> bool:
         "",
         "absent",
         "cpu",
+        "cpu_fallback",
         "pixmap",
     }
 

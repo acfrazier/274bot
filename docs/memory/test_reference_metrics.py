@@ -471,7 +471,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         self.assertEqual(g["slots"][0]["target"]["expected_fps"], 1.0)
         self.assertEqual(g["slots"][0]["observed_fps"], 1.0)
 
-    def test_gpu_interval_adapter_rejects_boundary_pending_and_missing_backend(self):
+    def test_gpu_interval_adapter_rejects_boundary_pending(self):
         meta = _meta(render_profile=True, gpu_completion_profile=True)
         row = {
             "slot_id": 9, "generation": 1, "sample_age_ms": 1,
@@ -492,6 +492,30 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         ])
         self.assertEqual(g["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "boundary_pending_incomplete")
+
+    def test_gpu_interval_adapter_rejects_cpu_fallback_backend(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True)
+        completion = {
+            "enabled": True, "registered_n": 4800, "completed_n": 4800,
+            "dropped_n": 0, "lost_n": 0, "pending_n": 0,
+            "stable_completed_n": 4800, "stable_completion_intervals": 4800,
+            "stable_completion_interval_buckets": [0, 0, 0, 4800] + [0] * 7,
+            "registration_complete": True, "completion_coverage_complete": True,
+            "interval_bound_ms": list(rm.INTERVAL_BOUNDS_MS),
+        }
+        row = {
+            "slot_id": 9, "generation": 1, "sample_age_ms": 1,
+            "renderer_present": True, "backend_kind": "cpu_fallback",
+            "ingame": True, "scene_state": 2, "draw": True, "full_rate": True,
+            "gpu_completion": completion,
+        }
+        g = rm.evaluate_gpu(meta, [
+            {"phase": "observe", "elapsed_s": 0.0, "renderer_profile": [row]},
+            {"phase": "observe", "elapsed_s": 120.0, "renderer_profile": [row]},
+        ])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertFalse(rm.gate_satisfies_require(g))
+        self.assertEqual(g["slots"][0]["reason"], "gpu_backend_or_completion_unavailable")
 
     def test_gpu_lost_no_false_pass(self):
         meta = _meta(render_profile=True, gpu_completion_profile=True)
