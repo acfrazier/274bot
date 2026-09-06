@@ -364,7 +364,9 @@ fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
     match boot {
         #[cfg(feature = "memory-profile")]
         Boot::Memory(config) => {
-            let run = host_play::memory::Run::prepare(config, "panel")?;
+            // Vault/card first; Play decodes the pack once inside prepare_memory,
+            // then seeds bind that Arc (no second load_pack).
+            let run = host_play::memory::Run::prepare_unseeded(config, "panel")?;
             state.session.prepare_memory(&run)?;
             state.memory = Some(run);
             Ok(())

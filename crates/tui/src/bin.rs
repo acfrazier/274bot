@@ -1154,9 +1154,13 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     #[cfg(feature = "memory-profile")]
     if let Some(config) = host_play::memory::Config::from_env()? {
         host_play::memory::require_live_benchmark()?;
-        let run = host_play::memory::Run::prepare(config, "tui")?;
+        // Vault/card first; unlock constructs Play once (single load_pack).
+        let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
         session.options.mainland = true;
         session.unlock_at(&run.vault, &run.pass)?;
+        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
+            session.play.as_ref().and_then(|p| p.world()),
+        ))?;
         session.names = run.names.clone();
         session.spawn_all();
         session.focus(&run.names[0]);

@@ -118,6 +118,12 @@ impl ScenarioRunner {
         Self::with_data(scenario, nav_world)
     }
 
+    /// Shared pack Arc this runner routes on (`None` when missing). Clones
+    /// the Arc only — identity is preserved for ownership checks.
+    pub fn shared_world(&self) -> Option<Arc<NavWorld>> {
+        self.nav_world.clone()
+    }
+
     fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         // Settings fields are Copy, so read them out before `scenario`
         // moves into the runner below.

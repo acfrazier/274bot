@@ -1350,12 +1350,17 @@ impl Session {
         self.persist_ui = false;
         self.mainland.store(true, Ordering::Relaxed);
         self.scatter.store(false, Ordering::Relaxed);
+        // One Play construction: load_pack happens here exactly once.
         if !self.start_vault(&run.vault, &run.pass) {
             return Err(self
                 .error
                 .clone()
                 .unwrap_or_else(|| "benchmark vault failed".into()));
         }
+        // Share Play's world with seed runners before slots start ticking.
+        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
+            self.play.as_ref().and_then(|p| p.world()),
+        ))?;
         self.set_multibox(true);
         for name in &run.names {
             let _ = self.wall.load(name);

@@ -366,11 +366,45 @@ pub struct Run {
     qualification_output: std::fs::File,
 }
 
+/// Where non-idle seed runners get their [`nav::world::NavWorld`].
+///
+/// Frontends pass [`SeedNav::FromPlay`] with `Play::world()` so the pack is
+/// decoded once. Unit tests without a Play use [`SeedNav::LoadDefault`].
+#[derive(Clone)]
+pub enum SeedNav {
+    /// Decode the default pack once for this prepare (no Play yet).
+    LoadDefault,
+    /// Reuse the Play-owned world as-is — `None` preserves missing-pack
+    /// behavior (no second decode attempt).
+    FromPlay(Option<Arc<nav::world::NavWorld>>),
+}
+
 impl Run {
-    /// Mint ephemeral accounts, throwaway vault, optional Thiever card.
+    /// Mint ephemeral accounts, throwaway vault, optional Thiever card, and
+    /// install seed runners via [`SeedNav::LoadDefault`]. Prefer
+    /// [`prepare_with_seed_nav`] from panel/TUI so seeds share `Play::world`.
     /// Idle modes: no card or RS2B0T. SeededIdle runs the Thiever setup only.
     /// Active/lifecycle: RS2B0T required.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
+        Self::prepare_with_seed_nav(config, frontend, SeedNav::LoadDefault)
+    }
+
+    /// Like [`prepare`], but seed runners take navigation from `seed_nav`
+    /// instead of always decoding a second pack copy.
+    pub fn prepare_with_seed_nav(
+        config: Config,
+        frontend: &'static str,
+        seed_nav: SeedNav,
+    ) -> Result<Self, String> {
+        let run = Self::prepare_unseeded(config, frontend)?;
+        run.bind_seed_nav(seed_nav)?;
+        Ok(run)
+    }
+
+    /// Vault, names, card, and sample outputs — **no** seed runners yet.
+    /// Frontends start `Play` next, then [`bind_seed_nav`] with
+    /// [`SeedNav::FromPlay`](`play.world()`) before spawning slots.
+    pub fn prepare_unseeded(config: Config, frontend: &'static str) -> Result<Self, String> {
         // Fail closed on panel-only / conflicting flags before minting vaults.
         let render_policy = parse_render_policy(frontend)?;
         let single_renderer =
@@ -410,14 +444,6 @@ impl Run {
         let path = dir.join("vault");
         let mut vault = Vault::create(&path, &pass).map_err(|e| e.to_string())?;
 
-        // One immutable pack per benchmark runner set. The production Play
-        // owns its separate, already-shared world; no per-account decode here.
-        let seed_world = if config.workload == Workload::Idle {
-            None
-        } else {
-            nav::world::NavWorld::load_pack(&scenario::default_pack_path()).ok().map(Arc::new)
-        };
-        let mut seeds = HashMap::new();
         for (i, name) in names.iter().enumerate() {
             let mut settings = ProfileSettings::default();
             settings.auto_login = true;
@@ -429,22 +455,9 @@ impl Run {
                     settings,
                 })
                 .map_err(|e| e.to_string())?;
-
-            if config.workload != Workload::Idle {
-                let mut scenario = if config.workload == Workload::SeededIdle {
-                    seeded_idle_scenario()
-                } else if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
-                    scenario::thiever_sustained_scenario()
-                } else { scenario::get("thiever").ok_or("missing Thiever scenario")? };
-                scenario.settings.terminal_shot = None;
-                let seed = seed_runner(scenario, name, seed_world.clone());
-                seeds.insert(
-                    name.clone(),
-                    Arc::new(Mutex::new(seed)),
-                );
-            }
         }
-        *SEEDS.lock().unwrap() = Some(seeds);
+        // Seeds install after Play exists (or via prepare's LoadDefault path).
+        *SEEDS.lock().unwrap() = Some(HashMap::new());
 
         let card = if matches!(config.workload, Workload::Idle | Workload::SeededIdle) {
             None
@@ -529,6 +542,40 @@ impl Run {
             single_renderer,
             render_policy,
         })
+    }
+
+    /// Install Thiever seed runners for non-idle workloads.
+    ///
+    /// [`SeedNav::FromPlay`] clones the Play-owned Arc (or keeps `None` when
+    /// the pack failed) — no second `load_pack`. [`SeedNav::LoadDefault`]
+    /// decodes once for unit tests without a Play. Unseeded idle leaves an
+    /// empty seed map. Call before spawning slots so `client_frame` sees them.
+    pub fn bind_seed_nav(&self, seed_nav: SeedNav) -> Result<(), String> {
+        if self.config.workload == Workload::Idle {
+            *SEEDS.lock().unwrap() = Some(HashMap::new());
+            return Ok(());
+        }
+        let seed_world = match seed_nav {
+            SeedNav::LoadDefault => nav::world::NavWorld::load_pack(&scenario::default_pack_path())
+                .ok()
+                .map(Arc::new),
+            SeedNav::FromPlay(world) => world,
+        };
+        let mut seeds = HashMap::new();
+        for name in &self.names {
+            let mut scenario = if self.config.workload == Workload::SeededIdle {
+                seeded_idle_scenario()
+            } else if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
+                scenario::thiever_sustained_scenario()
+            } else {
+                scenario::get("thiever").ok_or("missing Thiever scenario")?
+            };
+            scenario.settings.terminal_shot = None;
+            let seed = seed_runner(scenario, name, seed_world.clone());
+            seeds.insert(name.clone(), Arc::new(Mutex::new(seed)));
+        }
+        *SEEDS.lock().unwrap() = Some(seeds);
+        Ok(())
     }
 
     pub fn has_script_card(&self) -> bool {
@@ -1375,6 +1422,92 @@ mod tests {
         assert_eq!(Arc::strong_count(&world), 2);
         drop(b);
         assert_eq!(Arc::strong_count(&world), 1);
+    }
+
+    #[test]
+    fn bind_seed_nav_from_play_preserves_arc_identity() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
+        let world = Arc::new(nav::world::NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
+            },
+            Default::default(),
+            vec![],
+        ));
+        let run = Run::prepare_unseeded(unit_config(2, Workload::SeededIdle), "unit")
+            .expect("unseeded prepare");
+        run.bind_seed_nav(SeedNav::FromPlay(Some(world.clone())))
+            .expect("bind play world");
+        let seeds = SEEDS.lock().unwrap();
+        let map = seeds.as_ref().expect("seeds installed");
+        assert_eq!(map.len(), 2);
+        for name in &run.names {
+            let seed = map.get(name).expect("named seed").lock().unwrap();
+            let shared = seed.runner.shared_world().expect("seed must hold play world");
+            assert!(
+                Arc::ptr_eq(&world, &shared),
+                "seed {name} must share Play Arc identity"
+            );
+        }
+        // Play owner + 2 seed runners.
+        assert!(Arc::strong_count(&world) >= 3);
+    }
+
+    #[test]
+    fn bind_seed_nav_from_play_none_keeps_missing_pack() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
+        let run = Run::prepare_unseeded(unit_config(1, Workload::SeededIdle), "unit")
+            .expect("unseeded prepare");
+        // Play had no pack: FromPlay(None) must not attempt a second decode.
+        run.bind_seed_nav(SeedNav::FromPlay(None))
+            .expect("bind missing pack");
+        let seeds = SEEDS.lock().unwrap();
+        let seed = seeds
+            .as_ref()
+            .expect("seeds")
+            .get(&run.names[0])
+            .expect("seed")
+            .lock()
+            .unwrap();
+        assert!(
+            seed.runner.shared_world().is_none(),
+            "missing Play pack must stay missing on seeds"
+        );
+    }
+
+    #[test]
+    fn prepare_with_seed_nav_from_play_matches_bind() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
+        let world = Arc::new(nav::world::NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: api::snapshot::WorldTile { x: 1, z: 2, level: 0 },
+                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
+            },
+            Default::default(),
+            vec![],
+        ));
+        let run = Run::prepare_with_seed_nav(
+            unit_config(1, Workload::SeededIdle),
+            "unit",
+            SeedNav::FromPlay(Some(world.clone())),
+        )
+        .expect("prepare with play nav");
+        let seeds = SEEDS.lock().unwrap();
+        let shared = seeds
+            .as_ref()
+            .unwrap()
+            .get(&run.names[0])
+            .unwrap()
+            .lock()
+            .unwrap()
+            .runner
+            .shared_world()
+            .expect("world");
+        assert!(Arc::ptr_eq(&world, &shared));
     }
 
     #[test]
