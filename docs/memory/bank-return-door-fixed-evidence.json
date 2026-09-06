@@ -1,0 +1,108 @@
+{
+  "run": "20260906T011739Z_panel_n32_active",
+  "slot": "live48e70_0",
+  "recent_navigation": [
+    "FindStart generation=1 from=WorldTile { x: 2658, z: 3308, level: 0 } to=WorldTile { x: 2656, z: 3286, level: 0 } radius=3",
+    "FindEnd generation=1 outcome=Routed",
+    "Leg Start Walk tiles=28 from=Some(WorldTile { x: 2658, z: 3308, level: 0 }) to=Some(WorldTile { x: 2653, z: 3289, level: 0 })",
+    "WalkAttempt { tick: 175, at: WorldTile { x: 2658, z: 3308, level: 0 }, aim: WorldTile { x: 2653, z: 3289, level: 0 }, refusal: None }",
+    "Leg Done Walk tiles=28 from=Some(WorldTile { x: 2658, z: 3308, level: 0 }) to=Some(WorldTile { x: 2653, z: 3289, level: 0 })",
+    "FollowEnd tick=189 generation=1 outcome=Arrived { at: WorldTile { x: 2653, z: 3289, level: 0 } }",
+    "FindStart generation=2 from=WorldTile { x: 2653, z: 3289, level: 0 } to=WorldTile { x: 2656, z: 3286, level: 0 } radius=1",
+    "FindEnd generation=2 outcome=Routed",
+    "Leg Start Walk tiles=27 from=Some(WorldTile { x: 2653, z: 3289, level: 0 }) to=Some(WorldTile { x: 2655, z: 3287, level: 0 })",
+    "WalkAttempt { tick: 190, at: WorldTile { x: 2653, z: 3289, level: 0 }, aim: WorldTile { x: 2655, z: 3287, level: 0 }, refusal: None }",
+    "Leg Done Walk tiles=27 from=Some(WorldTile { x: 2653, z: 3289, level: 0 }) to=Some(WorldTile { x: 2655, z: 3287, level: 0 })",
+    "FollowEnd tick=203 generation=2 outcome=Arrived { at: WorldTile { x: 2655, z: 3287, level: 0 } }",
+    "FindStart generation=3 from=WorldTile { x: 2655, z: 3286, level: 0 } to=WorldTile { x: 2661, z: 3306, level: 0 } radius=2",
+    "FindEnd generation=3 outcome=Routed",
+    "Leg Start Walk tiles=47 from=Some(WorldTile { x: 2655, z: 3286, level: 0 }) to=Some(WorldTile { x: 2659, z: 3304, level: 0 })",
+    "WalkAttempt { tick: 214, at: WorldTile { x: 2655, z: 3286, level: 0 }, aim: WorldTile { x: 2659, z: 3304, level: 0 }, refusal: None }",
+    "Leg Done Walk tiles=47 from=Some(WorldTile { x: 2655, z: 3286, level: 0 }) to=Some(WorldTile { x: 2659, z: 3304, level: 0 })",
+    "FollowEnd tick=237 generation=3 outcome=Arrived { at: WorldTile { x: 2659, z: 3304, level: 0 } }"
+  ],
+  "runtime_paint": {
+    "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3305, 0)",
+    "lines": [
+      "Runtime: 5m | Target: Guard | XP/hr: 16.5k",
+      "Steals: 27 | Ate: 3 | Picked: 0",
+      "Food: 20 | Bank trips: 1 | Stunned: no",
+      "HP: 100%",
+      "",
+      "",
+      "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+    ]
+  },
+  "pack_comparison": {
+    "original": {
+      "count": 2208,
+      "near_closer": [
+        {
+          "values": [
+            2816,
+            3438,
+            0,
+            2816,
+            3439,
+            0,
+            1530,
+            1,
+            1
+          ],
+          "kind": 0,
+          "direction": 1
+        },
+        {
+          "values": [
+            2816,
+            3438,
+            0,
+            2816,
+            3437,
+            0,
+            1530,
+            1,
+            1
+          ],
+          "kind": 0,
+          "direction": 3
+        }
+      ]
+    },
+    "candidate": {
+      "count": 2182,
+      "near_closer": [
+        {
+          "values": [
+            2816,
+            3438,
+            0,
+            2816,
+            3439,
+            0,
+            1530,
+            1,
+            1
+          ],
+          "kind": 0,
+          "direction": 1
+        },
+        {
+          "values": [
+            2816,
+            3438,
+            0,
+            2816,
+            3437,
+            0,
+            1530,
+            1,
+            1
+          ],
+          "kind": 0,
+          "direction": 3
+        }
+      ]
+    }
+  }
+}

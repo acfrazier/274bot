@@ -1,0 +1,58 @@
+## APPROVE
+
+Bounded re-review of `7992f68` + `b9f40fe` vs `4231362` (source/test only). Findings: `docs/memory/grok-4.5-door-edge-rereview.txt`.
+
+### Prior blockers
+1. Contract docs adjacent-only — fixed (crate/`derive_transports`/`door_edges`/`toll_edges` + main fixtures).
+2. `web_far_side` multi-tile unit test — added; split locked.
+3. Derive Manhattan `|dx|+|dz|==1` on Catherby loc-1530 fixture doors — added (correctly not applied to all `TransportKind::Door`; webs stay multi-tile).
+4. Pack obsolete-edge in `cargo test` — still example-only; acceptable with offline pack check + intentional old-pack identity.
+5. `run_diagnostic.py` nav_pack meta — still present; non-blocking nit.
+
+### Source correctness
+`door_far_side` is adjacent+standable only; bank unit flags match `bank-return-door-evidence.json`. `door_edges`/`toll_edges` use it; `web_edges` keep walk-out via `web_far_side`. Live bake is `nav-pack` → `derive_transports` (not legacy `pack.rs` `nearest_walkable` DoorEdge path). Residual “far side” wording in a couple of fixture/helper comments is leftover phrasing, not a wrong contract.
+
+### Live acceptance (separate — not green)
+- Old pack retaining the obsolete edge is intentional metadata identity; new pack must be selected explicitly.
+- One-tick closer Expired identically on candidate and original (tick133 @2816,3438 → 2816,3439); range-house edges identical across packs → unresolved preexisting live failure, not proof this fix works or regressed.
+- Captured32 bank-return still running → bank bug offline-supported, live confirmation still open.
+
+No concrete source blockers in this scope. Not whole-branch review; not live sign-off.
+=> None; east standable => 2657.
+- door_edges + toll_edges call door_far_side; web_edges call web_far_side.
+- Live bake path is nav-pack -> derive_transports (not pack.rs DoorEdge /
+  nearest_walkable legacy grid path). Fix is on the pack that matters.
+- Residual "far side" wording in a few fixture comments / bake_collision helper
+  blurb is descriptive leftover, not a wrong public contract.
+
+### Tests (source)
+
+Operator: 253 nav lib + 3 nav-pack passed. Diff adds bank helper + web split
+tests and the Manhattan pin; consistent with +1 from prior 252 after bank
+landed in b9f40fe. Not re-run here.
+
+### Live acceptance (separate; does NOT pass this change)
+
+- Metadata pack identity intentional: old pack retains obsolete edge after
+  binary rebuild; explicit new pack selected live. Correct operational note.
+- One-tick closer FAILED identically on candidate AND original pack
+  (tick133 at 2816,3438 aiming 2816,3439 Expired). Both packs share identical
+  range-house edges. Treat as unresolved preexisting live failure — not
+  verification of this door-scenery fix, and not a source regression in this
+  diff.
+- Captured32 bank-return live still running: offline source/tests support the
+  bank fix; live confirmation of that path is still open and is the right
+  acceptance gate for the bank-return bug, not the range-house closer.
+
+### Verdict
+
+## APPROVE
+
+Source/test correctness of the bounded door-edge change is sound. Prior
+doc/test blockers are fixed. No concrete source blockers remain in
+4231362..HEAD for this scope.
+
+Not approved as live acceptance of nav behavior. Do not treat the failed
+range-house closer as green; finish bank-return live under the explicit new
+pack before calling the bank bug closed in production. Whole-branch review
+still separate.

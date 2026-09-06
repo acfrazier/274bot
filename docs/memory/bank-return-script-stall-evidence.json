@@ -1,0 +1,161 @@
+{
+  "elapsed_s": 461.986288958,
+  "name": "live48e70_18",
+  "state": "Running",
+  "error": null,
+  "paint": {
+    "title": "ThievingBot \u2014 returning from the bank",
+    "lines": [
+      "Runtime: 7m | Target: Guard | XP/hr: 7.3k",
+      "Steals: 17 | Ate: 1 | Picked: 0",
+      "Food: 28 | Bank trips: 1 | Stunned: no",
+      "HP: 100%",
+      "",
+      "",
+      "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+    ]
+  },
+  "in_flight": null,
+  "diagnostics": {
+    "client": {
+      "client_tick": 681,
+      "loop_cycle": 15576,
+      "xp": 102128,
+      "hp": 50,
+      "position": [
+        2659,
+        3304,
+        0
+      ],
+      "ingame": true,
+      "scene_state": 2,
+      "drawing": false,
+      "hold": false,
+      "animation": -1,
+      "spot_animation": -1,
+      "spot_animation_start_cycle": 4683,
+      "face_entity": -1,
+      "chat": "You don't have enough inventory space to withdraw that many.",
+      "guards": [
+        {
+          "index": 3555,
+          "type": 32,
+          "x": 2659,
+          "z": 3307,
+          "face_entity": -1,
+          "animation": 401
+        },
+        {
+          "index": 3541,
+          "type": 32,
+          "x": 2649,
+          "z": 3305,
+          "face_entity": -1,
+          "animation": -1
+        },
+        {
+          "index": 3554,
+          "type": 32,
+          "x": 2660,
+          "z": 3306,
+          "face_entity": 32782,
+          "animation": 401
+        },
+        {
+          "index": 3557,
+          "type": 32,
+          "x": 2667,
+          "z": 3300,
+          "face_entity": -1,
+          "animation": -1
+        },
+        {
+          "index": 3556,
+          "type": 32,
+          "x": 2658,
+          "z": 3308,
+          "face_entity": -1,
+          "animation": -1
+        },
+        {
+          "index": 3559,
+          "type": 32,
+          "x": 2669,
+          "z": 3302,
+          "face_entity": -1,
+          "animation": -1
+        },
+        {
+          "index": 3558,
+          "type": 32,
+          "x": 2667,
+          "z": 3318,
+          "face_entity": -1,
+          "animation": -1
+        }
+      ]
+    },
+    "snapshot_age_ms": 329,
+    "recent_logs": [
+      "thieving 'Guard' (Pickpocket) within 19 of (2661, 3306, 0), smart-eat *lobster*, banking at 3 food (target 22)",
+      "food restock: 3/22 \u2014 walking to Bank booth (2656, 3286, 0)",
+      "food restock complete: carrying 28 'lobster' food"
+    ],
+    "recent_requests": [
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }",
+      "Held { name: \"Lobster\", action: \"Eat\" }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }",
+      "Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }",
+      "WalkNear { x: 2656, z: 3286, level: 0, radius: 3, allow_teleports: false }",
+      "WalkNear { x: 2656, z: 3286, level: 0, radius: 1, allow_teleports: false }",
+      "OpenBooth { x: 0, z: 0, level: 0 }",
+      "Deposit { name: \"Coins\" }",
+      "Withdraw { name: \"Lobster\", action: \"Withdraw X\" }",
+      "AnswerCount { value: 19 }",
+      "Withdraw { name: \"Lobster\", action: \"Withdraw-10\" }",
+      "Close",
+      "WalkNear { x: 2661, z: 3306, level: 0, radius: 2, allow_teleports: false }"
+    ],
+    "recent_navigation": [
+      "FindStart generation=1 from=WorldTile { x: 2658, z: 3309, level: 0 } to=WorldTile { x: 2656, z: 3286, level: 0 } radius=3",
+      "FindEnd generation=1 outcome=Routed",
+      "Leg Start Walk tiles=29 from=Some(WorldTile { x: 2658, z: 3309, level: 0 }) to=Some(WorldTile { x: 2653, z: 3289, level: 0 })",
+      "WalkAttempt { tick: 217, at: WorldTile { x: 2658, z: 3309, level: 0 }, aim: WorldTile { x: 2653, z: 3289, level: 0 }, refusal: None }",
+      "Leg Done Walk tiles=29 from=Some(WorldTile { x: 2658, z: 3309, level: 0 }) to=Some(WorldTile { x: 2653, z: 3289, level: 0 })",
+      "FollowEnd tick=231 generation=1 outcome=Arrived { at: WorldTile { x: 2653, z: 3289, level: 0 } }",
+      "FindStart generation=2 from=WorldTile { x: 2653, z: 3289, level: 0 } to=WorldTile { x: 2656, z: 3286, level: 0 } radius=1",
+      "FindEnd generation=2 outcome=Routed",
+      "Leg Start Walk tiles=27 from=Some(WorldTile { x: 2653, z: 3289, level: 0 }) to=Some(WorldTile { x: 2655, z: 3287, level: 0 })",
+      "WalkAttempt { tick: 232, at: WorldTile { x: 2653, z: 3289, level: 0 }, aim: WorldTile { x: 2655, z: 3287, level: 0 }, refusal: None }",
+      "Leg Done Walk tiles=27 from=Some(WorldTile { x: 2653, z: 3289, level: 0 }) to=Some(WorldTile { x: 2655, z: 3287, level: 0 })",
+      "FollowEnd tick=245 generation=2 outcome=Arrived { at: WorldTile { x: 2655, z: 3287, level: 0 } }",
+      "FindStart generation=3 from=WorldTile { x: 2655, z: 3286, level: 0 } to=WorldTile { x: 2661, z: 3306, level: 0 } radius=2",
+      "FindEnd generation=3 outcome=Routed",
+      "Leg Start Walk tiles=47 from=Some(WorldTile { x: 2655, z: 3286, level: 0 }) to=Some(WorldTile { x: 2659, z: 3304, level: 0 })",
+      "WalkAttempt { tick: 257, at: WorldTile { x: 2655, z: 3286, level: 0 }, aim: WorldTile { x: 2659, z: 3304, level: 0 }, refusal: None }",
+      "Leg Done Walk tiles=47 from=Some(WorldTile { x: 2655, z: 3286, level: 0 }) to=Some(WorldTile { x: 2659, z: 3304, level: 0 })",
+      "FollowEnd tick=280 generation=3 outcome=Arrived { at: WorldTile { x: 2659, z: 3304, level: 0 } }"
+    ],
+    "request_batches": 38,
+    "sent_batches": 38
+  }
+}

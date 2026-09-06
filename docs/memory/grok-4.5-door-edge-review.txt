@@ -1,0 +1,73 @@
+## Commit review: `b9f40fe` — fix(nav): reject door crossings through blocked scenery
+
+**Scope:** `HEAD` vs `4231362` in  
+`/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f`  
+Files: `crates/nav/src/transport.rs`, `crates/nav/examples/check_bank_return.rs`, `docs/memory/run_diagnostic.py`
+
+### What changed (behavior)
+
+`door_far_side` no longer walks outward until the first standable tile. It only accepts the **immediate neighbor** in `dir` if `WorldCollision::standable` is true.
+
+That correctly kills the bank-return bug: Door1530 at `(2656,3292)` used to walk west over blocked counter/plant/bench tiles and land at `(2651,3292)`. Captured flags in the new unit test confirm west neighbor `(2655,3292)` is `WALK_SCENERY`-blocked (`0x4120`), while `(2651,3292)` is standable face-only (`0x4020`) — old walk-out would “succeed,” new logic returns `None`.
+
+Webs are split to `web_far_side` and keep the old multi-tile walk-out. Call sites:
+
+- `door_edges` (shape-0 doors + `gates.loc` fence gates) → adjacent-only
+- `toll_edges` (Al Kharid border gates) → adjacent-only via same helper
+- `web_edges` → unchanged walk-out
+
+Router still takes door edges from any standable tile within interact radius of `at` and lands on `to`; requiring `to` adjacent+standable matches one-tile wall-door crossings and does not invent a path through scenery.
+
+### Boundary / border gates / valid doors
+
+- **OOB neighbor:** `standable` is false off-grid → no edge (same practical outcome as old OOB exit).
+- **Blocked neighbor:** no edge (intended).
+- **Face-flag-only neighbor:** still standable → edge kept (Catherby wall-980 south landing still valid under existing tests).
+- **Border toll gates:** same shape-0 path; open-road adjacent landings should still emit both dirs. Existing real-content test still demands two edges per 2882/2883 — good canary if content is present.
+- **Fence gates:** same helper; one-tile cross is correct.
+- **Webs:** explicitly preserved; not treated as wall doors.
+
+No functional defect found in the new boundary rule for shape-0 wall doors/gates.
+
+### Tests
+
+| Coverage | Status |
+|---|---|
+| Helper regression (bank flags, W/E/N/S) | Good |
+| Existing fixture door landings (Catherby ±1) | Still consistent with adjacent-only |
+| Real-content border/Sinclair/web presence | Existing; soft if content absent |
+| Pack-level obsolete edge + bank route | Example only (`check_bank_return`), not `cargo test` |
+| `web_far_side` still multi-tile | **Missing** |
+| Door edges always Chebyshev-1 from `at` | **Not asserted** in derive fixtures |
+| Full `door_edges` omit blocked-west edge | Only via helper, not derive integration |
+
+Operator note that 252 nav + 3 nav-pack tests passed and offline checker fails old pack / passes new pack is consistent with this diff; not re-run here (read-only, no live tests).
+
+### Doc / scope issues
+
+Contract comments still describe the **old** walk-out behavior in places that now contradict the code:
+
+- `derive_transports` still says doors get “far-side walk-out”
+- `door_edges` doc still says walk outward until standable
+- `toll_edges` still says “far-side walk-out”
+- Fixture comments still say “walked out to standability” for plain doors
+
+`run_diagnostic.py` nav_pack/nav_flags meta is unrelated to the door fix (harmless cohesion nit).
+
+---
+
+## REQUEST CHANGES
+
+1. **Update door contract docs to adjacent-only** in `derive_transports`, `door_edges`, and `toll_edges` (and fixture comments that still say multi-tile walk-out for ordinary doors). Right now the public contract still documents the bug this commit fixes.
+
+2. **Lock the web split with a unit test** on `web_far_side`: blocked adjacent + standable further out must still resolve (mirrors bank geometry but expects `Some(far)`), so a future “unify helpers” refactor cannot silently break webs.
+
+3. **Pin the door invariant in at least one derive fixture** (e.g. Catherby or the new bank helper path): for `TransportKind::Door` edges from `door_edges`/`toll_edges`, `chebyshev(at,to)==1` (or `|dx|+|dz|==1`). Helper-only coverage leaves derive call sites free to drift.
+
+4. **Optional but useful:** fold the obsolete `(2656,3292)→(2651,3292)` loc-1530 assertion into a `#[test]` gated on real pack/content (same skip style as other content tests), or document that `check_bank_return` must be run in pack CI — example-only won’t catch pack/code skew on `cargo test`.
+
+5. **Nit:** drop or split the `run_diagnostic.py` nav_pack hash change from this fix commit unless pack identity is required for the live closer under review.
+
+**Not blocking on behavior:** adjacent-only `door_far_side` is the right wall-door rule; border gates correctly share it; webs correctly retain walk-out; bank regression geometry in the new unit test matches the claimed capture.
+
+Re-review after doc/test fixes should be able to **APPROVE**.
