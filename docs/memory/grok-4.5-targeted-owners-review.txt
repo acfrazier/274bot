@@ -1,0 +1,71 @@
+## Commit 31b9cc8 — APPROVE
+
+feat(memory): allow explicit live allocation stack logging  
+File: docs/memory/run_diagnostic.py only (+6/-3). No Rust/client binary change.
+
+Findings
+- Mutually exclusive group is real: `--stack-logging | --stack-logging-lite`. Static argparse check: either alone OK; both together exits 2 before launch.
+- Env mapping is correct and non-destructive of the old path:
+  - `--stack-logging` → `MallocStackLogging=1`
+  - `--stack-logging-lite` → `MallocStackLogging=lite`
+  - neither → env var cleared with the other Malloc* keys
+- Metadata is truthful enough:
+  - `stack_logging` = enabled boolean (`stack_logging or stack_logging_lite`)
+  - `stack_logging_mode` = `'lite' | '1' | null` distinguishes mode
+- Live captures under this commit confirm lite works: metadata has `stack_logging_mode: "lite"`, and vmmap shows `MallocStackLoggingLiteZone` (not the full-history helper zone from the failed pre-lite run).
+- Successful lite runs: `20260906T153903Z_…` and `20260906T154457Z_…` both host_commit `31b9cc8`, binary sha `616196ac…6c9b`, exit 0.
+- Failed prior full-logging run retained at `20260906T153122Z_…` (host_commit `ac542a8`, no `stack_logging_mode`): empty full `-allBySize` (timeout 120s), `-callTree` report with zero allocation entry lines, qualification `observation incomplete` / 95.273s — consistent with needing lite.
+
+No CLI compatibility issues found. No overclaim in this commit (code only).
+
+---
+
+## Commit a8f02ef — APPROVE
+
+docs(memory): attribute corrected native snapshot owners  
+Files: `targeted-allocation-owners.md` + `.json` only.
+
+### Receipts / qualification (match MD)
+| Capture | Ready/active at stack query | allBySize duration | Result |
+|---|---|---:|---|
+| Idle observe | 32/0 | 3.931s | exit 0 |
+| Active observe | 32/32 | 5.039s | exit 0 |
+| Active teardown (Stop) | 32/0 | 3.973s | exit 0 |
+
+- vmmap 0.7–1.1s, exit 0; phase stays observe/teardown as claimed.
+- Qualification: idle 118.471s, active 118.628s; active CPU 14.274 cores; all 32 bots steal gains 3–18.
+- Stop samples: ready 32/active 0, v8 isolates 0, v8_used 0, inflight bytes/capacity 0.
+- Report shas match streamed files:
+  - idle `def3ed6e…`, active `20f6ee95…`, stop `0e616274…`
+- Failed attempt correctly retained and labeled failed attribution (not a baseline).
+
+### Raw stack sums (streamed full reports; not from MD alone)
+WidgetView+LocView partition (disjoint owner stacks; owner sum = tag sum):
+
+| Owner | Idle/Active | After Stop | Stack discriminator vs source |
+|---|---:|---:|---|
+| panel | 48,381,952 | 48,381,952 | `panel::session::Session::start_play` → `GameSnapshot::rebuild`; source `nav_states: HashMap<…, GameSnapshot>` |
+| host | 45,334,528 | 45,959,168 | `host::Host::client_frame` → `rebuild_family`; source `Slot.snapshot` |
+| script_observe | 45,334,528 | 45,959,168 | `Host::client_tick` → `GameSnapshot::rebuild` without `client_frame`/`Session`/`ScenarioRunner`; aligns with host-play observe/`nav_snapshot` rebuild on the tick path |
+| runner | 48,381,952 | 48,381,952 | `scenario::ScenarioRunner::tick_with_hold` → rebuild; source runner retains `snapshot` |
+
+- Combined widget/location vectors: 187,432,960 (178.750 MiB) idle+active; 188,682,240 (179.941 MiB) after Stop. Matches MD.
+- Other path filters recomputed from full files: Client9construct 220.290 MiB; run_share_light 66.290/66.297; set_ground 64.717; NavWorld 140.988; largest construct group 32×4,358,144=139,460,608.
+- IsolateBuf active 32,127,248; SnapshotFingerprint 14,262,848; SceneEntityFp 13,628,880; nested (`SceneEntityFp ⊆ SnapshotFingerprint ⊆ IsolateBuf`). After Stop: all three absent (0). Corroborates Stop release; MD does not claim RSS delta from this.
+
+### VM totals / caveats
+- Malloc-zone ALLOCATED TOTAL: active 998.4M, after Stop 899.0M, idle process 895.6M — exact match to MD.
+- Lite zone present on success runs; failed run used non-lite zones.
+- MD caveats hold: intrusive diagnostic, not performance/RSS baseline; don’t sum path table; don’t add malloc/RSS/V8/GPU; allocator sizes ≠ Rust capacities; short lifecycle not hour soak; no whole-branch approval.
+
+### No RSS/performance acceptance overclaims
+Language stays diagnostic/attribution-only (“not performance baselines”, “does not isolate an RSS saving”, “Do not compare its RSS”, allocator retention “plausible” but unproven vs 235–406 MiB clean gap).
+
+### Minor note (not blocking)
+- “~13GB on-disk history” for the failed full-logging attempt is not re-checkable from retained run dir artifacts (only empty/timeout receipts). Failure mode itself is well evidenced; treat 13GB as author operational detail.
+
+---
+
+Verdict
+- 31b9cc8: APPROVE
+- a8f02ef: APPROVE
