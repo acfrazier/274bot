@@ -85,8 +85,9 @@ verify it on resume because a worker may finish after this snapshot.
    resident — not full 62 a priori). Standalone client-play skipped (defaults
    unmatched). No optimization implemented this card. **No performance pass.**
    Grok4.5 run64 approved attribution commit `1f086b0`. Shared-NavWorld
-   implementation is running on `t_513c266a`; its scope ends at tested code
-   review, with native and clean paired validation still pending.
+   implementation `606c93b` on `t_513c266a` passed Grok4.5 run69 review:
+   host-play 146, panel 377, TUI 87 and scenario missing-world checks passed.
+   Native and clean paired validation are still pending.
    Next after review: validate shared-NavWorld on an isolated follow-up card;
    residual fixed cost then GPU mapping / client construct. Final matrix/capacity
    later. Whole-branch Grok4.6 remains required at campaign finish.
@@ -98,9 +99,11 @@ verify it on resume because a worker may finish after this snapshot.
    not native modest-hardware or Linux GPU performance acceptance.
 8. Offline metrics card `t_8bade183` failed before writing deliverables after
    provider timeouts at roughly 78k context. Preserve that failed attempt.
-   Recovery `t_135ceb9f` narrows work to bounded observation/histogram core,
-   limited artifact reads, meaningful false-pass tests and honest unavailable
-   metrics; broader adapters remain subsequent work. No performance pass.
+   Recovery `t_135ceb9f` completed at `9be021c` with Grok4.5 run81 approval
+   after false-pass corrections (42 tests). Missing coverage/freshness/visible
+   endpoints fail closed; a fast GPU callback is not a frame-rate pass.
+   Luna GPU interval adapter `t_a0915201` is in progress; scheduling adapter
+   `t_a1861aa2` waits for its reviewed handoff. No performance pass.
    Do not start clean paired runs until Linux builds/tests and all other
    native profiling or test activity have stopped. Then collect enabled
    scheduling/responsiveness, matched overhead controls and separate server
@@ -110,8 +113,30 @@ verify it on resume because a worker may finish after this snapshot.
    shared root store with protected backups, preserving other providers and
    the Codex app login. New `luna` profile defaults to `gpt-5.6-luna` through
    `openai-codex`; an actual default-profile request passed (session
-   `20260906_192234_c235b6`). Server-resource sampler `t_f9ec3670` is running
-   under Luna, no task overrides, with the normal Grok4.5 review handoff.
+   `20260906_192234_c235b6`). Server-resource sampler `t_f9ec3670` and
+   hardening `t_014df28c` completed at `50d2ba8`, with Grok4.5 approval.
+   Thirteen tests passed on macOS and independently in Linux amd64, including
+   real process sampling. Overhead remains unmeasured; macOS start-identity
+   resolution and pressure limitations are explicit.
+10. Per-slot scheduling `t_c0e6e746` completed at `6345fbc`, Grok4.5 run84
+    approval: host 165 plus one ignored,
+    host-play 146 and 14 cadence tests. True tick-start endpoints, conservative
+    quantile bounds and flush lag are exposed. Scene separation remains
+    unavailable. No live p99 or overhead acceptance.
+11. Orch created comparison control branch `codex/shared-nav-control` at
+    `d373ea0`, checkout `.worktrees/shared-nav-control`: `6345fbc` with only
+    Nav-sharing `606c93b` reverted. Client `451759f2` was fetched from the active
+    local client because that commit was unavailable remotely. No push.
+    Build card `t_9abeb5e2` freezes matching control/candidate binaries before
+    isolated measurements. Both sides retain the new timing instrumentation.
+12. User-requested VNC desktop is running as `memory-ref-amd64-view` on host
+    `http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale` (Linux amd64,
+    2 CPU/4 GiB, relay disabled for this viewer). CUA visibly verified the
+    connected Vivaldi window with a live Linux build-log terminal and an
+    interactive `memref` x64 shell. Keep it alive for the user. Orch corrected
+    invalid `x11vnc -localhost false` to `-localhost`; running container was
+    repaired in place and the Linux worker will include the script correction.
+    Account desktop helpers separately; this is functional desktop proof.
 
 ## Evidence frontier
 
