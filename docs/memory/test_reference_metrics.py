@@ -418,6 +418,81 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         self.assertEqual(diag["target_verdict"], "meet")
         self.assertFalse(rm.gate_satisfies_require(g))
 
+    def test_gpu_stable_interval_adapter_meets_focused_observation(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True)
+        def row(completed, intervals):
+            gpu = {
+                "enabled": True, "registered_n": completed, "completed_n": completed,
+                "dropped_n": 0, "lost_n": 0, "pending_n": 0,
+                "stable_completed_n": completed,
+                "stable_completion_intervals": intervals,
+                "stable_completion_interval_buckets": [0, 0, 0, intervals] + [0] * 7,
+                "registration_complete": True, "completion_coverage_complete": True,
+                "interval_bound_ms": list(rm.INTERVAL_BOUNDS_MS),
+            }
+            return {
+                "slot_id": 3, "generation": 1, "sample_age_ms": 8,
+                "renderer_present": True, "backend_kind": "wgpu",
+                "ingame": True, "scene_state": 2, "draw": True, "full_rate": True,
+                "gpu_completion": gpu,
+            }
+        start = {"phase": "observe", "elapsed_s": 30.0, "renderer_profile": [row(0, 0)]}
+        end = {"phase": "observe", "elapsed_s": 150.0, "renderer_profile": [row(4800, 4800)]}
+        g = rm.evaluate_gpu(meta, [start, end])
+        self.assertEqual(g["status"], "available")
+        self.assertEqual(g["target_verdict"], "meet")
+        self.assertEqual(g["slots"][0]["observed_fps"], 40.0)
+        self.assertTrue(g["slots"][0]["boundary_accounted"])
+        self.assertEqual(g["presentation_endpoint"].split(";")[0], "unavailable")
+        self.assertTrue(rm.gate_satisfies_require(g))
+
+    def test_gpu_background_reports_expected_one_fps_without_lowering_policy(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True)
+        def row(completed, intervals):
+            return {
+                "slot_id": 4, "generation": 2, "sample_age_ms": 8,
+                "renderer_present": True, "backend_kind": "metal",
+                "ingame": True, "scene_state": 2, "draw": False, "full_rate": False,
+                "gpu_completion": {
+                    "enabled": True, "registered_n": completed, "completed_n": completed,
+                    "dropped_n": 0, "lost_n": 0, "pending_n": 0,
+                    "stable_completed_n": completed, "stable_completion_intervals": intervals,
+                    "stable_completion_interval_buckets": [0, 0, 0, intervals] + [0] * 7,
+                    "registration_complete": True, "completion_coverage_complete": True,
+                    "interval_bound_ms": list(rm.INTERVAL_BOUNDS_MS),
+                },
+            }
+        g = rm.evaluate_gpu(meta, [
+            {"phase": "observe", "elapsed_s": 0.0, "renderer_profile": [row(0, 0)]},
+            {"phase": "observe", "elapsed_s": 120.0, "renderer_profile": [row(120, 120)]},
+        ])
+        self.assertEqual(g["target_verdict"], "meet")
+        self.assertEqual(g["slots"][0]["role"], "background")
+        self.assertEqual(g["slots"][0]["target"]["expected_fps"], 1.0)
+        self.assertEqual(g["slots"][0]["observed_fps"], 1.0)
+
+    def test_gpu_interval_adapter_rejects_boundary_pending_and_missing_backend(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True)
+        row = {
+            "slot_id": 9, "generation": 1, "sample_age_ms": 1,
+            "renderer_present": True, "backend_kind": "wgpu",
+            "ingame": True, "scene_state": 2, "draw": True, "full_rate": True,
+            "gpu_completion": {
+                "enabled": True, "registered_n": 1, "completed_n": 1,
+                "dropped_n": 0, "lost_n": 0, "pending_n": 1,
+                "stable_completed_n": 1, "stable_completion_intervals": 1,
+                "stable_completion_interval_buckets": [0, 0, 0, 1] + [0] * 7,
+                "registration_complete": True, "completion_coverage_complete": True,
+                "interval_bound_ms": list(rm.INTERVAL_BOUNDS_MS),
+            },
+        }
+        g = rm.evaluate_gpu(meta, [
+            {"phase": "observe", "elapsed_s": 0.0, "renderer_profile": [row]},
+            {"phase": "observe", "elapsed_s": 10.0, "renderer_profile": [row]},
+        ])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "boundary_pending_incomplete")
+
     def test_gpu_lost_no_false_pass(self):
         meta = _meta(render_profile=True, gpu_completion_profile=True)
         start = {

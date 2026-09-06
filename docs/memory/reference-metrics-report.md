@@ -12,9 +12,9 @@ or lifecycle acceptance claim.**
 | `docs/memory/reference-metrics-report.md` | This report |
 
 No Rust, Docker, STATE, live runs, or builds. Workload qualification reuses
-`qualify_control.py` via `--qualify` (not reimplemented). Resource/renderer
-**expanded** adapters (RSS rollups, paint-cadence product gates, GPU *interval*
-histogram productization, etc.) are **next card** work — not fabricated here.
+`qualify_control.py` via `--qualify` (not reimplemented). Resource/RSS rollups,
+paint-cadence product gates, per-slot scheduling instrumentation, and a true
+hardware-presentation endpoint remain outside this card.
 
 ## What the core does
 
@@ -46,15 +46,19 @@ histogram productization, etc.) are **next card** work — not fabricated here.
    batch lag** → cannot prove per-slot or exact observation coverage; gate stays
    `unavailable` / `target_verdict=unavailable` even when diagnostic bounds exist.
 7. **GPU product gate** — `--require gpu` is the **product frame/cadence** gate.
-   It stays `status=unavailable` /
-   `reason=product_gpu_frame_cadence_requires_stable_completion_interval` until a
-   stable completion **interval**/FPS adapter exists. Fast
-   `completion_latency_buckets` (mainredraw→callback delivery) **cannot** product-meet
-   40 fps. Latency is scored only under nested
-   `diagnostic_completion_latency` with `metric=gpu_completion_latency` — distinct
-   from product `gpu`, and **not** accepted by `gate_satisfies_require` /
-   `--require gpu`. Never uses host paint as proxy. Serializer
-   `stable_completion_interval_buckets` are **raw present**, adapter **deferred**.
+   The adapter now differences stable completion interval histograms,
+   `stable_completed_n`, and registration/completion/lost/dropped/pending
+   counters between the exact observe endpoints for every `(slot_id,
+   generation)`. It requires a stable observed renderer identity, actual
+   non-CPU backend residency, finite `sample_age_ms`, zero pending at both
+   boundaries, complete registration/coverage flags, and no dropped/lost
+   delta. Focused rows must show observed >=40 fps and p99 interval <=40 ms;
+   background rows report expected 1 fps with an explicit ±0.25 fps tolerance.
+   The adapter never lowers the configured cadence to make a row pass.
+   `completion_latency_buckets` remain callback-delivery diagnostics only and
+   cannot product-meet on their own. The product result still records that the
+   endpoint is CPU callback delivery after a prior submit, not hardware timing
+   or scanout, and never uses host paint as a proxy.
 8. **CLI**
    - `--inspect` (default path): partial JSON, **exit 0**
    - `--require scheduling,decode,input,gpu`: **exit 1** if any required gate is
@@ -73,10 +77,11 @@ snapshot can therefore **conservatively** make decode/input/gpu **unavailable**
 even when the steady observe-window delta would be clean. This is intentional
 fail-closed for the narrow core.
 
-A later window adapter should compare observation deltas and account for
-boundary pending rather than reject all valid steady data solely because of
-canceled startup. Until that adapter exists, canceled/pending end-snapshot
-counts remain a hard unavailable path.
+A later adapter may account for non-zero boundary pending without rejecting the
+window. The GPU interval adapter currently requires both endpoint pending
+snapshots to be zero and reports `boundary_accounted=false` otherwise; it does
+not manufacture coverage across an unfinished boundary. Decode/input retain
+the original conservative end-snapshot behavior.
 
 ## Target verdicts
 
@@ -94,7 +99,7 @@ Product `gpu` never reaches that path on completion-latency alone.
 
 ```text
 python3 docs/memory/test_reference_metrics.py
-→ 42 passed
+→ 45 passed
 ```
 
 Coverage includes: empty/overflow/missing histograms; counter reset; generation
@@ -114,16 +119,18 @@ fail as required).
 Profiles-on overhead remains **unknown / diagnostic** (not measured here; never
 grants acceptance).
 
-## Explicit non-claims / next card
+## Explicit non-claims / remaining gaps
 
 - No RSS/CPU resource gate productization.
 - No per-slot scheduling instrumentation (host emits process-wide only today).
-- GPU completion **interval** histograms: in serializer, not adapted in this core
-  (product `--require gpu` remains unavailable until that adapter).
+- GPU interval evidence is callback-delivery cadence, not a true presentation
+  or scanout endpoint; hardware/scanout completion remains unavailable.
+- The adapter is per observed renderer slot, but host scheduling remains
+  process-wide; no per-slot scheduling p99 is claimed.
 - No live paired overhead runs; no budget acceptance; no STATE update on this card.
 - Flags-off reference cells cannot prove missing p99 — they correctly fail require.
-- No observe-window delta / boundary-pending cancel accounting yet (see warmup
-  limitation above).
+- Resource/RSS rollups, overhead attribution, and true presentation timestamps
+  remain diagnostic gaps for subsequent work.
 
 ## Example
 

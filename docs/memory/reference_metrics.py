@@ -821,6 +821,228 @@ def evaluate_input(
     }
 
 
+GPU_COUNTER_KEYS = (
+    "registered_n",
+    "completed_n",
+    "dropped_n",
+    "lost_n",
+    "stable_completed_n",
+    "stable_completion_intervals",
+)
+
+
+def _gpu_role(row: dict) -> Optional[str]:
+    """Infer an observed role from identity and renderer state, not policy flags."""
+    if (
+        row.get("renderer_present") is True
+        and row.get("ingame") is True
+        and row.get("scene_state") == 2
+        and row.get("draw") is True
+        and row.get("full_rate") is True
+    ):
+        return "focused_full_rate"
+    if (
+        row.get("renderer_present") is True
+        and row.get("ingame") is True
+        and row.get("scene_state") == 2
+        and row.get("full_rate") is False
+    ):
+        return "background"
+    return None
+
+
+def _gpu_backend_present(row: dict) -> bool:
+    backend = row.get("backend_kind")
+    return row.get("renderer_present") is True and isinstance(backend, str) and backend.lower() not in {
+        "",
+        "absent",
+        "cpu",
+        "pixmap",
+    }
+
+
+def evaluate_gpu_completion_intervals(
+    meta: dict,
+    samples: list[dict],
+    *,
+    target_ms: float = 40.0,
+    background_fps_tolerance: float = 0.25,
+) -> dict:
+    """Adapt stable callback-completion intervals into a bounded product gate.
+
+    The endpoint is still CPU callback delivery after a prior submit, not GPU
+    hardware timing or scanout. Every cumulative counter is differenced over
+    the exact observe endpoints; non-zero boundary pending is unavailable.
+    """
+    unavailable = lambda reason, **extra: _unavailable(  # noqa: E731
+        reason,
+        gate="gpu",
+        target_verdict="unavailable",
+        paint_proxy_forbidden=True,
+        paint_proxy_used=False,
+        **extra,
+    )
+    if not meta.get("gpu_completion_profile"):
+        return unavailable("gpu_completion_profile_disabled")
+    if not meta.get("render_profile"):
+        return unavailable("render_profile_disabled")
+    start, end = _observe_pair(samples)
+    if start is None or end is None:
+        return unavailable("no_observe_samples")
+    e0, e1 = start.get("elapsed_s"), end.get("elapsed_s")
+    if not isinstance(e0, (int, float)) or not isinstance(e1, (int, float)) or e1 <= e0:
+        return unavailable("invalid_observation_endpoints")
+    duration_s = float(e1 - e0)
+    s_map, e_map, idx_err, disappeared = _pair_slot_maps(
+        start.get("renderer_profile"), end.get("renderer_profile")
+    )
+    if idx_err:
+        return unavailable(
+            idx_err,
+            disappeared=[[a, b] for a, b in disappeared],
+            expected_slot_set=sorted(s_map or {}),
+        )
+    assert s_map is not None and e_map is not None
+    if set(s_map) != set(e_map):
+        return unavailable(
+            "renderer_slot_set_changed",
+            expected_slot_set=sorted(s_map),
+            observed_slot_set=sorted(e_map),
+        )
+    if not e_map:
+        return unavailable("no_slot_rows", expected_slot_set=[])
+
+    slots = []
+    for key in sorted(e_map):
+        srow, erow = s_map[key], e_map[key]
+        sg, eg = srow.get("gpu_completion"), erow.get("gpu_completion")
+        base = {"slot_id": key[0], "generation": key[1], "expected_slot": True}
+        age_err = _sample_age_reason(erow) or _sample_age_reason(srow)
+        if age_err:
+            slots.append(_unavailable(age_err, **base, freshness_field="sample_age_ms"))
+            continue
+        if not isinstance(sg, dict) or not isinstance(eg, dict):
+            slots.append(_unavailable("missing_gpu_completion", **base))
+            continue
+        if not eg.get("enabled") or not _gpu_backend_present(erow):
+            slots.append(_unavailable("gpu_backend_or_completion_unavailable", **base))
+            continue
+        role_s, role_e = _gpu_role(srow), _gpu_role(erow)
+        if role_s is None or role_e is None or role_s != role_e:
+            slots.append(_unavailable("unstable_or_unclassified_renderer_role", **base, role_start=role_s, role_end=role_e))
+            continue
+        if not all(sg.get(k) is not None and eg.get(k) is not None for k in GPU_COUNTER_KEYS):
+            slots.append(_unavailable("missing_gpu_counter", **base))
+            continue
+        deltas = {}
+        reset = False
+        for counter in GPU_COUNTER_KEYS:
+            delta = subtract_scalar(eg.get(counter), sg.get(counter))
+            if delta is None:
+                reset = True
+                break
+            deltas[counter] = delta
+        if reset:
+            slots.append(_unavailable("counter_reset", **base))
+            continue
+        pending_start, pending_end = sg.get("pending_n"), eg.get("pending_n")
+        if pending_start != 0 or pending_end != 0:
+            slots.append(_unavailable(
+                "boundary_pending_incomplete",
+                **base,
+                pending_start=pending_start,
+                pending_end=pending_end,
+                boundary_accounted=False,
+            ))
+            continue
+        if deltas["dropped_n"] or deltas["lost_n"]:
+            slots.append(_unavailable(
+                "coverage_lost_or_incomplete", **base,
+                dropped_n=deltas["dropped_n"], lost_n=deltas["lost_n"],
+            ))
+            continue
+        if not all(sg.get(k) is True and eg.get(k) is True for k in ("registration_complete", "completion_coverage_complete")):
+            slots.append(_unavailable("coverage_incomplete", **base))
+            continue
+        buckets = subtract_counts(
+            eg.get("stable_completion_interval_buckets"),
+            sg.get("stable_completion_interval_buckets"),
+        )
+        if buckets is None:
+            slots.append(_unavailable("missing_or_reset_stable_interval_histogram", **base))
+            continue
+        try:
+            interval_bounds = tuple(
+                int(x) for x in (eg.get("interval_bound_ms") or INTERVAL_BOUNDS_MS)
+            )
+        except (TypeError, ValueError):
+            slots.append(_unavailable("malformed_interval_bounds", **base))
+            continue
+        bounds = p99_lower_upper_ms(buckets, interval_bounds)
+        if bounds.get("status") != "available":
+            slots.append(_unavailable(bounds.get("reason", "interval_unavailable"), **base, p99=bounds))
+            continue
+        stable_n = deltas["stable_completed_n"]
+        interval_n = deltas["stable_completion_intervals"]
+        if stable_n <= 0 or interval_n <= 0:
+            slots.append(_unavailable("no_stable_completion_samples", **base, stable_completed_n=stable_n, interval_n=interval_n))
+            continue
+        observed_fps = stable_n / duration_s
+        if role_e == "focused_full_rate":
+            p99_upper = bounds.get("upper_ms")
+            verdict = "meet" if observed_fps >= 40.0 and p99_upper is not None and p99_upper <= target_ms else "miss"
+            target = {"min_fps": 40.0, "p99_max_ms": target_ms}
+        else:
+            low, high = 1.0 - background_fps_tolerance, 1.0 + background_fps_tolerance
+            verdict = "meet" if low <= observed_fps <= high else "miss"
+            target = {"expected_fps": 1.0, "fps_tolerance": background_fps_tolerance}
+        slots.append({
+            **base,
+            "status": "available",
+            "role": role_e,
+            "backend_kind": erow.get("backend_kind"),
+            "drawing": erow.get("draw"),
+            "full_rate": erow.get("full_rate"),
+            "stable_completion_interval_buckets_delta": buckets,
+            "stable_completed_n_delta": stable_n,
+            "gpu_counter_deltas": deltas,
+            "pending_delta": pending_end - pending_start,
+            "p99": bounds,
+            "observed_fps": observed_fps,
+            "target": target,
+            "target_verdict": verdict,
+            "pending_start": pending_start,
+            "pending_end": pending_end,
+            "boundary_accounted": True,
+            "freshness_field": "sample_age_ms",
+            "timestamp_semantics": "callback_delivery_cpu_after_prior_submit_not_hw_gpu_or_scanout",
+        })
+
+    verdicts = {s.get("target_verdict") for s in slots}
+    if any(s.get("status") != "available" for s in slots):
+        status, aggregate = "unavailable", "unavailable"
+    elif verdicts == {"meet"}:
+        status, aggregate = "available", "meet"
+    elif "miss" in verdicts:
+        status, aggregate = "available", "miss"
+    else:
+        status, aggregate = "available", "unproven"
+    return {
+        "status": status,
+        "reason": None if status == "available" else "no_complete_qualified_stable_interval",
+        "gate": "gpu",
+        "slots": slots,
+        "expected_slot_set": sorted(s_map),
+        "target_ms": target_ms,
+        "target_verdict": aggregate,
+        "paint_proxy_forbidden": True,
+        "paint_proxy_used": False,
+        "presentation_endpoint": "unavailable; callback delivery is not hardware/scanout",
+        "full_coverage": status == "available",
+        "adapter_implemented": {"completion_latency_diagnostic": True, "stable_completion_interval": True},
+    }
+
+
 def evaluate_gpu(
     meta: dict,
     samples: list[dict],
@@ -833,15 +1055,14 @@ def evaluate_gpu(
     stable completion *interval*/FPS proof. completion_latency_buckets measure
     mainredraw→callback delivery only — scored under diagnostic_completion_latency
     (metric=gpu_completion_latency), never as product meet. Serializer also
-    emits stable_completion_interval_buckets; interval adapter is deferred
-    (raw present), not absent.
+    emits stable_completion_interval_buckets; the adapter consumes those raw
+    cumulative buckets without treating them as scanout.
     """
-    product_reason = "product_gpu_frame_cadence_requires_stable_completion_interval"
     product_note = (
         "completion_latency is mainredraw→callback delivery, not frame/scanout cadence; "
         "fast callback latency does not prove 40fps. "
-        "serializer gpu_completion.stable_completion_interval_buckets exist but "
-        "are not adapted in this core"
+        "serializer gpu_completion.stable_completion_interval_buckets are adapted "
+        "as callback-delivery cadence, not hardware presentation"
     )
 
     if not meta.get("gpu_completion_profile"):
@@ -1099,24 +1320,16 @@ def evaluate_gpu(
             else "no_slot_with_available_gpu_completion_latency_p99",
         }
 
-    # Product gate stays unavailable until interval/FPS adapter exists.
-    return {
-        "status": "unavailable",
-        "reason": product_reason,
-        "gate": "gpu",
-        "target_ms": target_ms,
-        "target_verdict": "unavailable",
-        "pass_means": PASS_MEANS,
-        "paint_proxy_forbidden": True,
-        "paint_proxy_used": False,
-        "note": product_note,
-        "raw_gpu_interval_histograms_in_serializer": True,
-        "adapter_implemented": {
-            "completion_latency_diagnostic": True,
-            "stable_completion_interval": False,
-        },
-        "diagnostic_completion_latency": diagnostic,
-    }
+    product = evaluate_gpu_completion_intervals(meta, samples, target_ms=target_ms)
+    product.update(
+        {
+            "pass_means": PASS_MEANS,
+            "note": product_note,
+            "raw_gpu_interval_histograms_in_serializer": True,
+            "diagnostic_completion_latency": diagnostic,
+        }
+    )
+    return product
 
 
 def load_run_samples(run_dir: pathlib.Path, *, max_samples: Optional[int] = None) -> list[dict]:
