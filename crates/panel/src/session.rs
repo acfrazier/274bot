@@ -409,11 +409,9 @@ pub fn stream_capture_for(
     let Some(tx) = tx else {
         return;
     };
-    let actionable = left_down
-        || right_down
-        || left_up
-        || right_up
-        || keys.iter().any(|(down, _)| *down);
+    // Stamp only edges host drain treats as actionable (Down / key-down).
+    // Mouse-up must not start a sample: it never binds and would poison coverage.
+    let actionable = left_down || right_down || keys.iter().any(|(down, _)| *down);
     if actionable {
         note_panel_input_start(slot_name);
     }

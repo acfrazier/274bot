@@ -38,8 +38,8 @@ decode wall time before the gen edge.
 
 | Field | Meaning |
 |:---|:---|
-| Start | Actionable focused input capture: panel click/key edge or TUI key/mouse Down |
-| Bind (panel) | Host, after `mailbox.store`, binds outstanding starts to that mailbox generation when ≥1 actionable event drained into the shell |
+| Start | Actionable focused input capture only: panel mouse **Down** / key-down (not mouse-up; matches host `drain_with_actionable_flag`) or TUI key press (every focused key edge today, not only state-mutating) |
+| Bind (panel) | On every `mailbox.store` after drain/mainloop, bind outstanding panel starts with `require_gen==0` to that generation (same tick or later after a skipped paint). No-op when none unbound |
 | End (panel) | `note_panel_present` when a new mailbox generation is presented to the focused Game Image / wall tile texture (`require_gen != 0` and `require_gen <= presented_gen`) |
 | End (TUI) | `note_tui_draw_flush` after a successful `terminal.draw` for the focused slot |
 | Cancel | Explicit cancel (e.g. focus loss path) |
@@ -61,7 +61,9 @@ semantics string so a missing endpoint is never a silent pass.
 ## Bounds
 
 - Decode pending: **8** per slot generation
-- Input pending: **64** process-wide
+- Input pending: **256** process-wide
+- Decode bridge (host-play → slot Local): **256** process-wide; events carry
+  slot generation and are discarded on `Local` drop so restart cannot mis-pair
 - Latency histogram: fixed `LATENCY_BOUNDS_MS` (same style as render intervals)
 - Disabled path: `Local::new` → `None`; note_* no-ops; JSON `null`
 
@@ -89,8 +91,8 @@ Existing `renderer_profile` / `scheduling_profile` / `gpu_completion` meanings a
 
 ## Tests run (this task)
 
-- `cargo test -p host --lib` → 152 passed, 1 ignored (existing GPU smoke)
-- `cargo test -p host --lib responsiveness_profile` → 11 passed (disabled, pair/order, delay, cancel, overflow, bridge, panel present, TUI draw, headless unavailable, p99 buckets)
+- `cargo test -p host --lib` → 154 passed, 1 ignored (existing GPU smoke)
+- `cargo test -p host --lib responsiveness_profile` → 13 passed (disabled, pair/order, delay, cancel, overflow, bridge, panel present, TUI draw, headless unavailable, p99 buckets, deferred bind, stale bridge on restart)
 - `cargo test -p host-play --lib` → 114 passed
 - `cargo test -p host-play --lib --features memory-profile` → (re-run at commit)
 - `cargo check -p panel` / `cargo check -p tui` → ok

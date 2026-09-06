@@ -473,6 +473,9 @@ impl Local {
 
 impl Drop for Local {
     fn drop(&mut self) {
+        // Drop in-flight bridge events for this generation so a restart of
+        // the same username cannot mis-pair stale dispatch/cancel.
+        discard_bridge_for(self.snap.slot_id, self.generation);
         while self.decode_pending.pop_front().is_some() {
             self.snap.decode_lost_n = self.snap.decode_lost_n.wrapping_add(1);
         }
@@ -606,10 +609,11 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
     });
 }
 
-/// After panel mailbox store on a frame that drained actionable input, stamp
-/// pending inputs that still have require_gen==0 with this generation so
-/// present can pair. Call from slot thread when input was applied and a frame
-/// was stored.
+/// After panel mailbox store, stamp pending panel inputs that still have
+/// `require_gen==0` with this generation so a later present can pair.
+/// Call from the slot thread whenever a frame is stored after drain/mainloop
+/// (not only on same-frame actionable input) so starts that landed on a
+/// skipped-paint tick still bind on the next store.
 pub fn bind_input_to_mailbox_gen(slot_id: u64, gen: u64) {
     if !ENABLED.load(Relaxed) {
         return;
@@ -624,45 +628,102 @@ pub fn bind_input_to_mailbox_gen(slot_id: u64, gen: u64) {
 
 // --- Cross-thread decode completion without holding Local (host-play) ---
 
+/// Process-wide bound on host-play → slot-thread decode bridge events.
+const MAX_DECODE_BRIDGE: usize = 256;
+
 static DECODE_BRIDGE: Mutex<VecDeque<DecodeBridgeEv>> = Mutex::new(VecDeque::new());
 
 enum DecodeBridgeEv {
-    Dispatch { slot_id: u64, at: Instant },
-    Cancel { slot_id: u64 },
+    Dispatch {
+        slot_id: u64,
+        /// Local generation that owned the decode edge; mismatches are ignored.
+        generation: u64,
+        at: Instant,
+    },
+    Cancel {
+        slot_id: u64,
+        generation: u64,
+    },
 }
 
-/// host-play: script dispatch entered. Paired when Local drains the bridge
-/// on the slot thread, or applied via registry if Local already ended.
+fn live_generation_for(slot_id: u64) -> Option<u64> {
+    let reg = REGISTRY.lock().unwrap();
+    reg.iter()
+        .rev()
+        .find(|s| s.slot_id == slot_id && !s.ended)
+        .map(|s| s.generation)
+}
+
+fn push_decode_bridge(ev: DecodeBridgeEv) {
+    let mut q = DECODE_BRIDGE.lock().unwrap();
+    if q.len() >= MAX_DECODE_BRIDGE {
+        // Drop oldest so a stuck foreign slot cannot grow the queue unboundedly.
+        let _ = q.pop_front();
+    }
+    q.push_back(ev);
+}
+
+/// host-play: script dispatch entered. Stamped with the live Local generation
+/// so a stop/restart of the same username cannot pair stale events.
 pub fn note_script_dispatch_global(slot_id: u64, at: Instant) {
     if !ENABLED.load(Relaxed) {
         return;
     }
-    DECODE_BRIDGE
-        .lock()
-        .unwrap()
-        .push_back(DecodeBridgeEv::Dispatch { slot_id, at });
+    let Some(generation) = live_generation_for(slot_id) else {
+        return;
+    };
+    push_decode_bridge(DecodeBridgeEv::Dispatch {
+        slot_id,
+        generation,
+        at,
+    });
 }
 
 pub fn note_script_canceled_global(slot_id: u64) {
     if !ENABLED.load(Relaxed) {
         return;
     }
-    DECODE_BRIDGE
-        .lock()
-        .unwrap()
-        .push_back(DecodeBridgeEv::Cancel { slot_id });
+    let Some(generation) = live_generation_for(slot_id) else {
+        return;
+    };
+    push_decode_bridge(DecodeBridgeEv::Cancel {
+        slot_id,
+        generation,
+    });
+}
+
+/// Discard in-flight bridge events for one Local generation (slot end / restart).
+fn discard_bridge_for(slot_id: u64, generation: u64) {
+    let mut q = DECODE_BRIDGE.lock().unwrap();
+    q.retain(|ev| match ev {
+        DecodeBridgeEv::Dispatch {
+            slot_id: s,
+            generation: g,
+            ..
+        }
+        | DecodeBridgeEv::Cancel {
+            slot_id: s,
+            generation: g,
+        } => !(*s == slot_id && *g == generation),
+    });
 }
 
 impl Local {
-    /// Drain bridge events for this slot (call from slot thread each tick).
+    /// Drain bridge events for this slot **generation** (call each tick).
     pub fn drain_bridge(&mut self) {
         let mut q = DECODE_BRIDGE.lock().unwrap();
         let mut i = 0;
         while i < q.len() {
             let take = match &q[i] {
-                DecodeBridgeEv::Dispatch { slot_id, .. } | DecodeBridgeEv::Cancel { slot_id } => {
-                    *slot_id == self.snap.slot_id
+                DecodeBridgeEv::Dispatch {
+                    slot_id,
+                    generation,
+                    ..
                 }
+                | DecodeBridgeEv::Cancel {
+                    slot_id,
+                    generation,
+                } => *slot_id == self.snap.slot_id && *generation == self.generation,
             };
             if take {
                 match q.remove(i).unwrap() {
@@ -896,5 +957,59 @@ mod tests {
             .missing_capability
             .unwrap()
             .contains("no controlling terminal"));
+    }
+
+    #[test]
+    fn panel_present_ignores_unbound_until_bind() {
+        let _g = lock_tests();
+        enable();
+        INPUT_PENDING.lock().unwrap().clear();
+        set_input_surface(InputSurface::Panel);
+        let mut l = fresh_local("resp-deferred-bind");
+        let sid = l.slot_id();
+        let t0 = Instant::now();
+        assert!(note_input_start(sid, t0, 0));
+        // Present before bind must not complete (require_gen still 0).
+        note_panel_present(sid, 3, t0 + Duration::from_millis(5));
+        let rows = read().expect("on");
+        let row = rows.iter().find(|s| s.slot_id == sid).expect("row");
+        assert_eq!(row.input_complete_n, 0);
+        assert_eq!(row.input_start_n, 1);
+        // Later bind + present (skipped-paint then store) completes.
+        bind_input_to_mailbox_gen(sid, 9);
+        note_panel_present(sid, 9, t0 + Duration::from_millis(40));
+        let rows = read().expect("on");
+        let row = rows.iter().find(|s| s.slot_id == sid).expect("row");
+        assert_eq!(row.input_complete_n, 1);
+        assert!(input_coverage_complete(row));
+        l.decode_pending.clear();
+    }
+
+    #[test]
+    fn stale_bridge_after_drop_does_not_pair_restart() {
+        let _g = lock_tests();
+        let mut l = fresh_local("resp-bridge-restart");
+        let sid = l.slot_id();
+        let gen1 = l.generation();
+        let t0 = Instant::now();
+        l.note_decode_edge(t0);
+        note_script_dispatch_global(sid, t0 + Duration::from_millis(10));
+        // Drop without draining: bridge event for gen1 must be discarded.
+        drop(l);
+        let mut l2 = fresh_local("resp-bridge-restart");
+        assert_eq!(l2.slot_id(), sid);
+        assert_ne!(l2.generation(), gen1);
+        l2.note_decode_edge(t0 + Duration::from_millis(20));
+        l2.drain_bridge();
+        assert_eq!(
+            l2.snap.dispatch_n, 0,
+            "stale gen1 dispatch must not pair into gen2"
+        );
+        assert_eq!(l2.snap.decode_pending_n, 1);
+        // Fresh dispatch for gen2 still pairs.
+        note_script_dispatch_global(sid, t0 + Duration::from_millis(30));
+        l2.drain_bridge();
+        assert_eq!(l2.snap.dispatch_n, 1);
+        assert_eq!(l2.snap.decode_pending_n, 0);
     }
 }

@@ -35,8 +35,9 @@ verify it on resume because a worker may finish after this snapshot.
    host-play 143, launcher 8. Bounded queue-completion observations are opt-in
    and distinguish CPU callback delivery from hardware timestamps/scanout.
    No live panel/TUI performance result was produced. The next four cards are queued in review-gated sequence: `t_79e1e21f`
-   adds bounded responsiveness observations (implementer handoff this update;
-   report [responsiveness-measurement-report.md](responsiveness-measurement-report.md);
+   adds bounded responsiveness observations (round-1 review requested changes on
+   a90747a; fixes in flight on branch — report
+   [responsiveness-measurement-report.md](responsiveness-measurement-report.md);
    unit evidence only — no live overhead/p99 acceptance); `t_dac0878e` verifies and freezes
    release builds; `t_672f4ac3` runs the six live 1/16 active reference cells
    plus separate overhead/functional checks; `t_6ffdc227` attributes qualified

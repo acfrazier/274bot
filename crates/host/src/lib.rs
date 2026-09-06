@@ -395,9 +395,8 @@ impl Host {
         run_sends: &mut u32,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
-        let mut input_actionable = false;
         if let Some(inp) = input {
-            input_actionable = inp.drain_with_actionable_flag(&mut client.shell);
+            let _ = inp.drain_with_actionable_flag(&mut client.shell);
         }
         client.shell.latch_click();
         let t_loop = std::time::Instant::now();
@@ -605,15 +604,16 @@ impl Host {
             }
             if let Some(mailbox) = mailbox {
                 mailbox.store(frame);
-                // Panel input→present: bind outstanding focused inputs to
-                // this mailbox generation when actionable input drained.
-                if input_actionable {
-                    if let Some(resp) = slot.resp_prof.as_ref() {
-                        responsiveness_profile::bind_input_to_mailbox_gen(
-                            resp.slot_id(),
-                            mailbox.generation(),
-                        );
-                    }
+                // Panel input→present: bind any still-unbound focused starts
+                // (`require_gen==0`) to this mailbox generation on every store
+                // after drain/mainloop — not only when actionable input drained
+                // this frame — so a start on a skipped-paint tick still binds
+                // on a later store. No-op when nothing is unbound.
+                if let Some(resp) = slot.resp_prof.as_ref() {
+                    responsiveness_profile::bind_input_to_mailbox_gen(
+                        resp.slot_id(),
+                        mailbox.generation(),
+                    );
                 }
             }
         }
