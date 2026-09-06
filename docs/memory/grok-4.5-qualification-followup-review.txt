@@ -1,0 +1,31 @@
+APPROVE
+
+Commit e1e8c44 is docs-only (adds `docs/memory/runner-qualification-followup.md` + `.json` only). Claims checked against parent context, named raw diagnostic `docs/memory/diagnostics/20260906T183535Z_panel_n32_active`, reverse-pair evidence, and the listed local server sources.
+
+Functional qualification (matches raw diagnostic)
+- `metadata.json` == follow-up `metadata` (shared-stop binary sha `616196ac…4136c9b`, n=32, active, warmup 30s, observe 180s, diagnostic sidecar + nav captures on, counting/stack/scheduling off, exit 0).
+- `control_qualification` == `memory-summary.json`: `qualified: true`, `errors: []`, observation 178.628s, steal gains on all 32 slots in 8–31 (matches MD).
+- `functional_summary` matches `qualification-summary.json` (complete, failures [], ready/active 32 for all 178 observe samples).
+- Top-level `diagnostic_only: true`, `performance_acceptance: false`.
+
+Observation-only area scan (matches raw diagnostics stream)
+- Observe window from `samples.jsonl`: 178 samples, elapsed 181.823 → 360.452 (span 178.628s).
+- Over that window in `samples.diagnostics.jsonl`: 5664 ingame/scene_state=2 positions; x∈[2644,2670], z∈[3284,3318]; `out_of_area_ingame_scene2_slots` correctly empty for bounds x 2600–2700, z 3200–3400.
+- Exactly one observe hold: `live15161_23` at elapsed 181.825480875, pos (2667,3300,0) inside bounds; slot later progressed (steal gain 18). MD caveat that this is not “no random event anywhere” is appropriate.
+
+Bank note (supported by captures + diagnostics)
+- Capture `…nav-2-bank-arrival-live15161_0` exists; slot0 at (2655,3286) with paint “closing the bank” / Food 22; nav history has arrival + return-route start. No booth-bounce claim.
+
+Exact server coordinate mappings (listed local content; SHAs match JSON)
+- Sources exist; SHA-256s match `server_source_evidence`.
+- `0_31_74_24_28` decodes to (2008,4764); `mime_entry_point` teleports there; `mime_step_right_up` does `movecoord(coord, 0, 0, -2)` → (2008,4762), matching reverse-pair end position for `live14f0f_11`.
+- `macro_maze_teleports` val0 = `0_45_71_11_53` → (2891,4597); `start_macro_maze` enum-selects and teleports there, matching `live14f0f_1` end position in reverse-pair boundary records/MD.
+
+Source inference vs captured event trace
+- MD + JSON `causality` correctly label this as strong source-coordinate inference, not a captured event timeline from the failed previous run; readiness dips left unattributed; follow-up did not reproduce those endpoints.
+
+No repaired reverse pair / no performance acceptance
+- Explicit: does not repair reverse pair; reverse remains rejected; no memory/CPU saving; resource/timing excluded from acceptance; `performance_acceptance: false`; acceptance_status keeps reverse rejected and acceptance pending only.
+- Disposition keeps forward pair as the single qualified comparison and reverse as rejected evidence.
+
+No REQUEST CHANGES findings on the review criteria.
