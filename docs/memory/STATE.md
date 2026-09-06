@@ -105,6 +105,13 @@ verify it on resume because a worker may finish after this snapshot.
    native profiling or test activity have stopped. Then collect enabled
    scheduling/responsiveness, matched overhead controls and separate server
    resource evidence; the original flags-off cells cannot prove missing p99.
+9. Operator authorized Luna for bounded parallel work. Hermes Codex auth was
+   present only in the orch profile; moved that distinct Hermes grant to the
+   shared root store with protected backups, preserving other providers and
+   the Codex app login. New `luna` profile defaults to `gpt-5.6-luna` through
+   `openai-codex`; an actual default-profile request passed (session
+   `20260906_192234_c235b6`). Server-resource sampler `t_f9ec3670` is running
+   under Luna, no task overrides, with the normal Grok4.5 review handoff.
 
 ## Evidence frontier
 
