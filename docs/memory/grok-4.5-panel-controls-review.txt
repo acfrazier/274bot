@@ -1,0 +1,50 @@
+APPROVE
+
+Commit 85f978c (vs 028ff53) — docs-only control report
+
+Scope reviewed
+- docs/memory/panel-memory-controls.md
+- docs/memory/panel-memory-controls.json
+- docs/memory/summarize_control.py
+- Raw: 20260906T040226Z_panel_n1_active, 20260906T042057Z_panel_n32_seeded-idle, 20260906T043635Z_panel_n1_seeded-idle
+- Prior active32 summaries: sustained-panel32-memory/repeat/third.json (+ three-runs.md for cited ticks)
+
+Provenance and qualification
+- JSON matches a full re-summary of the three raw run dirs (0 field diffs).
+- All three qualified, exit 0, diagnostic_only, errors [].
+- Active N=1: binary 781b93eb… (memory-resume-build), host launch dcece07, host_sources b30ff310… — same binary/client/nav as the three active32 fleet runs.
+- Both seeded-idle: binary 33ec5346… (seeded-idle-build), host 028ff53, host_sources 00d82bee… — different executable, called out correctly.
+- On-disk binary SHA-256 matches metadata for both builds.
+- Client sources + nav pack identical across the six compared runs.
+- Active steals: paint 7 → 69 ⇒ gain 62.
+- Idle boundaries: every slot state Idle, error null, ingame true, scene_state 2, tile (2661,3306,0) at observe-start and observe-end; ready=N, active=0, v8_live_isolates=0, inflight 0 for all observe samples; script_tick_count stays 0.
+- d3abfb4 harness treated as separately approved; this commit only records live controls.
+
+Arithmetic (recomputed)
+- Table MiB/CPU/V8/GPU/work/interval/overruns match raw (half-up on x.xx25 is fine).
+- Idle slope (med32−med1)/31 = 94,316,345.81 → 94,316,346 B ≈ 89.947 MiB.
+- Active slopes vs this N=1 med: 107,967,653–110,109,465 B ≈ 102.966–105.009 MiB.
+- Active−idle median RSS at 32: 436.945–500.266 MiB.
+- Active teardown30 med − idle teardown30 med: 201.672–243.023 MiB.
+- Ticks: idle fleet 3.067/s; active fleet ~38.62–38.76; N=1 idle 39.620 vs N=1 active 43.003.
+
+summarize_control.py / null denominators
+- cycles==0 or intervals==0 → mean_ms None (not 0).
+- tick count delta 0 → *_mean_ms None (idle script_tick null).
+- v8_max_sample_age_ms all None → max(..., default=None).
+- final_statuses uses (runtime or {}).get('paint') so idle empty runtime does not throw.
+- Non-drawing deltas are 0 for these controls; md correctly says counters are zero without claiming zero client work, and notes parked cadence at N=32.
+
+Caveats / non-overclaim
+- States different binaries; not identical executables.
+- Setup matched, subsequent history different; parked idle cadence; active−idle is whole-workload delta, not pure V8/script cost.
+- Finite difference over N=1→32, one renderer; not ownership, linear law, or N=128/1000 prediction.
+- No % savings; slope subtraction does not isolate script cost.
+- Retained RSS after Stop is investigate-signal, not a leak or owner claim.
+- One run per new cell; directional only; not repeated-control acceptance.
+
+Nits (non-blocking)
+- Unused steals import in summarize_control.py.
+- Display rounds .3125 MiB half-up to .313.
+
+Verdict: APPROVE
