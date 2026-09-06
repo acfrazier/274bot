@@ -1,0 +1,21 @@
+APPROVE
+
+Commit 7c61116 (parent 6a25d11) — docs-only reassessment of shared runner nav + Stop storage. Scope is the four doc files only; code 7d026bc / e65103b are ancestors of host launch 6a25d11 and were out of scope.
+
+Verified against raw diagnostics
+- 20260906T122440Z_panel_n32_seeded-idle and 20260906T124019Z_panel_n32_active: metadata/binary SHA 616196ac… match shared-stop-build; host 6a25d11; client_sources 27246deb… and nav 2f393138… match prior controls; exit 0; sequential runs.
+- shared-nav-stop-reassessment.json matches both memory-summary.json bodies.
+- Observation qualification: idle ready32/active0 for all 594 observe samples; active ready32/active32 for all 596; both boundary records present; idle all 32 at (2661,3306,0) scene 2 both boundaries; active steal gains 48–92; no banking final titles / observe-end bank or script errors.
+- Teardown: ready32, active0, V8/in-flight/script gauges 0 (retained RSS ≠ shutdown).
+
+Arithmetic (1024 MiB)
+- Corrected idle/active medians, peaks, teardown30, CPU, tps, tick/script/UI means, sim/draw work/interval, first→last minute deltas, idle drop 2219.750 MiB (~2.168 GiB), active−idle teardown 234.703 MiB: all match raw bytes and prior control/three-active JSON ranges (panel-memory-controls n32 idle; sustained-panel32 / repeat / third).
+
+Native cardinality
+- 20260906T125706Z heap-verify: 63616KB[2], 7968KB[2]; prior 20260906T115411Z: [33]/[33]; exit -15; operator note = setup capture only, not baseline. shared-nav-native-check.json agrees.
+
+Claim discipline
+- No % savings; no independent Stop RSS split; active build has both fixes; performance non-acceptance explicit (active CPU 0.826 vs 0.731–0.741; mean client-tick 0.850 vs 0.694–0.714; higher UI-frame work); remaining repeats/soak called out.
+- Ownership notice correctly marks original capture vs reassessment.
+
+No REQUEST CHANGES items.
