@@ -1,0 +1,2218 @@
+{
+  "status": "rejected reverse-order performance pair: previous run did not qualify",
+  "approved_plan_commit": "530b83e",
+  "run_order": [
+    "corrected",
+    "previous"
+  ],
+  "summaries": [
+    {
+      "run": "20260906T181830Z_panel_n32_active",
+      "qualification": {
+        "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T181830Z_panel_n32_active",
+        "n": 32,
+        "counting": false,
+        "diagnostics": false,
+        "qualified": true,
+        "errors": [],
+        "observation_s": 118.916436167,
+        "cpu_seconds": 74.02271900000001,
+        "cpu_cores": 0.6224767692839902,
+        "client_ticks_per_slot_s": 42.49911881737397,
+        "median_resident_bytes": 1944911872,
+        "steal_gains": {
+          "live14dc1_0": 14,
+          "live14dc1_1": 9,
+          "live14dc1_2": 11,
+          "live14dc1_3": 19,
+          "live14dc1_4": 7,
+          "live14dc1_5": 9,
+          "live14dc1_6": 13,
+          "live14dc1_7": 12,
+          "live14dc1_8": 6,
+          "live14dc1_9": 18,
+          "live14dc1_10": 8,
+          "live14dc1_11": 12,
+          "live14dc1_12": 8,
+          "live14dc1_13": 13,
+          "live14dc1_14": 12,
+          "live14dc1_15": 11,
+          "live14dc1_16": 14,
+          "live14dc1_17": 13,
+          "live14dc1_18": 11,
+          "live14dc1_19": 5,
+          "live14dc1_20": 13,
+          "live14dc1_21": 6,
+          "live14dc1_22": 7,
+          "live14dc1_23": 8,
+          "live14dc1_24": 18,
+          "live14dc1_25": 17,
+          "live14dc1_26": 7,
+          "live14dc1_27": 5,
+          "live14dc1_28": 6,
+          "live14dc1_29": 8,
+          "live14dc1_30": 14,
+          "live14dc1_31": 10
+        },
+        "diagnostic_only": true
+      },
+      "meta": {
+        "stack_logging_mode": null,
+        "host_sources_sha256": "dc8b85e97e1ec064ff41354ee227dc65c17c70c55b05d0a8fe52a1477f6e88b5",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "active",
+        "warmup_s": 30,
+        "observe_s": 120,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/runner-boundary-build/panel-play-system",
+        "binary_sha256": "df54511ef56a2ad31b2a9d3aae76ffda07e774735e1adcf42bb808f9773f74ae",
+        "host_commit": "530b83e62bc8f7410af5b6b2dcf8470a8c4f58d9",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T181830Z_panel_n32_active",
+        "started_unix": 1788718710.373047,
+        "pid": 85441,
+        "exit_code": 0,
+        "ended_unix": 1788719072.569785
+      },
+      "groups": [
+        {
+          "drawing": false,
+          "cycles": 156500,
+          "work_ns": 53693487170,
+          "requested_sleep_ns": 3076306512830,
+          "actual_sleep_ns": 3631546901297,
+          "work_overruns": 0,
+          "intervals": 156499,
+          "interval_ns": 3685297745292,
+          "work_mean_ms": 0.34308937488817887,
+          "requested_sleep_mean_ms": 19.656910625111824,
+          "actual_sleep_mean_ms": 23.2047725322492,
+          "interval_mean_ms": 23.54837887329632
+        },
+        {
+          "drawing": true,
+          "cycles": 5200,
+          "work_ns": 23960633268,
+          "requested_sleep_ns": 80039366732,
+          "actual_sleep_ns": 95452426710,
+          "work_overruns": 0,
+          "intervals": 5200,
+          "interval_ns": 119416432541,
+          "work_mean_ms": 4.60781409,
+          "requested_sleep_mean_ms": 15.39218591,
+          "actual_sleep_mean_ms": 18.35623590576923,
+          "interval_mean_ms": 22.96469856557692
+        }
+      ],
+      "memory": {
+        "resident_bytes": {
+          "first": 1883488256,
+          "last": 1989443584,
+          "min": 1883488256,
+          "median": 1944911872,
+          "p95": 1958805504,
+          "max": 1989443584
+        },
+        "peak_resident_bytes": {
+          "first": 1884274688,
+          "last": 1990639616,
+          "min": 1884274688,
+          "median": 1946173440,
+          "p95": 1960312832,
+          "max": 1990639616
+        },
+        "v8_used_bytes": {
+          "first": 283232264,
+          "last": 203242048,
+          "min": 188693560,
+          "median": 222027968,
+          "p95": 278036464,
+          "max": 286336096
+        },
+        "v8_total_bytes": {
+          "first": 356253696,
+          "last": 414187520,
+          "min": 354156544,
+          "median": 373293056,
+          "p95": 381419520,
+          "max": 414187520
+        },
+        "snapshot_inflight_bytes": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 6680,
+          "max": 2216880
+        },
+        "snapshot_inflight_capacity": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 6680,
+          "max": 2216880
+        },
+        "gpu_tracked_bytes": {
+          "first": 18608168,
+          "last": 18608168,
+          "min": 18608168,
+          "median": 18608168,
+          "p95": 18608168,
+          "max": 18608168
+        },
+        "gpu_buffer_bytes": {
+          "first": 1364176,
+          "last": 1364176,
+          "min": 1364176,
+          "median": 1364176,
+          "p95": 1364176,
+          "max": 1364176
+        },
+        "gpu_texture_bytes": {
+          "first": 17243992,
+          "last": 17243992,
+          "min": 17243992,
+          "median": 17243992,
+          "p95": 17243992,
+          "max": 17243992
+        }
+      },
+      "resident_first_minute_median": 1918984192.0,
+      "resident_last_minute_median": 1955749888.0,
+      "teardown": {
+        "resident_bytes": 1580236800,
+        "peak_resident_bytes": 1990721536,
+        "ready": 32,
+        "active": 0,
+        "v8_live_isolates": 0,
+        "v8_used_bytes": 0,
+        "snapshot_inflight_bytes": 0,
+        "snapshot_inflight_capacity": 0,
+        "gpu_tracked_bytes": 18608168
+      },
+      "resident_last_teardown_30s_median": 1581293568.0,
+      "peak_resident_whole_run": 1990721536,
+      "v8_sampled_isolates_min": 32,
+      "v8_sample_age_max_ms": 1224,
+      "client_tick_mean_ms": 0.4797541800857021,
+      "script_tick_mean_ms": 0.11653726978360449,
+      "ui_frame_mean_ms": 0.613202583391731,
+      "final_statuses": {
+        "live14dc1_0": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 21.0k",
+            "Steals: 29 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 100%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_1": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 13.1k",
+            "Steals: 18 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_2": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3312, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 24 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_3": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2646, 3305, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 21.9k",
+            "Steals: 30 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 98%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_4": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 24 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_5": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3302, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.8k",
+            "Steals: 23 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_6": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3312, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 13.9k",
+            "Steals: 19 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_7": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 24 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_8": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 13.0k",
+            "Steals: 13 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 82%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_9": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3309, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 24 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_10": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.8k",
+            "Steals: 23 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_11": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3312, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 24.1k",
+            "Steals: 33 | Ate: 1 | Picked: 0",
+            "Food: 0 | Bank trips: 1 | Stunned: no",
+            "HP: 78%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_12": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 13.1k",
+            "Steals: 18 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 86%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_13": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 15.3k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_14": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.0k",
+            "Steals: 22 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_15": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 18.2k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_16": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 18.2k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_17": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.8k",
+            "Steals: 23 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_18": {
+          "title": "ThievingBot \u2014 eating (stunned)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 24.1k",
+            "Steals: 33 | Ate: 1 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 76%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_19": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 13.1k",
+            "Steals: 18 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_20": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 15.3k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_21": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3312, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.0k",
+            "Steals: 22 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_22": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3312, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 13.1k",
+            "Steals: 18 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_23": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 10.9k",
+            "Steals: 15 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 82%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_24": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 18.2k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_25": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3309, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.0k",
+            "Steals: 22 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_26": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 8.0k",
+            "Steals: 8 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 80%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_27": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 9.9k",
+            "Steals: 10 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 82%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_28": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3307, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.6k",
+            "Steals: 20 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_29": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 15.3k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 86%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_30": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 19.0k",
+            "Steals: 26 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 98%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14dc1_31": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 18.8k",
+            "Steals: 19 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 94%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        }
+      }
+    },
+    {
+      "run": "20260906T182432Z_panel_n32_active",
+      "qualification": {
+        "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T182432Z_panel_n32_active",
+        "n": 32,
+        "counting": false,
+        "diagnostics": false,
+        "qualified": false,
+        "errors": [
+          "missing active progress: live14f0f_11",
+          "readiness/activity below requested scale"
+        ],
+        "observation_s": 118.86191474999998,
+        "cpu_seconds": 70.92032300000001,
+        "cpu_cores": 0.5966614550099196,
+        "client_ticks_per_slot_s": 39.76489239586308,
+        "median_resident_bytes": 1993572352,
+        "steal_gains": {
+          "live14f0f_0": 13,
+          "live14f0f_1": 1,
+          "live14f0f_2": 16,
+          "live14f0f_3": 11,
+          "live14f0f_4": 9,
+          "live14f0f_5": 14,
+          "live14f0f_6": 9,
+          "live14f0f_7": 9,
+          "live14f0f_8": 17,
+          "live14f0f_9": 14,
+          "live14f0f_10": 9,
+          "live14f0f_11": 0,
+          "live14f0f_12": 6,
+          "live14f0f_13": 10,
+          "live14f0f_14": 12,
+          "live14f0f_15": 6,
+          "live14f0f_16": 13,
+          "live14f0f_17": 12,
+          "live14f0f_18": 21,
+          "live14f0f_19": 9,
+          "live14f0f_20": 16,
+          "live14f0f_21": 6,
+          "live14f0f_22": 14,
+          "live14f0f_23": 12,
+          "live14f0f_24": 4,
+          "live14f0f_25": 12,
+          "live14f0f_26": 9,
+          "live14f0f_27": 6,
+          "live14f0f_28": 9,
+          "live14f0f_29": 10,
+          "live14f0f_30": 12,
+          "live14f0f_31": 12
+        },
+        "diagnostic_only": true
+      },
+      "meta": {
+        "stack_logging_mode": null,
+        "host_sources_sha256": "dc8b85e97e1ec064ff41354ee227dc65c17c70c55b05d0a8fe52a1477f6e88b5",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "active",
+        "warmup_s": 30,
+        "observe_s": 120,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "530b83e62bc8f7410af5b6b2dcf8470a8c4f58d9",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T182432Z_panel_n32_active",
+        "started_unix": 1788719072.8510342,
+        "pid": 85775,
+        "exit_code": 0,
+        "ended_unix": 1788719445.741887
+      },
+      "groups": [
+        {
+          "drawing": false,
+          "cycles": 146550,
+          "work_ns": 53182029107,
+          "requested_sleep_ns": 2877817970893,
+          "actual_sleep_ns": 3635504539329,
+          "work_overruns": 0,
+          "intervals": 146548,
+          "interval_ns": 3688825819373,
+          "work_mean_ms": 0.3628934091231662,
+          "requested_sleep_mean_ms": 19.637106590876833,
+          "actual_sleep_mean_ms": 24.807264000880245,
+          "interval_mean_ms": 25.171451124361983
+        },
+        {
+          "drawing": true,
+          "cycles": 4900,
+          "work_ns": 22635679565,
+          "requested_sleep_ns": 75364320435,
+          "actual_sleep_ns": 96528598733,
+          "work_overruns": 0,
+          "intervals": 4900,
+          "interval_ns": 119169956667,
+          "work_mean_ms": 4.619526441836734,
+          "requested_sleep_mean_ms": 15.380473558163265,
+          "actual_sleep_mean_ms": 19.699714027142857,
+          "interval_mean_ms": 24.320399319795918
+        }
+      ],
+      "memory": {
+        "resident_bytes": {
+          "first": 1834778624,
+          "last": 2005123072,
+          "min": 1834778624,
+          "median": 1993572352,
+          "p95": 2009579520,
+          "max": 2010038272
+        },
+        "peak_resident_bytes": {
+          "first": 1835892736,
+          "last": 2011348992,
+          "min": 1835892736,
+          "median": 1994686464,
+          "p95": 2011348992,
+          "max": 2011348992
+        },
+        "v8_used_bytes": {
+          "first": 210534224,
+          "last": 233255432,
+          "min": 210534224,
+          "median": 247739360,
+          "p95": 273552424,
+          "max": 285426160
+        },
+        "v8_total_bytes": {
+          "first": 296222720,
+          "last": 362807296,
+          "min": 296222720,
+          "median": 366477312,
+          "p95": 375914496,
+          "max": 386662400
+        },
+        "snapshot_inflight_bytes": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 286496
+        },
+        "snapshot_inflight_capacity": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 286496
+        },
+        "gpu_tracked_bytes": {
+          "first": 18475832,
+          "last": 18475832,
+          "min": 18475832,
+          "median": 18475832,
+          "p95": 18475832,
+          "max": 18475832
+        },
+        "gpu_buffer_bytes": {
+          "first": 1231840,
+          "last": 1231840,
+          "min": 1231840,
+          "median": 1231840,
+          "p95": 1231840,
+          "max": 1231840
+        },
+        "gpu_texture_bytes": {
+          "first": 17243992,
+          "last": 17243992,
+          "min": 17243992,
+          "median": 17243992,
+          "p95": 17243992,
+          "max": 17243992
+        }
+      },
+      "resident_first_minute_median": 1898807296.0,
+      "resident_last_minute_median": 2004246528.0,
+      "teardown": {
+        "resident_bytes": 1649672192,
+        "peak_resident_bytes": 2011348992,
+        "ready": 32,
+        "active": 0,
+        "v8_live_isolates": 0,
+        "v8_used_bytes": 0,
+        "snapshot_inflight_bytes": 0,
+        "snapshot_inflight_capacity": 0,
+        "gpu_tracked_bytes": 18475832
+      },
+      "resident_last_teardown_30s_median": 1649623040.0,
+      "peak_resident_whole_run": 2011348992,
+      "v8_sampled_isolates_min": 32,
+      "v8_sample_age_max_ms": 1938,
+      "client_tick_mean_ms": 0.5004446620010711,
+      "script_tick_mean_ms": 0.12195520674897119,
+      "ui_frame_mean_ms": 0.6633332531178641,
+      "final_statuses": {
+        "live14f0f_0": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 20.1k",
+            "Steals: 29 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_1": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3309, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 9.8k",
+            "Steals: 14 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_2": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 21.7k",
+            "Steals: 31 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 100%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_3": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.7k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_4": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 15.5k",
+            "Steals: 22 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_5": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.4k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_6": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 11.3k",
+            "Steals: 12 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: yes",
+            "HP: 78%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_7": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_8": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2654, 3304, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 18.2k",
+            "Steals: 26 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_9": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.7k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_10": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 11.2k",
+            "Steals: 16 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_11": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3304, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 11.9k",
+            "Steals: 17 | Ate: 1 | Picked: 0",
+            "Food: 0 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_12": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2648, 3302, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.0k",
+            "Steals: 20 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_13": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.7k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_14": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 19.6k",
+            "Steals: 28 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_15": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.0k",
+            "Steals: 20 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_16": {
+          "title": "ThievingBot \u2014 eating (stunned)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 28.7k",
+            "Steals: 41 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: yes",
+            "HP: 76%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_17": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.8k",
+            "Steals: 21 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_18": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 19.6k",
+            "Steals: 28 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_19": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 11.1k",
+            "Steals: 12 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: yes",
+            "HP: 78%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_20": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_21": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.1k",
+            "Steals: 20 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_22": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3299, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 19.6k",
+            "Steals: 28 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_23": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.5k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_24": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3299, 0)",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 7.4k",
+            "Steals: 8 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 78%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_25": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2663, 3306, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 16.1k",
+            "Steals: 23 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_26": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.6k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_27": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 11.9k",
+            "Steals: 17 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_28": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2661, 3303, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 20.3k",
+            "Steals: 29 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_29": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 9.8k",
+            "Steals: 14 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_30": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.6k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "live14f0f_31": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+          "lines": [
+            "Runtime: 3m | Target: Guard | XP/hr: 12.2k",
+            "Steals: 13 | Ate: 1 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 82%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        }
+      }
+    }
+  ],
+  "readiness_dips": [
+    {
+      "elapsed_s": 232.777522375,
+      "ready": 31,
+      "active": 31,
+      "v8_live_isolates": 32
+    },
+    {
+      "elapsed_s": 238.802933291,
+      "ready": 31,
+      "active": 31,
+      "v8_live_isolates": 32
+    },
+    {
+      "elapsed_s": 239.80672083299999,
+      "ready": 31,
+      "active": 31,
+      "v8_live_isolates": 32
+    }
+  ],
+  "selected_boundary_records": [
+    {
+      "phase": "observe-start",
+      "elapsed_s": 192.283493833,
+      "slots": [
+        {
+          "name": "live14f0f_1",
+          "state": "Running",
+          "error": null,
+          "runtime": {
+            "dispatched": 203,
+            "last_completed_tick": 223,
+            "paint": {
+              "title": "ThievingBot \u2014 returning from the bank",
+              "lines": [
+                "Runtime: 2m | Target: Guard | XP/hr: 18.1k",
+                "Steals: 13 | Ate: 1 | Picked: 0",
+                "Food: 22 | Bank trips: 1 | Stunned: no",
+                "HP: 100%",
+                "",
+                "",
+                "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+              ]
+            },
+            "in_flight": null,
+            "inventory": [
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              }
+            ],
+            "bank": [],
+            "bank_open": false,
+            "bank_loaded": false
+          },
+          "client": {
+            "ingame": true,
+            "scene_state": 2,
+            "x": 2649,
+            "z": 3284,
+            "level": 0
+          }
+        },
+        {
+          "name": "live14f0f_11",
+          "state": "Running",
+          "error": null,
+          "runtime": {
+            "dispatched": 202,
+            "last_completed_tick": 223,
+            "paint": {
+              "title": "ThievingBot \u2014 banking for food at Bank booth",
+              "lines": [
+                "Runtime: 2m | Target: Guard | XP/hr: 23.9k",
+                "Steals: 17 | Ate: 1 | Picked: 0",
+                "Food: 3 | Bank trips: 0 | Stunned: no",
+                "HP: 92%",
+                "",
+                "",
+                "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+              ]
+            },
+            "in_flight": null,
+            "inventory": [
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Coins",
+                "count": 510,
+                "ops": [
+                  "Drop"
+                ]
+              }
+            ],
+            "bank": [],
+            "bank_open": false,
+            "bank_loaded": false
+          },
+          "client": {
+            "ingame": true,
+            "scene_state": 2,
+            "x": 2659,
+            "z": 3308,
+            "level": 0
+          }
+        }
+      ]
+    },
+    {
+      "phase": "observe-end",
+      "elapsed_s": 312.290711791,
+      "slots": [
+        {
+          "name": "live14f0f_1",
+          "state": "Running",
+          "error": null,
+          "runtime": {
+            "dispatched": 401,
+            "last_completed_tick": 423,
+            "paint": {
+              "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3309, 0)",
+              "lines": [
+                "Runtime: 4m | Target: Guard | XP/hr: 9.8k",
+                "Steals: 14 | Ate: 1 | Picked: 0",
+                "Food: 22 | Bank trips: 1 | Stunned: no",
+                "HP: 92%",
+                "",
+                "",
+                "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+              ]
+            },
+            "in_flight": null,
+            "inventory": [
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Lobster",
+                "count": 1,
+                "ops": [
+                  "Eat",
+                  "Drop"
+                ]
+              },
+              {
+                "name": "Coins",
+                "count": 30,
+                "ops": [
+                  "Drop"
+                ]
+              }
+            ],
+            "bank": [],
+            "bank_open": false,
+            "bank_loaded": false
+          },
+          "client": {
+            "ingame": true,
+            "scene_state": 2,
+            "x": 2891,
+            "z": 4597,
+            "level": 0
+          }
+        },
+        {
+          "name": "live14f0f_11",
+          "state": "Running",
+          "error": null,
+          "runtime": {
+            "dispatched": 401,
+            "last_completed_tick": 423,
+            "paint": {
+              "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3304, 0)",
+              "lines": [
+                "Runtime: 4m | Target: Guard | XP/hr: 11.9k",
+                "Steals: 17 | Ate: 1 | Picked: 0",
+                "Food: 0 | Bank trips: 1 | Stunned: no",
+                "HP: 96%",
+                "",
+                "",
+                "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+              ]
+            },
+            "in_flight": null,
+            "inventory": [],
+            "bank": [],
+            "bank_open": false,
+            "bank_loaded": false
+          },
+          "client": {
+            "ingame": true,
+            "scene_state": 2,
+            "x": 2008,
+            "z": 4762,
+            "level": 0
+          }
+        }
+      ]
+    }
+  ],
+  "raw_sha256": {
+    "20260906T181830Z_panel_n32_active": {
+      "metadata.json": "9f46a639c6c7adc4f934d0032fab7fc94a0b29426bdcd0ba874fdb6e7c165e85",
+      "samples.jsonl": "5e8260f5de359f70c27ee13ad34f031a6b61d1251f8a950e9e7fceb16cb1b19c",
+      "samples.qualification.jsonl": "d10e63cd0f5b959ca30b8fcac0ca4e481a2023cc61765097088cb1c3ec6ab691",
+      "run.log": "d03c2991c131913c6aa3d7421c2ee0e12dea822f1e5f6447f85fc47009c28805",
+      "memory-summary.json": "eba49a4cfe3fde286718d9234ea14517363b8170a100d6e8f1a23ee194ab5afd"
+    },
+    "20260906T182432Z_panel_n32_active": {
+      "metadata.json": "8b5f4f52bd2195eee2d2ecb97e2a9a71e0637c886340f1e37689507e38eeadcd",
+      "samples.jsonl": "fbfcbaaeac42e88369e272e5f6315177aa9daad0442e5b3d62c0ff32b4573c63",
+      "samples.qualification.jsonl": "51a7e6a58fd15c38377d8a4e629a16746b84c586156b80e1931625a2fb5a960e",
+      "run.log": "5fd458ad133ab69caef8df21b45259a08e7754d0694a41298a80c45bf5e37b65",
+      "memory-summary.json": "192e0a33f926a560888980d084281f606670d0bdf613ed420eeef6f7c056eebf"
+    }
+  },
+  "prior_forward_pair": {
+    "before": {
+      "run": "20260906T163141Z_panel_n32_active",
+      "qualification": {
+        "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T163141Z_panel_n32_active",
+        "n": 32,
+        "counting": false,
+        "diagnostics": false,
+        "qualified": true,
+        "errors": [],
+        "observation_s": 118.81244033299998,
+        "cpu_seconds": 76.628536,
+        "cpu_cores": 0.6449538094262721,
+        "client_ticks_per_slot_s": 42.52842745959964,
+        "median_resident_bytes": 2010562560,
+        "steal_gains": {
+          "live131ce_0": 5,
+          "live131ce_1": 9,
+          "live131ce_2": 5,
+          "live131ce_3": 5,
+          "live131ce_4": 11,
+          "live131ce_5": 13,
+          "live131ce_6": 13,
+          "live131ce_7": 6,
+          "live131ce_8": 7,
+          "live131ce_9": 8,
+          "live131ce_10": 11,
+          "live131ce_11": 8,
+          "live131ce_12": 19,
+          "live131ce_13": 11,
+          "live131ce_14": 12,
+          "live131ce_15": 12,
+          "live131ce_16": 15,
+          "live131ce_17": 10,
+          "live131ce_18": 21,
+          "live131ce_19": 10,
+          "live131ce_20": 11,
+          "live131ce_21": 5,
+          "live131ce_22": 10,
+          "live131ce_23": 10,
+          "live131ce_24": 12,
+          "live131ce_25": 10,
+          "live131ce_26": 15,
+          "live131ce_27": 10,
+          "live131ce_28": 14,
+          "live131ce_29": 13,
+          "live131ce_30": 6,
+          "live131ce_31": 13
+        },
+        "diagnostic_only": true
+      },
+      "meta": {
+        "stack_logging_mode": null,
+        "host_sources_sha256": "dc8b85e97e1ec064ff41354ee227dc65c17c70c55b05d0a8fe52a1477f6e88b5",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "active",
+        "warmup_s": 30,
+        "observe_s": 120,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "0af4481987735a40028ae5f71cff0313794fb84f",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T163141Z_panel_n32_active",
+        "started_unix": 1788712301.245247,
+        "pid": 78286,
+        "exit_code": 0,
+        "ended_unix": 1788712654.3481421
+      },
+      "groups": [
+        {
+          "drawing": false,
+          "cycles": 156550,
+          "work_ns": 58623021915,
+          "requested_sleep_ns": 3072376978085,
+          "actual_sleep_ns": 3625469563715,
+          "work_overruns": 0,
+          "intervals": 156550,
+          "interval_ns": 3684175163793,
+          "work_mean_ms": 0.3744683610028745,
+          "requested_sleep_mean_ms": 19.625531638997128,
+          "actual_sleep_mean_ms": 23.158540809421908,
+          "interval_mean_ms": 23.53353665789205
+        },
+        {
+          "drawing": true,
+          "cycles": 5200,
+          "work_ns": 23657303871,
+          "requested_sleep_ns": 80342696129,
+          "actual_sleep_ns": 95589407261,
+          "work_overruns": 0,
+          "intervals": 5200,
+          "interval_ns": 119250784833,
+          "work_mean_ms": 4.549481513653847,
+          "requested_sleep_mean_ms": 15.450518486346153,
+          "actual_sleep_mean_ms": 18.382578319423075,
+          "interval_mean_ms": 22.93284323711538
+        }
+      ],
+      "memory": {
+        "resident_bytes": {
+          "first": 1895415808,
+          "last": 2008842240,
+          "min": 1895415808,
+          "median": 2010562560,
+          "p95": 2014101504,
+          "max": 2017034240
+        },
+        "peak_resident_bytes": {
+          "first": 1897070592,
+          "last": 2018361344,
+          "min": 1897070592,
+          "median": 2012512256,
+          "p95": 2018361344,
+          "max": 2018361344
+        },
+        "v8_used_bytes": {
+          "first": 215878128,
+          "last": 182611448,
+          "min": 182611448,
+          "median": 229511432,
+          "p95": 264762952,
+          "max": 269694760
+        },
+        "v8_total_bytes": {
+          "first": 285212672,
+          "last": 359661568,
+          "min": 285212672,
+          "median": 366215168,
+          "p95": 373030912,
+          "max": 377225216
+        },
+        "snapshot_inflight_bytes": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 1652440
+        },
+        "snapshot_inflight_capacity": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 1652440
+        },
+        "gpu_tracked_bytes": {
+          "first": 18406352,
+          "last": 18528464,
+          "min": 18406352,
+          "median": 18528464,
+          "p95": 18528464,
+          "max": 18528464
+        },
+        "gpu_buffer_bytes": {
+          "first": 1162360,
+          "last": 1284472,
+          "min": 1162360,
+          "median": 1284472,
+          "p95": 1284472,
+          "max": 1284472
+        },
+        "gpu_texture_bytes": {
+          "first": 17243992,
+          "last": 17243992,
+          "min": 17243992,
+          "median": 17243992,
+          "p95": 17243992,
+          "max": 17243992
+        }
+      },
+      "resident_first_minute_median": 1992720384.0,
+      "resident_last_minute_median": 2013233152.0,
+      "teardown": {
+        "resident_bytes": 1669464064,
+        "peak_resident_bytes": 2018361344,
+        "ready": 32,
+        "active": 0,
+        "v8_live_isolates": 0,
+        "v8_used_bytes": 0,
+        "snapshot_inflight_bytes": 0,
+        "snapshot_inflight_capacity": 0,
+        "gpu_tracked_bytes": 18528464
+      },
+      "resident_last_teardown_30s_median": 1664630784.0,
+      "peak_resident_whole_run": 2018361344,
+      "v8_sampled_isolates_min": 32,
+      "v8_sample_age_max_ms": 1215,
+      "client_tick_mean_ms": 0.5083756977976783,
+      "script_tick_mean_ms": 0.12333338068181818,
+      "ui_frame_mean_ms": 0.6555544667718745
+    },
+    "after": {
+      "run": "20260906T163734Z_panel_n32_active",
+      "qualification": {
+        "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T163734Z_panel_n32_active",
+        "n": 32,
+        "counting": false,
+        "diagnostics": false,
+        "qualified": true,
+        "errors": [],
+        "observation_s": 119.041485875,
+        "cpu_seconds": 80.65205499999999,
+        "cpu_cores": 0.6775121665121772,
+        "client_ticks_per_slot_s": 42.48492626604657,
+        "median_resident_bytes": 1944895488,
+        "steal_gains": {
+          "live13343_0": 9,
+          "live13343_1": 18,
+          "live13343_2": 9,
+          "live13343_3": 10,
+          "live13343_4": 7,
+          "live13343_5": 8,
+          "live13343_6": 9,
+          "live13343_7": 8,
+          "live13343_8": 11,
+          "live13343_9": 3,
+          "live13343_10": 8,
+          "live13343_11": 12,
+          "live13343_12": 13,
+          "live13343_13": 11,
+          "live13343_14": 13,
+          "live13343_15": 10,
+          "live13343_16": 15,
+          "live13343_17": 13,
+          "live13343_18": 8,
+          "live13343_19": 8,
+          "live13343_20": 12,
+          "live13343_21": 15,
+          "live13343_22": 18,
+          "live13343_23": 6,
+          "live13343_24": 13,
+          "live13343_25": 9,
+          "live13343_26": 7,
+          "live13343_27": 9,
+          "live13343_28": 11,
+          "live13343_29": 11,
+          "live13343_30": 9,
+          "live13343_31": 5
+        },
+        "diagnostic_only": true
+      },
+      "meta": {
+        "stack_logging_mode": null,
+        "host_sources_sha256": "dc8b85e97e1ec064ff41354ee227dc65c17c70c55b05d0a8fe52a1477f6e88b5",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "active",
+        "warmup_s": 30,
+        "observe_s": 120,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/runner-boundary-build/panel-play-system",
+        "binary_sha256": "df54511ef56a2ad31b2a9d3aae76ffda07e774735e1adcf42bb808f9773f74ae",
+        "host_commit": "0af4481987735a40028ae5f71cff0313794fb84f",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T163734Z_panel_n32_active",
+        "started_unix": 1788712654.545613,
+        "pid": 78659,
+        "exit_code": 0,
+        "ended_unix": 1788713026.8864892
+      },
+      "groups": [
+        {
+          "drawing": false,
+          "cycles": 156500,
+          "work_ns": 60901204933,
+          "requested_sleep_ns": 3069098795067,
+          "actual_sleep_ns": 3626258724038,
+          "work_overruns": 0,
+          "intervals": 156500,
+          "interval_ns": 3687219113915,
+          "work_mean_ms": 0.38914507944408944,
+          "requested_sleep_mean_ms": 19.610854920555912,
+          "actual_sleep_mean_ms": 23.170982262223642,
+          "interval_mean_ms": 23.560505520223643
+        },
+        {
+          "drawing": true,
+          "cycles": 5200,
+          "work_ns": 27356847795,
+          "requested_sleep_ns": 76643152205,
+          "actual_sleep_ns": 91486208609,
+          "work_overruns": 0,
+          "intervals": 5200,
+          "interval_ns": 118844130125,
+          "work_mean_ms": 5.26093226826923,
+          "requested_sleep_mean_ms": 14.739067731730769,
+          "actual_sleep_mean_ms": 17.593501655576922,
+          "interval_mean_ms": 22.854640408653847
+        }
+      ],
+      "memory": {
+        "resident_bytes": {
+          "first": 1902559232,
+          "last": 1933099008,
+          "min": 1902559232,
+          "median": 1944895488,
+          "p95": 1955577856,
+          "max": 1957216256
+        },
+        "peak_resident_bytes": {
+          "first": 1903706112,
+          "last": 1958494208,
+          "min": 1903706112,
+          "median": 1954709504,
+          "p95": 1958494208,
+          "max": 1958494208
+        },
+        "v8_used_bytes": {
+          "first": 242751888,
+          "last": 178881576,
+          "min": 176231856,
+          "median": 218242408,
+          "p95": 268430768,
+          "max": 278809584
+        },
+        "v8_total_bytes": {
+          "first": 358612992,
+          "last": 338690048,
+          "min": 334757888,
+          "median": 360972288,
+          "p95": 370933760,
+          "max": 379322368
+        },
+        "snapshot_inflight_bytes": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 281432
+        },
+        "snapshot_inflight_capacity": {
+          "first": 0,
+          "last": 0,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 281432
+        },
+        "gpu_tracked_bytes": {
+          "first": 18503552,
+          "last": 18570800,
+          "min": 18503552,
+          "median": 18550064,
+          "p95": 18570800,
+          "max": 18570800
+        },
+        "gpu_buffer_bytes": {
+          "first": 1259560,
+          "last": 1326808,
+          "min": 1259560,
+          "median": 1306072,
+          "p95": 1326808,
+          "max": 1326808
+        },
+        "gpu_texture_bytes": {
+          "first": 17243992,
+          "last": 17243992,
+          "min": 17243992,
+          "median": 17243992,
+          "p95": 17243992,
+          "max": 17243992
+        }
+      },
+      "resident_first_minute_median": 1934630912.0,
+      "resident_last_minute_median": 1953333248.0,
+      "teardown": {
+        "resident_bytes": 1597620224,
+        "peak_resident_bytes": 1958494208,
+        "ready": 32,
+        "active": 0,
+        "v8_live_isolates": 0,
+        "v8_used_bytes": 0,
+        "snapshot_inflight_bytes": 0,
+        "snapshot_inflight_capacity": 0,
+        "gpu_tracked_bytes": 18570800
+      },
+      "resident_last_teardown_30s_median": 1597603840.0,
+      "peak_resident_whole_run": 1958494208,
+      "v8_sampled_isolates_min": 32,
+      "v8_sample_age_max_ms": 1220,
+      "client_tick_mean_ms": 0.5459518420590834,
+      "script_tick_mean_ms": 0.12046046164772728,
+      "ui_frame_mean_ms": 0.6787956690584529
+    },
+    "binary_provenance": {
+      "before": {
+        "source_commit": "6a25d115de95f0b2fa73ebe2ccb8cd2487b4eda8",
+        "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0"
+      },
+      "after": {
+        "source_commit": "0e909b9d835037f3c81ee4a19d3e41e2a7c7525c",
+        "host_sources_sha256": "dc8b85e97e1ec064ff41354ee227dc65c17c70c55b05d0a8fe52a1477f6e88b5"
+      }
+    },
+    "deltas_after_minus_before": {
+      "median_resident_bytes": -65667072,
+      "teardown_resident_bytes": -67026944.0,
+      "peak_resident_bytes": -59867136
+    },
+    "operator_observation": "Operator observed bots appearing to bounce off the bank booth instead of walking directly adjacent during the clean paired run. Slot and exact tick unspecified. Detailed nav diagnostics/captures disabled; no causal attribution from this observation. Preserve clean instrumentation; separate targeted approach-path investigation if pursued.\n"
+  }
+}
