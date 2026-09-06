@@ -36,8 +36,8 @@ def parse_proc_stat(text: str) -> Dict[str, Any]:
     if close < 0 or close + 2 >= len(text):
         raise SampleError("malformed /proc/PID/stat")
     fields = text[close + 2 :].split()
-    # fields[0] is stat field 3 (state); starttime is field 22, utime 14, stime 15.
-    if len(fields) < 20:
+    # fields[0] is stat field 3 (state); starttime is field 22, rss field 24.
+    if len(fields) < 22:
         raise SampleError("short /proc/PID/stat")
     try:
         return {
@@ -45,6 +45,7 @@ def parse_proc_stat(text: str) -> Dict[str, Any]:
             "utime_ticks": int(fields[11]),
             "stime_ticks": int(fields[12]),
             "start_ticks": int(fields[19]),
+            "rss_pages": int(fields[21]),
         }
     except (TypeError, ValueError) as exc:
         raise SampleError("non-numeric /proc/PID/stat counter") from exc
@@ -109,36 +110,35 @@ def open_output(path: pathlib.Path, *, force: bool) -> TextIO:
         raise SampleError("refusing to overwrite existing output; use --force") from exc
 
 
-def _linux_sample(pid: int) -> Dict[str, Any]:
+def _linux_sample(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
     proc = pathlib.Path("/proc") / str(pid)
     try:
         stat = parse_proc_stat((proc / "stat").read_text())
         page_size = os.sysconf("SC_PAGE_SIZE")
-        rss_pages = int((proc / "statm").read_text().split()[1])
     except (OSError, IndexError, ValueError) as exc:
         raise SampleError(f"required Linux process sample unreadable: {exc}") from exc
     ticks = os.sysconf("SC_CLK_TCK")
     return {
         "start_identity": f"linux_proc_start_ticks:{stat['start_ticks']}",
         "state": stat["state"],
-        "resident_bytes": rss_pages * page_size,
+        "resident_bytes": stat["rss_pages"] * page_size,
         "user_s": stat["utime_ticks"] / ticks,
         "system_s": stat["stime_ticks"] / ticks,
         "provenance": {
             "os": "linux",
-            "rss": f"/proc/{pid}/statm resident pages × SC_PAGE_SIZE (current resident set)",
+            "rss": f"/proc/{pid}/stat field 24 rss pages × SC_PAGE_SIZE (current resident set; approximate)",
             "cpu": f"/proc/{pid}/stat utime/stime ÷ SC_CLK_TCK (cumulative process CPU)",
             "identity": f"/proc/{pid}/stat field 22 starttime ticks",
         },
     }
 
 
-def _mac_sample(pid: int) -> Dict[str, Any]:
+def _mac_sample(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
     # ps is queried only for the explicit PID; no process discovery is done.
     command = ["/bin/ps", "-o", "rss=", "-o", "utime=", "-o", "stime=", "-o", "lstart=", "-p", str(pid)]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise SampleError(f"required macOS ps sample unreadable: {exc}") from exc
     line = result.stdout.strip()
     if not line:
@@ -162,16 +162,17 @@ def _mac_sample(pid: int) -> Dict[str, Any]:
             "rss": f"/bin/ps -o rss= -p {pid}, KiB (current resident set)",
             "cpu": f"/bin/ps -o utime=,stime= -p {pid} (cumulative process CPU)",
             "identity": f"/bin/ps -o lstart= -p {pid} (process start wall time)",
+            "identity_limitation": "lstart has one-second resolution; PID reuse within that second cannot be ruled out",
         },
     }
 
 
-def sample_process(pid: int) -> Dict[str, Any]:
+def sample_process(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
     validate_pid(pid)
     if sys.platform.startswith("linux"):
-        return _linux_sample(pid)
+        return _linux_sample(pid, timeout=timeout)
     if sys.platform == "darwin":
-        return _mac_sample(pid)
+        return _mac_sample(pid, timeout=timeout)
     raise SampleError(f"unsupported OS: {platform.system()}")
 
 
@@ -191,12 +192,17 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def run(pid: int, output: pathlib.Path, interval: float, duration: float, *, force: bool = False) -> int:
+def run(pid: int, output: pathlib.Path, interval: float, duration: float, *, force: bool = False,
+        sample_fn=None, pressure_fn=None, monotonic_fn=None, sleep_fn=None) -> int:
     validate_pid(pid)
     if interval <= 0 or duration <= 0 or not math.isfinite(interval) or not math.isfinite(duration):
         raise SampleError("interval and duration must be finite positive numbers")
     out = open_output(output, force=force)
-    monotonic_start = time.monotonic()
+    monotonic_fn = monotonic_fn or time.monotonic
+    sleep_fn = sleep_fn or time.sleep
+    sample_fn = sample_fn or sample_process
+    pressure_fn = pressure_fn or sample_pressure
+    monotonic_start = monotonic_fn()
     previous: Optional[Dict[str, Any]] = None
     count = 0
     try:
@@ -204,30 +210,40 @@ def run(pid: int, output: pathlib.Path, interval: float, duration: float, *, for
             out.write(json.dumps(row, sort_keys=True) + "\n")
             out.flush()
 
-        write({"type": "metadata", "schema": 1, "pid": pid, "interval_s": interval, "duration_s": duration, "started_utc": _utc_now(), "clock": "time.monotonic() for elapsed/delta; datetime UTC for wall timestamp", "scope": "explicit root PID only; children are not included", "pressure": "host-wide and separate from process records"})
+        cadence_tolerance = min(0.5, max(0.05, interval * 0.25))
+        write({"type": "metadata", "schema": 1, "pid": pid, "interval_s": interval, "duration_s": duration, "cadence_tolerance_s": cadence_tolerance, "started_utc": _utc_now(), "clock": "time.monotonic() for elapsed/delta; datetime UTC for wall timestamp", "scope": "explicit root PID only; children are not included", "pressure": "host-wide and separate from process records"})
         deadline = monotonic_start + duration
         while True:
-            now = time.monotonic()
-            if now > deadline and count:
+            scheduled = monotonic_start + count * interval
+            if scheduled >= deadline:
                 break
-            current = sample_process(pid)
+            now = monotonic_fn()
+            if now < scheduled:
+                sleep_fn(scheduled - now)
+            acquisition_start = monotonic_fn()
+            remaining = deadline - acquisition_start
+            if remaining <= 0:
+                raise SampleError("sampling duration exceeded before required sample")
+            current = sample_fn(pid, timeout=remaining)
+            acquisition_end = monotonic_fn()
+            acquisition_duration = acquisition_end - acquisition_start
+            lateness = max(0.0, acquisition_start - scheduled)
             if previous is not None:
                 require_same_identity(previous, current)
                 delta = cpu_delta_seconds(previous, current)
-                elapsed = now - previous["_monotonic"]
+                elapsed = acquisition_start - previous["_monotonic"]
                 if elapsed <= 0:
                     raise SampleError("non-positive monotonic sample interval")
                 cores = delta["total_s"] / elapsed
             else:
                 delta = {"user_s": 0.0, "system_s": 0.0, "total_s": 0.0}
                 cores = None
-            row = {"type": "sample", "utc": _utc_now(), "monotonic_s": now, "elapsed_s": now - monotonic_start, "resident_bytes": current["resident_bytes"], "cpu": {"cumulative_user_s": current["user_s"], "cumulative_system_s": current["system_s"], "delta_user_s": delta["user_s"], "delta_system_s": delta["system_s"], "delta_total_s": delta["total_s"], "cores_delta": cores}, "process": {k: v for k, v in current.items() if k not in ("user_s", "system_s")}, "host_pressure": sample_pressure()}
+            row = {"type": "sample", "utc": _utc_now(), "monotonic_s": acquisition_start, "elapsed_s": acquisition_start - monotonic_start, "scheduled_monotonic_s": scheduled, "acquisition_start_monotonic_s": acquisition_start, "acquisition_end_monotonic_s": acquisition_end, "acquisition_duration_s": acquisition_duration, "lateness_s": lateness, "resident_bytes": current["resident_bytes"], "cpu": {"cumulative_user_s": current["user_s"], "cumulative_system_s": current["system_s"], "delta_user_s": delta["user_s"], "delta_system_s": delta["system_s"], "delta_total_s": delta["total_s"], "cores_delta": cores}, "process": {k: v for k, v in current.items() if k not in ("user_s", "system_s")}, "host_pressure": pressure_fn()}
             write(row)
-            previous = dict(current, _monotonic=now)
+            previous = dict(current, _monotonic=acquisition_start)
             count += 1
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+            if lateness > cadence_tolerance or acquisition_end > scheduled + interval + cadence_tolerance:
+                raise SampleError("sample cadence missed required deadline")
         write({"type": "summary", "status": "ok", "sample_count": count, "ended_utc": _utc_now(), "sampling_overhead": "unmeasured; no matched overhead proof"})
         return 0
     except (SampleError, OSError) as exc:
