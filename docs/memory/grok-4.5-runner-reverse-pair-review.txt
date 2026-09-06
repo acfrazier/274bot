@@ -1,0 +1,52 @@
+APPROVE
+
+Commit e36b8ae (parent 530b83e) only adds `docs/memory/runner-reverse-pair.md` and `.json`. Read-only check against the two named raw runs and the forward-pair receipt holds. The pair is retained as a rejected screen, not as a performance comparison.
+
+Qualification rejection
+- Corrected `20260906T181830Z_panel_n32_active`: `qualified: true`, errors `[]`, steal gains 5–19 (all 32).
+- Previous `20260906T182432Z_panel_n32_active`: `qualified: false`, errors `missing active progress: live14f0f_11` and `readiness/activity below requested scale`; gains include zero on `_11` and 1 on `_1`.
+- Both `exit_code` 0 and `run.log` “PASS: memory panel observation complete”; MD correctly treats post-run qualification as stricter than frontend exit0.
+- JSON `status` rejects the reverse-order performance pair. Diagnostic table is labeled non-comparative.
+
+Numerical claims (raw memory-summary / qualification)
+- Observation span 118.916 / 118.862 s
+- Median RSS 1854.8125 / 1901.21875 MiB
+- Final teardown 30s median RSS 1508.039 / 1573.203 MiB
+- CPU mean cores 0.6225 / 0.5967
+- Client ticks/slot/s 42.499 / 39.765
+- Mean client tick 0.4798 / 0.5004 ms
+- Mean sim work 0.3431 / 0.3629 ms; mean drawing 4.6078 / 4.6195 ms; overruns 0/0
+- Teardown both: ready32, active0, live isolates 0, V8 used 0, inflight bytes/capacity 0
+- Receipt `summaries[]` byte-equal to each run’s `memory-summary.json`
+- All five files per run match `raw_sha256`
+
+Saved-binary vs launch-checkout provenance
+- Launch: host_commit `530b83e…`, clean `host_diff` (empty tree), `host_sources_sha256` `dc8b85e9…` on both metas (checkout sources, not older binary build sources).
+- Corrected binary path `runner-boundary-build/…`, sha `df54511e…` (on-disk match).
+- Previous binary path `shared-stop-build/…`, sha `616196ac…` (on-disk match).
+- Build-source distinction matches forward pair: previous `9a4089c2…` / corrected `dc8b85e9…` via embedded `binary_provenance`.
+- Client/nav/rs2b0t identifiers match across the two reverse runs; only binary identity and run timestamps differ.
+- MD states the launch-source vs saved-binary distinction explicitly; does not collapse them.
+
+Three readiness dips
+- Previous observe-phase only: exactly three `ready31/active31` with `v8_live_isolates` 32 at elapsed 232.777522375, 238.802933291, 239.80672083299999 — matches JSON `readiness_dips` and MD.
+- Corrected observe: zero ready dips.
+- Samples are whole-run elapsed; observation start 192.283493833 s as stated. One-second samples do not name the dipped slot.
+
+Selected out-of-area endpoint records
+- `selected_boundary_records` are exact subsets of previous `samples.qualification.jsonl` observe-start/end for `live14f0f_1` and `live14f0f_11`.
+- `_11`: dispatched 202→401, steals 17→17, start (2659,3308) banking / Food 3 / bank trips 0; end (2008,4762), empty inv, bank trips 1; paint still targets guard (2657,3304).
+- `_1`: steal gain 1 (13→14); (2649,3284)→(2891,4597).
+- Both ends: `ingame: true`, `scene_state: 2`.
+- MD records endpoints only; no causal claim about nav/guardian/bank-bounce.
+
+Prior forward-pair receipt
+- `prior_forward_pair` is identical to `docs/memory/runner-clean-pair.json` for before/after, binary_provenance, deltas, and operator_observation.
+- Forward qualified pair and native ~46.1 MiB removal are referenced with existing limits; reverse pair is not folded into them.
+
+Operator direction
+- References approved plan `530b83e` as launch/procedure context only.
+- Next step is bounded functional nav diagnostic + qualification exit-status hardening; no budget reopen and no claim of full performance acceptance.
+- No builds/tests/live runs/UI/delegates/file mods performed in this review.
+
+Verdict: APPROVE. Evidence is consistent, qualification failure is correctly retained, and the invalid pair is not offered as a performance comparison.
