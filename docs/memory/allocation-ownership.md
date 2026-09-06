@@ -1,5 +1,10 @@
 # Allocation ownership investigation — 2026-09-06
 
+The bounded runner-sharing and explicit-Stop fixes are now implemented. See
+[reassessment](shared-nav-stop-reassessment.md) for tests, native cardinality
+verification, clean measurements and the unresolved CPU/work variation. The
+findings below describe the original capture.
+
 The largest apparent per-bot memory cost is **benchmark overhead**: each scenario
 runner decodes and retains its own navigation pack. The live stack report groups
 2,362,141,824 allocated bytes under the 32 `ScenarioRunner::new →

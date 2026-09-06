@@ -1,0 +1,47 @@
+{
+  "meta": {
+    "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+    "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+    "frontend": "panel",
+    "n": 32,
+    "workload": "seeded-idle",
+    "warmup_s": 1,
+    "observe_s": 5,
+    "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+    "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+    "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+    "diagnostic_only": true,
+    "scheduling_profile": false,
+    "diagnostic_sidecar": false,
+    "nav_captures": false,
+    "single_renderer": true,
+    "render_policy": "fixed-one",
+    "terminal": false,
+    "terminal_size": null,
+    "debug": false,
+    "sustain": true,
+    "stack_logging": false,
+    "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+    "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+    "host_commit": "6a25d115de95f0b2fa73ebe2ccb8cd2487b4eda8",
+    "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+    "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T125706Z_panel_n32_seeded-idle",
+    "started_unix": 1788699427.132312,
+    "pid": 62514,
+    "exit_code": -15,
+    "ended_unix": 1788699482.358808
+  },
+  "purpose": "allocation cardinality only; intentionally terminated during setup after capture",
+  "heap_file": "docs/memory/diagnostics/20260906T125706Z_panel_n32_seeded-idle/heap-verify.txt",
+  "before_counts": {
+    "63616_KiB": 33,
+    "7968_KiB": 33
+  },
+  "after_counts": {
+    "63616_KiB": 2,
+    "7968_KiB": 2
+  },
+  "heap_vs_stack_size_note": "heap block sizes include allocator rounding; malloc_history records different request sizes"
+}
