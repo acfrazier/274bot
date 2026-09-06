@@ -2307,7 +2307,9 @@ dependencies = [
  "client",
  "libc",
  "num-bigint",
+ "pollster",
  "vault",
+ "wgpu",
 ]
 
 [[package]]

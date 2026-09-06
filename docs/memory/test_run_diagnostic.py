@@ -86,6 +86,23 @@ class RunDiagnosticCli(unittest.TestCase):
         help_proc = run_cli("--help")
         self.assertIn("--render-profile", help_proc.stdout)
 
+    def test_gpu_completion_profile_requires_panel_and_render_profile(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a = p.parse_args(
+            ["panel", "1", "idle", "--render-profile", "--gpu-completion-profile"]
+        )
+        rd.validate_args(a, p)
+        self.assertTrue(a.gpu_completion_profile)
+        self.assertTrue(a.render_profile)
+        bad_tui = run_cli("tui", "1", "idle", "--render-profile", "--gpu-completion-profile")
+        self.assertNotEqual(bad_tui.returncode, 0)
+        bad_no_rp = run_cli("panel", "1", "idle", "--gpu-completion-profile")
+        self.assertNotEqual(bad_no_rp.returncode, 0)
+        help_proc = run_cli("--help")
+        self.assertIn("--gpu-completion-profile", help_proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

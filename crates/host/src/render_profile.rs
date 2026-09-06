@@ -9,18 +9,38 @@
 //! Interval linkage breaks on draw / full-rate / backend / stable-scene mode
 //! changes even when the transition frame does not paint, so mixed 1 fps and
 //! full-rate gaps are never treated as one steady cadence sample.
+//!
+//! # GPU queue-completion (separate opt-in)
+//!
+//! `enable_gpu_completion` (requires render profile) registers
+//! `queue.on_submitted_work_done` after a Texture `mainredraw`, before the
+//! frame moves into the mailbox. Callback timestamps are **CPU delivery**
+//! after prior GPU work, delivered on a later existing submit/poll — not
+//! hardware GPU timestamps or display scanout. Latency is a conservative
+//! end-to-end upper bound; callback intervals are observed delivery cadence.
+//! Outstanding callbacks are bounded per slot and process-wide; permits
+//! release when the callback runs or the closure is dropped. Callbacks hold
+//! only weak telemetry + an RAII permit — never client/renderer/frame owners.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+static GPU_COMPLETION: AtomicBool = AtomicBool::new(false);
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static REGISTRY: Mutex<Vec<SlotObservation>> = Mutex::new(Vec::new());
+/// Process-wide outstanding GPU completion callbacks (all slots / restarts).
+static PROCESS_GPU_PENDING: AtomicUsize = AtomicUsize::new(0);
 
 /// Cap ended-but-unread rows so slot restart storms cannot grow the registry
 /// without a reader. Live (non-ended) rows are bounded by concurrent slots.
 const MAX_ENDED_UNREAD: usize = 64;
+
+/// Max in-flight GPU completion callbacks for one slot generation.
+const MAX_GPU_PENDING_SLOT: usize = 8;
+/// Max in-flight GPU completion callbacks across the whole process.
+const MAX_GPU_PENDING_PROCESS: usize = 256;
 
 /// Histogram upper bounds in milliseconds (inclusive on exact Duration), then
 /// unbounded. Covers full-rate (~20 ms), the 40 ms gate, and ~1 s watch paint.
@@ -79,6 +99,37 @@ pub struct SlotObservation {
     /// Wall ms of last publish (sample age = now - this).
     pub updated_ms: u64,
     pub ended: bool,
+
+    // --- GPU queue-completion (zeros unless gpu completion enabled) ---
+    /// `FrameOutput::Texture` frames observed at the host seam.
+    pub gpu_frame_n: u64,
+    /// `FrameOutput::PixMap` frames observed (never counted as GPU completions).
+    pub cpu_frame_n: u64,
+    /// Callbacks successfully registered with the queue.
+    pub gpu_registered_n: u64,
+    /// Callbacks delivered on the CPU (after prior submit completed).
+    pub gpu_completed_n: u64,
+    /// Texture frames that could not register (slot/process permit overflow).
+    pub gpu_dropped_n: u64,
+    /// Outstanding registered callbacks at last merge/publish.
+    pub gpu_pending_n: u64,
+    /// Age of oldest outstanding submit sample in ms; 0 if none.
+    pub gpu_oldest_pending_age_ms: u64,
+    /// Completions while stable scene mode at submit.
+    pub gpu_stable_completed_n: u64,
+    /// Completions while transition mode at submit.
+    pub gpu_transition_completed_n: u64,
+    /// Submit/register → callback-delivery latency samples.
+    pub gpu_completion_latency_n: u64,
+    pub gpu_completion_latency_ns: u64,
+    pub gpu_completion_latency_buckets: [u64; INTERVAL_BUCKETS],
+    /// Delivery-to-delivery intervals (same submit cadence mode only).
+    pub gpu_stable_completion_intervals: u64,
+    pub gpu_stable_completion_interval_ns: u64,
+    pub gpu_stable_completion_interval_buckets: [u64; INTERVAL_BUCKETS],
+    pub gpu_transition_completion_intervals: u64,
+    pub gpu_transition_completion_interval_ns: u64,
+    pub gpu_transition_completion_interval_buckets: [u64; INTERVAL_BUCKETS],
 }
 
 impl SlotObservation {
@@ -109,6 +160,24 @@ impl SlotObservation {
             backend_change_n: 0,
             updated_ms: 0,
             ended: false,
+            gpu_frame_n: 0,
+            cpu_frame_n: 0,
+            gpu_registered_n: 0,
+            gpu_completed_n: 0,
+            gpu_dropped_n: 0,
+            gpu_pending_n: 0,
+            gpu_oldest_pending_age_ms: 0,
+            gpu_stable_completed_n: 0,
+            gpu_transition_completed_n: 0,
+            gpu_completion_latency_n: 0,
+            gpu_completion_latency_ns: 0,
+            gpu_completion_latency_buckets: [0; INTERVAL_BUCKETS],
+            gpu_stable_completion_intervals: 0,
+            gpu_stable_completion_interval_ns: 0,
+            gpu_stable_completion_interval_buckets: [0; INTERVAL_BUCKETS],
+            gpu_transition_completion_intervals: 0,
+            gpu_transition_completion_interval_ns: 0,
+            gpu_transition_completion_interval_buckets: [0; INTERVAL_BUCKETS],
         }
     }
 }
@@ -196,6 +265,16 @@ pub fn enabled() -> bool {
     ENABLED.load(Relaxed)
 }
 
+/// Opt-in GPU queue-completion measurement. Intended only with render profile
+/// enabled (launcher enforces panel + `--render-profile`).
+pub fn enable_gpu_completion() {
+    GPU_COMPLETION.store(true, Relaxed);
+}
+
+pub fn gpu_completion_enabled() -> bool {
+    GPU_COMPLETION.load(Relaxed)
+}
+
 /// Current published observations when enabled; `None` while disabled.
 /// Ended slots are included once, then pruned. Register/flush also caps
 /// unread ended rows so the registry stays bounded without a reader.
@@ -219,6 +298,190 @@ pub fn slot_id_for(username: &str) -> u64 {
     h
 }
 
+/// Shared callback target: weak-held by queue callbacks; strong only in `Local`.
+struct GpuShared {
+    generation: u64,
+    live: AtomicBool,
+    /// Completed callbacks that have not yet been merged into the slot snap.
+    completed_delta: AtomicU64,
+    stable_completed_delta: AtomicU64,
+    transition_completed_delta: AtomicU64,
+    latency_n_delta: AtomicU64,
+    latency_ns_delta: AtomicU64,
+    latency_buckets: [AtomicU64; INTERVAL_BUCKETS],
+    stable_interval_n_delta: AtomicU64,
+    stable_interval_ns_delta: AtomicU64,
+    stable_interval_buckets: [AtomicU64; INTERVAL_BUCKETS],
+    transition_interval_n_delta: AtomicU64,
+    transition_interval_ns_delta: AtomicU64,
+    transition_interval_buckets: [AtomicU64; INTERVAL_BUCKETS],
+    pending: AtomicUsize,
+    /// Wall-ms submit stamps for outstanding permits (0 = empty). Fixed size.
+    pending_submit_ms: [AtomicU64; MAX_GPU_PENDING_SLOT],
+    /// Last delivered completion for interval pairing (same generation only).
+    last_delivery: Mutex<Option<(Instant, CadenceMode)>>,
+}
+
+impl GpuShared {
+    fn new(generation: u64) -> Self {
+        const ZERO: AtomicU64 = AtomicU64::new(0);
+        Self {
+            generation,
+            live: AtomicBool::new(true),
+            completed_delta: AtomicU64::new(0),
+            stable_completed_delta: AtomicU64::new(0),
+            transition_completed_delta: AtomicU64::new(0),
+            latency_n_delta: AtomicU64::new(0),
+            latency_ns_delta: AtomicU64::new(0),
+            latency_buckets: [ZERO; INTERVAL_BUCKETS],
+            stable_interval_n_delta: AtomicU64::new(0),
+            stable_interval_ns_delta: AtomicU64::new(0),
+            stable_interval_buckets: [ZERO; INTERVAL_BUCKETS],
+            transition_interval_n_delta: AtomicU64::new(0),
+            transition_interval_ns_delta: AtomicU64::new(0),
+            transition_interval_buckets: [ZERO; INTERVAL_BUCKETS],
+            pending: AtomicUsize::new(0),
+            pending_submit_ms: [ZERO; MAX_GPU_PENDING_SLOT],
+            last_delivery: Mutex::new(None),
+        }
+    }
+
+    fn oldest_pending_age_ms(&self, now_ms: u64) -> u64 {
+        let mut oldest = 0u64;
+        for cell in &self.pending_submit_ms {
+            let t = cell.load(Relaxed);
+            if t == 0 {
+                continue;
+            }
+            let age = now_ms.saturating_sub(t);
+            if oldest == 0 || age > oldest {
+                oldest = age;
+            }
+        }
+        oldest
+    }
+
+    fn on_complete(&self, submitted_at: Instant, mode: CadenceMode, pending_idx: usize) {
+        if !self.live.load(Relaxed) {
+            return;
+        }
+        let now = Instant::now();
+        let latency = now.saturating_duration_since(submitted_at);
+        let b = interval_bucket(latency);
+        self.completed_delta.fetch_add(1, Relaxed);
+        self.latency_n_delta.fetch_add(1, Relaxed);
+        self.latency_ns_delta.fetch_add(ns(latency), Relaxed);
+        self.latency_buckets[b].fetch_add(1, Relaxed);
+        if mode.stable {
+            self.stable_completed_delta.fetch_add(1, Relaxed);
+        } else {
+            self.transition_completed_delta.fetch_add(1, Relaxed);
+        }
+        if let Ok(mut last) = self.last_delivery.lock() {
+            if let Some((prev, prev_mode)) = *last {
+                if prev_mode == mode {
+                    let interval = now.saturating_duration_since(prev);
+                    let ib = interval_bucket(interval);
+                    if mode.stable {
+                        self.stable_interval_n_delta.fetch_add(1, Relaxed);
+                        self.stable_interval_ns_delta
+                            .fetch_add(ns(interval), Relaxed);
+                        self.stable_interval_buckets[ib].fetch_add(1, Relaxed);
+                    } else {
+                        self.transition_interval_n_delta.fetch_add(1, Relaxed);
+                        self.transition_interval_ns_delta
+                            .fetch_add(ns(interval), Relaxed);
+                        self.transition_interval_buckets[ib].fetch_add(1, Relaxed);
+                    }
+                }
+            }
+            *last = Some((now, mode));
+        }
+        if pending_idx < MAX_GPU_PENDING_SLOT {
+            self.pending_submit_ms[pending_idx].store(0, Relaxed);
+        }
+    }
+}
+
+/// RAII permit: process + slot pending. Releases if callback runs or drops.
+struct GpuPermit {
+    shared: Weak<GpuShared>,
+    pending_idx: usize,
+    process_held: bool,
+    slot_held: bool,
+}
+
+impl GpuPermit {
+    fn release(&mut self) {
+        if self.slot_held {
+            if let Some(s) = self.shared.upgrade() {
+                s.pending.fetch_sub(1, Relaxed);
+                if self.pending_idx < MAX_GPU_PENDING_SLOT {
+                    s.pending_submit_ms[self.pending_idx].store(0, Relaxed);
+                }
+            }
+            self.slot_held = false;
+        }
+        if self.process_held {
+            PROCESS_GPU_PENDING.fetch_sub(1, Relaxed);
+            self.process_held = false;
+        }
+    }
+}
+
+impl Drop for GpuPermit {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+fn try_acquire_gpu_permit(shared: &Arc<GpuShared>) -> Option<GpuPermit> {
+    // Process-wide bound.
+    loop {
+        let cur = PROCESS_GPU_PENDING.load(Relaxed);
+        if cur >= MAX_GPU_PENDING_PROCESS {
+            return None;
+        }
+        if PROCESS_GPU_PENDING
+            .compare_exchange_weak(cur, cur + 1, Relaxed, Relaxed)
+            .is_ok()
+        {
+            break;
+        }
+    }
+    // Per-slot bound.
+    let prev = shared.pending.fetch_add(1, Relaxed);
+    if prev >= MAX_GPU_PENDING_SLOT {
+        shared.pending.fetch_sub(1, Relaxed);
+        PROCESS_GPU_PENDING.fetch_sub(1, Relaxed);
+        return None;
+    }
+    // Claim a pending timestamp slot (fixed array, no heap growth).
+    let submit_ms = wall_ms().max(1); // 0 is empty sentinel
+    let mut idx = MAX_GPU_PENDING_SLOT;
+    for i in 0..MAX_GPU_PENDING_SLOT {
+        if shared.pending_submit_ms[i]
+            .compare_exchange(0, submit_ms, Relaxed, Relaxed)
+            .is_ok()
+        {
+            idx = i;
+            break;
+        }
+    }
+    if idx == MAX_GPU_PENDING_SLOT {
+        // Array full (shouldn't happen if pending count is honest) — roll back.
+        shared.pending.fetch_sub(1, Relaxed);
+        PROCESS_GPU_PENDING.fetch_sub(1, Relaxed);
+        return None;
+    }
+    Some(GpuPermit {
+        shared: Arc::downgrade(shared),
+        pending_idx: idx,
+        process_held: true,
+        slot_held: true,
+    })
+}
+
 /// Per-slot local accumulator. Register once when the slot thread starts.
 pub struct Local {
     generation: u64,
@@ -230,6 +493,8 @@ pub struct Local {
     last_mode: Option<CadenceMode>,
     last_flush: Instant,
     dirty: bool,
+    /// Present only when GPU completion profiling is enabled at register time.
+    gpu: Option<Arc<GpuShared>>,
 }
 
 impl Local {
@@ -244,6 +509,11 @@ impl Local {
             prune_ended_overflow(&mut reg);
             reg.push(snap.clone());
         }
+        let gpu = if GPU_COMPLETION.load(Relaxed) {
+            Some(Arc::new(GpuShared::new(generation)))
+        } else {
+            None
+        };
         Some(Self {
             generation,
             snap,
@@ -252,6 +522,7 @@ impl Local {
             last_mode: None,
             last_flush: Instant::now(),
             dirty: true,
+            gpu,
         })
     }
 
@@ -332,12 +603,153 @@ impl Local {
             self.snap.skip_n = self.snap.skip_n.wrapping_add(1);
         }
 
+        self.merge_gpu_deltas();
         if self.dirty || self.last_flush.elapsed() >= Duration::from_secs(1) {
             self.flush(false);
         }
     }
 
+    /// After a real `mainredraw`, observe the frame kind and optionally register
+    /// a GPU queue-completion callback **before** the frame enters the mailbox.
+    ///
+    /// `register_done` must call `queue.on_submitted_work_done(cb)` and nothing
+    /// else. Disabled / CPU paths never allocate a callback or call `register_done`.
+    pub fn observe_painted_output(
+        &mut self,
+        is_gpu_texture: bool,
+        register_done: impl FnOnce(Box<dyn FnOnce() + Send + 'static>),
+    ) {
+        let Some(shared) = self.gpu.as_ref() else {
+            return;
+        };
+        if !is_gpu_texture {
+            self.snap.cpu_frame_n = self.snap.cpu_frame_n.wrapping_add(1);
+            self.dirty = true;
+            return;
+        }
+        self.snap.gpu_frame_n = self.snap.gpu_frame_n.wrapping_add(1);
+        let mode = self.last_mode.unwrap_or(CadenceMode {
+            stable: false,
+            draw: false,
+            full_rate: false,
+            backend: BackendObs::Absent,
+        });
+        let Some(permit) = try_acquire_gpu_permit(shared) else {
+            self.snap.gpu_dropped_n = self.snap.gpu_dropped_n.wrapping_add(1);
+            self.dirty = true;
+            return;
+        };
+        self.snap.gpu_registered_n = self.snap.gpu_registered_n.wrapping_add(1);
+        let pending_idx = permit.pending_idx;
+        let submitted_at = Instant::now();
+        let weak = Arc::downgrade(shared);
+        let generation = shared.generation;
+        register_done(Box::new(move || {
+            // Own the permit so Drop runs even if we return early.
+            let _permit = permit;
+            if let Some(s) = weak.upgrade() {
+                if s.generation == generation {
+                    s.on_complete(submitted_at, mode, pending_idx);
+                }
+            }
+            // Permit Drop releases process/slot outstanding counts.
+        }));
+        self.dirty = true;
+        self.merge_gpu_deltas();
+        if self.dirty || self.last_flush.elapsed() >= Duration::from_secs(1) {
+            self.flush(false);
+        }
+    }
+
+    fn merge_gpu_deltas(&mut self) {
+        let Some(shared) = self.gpu.as_ref() else {
+            return;
+        };
+        let take = |a: &AtomicU64| a.swap(0, Relaxed);
+        let c = take(&shared.completed_delta);
+        if c != 0 {
+            self.snap.gpu_completed_n = self.snap.gpu_completed_n.wrapping_add(c);
+            self.dirty = true;
+        }
+        self.snap.gpu_stable_completed_n = self
+            .snap
+            .gpu_stable_completed_n
+            .wrapping_add(take(&shared.stable_completed_delta));
+        self.snap.gpu_transition_completed_n = self
+            .snap
+            .gpu_transition_completed_n
+            .wrapping_add(take(&shared.transition_completed_delta));
+        let ln = take(&shared.latency_n_delta);
+        if ln != 0 {
+            self.snap.gpu_completion_latency_n =
+                self.snap.gpu_completion_latency_n.wrapping_add(ln);
+            self.snap.gpu_completion_latency_ns = self
+                .snap
+                .gpu_completion_latency_ns
+                .wrapping_add(take(&shared.latency_ns_delta));
+            for i in 0..INTERVAL_BUCKETS {
+                let d = take(&shared.latency_buckets[i]);
+                self.snap.gpu_completion_latency_buckets[i] =
+                    self.snap.gpu_completion_latency_buckets[i].wrapping_add(d);
+            }
+        } else {
+            let _ = take(&shared.latency_ns_delta);
+            for i in 0..INTERVAL_BUCKETS {
+                let _ = take(&shared.latency_buckets[i]);
+            }
+        }
+        let sin = take(&shared.stable_interval_n_delta);
+        if sin != 0 {
+            self.snap.gpu_stable_completion_intervals = self
+                .snap
+                .gpu_stable_completion_intervals
+                .wrapping_add(sin);
+            self.snap.gpu_stable_completion_interval_ns = self
+                .snap
+                .gpu_stable_completion_interval_ns
+                .wrapping_add(take(&shared.stable_interval_ns_delta));
+            for i in 0..INTERVAL_BUCKETS {
+                let d = take(&shared.stable_interval_buckets[i]);
+                self.snap.gpu_stable_completion_interval_buckets[i] = self
+                    .snap
+                    .gpu_stable_completion_interval_buckets[i]
+                    .wrapping_add(d);
+            }
+        } else {
+            let _ = take(&shared.stable_interval_ns_delta);
+            for i in 0..INTERVAL_BUCKETS {
+                let _ = take(&shared.stable_interval_buckets[i]);
+            }
+        }
+        let tin = take(&shared.transition_interval_n_delta);
+        if tin != 0 {
+            self.snap.gpu_transition_completion_intervals = self
+                .snap
+                .gpu_transition_completion_intervals
+                .wrapping_add(tin);
+            self.snap.gpu_transition_completion_interval_ns = self
+                .snap
+                .gpu_transition_completion_interval_ns
+                .wrapping_add(take(&shared.transition_interval_ns_delta));
+            for i in 0..INTERVAL_BUCKETS {
+                let d = take(&shared.transition_interval_buckets[i]);
+                self.snap.gpu_transition_completion_interval_buckets[i] = self
+                    .snap
+                    .gpu_transition_completion_interval_buckets[i]
+                    .wrapping_add(d);
+            }
+        } else {
+            let _ = take(&shared.transition_interval_ns_delta);
+            for i in 0..INTERVAL_BUCKETS {
+                let _ = take(&shared.transition_interval_buckets[i]);
+            }
+        }
+        self.snap.gpu_pending_n = shared.pending.load(Relaxed) as u64;
+        self.snap.gpu_oldest_pending_age_ms = shared.oldest_pending_age_ms(wall_ms());
+    }
+
     fn flush(&mut self, ended: bool) {
+        self.merge_gpu_deltas();
         self.snap.ended = ended;
         self.snap.updated_ms = wall_ms();
         let mut reg = REGISTRY.lock().unwrap();
@@ -356,7 +768,17 @@ impl Local {
 
 impl Drop for Local {
     fn drop(&mut self) {
+        if let Some(shared) = self.gpu.as_ref() {
+            shared.live.store(false, Relaxed);
+            // Break interval pairing so a restarted generation cannot pair
+            // against this one's last delivery if any Arc briefly remains.
+            if let Ok(mut last) = shared.last_delivery.lock() {
+                *last = None;
+            }
+        }
         self.flush(true);
+        // Drop Arc after flush so in-flight callbacks still upgrading see
+        // live=false; once Local is gone, Weak upgrades fail (no contamination).
     }
 }
 
@@ -382,6 +804,12 @@ pub fn classify_backend(
     }
 }
 
+/// True when every GPU texture frame was registered and counters are monotonic
+/// enough to qualify throughput claims (still not hardware present proof).
+pub fn gpu_registration_complete(s: &SlotObservation) -> bool {
+    s.gpu_frame_n > 0 && s.gpu_dropped_n == 0 && s.gpu_registered_n == s.gpu_frame_n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +826,9 @@ mod tests {
 
     fn reset_registry() {
         REGISTRY.lock().unwrap().clear();
+        // Drain any leaked process pending from prior aborted tests.
+        PROCESS_GPU_PENDING.store(0, Relaxed);
+        GPU_COMPLETION.store(false, Relaxed);
     }
 
     fn base_obs(now: Instant) -> FrameObs {
@@ -695,4 +1126,313 @@ mod tests {
             BackendObs::Gpu
         );
     }
-}
+
+    #[test]
+    fn gpu_disabled_allocates_and_registers_nothing() {
+        with_lock(|| {
+            ENABLED.store(true, Relaxed);
+            reset_registry();
+            GPU_COMPLETION.store(false, Relaxed);
+            let mut local = Local::new(1).unwrap();
+            assert!(local.gpu.is_none());
+            let mut fired = false;
+            local.record(base_obs(Instant::now()));
+            local.observe_painted_output(true, |_| {
+                fired = true;
+            });
+            assert!(!fired);
+            assert_eq!(local.snap.gpu_frame_n, 0);
+            assert_eq!(local.snap.gpu_registered_n, 0);
+            assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), 0);
+            drop(local);
+            let _ = read();
+        });
+    }
+
+    #[test]
+    fn gpu_cpu_path_never_counts_as_completion() {
+        with_lock(|| {
+            ENABLED.store(true, Relaxed);
+            reset_registry();
+            GPU_COMPLETION.store(true, Relaxed);
+            let mut local = Local::new(3).unwrap();
+            local.record(base_obs(Instant::now()));
+            let mut fired = false;
+            local.observe_painted_output(false, |_| {
+                fired = true;
+            });
+            assert!(!fired);
+            assert_eq!(local.snap.cpu_frame_n, 1);
+            assert_eq!(local.snap.gpu_frame_n, 0);
+            assert_eq!(local.snap.gpu_completed_n, 0);
+            drop(local);
+            let _ = read();
+        });
+    }
+
+    #[test]
+    fn gpu_one_callback_per_registration_and_permit_release() {
+        with_lock(|| {
+            ENABLED.store(true, Relaxed);
+            reset_registry();
+            GPU_COMPLETION.store(true, Relaxed);
+            let mut local = Local::new(5).unwrap();
+            local.record(base_obs(Instant::now()));
+            let mut cbs: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
+            local.observe_painted_output(true, |cb| cbs.push(cb));
+            assert_eq!(local.snap.gpu_frame_n, 1);
+            assert_eq!(local.snap.gpu_registered_n, 1);
+            assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), 1);
+            assert_eq!(cbs.len(), 1);
+            cbs.pop().unwrap()();
+            local.merge_gpu_deltas();
+            assert_eq!(local.snap.gpu_completed_n, 1);
+            assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), 0);
+            assert_eq!(local.snap.gpu_pending_n, 0);
+            assert!(gpu_registration_complete(&local.snap));
+            drop(local);
+            let _ = read();
+        });
+    }
+
+    #[test]
+    fn gpu_overflow_drops_and_permit_drop_without_fire_releases() {
+        with_lock(|| {
+            ENABLED.store(true, Relaxed);
+            reset_registry();
+            GPU_COMPLETION.store(true, Relaxed);
+            let mut local = Local::new(6).unwrap();
+            local.record(base_obs(Instant::now()));
+            let mut held: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
+            for _ in 0..MAX_GPU_PENDING_SLOT {
+                local.observe_painted_output(true, |cb| held.push(cb));
+            }
+            assert_eq!(local.snap.gpu_registered_n, MAX_GPU_PENDING_SLOT as u64);
+            assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), MAX_GPU_PENDING_SLOT);
+            // Next must drop.
+            let mut attempted = false;
+            local.observe_painted_output(true, |_| {
+                attempted = true;
+            });
+            assert!(!attempted);
+            assert_eq!(local.snap.gpu_dropped_n, 1);
+            assert_eq!(
+                local.snap.gpu_frame_n,
+                MAX_GPU_PENDING_SLOT as u64 + 1
+            );
+            // Dropping closures without firing must release permits.
+            held.clear();
+            assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), 0);
+            local.merge_gpu_deltas();
+            assert_eq!(local.snap.gpu_pending_n, 0);
+            assert_eq!(local.snap.gpu_completed_n, 0);
+            drop(local);
+            let _ = read();
+        });
+    }
+
+    #[test]
+    fn gpu_late_callback_after_slot_end_does_not_contaminate_restart() {
+        with_lock(|| {
+            ENABLED.store(true, Relaxed);
+            reset_registry();
+            GPU_COMPLETION.store(true, Relaxed);
+            let mut first = Local::new(10).unwrap();
+            let gen1 = first.generation();
+            first.record(base_obs(Instant::now()));
+            let mut cb = None;
+            first.observe_painted_output(true, |c| cb = Some(c));
+            drop(first);
+            let _ = read(); // prune ended
+
+            let mut second = Local::new(10).unwrap();
+            let gen2 = second.generation();
+            assert_ne!(gen1, gen2);
+            second.record(base_obs(Instant::now()));
+            // Fire late callback from first generation.
+            cb.take().unwrap()();
+            second.merge_gpu_deltas();
+            assert_eq!(
+                second.snap.gpu_completed_n, 0,
+                "late callback must not credit the restarted slot"
+            );
+            assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), 0);
+            drop(second);
+            let _ = read();
+        });
+    }
+
+    #[test]
+    fn gpu_completion_intervals_separate_stable_from_transition() {
+        with_lock(|| {
+            ENABLED.store(true, Relaxed);
+            reset_registry();
+            GPU_COMPLETION.store(true, Relaxed);
+            let mut local = Local::new(11).unwrap();
+            let t0 = Instant::now();
+            // Transition scene.
+            local.record(FrameObs {
+                now: t0,
+                painted: true,
+                renderer_present: true,
+                backend: BackendObs::Gpu,
+                prefer_cpu: Some(false),
+                ingame: true,
+                scene_state: 1,
+                draw: true,
+                full_rate: true,
+            });
+            let mut cbs = Vec::new();
+            local.observe_painted_output(true, |cb| cbs.push(cb));
+            local.record(FrameObs {
+                now: t0 + Duration::from_millis(20),
+                painted: true,
+                renderer_present: true,
+                backend: BackendObs::Gpu,
+                prefer_cpu: Some(false),
+                ingame: true,
+                scene_state: 1,
+                draw: true,
+                full_rate: true,
+            });
+            local.observe_painted_output(true, |cb| cbs.push(cb));
+            for cb in cbs.drain(..) {
+                cb();
+            }
+            local.merge_gpu_deltas();
+            assert_eq!(local.snap.gpu_transition_completed_n, 2);
+            assert_eq!(local.snap.gpu_transition_completion_intervals, 1);
+            assert_eq!(local.snap.gpu_stable_completion_intervals, 0);
+
+            // Stable scene — mode change breaks pairing with transition completions.
+            local.record(FrameObs {
+                now: t0 + Duration::from_millis(40),
+                painted: true,
+                renderer_present: true,
+                backend: BackendObs::Gpu,
+                prefer_cpu: Some(false),
+                ingame: true,
+                scene_state: 2,
+                draw: true,
+                full_rate: true,
+            });
+            local.observe_painted_output(true, |cb| cbs.push(cb));
+            local.record(FrameObs {
+                now: t0 + Duration::from_millis(60),
+                painted: true,
+                renderer_present: true,
+                backend: BackendObs::Gpu,
+                prefer_cpu: Some(false),
+                ingame: true,
+                scene_state: 2,
+                draw: true,
+                full_rate: true,
+            });
+            local.observe_painted_output(true, |cb| cbs.push(cb));
+            for cb in cbs.drain(..) {
+                cb();
+            }
+            local.merge_gpu_deltas();
+            assert_eq!(local.snap.gpu_stable_completed_n, 2);
+            assert_eq!(local.snap.gpu_stable_completion_intervals, 1);
+            assert_eq!(local.snap.gpu_transition_completion_intervals, 1);
+            drop(local);
+            let _ = read();
+        });
+    }
+
+    #[test]
+        fn gpu_process_wide_bound_includes_multiple_slots() {
+            with_lock(|| {
+                ENABLED.store(true, Relaxed);
+                reset_registry();
+                GPU_COMPLETION.store(true, Relaxed);
+                // Force process near cap then assert next registration drops.
+                PROCESS_GPU_PENDING.store(MAX_GPU_PENDING_PROCESS, Relaxed);
+                let mut local = Local::new(12).unwrap();
+                local.record(base_obs(Instant::now()));
+                let mut attempted = false;
+                local.observe_painted_output(true, |_| {
+                    attempted = true;
+                });
+                assert!(!attempted);
+                assert_eq!(local.snap.gpu_dropped_n, 1);
+                PROCESS_GPU_PENDING.store(0, Relaxed);
+                drop(local);
+                let _ = read();
+            });
+        }
+
+        /// Real wgpu queue smoke. Soft-skips when no adapter (honest unavailable).
+        /// Production path never polls/waits solely to improve completion delivery.
+        #[test]
+        fn real_queue_on_submitted_work_done_delivers_once() {
+            with_lock(|| {
+                ENABLED.store(true, Relaxed);
+                reset_registry();
+                GPU_COMPLETION.store(true, Relaxed);
+
+                let instance =
+                    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+                let adapter = match pollster::block_on(
+                    instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+                ) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        eprintln!(
+                            "gpu completion smoke: no adapter — real queue proof unavailable"
+                        );
+                        GPU_COMPLETION.store(false, Relaxed);
+                        return;
+                    }
+                };
+                let (device, queue) =
+                    match pollster::block_on(adapter.request_device(&Default::default())) {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            eprintln!("gpu completion smoke: request_device failed: {e}");
+                            GPU_COMPLETION.store(false, Relaxed);
+                            return;
+                        }
+                    };
+
+                let mut local = Local::new(99).unwrap();
+                local.record(FrameObs {
+                    now: Instant::now(),
+                    painted: true,
+                    renderer_present: true,
+                    backend: BackendObs::Gpu,
+                    prefer_cpu: Some(false),
+                    ingame: true,
+                    scene_state: 2,
+                    draw: true,
+                    full_rate: true,
+                });
+                let done = Arc::new(StdMutex::new(false));
+                let done2 = done.clone();
+                local.observe_painted_output(true, |cb| {
+                    queue.on_submitted_work_done(move || {
+                        cb();
+                        *done2.lock().unwrap() = true;
+                    });
+                });
+                // Drive delivery the same way production does: a later submit/poll.
+                // This test waits only as proof; host never adds a completion poll.
+                queue.submit(std::iter::empty());
+                let start = Instant::now();
+                while !*done.lock().unwrap() {
+                    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+                    if start.elapsed() > Duration::from_secs(5) {
+                        panic!("callback not delivered within 5s");
+                    }
+                }
+                local.merge_gpu_deltas();
+                assert_eq!(local.snap.gpu_registered_n, 1);
+                assert_eq!(local.snap.gpu_completed_n, 1);
+                assert_eq!(PROCESS_GPU_PENDING.load(Relaxed), 0);
+                drop(local);
+                let _ = read();
+                GPU_COMPLETION.store(false, Relaxed);
+            });
+        }
+    }

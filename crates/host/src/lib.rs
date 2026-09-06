@@ -563,7 +563,24 @@ impl Host {
         // backend) or packs the `PixMap` (CPU backend) at its consume
         // site, and `FrameBuf::snapshot` keeps the CPU packing path for
         // the tests.
+        //
+        // GPU completion (opt-in): register `on_submitted_work_done` for a
+        // Texture frame *before* mailbox ownership moves, so the callback
+        // tracks the submit that produced this handle. No wait/readback;
+        // delivery rides later existing submit/poll calls.
         if let Some(frame) = frame {
+            if let Some(prof) = slot.render_prof.as_mut() {
+                match &frame {
+                    FrameOutput::Texture(handle) => {
+                        prof.observe_painted_output(true, |cb| {
+                            handle.queue.on_submitted_work_done(cb);
+                        });
+                    }
+                    FrameOutput::PixMap(_) => {
+                        prof.observe_painted_output(false, |_| {});
+                    }
+                }
+            }
             if let Some(mailbox) = mailbox {
                 mailbox.store(frame);
             }

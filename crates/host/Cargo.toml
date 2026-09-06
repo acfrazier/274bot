@@ -10,3 +10,8 @@ client = { workspace = true }
 libc = "0.2"
 num-bigint = "0.4"
 vault = { path = "../vault" }
+
+# Dev-only: real queue.on_submitted_work_done smoke (soft-skips without adapter).
+[dev-dependencies]
+pollster = "0.4"
+wgpu = "29"

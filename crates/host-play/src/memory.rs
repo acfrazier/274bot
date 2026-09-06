@@ -377,7 +377,12 @@ impl Run {
             std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
         client::profiling::enable();
         if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
-        if std::env::var("BOT_RENDER_PROFILE").as_deref() == Ok("1") { host::render_profile::enable(); }
+        if std::env::var("BOT_RENDER_PROFILE").as_deref() == Ok("1") {
+            host::render_profile::enable();
+            if std::env::var("BOT_GPU_COMPLETION_PROFILE").as_deref() == Ok("1") {
+                host::render_profile::enable_gpu_completion();
+            }
+        }
         use vault::{Profile, ProfileSettings, Vault};
 
         let names = crate::mint_live_names(config.n);
@@ -738,49 +743,87 @@ impl Run {
             }).unwrap_or(serde_json::Value::Null);
             // Host mainredraw/paint completions and live renderer residency —
             // not GPU completed/presented frames. Null while profiling off.
-            value["renderer_profile"] = host::render_profile::read().map(|slots| {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                serde_json::Value::Array(slots.into_iter().map(|s| {
-                    let age = if s.updated_ms == 0 {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
-                    };
-                    serde_json::json!({
-                        "slot_id": s.slot_id,
-                        "generation": s.generation,
-                        "renderer_present": s.renderer_present,
-                        "backend_kind": s.backend.as_str(),
-                        "prefer_cpu": s.prefer_cpu,
-                        "ingame": s.ingame,
-                        "scene_state": s.scene_state,
-                        "draw": s.draw,
-                        "full_rate": s.full_rate,
-                        "client_loop_n": s.client_loop_n,
-                        "paint_n": s.paint_n,
-                        "skip_n": s.skip_n,
-                        "stable_paint_n": s.stable_paint_n,
-                        "transition_paint_n": s.transition_paint_n,
-                        "stable_paint_intervals": s.stable_paint_intervals,
-                        "stable_paint_interval_ns": s.stable_paint_interval_ns,
-                        "stable_paint_interval_buckets": s.stable_paint_interval_buckets,
-                        "transition_paint_intervals": s.transition_paint_intervals,
-                        "transition_paint_interval_ns": s.transition_paint_interval_ns,
-                        "transition_paint_interval_buckets": s.transition_paint_interval_buckets,
-                        "interval_bound_ms": host::render_profile::INTERVAL_BOUNDS_MS,
-                        "attach_n": s.attach_n,
-                        "detach_n": s.detach_n,
-                        "backend_change_n": s.backend_change_n,
-                        "updated_ms": s.updated_ms,
-                        "sample_age_ms": age,
-                        "ended": s.ended,
-                        "paint_count_means": "host_mainredraw_completions_not_gpu_presented_frames",
-                    })
-                }).collect())
-            }).unwrap_or(serde_json::Value::Null);
+            // GPU queue-completion (nested object) is built separately to keep
+            // serde_json::json! under the crate recursion limit.
+            value["renderer_profile"] = host::render_profile::read()
+                .map(|slots| {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    let gpu_on = host::render_profile::gpu_completion_enabled();
+                    serde_json::Value::Array(
+                        slots
+                            .into_iter()
+                            .map(|s| {
+                                let age = if s.updated_ms == 0 {
+                                    serde_json::Value::Null
+                                } else {
+                                    serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
+                                };
+                                let mut row = serde_json::json!({
+                                    "slot_id": s.slot_id,
+                                    "generation": s.generation,
+                                    "renderer_present": s.renderer_present,
+                                    "backend_kind": s.backend.as_str(),
+                                    "prefer_cpu": s.prefer_cpu,
+                                    "ingame": s.ingame,
+                                    "scene_state": s.scene_state,
+                                    "draw": s.draw,
+                                    "full_rate": s.full_rate,
+                                    "client_loop_n": s.client_loop_n,
+                                    "paint_n": s.paint_n,
+                                    "skip_n": s.skip_n,
+                                    "stable_paint_n": s.stable_paint_n,
+                                    "transition_paint_n": s.transition_paint_n,
+                                    "stable_paint_intervals": s.stable_paint_intervals,
+                                    "stable_paint_interval_ns": s.stable_paint_interval_ns,
+                                    "stable_paint_interval_buckets": s.stable_paint_interval_buckets,
+                                    "transition_paint_intervals": s.transition_paint_intervals,
+                                    "transition_paint_interval_ns": s.transition_paint_interval_ns,
+                                    "transition_paint_interval_buckets": s.transition_paint_interval_buckets,
+                                    "interval_bound_ms": host::render_profile::INTERVAL_BOUNDS_MS,
+                                    "attach_n": s.attach_n,
+                                    "detach_n": s.detach_n,
+                                    "backend_change_n": s.backend_change_n,
+                                    "updated_ms": s.updated_ms,
+                                    "sample_age_ms": age,
+                                    "ended": s.ended,
+                                    "paint_count_means": "host_mainredraw_completions_not_gpu_presented_frames",
+                                });
+                                // CPU delivery after prior submit — not HW GPU ts or scanout.
+                                row["gpu_completion"] = serde_json::json!({
+                                    "enabled": gpu_on,
+                                    "gpu_frame_n": s.gpu_frame_n,
+                                    "cpu_frame_n": s.cpu_frame_n,
+                                    "registered_n": s.gpu_registered_n,
+                                    "completed_n": s.gpu_completed_n,
+                                    "dropped_n": s.gpu_dropped_n,
+                                    "pending_n": s.gpu_pending_n,
+                                    "oldest_pending_age_ms": s.gpu_oldest_pending_age_ms,
+                                    "stable_completed_n": s.gpu_stable_completed_n,
+                                    "transition_completed_n": s.gpu_transition_completed_n,
+                                    "completion_latency_n": s.gpu_completion_latency_n,
+                                    "completion_latency_ns": s.gpu_completion_latency_ns,
+                                    "completion_latency_buckets": s.gpu_completion_latency_buckets,
+                                    "stable_completion_intervals": s.gpu_stable_completion_intervals,
+                                    "stable_completion_interval_ns": s.gpu_stable_completion_interval_ns,
+                                    "stable_completion_interval_buckets": s.gpu_stable_completion_interval_buckets,
+                                    "transition_completion_intervals": s.gpu_transition_completion_intervals,
+                                    "transition_completion_interval_ns": s.gpu_transition_completion_interval_ns,
+                                    "transition_completion_interval_buckets": s.gpu_transition_completion_interval_buckets,
+                                    "interval_bound_ms": host::render_profile::INTERVAL_BOUNDS_MS,
+                                    "registration_complete": host::render_profile::gpu_registration_complete(&s),
+                                    "timestamp_semantics": "callback_delivery_cpu_after_prior_submit_not_hw_gpu_or_scanout",
+                                    "latency_means": "conservative_submit_or_register_to_callback_delivery_upper_bound",
+                                    "interval_means": "observed_callback_delivery_cadence_same_mode_only",
+                                });
+                                row
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or(serde_json::Value::Null);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
