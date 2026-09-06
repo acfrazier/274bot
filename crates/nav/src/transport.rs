@@ -14,7 +14,7 @@
 //! agility shortcuts port `resolveShortcutPlacements`. Doors derive two
 //! edges per jm2 placement — `dir` and its opposite — from the door
 //! configs + the baked collision (`at` = the loc tile, `to` each
-//! direction's far-side walk-out, `open_loc_id` from the config's
+//! direction's adjacent standable tile, `open_loc_id` from the config's
 //! `next_loc_stage`). Boats are
 //! an explicit 2004 route table (dock NPC tile → destination ship deck,
 //! then a loc-backed Cross on the boat-side `_gangplank_disembark`),
@@ -131,7 +131,7 @@ pub struct TransportGraph {
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
 /// shortcuts from `scripts/skill_agility/scripts/*.rs2`. Placements and
 /// destinations that resolve emit an edge — doors emit two per placement
-/// (`dir` and its opposite, each with its own far-side walk-out); `at` the
+/// (`dir` and its opposite, each with an adjacent standable destination); `at` the
 /// loc tile, `to` the resolved landing (no walkability filter — the router
 /// applies the collision map). Boats, gnome gliders, the Rune Mysteries
 /// essence-mine wizards and Elkoy's maze escorts are the explicit 2004
@@ -504,9 +504,8 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 /// the jm2 LOC placements, two edges per placement: `at` = the door loc
 /// tile, `dir` =
 /// the placement angle's wall orientation and its opposite (a door is
-/// bidirectional), `to` = each direction's far-side tile (walking outward
-/// from `at` in the wall's far direction until
-/// [`WorldCollision::standable`] accepts one), `open_loc_id` = the
+/// bidirectional), `to` = each direction's adjacent tile when
+/// [`WorldCollision::standable`] accepts it (otherwise no edge), `open_loc_id` = the
 /// config's `param=next_loc_stage` open leaf. `option` 1 is the `Open` op;
 /// each `to` is that crossing's arrival side, never a snap. Quest-gated
 /// doors (`scripts/quests/*/configs/*.loc` and
@@ -2879,7 +2878,7 @@ const SHANTAY_SOUTH_TICKS: i32 = 2;
 /// (`op1=Open`) once their config's name-keyed blocks resolve through the
 /// loc id map ([`parse_door_config_ids`]), and derive their two
 /// crossings like every door: `at` the placement tile (m51_50 (4,27)/
-/// (4,28) = (3268,3227)/(3268,3228)), `to` the far-side walk-out,
+/// (4,28) = (3268,3227)/(3268,3228)), `to` the adjacent standable tile,
 /// `open_loc_id` the config's `next_loc_stage` leaf (loc 1562/1563),
 /// `item_req` the 10-coin toll. The Shantay henge doorway (loc 4031,
 /// `op1=Go-through`) derives two `TransportKind::Door` edges, one per
@@ -4090,6 +4089,40 @@ mod tests {
     }
 
     #[test]
+    fn web_far_side_preserves_multi_tile_footprint_crossing() {
+        let mut flags = vec![0u32; 3 * 4];
+        flags[1] = 0x100; // Adjacent scenery remains part of the web walk-out.
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 3,
+            height: 1,
+            walk,
+            blocked,
+            flags: Some(flags),
+        };
+        let at = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        assert_eq!(
+            web_far_side(at, DoorDir::E, &collision),
+            Some(WorldTile {
+                x: 2,
+                z: 0,
+                level: 0
+            })
+        );
+        assert_eq!(door_far_side(at, DoorDir::E, &collision), None);
+        assert_eq!(web_far_side(at, DoorDir::W, &collision), None);
+    }
+
+    #[test]
     fn derive_transports_door_edge_at_dir_to_open_loc_id() {
         let fx = Fixture::new();
         fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
@@ -4099,7 +4132,7 @@ mod tests {
         );
         // m44_53 local (0,46) = absolute (2816,3438). Wall 980 (angle
         // SOUTH) sits on the door's south approach tile (2816,3437), so
-        // the south-bound far-side walk-out stops on that tile — its W_S
+        // the south-bound adjacent destination accepts that tile — its W_S
         // face flag stands (face flags never disqualify). The closed
         // door's own angle-NORTH stamp puts W_S on (2816,3439), which also
         // stands.
@@ -4127,9 +4160,15 @@ mod tests {
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
             .collect();
         // Two edges per placement: `dir` and its opposite, each with its
-        // own far side. `at` is the door loc tile, `to` the far side
-        // walked out to standability.
+        // own adjacent standable destination. `at` is the door loc tile.
         assert_eq!(doors.len(), 2);
+        for edge in &doors {
+            assert_eq!(edge.at.level, edge.to.level);
+            assert_eq!(
+                (edge.at.x - edge.to.x).abs() + (edge.at.z - edge.to.z).abs(),
+                1
+            );
+        }
         let n = doors
             .iter()
             .find(|e| e.dir == Some(DoorDir::N))
@@ -4160,7 +4199,7 @@ mod tests {
                 level: 0
             }
         );
-        // The south-bound walk-out stops on wall 980's own tile: its W_S
+        // The south-bound destination is wall 980's own tile: its W_S
         // face flag stands (the wall's face flag never disqualifies).
         assert_eq!(
             s.to,
@@ -4689,7 +4728,7 @@ switch_coord (loc_coord) {
 
         // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): two edges
         // per placement — `at` the loc tile, `dir` N and S, each `to` the
-        // far side walked out to standability, `Open` op 1, one tick.
+        // adjacent standable destination, `Open` op 1, one tick.
         let doors: Vec<_> = graph
             .edges
             .iter()
