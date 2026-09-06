@@ -5,6 +5,7 @@ pub mod cadence;
 pub mod login_queue;
 mod random;
 pub mod render_profile;
+pub mod responsiveness_profile;
 mod slot;
 mod slot_io;
 
@@ -230,6 +231,9 @@ impl Host {
             lamp_auto,
             lamp_skill,
             render_prof: render_profile::Local::new(render_profile::slot_id_for(username)),
+            resp_prof: responsiveness_profile::Local::new(responsiveness_profile::slot_id_for(
+                username,
+            )),
             ..SlotLoop::new()
         };
         let mut run_sends = 0u32;
@@ -347,6 +351,11 @@ impl Host {
         if observe_ns > slot.observe_max_ns {
             slot.observe_max_ns = observe_ns;
         }
+        // Responsiveness: pair host-play script dispatch/cancel bridge events
+        // stamped during observe with decode edges from prior after_drain.
+        if let Some(resp) = slot.resp_prof.as_mut() {
+            resp.drain_bridge();
+        }
         if debug_enabled() {
             if let Some(us) = debug_observe_hitch_us(observe_ns / 1000) {
                 eprintln!(
@@ -386,8 +395,9 @@ impl Host {
         run_sends: &mut u32,
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
+        let mut input_actionable = false;
         if let Some(inp) = input {
-            inp.drain(&mut client.shell);
+            input_actionable = inp.drain_with_actionable_flag(&mut client.shell);
         }
         client.shell.latch_click();
         let t_loop = std::time::Instant::now();
@@ -513,6 +523,13 @@ impl Host {
         }
         slot.log_n = slot.log_n.wrapping_add(1);
         let result = slot.after_drain(client);
+        // Responsiveness: PLAYER_INFO edge is the decoded update that drives
+        // script tick. Stamp here; host-play pairs on the next observe dispatch.
+        if result.player_info {
+            if let Some(resp) = slot.resp_prof.as_mut() {
+                resp.note_decode_edge(Instant::now());
+            }
+        }
         // Random-event guardian (spec pump placement): the snapshot is
         // fresh after the drain. Sync the live toggle from the shared
         // atomic (panel/TUI may flip it mid-session) onto the cloned
@@ -588,6 +605,16 @@ impl Host {
             }
             if let Some(mailbox) = mailbox {
                 mailbox.store(frame);
+                // Panel input→present: bind outstanding focused inputs to
+                // this mailbox generation when actionable input drained.
+                if input_actionable {
+                    if let Some(resp) = slot.resp_prof.as_ref() {
+                        responsiveness_profile::bind_input_to_mailbox_gen(
+                            resp.slot_id(),
+                            mailbox.generation(),
+                        );
+                    }
+                }
             }
         }
         *run_sends = slot.run_sends;
@@ -814,6 +841,8 @@ struct SlotLoop {
     dbg_at: Option<Instant>,
     /// Opt-in renderer residency/paint counters; `None` while profiling off.
     render_prof: Option<render_profile::Local>,
+    /// Opt-in decode→script / input latency counters; `None` while off.
+    resp_prof: Option<responsiveness_profile::Local>,
 }
 
 impl SlotLoop {
@@ -845,6 +874,7 @@ impl SlotLoop {
             dbg: DebugSnap::default(),
             dbg_at: None,
             render_prof: None,
+            resp_prof: None,
         }
     }
 

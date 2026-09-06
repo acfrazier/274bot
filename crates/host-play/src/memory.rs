@@ -383,6 +383,19 @@ impl Run {
                 host::render_profile::enable_gpu_completion();
             }
         }
+        if std::env::var("BOT_RESPONSIVENESS_PROFILE").as_deref() == Ok("1") {
+            host::responsiveness_profile::enable();
+            if frontend == "panel" {
+                host::responsiveness_profile::set_input_surface(
+                    host::responsiveness_profile::InputSurface::Panel,
+                );
+            } else if frontend == "tui" {
+                // Headless memory harness has no terminal.draw path.
+                host::responsiveness_profile::set_input_surface(
+                    host::responsiveness_profile::InputSurface::TuiHeadless,
+                );
+            }
+        }
         use vault::{Profile, ProfileSettings, Vault};
 
         let names = crate::mint_live_names(config.n);
@@ -821,6 +834,69 @@ impl Run {
                                     "interval_means": "observed_callback_delivery_cadence_same_mode_epoch_only",
                                 });
                                 row
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or(serde_json::Value::Null);
+            // Decode→script dispatch and focused-input→UI endpoint latencies.
+            // Null while profiling off. Input endpoint is surface-specific;
+            // display scanout remains explicitly unavailable on panel.
+            value["responsiveness_profile"] = host::responsiveness_profile::read()
+                .map(|slots| {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    let ack = host::responsiveness_profile::visible_ack_status();
+                    let surface = host::responsiveness_profile::input_surface().as_str();
+                    serde_json::Value::Array(
+                        slots
+                            .into_iter()
+                            .map(|s| {
+                                let age = if s.updated_ms == 0 {
+                                    serde_json::Value::Null
+                                } else {
+                                    serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
+                                };
+                                serde_json::json!({
+                                    "slot_id": s.slot_id,
+                                    "generation": s.generation,
+                                    "updated_ms": s.updated_ms,
+                                    "sample_age_ms": age,
+                                    "ended": s.ended,
+                                    "input_surface": surface,
+                                    "decode_edge_n": s.decode_edge_n,
+                                    "dispatch_n": s.dispatch_n,
+                                    "decode_canceled_n": s.decode_canceled_n,
+                                    "decode_lost_n": s.decode_lost_n,
+                                    "decode_dropped_n": s.decode_dropped_n,
+                                    "decode_pending_n": s.decode_pending_n,
+                                    "decode_latency_n": s.decode_latency_n,
+                                    "decode_latency_ns": s.decode_latency_ns,
+                                    "decode_latency_buckets": s.decode_latency_buckets,
+                                    "decode_p99_upper_bound_ms": host::responsiveness_profile::p99_upper_bound_ms(&s.decode_latency_buckets),
+                                    "decode_coverage_complete": host::responsiveness_profile::decode_coverage_complete(&s),
+                                    "decode_means": "PLAYER_INFO_after_drain_to_on_game_tick_entry",
+                                    "input_start_n": s.input_start_n,
+                                    "input_complete_n": s.input_complete_n,
+                                    "input_canceled_n": s.input_canceled_n,
+                                    "input_lost_n": s.input_lost_n,
+                                    "input_dropped_n": s.input_dropped_n,
+                                    "input_pending_n": s.input_pending_n,
+                                    "input_latency_n": s.input_latency_n,
+                                    "input_latency_ns": s.input_latency_ns,
+                                    "input_latency_buckets": s.input_latency_buckets,
+                                    "input_p99_upper_bound_ms": host::responsiveness_profile::p99_upper_bound_ms(&s.input_latency_buckets),
+                                    "input_coverage_complete": host::responsiveness_profile::input_coverage_complete(&s),
+                                    "latency_bound_ms": host::responsiveness_profile::LATENCY_BOUNDS_MS,
+                                    "visible_ack": {
+                                        "available": ack.available,
+                                        "endpoint": ack.endpoint,
+                                        "missing_capability": ack.missing_capability,
+                                        "means": ack.means,
+                                    },
+                                })
                             })
                             .collect(),
                     )

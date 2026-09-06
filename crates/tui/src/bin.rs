@@ -1248,6 +1248,9 @@ impl TuiSession {
 fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
+        host::responsiveness_profile::set_input_surface(
+            host::responsiveness_profile::InputSurface::TuiHeadless,
+        );
         loop {
             session.pump(&mut app);
             if let Some(code) = session.live_status() {
@@ -1256,6 +1259,9 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+    host::responsiveness_profile::set_input_surface(
+        host::responsiveness_profile::InputSurface::Tui,
+    );
     let mut stdout = std::io::stdout();
     crossterm::execute!(
         stdout,
@@ -1281,10 +1287,23 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
                 app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
             })
             .map_err(|e| e.to_string())?;
+        if let Some(name) = app.focused_name() {
+            host::responsiveness_profile::note_tui_draw_flush(
+                host::responsiveness_profile::slot_id_for(&name),
+                Instant::now(),
+            );
+        }
         }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
+                    if let Some(name) = app.focused_name() {
+                        let _ = host::responsiveness_profile::note_input_start(
+                            host::responsiveness_profile::slot_id_for(&name),
+                            Instant::now(),
+                            0,
+                        );
+                    }
                     if app.params_state.open {
                         app.params_on_key(&mut session.script_settings, &session.loadouts, k);
                     } else if app.loadouts_on_key(&mut session.loadouts, k) {
@@ -1295,6 +1314,13 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
                 }
                 Event::Mouse(m) => {
                     if let MouseEventKind::Down(_) = m.kind {
+                        if let Some(name) = app.focused_name() {
+                            let _ = host::responsiveness_profile::note_input_start(
+                                host::responsiveness_profile::slot_id_for(&name),
+                                Instant::now(),
+                                0,
+                            );
+                        }
                         let action = app.on_click(m.column, m.row);
                         dispatch(&mut session, &mut app, action);
                     }

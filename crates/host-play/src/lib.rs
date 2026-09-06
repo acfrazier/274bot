@@ -652,6 +652,10 @@ fn script_observe(
 ) -> bool {
     let mut wrote = false;
     let mut interact = Vec::new();
+    // Responsiveness: decode→dispatch pairs PLAYER_INFO edges to on_game_tick
+    // entry (or cancel when the edge will not dispatch).
+    let mut resp_dispatched = false;
+    let mut resp_cancel_edge = false;
     if let Some(slot) = script_slot(scripts, name) {
         let mut slot = slot.lock().unwrap();
         slot.on_is_up(up);
@@ -712,6 +716,9 @@ fn script_observe(
                         obj_names,
                     });
                     wrote = true;
+                    resp_dispatched = true;
+                } else {
+                    resp_cancel_edge = true;
                 }
             } else {
                 // One shared arm for both hooks: `walk_with` carries the
@@ -763,7 +770,11 @@ fn script_observe(
                     obj_names,
                 });
                 wrote = true;
+                resp_dispatched = true;
             }
+        } else if tick_edge {
+            // Idle/Paused/Stopping/no Running instance: edge will not dispatch.
+            resp_cancel_edge = true;
         }
         emit_script_debug_logs(&mut slot, name);
         // Fold the isolate's forwarded shim interact requests (queued
@@ -771,6 +782,19 @@ fn script_observe(
         // a frame after the tick that produced them, tick edge or not —
         // and dispatch them below.
         interact = slot.drain_interacts();
+    } else if tick_edge {
+        // No script slot: PLAYER_INFO edge still exists at host; cancel for coverage.
+        resp_cancel_edge = true;
+    }
+    if resp_dispatched {
+        host::responsiveness_profile::note_script_dispatch_global(
+            host::responsiveness_profile::slot_id_for(name),
+            Instant::now(),
+        );
+    } else if resp_cancel_edge {
+        host::responsiveness_profile::note_script_canceled_global(
+            host::responsiveness_profile::slot_id_for(name),
+        );
     }
     // Dispatch the shim's interact requests through the slot's own Driver
     // (open/deposit/withdraw) and the shared walk arm (bank-stand walks

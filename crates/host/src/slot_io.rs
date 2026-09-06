@@ -139,21 +139,37 @@ impl SlotInput {
         *self.rx.lock().unwrap() = None;
     }
     pub fn drain(&self, shell: &mut GameShell) {
+        let _ = self.drain_with_actionable_flag(shell);
+    }
+
+    /// Drain capture events into the shell. Returns true when at least one
+    /// actionable event (`Down` or key-down) was applied this call.
+    pub fn drain_with_actionable_flag(&self, shell: &mut GameShell) -> bool {
         if !self.enabled.load(Ordering::Relaxed) {
-            return;
+            return false;
         }
         let mut g = self.rx.lock().unwrap();
         let Some(rx) = g.as_mut() else {
-            return;
+            return false;
         };
+        let mut actionable = false;
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 InputEv::Move { x, y } => shell.apply_mouse_move(x, y),
-                InputEv::Down { button, x, y } => shell.apply_mouse_down(button, x, y),
+                InputEv::Down { button, x, y } => {
+                    actionable = true;
+                    shell.apply_mouse_down(button, x, y);
+                }
                 InputEv::Up => shell.apply_mouse_up(),
-                InputEv::Key { down, ch } => shell.apply_key(down, 0, ch),
+                InputEv::Key { down, ch } => {
+                    if down {
+                        actionable = true;
+                    }
+                    shell.apply_key(down, 0, ch);
+                }
             }
         }
+        actionable
     }
 }
 

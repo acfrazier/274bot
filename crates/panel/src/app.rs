@@ -47,7 +47,7 @@ use crate::resource::{
 };
 use crate::session::{
     debug_dest_cheats, debug_main_buttons, debug_maxme_cheats, script_active, script_pause_enabled,
-    script_status_text, script_stop_enabled, stream_capture, Session, PROCESS,
+    script_status_text, script_stop_enabled, stream_capture_for, Session, PROCESS,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
@@ -1109,8 +1109,15 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 if let Some(view) = state.game_view.as_mut() {
                     view.present(gpu, frame);
                 }
+                if !name.is_empty() && gen > 0 {
+                    host::responsiveness_profile::note_panel_present(
+                        host::responsiveness_profile::slot_id_for(&name),
+                        gen,
+                        Instant::now(),
+                    );
+                }
             }
-            state.last_upload = Some((name, gen));
+            state.last_upload = Some((name.clone(), gen));
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
@@ -1131,7 +1138,8 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if capture && ui.is_item_hovered() {
             let mouse = ui.io().mouse_pos();
             let min = ui.item_rect_min();
-            stream_capture(
+            stream_capture_for(
+                Some(name.as_str()),
                 &state.session.capture_tx,
                 mouse[0] - min[0],
                 mouse[1] - min[1],
@@ -1211,7 +1219,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             if is_focused && capture && ui.is_item_hovered() {
                 let mouse = ui.io().mouse_pos();
                 let min = ui.item_rect_min();
-                stream_capture(
+                stream_capture_for(
+                    Some(name.as_str()),
                     &state.session.capture_tx,
                     mouse[0] - min[0],
                     mouse[1] - min[1],
@@ -3620,8 +3629,21 @@ fn cell_body(
         // `take` moves the stored frame out; `present` routes it: the
         // `PixMap` (CPU) arm uploads into the tile's owned texture, the
         // `Texture` (GPU) arm binds the client's frame view directly.
+        let gen = state
+            .session
+            .slots
+            .get(name)
+            .map(|s| s.pixels.generation())
+            .unwrap_or(0);
         if let Some(frame) = state.session.slots.get(name).and_then(|s| s.pixels.take()) {
             tv.view.present(gpu, frame);
+            if gen > 0 {
+                host::responsiveness_profile::note_panel_present(
+                    host::responsiveness_profile::slot_id_for(name),
+                    gen,
+                    Instant::now(),
+                );
+            }
         }
     }
     ui.image(tv.view.tex_id, size);
@@ -4007,6 +4029,9 @@ fn arm_scenario_shots(state: &mut PanelState) {
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
 /// exit 0).
 pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
+    host::responsiveness_profile::set_input_surface(
+        host::responsiveness_profile::InputSurface::Panel,
+    );
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();

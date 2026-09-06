@@ -103,6 +103,21 @@ class RunDiagnosticCli(unittest.TestCase):
         help_proc = run_cli("--help")
         self.assertIn("--gpu-completion-profile", help_proc.stdout)
 
+    def test_responsiveness_profile_flag_independent_and_scrubbed(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a = p.parse_args(["panel", "1", "idle", "--responsiveness-profile"])
+        rd.validate_args(a, p)
+        self.assertTrue(a.responsiveness_profile)
+        a2 = p.parse_args(["tui", "1", "idle", "--responsiveness-profile"])
+        rd.validate_args(a2, p)
+        self.assertTrue(a2.responsiveness_profile)
+        a3 = p.parse_args(["panel", "1", "idle"])
+        self.assertFalse(a3.responsiveness_profile)
+        help_proc = run_cli("--help")
+        self.assertIn("--responsiveness-profile", help_proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -345,12 +345,26 @@ pub fn combo_index(focused: Option<&str>, names: &[String]) -> Option<usize> {
 /// when the capture channel has been dropped (capture off) or the point is
 /// outside the Image.
 pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, h: f32) {
+    maybe_send_click_for(None, tx, lx, ly, w, h);
+}
+
+/// Like [`maybe_send_click`], optionally stamping responsiveness input start
+/// for the focused slot when `slot_name` is provided.
+pub fn maybe_send_click_for(
+    slot_name: Option<&str>,
+    tx: &Option<Sender<InputEv>>,
+    lx: f32,
+    ly: f32,
+    w: f32,
+    h: f32,
+) {
     let Some(tx) = tx else {
         return;
     };
     let Some((x, y)) = map_image_to_applet(lx, ly, w, h) else {
         return;
     };
+    note_panel_input_start(slot_name);
     let _ = tx.send(InputEv::Down { button: 1, x, y });
 }
 
@@ -371,9 +385,38 @@ pub fn stream_capture(
     right_up: bool,
     keys: &[(bool, i32)],
 ) {
+    stream_capture_for(
+        None, tx, lx, ly, w, h, left_down, right_down, left_up, right_up, keys,
+    );
+}
+
+/// Like [`stream_capture`], optionally stamping responsiveness input start
+/// for actionable button/key edges when `slot_name` is provided.
+#[allow(clippy::too_many_arguments)]
+pub fn stream_capture_for(
+    slot_name: Option<&str>,
+    tx: &Option<Sender<InputEv>>,
+    lx: f32,
+    ly: f32,
+    w: f32,
+    h: f32,
+    left_down: bool,
+    right_down: bool,
+    left_up: bool,
+    right_up: bool,
+    keys: &[(bool, i32)],
+) {
     let Some(tx) = tx else {
         return;
     };
+    let actionable = left_down
+        || right_down
+        || left_up
+        || right_up
+        || keys.iter().any(|(down, _)| *down);
+    if actionable {
+        note_panel_input_start(slot_name);
+    }
     if let Some((x, y)) = map_image_to_applet(lx, ly, w, h) {
         let _ = tx.send(InputEv::Move { x, y });
         if left_down {
@@ -389,6 +432,17 @@ pub fn stream_capture(
     for &(down, ch) in keys {
         let _ = tx.send(InputEv::Key { down, ch });
     }
+}
+
+fn note_panel_input_start(slot_name: Option<&str>) {
+    let Some(name) = slot_name.filter(|n| !n.is_empty()) else {
+        return;
+    };
+    let _ = host::responsiveness_profile::note_input_start(
+        host::responsiveness_profile::slot_id_for(name),
+        Instant::now(),
+        0,
+    );
 }
 
 /// rs2b0t disable rule: a script is active while it holds the slot, so
