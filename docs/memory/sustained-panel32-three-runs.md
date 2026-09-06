@@ -1,5 +1,11 @@
 # Sustained panel32: three fresh processes — 2026-09-06
 
+**Ownership correction:** these runs include a separately decoded navigation pack
+per benchmark scenario runner. Their functional qualifications and recorded RSS
+remain valid, but the RSS includes substantial harness overhead. Correct that
+ownership before using this configuration as a production-memory reference. See
+[allocation ownership](allocation-ownership.md).
+
 All three runs qualified. The third maintained 32 ready and active bots for the
 600s observation; each gained 45–79 steals. Final statuses were pickpocketing,
 eating while stunned, or waiting out stun, with no banking status or script

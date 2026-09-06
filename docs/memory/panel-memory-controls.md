@@ -1,5 +1,11 @@
 # Panel memory controls — 2026-09-06
 
+**Ownership correction:** subsequent native allocation profiling found a separate
+navigation pack retained by every benchmark scenario runner (about 70.4 MiB
+each). The slopes below include that harness overhead and must not be treated as
+production client costs. Numbers remain historical measurements of the recorded
+configuration. See [allocation ownership](allocation-ownership.md).
+
 Three new controls passed: one active Thiever, 32 seeded-idle clients, and one
 seeded-idle client. Each used a fresh process and accounts, one drawing slot,
 120s warmup, 600s observation and 60s teardown. All clients stayed ready at
