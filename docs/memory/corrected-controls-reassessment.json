@@ -1,0 +1,1966 @@
+{
+  "runs": [
+    {
+      "metadata": {
+        "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "seeded-idle",
+        "warmup_s": 120,
+        "observe_s": 600,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "6a25d115de95f0b2fa73ebe2ccb8cd2487b4eda8",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T122440Z_panel_n32_seeded-idle",
+        "started_unix": 1788697480.4641778,
+        "pid": 60476,
+        "exit_code": 0,
+        "ended_unix": 1788698394.69138
+      },
+      "summary": {
+        "run": "20260906T122440Z_panel_n32_seeded-idle",
+        "qualification": {
+          "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T122440Z_panel_n32_seeded-idle",
+          "n": 32,
+          "counting": false,
+          "diagnostics": false,
+          "qualified": true,
+          "errors": [],
+          "observation_s": 598.0948809170001,
+          "cpu_seconds": 194.09787599999999,
+          "cpu_cores": 0.3245268973083481,
+          "client_ticks_per_slot_s": 3.18908430895715,
+          "median_resident_bytes": 1237909504.0,
+          "steal_gains": {},
+          "diagnostic_only": true
+        },
+        "meta": {
+          "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+          "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+          "frontend": "panel",
+          "n": 32,
+          "workload": "seeded-idle",
+          "warmup_s": 120,
+          "observe_s": 600,
+          "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+          "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+          "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+          "diagnostic_only": true,
+          "scheduling_profile": true,
+          "diagnostic_sidecar": false,
+          "nav_captures": false,
+          "single_renderer": true,
+          "render_policy": "fixed-one",
+          "terminal": false,
+          "terminal_size": null,
+          "debug": false,
+          "sustain": true,
+          "stack_logging": false,
+          "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+          "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+          "host_commit": "6a25d115de95f0b2fa73ebe2ccb8cd2487b4eda8",
+          "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+          "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+          "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T122440Z_panel_n32_seeded-idle",
+          "started_unix": 1788697480.4641778,
+          "pid": 60476,
+          "exit_code": 0,
+          "ended_unix": 1788698394.69138
+        },
+        "groups": [
+          {
+            "drawing": false,
+            "cycles": 0,
+            "work_ns": 0,
+            "requested_sleep_ns": 0,
+            "actual_sleep_ns": 0,
+            "work_overruns": 0,
+            "intervals": 0,
+            "interval_ns": 0,
+            "work_mean_ms": null,
+            "requested_sleep_mean_ms": null,
+            "actual_sleep_mean_ms": null,
+            "interval_mean_ms": null
+          },
+          {
+            "drawing": true,
+            "cycles": 25800,
+            "work_ns": 146574407610,
+            "requested_sleep_ns": 369425592390,
+            "actual_sleep_ns": 451746983078,
+            "work_overruns": 0,
+            "intervals": 25800,
+            "interval_ns": 598352704083,
+            "work_mean_ms": 5.681178589534883,
+            "requested_sleep_mean_ms": 14.318821410465116,
+            "actual_sleep_mean_ms": 17.50957298751938,
+            "interval_mean_ms": 23.191965274534883
+          }
+        ],
+        "memory": {
+          "resident_bytes": {
+            "first": 1235501056,
+            "last": 1242251264,
+            "min": 1234386944,
+            "median": 1237909504.0,
+            "p95": 1243119616,
+            "max": 1243283456
+          },
+          "peak_resident_bytes": {
+            "first": 1238040576,
+            "last": 1244282880,
+            "min": 1238040576,
+            "median": 1239744512.0,
+            "p95": 1244282880,
+            "max": 1244282880
+          },
+          "v8_used_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "v8_total_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "snapshot_inflight_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "snapshot_inflight_capacity": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "gpu_tracked_bytes": {
+            "first": 18292776,
+            "last": 18292776,
+            "min": 18292776,
+            "median": 18292776.0,
+            "p95": 18292776,
+            "max": 18292776
+          },
+          "gpu_buffer_bytes": {
+            "first": 1048784,
+            "last": 1048784,
+            "min": 1048784,
+            "median": 1048784.0,
+            "p95": 1048784,
+            "max": 1048784
+          },
+          "gpu_texture_bytes": {
+            "first": 17243992,
+            "last": 17243992,
+            "min": 17243992,
+            "median": 17243992.0,
+            "p95": 17243992,
+            "max": 17243992
+          }
+        },
+        "resident_first_minute_median": 1236451328.0,
+        "resident_last_minute_median": 1243078656.0,
+        "teardown": {
+          "resident_bytes": 1243217920,
+          "peak_resident_bytes": 1244282880,
+          "ready": 32,
+          "active": 0,
+          "v8_live_isolates": 0,
+          "v8_used_bytes": 0,
+          "snapshot_inflight_bytes": 0,
+          "snapshot_inflight_capacity": 0,
+          "gpu_tracked_bytes": 18292776
+        },
+        "resident_last_teardown_30s_median": 1242284032.0,
+        "peak_resident_whole_run": 1244282880,
+        "v8_sampled_isolates_min": 0,
+        "v8_sample_age_max_ms": null,
+        "client_tick_mean_ms": 4.361420274166067,
+        "script_tick_mean_ms": null,
+        "ui_frame_mean_ms": 0.3893236526161778,
+        "final_statuses": {
+          "liveec3c0_0": null,
+          "liveec3c0_1": null,
+          "liveec3c0_2": null,
+          "liveec3c0_3": null,
+          "liveec3c0_4": null,
+          "liveec3c0_5": null,
+          "liveec3c0_6": null,
+          "liveec3c0_7": null,
+          "liveec3c0_8": null,
+          "liveec3c0_9": null,
+          "liveec3c0_10": null,
+          "liveec3c0_11": null,
+          "liveec3c0_12": null,
+          "liveec3c0_13": null,
+          "liveec3c0_14": null,
+          "liveec3c0_15": null,
+          "liveec3c0_16": null,
+          "liveec3c0_17": null,
+          "liveec3c0_18": null,
+          "liveec3c0_19": null,
+          "liveec3c0_20": null,
+          "liveec3c0_21": null,
+          "liveec3c0_22": null,
+          "liveec3c0_23": null,
+          "liveec3c0_24": null,
+          "liveec3c0_25": null,
+          "liveec3c0_26": null,
+          "liveec3c0_27": null,
+          "liveec3c0_28": null,
+          "liveec3c0_29": null,
+          "liveec3c0_30": null,
+          "liveec3c0_31": null
+        }
+      }
+    },
+    {
+      "metadata": {
+        "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "active",
+        "warmup_s": 120,
+        "observe_s": 600,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "6a25d115de95f0b2fa73ebe2ccb8cd2487b4eda8",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T124019Z_panel_n32_active",
+        "started_unix": 1788698419.79559,
+        "pid": 61398,
+        "exit_code": 0,
+        "ended_unix": 1788699345.136578
+      },
+      "summary": {
+        "run": "20260906T124019Z_panel_n32_active",
+        "qualification": {
+          "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T124019Z_panel_n32_active",
+          "n": 32,
+          "counting": false,
+          "diagnostics": false,
+          "qualified": true,
+          "errors": [],
+          "observation_s": 599.332404666,
+          "cpu_seconds": 495.332916,
+          "cpu_cores": 0.8264744441376276,
+          "client_ticks_per_slot_s": 41.18551292709755,
+          "median_resident_bytes": 1697284096.0,
+          "steal_gains": {
+            "liveefd60_0": 76,
+            "liveefd60_1": 66,
+            "liveefd60_2": 53,
+            "liveefd60_3": 59,
+            "liveefd60_4": 60,
+            "liveefd60_5": 62,
+            "liveefd60_6": 69,
+            "liveefd60_7": 67,
+            "liveefd60_8": 69,
+            "liveefd60_9": 65,
+            "liveefd60_10": 68,
+            "liveefd60_11": 48,
+            "liveefd60_12": 74,
+            "liveefd60_13": 68,
+            "liveefd60_14": 65,
+            "liveefd60_15": 92,
+            "liveefd60_16": 61,
+            "liveefd60_17": 74,
+            "liveefd60_18": 82,
+            "liveefd60_19": 63,
+            "liveefd60_20": 74,
+            "liveefd60_21": 58,
+            "liveefd60_22": 80,
+            "liveefd60_23": 71,
+            "liveefd60_24": 76,
+            "liveefd60_25": 61,
+            "liveefd60_26": 91,
+            "liveefd60_27": 50,
+            "liveefd60_28": 68,
+            "liveefd60_29": 57,
+            "liveefd60_30": 69,
+            "liveefd60_31": 72
+          },
+          "diagnostic_only": true
+        },
+        "meta": {
+          "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+          "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+          "frontend": "panel",
+          "n": 32,
+          "workload": "active",
+          "warmup_s": 120,
+          "observe_s": 600,
+          "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+          "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+          "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+          "diagnostic_only": true,
+          "scheduling_profile": true,
+          "diagnostic_sidecar": false,
+          "nav_captures": false,
+          "single_renderer": true,
+          "render_policy": "fixed-one",
+          "terminal": false,
+          "terminal_size": null,
+          "debug": false,
+          "sustain": true,
+          "stack_logging": false,
+          "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+          "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+          "host_commit": "6a25d115de95f0b2fa73ebe2ccb8cd2487b4eda8",
+          "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+          "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+          "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T124019Z_panel_n32_active",
+          "started_unix": 1788698419.79559,
+          "pid": 61398,
+          "exit_code": 0,
+          "ended_unix": 1788699345.136578
+        },
+        "groups": [
+          {
+            "drawing": false,
+            "cycles": 764550,
+            "work_ns": 542226932303,
+            "requested_sleep_ns": 14748773067697,
+            "actual_sleep_ns": 18039383004829,
+            "work_overruns": 0,
+            "intervals": 764550,
+            "interval_ns": 18582102963376,
+            "work_mean_ms": 0.7092105582407953,
+            "requested_sleep_mean_ms": 19.290789441759205,
+            "actual_sleep_mean_ms": 23.594772094472564,
+            "interval_mean_ms": 24.304627510791967
+          },
+          {
+            "drawing": true,
+            "cycles": 25350,
+            "work_ns": 129481218811,
+            "requested_sleep_ns": 377518781189,
+            "actual_sleep_ns": 469629976817,
+            "work_overruns": 0,
+            "intervals": 25350,
+            "interval_ns": 599126721833,
+            "work_mean_ms": 5.107740387021696,
+            "requested_sleep_mean_ms": 14.892259612978304,
+            "actual_sleep_mean_ms": 18.525837349783036,
+            "interval_mean_ms": 23.634190210374754
+          }
+        ],
+        "memory": {
+          "resident_bytes": {
+            "first": 1831698432,
+            "last": 1760018432,
+            "min": 1640792064,
+            "median": 1697284096.0,
+            "p95": 1830633472,
+            "max": 1833451520
+          },
+          "peak_resident_bytes": {
+            "first": 1834287104,
+            "last": 1834434560,
+            "min": 1834287104,
+            "median": 1834434560.0,
+            "p95": 1834434560,
+            "max": 1834434560
+          },
+          "v8_used_bytes": {
+            "first": 217227680,
+            "last": 228013704,
+            "min": 122223632,
+            "median": 161638360.0,
+            "p95": 223757808,
+            "max": 231351568
+          },
+          "v8_total_bytes": {
+            "first": 368312320,
+            "last": 260046848,
+            "min": 168296448,
+            "median": 219414528.0,
+            "p95": 366477312,
+            "max": 378798080
+          },
+          "snapshot_inflight_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 303320
+          },
+          "snapshot_inflight_capacity": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 303320
+          },
+          "gpu_tracked_bytes": {
+            "first": 18433784,
+            "last": 18434720,
+            "min": 18433784,
+            "median": 18433784.0,
+            "p95": 18434720,
+            "max": 18434720
+          },
+          "gpu_buffer_bytes": {
+            "first": 1189792,
+            "last": 1190728,
+            "min": 1189792,
+            "median": 1189792.0,
+            "p95": 1190728,
+            "max": 1190728
+          },
+          "gpu_texture_bytes": {
+            "first": 17243992,
+            "last": 17243992,
+            "min": 17243992,
+            "median": 17243992.0,
+            "p95": 17243992,
+            "max": 17243992
+          }
+        },
+        "resident_first_minute_median": 1830576128.0,
+        "resident_last_minute_median": 1751588864.0,
+        "teardown": {
+          "resident_bytes": 1488371712,
+          "peak_resident_bytes": 1834434560,
+          "ready": 32,
+          "active": 0,
+          "v8_live_isolates": 0,
+          "v8_used_bytes": 0,
+          "snapshot_inflight_bytes": 0,
+          "snapshot_inflight_capacity": 0,
+          "gpu_tracked_bytes": 18434720
+        },
+        "resident_last_teardown_30s_median": 1488388096.0,
+        "peak_resident_whole_run": 1834434560,
+        "v8_sampled_isolates_min": 32,
+        "v8_sample_age_max_ms": 1219,
+        "client_tick_mean_ms": 0.8502499334179029,
+        "script_tick_mean_ms": 0.11331528193818818,
+        "ui_frame_mean_ms": 0.9614688194134857,
+        "final_statuses": {
+          "liveefd60_0": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 19.5k",
+              "Steals: 92 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 84%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_1": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.0k",
+              "Steals: 80 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_2": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 15.5k",
+              "Steals: 73 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 82%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_3": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.4k",
+              "Steals: 68 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_4": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3313, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.4k",
+              "Steals: 77 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: no",
+              "HP: 96%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_5": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.8k",
+              "Steals: 84 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_6": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3309, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.7k",
+              "Steals: 88 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 100%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_7": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3313, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.2k",
+              "Steals: 86 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_8": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.6k",
+              "Steals: 78 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_9": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 17.3k",
+              "Steals: 75 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_10": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.4k",
+              "Steals: 82 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_11": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.6k",
+              "Steals: 69 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: no",
+              "HP: 94%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_12": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.4k",
+              "Steals: 82 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 82%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_13": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 16.3k",
+              "Steals: 71 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 100%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_14": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.3k",
+              "Steals: 77 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: yes",
+              "HP: 100%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_15": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 23.8k",
+              "Steals: 112 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: yes",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_16": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.6k",
+              "Steals: 78 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 80%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_17": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 20.8k",
+              "Steals: 98 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_18": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 21.2k",
+              "Steals: 100 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 96%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_19": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.4k",
+              "Steals: 82 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_20": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 19.9k",
+              "Steals: 94 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: yes",
+              "HP: 82%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_21": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.3k",
+              "Steals: 77 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 90%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_22": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 19.3k",
+              "Steals: 91 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_23": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.5k",
+              "Steals: 87 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 86%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_24": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 19.7k",
+              "Steals: 93 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 94%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_25": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 15.5k",
+              "Steals: 73 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: no",
+              "HP: 96%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_26": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3313, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 22.1k",
+              "Steals: 104 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 82%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_27": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 14.1k",
+              "Steals: 61 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_28": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.5k",
+              "Steals: 87 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_29": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3313, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.4k",
+              "Steals: 68 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: no",
+              "HP: 100%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_30": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.4k",
+              "Steals: 82 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 98%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "liveefd60_31": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 19.6k",
+              "Steals: 85 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: yes",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "metadata": {
+        "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 32,
+        "workload": "active",
+        "warmup_s": 120,
+        "observe_s": 600,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "747e81e3831ac717a6f77bcd8a73add5afbb51f7",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T141303Z_panel_n32_active",
+        "started_unix": 1788703983.939421,
+        "pid": 67804,
+        "exit_code": 0,
+        "ended_unix": 1788704907.721198
+      },
+      "summary": {
+        "run": "20260906T141303Z_panel_n32_active",
+        "qualification": {
+          "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T141303Z_panel_n32_active",
+          "n": 32,
+          "counting": false,
+          "diagnostics": false,
+          "qualified": true,
+          "errors": [],
+          "observation_s": 599.1243139170001,
+          "cpu_seconds": 386.415846,
+          "cpu_cores": 0.6449677254352462,
+          "client_ticks_per_slot_s": 42.49556295511507,
+          "median_resident_bytes": 1919361024.0,
+          "steal_gains": {
+            "live108dc_0": 57,
+            "live108dc_1": 68,
+            "live108dc_2": 57,
+            "live108dc_3": 55,
+            "live108dc_4": 65,
+            "live108dc_5": 59,
+            "live108dc_6": 83,
+            "live108dc_7": 69,
+            "live108dc_8": 63,
+            "live108dc_9": 45,
+            "live108dc_10": 44,
+            "live108dc_11": 75,
+            "live108dc_12": 56,
+            "live108dc_13": 75,
+            "live108dc_14": 60,
+            "live108dc_15": 81,
+            "live108dc_16": 54,
+            "live108dc_17": 89,
+            "live108dc_18": 59,
+            "live108dc_19": 67,
+            "live108dc_20": 61,
+            "live108dc_21": 77,
+            "live108dc_22": 73,
+            "live108dc_23": 68,
+            "live108dc_24": 56,
+            "live108dc_25": 61,
+            "live108dc_26": 91,
+            "live108dc_27": 59,
+            "live108dc_28": 74,
+            "live108dc_29": 72,
+            "live108dc_30": 64,
+            "live108dc_31": 69
+          },
+          "diagnostic_only": true
+        },
+        "meta": {
+          "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+          "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+          "frontend": "panel",
+          "n": 32,
+          "workload": "active",
+          "warmup_s": 120,
+          "observe_s": 600,
+          "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+          "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+          "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+          "diagnostic_only": true,
+          "scheduling_profile": true,
+          "diagnostic_sidecar": false,
+          "nav_captures": false,
+          "single_renderer": true,
+          "render_policy": "fixed-one",
+          "terminal": false,
+          "terminal_size": null,
+          "debug": false,
+          "sustain": true,
+          "stack_logging": false,
+          "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+          "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+          "host_commit": "747e81e3831ac717a6f77bcd8a73add5afbb51f7",
+          "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+          "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+          "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T141303Z_panel_n32_active",
+          "started_unix": 1788703983.939421,
+          "pid": 67804,
+          "exit_code": 0,
+          "ended_unix": 1788704907.721198
+        },
+        "groups": [
+          {
+            "drawing": false,
+            "cycles": 788750,
+            "work_ns": 326230428921,
+            "requested_sleep_ns": 15448779225995,
+            "actual_sleep_ns": 18251223087080,
+            "work_overruns": 3,
+            "intervals": 788750,
+            "interval_ns": 18577805700752,
+            "work_mean_ms": 0.41360434728494455,
+            "requested_sleep_mean_ms": 19.586407893496038,
+            "actual_sleep_mean_ms": 23.139427051765452,
+            "interval_mean_ms": 23.553477909035816
+          },
+          {
+            "drawing": true,
+            "cycles": 26200,
+            "work_ns": 128501467288,
+            "requested_sleep_ns": 395498532712,
+            "actual_sleep_ns": 470966445886,
+            "work_overruns": 0,
+            "intervals": 26200,
+            "interval_ns": 599478934042,
+            "work_mean_ms": 4.904636156030535,
+            "requested_sleep_mean_ms": 15.095363843969466,
+            "actual_sleep_mean_ms": 17.975818545267177,
+            "interval_mean_ms": 22.880875345114504
+          }
+        ],
+        "memory": {
+          "resident_bytes": {
+            "first": 1978433536,
+            "last": 2030632960,
+            "min": 1818198016,
+            "median": 1919361024.0,
+            "p95": 2023915520,
+            "max": 2030632960
+          },
+          "peak_resident_bytes": {
+            "first": 1980219392,
+            "last": 2031648768,
+            "min": 1980219392,
+            "median": 1994358784.0,
+            "p95": 2026389504,
+            "max": 2031648768
+          },
+          "v8_used_bytes": {
+            "first": 251960328,
+            "last": 252557208,
+            "min": 119182200,
+            "median": 187192816.0,
+            "p95": 296965680,
+            "max": 312851896
+          },
+          "v8_total_bytes": {
+            "first": 358350848,
+            "last": 338427904,
+            "min": 154927104,
+            "median": 255852544.0,
+            "p95": 352321536,
+            "max": 362545152
+          },
+          "snapshot_inflight_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 25312
+          },
+          "snapshot_inflight_capacity": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0.0,
+            "p95": 0,
+            "max": 25312
+          },
+          "gpu_tracked_bytes": {
+            "first": 18550568,
+            "last": 18550568,
+            "min": 18550568,
+            "median": 18550568.0,
+            "p95": 18550568,
+            "max": 18550568
+          },
+          "gpu_buffer_bytes": {
+            "first": 1306576,
+            "last": 1306576,
+            "min": 1306576,
+            "median": 1306576.0,
+            "p95": 1306576,
+            "max": 1306576
+          },
+          "gpu_texture_bytes": {
+            "first": 17243992,
+            "last": 17243992,
+            "min": 17243992,
+            "median": 17243992.0,
+            "p95": 17243992,
+            "max": 17243992
+          }
+        },
+        "resident_first_minute_median": 1980653568.0,
+        "resident_last_minute_median": 2023907328.0,
+        "teardown": {
+          "resident_bytes": 1669464064,
+          "peak_resident_bytes": 2031648768,
+          "ready": 32,
+          "active": 0,
+          "v8_live_isolates": 0,
+          "v8_used_bytes": 0,
+          "snapshot_inflight_bytes": 0,
+          "snapshot_inflight_capacity": 0,
+          "gpu_tracked_bytes": 18550568
+        },
+        "resident_last_teardown_30s_median": 1667891200.0,
+        "peak_resident_whole_run": 2031648768,
+        "v8_sampled_isolates_min": 32,
+        "v8_sample_age_max_ms": 1220,
+        "client_tick_mean_ms": 0.5579529075269661,
+        "script_tick_mean_ms": 0.10350900898953831,
+        "ui_frame_mean_ms": 0.7343844899853953,
+        "final_statuses": {
+          "live108dc_0": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.8k",
+              "Steals: 79 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_1": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2655, 3307, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 19.6k",
+              "Steals: 92 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 100%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_2": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.4k",
+              "Steals: 77 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 86%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_3": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.0k",
+              "Steals: 66 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: yes",
+              "HP: 100%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_4": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 17.5k",
+              "Steals: 76 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: yes",
+              "HP: 84%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_5": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.9k",
+              "Steals: 70 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 80%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_6": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 21.3k",
+              "Steals: 100 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_7": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.4k",
+              "Steals: 82 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 90%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_8": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3304, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 15.7k",
+              "Steals: 74 | Ate: 9 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 84%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_9": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 13.0k",
+              "Steals: 61 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: no",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_10": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 13.8k",
+              "Steals: 65 | Ate: 10 | Picked: 0",
+              "Food: 13 | Bank trips: 1 | Stunned: no",
+              "HP: 92%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_11": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.7k",
+              "Steals: 88 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 90%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_12": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.7k",
+              "Steals: 69 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_13": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3304, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.7k",
+              "Steals: 88 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 94%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_14": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.4k",
+              "Steals: 77 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 80%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_15": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 21.5k",
+              "Steals: 101 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_16": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 15.7k",
+              "Steals: 67 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 96%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_17": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3304, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 21.7k",
+              "Steals: 102 | Ate: 8 | Picked: 0",
+              "Food: 16 | Bank trips: 1 | Stunned: no",
+              "HP: 74%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_18": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.2k",
+              "Steals: 76 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 80%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_19": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 16.6k",
+              "Steals: 72 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 98%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_20": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.8k",
+              "Steals: 79 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 90%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_21": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 18.7k",
+              "Steals: 88 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_22": {
+            "title": "ThievingBot \u2014 eating (stunned)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 20.2k",
+              "Steals: 95 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 98%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_23": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3308, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.7k",
+              "Steals: 83 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 84%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_24": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3304, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 14.9k",
+              "Steals: 70 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 86%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_25": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 16.4k",
+              "Steals: 77 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: no",
+              "HP: 84%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_26": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2665, 3304, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 23.4k",
+              "Steals: 110 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 90%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_27": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 15.3k",
+              "Steals: 72 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 82%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_28": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3310, 0)",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 20.2k",
+              "Steals: 95 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 78%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_29": {
+            "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3310, 0)",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 18.7k",
+              "Steals: 81 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: no",
+              "HP: 88%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_30": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 15.9k",
+              "Steals: 75 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 82%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          },
+          "live108dc_31": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 13m | Target: Guard | XP/hr: 17.7k",
+              "Steals: 83 | Ate: 9 | Picked: 0",
+              "Food: 14 | Bank trips: 1 | Stunned: yes",
+              "HP: 84%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "metadata": {
+        "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 1,
+        "workload": "seeded-idle",
+        "warmup_s": 120,
+        "observe_s": 600,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "747e81e3831ac717a6f77bcd8a73add5afbb51f7",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T142954Z_panel_n1_seeded-idle",
+        "started_unix": 1788704994.3264792,
+        "pid": 68957,
+        "exit_code": 0,
+        "ended_unix": 1788705786.124649
+      },
+      "summary": {
+        "run": "20260906T142954Z_panel_n1_seeded-idle",
+        "qualification": {
+          "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T142954Z_panel_n1_seeded-idle",
+          "n": 1,
+          "counting": false,
+          "diagnostics": false,
+          "qualified": true,
+          "errors": [],
+          "observation_s": 599.003088166,
+          "cpu_seconds": 280.570944,
+          "cpu_cores": 0.46839649000648587,
+          "client_ticks_per_slot_s": 43.884581764819146,
+          "median_resident_bytes": 623788032,
+          "steal_gains": {},
+          "diagnostic_only": true
+        },
+        "meta": {
+          "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+          "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+          "frontend": "panel",
+          "n": 1,
+          "workload": "seeded-idle",
+          "warmup_s": 120,
+          "observe_s": 600,
+          "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+          "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+          "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+          "diagnostic_only": true,
+          "scheduling_profile": true,
+          "diagnostic_sidecar": false,
+          "nav_captures": false,
+          "single_renderer": true,
+          "render_policy": "fixed-one",
+          "terminal": false,
+          "terminal_size": null,
+          "debug": false,
+          "sustain": true,
+          "stack_logging": false,
+          "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+          "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+          "host_commit": "747e81e3831ac717a6f77bcd8a73add5afbb51f7",
+          "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+          "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+          "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T142954Z_panel_n1_seeded-idle",
+          "started_unix": 1788704994.3264792,
+          "pid": 68957,
+          "exit_code": 0,
+          "ended_unix": 1788705786.124649
+        },
+        "groups": [
+          {
+            "drawing": false,
+            "cycles": 0,
+            "work_ns": 0,
+            "requested_sleep_ns": 0,
+            "actual_sleep_ns": 0,
+            "work_overruns": 0,
+            "intervals": 0,
+            "interval_ns": 0,
+            "work_mean_ms": null,
+            "requested_sleep_mean_ms": null,
+            "actual_sleep_mean_ms": null,
+            "interval_mean_ms": null
+          },
+          {
+            "drawing": true,
+            "cycles": 26300,
+            "work_ns": 193219826605,
+            "requested_sleep_ns": 332834716311,
+            "actual_sleep_ns": 406067960740,
+            "work_overruns": 1,
+            "intervals": 26300,
+            "interval_ns": 599329286584,
+            "work_mean_ms": 7.3467614678707225,
+            "requested_sleep_mean_ms": 12.655312407262358,
+            "actual_sleep_mean_ms": 15.439846415969582,
+            "interval_mean_ms": 22.788185801673002
+          }
+        ],
+        "memory": {
+          "resident_bytes": {
+            "first": 598212608,
+            "last": 624918528,
+            "min": 597409792,
+            "median": 623788032,
+            "p95": 625508352,
+            "max": 625934336
+          },
+          "peak_resident_bytes": {
+            "first": 598999040,
+            "last": 626966528,
+            "min": 598999040,
+            "median": 624836608,
+            "p95": 626966528,
+            "max": 626966528
+          },
+          "v8_used_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "v8_total_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "snapshot_inflight_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "snapshot_inflight_capacity": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "gpu_tracked_bytes": {
+            "first": 18292776,
+            "last": 18292776,
+            "min": 18292776,
+            "median": 18292776,
+            "p95": 18292776,
+            "max": 18292776
+          },
+          "gpu_buffer_bytes": {
+            "first": 1048784,
+            "last": 1048784,
+            "min": 1048784,
+            "median": 1048784,
+            "p95": 1048784,
+            "max": 1048784
+          },
+          "gpu_texture_bytes": {
+            "first": 17243992,
+            "last": 17243992,
+            "min": 17243992,
+            "median": 17243992,
+            "p95": 17243992,
+            "max": 17243992
+          }
+        },
+        "resident_first_minute_median": 600596480.0,
+        "resident_last_minute_median": 624918528.0,
+        "teardown": {
+          "resident_bytes": 627064832,
+          "peak_resident_bytes": 628178944,
+          "ready": 1,
+          "active": 0,
+          "v8_live_isolates": 0,
+          "v8_used_bytes": 0,
+          "snapshot_inflight_bytes": 0,
+          "snapshot_inflight_capacity": 0,
+          "gpu_tracked_bytes": 18292776
+        },
+        "resident_last_teardown_30s_median": 626139136.0,
+        "peak_resident_whole_run": 628178944,
+        "v8_sampled_isolates_min": 0,
+        "v8_sample_age_max_ms": null,
+        "client_tick_mean_ms": 7.3512474064366415,
+        "script_tick_mean_ms": null,
+        "ui_frame_mean_ms": 0.8501344905050083,
+        "final_statuses": {
+          "live10d5d0_0": null
+        }
+      }
+    },
+    {
+      "metadata": {
+        "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+        "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+        "frontend": "panel",
+        "n": 1,
+        "workload": "active",
+        "warmup_s": 120,
+        "observe_s": 600,
+        "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+        "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+        "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+        "diagnostic_only": true,
+        "scheduling_profile": true,
+        "diagnostic_sidecar": false,
+        "nav_captures": false,
+        "single_renderer": true,
+        "render_policy": "fixed-one",
+        "terminal": false,
+        "terminal_size": null,
+        "debug": false,
+        "sustain": true,
+        "stack_logging": false,
+        "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+        "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+        "host_commit": "747e81e3831ac717a6f77bcd8a73add5afbb51f7",
+        "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+        "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T144306Z_panel_n1_active",
+        "started_unix": 1788705786.2917929,
+        "pid": 69630,
+        "exit_code": 0,
+        "ended_unix": 1788706597.9268029
+      },
+      "summary": {
+        "run": "20260906T144306Z_panel_n1_active",
+        "qualification": {
+          "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T144306Z_panel_n1_active",
+          "n": 1,
+          "counting": false,
+          "diagnostics": false,
+          "qualified": true,
+          "errors": [],
+          "observation_s": 598.8363158340001,
+          "cpu_seconds": 225.38972200000003,
+          "cpu_cores": 0.37637951480297166,
+          "client_ticks_per_slot_s": 43.34740448038503,
+          "median_resident_bytes": 664092672,
+          "steal_gains": {
+            "live10ffe0_0": 53
+          },
+          "diagnostic_only": true
+        },
+        "meta": {
+          "host_sources_sha256": "9a4089c2ca3351decfed6a2351df58c2105932cac2a6ebd3c38783224bde05e0",
+          "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+          "frontend": "panel",
+          "n": 1,
+          "workload": "active",
+          "warmup_s": 120,
+          "observe_s": 600,
+          "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+          "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+          "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+          "diagnostic_only": true,
+          "scheduling_profile": true,
+          "diagnostic_sidecar": false,
+          "nav_captures": false,
+          "single_renderer": true,
+          "render_policy": "fixed-one",
+          "terminal": false,
+          "terminal_size": null,
+          "debug": false,
+          "sustain": true,
+          "stack_logging": false,
+          "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+          "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+          "host_commit": "747e81e3831ac717a6f77bcd8a73add5afbb51f7",
+          "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+          "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+          "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T144306Z_panel_n1_active",
+          "started_unix": 1788705786.2917929,
+          "pid": 69630,
+          "exit_code": 0,
+          "ended_unix": 1788706597.9268029
+        },
+        "groups": [
+          {
+            "drawing": false,
+            "cycles": 0,
+            "work_ns": 0,
+            "requested_sleep_ns": 0,
+            "actual_sleep_ns": 0,
+            "work_overruns": 0,
+            "intervals": 0,
+            "interval_ns": 0,
+            "work_mean_ms": null,
+            "requested_sleep_mean_ms": null,
+            "actual_sleep_mean_ms": null,
+            "interval_mean_ms": null
+          },
+          {
+            "drawing": true,
+            "cycles": 25950,
+            "work_ns": 163382420051,
+            "requested_sleep_ns": 355617579949,
+            "actual_sleep_ns": 435219419840,
+            "work_overruns": 0,
+            "intervals": 25950,
+            "interval_ns": 598633025000,
+            "work_mean_ms": 6.296047015452793,
+            "requested_sleep_mean_ms": 13.703952984547206,
+            "actual_sleep_mean_ms": 16.7714612655106,
+            "interval_mean_ms": 23.068710019267822
+          }
+        ],
+        "memory": {
+          "resident_bytes": {
+            "first": 633274368,
+            "last": 669696000,
+            "min": 633274368,
+            "median": 664092672,
+            "p95": 670498816,
+            "max": 671285248
+          },
+          "peak_resident_bytes": {
+            "first": 637485056,
+            "last": 673628160,
+            "min": 637485056,
+            "median": 666697728,
+            "p95": 673628160,
+            "max": 673628160
+          },
+          "v8_used_bytes": {
+            "first": 11141656,
+            "last": 11684160,
+            "min": 3205064,
+            "median": 6588344,
+            "p95": 11617808,
+            "max": 11923200
+          },
+          "v8_total_bytes": {
+            "first": 12320768,
+            "last": 12582912,
+            "min": 9175040,
+            "median": 10485760,
+            "p95": 12582912,
+            "max": 13107200
+          },
+          "snapshot_inflight_bytes": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0,
+            "p95": 0,
+            "max": 278624
+          },
+          "snapshot_inflight_capacity": {
+            "first": 0,
+            "last": 0,
+            "min": 0,
+            "median": 0,
+            "p95": 0,
+            "max": 278624
+          },
+          "gpu_tracked_bytes": {
+            "first": 18408440,
+            "last": 18408440,
+            "min": 18408440,
+            "median": 18408440,
+            "p95": 18408440,
+            "max": 18408440
+          },
+          "gpu_buffer_bytes": {
+            "first": 1164448,
+            "last": 1164448,
+            "min": 1164448,
+            "median": 1164448,
+            "p95": 1164448,
+            "max": 1164448
+          },
+          "gpu_texture_bytes": {
+            "first": 17243992,
+            "last": 17243992,
+            "min": 17243992,
+            "median": 17243992,
+            "p95": 17243992,
+            "max": 17243992
+          }
+        },
+        "resident_first_minute_median": 645447680.0,
+        "resident_last_minute_median": 670294016.0,
+        "teardown": {
+          "resident_bytes": 657178624,
+          "peak_resident_bytes": 673628160,
+          "ready": 1,
+          "active": 0,
+          "v8_live_isolates": 0,
+          "v8_used_bytes": 0,
+          "snapshot_inflight_bytes": 0,
+          "snapshot_inflight_capacity": 0,
+          "gpu_tracked_bytes": 18408440
+        },
+        "resident_last_teardown_30s_median": 657186816.0,
+        "peak_resident_whole_run": 673628160,
+        "v8_sampled_isolates_min": 1,
+        "v8_sample_age_max_ms": 1224,
+        "client_tick_mean_ms": 6.291230767547576,
+        "script_tick_mean_ms": 0.18371022945891782,
+        "ui_frame_mean_ms": 0.5976159409963818,
+        "final_statuses": {
+          "live10ffe0_0": {
+            "title": "ThievingBot \u2014 stunned \u2014 waiting",
+            "lines": [
+              "Runtime: 12m | Target: Guard | XP/hr: 15.5k",
+              "Steals: 68 | Ate: 8 | Picked: 0",
+              "Food: 15 | Bank trips: 1 | Stunned: yes",
+              "HP: 86%",
+              "",
+              "",
+              "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "finite_differences": {
+    "idle_resident_bytes_per_additional_bot": 19810370.06451613,
+    "active_resident_bytes_per_additional_bot": [
+      33328755.612903226,
+      40492527.48387097
+    ],
+    "active_teardown_resident_bytes_per_additional_bot": [
+      26812944.51612903,
+      32603367.225806452
+    ]
+  }
+}
