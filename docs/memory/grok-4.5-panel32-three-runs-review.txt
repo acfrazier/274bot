@@ -1,0 +1,26 @@
+APPROVE
+
+Commit 0e24f95 (parent 73f3304): adds only
+docs/memory/sustained-panel32-three-runs.md and
+docs/memory/sustained-panel32-third.json.
+
+Findings
+
+1. third.json authenticity
+   Exact match to diagnostics/20260906T033459Z_panel_n32_active/memory-summary.json with final_statuses stripped (same shape as run1/run2 JSON). meta == metadata.json. qualification == cpu_screen.summarize(run, counting=False, diagnostics=False). Binary SHA-256 on disk matches 781b93eb…d8bf76f.
+
+2. Qualification / Stop
+   Observe samples: 595 rows, ready=32 and active=32 throughout; span 599.429288834s (matches claim and qualification.observation_s). Boundaries observe-start/end present; 32 Running, no errors, bank_open=0. Steal gains from boundary Steals: lines are 45–79 (sum 1999), exact match to JSON. Exit 0; run.log PASS. Teardown last sample: active=0, v8_live_isolates=0, v8_used=0, snapshot in-flight bytes/capacity=0, ready=32 — and the same Stop zeros hold for run1/run2 JSON. Final titles are only pickpocketing, stunned—waiting, or eating (stunned); no banking title/status.
+
+3. Arithmetic / units (1024-based)
+   All 11 table cells for runs 1–3 recompute from the three JSONs and round correctly to the printed precision (GiB/MiB/cores/ticks/ms).
+   RSS median range: (4090052608−4023656448)/MiB = 63.3203125 → 63.320 MiB; 1.639% of the three-median mean.
+   Third-run scheduling means and sleep excesses recompute from group totals: sim 0.532 / 25.924 ms, draw 6.005 / 24.891 ms; excesses 5.924 ms and 4.890 ms; work_overruns 0/0. GPU/snapshot prose matches third memory block (textures fixed 17,243,992; buffers 1,219,960–1,547,200; snap max 846,432 with median/p95 0).
+
+4. Cross-run / provenance
+   Same binary, host/client source hashes, client commit, rs2b0t (catalog) commit, nav pack, fixed-one/single-renderer, diagnostic_only, scheduling on, warmup 120 / observe 600 across all three. Host 5e0f3ec..73f3304 is only docs/memory report/review commits. Launch host_commit 73f3304 matches parent.
+
+5. Interpretation / overstatement
+   Scoped as three repeats of this cell, not matrix/acceptance/savings. Spread labeled as three-sample observation, not CI. Drift/highest third retained+peak stated as motivation for lifecycle work, not leak proof. Overlap / do-not-sum memory warning present; retained RSS not equated to client-owned shutdown memory; batched counter lag / no tail-latency claim consistent with prior panel32 notes. No whole-branch approval claimed.
+
+No concrete defects found in the reviewed pair.
