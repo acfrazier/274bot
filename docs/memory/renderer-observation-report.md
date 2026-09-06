@@ -35,13 +35,23 @@ Do not treat bucket edges as exact percentiles. Interval bounds
 `[10,20,25,40,50,100,250,500,1000,2000]` ms + overflow support a conservative
 upper bound around the 40 ms gate and ~1 s background watch cadence.
 
+Bucket membership compares full `Duration` values (not floored millisecond
+integers), so `40ms + 1ns` is outside the ≤40ms bucket.
+
+Interval linkage requires matching cadence mode (`stable` scene, `draw`,
+`full_rate`, backend). Mode changes clear the previous paint anchor even when
+the transition frame only skip-paints, so mixed 1 fps / full-rate gaps are not
+one steady sample.
+
 ## Design bounds
 
 - Fixed-size counters/histograms only; no per-tick heap, world copy, or logging.
 - No global registry lock on the hot path (local accumulate; lock only on flush).
 - Sampling does not hold client/renderer ownership or force paint work.
 - Parked/low-cadence paths still record when a tick runs (watch 1 fps included).
-- Ended slots publish once then prune — no unbounded dead-slot retention.
+- Ended slots publish once then prune on `read()`; unread ended rows are also
+  hard-capped (`MAX_ENDED_UNREAD=64`) on register/end so restart storms stay
+  bounded without a sampler.
 - Production paint policy unchanged: last-FBO `scene_state==1` freeze, skip-paint
   cadence, existing counters/snapshot APIs.
 
@@ -55,7 +65,7 @@ upper bound around the 40 ms gate and ~1 s background watch cadence.
 
 ## Verification
 
-- `cargo test -p host --lib` — 127 passed (module + attach/detach client_frame)
+- `cargo test -p host --lib` — 129 passed (module + attach/detach client_frame)
 - `cargo test -p host-play --lib --features memory-profile` — 143 passed
 - `python3 docs/memory/test_run_diagnostic.py` — 7 passed
 
