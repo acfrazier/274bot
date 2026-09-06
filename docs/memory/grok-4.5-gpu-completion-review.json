@@ -1,0 +1,56 @@
+{
+  "task": "t_bd7960b8",
+  "verified_model": "grok-4.5",
+  "verified_provider": "xai-oauth",
+  "model_evidence": "reviewer agent.log session 20260906_171130_126c01 API calls and final turn record",
+  "review": {
+    "id": 50,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1788729089,
+    "ended_at": 1788729183,
+    "summary": "Reviewed and approved round-2 GPU queue-completion hardening at be8c5fc on codex/memory-diagnostics. All six prior defects fixed with targeted regressions; orch latency/smoke notes landed; no client/mailbox/production-wait changes. Independent runs: host --lib 141+1 ign (ignored real GPU smoke passed when requested), host-play memory-profile 143, python launcher 8.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 2,
+      "lens": "execution",
+      "commit": "be8c5fc",
+      "branch": "codex/memory-diagnostics",
+      "prior_reject_commit": "35e1e0f",
+      "report": "docs/memory/gpu-completion-report.md",
+      "no_client_changes": true,
+      "no_production_gpu_wait": true,
+      "reviewer_checks": [
+        "branch codex/memory-diagnostics @ be8c5fc; clean worktree; vendor/client unchanged",
+        "seam: lib.rs registers Texture on_submitted_work_done before mailbox.store; sample_at = mainredraw start Instant",
+        "fix1: observe_painted_output no dirty/REGISTRY flush on routine register/complete; gpu_observe_does_not_flush_registry_every_frame",
+        "fix2: coherent GpuDeltaBatch take under mutex; gpu_merge_deltas_keeps_count_and_latency_coherent (200 concurrent completes)",
+        "fix3: pending_submit_ms clear only on GpuPermit Drop; gpu_on_complete_does_not_clear_pending_stamp",
+        "fix4: lost_n on unfired permit drop; registration_complete requires lost==0; coverage needs completed==registered; gpu_lost_unfired_hides_registration_complete",
+        "fix5: mode_epoch bump on cadence change + Local drop; gpu_mode_epoch_blocks_a_b_a_late_callback_interval",
+        "fix6: #[ignore] gpu_real_queue fail-closed expect adapter/device + real buffer write/submit; ran --ignored \u2192 ok on this host",
+        "orch: latency_means mainredraw_start_to_callback_delivery; real smoke submits work; production poll only in ignored test",
+        "host-play JSON gpu_completion includes lost_n, registration_complete, completion_coverage_complete, semantics strings",
+        "launcher --gpu-completion-profile requires panel+render-profile; enable nested under BOT_RENDER_PROFILE",
+        "bounds 8/256; weak+permit capture; disabled path no-ops",
+        "cargo test -p host --lib \u2192 141 passed, 1 ignored",
+        "cargo test -p host --lib render_profile:: \u2192 20 passed, 1 ignored",
+        "cargo test -p host --lib gpu_real_queue -- --ignored \u2192 1 passed",
+        "cargo test -p host-play --lib --features memory-profile \u2192 143 passed",
+        "python3 docs/memory/test_run_diagnostic.py \u2192 8 passed"
+      ],
+      "non_blocking": [
+        "crates/host/Cargo.toml still says soft-skips without adapter; smoke is fail-closed ignore \u2014 comment only",
+        "late out-of-order callbacks can clobber last_delivery and skip one later same-epoch interval sample; does not invent cross-epoch intervals"
+      ],
+      "caveats": [
+        "no live panel/TUI benchmark in this task; do not claim renderer performance from unit tests"
+      ],
+      "worker_session_id": "20260906_171130_126c01"
+    },
+    "worker_pid": null,
+    "step_key": null
+  }
+}

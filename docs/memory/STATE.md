@@ -29,11 +29,14 @@ verify it on resume because a worker may finish after this snapshot.
    completed-frame cadence or responsiveness, and includes no live run.
 4. Renderer observations `15c4fc4` + hardening `316c2a2` passed Grok4.5 review
    `t_2dfa7342` (actual per-slot residency/backend and host paint cadence);
-   [receipt](grok-4.5-renderer-observation-review.txt). Task `t_bd7960b8` is now
-   implementing bounded GPU queue-completion coverage. These are opt-in, do not change rendering,
+   [receipt](grok-4.5-renderer-observation-review.txt). Task `t_bd7960b8` completed with Grok4.5 run50 approval at `be8c5fc`
+   after round-1 changes; [receipt](grok-4.5-gpu-completion-review.json).
+   Independent checks passed: host 141 plus explicitly executed real GPU smoke,
+   host-play 143, launcher 8. Bounded queue-completion observations are opt-in
    and distinguish CPU callback delivery from hardware timestamps/scanout.
-   After review, build immutable release binaries and qualify the three approved
-   modes live. Precise responsiveness measurements remain separate work.
+   No live panel/TUI performance result was produced. The board has no pending
+   cards at this boundary. Next build immutable release binaries and qualify the
+   three approved modes live. Precise responsiveness measurements remain separate work.
 5. Continue approved single-client fixed-cost attribution and measured N/N+x
    costs. Terminal-runner cleanup performance acceptance remains pending; do not
    launch more blind repeats. Final whole-branch Grok4.6 review remains required.
