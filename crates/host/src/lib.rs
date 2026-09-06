@@ -249,7 +249,7 @@ impl Host {
         // so re-polling it would busy-spin; skip the socket until a tick
         // consumes bytes again.
         let mut socket_stalled = false;
-        let mut cadence = cadence::Local::new();
+        let mut cadence = cadence::Local::new(cadence::slot_id_for(username));
         loop {
             if probe(client) {
                 return;

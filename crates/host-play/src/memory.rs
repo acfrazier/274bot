@@ -793,6 +793,7 @@ impl Run {
                 let (count,total,max)=counter.read();
                 value[format!("{key}_count")]=count.into();value[format!("{key}_total_ns")]=total.into();value[format!("{key}_max_ns")]=max.into();
             }
+            // Legacy process-wide drawing/non-drawing groups — array schema unchanged.
             value["scheduling"] = host::cadence::read().map(|groups| {
                 serde_json::Value::Array(groups.iter().enumerate().map(|(i,c)| serde_json::json!({
                     "drawing": i==1, "cycles":c.cycles, "work_ns":c.work_ns,
@@ -801,6 +802,61 @@ impl Run {
                     "sleep_excess_buckets":c.sleep_excess,"interval_excess_buckets":c.interval_excess
                 })).collect())
             }).unwrap_or(serde_json::Value::Null);
+            // Per-slot absolute start-to-start intervals (sibling field; null while off).
+            value["scheduling_slots"] = host::cadence::read_slots()
+                .map(|slots| {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    serde_json::Value::Array(
+                        slots
+                            .into_iter()
+                            .map(|s| {
+                                let age = if s.updated_ms == 0 {
+                                    serde_json::Value::Null
+                                } else {
+                                    serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
+                                };
+                                serde_json::json!({
+                                    "slot_id": s.slot_id,
+                                    "generation": s.generation,
+                                    "updated_ms": s.updated_ms,
+                                    "sample_age_ms": age,
+                                    "ended": s.ended,
+                                    "drawing": s.drawing,
+                                    "cycle_n": s.cycle_n,
+                                    "drawing_cycle_n": s.drawing_cycle_n,
+                                    "non_drawing_cycle_n": s.non_drawing_cycle_n,
+                                    "work_ns": s.work_ns,
+                                    "requested_sleep_ns": s.requested_sleep_ns,
+                                    "actual_sleep_ns": s.actual_sleep_ns,
+                                    "work_overrun_n": s.work_overrun_n,
+                                    "interval_n": s.interval_n,
+                                    "interval_ns": s.interval_ns,
+                                    "interval_buckets": s.interval_buckets.as_slice(),
+                                    "interval_bound_ms": host::cadence::INTERVAL_BOUNDS_MS.as_slice(),
+                                    "interval_p99_upper_bound_ms": host::cadence::p99_upper_bound_ms(&s.interval_buckets),
+                                    "interval_coverage_complete": host::cadence::interval_coverage_complete(&s),
+                                    "mode_break_n": s.mode_break_n,
+                                    "park_n": s.park_n,
+                                    "anchor_miss_n": s.anchor_miss_n,
+                                    "first_interval_ms": s.first_interval_ms,
+                                    "last_interval_ms": s.last_interval_ms,
+                                    "first_cycle_ms": s.first_cycle_ms,
+                                    "last_cycle_ms": s.last_cycle_ms,
+                                    "sleep_excess_buckets": s.sleep_excess,
+                                    "interval_excess_buckets": s.interval_excess,
+                                    "ended_lost_n": host::cadence::ended_lost_n(),
+                                    "interval_means": "tick_start_to_start_same_drawing_no_park_absolute_not_excess",
+                                    "mode_break_means": "drawing_latch_flip_while_anchor_present_excluded_from_intervals",
+                                    "park_means": "idle_park_cleared_start_anchor_excluded_from_intervals",
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or(serde_json::Value::Null);
             // Host mainredraw/paint completions and live renderer residency —
             // not GPU completed/presented frames. Null while profiling off.
             // GPU queue-completion (nested object) is built separately to keep
