@@ -1,0 +1,57 @@
+Per-commit review only (7d026bc, e65103b). No whole-branch scope. Evidence from diffs, parents, and the cited logs only (no live reruns).
+
+---------------------------------------------------------------------------
+1) 7d026bc — fix(memory): share navigation across benchmark seed runners
+---------------------------------------------------------------------------
+Scope: crates/host-play/src/memory.rs only. Parent a5896a8. No runtime/client/API files.
+
+What changed
+- prepare() loads NavWorld once per benchmark runner set via load_pack(...).ok().map(Arc::new), outside the account loop.
+- Idle keeps seed_world = None and still installs no seeds.
+- Non-idle runners go through seed_runner(..., seed_world.clone()) → ScenarioRunner::with_world instead of ScenarioRunner::new (which re-loaded the pack per account).
+- Unit test seed_runners_share_world_but_keep_independent_state checks Arc strong_count (shared identity + drop lifetime), distinct profile names, and independent started flags.
+
+Checklist
+- World loaded once per benchmark only: yes (single load, Arc clones).
+- Missing-pack behavior: preserved (.ok() → None → with_world(None); same fail-closed nav path as ScenarioRunner::new).
+- Per-runner independent state: separate Seed/ScenarioRunner values; only the immutable pack Arc is shared. Runner uses nav_world.as_ref() only (no shared mutable nav state).
+- Arc identity/lifetime: covered by the new test; red log shows pre-fix failure (count stayed 1 when world was ignored); green /tmp/shared-seed-tests.log: seed_runners_share_world_but_keep_independent_state ok; host-play 134 passed.
+- Scenario suite: /tmp/shared-seed-scenario-tests.log — 76 passed, 0 failed.
+- Unseeded idle control preserved (workload Idle → no seeds; comments updated accordingly).
+
+Verdict: APPROVE
+
+---------------------------------------------------------------------------
+2) e65103b — fix(script): release snapshot storage after explicit Stop
+---------------------------------------------------------------------------
+Scope: crates/script/src/isolate_fb.rs, crates/script/src/slot.rs. Parent 7d026bc. No runtime/client/API files.
+
+What changed
+- stop() order under feature = "load":
+  1) take load isolate and join
+  2) compiled on_stop (if any)
+  3) then last_snapshot = None, last_world_id = None, ipc = IsolateBuf::new()
+  4) want_run = false, state = Idle
+- Test-only helpers: IsolateBuf::into_backing_capacity, isolate_fb::tests / empty_input pub(crate).
+- New test stop_releases_snapshot_storage_and_restart_emits_keyframe (cfg load): builds a large snapshot (builder capacity pressure), pause/resume + small delta, stop clears fp/world id/builder capacity, keeps last_error/pending_logs, restart encodes full keyframe equal to first, earlier owned bytes still parse.
+
+Checklist
+- Join isolate before releasing fp / world id / builder: yes.
+- pause/resume/logs/errors preserved: yes (test exercises pause/resume; asserts retained diagnostic + log; stop does not clear those).
+- Restart keyframes: yes (cleared last_snapshot → next encode is keyframe; equals first).
+- Test consumes builder capacity and holds earlier bytes: yes (1MiB chat_text; first retained and re-read after stop/reuse).
+- Red /tmp/stop-storage-red.log: failed on !has_snapshot_fingerprint() before clear. Green /tmp/stop-storage-tests.log: that test ok; full script suite green (38 lib unit tests + integration batches, 0 failed), consistent with --features load.
+- host-play still green after this commit (/tmp/shared-stop-host-tests.log: 134 passed, including shared-world test).
+
+Verdict: APPROVE
+
+---------------------------------------------------------------------------
+Cross-cutting
+---------------------------------------------------------------------------
+- No runtime client/API changes in either commit.
+- Red logs predate commits; green logs match the stated suites; scenario log completed clean.
+- Residual non-blockers (not enough to REQUEST CHANGES): stop storage release is load-feature-gated (fields only exist there); isolate_fb test module visibility widened pub(crate) for the slot test only.
+
+Final
+- 7d026bc: APPROVE
+- e65103b: APPROVE
