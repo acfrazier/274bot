@@ -181,6 +181,12 @@ impl SlotScript {
         if let Some(mut script) = self.compiled.take() {
             script.on_stop();
         }
+        #[cfg(feature = "load")]
+        {
+            self.last_snapshot = None;
+            self.last_world_id = None;
+            self.ipc = IsolateBuf::new();
+        }
         self.want_run = false;
         self.state = RunState::Idle;
     }
@@ -467,6 +473,37 @@ mod tests {
             "noop"
         }
         fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        let text = "x".repeat(1024 * 1024);
+        let mut input = crate::isolate_fb::tests::empty_input(1);
+        input.chat_text = Some(&text);
+        let first = slot.encode_snapshot_delta(&input, false);
+        assert!(first.len() > text.len());
+        slot.store_last_world_id(Some(123));
+        slot.last_error = Some("retained diagnostic".into());
+        slot.pending_logs.push("retained log".into());
+        slot.pause();
+        assert!(slot.has_snapshot_fingerprint());
+        assert_eq!(slot.last_world_id(), Some(123));
+        slot.resume();
+        let delta = slot.encode_snapshot_delta(&input, false);
+        assert!(delta.len() < 1024);
+        slot.stop();
+        assert!(!slot.has_snapshot_fingerprint());
+        assert_eq!(slot.last_world_id(), None);
+        assert_eq!(std::mem::take(&mut slot.ipc).into_backing_capacity(), 0);
+        assert_eq!(slot.last_error.as_deref(), Some("retained diagnostic"));
+        assert_eq!(slot.pending_logs, ["retained log"]);
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        assert_eq!(slot.encode_snapshot_delta(&input, false), first);
+        // The earlier owned packet remains intact after reuse and Stop.
+        assert!(crate::isolate_fb::SnapshotReader::from_bytes(&first).is_ok());
     }
 
     #[test]
