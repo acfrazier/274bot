@@ -322,6 +322,15 @@ impl ScenarioRunner {
     /// Like [`ScenarioRunner::tick`], but skip `Traveller::follow` while
     /// `hold` is set (guardian hold — the armed route stays latched).
     pub fn tick_with_hold(&mut self, client: &mut Client, hold: bool) {
+        self.tick_inner(client, hold);
+        if matches!(self.phase, Phase::Done) {
+            // A follow failure may still be consumed by this tick's remaining
+            // checks. Release only after all existing callbacks and evidence.
+            self.snapshot = GameSnapshot::new();
+        }
+    }
+
+    fn tick_inner(&mut self, client: &mut Client, hold: bool) {
         if matches!(self.phase, Phase::Done) {
             return;
         }
@@ -781,9 +790,6 @@ impl ScenarioRunner {
             self.obj_names.as_deref(),
             self.started,
         ));
-        // Terminal consumers have copied their evidence and the shot callback
-        // has returned. Done ticks never read this working snapshot again.
-        self.snapshot = GameSnapshot::new();
     }
 
     fn finish_fail(&mut self, msg: &str) {
@@ -799,7 +805,6 @@ impl ScenarioRunner {
             self.obj_names.as_deref(),
             self.started,
         ));
-        self.snapshot = GameSnapshot::new();
     }
 }
 
@@ -917,6 +922,7 @@ mod tests {
             );
             let retained_evidence = evidence.to_json();
             let retained_status = format!("{:?}", runner.status());
+            runner.tick_with_hold(&mut client, false);
             assert_eq!(serde_json::to_value(&runner.snapshot).unwrap(), empty);
             client.runenergy = 1;
             client.ingame = false;
@@ -927,6 +933,38 @@ mod tests {
             assert_eq!(shots.lock().unwrap().len(), 1);
             assert_eq!(serde_json::to_value(&runner.snapshot).unwrap(), empty);
         }
+    }
+
+    #[test]
+    fn follow_failure_keeps_snapshot_for_existing_same_tick_budget_failure() {
+        let mut client = seeded_client();
+        let mut runner = ScenarioRunner::with_world(stat_scenario(999, 1), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.phase = Phase::Running;
+        runner.step_sent = true;
+        runner.route = Some(Route {
+            dest: WorldTile { x: 3221, z: 3220, level: 0 },
+            legs: vec![nav::router::Leg::Walk {
+                tiles: vec![
+                    WorldTile { x: 3220, z: 3220, level: 0 },
+                    WorldTile { x: 3221, z: 3220, level: 0 },
+                ],
+            }],
+            ticks: 1.0,
+        });
+        let shots = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&shots);
+        runner.set_terminal_shot("failure");
+        runner.set_shot_sink(Box::new(move |_, snap| {
+            captured.lock().unwrap().push(snap.tile());
+        }));
+        runner.tick(&mut client);
+        // Existing behavior: follow refusal does not short-circuit the budget
+        // check. Memory cleanup must not change either callback's snapshot.
+        assert_eq!(*shots.lock().unwrap(), vec![Some((3220, 3220, 0)); 2]);
+        let evidence = runner.evidence().unwrap();
+        assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+        assert!(evidence.message.as_ref().unwrap().contains("not seen within 1 ticks"));
     }
 
     #[test]
