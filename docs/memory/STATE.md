@@ -34,20 +34,24 @@ verify it on resume because a worker may finish after this snapshot.
    Independent checks passed: host 141 plus explicitly executed real GPU smoke,
    host-play 143, launcher 8. Bounded queue-completion observations are opt-in
    and distinguish CPU callback delivery from hardware timestamps/scanout.
-   No live panel/TUI performance result was produced. The next four cards are queued in review-gated sequence: `t_79e1e21f`
-   adds bounded responsiveness observations — initial `a90747a`; round-1 review
-   changes requested; round-2 fixes at `cc07d09`/`0e19ea1` (panel Down-only stamp,
-   bind unbound starts on every mailbox store, generation-scoped/bounded decode
-   bridge discarded on Local drop, report MAX_INPUT_PENDING=256, deferred-bind +
-   stale-bridge regressions); report
-   [responsiveness-measurement-report.md](responsiveness-measurement-report.md);
-   unit evidence only — no live overhead/p99 acceptance); `t_dac0878e` verifies and freezes
-   release builds; `t_672f4ac3` runs the six live 1/16 active reference cells
-   plus separate overhead/functional checks; `t_6ffdc227` attributes qualified
-   fixed/incremental costs and proposes one next change. Failed or unavailable
-   metrics remain unresolved, even if an evidence report passes review.
-   Each card uses profile defaults and the same campaign checkout; dependent
-   cards wait for parent review completion. No final matrix/capacity claim yet.
+   No live panel/TUI performance result was produced. Responsiveness
+   `t_79e1e21f` approved at `57cbfc7` (code `cc07d09`, report `0e19ea1`); unit
+   evidence only — no live overhead/p99 acceptance; report
+   [responsiveness-measurement-report.md](responsiveness-measurement-report.md).
+   Task `t_dac0878e` freezes immutable system-allocator reference builds at host
+   `57cbfc7` / client `451759f2` (clean source); report
+   [reference-build-report.md](reference-build-report.md) +
+   [reference-build-manifest.json](reference-build-manifest.json); binaries
+   `docs/memory/diagnostics/reference-build-20260906T215255Z/` (gitignored)
+   panel sha256 `ed403b4f1bbce4c6…`, tui `91103790581692e0…`; features verified
+   `memory-profile-no-alloc` via cargo fingerprints; full host/host-play/panel/tui
+   tests + explicit real GPU smoke passed. **No live cells run here.** Next:
+   `t_672f4ac3` runs the six live 1/16 active reference cells plus separate
+   overhead/functional checks against those frozen binaries; then `t_6ffdc227`
+   attributes qualified fixed/incremental costs. Failed or unavailable metrics
+   remain unresolved. Each card uses profile defaults and the same campaign
+   checkout; dependent cards wait for parent review completion. No final
+   matrix/capacity claim yet.
 5. Continue approved single-client fixed-cost attribution and measured N/N+x
    costs. Terminal-runner cleanup performance acceptance remains pending; do not
    launch more blind repeats. Final whole-branch Grok4.6 review remains required.

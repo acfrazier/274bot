@@ -1,0 +1,249 @@
+{
+  "task_id": "t_dac0878e",
+  "purpose": "Freeze immutable low-end reference builds (system allocator) for six 1/16 active cells",
+  "created_utc": "20260906T215255Z",
+  "workspace": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f",
+  "branch": "codex/memory-diagnostics",
+  "host": {
+    "commit": "57cbfc7fae896cbfcef3cc4d7ac98e026960011d",
+    "branch": "codex/memory-diagnostics",
+    "dirty": false,
+    "status_porcelain": null,
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sources_sha256": "41eb8d95546af5e416e1990460020cd6a0e96d707bd91dc963d3dd855c451569",
+    "note": "Source HEAD clean at freeze. Deliverable docs (this manifest/report) are new untracked files only; no source/submodule drift."
+  },
+  "client": {
+    "path": "vendor/fr-client-rust",
+    "commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+    "branch": "codex/memory-sprite-reuse",
+    "dirty": false,
+    "status_porcelain": null,
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+    "submodule_status": "451759f2a7df9c57895657d5b8d506172860cee1 vendor/fr-client-rust (heads/codex/memory-sprite-reuse)"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "rustc_verbose": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: aarch64-apple-darwin\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "os": "macOS",
+    "arch": "arm64",
+    "os_version": "15.7.9"
+  },
+  "features": {
+    "requested": "memory-profile-no-alloc",
+    "allocator": "std::alloc::System",
+    "allocation_counting": false,
+    "feature_graph_lines": [],
+    "nm_non_v8_CountingAllocator_lines": [],
+    "verification": {
+      "cargo_features_flag": "memory-profile-no-alloc on panel and tui bins",
+      "code_path": "host_play::memory BenchmarkAllocator = System under cfg(feature=memory-profile-no-alloc)",
+      "sample_field": "allocation_counting JSON is false / rust allocation fields null at runtime",
+      "fingerprint_proof": "Newest release fingerprints for panel-play, tui-play, and host-play all list memory-profile + memory-profile-no-alloc."
+    },
+    "cargo_fingerprints": {
+      "panel_play_path": "target/release/.fingerprint/panel-68bf885681099fe7/bin-panel-play.json",
+      "panel_play_features": "[\"memory-profile\", \"memory-profile-no-alloc\"]",
+      "tui_play_path": "target/release/.fingerprint/tui-539d285beb6aca91/bin-tui-play.json",
+      "tui_play_features": "[\"memory-profile\", \"memory-profile-no-alloc\"]",
+      "host_play_path": "target/release/.fingerprint/host-play-17d4aeea83857fd0/lib-host_play.json",
+      "host_play_features": "[\"memory-profile\", \"memory-profile-no-alloc\"]"
+    }
+  },
+  "build_commands": [
+    "cargo build --release -p panel --bin panel-play -p tui --bin tui-play --features memory-profile-no-alloc",
+    "# verified: cargo fingerprints include memory-profile-no-alloc for panel, tui, host-play"
+  ],
+  "binaries": {
+    "panel-play-system": {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z",
+      "filename": "panel-play-system-20260906T215255Z",
+      "sha256": "ed403b4f1bbce4c6ff86d18417bdf2ab267064f25f5ff4b7f64a3c9daa9b6abb",
+      "size_bytes": 84970080
+    },
+    "tui-play-system": {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/tui-play-system-20260906T215255Z",
+      "filename": "tui-play-system-20260906T215255Z",
+      "sha256": "91103790581692e079ff544aa813e9651c689e221f6584df66afcfdfa5789017",
+      "size_bytes": 81263600
+    }
+  },
+  "sha256sums_file": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/SHA256SUMS",
+  "nav": {
+    "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+    "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+    "nav_pack_size": 73438581,
+    "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+    "nav_flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb",
+    "nav_flags_size": 260571161
+  },
+  "catalog": {
+    "js_scripts_json": "/Users/acfrazier/.274bot/js-scripts.json",
+    "js_scripts_json_sha256": "3bee852f888a9c383b23d299979a3e898c4b620b73b5c8a6f69e87584399d4f6",
+    "rs2b0t_path": "/Users/acfrazier/experiments/rs2b0t",
+    "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "rs2b0t_dirty": false
+  },
+  "server": {
+    "intended_target": "local",
+    "BOT_TARGET": "local",
+    "note": "Local game server outside client deployment budgets; no credentials recorded."
+  },
+  "frontend_geometry_settings": {
+    "panel_applet_min": "765x503",
+    "panel_focused_full_rate_fps": 50,
+    "panel_background_skip_paint_fps": 1,
+    "last_fbo_freeze_while_scene_state_1": true,
+    "tui_raster": "Off",
+    "tui_reference_terminal_size": [
+      120,
+      40
+    ],
+    "tui_real_pty": true,
+    "client_loop_target_ms": 20,
+    "fixture": "sustained level50 Thiever (BOT_MEMORY_SUSTAIN=1)",
+    "clean_cells_diagnostics": "off (--no-diagnostics)",
+    "allocator_mode": "system (memory-profile-no-alloc)",
+    "approved_reference_modes": [
+      "tui (render_policy=none)",
+      "panel focused-one",
+      "panel focused-plus-background"
+    ]
+  },
+  "six_active_cells": [
+    {
+      "id": "tui_n1_active",
+      "frontend": "tui",
+      "n": 1,
+      "workload": "active",
+      "command": "python3 docs/memory/run_diagnostic.py tui 1 active --sustain --no-diagnostics --render-profile --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/tui-play-system-20260906T215255Z --warmup 30 --observe 120",
+      "pty": true,
+      "profiles": [
+        "render-profile"
+      ]
+    },
+    {
+      "id": "tui_n16_active",
+      "frontend": "tui",
+      "n": 16,
+      "workload": "active",
+      "command": "python3 docs/memory/run_diagnostic.py tui 16 active --sustain --no-diagnostics --render-profile --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/tui-play-system-20260906T215255Z --warmup 30 --observe 120",
+      "pty": true,
+      "profiles": [
+        "render-profile"
+      ]
+    },
+    {
+      "id": "panel_focused_one_n1_active",
+      "frontend": "panel",
+      "n": 1,
+      "workload": "active",
+      "command": "python3 docs/memory/run_diagnostic.py panel 1 active --sustain --no-diagnostics --focused-one --render-profile --gpu-completion-profile --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z --warmup 30 --observe 120",
+      "profiles": [
+        "render-profile",
+        "gpu-completion-profile"
+      ]
+    },
+    {
+      "id": "panel_focused_one_n16_active",
+      "frontend": "panel",
+      "n": 16,
+      "workload": "active",
+      "command": "python3 docs/memory/run_diagnostic.py panel 16 active --sustain --no-diagnostics --focused-one --render-profile --gpu-completion-profile --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z --warmup 30 --observe 120",
+      "profiles": [
+        "render-profile",
+        "gpu-completion-profile"
+      ]
+    },
+    {
+      "id": "panel_focused_background_n1_active",
+      "frontend": "panel",
+      "n": 1,
+      "workload": "active",
+      "command": "python3 docs/memory/run_diagnostic.py panel 1 active --sustain --no-diagnostics --focused-background --render-profile --gpu-completion-profile --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z --warmup 30 --observe 120",
+      "profiles": [
+        "render-profile",
+        "gpu-completion-profile"
+      ]
+    },
+    {
+      "id": "panel_focused_background_n16_active",
+      "frontend": "panel",
+      "n": 16,
+      "workload": "active",
+      "command": "python3 docs/memory/run_diagnostic.py panel 16 active --sustain --no-diagnostics --focused-background --render-profile --gpu-completion-profile --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z --warmup 30 --observe 120",
+      "profiles": [
+        "render-profile",
+        "gpu-completion-profile"
+      ]
+    }
+  ],
+  "overhead_comparison": {
+    "id": "panel_focused_background_n16_active_profiles_off",
+    "match_cell": "panel_focused_background_n16_active",
+    "note": "Same frozen binary and focused-background policy; profiles off to screen observation overhead. Not an optimization claim. Run adjacent to the matched profiles-on cell without rebuilds or concurrent load.",
+    "command": "python3 docs/memory/run_diagnostic.py panel 16 active --sustain --no-diagnostics --focused-background --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z --warmup 30 --observe 120"
+  },
+  "functional_visual_pilot_not_clean_cell": {
+    "id": "panel_focused_one_n1_nav_captures_pilot",
+    "note": "Functional/visual diagnostic only; exclude resource values from clean acceptance.",
+    "command": "python3 docs/memory/run_diagnostic.py panel 1 active --sustain --no-diagnostics --focused-one --render-profile --gpu-completion-profile --nav-captures --binary /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z/panel-play-system-20260906T215255Z --warmup 30 --observe 120"
+  },
+  "profiling_requirements": {
+    "render_profile": [
+      "per-slot residency/backend",
+      "host paint cadence",
+      "CPU fallback detection"
+    ],
+    "gpu_completion_profile": [
+      "registration/completion coverage",
+      "delivery latency (CPU delivery; not HW GPU ts or scanout)"
+    ],
+    "responsiveness_profile": [
+      "decode\u2192script dispatch",
+      "input\u2192visible UI ack"
+    ],
+    "overhead_match_rule": "Downstream overhead controls must use the same frozen binary paths and the same frontend/n/workload/render policy; only toggle profile flags.",
+    "exclude_from_clean_acceptance": [
+      "nav-captures",
+      "MallocStackLogging",
+      "memory-profile counting allocator builds",
+      "diagnostic sidecar for CPU/latency claims"
+    ]
+  },
+  "timing_defaults_reference_stage": {
+    "warmup_s": 30,
+    "observe_s": 120,
+    "teardown_s": 60,
+    "source": "docs/memory/renderer-live-protocol.md"
+  },
+  "tests_run": {
+    "cargo test -p host --lib": "154 passed, 1 ignored",
+    "cargo test -p host --lib gpu_real_queue -- --ignored --nocapture": "1 passed",
+    "cargo test -p host-play --lib --features memory-profile": "143 passed",
+    "cargo test -p host-play --lib --features memory-profile-no-alloc": "143 passed",
+    "cargo test -p panel --features memory-profile": "377 passed",
+    "cargo test -p tui --features memory-profile": "87 passed",
+    "python3 docs/memory/test_run_diagnostic.py -v": "9 passed"
+  },
+  "gates": {
+    "host_clean": true,
+    "client_clean": true,
+    "gpu_smoke_pass": true,
+    "system_allocator_feature": true,
+    "binaries_outside_tracked_tree": true,
+    "did_not_overwrite_historical_controls": true,
+    "live_performance_acceptance": false,
+    "source_optimization": false,
+    "fingerprint_memory_profile_no_alloc": true
+  },
+  "build_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/reference-build-20260906T215255Z",
+  "historical_controls_untouched": [
+    "docs/memory/diagnostics/cpu-overhead-builds/",
+    "docs/memory/diagnostics/runner-boundary-build/",
+    "docs/memory/diagnostics/shared-stop-build/",
+    "docs/memory/diagnostics/memory-resume-build/"
+  ]
+}
