@@ -286,6 +286,7 @@ impl Run {
     /// Idle: no card, no RS2B0T. Active/lifecycle: RS2B0T required.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
         client::profiling::enable();
+        if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
         use vault::{Profile, ProfileSettings, Vault};
 
         let names = crate::mint_live_names(config.n);
@@ -624,6 +625,14 @@ impl Run {
                 let (count,total,max)=counter.read();
                 value[format!("{key}_count")]=count.into();value[format!("{key}_total_ns")]=total.into();value[format!("{key}_max_ns")]=max.into();
             }
+            value["scheduling"] = host::cadence::read().map(|groups| {
+                serde_json::Value::Array(groups.iter().enumerate().map(|(i,c)| serde_json::json!({
+                    "drawing": i==1, "cycles":c.cycles, "work_ns":c.work_ns,
+                    "requested_sleep_ns":c.requested_sleep_ns,"actual_sleep_ns":c.actual_sleep_ns,
+                    "work_overruns":c.work_overruns,"intervals":c.intervals,"interval_ns":c.interval_ns,
+                    "sleep_excess_buckets":c.sleep_excess,"interval_excess_buckets":c.interval_excess
+                })).collect())
+            }).unwrap_or(serde_json::Value::Null);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;

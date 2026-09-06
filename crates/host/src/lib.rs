@@ -1,6 +1,7 @@
 //! 274 bot host: one OS thread per client slot.
 
 mod auto_run;
+pub mod cadence;
 pub mod login_queue;
 mod random;
 mod slot;
@@ -242,6 +243,7 @@ impl Host {
         // so re-polling it would busy-spin; skip the socket until a tick
         // consumes bytes again.
         let mut socket_stalled = false;
+        let mut cadence = cadence::Local::new();
         loop {
             if probe(client) {
                 return;
@@ -265,8 +267,15 @@ impl Host {
                 // Java GameShell sleeps the leftover of 20 ms *after* the work.
                 // A fixed sleep *before* the tick made the period 20 ms + Pix3D
                 // (slow picture, extra idle). If the tick overruns, skip sleep.
-                if let Some(rest) = FRAME_MS.checked_sub(start.elapsed()) {
+                let work = start.elapsed();
+                let rest = FRAME_MS.checked_sub(work);
+                let sleep_start = cadence.as_ref().map(|_| Instant::now());
+                if let Some(rest) = rest {
                     thread::sleep(rest);
+                }
+                if let Some(profile) = cadence.as_mut() {
+                    let slept = if rest.is_some() { sleep_start.unwrap().elapsed() } else { Duration::ZERO };
+                    profile.record(start, client.draw, work, rest.unwrap_or_default(), slept, FRAME_MS);
                 }
                 continue;
             }
@@ -274,6 +283,7 @@ impl Host {
             // run one tick (drain the socket / apply the panel's
             // `set_draw`) and re-evaluate. A watch-only sidecar wakes on
             // the 1 s repaint bound; everything else on the game-tick bound.
+            if let Some(profile) = cadence.as_mut() { profile.parked(); }
             let before = stream_bytes(client);
             let timeout = if socket_stalled {
                 STALL_PARK_MS

@@ -14,6 +14,7 @@ p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose di
 p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
 p.add_argument('--sustain', action='store_true')
 p.add_argument('--stack-logging', action='store_true')
+p.add_argument('--scheduling-profile', action='store_true', help='Collect batched active-loop work/sleep/interval diagnostics')
 p.add_argument('--observe', type=int, default=600)
 p.add_argument('--warmup', type=int, default=120)
 a = p.parse_args()
@@ -25,7 +26,7 @@ binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.fronte
 run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
 run.mkdir(parents=True, exist_ok=False)
 env = os.environ.copy()
-for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_NAV_CAPTURES']:
+for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE']:
     env.pop(k, None)
 env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
            BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
@@ -38,6 +39,7 @@ if a.nav_captures:
 if a.single_renderer: env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
 if a.sustain: env['BOT_MEMORY_SUSTAIN'] = '1'
 if a.stack_logging: env['MallocStackLogging'] = '1'
+if a.scheduling_profile: env['BOT_SCHEDULING_PROFILE'] = '1'
 def git(*args):
     return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
 def source_digest(directory):
@@ -51,7 +53,7 @@ def source_digest(directory):
         if path.is_file(): digest.update(name+b'\0'+path.read_bytes()+b'\0')
     return digest.hexdigest()
 meta = dict(host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
-            diagnostic_only=True,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging,binary=str(binary),
+            diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging,binary=str(binary),
             binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
             host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
             host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
