@@ -1,0 +1,43 @@
+## Verdict: APPROVE
+
+Commit `8a8e6678d5687187299d53a68e7b6cf8cd28662e` vs parent `dfb3ecd55b30a3d72e33bcb77421a917617e4d45`  
+Scope: `cadence.rs` (new), active-loop call site in `host/src/lib.rs`, `host-play` memory sample/enable, `run_diagnostic.py` provenance, `scheduling-profile.md`.  
+No live proof claimed. Operator note only: host120 and host-play131 passed; release build running (not re-executed here).
+
+### Checks
+
+Active-loop cadence unchanged (disabled path)
+- Parent: `FRAME_MS.checked_sub(start.elapsed())` then optional `thread::sleep(rest)`.
+- Child: same budget and sleep; `Local::new()` is `None` when unset, so no extra clocks, no `record`/`parked` work.
+- Decision predicate (`frame_cadence || busy`), park branch, and `FRAME_MS` (20 ms) unchanged.
+- Enabled path keeps the same `checked_sub` + `sleep`; only adds timing around the existing sleep. Matches the doc.
+
+Optional measurements meaningful
+- Active 20 ms arm only: work, requested rest, actual sleep, overruns (`work > budget`, aligned with `checked_sub`), same-mode tick-start intervals.
+- Idle: `parked()` clears the interval anchor; post-park ticks are not treated as active-loop samples.
+- Draw vs sim split via `client.draw` → index 0/1; mode changes drop the interval pair.
+- Zero requested sleep skips sleep-excess histogram (overrun/exact-budget); totals still accumulate. Interval still covers full period including pre-sleep overhead.
+
+Thread batching and histograms
+- Thread-local pending; flush every 50 cycles and on `Drop`; shared mutex only at publish; lag ≤ 49 cycles/slot as documented.
+- Buckets upper bounds 1, 2, 5, 10, 20 ms, then unbounded; inclusive boundaries covered by unit test; synthetic oversleep/park/focus cases match the rules.
+- Sample JSON: `scheduling: null` when off; two-group array with bucket fields when on.
+
+Launcher provenance
+- `--scheduling-profile` → `BOT_SCHEDULING_PROFILE=1` only when set.
+- Env key cleared before apply (no leak from parent env).
+- Meta records `scheduling_profile=...`.
+- `enable()` in `Run::prepare` before slot threads; gated on exact `"1"`.
+
+### Findings
+
+Blocking: none
+
+Nonblocking
+1. `sleep_start.unwrap()` is safe under the `cadence`/`rest` guards but is brittle style; an `if let` would be clearer.
+2. `scheduling-profile.md` still says “Review/build/live pending” while this review is the commit-diff gate; harmless doc lag, not a code issue.
+3. Time between work end and `thread::sleep` is outside `work_ns` and `actual_sleep_ns` (only in interval). Acceptable for the stated goal; worth remembering when reading sleep-excess vs interval-excess.
+
+### Summary
+
+Opt-in scheduling profile is correctly isolated, does not change default cadence behavior, batching/histograms match the written contract, and launcher/meta flags are clean. **APPROVE.**
