@@ -13,7 +13,9 @@ p.add_argument('--debug', action='store_true')
 p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
 p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
 p.add_argument('--sustain', action='store_true')
-p.add_argument('--stack-logging', action='store_true')
+stack_logging = p.add_mutually_exclusive_group()
+stack_logging.add_argument('--stack-logging', action='store_true')
+stack_logging.add_argument('--stack-logging-lite', action='store_true', help='Native diagnostic: retain only current allocation stacks')
 p.add_argument('--scheduling-profile', action='store_true', help='Collect batched active-loop work/sleep/interval diagnostics')
 p.add_argument('--observe', type=int, default=600)
 p.add_argument('--warmup', type=int, default=120)
@@ -39,6 +41,7 @@ if a.nav_captures:
 if a.single_renderer: env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
 if a.sustain: env['BOT_MEMORY_SUSTAIN'] = '1'
 if a.stack_logging: env['MallocStackLogging'] = '1'
+if a.stack_logging_lite: env['MallocStackLogging'] = 'lite'
 if a.scheduling_profile: env['BOT_SCHEDULING_PROFILE'] = '1'
 def git(*args):
     return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
@@ -54,9 +57,9 @@ def source_digest(directory):
     return digest.hexdigest()
 nav_pack = pathlib.Path(env.get('NAV_PACK', str(pathlib.Path.home()/'.274bot/274bot.navpack'))).resolve()
 nav_flags = pathlib.Path(env.get('NAV_FLAGS', str(nav_pack.with_suffix('.navflags')))).resolve()
-meta = dict(host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
+meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
             nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
-            diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging,binary=str(binary),
+            diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
             binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
             host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
             host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
