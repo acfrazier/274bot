@@ -2306,8 +2306,13 @@ export default class T extends LoopingBot {
         "next tick answers the count dialog"
     );
     iso.on_game_tick(3);
+    assert_eq!(iso.probe("typeof __ok").unwrap(), "undefined");
+    let inv = [item_row(526, Some("Bones"), 25, &[], false, -1, 0)];
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
     let ok = iso.probe("__ok").unwrap();
-    assert_eq!(ok, true, "withdrawX resolves after the count answer");
+    assert_eq!(ok, true, "withdrawX resolves after inventory publication");
     iso.join();
 }
 

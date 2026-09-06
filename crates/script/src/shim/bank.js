@@ -1,4 +1,5 @@
 import { Execution } from '../execution/Execution.js';
+import { Inventory } from '../inventory/Inventory.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -145,12 +146,17 @@ export const Bank = new Proxy(
             if (!row || !xOp) {
                 throw notImpl('Bank.withdrawX');
             }
+            const before = Inventory.count(row.name);
+            const target = before + Math.min(Number(count) || 0, row.count);
             return (async () => {
                 queue({ op: 'withdraw', name: row.name, action: String(xOp) });
                 await Execution.delayTicks(1);
                 queue({ op: 'answer-count', value: Number(count) || 0 });
-                await Execution.delayTicks(1);
-                return true;
+                // A queued answer is not inventory publication. Do not let the
+                // host withdrawal sequencer issue its fallback against old rows.
+                return Execution.delayUntil(() =>
+                    Inventory.count(row.name) >= target ||
+                    (Inventory.count(row.name) > before && Inventory.isFull()), 4000);
             })();
         },
         async withdrawXById(id, count, _landsAsId) {

@@ -370,3 +370,24 @@ export default class T extends LoopingBot {
     assert!(matches!(requests[0],script::shim::InteractReq::OpenBooth{..}));
     iso.join();
 }
+
+#[test]
+fn withdraw_x_waits_for_inventory_publication() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { globalThis.__withdrawResult = await Bank.withdrawX('Lobster', 19); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.probe("globalThis.__rs2b0t_host.snapshot={bank:[{name:'Lobster',count:2000,ops:['Withdraw X']}],inv_size:28,inv:[{name:'Lobster',count:3}]};true").unwrap();
+    for tick in 1..=3 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+    assert_eq!(iso.probe("typeof globalThis.__withdrawResult").unwrap(), "undefined", "a sent count is not a completed withdrawal");
+    iso.probe("globalThis.__rs2b0t_host.snapshot.inv=[{name:'Lobster',count:22}];true").unwrap();
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__withdrawResult").unwrap(), true);
+    iso.join();
+}
