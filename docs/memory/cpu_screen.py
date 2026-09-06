@@ -25,6 +25,7 @@ def summarize(run, counting, diagnostics):
     observed = [r for r in rows if r['phase'] == 'observe']
     proof = read_rows(run / 'samples.qualification.jsonl')
     errors = []
+    seeded_idle = meta.get('workload') == 'seeded-idle'
     if meta.get('exit_code') != 0:
         errors.append('process failed or incomplete')
     if len(observed) < 2:
@@ -34,8 +35,10 @@ def summarize(run, counting, diagnostics):
     if elapsed < meta['observe_s'] - 5:
         errors.append('observation incomplete')
     for r in observed:
-        if r['ready'] != meta['n'] or r['active'] != meta['n']:
+        if r['ready'] != meta['n'] or r['active'] != (0 if seeded_idle else meta['n']):
             errors.append('readiness/activity below requested scale')
+        if seeded_idle and any(r.get(k) != 0 for k in ['v8_live_isolates','snapshot_inflight_bytes','snapshot_inflight_capacity']):
+            errors.append('idle retains isolate or in-flight snapshots')
         if r.get('allocation_counting') != counting or r.get('diagnostic_sidecar') != diagnostics:
             errors.append('wrong instrumentation mode')
         for field in ['rust_allocations', 'rust_allocated_bytes', 'rust_live_bytes']:
@@ -53,6 +56,14 @@ def summarize(run, counting, diagnostics):
             errors.append('qualification slot mismatch')
         for name, end in after.items():
             start = before.get(name, {})
+            if seeded_idle:
+                for slot in [start,end]:
+                    client = slot.get('client') or {}
+                    if slot.get('error') or slot.get('state') != 'Idle':
+                        errors.append('idle script state invalid: ' + name)
+                    if not (client.get('ingame') is True and client.get('scene_state') == 2 and client.get('level') == 0 and abs(client.get('x',0)-2661) <= 10 and abs(client.get('z',0)-3306) <= 10):
+                        errors.append('idle scene qualification missing: ' + name)
+                continue
             x, y = steals(start), steals(end)
             gains[name] = None if x is None or y is None else y - x
             if end.get('error') or end.get('state') != 'Running' or gains[name] is None or gains[name] <= 0:

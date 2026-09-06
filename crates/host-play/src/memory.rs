@@ -101,6 +101,7 @@ pub fn rust_allocator_counts() -> (u64, u64, u64) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Workload {
     Idle,
+    SeededIdle,
     Active,
     Lifecycle,
 }
@@ -109,6 +110,7 @@ impl Workload {
     pub fn as_str(self) -> &'static str {
         match self {
             Workload::Idle => "idle",
+            Workload::SeededIdle => "seeded-idle",
             Workload::Active => "active",
             Workload::Lifecycle => "lifecycle",
         }
@@ -132,9 +134,10 @@ impl Config {
         let n = parse_n(&n)?;
         let workload = match std::env::var("BOT_MEMORY_WORKLOAD").as_deref() {
             Err(_) | Ok("idle") => Workload::Idle,
+            Ok("seeded-idle") => Workload::SeededIdle,
             Ok("active") => Workload::Active,
             Ok("lifecycle") => Workload::Lifecycle,
-            _ => return Err("BOT_MEMORY_WORKLOAD must be idle, active, or lifecycle".into()),
+            _ => return Err("BOT_MEMORY_WORKLOAD must be idle, seeded-idle, active, or lifecycle".into()),
         };
         let duration = |key: &str, default: u64| -> Result<Duration, String> {
             let secs = match std::env::var(key) {
@@ -253,6 +256,19 @@ pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: boo
     seed.runner.tick_with_hold(c, hold);
 }
 
+/// The same sustained Thiever setup, ending before any script is loaded.
+/// Keep the original idle workload available as the unseeded login control.
+fn seeded_idle_scenario() -> scenario::Scenario {
+    let mut scenario = scenario::thiever_sustained_scenario();
+    let start = scenario.steps.iter().position(|step| matches!(step.kind, scenario::StepKind::StartScript)).expect("Thiever StartScript");
+    let arrival = scenario.steps.iter().find(|step| step.name == "seed stats, food, and tele to the guard stand").expect("Thiever seed").wait.arm;
+    scenario.steps.truncate(start);
+    scenario.proof = arrival;
+    scenario.settings.start_script = None;
+    scenario.settings.terminal_shot = None;
+    scenario
+}
+
 type ScriptCard = (
     script::JsCard,
     serde_json::Map<String, serde_json::Value>,
@@ -283,7 +299,8 @@ pub struct Run {
 
 impl Run {
     /// Mint ephemeral accounts, throwaway vault, optional Thiever card.
-    /// Idle: no card, no RS2B0T. Active/lifecycle: RS2B0T required.
+    /// Idle modes: no card or RS2B0T. SeededIdle runs the Thiever setup only.
+    /// Active/lifecycle: RS2B0T required.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
         client::profiling::enable();
         if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
@@ -315,7 +332,9 @@ impl Run {
                 .map_err(|e| e.to_string())?;
 
             if config.workload != Workload::Idle {
-                let mut scenario = if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
+                let mut scenario = if config.workload == Workload::SeededIdle {
+                    seeded_idle_scenario()
+                } else if std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1") {
                     scenario::thiever_sustained_scenario()
                 } else { scenario::get("thiever").ok_or("missing Thiever scenario")? };
                 scenario.settings.terminal_shot = None;
@@ -333,7 +352,7 @@ impl Run {
         }
         *SEEDS.lock().unwrap() = Some(seeds);
 
-        let card = if config.workload == Workload::Idle {
+        let card = if matches!(config.workload, Workload::Idle | Workload::SeededIdle) {
             None
         } else {
             let root = std::env::var_os("RS2B0T")
@@ -459,7 +478,7 @@ impl Run {
 
         let mut seeded = 0usize;
         let mut proved = 0usize;
-        if self.card.is_some() {
+        if self.config.workload != Workload::Idle {
             let map = {
                 let seeds = SEEDS.lock().unwrap();
                 seeds
@@ -515,8 +534,11 @@ impl Run {
             .filter(|name| play.script_state(name) == script::RunState::Running)
             .count();
 
-        // Idle: ready gate only. Active/lifecycle: all ready, seeded, XP-proved, scripts up.
-        let established = if self.card.is_none() {
+        // Unseeded idle: ready only. Seeded idle: seed completed, no scripts.
+        // Active/lifecycle: all ready, seeded, XP-proved, scripts up.
+        let established = if self.config.workload == Workload::SeededIdle {
+            ready == self.config.n && seeded == self.config.n && active == 0
+        } else if self.card.is_none() {
             ready == self.config.n
         } else {
             ready == self.config.n
@@ -648,11 +670,13 @@ impl Run {
     // Two boundary reads preserve script progress evidence when verbose
     // diagnostic collection is disabled. Never drains logs or sends actions.
     fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
+        let statuses = play.statuses();
         let slots: Vec<_> = self.names.iter().map(|name| serde_json::json!({
             "name": name,
             "state": format!("{:?}", play.script_state(name)),
             "error": play.script_last_error(name),
             "runtime": play.memory_script_progress(name),
+            "client": statuses.iter().find(|s| &s.username == name).map(|s| serde_json::json!({"ingame":s.ingame,"scene_state":s.scene_state,"x":s.tile_x,"z":s.tile_z,"level":s.tile_level})),
         })).collect();
         let value = serde_json::json!({"phase":phase,"elapsed_s":self.started.elapsed().as_secs_f64(),"slots":slots});
         writeln!(self.qualification_output, "{value}").map_err(|e|e.to_string())
@@ -936,6 +960,33 @@ mod tests {
             "focus_index {idx} out of 0..{}",
             run.names.len()
         );
+    }
+
+    #[test]
+    fn seeded_idle_preserves_setup_and_ends_before_script_start() {
+        let active = scenario::thiever_sustained_scenario();
+        let idle = seeded_idle_scenario();
+        let start = active.steps.iter().position(|s| matches!(s.kind, scenario::StepKind::StartScript)).unwrap();
+        assert_eq!(idle.steps.len(), start);
+        assert_eq!(idle.steps.iter().map(|s| s.name).collect::<Vec<_>>(), active.steps[..start].iter().map(|s| s.name).collect::<Vec<_>>());
+        assert!(matches!(idle.steps.last().unwrap().kind, scenario::StepKind::DrainDialogs { .. }));
+        assert!(matches!(idle.proof, scenario::Proof::ArrivedNear { x: 2661, z: 3306, level: 0, radius: 10 }));
+        assert!(idle.settings.start_script.is_none());
+    }
+
+    #[test]
+    fn prepare_seeded_idle_runs_seed_without_catalog() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
+        std::env::set_var("BOT_MEMORY_N", "1");
+        std::env::set_var("BOT_MEMORY_WORKLOAD", "seeded-idle");
+        let config = Config::from_env().expect("seeded idle config").unwrap();
+        assert_eq!(config.workload.as_str(), "seeded-idle");
+        let run = Run::prepare(config, "unit").expect("seed without catalog");
+        assert!(!run.has_script_card());
+        let seeds = SEEDS.lock().unwrap();
+        assert_eq!(seeds.as_ref().unwrap().len(), 1);
+        assert!(seeds.as_ref().unwrap().contains_key(&run.names[0]));
     }
 
     #[test]

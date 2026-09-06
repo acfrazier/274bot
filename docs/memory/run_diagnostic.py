@@ -5,7 +5,7 @@ import errno, fcntl, pty, struct, termios, threading
 p = argparse.ArgumentParser()
 p.add_argument('frontend', choices=['panel','tui'])
 p.add_argument('n', type=int, choices=[1,32,128])
-p.add_argument('workload', choices=['idle','active','lifecycle'])
+p.add_argument('workload', choices=['idle','seeded-idle','active','lifecycle'])
 p.add_argument('--nav-captures', action='store_true', help='Diagnostic only: capture navigation checkpoints and failure, temporarily focusing affected bot')
 p.add_argument('--single-renderer', action='store_true', help='Panel: fixed slot zero draws; other slots simulate only')
 p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')

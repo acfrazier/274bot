@@ -50,5 +50,31 @@ class QualificationTests(unittest.TestCase):
         self.rows[1]['process_cpu_user_s']=200
         self.assertFalse(self.report()['qualified'])
 
+class SeededIdleTests(QualificationTests):
+    def setUp(self):
+        super().setUp()
+        (self.run/'metadata.json').write_text(json.dumps({'exit_code':0,'n':1,'observe_s':180,'workload':'seeded-idle'}))
+        for r in self.rows:
+            r.update(active=0,v8_live_isolates=0,snapshot_inflight_bytes=0,snapshot_inflight_capacity=0)
+        for r in self.proof:
+            r['slots'][0].update(state='Idle',runtime=None,client=dict(ingame=True,scene_state=2,x=2661,z=3306,level=0))
+
+    def test_system_mode_cpu_and_progress(self):
+        self.assertTrue(self.report()['qualified'])
+        self.assertEqual(self.report()['steal_gains'],{})
+
+    def test_no_progress_cannot_qualify(self):
+        # Idle must have no live script, rather than demonstrate steal gains.
+        self.rows[1]['active']=1
+        self.assertFalse(self.report()['qualified'])
+
+    def test_wrong_scene_cannot_qualify(self):
+        self.proof[1]['slots'][0]['client']['x']=3200
+        self.assertFalse(self.report()['qualified'])
+
+    def test_live_isolate_cannot_qualify(self):
+        self.rows[1]['v8_live_isolates']=1
+        self.assertFalse(self.report()['qualified'])
+
 if __name__=='__main__':
     unittest.main()
