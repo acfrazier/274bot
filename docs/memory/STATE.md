@@ -45,16 +45,28 @@ verify it on resume because a worker may finish after this snapshot.
    `docs/memory/diagnostics/reference-build-20260906T215255Z/` (gitignored)
    panel sha256 `ed403b4f1bbce4c6…`, tui `91103790581692e0…`; features verified
    `memory-profile-no-alloc` via cargo fingerprints; full host/host-play/panel/tui
-   tests + explicit real GPU smoke passed. **No live cells run here.** Next:
-   `t_672f4ac3` runs the six live 1/16 active reference cells plus separate
-   overhead/functional checks against those frozen binaries; then `t_6ffdc227`
-   attributes qualified fixed/incremental costs. Failed or unavailable metrics
-   remain unresolved. Each card uses profile defaults and the same campaign
-   checkout; dependent cards wait for parent review completion. No final
-   matrix/capacity claim yet.
-5. Continue approved single-client fixed-cost attribution and measured N/N+x
-   costs. Terminal-runner cleanup performance acceptance remains pending; do not
-   launch more blind repeats. Final whole-branch Grok4.6 review remains required.
+   tests + explicit real GPU smoke passed. **No live cells in freeze task.**
+5. Task `t_672f4ac3` live short reference screen against those frozen binaries:
+   report [low-end-reference-screen.md](low-end-reference-screen.md) +
+   [low-end-reference-screen-table.json](low-end-reference-screen-table.json);
+   batch `docs/memory/diagnostics/low-end-reference-screen-20260906T220129Z/`
+   (gitignored). All ten cells exit0 + workload-qualified (six active 1/16
+   three-mode + three profiles-off overhead pairs + nav-captures pilot). Clean
+   observation windows (before host contamination 22:21:17Z): TUI 1/16 and panel
+   focused-one 1/16. **Every clean RSS budget target missed** (TUI n1 median
+   ~381 MiB vs ≤256; TUI n16 ~1001 vs ≤512; panel fo n1 ~613 vs ≤384; panel fo
+   n16 ~1270 vs ≤768). Actual GPU policy observed (TUI 0 renderers; fo exactly 1
+   GPU; fb-n16 16 GPU with ~1 fps background). GPU completion coverage 1.0 on
+   profiled panel cells (CPU delivery, not scanout). Profiles-on CPU is
+   diagnostic only; all overhead pairs + focused-background resource cells
+   contaminated by concurrent Hermes runtime-fix traffic — no overhead
+   acceptance, no blind rerun. Visual pilot PNGs inspected (scene-ready,
+   bank-area, return-from-bank). Unresolved: scheduling p99, responsiveness
+   live p99, last-FBO/CPU-fallback/TUI-resize functional cells, server resource
+   series, isolated re-screen of contaminated cells. **No performance pass.**
+   Next after review: `t_6ffdc227` attributes fixed/incremental costs using only
+   qualified portions; failed RSS targets stay failed. Final matrix/capacity
+   still later. Whole-branch Grok4.6 remains required at campaign finish.
 
 ## Evidence frontier
 
@@ -74,12 +86,16 @@ verify it on resume because a worker may finish after this snapshot.
 - [Ownership](targeted-allocation-owners.md) and
   [consumer audit](snapshot-consumer-audit.md): attribution and consumer contracts
   for next measured work; do not count allocation totals as resident savings.
+- [Low-end reference screen](low-end-reference-screen.md): short 1/16 three-mode
+  screen; workload qualified; clean RSS budgets all missed; contamination
+  limits overhead and focused-background resource claims.
 
 No accepted claim yet for the final 1/16 three-mode budgets, required p99 and
-completed GPU frames, modest-hardware validation, final lifecycle matrix, or
-128-bot capacity. The 1,000-bot/16GB VPS ambition remains a later milestone.
-No game behavior, random-event settings or fixture requirements may be weakened
-to obtain a passing memory result. Keep existing compatibility errors/stubs.
+completed GPU frames as presentation gates, modest-hardware validation, final
+lifecycle matrix, or 128-bot capacity. The 1,000-bot/16GB VPS ambition remains a
+later milestone. No game behavior, random-event settings or fixture requirements
+may be weakened to obtain a passing memory result. Keep existing compatibility
+errors/stubs.
 
 ## Handoff maintenance
 
