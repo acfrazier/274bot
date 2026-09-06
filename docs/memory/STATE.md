@@ -64,9 +64,29 @@ verify it on resume because a worker may finish after this snapshot.
    bank-area, return-from-bank). Unresolved: scheduling p99, responsiveness
    live p99, last-FBO/CPU-fallback/TUI-resize functional cells, server resource
    series, isolated re-screen of contaminated cells. **No performance pass.**
-   Next after review: `t_6ffdc227` attributes fixed/incremental costs using only
-   qualified portions; failed RSS targets stay failed. Final matrix/capacity
-   still later. Whole-branch Grok4.6 remains required at campaign finish.
+   Grok review approved `f2ffaa0`.
+6. Task `t_6ffdc227` fixed/incremental attribution from qualified portions only:
+   report [low-end-owner-attribution.md](low-end-owner-attribution.md). Clean
+   finite diffs (profiles-on provisional): TUI Δ/bot med RSS **41.38 MiB**,
+   linear fixed ~339 MiB; panel focused-one Δ/bot **43.79 MiB**, linear fixed
+   ~569 MiB; panel−TUI N1 ~232 MiB. Contaminated fb/overhead excluded from
+   matched claims; prerequisite for those = quiet-host re-screen. Separate N=1
+   lite stack-logging attribution on frozen binaries
+   (`20260906T225751Z_panel_n1_active`, `20260906T230141Z_tui_n1_active`): both
+   workload-qualified diagnostic-only. vmmap: MALLOC_LARGE resident **137.6M**
+   both frontends; Memory Tag 255 **32.4G virtual / ~8–11M resident** (not RSS);
+   panel IOAccelerator graphics **420.4M** resident (≫ gpu_tracked ~17.5 MiB).
+   JsRuntime 256/128/64 MiB stack groups are mmap reservations — **not** ranked
+   as resident targets (small V8-tagged sum ~10 MiB). Ranked lead: **two**
+   `NavWorld::load_pack` decodes (`Play::new` + `Run::prepare`) totaling
+   **140.988 MiB** alloc, RSS-linked via MALLOC_LARGE. ONE next proposal: share
+   single NavWorld Arc across Play and Run::prepare; validate with native
+   owner count + clean paired TUI RSS (expect tens of MiB if second decode
+   resident — not full 62 a priori). Standalone client-play skipped (defaults
+   unmatched). No optimization implemented this card. **No performance pass.**
+   Next after review: implement/validate shared-NavWorld on a follow-up card;
+   residual fixed cost then GPU mapping / client construct. Final matrix/capacity
+   later. Whole-branch Grok4.6 remains required at campaign finish.
 
 ## Evidence frontier
 
@@ -89,6 +109,9 @@ verify it on resume because a worker may finish after this snapshot.
 - [Low-end reference screen](low-end-reference-screen.md): short 1/16 three-mode
   screen; workload qualified; clean RSS budgets all missed; contamination
   limits overhead and focused-background resource claims.
+- [Low-end owner attribution](low-end-owner-attribution.md): clean 1/16 fixed
+  vs Δ/bot; N=1 native owners; dual nav decode + panel IOAccel; one shared-NavWorld
+  proposal; V8 large stacks not RSS.
 
 No accepted claim yet for the final 1/16 three-mode budgets, required p99 and
 completed GPU frames as presentation gates, modest-hardware validation, final
