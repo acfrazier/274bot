@@ -329,12 +329,13 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         self.assertTrue(g["paint_proxy_forbidden"])
         self.assertTrue(g["raw_gpu_interval_histograms_in_serializer"])
 
-    def test_gpu_completion_available(self):
+    def test_gpu_product_gate_not_meet_on_completion_latency(self):
+        """completion_latency is callback delivery — not product frame/cadence."""
         meta = _meta(render_profile=True, gpu_completion_profile=True)
         bounds = list(rm.INTERVAL_BOUNDS_MS)
         s_buckets = [0] * 11
         e_buckets = [0] * 11
-        e_buckets[3] = 200  # ≤40ms
+        e_buckets[3] = 200  # ≤40ms completion latency
 
         def row(buckets, enabled=True):
             return {
@@ -349,7 +350,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
                     "completion_coverage_complete": True,
                     "completion_latency_buckets": buckets,
                     "interval_bound_ms": bounds,
-                    # raw interval hists exist on serializer; core defers adapter
+                    # raw interval hists exist on serializer; product adapter deferred
                     "stable_completion_interval_buckets": list(buckets),
                 },
             }
@@ -357,9 +358,19 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         start = {"phase": "observe", "elapsed_s": 30.0, "renderer_profile": [row(s_buckets)]}
         end = {"phase": "observe", "elapsed_s": 150.0, "renderer_profile": [row(e_buckets)]}
         g = rm.evaluate_gpu(meta, [start, end], target_ms=40)
-        self.assertEqual(g["status"], "available")
-        self.assertEqual(g["target_verdict"], "meet")
+        # Product --require gpu must not pass on latency alone.
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["target_verdict"], "unavailable")
+        self.assertEqual(g["gate"], "gpu")
+        self.assertIn("interval", g["reason"])
         self.assertFalse(g["paint_proxy_used"])
+        self.assertTrue(g["paint_proxy_forbidden"])
+        # Distinct diagnostic may score latency; not product cadence.
+        diag = g["diagnostic_completion_latency"]
+        self.assertEqual(diag["metric"], "gpu_completion_latency")
+        self.assertEqual(diag["status"], "available")
+        self.assertEqual(diag["target_verdict"], "meet")
+        self.assertFalse(rm.gate_satisfies_require(g))
 
     def test_gpu_lost_no_false_pass(self):
         meta = _meta(render_profile=True, gpu_completion_profile=True)
@@ -404,7 +415,38 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
             ],
         }
         g = rm.evaluate_gpu(meta, [start, end])
-        self.assertEqual(g["slots"][0]["reason"], "coverage_lost_or_incomplete")
+        self.assertEqual(g["status"], "unavailable")
+        diag = g["diagnostic_completion_latency"]
+        self.assertEqual(diag["slots"][0]["reason"], "coverage_lost_or_incomplete")
+
+    def test_duplicate_slot_generation_rejected(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair()
+        dup = dict(end["responsiveness_profile"][0])
+        end["responsiveness_profile"] = [end["responsiveness_profile"][0], dup]
+        g = rm.evaluate_decode(meta, [start, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["reason"], "duplicate_slot_generation")
+
+    def test_disappearing_start_slot_rejected(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair()
+        extra = dict(start["responsiveness_profile"][0])
+        extra["slot_id"] = 99
+        start["responsiveness_profile"] = [start["responsiveness_profile"][0], extra]
+        g = rm.evaluate_decode(meta, [start, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["reason"], "disappearing_expected_slots")
+        self.assertIn([99, 1], g.get("disappeared", []))
+
+    def test_missing_coverage_flag_unavailable(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._resp_pair()
+        del end["responsiveness_profile"][0]["decode_coverage_complete"]
+        del start["responsiveness_profile"][0]["decode_coverage_complete"]
+        g = rm.evaluate_decode(meta, [start, end])
+        self.assertEqual(g["slots"][0]["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "coverage_flag_absent")
 
 
 class ObservationWindowTests(unittest.TestCase):
@@ -571,6 +613,53 @@ class CliAndRealCellTests(unittest.TestCase):
             self.assertEqual(data["gates"]["decode"]["target_verdict"], "unproven")
             self.assertEqual(data["gates"]["decode"]["slots"][0]["p99"]["lower_ms"], 100)
             self.assertEqual(data["gates"]["decode"]["slots"][0]["p99"]["upper_ms"], 250)
+
+    def test_output_rejects_existing_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            run = pathlib.Path(td) / "run"
+            run.mkdir()
+            (run / "metadata.json").write_text(json.dumps(_meta()))
+            _write_jsonl(
+                run / "samples.jsonl",
+                [
+                    {"phase": "observe", "elapsed_s": 1.0},
+                    {"phase": "observe", "elapsed_s": 2.0},
+                ],
+            )
+            out = pathlib.Path(td) / "out.json"
+            out.write_text("sentinel\n")
+            proc = subprocess.run(
+                [sys.executable, str(CLI), str(run), "--inspect", "-o", str(out)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertEqual(out.read_text(), "sentinel\n")
+            self.assertIn("exist", proc.stderr.lower())
+
+    def test_output_exclusive_create(self):
+        with tempfile.TemporaryDirectory() as td:
+            run = pathlib.Path(td) / "run"
+            run.mkdir()
+            (run / "metadata.json").write_text(json.dumps(_meta()))
+            _write_jsonl(
+                run / "samples.jsonl",
+                [
+                    {"phase": "observe", "elapsed_s": 1.0},
+                    {"phase": "observe", "elapsed_s": 2.0},
+                ],
+            )
+            out = pathlib.Path(td) / "out.json"
+            proc = subprocess.run(
+                [sys.executable, str(CLI), str(run), "--inspect", "-o", str(out)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            data = json.loads(out.read_text())
+            self.assertFalse(data["final_acceptance_claim"])
 
 
 class NoInputAndEmptyRunTests(unittest.TestCase):

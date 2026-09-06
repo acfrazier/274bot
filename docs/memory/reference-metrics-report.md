@@ -23,12 +23,14 @@ histogram productization, etc.) are **next card** work — not fabricated here.
    samples; optional `--contamination-from` intersection with `[obs_start, obs_end]`.
 3. **Cumulative histogram subtraction** — observe-end − observe-start; rejects
    counter resets (any bucket drop), `slot_id` / `generation` mismatches, missing
-   start rows.
+   start rows, **duplicate (slot_id, generation)** rows, and **disappearing** slots
+   present at observe-start but absent at observe-end.
 4. **p99 lower/upper** — same host rule as `p99_upper_bound_ms` (`cum*100 >= n*99`);
    reports the coarse bucket edges, never a precise percentile. Empty, width
    mismatch, negative counts, and **overflow** → `status=unavailable`.
 5. **Fail-closed integrity** — drops / cancels / lost / pending / coverage flags
-   cannot produce a gate pass. Disabled profiles and null input → unavailable.
+   cannot produce a gate pass. **Absent** coverage flags → `coverage_flag_absent`
+   (unavailable), not default-true. Disabled profiles and null input → unavailable.
 6. **Scheduling** — excess bins `[1,2,5,10,20]` ms + overflow; absolute interval
    mapping uses fixed **20 ms** budget. **First excess bucket lower absolute bound
    is 0**, not 20: `interval.saturating_sub(budget)` puts sub-budget intervals in
@@ -36,14 +38,22 @@ histogram productization, etc.) are **next card** work — not fabricated here.
    is sound. Groups are **process-wide** drawing/non-drawing with up to **49-cycle
    batch lag** → cannot prove per-slot or exact observation coverage; gate stays
    `unavailable` / `target_verdict=unavailable` even when diagnostic bounds exist.
-7. **GPU** — requires `gpu_completion_profile`; never uses host paint as proxy.
-   Scores `completion_latency_buckets` only. Serializer also emits
-   `stable_completion_interval_buckets` / transition equivalents — **raw capability
-   present**, adapter **deferred** (`adapter_implemented=false`), not “absent.”
+7. **GPU product gate** — `--require gpu` is the **product frame/cadence** gate.
+   It stays `status=unavailable` /
+   `reason=product_gpu_frame_cadence_requires_stable_completion_interval` until a
+   stable completion **interval**/FPS adapter exists. Fast
+   `completion_latency_buckets` (mainredraw→callback delivery) **cannot** product-meet
+   40 fps. Latency is scored only under nested
+   `diagnostic_completion_latency` with `metric=gpu_completion_latency` — distinct
+   from product `gpu`, and **not** accepted by `gate_satisfies_require` /
+   `--require gpu`. Never uses host paint as proxy. Serializer
+   `stable_completion_interval_buckets` are **raw present**, adapter **deferred**.
 8. **CLI**
    - `--inspect` (default path): partial JSON, **exit 0**
    - `--require scheduling,decode,input,gpu`: **exit 1** if any required gate is
      unavailable or target not `meet` (straddle = unproven → fail)
+   - `-o` / `--output`: **exclusive create** (`open("x")`); existing path → exit 1,
+     no overwrite (immutable evidence)
    - `final_acceptance_claim` always `false`
 
 ## Target verdicts
@@ -56,17 +66,20 @@ histogram productization, etc.) are **next card** work — not fabricated here.
 | `unavailable` | no honest bound / integrity failure / wrong scope |
 
 `--require` accepts only `status=available` **and** `target_verdict=meet`.
+Product `gpu` never reaches that path on completion-latency alone.
 
 ## Verification
 
 ```text
 python3 docs/memory/test_reference_metrics.py
-→ 32 passed
+→ 37 passed
 ```
 
 Coverage includes: empty/overflow/missing histograms; counter reset; generation
-mismatch; scheduling first-bucket lower=0; process-wide cannot meet per-slot;
-decode/input coverage-lost and no-input; GPU disabled ≠ paint proxy; GPU lost;
+mismatch; duplicate/disappearing slots; absent coverage flags; scheduling
+first-bucket lower=0; process-wide cannot meet per-slot; decode/input
+coverage-lost and no-input; GPU disabled ≠ paint proxy; GPU product gate not
+meet on completion latency (diagnostic only); GPU lost; exclusive `--output`;
 contamination intersection; CLI inspect exit 0; require exit 1; **one real
 reviewed** flags-off cell
 `diagnostics/low-end-reference-screen-20260906T220129Z/tui_n1_active`
@@ -75,13 +88,15 @@ proves `--require scheduling,decode,input,gpu` **exit 1** with all four gates
 `unavailable` / `profile_disabled` (scheduling + responsiveness required gates
 fail as required).
 
-Profiles-on overhead remains **unknown / diagnostic** (not measured here).
+Profiles-on overhead remains **unknown / diagnostic** (not measured here; never
+grants acceptance).
 
 ## Explicit non-claims / next card
 
 - No RSS/CPU resource gate productization.
 - No per-slot scheduling instrumentation (host emits process-wide only today).
-- GPU completion **interval** histograms: in serializer, not adapted in this core.
+- GPU completion **interval** histograms: in serializer, not adapted in this core
+  (product `--require gpu` remains unavailable until that adapter).
 - No live paired overhead runs; no budget acceptance; no STATE update on this card.
 - Flags-off reference cells cannot prove missing p99 — they correctly fail require.
 

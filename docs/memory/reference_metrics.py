@@ -377,18 +377,41 @@ def evaluate_scheduling(
     )
 
 
-def _index_slots(rows: Any) -> dict[tuple[Any, Any], dict]:
-    out: dict[tuple[Any, Any], dict] = {}
+def _index_slots(rows: Any) -> tuple[Optional[dict[tuple[Any, Any], dict]], Optional[str]]:
+    """Index rows by (slot_id, generation). Fail closed on duplicates/malformed."""
+    if rows is None:
+        return {}, None
     if not isinstance(rows, list):
-        return out
+        return None, "malformed_slot_rows"
+    out: dict[tuple[Any, Any], dict] = {}
     for row in rows:
         if not isinstance(row, dict):
-            continue
+            return None, "malformed_slot_row"
         key = (row.get("slot_id"), row.get("generation"))
         if key[0] is None or key[1] is None:
-            continue
+            return None, "missing_slot_id_or_generation"
+        if key in out:
+            return None, "duplicate_slot_generation"
         out[key] = row
-    return out
+    return out, None
+
+
+def _pair_slot_maps(
+    start_rows: Any,
+    end_rows: Any,
+) -> tuple[Optional[dict[tuple[Any, Any], dict]], Optional[dict[tuple[Any, Any], dict]], Optional[str], list]:
+    """Build start/end maps; reject duplicates and start-only disappearing slots."""
+    s_map, err = _index_slots(start_rows)
+    if err:
+        return None, None, err, []
+    e_map, err = _index_slots(end_rows)
+    if err:
+        return None, None, err, []
+    assert s_map is not None and e_map is not None
+    disappeared = sorted(k for k in s_map if k not in e_map)
+    if disappeared:
+        return None, None, "disappearing_expected_slots", disappeared
+    return s_map, e_map, None, []
 
 
 def _slot_hist_delta(
@@ -425,7 +448,14 @@ def evaluate_decode(
     s_rows, e_rows = start.get("responsiveness_profile"), end.get("responsiveness_profile")
     if s_rows is None and e_rows is None:
         return _unavailable("no_input", field="responsiveness_profile", gate="decode")
-    s_map, e_map = _index_slots(s_rows), _index_slots(e_rows)
+    s_map, e_map, idx_err, disappeared = _pair_slot_maps(s_rows, e_rows)
+    if idx_err:
+        return _unavailable(
+            idx_err,
+            gate="decode",
+            disappeared=[[a, b] for a, b in disappeared],
+        )
+    assert s_map is not None and e_map is not None
     if not e_map:
         return _unavailable("no_slot_rows", gate="decode")
 
@@ -438,7 +468,7 @@ def evaluate_decode(
             continue
 
         # Coverage / integrity on end snapshot (cumulative). Drops/cancels/lost
-        # or incomplete coverage cannot pass.
+        # or incomplete/absent coverage cannot pass.
         dropped = int(erow.get("decode_dropped_n") or 0)
         canceled = int(erow.get("decode_canceled_n") or 0)
         lost = int(erow.get("decode_lost_n") or 0)
@@ -455,6 +485,17 @@ def evaluate_decode(
                     decode_canceled_n=canceled,
                     decode_lost_n=lost,
                     decode_pending_n=pending,
+                    decode_coverage_complete=coverage,
+                )
+            )
+            continue
+        if coverage is None:
+            slots.append(
+                _unavailable(
+                    "coverage_flag_absent",
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="decode",
                     decode_coverage_complete=coverage,
                 )
             )
@@ -494,7 +535,7 @@ def evaluate_decode(
             "p99": bounds,
             "target_ms": target_ms,
             "target_verdict": verdict,
-            "decode_coverage_complete": coverage if coverage is not None else True,
+            "decode_coverage_complete": coverage,
         }
         if bounds.get("status") == "available" and verdict == "meet":
             row["status"] = "available"
@@ -559,7 +600,14 @@ def evaluate_input(
     s_rows, e_rows = start.get("responsiveness_profile"), end.get("responsiveness_profile")
     if s_rows is None and e_rows is None:
         return _unavailable("no_input", field="responsiveness_profile", gate="input")
-    s_map, e_map = _index_slots(s_rows), _index_slots(e_rows)
+    s_map, e_map, idx_err, disappeared = _pair_slot_maps(s_rows, e_rows)
+    if idx_err:
+        return _unavailable(
+            idx_err,
+            gate="input",
+            disappeared=[[a, b] for a, b in disappeared],
+        )
+    assert s_map is not None and e_map is not None
     if not e_map:
         return _unavailable("no_slot_rows", gate="input")
 
@@ -600,6 +648,17 @@ def evaluate_input(
                     input_canceled_n=canceled,
                     input_lost_n=lost,
                     input_pending_n=pending,
+                    input_coverage_complete=coverage,
+                )
+            )
+            continue
+        if coverage is None:
+            slots.append(
+                _unavailable(
+                    "coverage_flag_absent",
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="input",
                     input_coverage_complete=coverage,
                 )
             )
@@ -650,7 +709,7 @@ def evaluate_input(
             "p99": bounds,
             "target_ms": target_ms,
             "target_verdict": verdict,
-            "input_coverage_complete": coverage if coverage is not None else True,
+            "input_coverage_complete": coverage,
         }
         if bounds.get("status") == "available":
             row["status"] = "available"
@@ -698,52 +757,101 @@ def evaluate_gpu(
     *,
     target_ms: float = 40.0,
 ) -> dict:
-    """GPU completion latency gate (narrow core).
+    """Product GPU frame/cadence gate (narrow core).
 
-    Never uses host paint as a GPU proxy. The live serializer also emits
-    stable_completion_interval_buckets / transition_completion_interval_buckets;
-    this core scores completion_latency_buckets only — interval adapters are
-    deferred, not absent from the raw artifact.
+    Never uses host paint as a GPU proxy. Product `--require gpu` requires
+    stable completion *interval*/FPS proof. completion_latency_buckets measure
+    mainredraw→callback delivery only — scored under diagnostic_completion_latency
+    (metric=gpu_completion_latency), never as product meet. Serializer also
+    emits stable_completion_interval_buckets; interval adapter is deferred
+    (raw present), not absent.
     """
+    product_reason = "product_gpu_frame_cadence_requires_stable_completion_interval"
+    product_note = (
+        "completion_latency is mainredraw→callback delivery, not frame/scanout cadence; "
+        "fast callback latency does not prove 40fps. "
+        "serializer gpu_completion.stable_completion_interval_buckets exist but "
+        "are not adapted in this core"
+    )
+
     if not meta.get("gpu_completion_profile"):
-        # render_profile paint histograms must not substitute.
         return _unavailable(
             "gpu_completion_profile_disabled",
             gate="gpu",
+            target_verdict="unavailable",
             paint_proxy_forbidden=True,
-            note=(
-                "host paint_n / stable_paint_interval_buckets are not GPU completion; "
-                "serializer gpu_completion.stable_completion_interval_buckets exist but "
-                "are not adapted in this core"
-            ),
+            paint_proxy_used=False,
+            note=product_note,
             raw_gpu_interval_histograms_in_serializer=True,
-            adapter_implemented=False,
+            adapter_implemented={
+                "completion_latency_diagnostic": False,
+                "stable_completion_interval": False,
+            },
         )
     if not meta.get("render_profile"):
-        return _unavailable("render_profile_disabled", gate="gpu", paint_proxy_forbidden=True)
+        return _unavailable(
+            "render_profile_disabled",
+            gate="gpu",
+            target_verdict="unavailable",
+            paint_proxy_forbidden=True,
+            paint_proxy_used=False,
+        )
 
     start, end = _observe_pair(samples)
     if start is None or end is None:
-        return _unavailable("no_observe_samples", gate="gpu")
+        return _unavailable(
+            "no_observe_samples",
+            gate="gpu",
+            target_verdict="unavailable",
+            paint_proxy_forbidden=True,
+            paint_proxy_used=False,
+        )
 
     s_rows, e_rows = start.get("renderer_profile"), end.get("renderer_profile")
     if s_rows is None and e_rows is None:
-        return _unavailable("no_input", field="renderer_profile", gate="gpu")
-    s_map, e_map = _index_slots(s_rows), _index_slots(e_rows)
+        return _unavailable(
+            "no_input",
+            field="renderer_profile",
+            gate="gpu",
+            target_verdict="unavailable",
+            paint_proxy_forbidden=True,
+            paint_proxy_used=False,
+        )
+    s_map, e_map, idx_err, disappeared = _pair_slot_maps(s_rows, e_rows)
+    if idx_err:
+        return _unavailable(
+            idx_err,
+            gate="gpu",
+            target_verdict="unavailable",
+            paint_proxy_forbidden=True,
+            paint_proxy_used=False,
+            disappeared=[[a, b] for a, b in disappeared],
+        )
+    assert s_map is not None and e_map is not None
     if not e_map:
-        return _unavailable("no_slot_rows", gate="gpu")
+        return _unavailable(
+            "no_slot_rows",
+            gate="gpu",
+            target_verdict="unavailable",
+            paint_proxy_forbidden=True,
+            paint_proxy_used=False,
+        )
 
     slots = []
     any_available = False
     for key, erow in e_map.items():
         srow = s_map.get(key)
         if srow is None:
-            slots.append(_unavailable("missing_start_slot", slot_id=key[0], generation=key[1], gate="gpu"))
+            slots.append(
+                _unavailable("missing_start_slot", slot_id=key[0], generation=key[1], gate="gpu")
+            )
             continue
         eg = erow.get("gpu_completion")
         sg = (srow or {}).get("gpu_completion")
         if not isinstance(eg, dict):
-            slots.append(_unavailable("missing_gpu_completion", slot_id=key[0], generation=key[1], gate="gpu"))
+            slots.append(
+                _unavailable("missing_gpu_completion", slot_id=key[0], generation=key[1], gate="gpu")
+            )
             continue
         if not eg.get("enabled", False):
             slots.append(
@@ -777,6 +885,18 @@ def evaluate_gpu(
                 )
             )
             continue
+        if reg_ok is None or cov_ok is None:
+            slots.append(
+                _unavailable(
+                    "coverage_flag_absent",
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="gpu",
+                    registration_complete=reg_ok,
+                    completion_coverage_complete=cov_ok,
+                )
+            )
+            continue
         if reg_ok is False or cov_ok is False:
             slots.append(
                 _unavailable(
@@ -791,10 +911,19 @@ def evaluate_gpu(
             continue
 
         if not isinstance(sg, dict):
-            slots.append(_unavailable("missing_start_gpu_completion", slot_id=key[0], generation=key[1], gate="gpu"))
+            slots.append(
+                _unavailable(
+                    "missing_start_gpu_completion",
+                    slot_id=key[0],
+                    generation=key[1],
+                    gate="gpu",
+                )
+            )
             continue
         if erow.get("generation") != srow.get("generation"):
-            slots.append(_unavailable("generation_mismatch", slot_id=key[0], generation=key[1], gate="gpu"))
+            slots.append(
+                _unavailable("generation_mismatch", slot_id=key[0], generation=key[1], gate="gpu")
+            )
             continue
 
         delta = subtract_counts(
@@ -803,9 +932,13 @@ def evaluate_gpu(
         )
         if delta is None:
             if eg.get("completion_latency_buckets") is None:
-                slots.append(_unavailable("missing_histogram", slot_id=key[0], generation=key[1], gate="gpu"))
+                slots.append(
+                    _unavailable("missing_histogram", slot_id=key[0], generation=key[1], gate="gpu")
+                )
             else:
-                slots.append(_unavailable("counter_reset", slot_id=key[0], generation=key[1], gate="gpu"))
+                slots.append(
+                    _unavailable("counter_reset", slot_id=key[0], generation=key[1], gate="gpu")
+                )
             continue
 
         bound_list = eg.get("interval_bound_ms") or INTERVAL_BOUNDS_MS
@@ -818,7 +951,7 @@ def evaluate_gpu(
         row = {
             "slot_id": key[0],
             "generation": key[1],
-            "gate": "gpu",
+            "metric": "gpu_completion_latency",
             "buckets_delta": delta,
             "p99": bounds,
             "target_ms": target_ms,
@@ -826,6 +959,7 @@ def evaluate_gpu(
             "registration_complete": reg_ok,
             "completion_coverage_complete": cov_ok,
             "paint_proxy_used": False,
+            "not_product_frame_cadence": True,
         }
         if bounds.get("status") == "available":
             row["status"] = "available"
@@ -837,36 +971,64 @@ def evaluate_gpu(
         slots.append(row)
 
     if not slots:
-        return _unavailable("no_matched_slots", gate="gpu")
-    if not any_available:
-        return {
+        diagnostic: dict[str, Any] = {
+            "metric": "gpu_completion_latency",
             "status": "unavailable",
-            "reason": "no_slot_with_available_gpu_p99",
-            "gate": "gpu",
+            "reason": "no_matched_slots",
+            "target_verdict": "unavailable",
+            "pass_means": PASS_MEANS,
+            "not_product_frame_cadence": True,
+        }
+    elif not any_available:
+        diagnostic = {
+            "metric": "gpu_completion_latency",
+            "status": "unavailable",
+            "reason": "no_slot_with_available_gpu_completion_latency_p99",
             "slots": slots,
             "pass_means": PASS_MEANS,
             "target_verdict": "unavailable",
-            "paint_proxy_forbidden": True,
+            "not_product_frame_cadence": True,
         }
-    verdicts = {s.get("target_verdict") for s in slots}
-    if verdicts == {"meet"}:
-        agg, status = "meet", "available"
-    elif "unavailable" in verdicts and not (verdicts - {"unavailable"}):
-        agg, status = "unavailable", "unavailable"
-    elif "miss" in verdicts:
-        agg, status = "miss", "available"
     else:
-        agg, status = "unproven", "available"
+        verdicts = {s.get("target_verdict") for s in slots}
+        if verdicts == {"meet"}:
+            d_agg, d_status = "meet", "available"
+        elif "unavailable" in verdicts and not (verdicts - {"unavailable"}):
+            d_agg, d_status = "unavailable", "unavailable"
+        elif "miss" in verdicts:
+            d_agg, d_status = "miss", "available"
+        else:
+            d_agg, d_status = "unproven", "available"
+        diagnostic = {
+            "metric": "gpu_completion_latency",
+            "status": d_status,
+            "slots": slots,
+            "target_ms": target_ms,
+            "target_verdict": d_agg,
+            "pass_means": PASS_MEANS,
+            "not_product_frame_cadence": True,
+            "reason": None
+            if d_status == "available"
+            else "no_slot_with_available_gpu_completion_latency_p99",
+        }
+
+    # Product gate stays unavailable until interval/FPS adapter exists.
     return {
-        "status": status,
+        "status": "unavailable",
+        "reason": product_reason,
         "gate": "gpu",
-        "slots": slots,
         "target_ms": target_ms,
-        "target_verdict": agg,
+        "target_verdict": "unavailable",
         "pass_means": PASS_MEANS,
         "paint_proxy_forbidden": True,
         "paint_proxy_used": False,
-        "reason": None if status == "available" else "no_slot_with_available_gpu_p99",
+        "note": product_note,
+        "raw_gpu_interval_histograms_in_serializer": True,
+        "adapter_implemented": {
+            "completion_latency_diagnostic": True,
+            "stable_completion_interval": False,
+        },
+        "diagnostic_completion_latency": diagnostic,
     }
 
 
@@ -1027,7 +1189,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     text = json.dumps(result, indent=2, sort_keys=True)
     if args.output:
-        args.output.write_text(text + "\n")
+        try:
+            # Immutable evidence: exclusive create; never overwrite.
+            with args.output.open("x", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+        except FileExistsError:
+            print(
+                f"refusing to overwrite existing output: {args.output}",
+                file=sys.stderr,
+            )
+            return 1
+        except OSError as exc:
+            print(f"output write failed: {exc}", file=sys.stderr)
+            return 1
     else:
         print(text)
 
