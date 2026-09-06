@@ -781,6 +781,9 @@ impl ScenarioRunner {
             self.obj_names.as_deref(),
             self.started,
         ));
+        // Terminal consumers have copied their evidence and the shot callback
+        // has returned. Done ticks never read this working snapshot again.
+        self.snapshot = GameSnapshot::new();
     }
 
     fn finish_fail(&mut self, msg: &str) {
@@ -796,6 +799,7 @@ impl ScenarioRunner {
             self.obj_names.as_deref(),
             self.started,
         ));
+        self.snapshot = GameSnapshot::new();
     }
 }
 
@@ -871,6 +875,57 @@ mod tests {
             proof: Proof::Stat { id: 16, min },
             companions: vec![],
             settings: ScenarioSettings::default(),
+        }
+    }
+
+    #[test]
+    fn terminal_snapshot_is_released_after_shot_and_evidence() {
+        for failed in [false, true] {
+            let mut client = seeded_client();
+            client.runenergy = 73;
+            let mut runner = ScenarioRunner::with_world(stat_scenario(1, 10), None);
+            runner.snapshot.rebuild(&client);
+            let terminal = serde_json::to_value(&runner.snapshot).unwrap();
+            let empty = serde_json::to_value(GameSnapshot::new()).unwrap();
+            assert_ne!(terminal, empty);
+            let shots = Arc::new(Mutex::new(Vec::new()));
+            let captured = Arc::clone(&shots);
+            runner.set_terminal_shot("terminal");
+            runner.set_shot_sink(Box::new(move |label, snapshot| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push((label.to_owned(), serde_json::to_value(snapshot).unwrap()));
+            }));
+            if failed {
+                runner.finish_fail("original failure");
+            } else {
+                runner.finish_pass();
+            }
+            assert_eq!(
+                *shots.lock().unwrap(),
+                vec![("terminal".to_owned(), terminal)]
+            );
+            let evidence = runner.evidence().unwrap();
+            assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+            assert_eq!(evidence.scene, 2);
+            assert_eq!(evidence.stat.as_ref().unwrap().runenergy, 73);
+            assert_eq!(evidence.outcome, if failed { "FAIL" } else { "PASS" });
+            assert_eq!(
+                evidence.message.as_deref(),
+                failed.then_some("original failure")
+            );
+            let retained_evidence = evidence.to_json();
+            let retained_status = format!("{:?}", runner.status());
+            assert_eq!(serde_json::to_value(&runner.snapshot).unwrap(), empty);
+            client.runenergy = 1;
+            client.ingame = false;
+            runner.tick_with_hold(&mut client, true);
+            runner.tick(&mut client);
+            assert_eq!(runner.evidence().unwrap().to_json(), retained_evidence);
+            assert_eq!(format!("{:?}", runner.status()), retained_status);
+            assert_eq!(shots.lock().unwrap().len(), 1);
+            assert_eq!(serde_json::to_value(&runner.snapshot).unwrap(), empty);
         }
     }
 
