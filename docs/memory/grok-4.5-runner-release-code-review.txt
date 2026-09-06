@@ -1,0 +1,64 @@
+Verdict: REQUEST CHANGES
+
+Commit: `122ad32` `fix(memory): release scenario snapshot after terminal evidence`
+Parent: `317b5ec`
+Scope: `crates/scenario/src/runner.rs` only (+55)
+
+What the change does
+- `finish_pass` / `finish_fail`: `phase = Done` → `fire_terminal_shot()` → `Evidence::terminal(...)` → `self.snapshot = GameSnapshot::new()`
+- Ordering is correct for the intentional consumers: shot sink sees the live terminal snap; evidence is owned/copied from it; then the private working snap is dropped
+- `snapshot` stays private; public surface is still `evidence()` / `status()` / shot sink callback — no new API, no global snapshot sharing, no family removal
+- Panel sink serializes JSON inside the callback (`arm_scenario_shots`), so it does not retain a reference past clear
+- New test covers PASS and FAIL: sink payload, evidence fields, empty snap after finish, post-done `tick` / `tick_with_hold` no-ops, no second shot
+
+Logs
+- Red `/tmp/runner-release-red.log`: new test fails on empty-snapshot assert (working snap still terminal) — demonstrates the bug the test locks
+- Green scenario: 77 passed including `terminal_snapshot_is_released_after_shot_and_evidence`
+- Green host-play: 134 passed
+
+Blocking finding: same-tick read after finish
+
+`tick_with_hold` still continues after terminal on the follow-fail path:
+
+```
+if dirty && !hold {
+    self.step_route(client);  // may finish_fail → clear snapshot
+}
+// no Phase::Done check / return
+if !self.step_sent { ... }           // can still run
+if dirty { ticks_waited/total_ticks += 1; }
+arm.check_with_xp_baselines(&self.snapshot, ...)  // reads CLEARED snap
+else if ticks_waited >= budget { finish_fail(...) } // may fire again
+```
+
+- `send_current`’s `finish_fail` correctly `return`s
+- budget / deadline / `finish_pass` fallthrough is gated by `phase` and does not re-read snap
+- `step_route`’s `finish_fail` does not return and does not re-check `Done`
+
+So the new comment (“Done ticks never read this working snapshot again”) is false on this path. Before the clear, fallthrough still saw the terminal snap (mostly benign). After the clear it sees `GameSnapshot::new()`:
+
+1. Arm checks run on an empty snap (nav `Arrived` etc. fail closed)
+2. On a dirty tick where follow fails and `ticks_waited` reaches `budget` after the post-`step_route` increment, a second `finish_fail` can overwrite the specific follow evidence with a generic budget message
+
+That is a real behavioral shift introduced by releasing the snap without stopping the tick.
+
+Required fix (minimal, still bounded)
+After `step_route`, bail if terminal — same pattern as the send-fail path:
+
+```
+if dirty && !hold {
+    self.step_route(client);
+    if matches!(self.phase, Phase::Done) {
+        return;
+    }
+}
+```
+
+Better (optional consistency): `return` immediately at the end of both `finish_*`, or after every `finish_fail` call site in `tick_with_hold`, so the invariant matches the comment and the test’s “no post-terminal work” intent.
+
+Nits (non-blocking)
+- Explanatory comment only on `finish_pass`, not `finish_fail`
+- Test asserts private `runner.snapshot` via serde (fine in-module); does not exercise the `step_route` → same-tick path above
+
+Summary
+Release-after-shot+evidence is the right bounded optimization and the happy-path/public API/tests look sound, but same-tick continuation after `step_route` finish still reads the working snapshot and can clobber FAIL evidence. Fix that guard/return before approving.

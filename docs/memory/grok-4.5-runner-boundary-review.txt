@@ -1,0 +1,32 @@
+Verdict: APPROVE
+
+Commit: 0e909b9 fix(memory): defer runner cleanup until the tick returns
+Range: 317b5ec..0e909b9 (via 122ad32)
+Scope: crates/scenario/src/runner.rs only (+93)
+
+What changed vs prior review (122ad32)
+- 122ad32 cleared snapshot inside finish_pass/finish_fail. That broke same-tick fallthrough after step_route finish_fail (arm/budget still ran on an empty snap; second terminal shot saw None).
+- 0e909b9 undoes mid-finish clear. Public tick_with_hold runs unmodified body as tick_inner, then clears only if Phase::Done.
+- No early return after step_route (deliberate). Original same-tick continuation and possible repeated failure shot/evidence overwrite stay intact.
+
+Behavior preservation (checked)
+- tick_inner(0e909b9) == tick_with_hold(317b5ec) body (exact).
+- finish_pass / finish_fail == parent (no GameSnapshot::new() there).
+- Sole production clear: end of tick_with_hold when Done (plus struct init).
+- tick() still delegates to tick_with_hold, so every public tick path gets the epilogue.
+- send_current finish_fail early return still clears after tick_inner returns.
+- Later same-tick phase gates unchanged: Proving and deadline still skip when Done; Running fallthrough after follow fail still sees the live terminal snap.
+- Snapshot stays private; evidence()/status()/shot sink remain the public surface.
+
+Tests
+- terminal_snapshot_is_released_after_shot_and_evidence: shot+evidence from live snap; release asserted after tick_with_hold; post-done ticks retain evidence/status; no second shot.
+- follow_failure_keeps_snapshot_for_existing_same_tick_budget_failure: locks original [Some(tile), Some(tile)] and budget evidence message (follow then budget in one tick).
+
+Logs
+- /tmp/runner-boundary-red.log: regression fails under clear-in-finish shape — left [Some(...), None] vs [Some(...), Some(...)].
+- /tmp/runner-boundary-scenario-tests.log: 78 passed, including both new tests.
+- /tmp/runner-boundary-host-tests.log: 134 passed.
+
+Earlier REQUEST CHANGES is satisfied by deferring release rather than changing control flow. Memory drop still happens once the terminal tick returns; mid-tick readers keep parent semantics.
+
+APPROVE
