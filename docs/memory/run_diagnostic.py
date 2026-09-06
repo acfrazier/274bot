@@ -52,7 +52,10 @@ def source_digest(directory):
         path = directory / relative
         if path.is_file(): digest.update(name+b'\0'+path.read_bytes()+b'\0')
     return digest.hexdigest()
+nav_pack = pathlib.Path(env.get('NAV_PACK', str(pathlib.Path.home()/'.274bot/274bot.navpack'))).resolve()
+nav_flags = pathlib.Path(env.get('NAV_FLAGS', str(nav_pack.with_suffix('.navflags')))).resolve()
 meta = dict(host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
+            nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
             diagnostic_only=True,scheduling_profile=a.scheduling_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=("fixed-one" if a.single_renderer else "rotating-all") if a.frontend == "panel" else "none",terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging,binary=str(binary),
             binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
             host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),

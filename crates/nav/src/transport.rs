@@ -123,8 +123,8 @@ pub struct TransportGraph {
 
 /// Derive the transport graph from `content_root` (the Server content tree:
 /// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs,
-/// and the baked whole-world [`WorldCollision`] (the door edges walk their
-/// `to` far side out to a standable tile on it; door edges carry `dir` and
+/// and the baked whole-world [`WorldCollision`] (door edges place their
+/// `to` on an adjacent standable tile; door edges carry `dir` and
 /// `open_loc_id`, every other kind keeps `dir: None`/`open_loc_id: None`).
 ///
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
@@ -578,8 +578,8 @@ fn door_edges(
                 level: p.level,
             };
             // A door is bidirectional: an edge in `dir` and one in its
-            // opposite, each with its own far-side walk-out (a direction
-            // whose far side never resolves yields no edge).
+            // opposite, each with an adjacent standable destination. A blocked
+            // neighbor yields no edge; opening a door cannot erase scenery.
             for dir in [dir, opposite(dir)] {
                 let Some(to) = door_far_side(at, dir, collision) else {
                     continue;
@@ -626,10 +626,6 @@ fn opposite(dir: DoorDir) -> DoorDir {
     }
 }
 
-/// The far-side tile of a door at `at`: walk outward in the wall's far
-/// direction (`dir`: N→+z, S→-z, E→+x, W→-x) one tile at a time until
-/// `collision.standable` accepts one. A door whose far side never becomes
-/// standable inside the bake yields no edge.
 /// Slashable webs (`bigweb_slashable` / loc 733): two edges per
 /// far-side dir — `oplocu` with an unequippable knife (`option` 0,
 /// `item_req`), and `oploc1` Slash (`option` 1) when any
@@ -675,7 +671,7 @@ fn web_edges(
             level: p.level,
         };
         for dir in [dir, opposite(dir)] {
-            let Some(to) = door_far_side(at, dir, collision) else {
+            let Some(to) = web_far_side(at, dir, collision) else {
                 bump(skipped, SKIP_WEB_NO_FAR, 1);
                 continue;
             };
@@ -762,7 +758,25 @@ fn slash_weapon_ids(content_root: &Path, objs: &HashMap<String, i32>) -> Vec<i32
     ids
 }
 
+/// A wall door can expose the adjacent tile, not erase intervening scenery.
 fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
+    let (dx, dz) = match dir {
+        DoorDir::N => (0, 1),
+        DoorDir::S => (0, -1),
+        DoorDir::E => (1, 0),
+        DoorDir::W => (-1, 0),
+    };
+    let to = WorldTile {
+        x: at.x + dx,
+        z: at.z + dz,
+        level: at.level,
+    };
+    collision.standable(to).then_some(to)
+}
+
+// Web footprint traversal retains its existing behavior in this wall-door
+// correction; webs are not shape-0 wall doors and need separate validation.
+fn web_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
     let (dx, dz) = match dir {
         DoorDir::N => (0, 1),
         DoorDir::S => (0, -1),
@@ -4036,6 +4050,43 @@ mod tests {
             fx.write("maps/m44_53.jm2", "==== MAP ====\n0 0 0: h1 u50\n");
         }
         bake_from_maps(&fx.path().join("maps"), defs, door_ids).unwrap()
+    }
+
+    #[test]
+    fn door_far_side_does_not_skip_bank_return_obstacles() {
+        // Captured at (2651..=2657,3292): counter/plant/bench footprints
+        // separate Door1530 at2656 from the old bogus west landing2651.
+        let mut flags = vec![0u32; 7 * 4];
+        flags[..7].copy_from_slice(&[0x4020, 0x4120, 0x4120, 0x4120, 0x4120, 0x5028, 0x10080]);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 2651,
+                z: 3292,
+                level: 0,
+            },
+            width: 7,
+            height: 1,
+            walk,
+            blocked,
+            flags: Some(flags),
+        };
+        let at = WorldTile {
+            x: 2656,
+            z: 3292,
+            level: 0,
+        };
+        assert_eq!(door_far_side(at, DoorDir::W, &collision), None);
+        assert_eq!(
+            door_far_side(at, DoorDir::E, &collision),
+            Some(WorldTile {
+                x: 2657,
+                z: 3292,
+                level: 0
+            })
+        );
+        assert_eq!(door_far_side(at, DoorDir::N, &collision), None);
+        assert_eq!(door_far_side(at, DoorDir::S, &collision), None);
     }
 
     #[test]
