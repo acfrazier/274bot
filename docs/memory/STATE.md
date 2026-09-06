@@ -84,9 +84,27 @@ verify it on resume because a worker may finish after this snapshot.
    owner count + clean paired TUI RSS (expect tens of MiB if second decode
    resident — not full 62 a priori). Standalone client-play skipped (defaults
    unmatched). No optimization implemented this card. **No performance pass.**
-   Next after review: implement/validate shared-NavWorld on a follow-up card;
+   Grok4.5 run64 approved attribution commit `1f086b0`. Shared-NavWorld
+   implementation is running on `t_513c266a`; its scope ends at tested code
+   review, with native and clean paired validation still pending.
+   Next after review: validate shared-NavWorld on an isolated follow-up card;
    residual fixed cost then GPU mapping / client construct. Final matrix/capacity
    later. Whole-branch Grok4.6 remains required at campaign finish.
+7. Linux environment preparation `t_e0ea755d` completed at `d4945ab` with
+   review approval: [environment](linux-reference-environment.md). No image
+   build/runtime proof in that preparation. Execution card `t_e1c104c1` may
+   start Docker Desktop, build/test Linux amd64 and validate optional localhost
+   noVNC while no clean measurements run. Emulation is portability evidence,
+   not native modest-hardware or Linux GPU performance acceptance.
+8. Offline metrics card `t_8bade183` failed before writing deliverables after
+   provider timeouts at roughly 78k context. Preserve that failed attempt.
+   Recovery `t_135ceb9f` narrows work to bounded observation/histogram core,
+   limited artifact reads, meaningful false-pass tests and honest unavailable
+   metrics; broader adapters remain subsequent work. No performance pass.
+   Do not start clean paired runs until Linux builds/tests and all other
+   native profiling or test activity have stopped. Then collect enabled
+   scheduling/responsiveness, matched overhead controls and separate server
+   resource evidence; the original flags-off cells cannot prove missing p99.
 
 ## Evidence frontier
 
