@@ -90,15 +90,29 @@ checkout's gitignored `docs/superpowers/STATE.md` only points here; update that
 pointer if the campaign moves. After memory completion, it also identifies the
 preserved historical context for resuming the remaining compatibility work.
 
-## Runtime handoff caveat (2026-09-06)
+## Runtime handoff correction (2026-09-06)
 
-The installed Hermes `agent/kanban_stop.py` stop nudge recognizes complete/block,
-but not request-review. Run45 continued after its handoff and made a scoped
-follow-up commit. Orch stopped its stale process; reviewer independently approved
-the final `316c2a2` code. Documentation alone does not fix this runtime guard.
-Until corrected in Hermes, verify the ended implementer process exits at handoff
-and stop that exact old process if necessary, without reclaiming the new reviewer.
-For run47/task `t_bd7960b8`, orch started a bounded supervisor that checks run
-outcome and original PID identity before terminating only an ended implementer.
-No Hermes source, auth or provider configuration was changed. Keep this execution
-limitation visible; never accept a review while its producer is still editing.
+The old Hermes guard nudged implementers after request-review (observed on run45;
+run47 received a bounded exact-process supervisor). That was a runtime defect.
+Local Hermes branch `codex/kanban-handoff-stop` now contains fix `32e33b6b`, plus
+instruction-only follow-up `e33b4235`. Grok4.5 review `t_82629455` run58 approved
+`32e33b6b`; [receipt](grok-4.5-hermes-handoff-review.json). Validation: 124 tests
+passed with one Windows-only skip; reviewer independently ran 81 passing tests.
+The original baseline failed all five new cases. Actual run58 exited with
+`reason=kanban_run_ended`; its PID was confirmed gone without the workaround.
+
+Retire the workaround for fresh workers importing the local patch. Workers
+already running before the patch retain their imports: allow them to drain and
+verify handoff exit, using the prior exact-process workaround only if needed.
+Already-started background jobs must finish/stop before shared-workspace handoff.
+No gateway restart, auth/provider configuration change or remote push was made.
+The patch is local, not a claim that an upstream Hermes release contains it.
+
+The preserved compatibility plan/spec in the primary checkout now defer to the
+canonical execution protocol and use the at-pen fixture consistently. Missing
+capabilities remain diagnostic outcomes rather than functional passes; authorized
+bounded diagnosis may continue after a failed proof. Historical state is evidence.
+
+Live task `t_672f4ac3` acknowledged concurrent Hermes test activity beginning
+2026-09-06T22:21:17Z. Its affected observations must remain diagnostic for resource/
+latency acceptance; preserve gameplay qualification separately. No blind reruns.
