@@ -1,0 +1,21 @@
+APPROVE
+
+Commit 98b72c4 (docs only vs 1b357b8) correctly identifies duplicated benchmark nav ownership. Claims check out against code and the two cited diagnostics.
+
+Attribution
+- All 15 `scenario_nav` groups are `Run::prepare` → `ScenarioRunner::new` → `NavWorld::load_pack` → `pack::decode` (32-call dominant paths). JSON matches `allocation-groups.json` exactly; sum 2,362,141,824; per runner 73,816,932 = 70.397 MiB; 31× redundant = 2,182.317 MiB.
+- Table split is right: walk `vec![0u8; cells]` → 2,084,569,088 (32×65,142,784); blocked-plane path → 260,571,136 (32×8,142,848); remaining 13 groups = 17,001,600.
+- Distinct host path: `Play::new` → `load_pack`, 1×65,142,784. Heap settled: 33×65,142,784 nav class (32 runners + 1 Play). `Play::world` clones the host Arc; runners each load their own.
+
+Ownership / lifetime
+- `memory.rs`: one `ScenarioRunner::new` per seeded name into static `SEEDS`.
+- `runner.rs`: `new` always `load_pack` + `Arc::new`; `with_world` exists for sharing; `tick_with_hold` returns on `Phase::Done` without dropping `nav_world` / snapshot.
+- `SlotScript::stop` joins/drops isolate and compiled instance only; leaves `last_snapshot`, `last_world_id`, `ipc` (cleared on Start, not Stop).
+
+Evidence / caveats
+- Idle `20260906T115411Z_panel_n32_seeded-idle`: binary `33ec5346…f13f8`, exit -15, operator note ownership-only; ready=32 before settled heap; not a baseline.
+- Active `20260906T120024Z_panel_n1_active`: exit 0, 179.137s observe, +21 steals; observe `malloc_history` timeout (~55s) with full report (down to 1-byte groups + image footer); teardown allocations empty (0 bytes); both vmmaps exit 0; zone allocated 331.7M → 330.8M; v8 isolates 0 / inflight 0 after Stop; no paired Stop attribution.
+- Docs correctly refuse malloc−RSS “correction,” production cost reading of prior ~90 / ~103–105 MiB deltas, and any optimization/RSS promise. Client construct 32×4,325,376 noted as coarse only.
+- Correction banners on `panel-memory-controls.md` and `sustained-panel32-three-runs.md` are accurate.
+
+No factual or arithmetic defects in scope.
