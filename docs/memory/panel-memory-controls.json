@@ -1,0 +1,532 @@
+[
+  {
+    "run": "20260906T040226Z_panel_n1_active",
+    "qualification": {
+      "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T040226Z_panel_n1_active",
+      "n": 1,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 599.606643167,
+      "cpu_seconds": 199.738622,
+      "cpu_cores": 0.33311609248526886,
+      "client_ticks_per_slot_s": 43.00319266612673,
+      "median_resident_bytes": 676659200.0,
+      "steal_gains": {
+        "live7a350_0": 62
+      },
+      "diagnostic_only": true
+    },
+    "meta": {
+      "host_sources_sha256": "b30ff310540246d788cc0a50dc60e047493938e938ab5b1ad6e96c42223d223b",
+      "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+      "frontend": "panel",
+      "n": 1,
+      "workload": "active",
+      "warmup_s": 120,
+      "observe_s": 600,
+      "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+      "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+      "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+      "diagnostic_only": true,
+      "scheduling_profile": true,
+      "diagnostic_sidecar": false,
+      "nav_captures": false,
+      "single_renderer": true,
+      "render_policy": "fixed-one",
+      "terminal": false,
+      "terminal_size": null,
+      "debug": false,
+      "sustain": true,
+      "stack_logging": false,
+      "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/memory-resume-build/panel-play-system",
+      "binary_sha256": "781b93eb3f9b64eb3dbeed6fa3a0c46660b36ecb9fa995ebae3b505c2d8bf76f",
+      "host_commit": "dcece07ffb6c701dedec00e1d291de53dd9ae96c",
+      "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+      "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T040226Z_panel_n1_active",
+      "started_unix": 1788667346.381305,
+      "pid": 31285,
+      "exit_code": 0,
+      "ended_unix": 1788668140.3135302
+    },
+    "groups": [
+      {
+        "drawing": false,
+        "cycles": 0,
+        "work_ns": 0,
+        "requested_sleep_ns": 0,
+        "actual_sleep_ns": 0,
+        "work_overruns": 0,
+        "intervals": 0,
+        "interval_ns": 0,
+        "work_mean_ms": null,
+        "requested_sleep_mean_ms": null,
+        "actual_sleep_mean_ms": null,
+        "interval_mean_ms": null
+      },
+      {
+        "drawing": true,
+        "cycles": 25800,
+        "work_ns": 143997614917,
+        "requested_sleep_ns": 372002385083,
+        "actual_sleep_ns": 455863350683,
+        "work_overruns": 0,
+        "intervals": 25800,
+        "interval_ns": 599904630833,
+        "work_mean_ms": 5.58130290375969,
+        "requested_sleep_mean_ms": 14.41869709624031,
+        "actual_sleep_mean_ms": 17.669122119496127,
+        "interval_mean_ms": 23.252117474147287
+      }
+    ],
+    "memory": {
+      "resident_bytes": {
+        "first": 659374080,
+        "last": 687423488,
+        "min": 658325504,
+        "median": 676659200.0,
+        "p95": 685867008,
+        "max": 687423488
+      },
+      "peak_resident_bytes": {
+        "first": 660488192,
+        "last": 688996352,
+        "min": 660488192,
+        "median": 678264832.0,
+        "p95": 688996352,
+        "max": 688996352
+      },
+      "v8_used_bytes": {
+        "first": 7047960,
+        "last": 7021040,
+        "min": 3138928,
+        "median": 6291584.0,
+        "p95": 9693456,
+        "max": 13286096
+      },
+      "v8_total_bytes": {
+        "first": 12320768,
+        "last": 9437184,
+        "min": 4718592,
+        "median": 9699328.0,
+        "p95": 12320768,
+        "max": 15204352
+      },
+      "snapshot_inflight_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0.0,
+        "p95": 0,
+        "max": 273296
+      },
+      "snapshot_inflight_capacity": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0.0,
+        "p95": 0,
+        "max": 273296
+      },
+      "gpu_tracked_bytes": {
+        "first": 18334064,
+        "last": 18395120,
+        "min": 18334064,
+        "median": 18395120.0,
+        "p95": 18395120,
+        "max": 18395120
+      },
+      "gpu_buffer_bytes": {
+        "first": 1090072,
+        "last": 1151128,
+        "min": 1090072,
+        "median": 1151128.0,
+        "p95": 1151128,
+        "max": 1151128
+      },
+      "gpu_texture_bytes": {
+        "first": 17243992,
+        "last": 17243992,
+        "min": 17243992,
+        "median": 17243992.0,
+        "p95": 17243992,
+        "max": 17243992
+      }
+    },
+    "resident_first_minute_median": 666370048.0,
+    "resident_last_minute_median": 685834240.0,
+    "teardown": {
+      "resident_bytes": 672661504,
+      "peak_resident_bytes": 688996352,
+      "ready": 1,
+      "active": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "gpu_tracked_bytes": 18395120
+    },
+    "resident_last_teardown_30s_median": 672432128.0,
+    "peak_resident_whole_run": 688996352,
+    "v8_sampled_isolates_min": 1,
+    "v8_sample_age_max_ms": 1220,
+    "client_tick_mean_ms": 5.580645633818111,
+    "script_tick_mean_ms": 0.2551930550550551,
+    "ui_frame_mean_ms": 0.569387264091858
+  },
+  {
+    "run": "20260906T042057Z_panel_n32_seeded-idle",
+    "qualification": {
+      "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T042057Z_panel_n32_seeded-idle",
+      "n": 32,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 599.101987709,
+      "cpu_seconds": 210.28737300000003,
+      "cpu_cores": 0.35100429862393023,
+      "client_ticks_per_slot_s": 3.0665688608804476,
+      "median_resident_bytes": 3565486080,
+      "steal_gains": {},
+      "diagnostic_only": true
+    },
+    "meta": {
+      "host_sources_sha256": "00d82bee74b37acb89dd8248472d46114b8ec50d0c3ab3cb5846388a5a89fa1e",
+      "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+      "frontend": "panel",
+      "n": 32,
+      "workload": "seeded-idle",
+      "warmup_s": 120,
+      "observe_s": 600,
+      "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+      "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+      "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+      "diagnostic_only": true,
+      "scheduling_profile": true,
+      "diagnostic_sidecar": false,
+      "nav_captures": false,
+      "single_renderer": true,
+      "render_policy": "fixed-one",
+      "terminal": false,
+      "terminal_size": null,
+      "debug": false,
+      "sustain": true,
+      "stack_logging": false,
+      "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/seeded-idle-build/panel-play-system",
+      "binary_sha256": "33ec534685ddd2c59431124fe3aa0ba402aad0430172536d14a46f21a38f13f8",
+      "host_commit": "028ff5303cfc7d43f94cb62b4ea4491be6e90efd",
+      "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+      "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T042057Z_panel_n32_seeded-idle",
+      "started_unix": 1788668457.793468,
+      "pid": 32852,
+      "exit_code": 0,
+      "ended_unix": 1788669372.716675
+    },
+    "groups": [
+      {
+        "drawing": false,
+        "cycles": 0,
+        "work_ns": 0,
+        "requested_sleep_ns": 0,
+        "actual_sleep_ns": 0,
+        "work_overruns": 0,
+        "intervals": 0,
+        "interval_ns": 0,
+        "work_mean_ms": null,
+        "requested_sleep_mean_ms": null,
+        "actual_sleep_mean_ms": null,
+        "interval_mean_ms": null
+      },
+      {
+        "drawing": true,
+        "cycles": 23750,
+        "work_ns": 141059932772,
+        "requested_sleep_ns": 333946479478,
+        "actual_sleep_ns": 458554480992,
+        "work_overruns": 1,
+        "intervals": 23750,
+        "interval_ns": 599656284917,
+        "work_mean_ms": 5.9393655904000004,
+        "requested_sleep_mean_ms": 14.060904399073685,
+        "actual_sleep_mean_ms": 19.3075570944,
+        "interval_mean_ms": 25.248685680715788
+      }
+    ],
+    "memory": {
+      "resident_bytes": {
+        "first": 3562160128,
+        "last": 3570745344,
+        "min": 3562160128,
+        "median": 3565486080,
+        "p95": 3570745344,
+        "max": 3571695616
+      },
+      "peak_resident_bytes": {
+        "first": 3564453888,
+        "last": 3572727808,
+        "min": 3564453888,
+        "median": 3566567424,
+        "p95": 3572727808,
+        "max": 3572727808
+      },
+      "v8_used_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "v8_total_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "snapshot_inflight_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "snapshot_inflight_capacity": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "gpu_tracked_bytes": {
+        "first": 18292776,
+        "last": 18292776,
+        "min": 18292776,
+        "median": 18292776,
+        "p95": 18292776,
+        "max": 18292776
+      },
+      "gpu_buffer_bytes": {
+        "first": 1048784,
+        "last": 1048784,
+        "min": 1048784,
+        "median": 1048784,
+        "p95": 1048784,
+        "max": 1048784
+      },
+      "gpu_texture_bytes": {
+        "first": 17243992,
+        "last": 17243992,
+        "min": 17243992,
+        "median": 17243992,
+        "p95": 17243992,
+        "max": 17243992
+      }
+    },
+    "resident_first_minute_median": 3562864640.0,
+    "resident_last_minute_median": 3570728960.0,
+    "teardown": {
+      "resident_bytes": 3570778112,
+      "peak_resident_bytes": 3572727808,
+      "ready": 32,
+      "active": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "gpu_tracked_bytes": 18292776
+    },
+    "resident_last_teardown_30s_median": 3570761728.0,
+    "peak_resident_whole_run": 3572727808,
+    "v8_sampled_isolates_min": 0,
+    "v8_sample_age_max_ms": null,
+    "client_tick_mean_ms": 4.170560386817486,
+    "script_tick_mean_ms": null,
+    "ui_frame_mean_ms": 0.6798740244347065
+  },
+  {
+    "run": "20260906T043635Z_panel_n1_seeded-idle",
+    "qualification": {
+      "run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T043635Z_panel_n1_seeded-idle",
+      "n": 1,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 599.669942708,
+      "cpu_seconds": 190.12851899999998,
+      "cpu_cores": 0.3170552756761733,
+      "client_ticks_per_slot_s": 39.620128187030176,
+      "median_resident_bytes": 641679360,
+      "steal_gains": {},
+      "diagnostic_only": true
+    },
+    "meta": {
+      "host_sources_sha256": "00d82bee74b37acb89dd8248472d46114b8ec50d0c3ab3cb5846388a5a89fa1e",
+      "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+      "frontend": "panel",
+      "n": 1,
+      "workload": "seeded-idle",
+      "warmup_s": 120,
+      "observe_s": 600,
+      "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+      "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+      "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+      "diagnostic_only": true,
+      "scheduling_profile": true,
+      "diagnostic_sidecar": false,
+      "nav_captures": false,
+      "single_renderer": true,
+      "render_policy": "fixed-one",
+      "terminal": false,
+      "terminal_size": null,
+      "debug": false,
+      "sustain": true,
+      "stack_logging": false,
+      "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/seeded-idle-build/panel-play-system",
+      "binary_sha256": "33ec534685ddd2c59431124fe3aa0ba402aad0430172536d14a46f21a38f13f8",
+      "host_commit": "028ff5303cfc7d43f94cb62b4ea4491be6e90efd",
+      "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+      "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T043635Z_panel_n1_seeded-idle",
+      "started_unix": 1788669395.2114189,
+      "pid": 33675,
+      "exit_code": 0,
+      "ended_unix": 1788670187.5025961
+    },
+    "groups": [
+      {
+        "drawing": false,
+        "cycles": 0,
+        "work_ns": 0,
+        "requested_sleep_ns": 0,
+        "actual_sleep_ns": 0,
+        "work_overruns": 0,
+        "intervals": 0,
+        "interval_ns": 0,
+        "work_mean_ms": null,
+        "requested_sleep_mean_ms": null,
+        "actual_sleep_mean_ms": null,
+        "interval_mean_ms": null
+      },
+      {
+        "drawing": true,
+        "cycles": 23750,
+        "work_ns": 137447080453,
+        "requested_sleep_ns": 337552919547,
+        "actual_sleep_ns": 461941293908,
+        "work_overruns": 0,
+        "intervals": 23750,
+        "interval_ns": 599438711375,
+        "work_mean_ms": 5.787245492757895,
+        "requested_sleep_mean_ms": 14.212754507242106,
+        "actual_sleep_mean_ms": 19.450159743494737,
+        "interval_mean_ms": 25.239524689473686
+      }
+    ],
+    "memory": {
+      "resident_bytes": {
+        "first": 627441664,
+        "last": 644956160,
+        "min": 627441664,
+        "median": 641679360,
+        "p95": 644907008,
+        "max": 645988352
+      },
+      "peak_resident_bytes": {
+        "first": 628391936,
+        "last": 646103040,
+        "min": 628391936,
+        "median": 643072000,
+        "p95": 645988352,
+        "max": 646103040
+      },
+      "v8_used_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "v8_total_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "snapshot_inflight_bytes": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "snapshot_inflight_capacity": {
+        "first": 0,
+        "last": 0,
+        "min": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "gpu_tracked_bytes": {
+        "first": 18292776,
+        "last": 18292776,
+        "min": 18292776,
+        "median": 18292776,
+        "p95": 18292776,
+        "max": 18292776
+      },
+      "gpu_buffer_bytes": {
+        "first": 1048784,
+        "last": 1048784,
+        "min": 1048784,
+        "median": 1048784,
+        "p95": 1048784,
+        "max": 1048784
+      },
+      "gpu_texture_bytes": {
+        "first": 17243992,
+        "last": 17243992,
+        "min": 17243992,
+        "median": 17243992,
+        "p95": 17243992,
+        "max": 17243992
+      }
+    },
+    "resident_first_minute_median": 632012800.0,
+    "resident_last_minute_median": 644907008.0,
+    "teardown": {
+      "resident_bytes": 645267456,
+      "peak_resident_bytes": 647200768,
+      "ready": 1,
+      "active": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "gpu_tracked_bytes": 18292776
+    },
+    "resident_last_teardown_30s_median": 645267456.0,
+    "peak_resident_whole_run": 647200768,
+    "v8_sampled_isolates_min": 0,
+    "v8_sample_age_max_ms": null,
+    "client_tick_mean_ms": 5.786552656845827,
+    "script_tick_mean_ms": null,
+    "ui_frame_mean_ms": 0.5549354368911626
+  }
+]
