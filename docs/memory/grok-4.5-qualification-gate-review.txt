@@ -1,0 +1,25 @@
+Task t_61419501: Correct Grok4.5 review of qualification gate
+  status:    done
+  assignee:  reviewer
+  workspace: dir @ /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f
+  max-retries: 1 (task)
+  created:   2026-09-06 15:00 by orch
+  started:   2026-09-06 15:01
+  completed: 2026-09-06 15:02
+
+Body:
+Independent replacement review of qualification-gate commit b904577 in /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f, branch codex/memory-diagnostics. Read AGENTS.md; operator uses Composer implementer, Grok4.5 per-task reviewer. You are reviewer profile with NO task model override. Prior t_88c0a26d review ran with inherited Composer override and does not satisfy required Grok4.5 review. Review exactly docs/memory/qualify_control.py, test_qualify_control.py, qualification-gate-report.md against parent. Verify explicit modes, structured failure+exit1 for invalid/missing/malformed/incomplete controls, existing criteria unchanged, and real corrected181830 exit0/rejected182432 exit1 using temp output. Run focused Python tests only. Another implementer is editing N16/Rust/launcher files; do not review or modify those, build Rust, launch live, change files, delegate, merge or push. Return APPROVE or REQUEST CHANGES with concrete findings and actual reviewer model. Complete this separate corrective review card; do not claim the earlier wrong-model receipt meets policy.
+
+Latest summary:
+APPROVE. Independent Grok-4.5 (xai-oauth, no task model override) re-review of b904577 qualification gate. qualify_control.py uses explicit --counting/--diagnostics (default false), structured JSON + exit 1 for missing/malformed/incomplete/unsupported controls; cpu_screen criteria untouched. 16/16 focused tests OK; real 181830 → exit 0 and 182432 → exit 1 with temp -o (no run-dir artifact).
+
+Events (5):
+  [2026-09-06 15:00] created {'assignee': 'reviewer', 'status': 'ready', 'parents': [], 'tenant': None, 'workspace_kind': 'dir', 'workspace_path': '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f', 'branch_name': None, 'project_id': None, 'skills': None, 'goal_mode': None, 'model_override': None, 'provider_override': None}
+  [2026-09-06 15:01] [run 42] claimed {'lock': 'merlot.local:63087', 'expires': 1788722173, 'run_id': 42}
+  [2026-09-06 15:01] [run 42] spawned {'pid': 89792}
+  [2026-09-06 15:01] [run 42] heartbeat
+  [2026-09-06 15:02] [run 42] completed {'result_len': 0, 'summary': 'APPROVE. Independent Grok-4.5 (xai-oauth, no task model override) re-review of b904577 qualification gate. qualify_control.py uses explicit --counting/--diagnostics (default false), structured JSON + exit 1 for missing/malformed/incomplete/unsupported controls; cpu_screen criteria untouched. 16/16 focused tests OK; real 181830 → exit 0 and 182432 → exit 1 with temp -o (no run-dir artifact).'}
+
+Runs (1):
+  #42  completed    @reviewer  58s  2026-09-06 15:01
+        → APPROVE. Independent Grok-4.5 (xai-oauth, no task model override) re-review of b904577 qualification gate. qualify_control.py uses explicit --counting/--diagnos

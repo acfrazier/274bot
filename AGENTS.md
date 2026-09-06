@@ -4,7 +4,7 @@ Read applicable instructions once. Do not search unrelated worktrees or archives
 
 **What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bh-modular`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` **in this checkout** (not Fairy-Ring, not GitHub).
 
-**Resume:** for campaign work, read `docs/superpowers/STATE.md` once and follow the named current plan. Stop browsing the archive, then continue the task. Treat dated status as a snapshot; current code and operator instructions take precedence. Give implementers the relevant plan, not the entire state file.
+**Resume:** read `docs/memory/STATE.md` in the active campaign checkout, then only its named current plan/task. If absent, locate the primary checkout with `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` and read its `docs/superpowers/STATE.md` pointer. Do not search other worktrees or archives for instructions. Treat dated reports as evidence snapshots, not current next actions. Give implementers the relevant task brief and plan section, not the entire state/history. Execution and review handoffs: `docs/execution.md` in the active checkout.
 
 **Client fork:** Patch `FR-client-bothost` `r274-bh-modular` (instrumentation, skip-paint, wgpu). `r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork — do not push there. **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 
@@ -14,7 +14,7 @@ Read applicable instructions once. Do not search unrelated worktrees or archives
 
 **Rendering:** GPU 3D lives in the client submodule; `BOT_CPU=1` selects CpuPix3D. Preserve the last-FBO freeze while `scene_state==1`.
 
-**SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
+**SDD roles (operator):** Hermes profile `implementer` uses `grok-composer-2.5-fast`; `reviewer` uses `grok-4.5`; **`branchreviewer` uses `grok-4.6`**. Use profile defaults, without task model/provider overrides; verify the actual review model. The orchestrator may be the current Codex session or the configured Hermes `orch` profile. Screenshot proofs require a tool/model that actually reads the captures; the orchestrator may perform them directly. Do not skip the final Grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
 **Git (this is the only copy of the rule — plans must not restate it):**
 - **Flash / SDD implementer / spawned subagent:** forbidden on `main`. Run `git branch --show-current`. If it is `main`, **stop** and tell the orch. Commit only on the orch-named branch or a worktree (`isolation: worktree`). Never merge, never push remotes, never `checkout main`.

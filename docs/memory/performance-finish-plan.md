@@ -215,9 +215,14 @@ candidate worth retaining. Start native attribution only after the clean phase
 and keep its results out of CPU/latency comparisons.
 
 A candidate must improve its intended metric beyond measured variation, or
-establish a concrete allocation removal, while preserving behavior and meeting
-resource/responsiveness gates. Approved clean-run non-regression margins are
-5% CPU and 2ms p99 latency, with the absolute budgets also satisfied. Allocation removal is not automatically an RSS saving.
+establish a concrete allocation removal, while preserving behavior. Approved
+clean-run non-regression margins are 5% CPU and 2ms p99 latency. An intermediate
+candidate may be provisionally retained while the baseline remains above the
+absolute budgets; record missing or inconclusive regression evidence as pending,
+not a pass. Final campaign acceptance requires the absolute resource and
+responsiveness budgets as well as behavior/lifecycle gates. This clarification
+does not raise budgets, waive regressions or grant performance acceptance from
+an allocation count. Allocation removal is not automatically an RSS saving.
 
 If noise exceeds the margin, classify the result as inconclusive. After paired
 screens and one longer confirmation stage, investigate a named confounder or
