@@ -1,0 +1,107 @@
+{
+  "source_run": "20260906T002421Z_panel_n32_active",
+  "checkpoint": "return-route-start",
+  "slot": "live3a670_0",
+  "tick": 211,
+  "door": {
+    "id": 1530,
+    "x": 2656,
+    "z": 3292,
+    "level": 0
+  },
+  "observed_edge_to": {
+    "x": 2651,
+    "z": 3292,
+    "level": 0
+  },
+  "cells": [
+    {
+      "x": 2651,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 16416,
+      "locs": []
+    },
+    {
+      "x": 2652,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 16672,
+      "locs": [
+        {
+          "id": 612,
+          "name": "Counter",
+          "shape": 10,
+          "angle": 1,
+          "block_walk": true
+        }
+      ]
+    },
+    {
+      "x": 2653,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 16672,
+      "locs": [
+        {
+          "id": 1158,
+          "name": "Potted plant",
+          "shape": 10,
+          "angle": 2,
+          "block_walk": true
+        },
+        {
+          "id": 1830,
+          "name": null,
+          "shape": 4,
+          "angle": 3,
+          "block_walk": true
+        }
+      ]
+    },
+    {
+      "x": 2654,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 16672,
+      "locs": [
+        {
+          "id": 1106,
+          "name": "Bench",
+          "shape": 10,
+          "angle": 2,
+          "block_walk": true
+        }
+      ]
+    },
+    {
+      "x": 2655,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 16672,
+      "locs": []
+    },
+    {
+      "x": 2656,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 20520,
+      "locs": [
+        {
+          "id": 1530,
+          "name": "Door",
+          "shape": 0,
+          "angle": 2,
+          "block_walk": true
+        }
+      ]
+    },
+    {
+      "x": 2657,
+      "z": 3292,
+      "level": 0,
+      "collision_flags": 65664,
+      "locs": []
+    }
+  ]
+}
