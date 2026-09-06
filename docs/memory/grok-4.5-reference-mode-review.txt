@@ -1,0 +1,52 @@
+Task t_9cd0e197: Add N16 and explicit low-end panel reference policies
+  status:    done
+  assignee:  reviewer
+  workspace: dir @ /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f
+  max-retries: 1 (task)
+  created:   2026-09-06 14:50 by orch
+  started:   2026-09-06 14:54
+  completed: 2026-09-06 15:32
+  parents:   t_88c0a26d
+
+Body:
+Implement approved low-end reference support in /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f on codex/memory-diagnostics. Verify git branch first, stop on main or wrong branch. Read applicable AGENTS.md once and docs/memory/performance-finish-plan.md sections 1 and 3. Operator explicitly selected grok-composer-2.5-fast for implementer, superseding DeepSeek; per-task reviewer remains grok-4.5. No merge, push, branch switch or unrelated changes.
+
+Bounded task: add N=16 and two explicit opt-in panel benchmark policies, preserving every existing CLI/env default and production rendering policy. Existing historical --single-renderer / BOT_MEMORY_SINGLE_RENDERER behavior must remain compatible and its old summaries remain accurate. Introduce clear explicit modes for fixed focused full-rate GPU with remaining slots simulation-only, and fixed focused full-rate GPU with all other requested slots drawing at existing 1 fps skip-paint cadence. Use existing Focus/full_rate_for/draw_for_slot and scheduling behavior. Do not implement GPU completion instrumentation in this task or claim actual GPU/cadence proof from requested policy. No CPU-renderer changes, client changes, script/gameplay changes, profile persistence, scheduler or timeout changes. Do not invent opcodes.
+
+Relevant seams: docs/memory/run_diagnostic.py n choices and renderer env scrubbing/metadata; crates/host-play/src/memory.rs parse_n, Run policy initialization and focus_index; crates/panel/src/focus.rs memory_draw_policy; crates/panel/src/session.rs memory_focus. Add 16 to accepted scales/errors/tests wherever required for this path. Make new policies deterministic against persisted UI settings: explicitly set game pane, wall membership/open where needed, per-slot renderer permissions, focused_50=true, sidecar_50=false, live_full_rate=false, fixed focus index0. Preserve old policy path semantics. Reject conflicting flags/env and reject panel-only flags for TUI before starting a process. Log requested mode honestly as requested metadata, not observed proof. Keep nav-captures rules safe and explicit. Scope files to these seams and necessary targeted tests plus docs/memory/reference-mode-report.md.
+
+Validation: meaningful policy tests for 1 and16 slots, actual draw_for_slot/full_rate_for outcomes for all members under initially adverse persisted preferences, switching modes, legacy behavior, parser rejection. Run affected crate tests with memory-profile feature as required; no client integration changes expected since client source out of scope. Python CLI checks must avoid launching live for invalid inputs. Rust build/test resource use may run because no clean live measurement is currently active; coordinate if that changes. Do not launch live runs; orchestrator will build immutable release binaries and run actual mode/cadence proof in a later named task. Report commands/results, limitations and changes. Commit only your named task files, request reviewer grok-4.5 via existing Hermes flow; never self-approve. Orchestrator may concurrently edit separate reports.
+
+Latest summary:
+Reviewed and approved. N=16 plus focused-one / focused-plus-background panel policies land correctly on codex/memory-diagnostics@9f687af; legacy single-renderer and rotating-all defaults preserved; adverse-pref draw/full_rate outcomes and CLI/env rejection verified; independent re-run of Python + host-play memory + panel memory_ tests all passed. No live GPU proof claimed.
+
+Comments (1):
+  [2026-09-06 15:06] implementer: Implementer session re-checked after protocol nudge: board status is already **review**, assignee **grok-4.5**, run 41 outcome `review_requested`, commit **9f687af**. Worktree clean on `codex/memory-diagnostics`. Re-`request_review` correctly rejected (not running). Implementer will not `kanban_complete` (never self-approve). Ready for grok-4.5 review.
+
+Events (27):
+  [2026-09-06 14:56] [run 41] heartbeat {'note': 'Designing N=16 + two panel render policies; reading seams complete'}
+  [2026-09-06 14:57] [run 41] heartbeat
+  [2026-09-06 14:58] [run 41] heartbeat
+  [2026-09-06 14:59] [run 41] heartbeat
+  [2026-09-06 15:00] [run 41] heartbeat
+  [2026-09-06 15:00] [run 41] heartbeat {'note': 'Python CLI tests pass; running host-play + panel memory-profile tests'}
+  [2026-09-06 15:01] [run 41] heartbeat
+  [2026-09-06 15:02] [run 41] heartbeat
+  [2026-09-06 15:03] [run 41] heartbeat
+  [2026-09-06 15:03] [run 41] heartbeat {'note': 'Early policy parse + sample metadata; running host-play and panel tests'}
+  [2026-09-06 15:04] [run 41] heartbeat
+  [2026-09-06 15:05] [run 41] review_requested {'summary': 'Added N=16 and explicit panel policies focused-one / focused-plus-background; preserved legacy single-renderer. Python CLI + host-play memory (27) + panel memory_ (4) tests pass. Commit 9f687af. No live runs.', 'implementer': 'implementer', 'reviewer': 'grok-4.5'}
+  [2026-09-06 15:06] commented {'author': 'implementer', 'len': 354}
+  [2026-09-06 15:30] assigned {'assignee': 'reviewer'}
+  [2026-09-06 15:30] [run 44] claimed {'lock': 'merlot.local:92206', 'expires': 1788723922, 'run_id': 44, 'source_status': 'review'}
+  [2026-09-06 15:30] [run 44] spawned {'pid': 92207}
+  [2026-09-06 15:30] [run 44] heartbeat
+  [2026-09-06 15:31] [run 44] heartbeat
+  [2026-09-06 15:32] [run 44] heartbeat
+  [2026-09-06 15:32] [run 44] completed {'result_len': 0, 'summary': 'Reviewed and approved. N=16 plus focused-one / focused-plus-background panel policies land correctly on codex/memory-diagnostics@9f687af; legacy single-renderer and rotating-all defaults preserved; adverse-pref draw/full_rate outcomes and CLI/env rejection verified; independent re-run of Python + host-play memory + panel memory_ tests all passed. No live GPU proof claimed.'}
+
+Runs (2):
+  #41  review_requested @implementer  660s  2026-09-06 14:54
+        → Added N=16 and explicit panel policies focused-one / focused-plus-background; preserved legacy single-renderer. Python CLI + host-play memory (27) + panel memor
+  #44  completed    @reviewer  138s  2026-09-06 15:30
+        → Reviewed and approved. N=16 plus focused-one / focused-plus-background panel policies land correctly on codex/memory-diagnostics@9f687af; legacy single-renderer

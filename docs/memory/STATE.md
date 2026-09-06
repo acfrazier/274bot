@@ -22,12 +22,17 @@ verify it on resume because a worker may finish after this snapshot.
    completed with Grok4.5 approval; [receipt](grok-4.5-qualification-gate-review.txt).
    Sixteen tests passed, including real corrected-run exit0 and failed-run exit1.
 3. Task `t_9cd0e197` adds N=16 and explicit opt-in panel reference policies. It is
-   implemented at `9f687af` and awaiting Grok4.5 review at this update, with no
-   task model override. Monitor it through review. Its scope does not prove actual GPU backend,
+   implemented at `9f687af` and approved by Grok4.5 in run44; see
+   [receipt](grok-4.5-reference-mode-review.txt). The implementer initially used
+   the model string as reviewer profile; orch reassigned to `reviewer` and
+   verified the real review completed. Use profile names in handoffs. Its scope does not prove actual GPU backend,
    completed-frame cadence or responsiveness, and includes no live run.
-4. After policy review, add bounded observed renderer/backend/cadence and missing
-   responsiveness proof. Build immutable release binaries and qualify the three
-   approved modes. Do not claim requested renderer policy is observed GPU proof.
+4. Renderer observations are in implementation task `t_2dfa7342` (actual
+   per-slot residency/backend and host paint cadence). Dependent task
+   `t_bd7960b8` adds bounded GPU queue-completion coverage. These are opt-in, do not change rendering,
+   and distinguish CPU callback delivery from hardware timestamps/scanout.
+   After review, build immutable release binaries and qualify the three approved
+   modes live. Precise responsiveness measurements remain separate work.
 5. Continue approved single-client fixed-cost attribution and measured N/N+x
    costs. Terminal-runner cleanup performance acceptance remains pending; do not
    launch more blind repeats. Final whole-branch Grok4.6 review remains required.
