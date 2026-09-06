@@ -18,22 +18,39 @@ Opt-in extension of host `render_profile` that records **bounded**
 |:---|:---|
 | Callback timestamp | **CPU delivery** after prior queue submission completes |
 | Delivery driver | Later existing `submit` / `poll` (production adds **no** wait poll) |
-| Latency histogram | Register/submit-sample → callback delivery (conservative end-to-end **upper bound**) |
-| Completion interval | Observed callback **delivery cadence** (same cadence mode only) |
+| Latency histogram | Host `mainredraw` **start** Instant → callback delivery (upper bound on that interval only; not pre-paint host work, not HW GPU ts, not scanout/panel present) |
+| Completion interval | Observed callback **delivery cadence** within one **mode epoch** only |
+| Lost / canceled | Registered callback dropped without a successful complete (`lost_n`) |
 | Not measured | Hardware GPU timestamps, display scanout, panel present |
 
 `paint_n` remains host `mainredraw` counts. CPU `PixMap` frames increment
 `cpu_frame_n` only and **never** count as GPU completions. Empty / unfired
-callbacks are not completions.
+callbacks are not completions; dropping them increments `lost_n`.
 
-GPU completion **throughput** may be qualified only when:
+GPU completion **registration** may be treated complete only when:
 
-- `registration_complete` (every Texture frame registered; `dropped_n == 0`)
-- counters monotonic
-- recent samples present
-- stable scene/mode (`ingame && scene_state == 2`, matching cadence mode)
+- every Texture frame registered (`registered_n == gpu_frame_n`)
+- `dropped_n == 0` and `lost_n == 0`
+
+**Throughput / coverage** additionally requires `completion_coverage_complete`:
+pending cleared and `completed_n == registered_n`.
 
 Any drop / lost / unsupported evidence → treat throughput as **invalid or unavailable**.
+
+## Hot-path / concurrency (reviewer fixes)
+
+- Routine register/complete traffic updates the **local** snap only. Global
+  `REGISTRY` publish stays on the parent ~1s / state-change / end path (no
+  dirty/flush every GPU frame).
+- Completion/lost/latency counters drain as one coherent `GpuDeltaBatch` under
+  a single lock (no multi-swap discard of partial histograms).
+- `pending_submit_ms` is cleared **only** by the owning `GpuPermit` Drop — not
+  by `on_complete` — so a reused cell cannot lose a newer stamp.
+- Cadence **mode epoch** bumps on mode change and Local drop so A→B→A late
+  callbacks cannot invent stable intervals across eras.
+- Real wgpu smoke is `#[ignore]` and **fail-closed** (`expect` adapter/device);
+  it submits bounded buffer work, not an empty submit-only check. Soft-skip is
+  not used.
 
 ## Bounds
 
@@ -41,7 +58,7 @@ Any drop / lost / unsupported evidence → treat throughput as **invalid or unav
 - Process-wide (all slots + restarts): max **256** outstanding
 - RAII permit releases when the callback runs **or** the closure is dropped
 - Callback captures only `Weak` telemetry + permit — never client/renderer/frame/device/queue owners
-- Generation + `live` flag: late callbacks after slot end cannot credit a restarted slot
+- Generation + `live` + mode epoch: late callbacks after slot end / mode change cannot contaminate restart or pair across eras
 - Fixed pending timestamp slots (no unbounded pending age storage)
 - Disabled path: `Local.gpu == None`; `observe_painted_output` no-ops registration
 
@@ -49,17 +66,18 @@ Any drop / lost / unsupported evidence → treat throughput as **invalid or unav
 
 Emitted on each slot row when render profile is on (zeros / `enabled: false`
 when GPU completion off). Fields include `gpu_frame_n`, `cpu_frame_n`,
-`registered_n`, `completed_n`, `dropped_n`, `pending_n`,
+`registered_n`, `completed_n`, `dropped_n`, `lost_n`, `pending_n`,
 `oldest_pending_age_ms`, stable/transition completion counts, latency and
 interval histograms (`interval_bound_ms` shared with paint),
-`registration_complete`, and explicit semantics strings.
+`registration_complete`, `completion_coverage_complete`, and explicit
+semantics strings (`latency_means`, `interval_means`, `timestamp_semantics`).
 
 While render profile is off, `renderer_profile` remains JSON `null`.
 
 ## Files
 
 - `crates/host/src/render_profile.rs` — GPU shared state, permits, tests
-- `crates/host/src/lib.rs` — register before `mailbox.store`
+- `crates/host/src/lib.rs` — `mainredraw` start Instant + register before `mailbox.store`
 - `crates/host/Cargo.toml` — `wgpu` + `pollster` **dev-dependencies** only
 - `crates/host-play/src/memory.rs` — enable + JSONL
 - `docs/memory/run_diagnostic.py` / `test_run_diagnostic.py` — flag + gates
@@ -71,19 +89,27 @@ blocking poll for completion.
 ## Verification
 
 ```text
+cargo test -p host --lib render_profile::
+  → 20 passed; 1 ignored (real GPU adapter proof)
+
 cargo test -p host --lib
-  → 137 passed (includes real queue smoke when adapter present; soft-skips unavailable)
+  → (full host lib)
 
 cargo test -p host-play --lib --features memory-profile
-  → 143 passed
+  → (host-play memory)
 
 python3 docs/memory/test_run_diagnostic.py
-  → 8 passed
+  → (launcher gates)
 ```
 
-Real queue smoke: `queue.on_submitted_work_done` + empty submit + device poll
-in the **test only**. Soft-skips with an honest message if no adapter /
-`request_device` fails.
+Real queue proof (manual):
+
+```text
+cargo test -p host --lib gpu_real_queue -- --ignored --nocapture
+```
+
+Fails hard if adapter/device unavailable. Test-only poll/wait; production never
+adds a completion poll.
 
 ## Overhead caveat
 

@@ -799,6 +799,7 @@ impl Run {
                                     "registered_n": s.gpu_registered_n,
                                     "completed_n": s.gpu_completed_n,
                                     "dropped_n": s.gpu_dropped_n,
+                                    "lost_n": s.gpu_lost_n,
                                     "pending_n": s.gpu_pending_n,
                                     "oldest_pending_age_ms": s.gpu_oldest_pending_age_ms,
                                     "stable_completed_n": s.gpu_stable_completed_n,
@@ -814,9 +815,10 @@ impl Run {
                                     "transition_completion_interval_buckets": s.gpu_transition_completion_interval_buckets,
                                     "interval_bound_ms": host::render_profile::INTERVAL_BOUNDS_MS,
                                     "registration_complete": host::render_profile::gpu_registration_complete(&s),
+                                    "completion_coverage_complete": host::render_profile::gpu_completion_coverage_complete(&s),
                                     "timestamp_semantics": "callback_delivery_cpu_after_prior_submit_not_hw_gpu_or_scanout",
-                                    "latency_means": "conservative_submit_or_register_to_callback_delivery_upper_bound",
-                                    "interval_means": "observed_callback_delivery_cadence_same_mode_only",
+                                    "latency_means": "mainredraw_start_to_callback_delivery_upper_bound_not_pre_paint_or_scanout",
+                                    "interval_means": "observed_callback_delivery_cadence_same_mode_epoch_only",
                                 });
                                 row
                             })

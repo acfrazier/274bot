@@ -461,8 +461,12 @@ impl Host {
             &mut slot.raster_was_on,
         );
         let mut frame: Option<FrameOutput> = None;
+        // Captured at mainredraw start for opt-in GPU completion latency
+        // (sample → callback delivery). Not pre-paint host work or scanout.
+        let mut redraw_started_at: Option<std::time::Instant> = None;
         if paint {
             let t_r = std::time::Instant::now();
+            redraw_started_at = Some(t_r);
             // The head's build request is latched beside it so the detach
             // check above can see a GPU↔CPU or mem flip without deriving
             // it again.
@@ -570,14 +574,15 @@ impl Host {
         // delivery rides later existing submit/poll calls.
         if let Some(frame) = frame {
             if let Some(prof) = slot.render_prof.as_mut() {
+                let sample_at = redraw_started_at.unwrap_or_else(std::time::Instant::now);
                 match &frame {
                     FrameOutput::Texture(handle) => {
-                        prof.observe_painted_output(true, |cb| {
+                        prof.observe_painted_output(true, sample_at, |cb| {
                             handle.queue.on_submitted_work_done(cb);
                         });
                     }
                     FrameOutput::PixMap(_) => {
-                        prof.observe_painted_output(false, |_| {});
+                        prof.observe_painted_output(false, sample_at, |_| {});
                     }
                 }
             }
