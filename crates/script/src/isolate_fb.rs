@@ -1823,6 +1823,11 @@ impl IsolateBuf {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn into_backing_capacity(self) -> usize {
+        self.builder.collapse().0.capacity()
+    }
+
     fn copy_finished(&self) -> Vec<u8> {
         self.builder.finished_data().to_vec()
     }
@@ -3447,11 +3452,11 @@ fn interact_off<'b>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::shim::{InteractReq, ScriptPaint};
 
-    fn empty_input(tick: u64) -> SnapshotInput<'static> {
+    pub(crate) fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {
             tick,
             here: None,
