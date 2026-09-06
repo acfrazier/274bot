@@ -16,8 +16,18 @@
 //! duration (not excess over the 20 ms budget). Samples pair only consecutive
 //! same-drawing starts with no intervening park. Drawing-mode flips and parks
 //! break the anchor and are counted explicitly — they are never interval
-//! samples. Scene/focus transitions that change `client.draw` therefore appear
-//! as mode breaks, not mixed-cadence intervals.
+//! samples. Drawing-latch flips that change `client.draw` are mode breaks.
+//! **Scene rebuilds that leave `client.draw` unchanged are not observed** —
+//! `scene_transition_separation` is published as `unavailable` (fail-closed);
+//! buckets must not be treated as steady-scene proof.
+//!
+//! Interval endpoint stamps are tick-**start** Instant times (wall backdated
+//! from `record` entry; mono from a Local origin). They are **not** post-sleep
+//! `record()` wall times. `updated_ms` is publish/freshness only and is
+//! distinct from sample endpoints. JSONL row time ≠ interval endpoints.
+//! Per-slot registry flush may lag up to 50 cycles or ~1 s (or until
+//! park/mode dirty); consumers must use counter deltas with endpoint stamps,
+//! never nominal JSONL Δt as the observation window.
 //!
 //! Histogram bounds use ≤1 ms resolution from 18–42 ms so a conservative p99
 //! upper bound can sit next to the 40 ms gate with ~2 ms paired headroom.
@@ -40,6 +50,18 @@ static ENDED_LOST: AtomicU64 = AtomicU64::new(0);
 /// Cap ended-but-unread rows so slot restart storms cannot grow the registry
 /// without a reader. Live rows are bounded by concurrent slots.
 const MAX_ENDED_UNREAD: usize = 64;
+
+/// Max cycles a live slot may accumulate locally before a forced registry
+/// publish (same cadence as the legacy batch). Unread local progress is
+/// bounded by this and [`FLUSH_LAG_MAX_MS`].
+pub const FLUSH_LAG_MAX_CYCLES: u32 = 50;
+/// Max wall time between per-slot registry publishes when the slot keeps
+/// ticking without park/mode dirty (plus the cycle bound above).
+pub const FLUSH_LAG_MAX_MS: u64 = 1000;
+/// Scene rebuild / focus transitions that do not flip `client.draw` are not
+/// inputs to `record`. Published fail-closed so adapters cannot treat buckets
+/// as steady-scene-only proof.
+pub const SCENE_TRANSITION_SEPARATION: &str = "unavailable";
 
 /// Inclusive upper bounds in ms for absolute start-to-start intervals, then
 /// overflow. 1 ms steps from 18..=42 support the 20 ms target and 40 ms p99
@@ -126,12 +148,23 @@ pub struct SlotObservation {
     /// Cycles that ran with no prior anchor (first after start/park/mode break).
     pub anchor_miss_n: u64,
 
-    /// Wall ms of first / last **interval sample** (0 if none).
+    /// Wall ms of the **start** Instant of the first sampled interval (0 if none).
+    /// Backdated from tick-start Instant — not post-sleep `record()` wall time.
     pub first_interval_ms: u64,
+    /// Wall ms of the **end** Instant of the last sampled interval (= closing
+    /// tick start). 0 if none. Span `[first_interval_ms, last_interval_ms]` is
+    /// the elapsed sample window for wholly-inside checks (with mono fields).
     pub last_interval_ms: u64,
-    /// Wall ms of first / last cycle `record` (0 if none).
+    /// Monotonic ms (Local origin) of first interval start Instant (0 if none).
+    pub first_interval_start_mono_ms: u64,
+    /// Monotonic ms (Local origin) of last interval end Instant (0 if none).
+    pub last_interval_end_mono_ms: u64,
+    /// Wall ms of first / last tick **start** Instant (0 if none). Not record entry.
     pub first_cycle_ms: u64,
     pub last_cycle_ms: u64,
+    /// Monotonic ms of first / last tick start Instant (0 if none).
+    pub first_cycle_mono_ms: u64,
+    pub last_cycle_mono_ms: u64,
 
     /// Legacy-style excess histograms on this slot (same 6-bucket schema).
     pub sleep_excess: [u64; 6],
@@ -161,12 +194,27 @@ impl SlotObservation {
             anchor_miss_n: 0,
             first_interval_ms: 0,
             last_interval_ms: 0,
+            first_interval_start_mono_ms: 0,
+            last_interval_end_mono_ms: 0,
             first_cycle_ms: 0,
             last_cycle_ms: 0,
+            first_cycle_mono_ms: 0,
+            last_cycle_mono_ms: 0,
             sleep_excess: [0; 6],
             interval_excess: [0; 6],
         }
     }
+}
+
+/// Tick-start anchor used for start-to-start pairing.
+#[derive(Clone, Copy, Debug)]
+struct TickAnchor {
+    start: Instant,
+    drawing: bool,
+    /// Wall ms of `start` (backdated at the cycle that recorded this anchor).
+    wall_ms: u64,
+    /// Monotonic ms of `start` relative to the Local origin Instant.
+    mono_ms: u64,
 }
 
 fn wall_ms() -> u64 {
@@ -174,6 +222,15 @@ fn wall_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Wall time of `at` estimated from a simultaneous `(now, wall_now)` pair.
+fn wall_at(at: Instant, now: Instant, wall_now: u64) -> u64 {
+    wall_now.saturating_sub(now.saturating_duration_since(at).as_millis() as u64)
+}
+
+fn mono_ms(origin: Instant, at: Instant) -> u64 {
+    at.saturating_duration_since(origin).as_millis() as u64
 }
 
 fn excess_bucket(d: Duration) -> usize {
@@ -292,7 +349,9 @@ pub(crate) struct Local {
     snap: SlotObservation,
     /// Legacy process-wide pending (drawing index 0/1).
     pending: [Counts; 2],
-    previous: Option<(Instant, bool)>,
+    /// Origin for mono_ms conversion of tick-start Instants.
+    origin: Instant,
+    previous: Option<TickAnchor>,
     cycles: u32,
     last_flush: Instant,
     dirty: bool,
@@ -314,6 +373,7 @@ impl Local {
             generation,
             snap,
             pending: [Counts::ZERO; 2],
+            origin: Instant::now(),
             previous: None,
             cycles: 0,
             last_flush: Instant::now(),
@@ -350,7 +410,13 @@ impl Local {
         slept: Duration,
         budget: Duration,
     ) {
-        let now_ms = wall_ms();
+        // Capture a simultaneous Instant/wall pair so tick-start endpoints can
+        // be backdated from `start` even though the host calls `record` after
+        // work + leftover sleep.
+        let now = Instant::now();
+        let wall_now = wall_ms();
+        let start_wall = wall_at(start, now, wall_now);
+        let start_mono = mono_ms(self.origin, start);
 
         // --- legacy group batch (unchanged semantics) ---
         let c = &mut self.pending[drawing as usize];
@@ -362,9 +428,9 @@ impl Local {
         if !requested.is_zero() {
             c.sleep_excess[excess_bucket(slept.saturating_sub(requested))] += 1;
         }
-        if let Some((previous, previous_drawing)) = self.previous {
-            if previous_drawing == drawing {
-                let interval = start.duration_since(previous);
+        if let Some(prev) = self.previous {
+            if prev.drawing == drawing {
+                let interval = start.duration_since(prev.start);
                 c.intervals += 1;
                 c.interval_ns += ns(interval);
                 c.interval_excess[excess_bucket(interval.saturating_sub(budget))] += 1;
@@ -390,25 +456,31 @@ impl Local {
             self.snap.sleep_excess[b] = self.snap.sleep_excess[b].wrapping_add(1);
         }
         if self.snap.first_cycle_ms == 0 {
-            self.snap.first_cycle_ms = now_ms;
+            self.snap.first_cycle_ms = start_wall;
+            self.snap.first_cycle_mono_ms = start_mono;
         }
-        self.snap.last_cycle_ms = now_ms;
+        self.snap.last_cycle_ms = start_wall;
+        self.snap.last_cycle_mono_ms = start_mono;
 
         match self.previous {
-            Some((previous, previous_drawing)) if previous_drawing == drawing => {
-                let interval = start.saturating_duration_since(previous);
+            Some(prev) if prev.drawing == drawing => {
+                let interval = start.saturating_duration_since(prev.start);
                 let b = interval_bucket(interval);
                 self.snap.interval_n = self.snap.interval_n.wrapping_add(1);
                 self.snap.interval_ns = self.snap.interval_ns.wrapping_add(ns(interval));
                 self.snap.interval_buckets[b] = self.snap.interval_buckets[b].wrapping_add(1);
                 let eb = excess_bucket(interval.saturating_sub(budget));
                 self.snap.interval_excess[eb] = self.snap.interval_excess[eb].wrapping_add(1);
+                // True interval endpoints: start Instant of opening tick →
+                // start Instant of closing tick (not post-sleep record wall).
                 if self.snap.first_interval_ms == 0 {
-                    self.snap.first_interval_ms = now_ms;
+                    self.snap.first_interval_ms = prev.wall_ms;
+                    self.snap.first_interval_start_mono_ms = prev.mono_ms;
                 }
-                self.snap.last_interval_ms = now_ms;
+                self.snap.last_interval_ms = start_wall;
+                self.snap.last_interval_end_mono_ms = start_mono;
             }
-            Some((_, previous_drawing)) if previous_drawing != drawing => {
+            Some(prev) if prev.drawing != drawing => {
                 self.snap.mode_break_n = self.snap.mode_break_n.wrapping_add(1);
                 self.dirty = true;
             }
@@ -418,18 +490,24 @@ impl Local {
             }
         }
 
-        self.previous = Some((start, drawing));
+        self.previous = Some(TickAnchor {
+            start,
+            drawing,
+            wall_ms: start_wall,
+            mono_ms: start_mono,
+        });
         self.cycles += 1;
-        if self.cycles >= 50 {
+        if self.cycles >= FLUSH_LAG_MAX_CYCLES {
             self.flush_legacy();
             self.flush_slot(false);
-        } else if self.dirty || self.last_flush.elapsed() >= Duration::from_secs(1) {
+        } else if self.dirty || self.last_flush.elapsed() >= Duration::from_millis(FLUSH_LAG_MAX_MS)
+        {
             self.maybe_flush_slot();
         }
     }
 
     fn maybe_flush_slot(&mut self) {
-        if self.dirty || self.last_flush.elapsed() >= Duration::from_secs(1) {
+        if self.dirty || self.last_flush.elapsed() >= Duration::from_millis(FLUSH_LAG_MAX_MS) {
             self.flush_slot(false);
         }
     }
@@ -615,6 +693,92 @@ mod tests {
             l.record(t + ms(5040), true, ms(1), ms(19), ms(19), ms(20));
             assert_eq!(l.snap.interval_n, 2);
             assert!(interval_coverage_complete(&l.snap));
+            ENABLED.store(false, Relaxed);
+        });
+    }
+
+    #[test]
+    fn interval_endpoints_align_with_synthetic_start_instants() {
+        with_lock(|| {
+            enable_clean();
+            let mut l = Local::new(99).expect("enabled");
+            let origin = l.origin;
+            let t0 = Instant::now();
+            // Ensure t0 is after origin so mono deltas are exact Instant math.
+            assert!(t0 >= origin);
+            let ms = Duration::from_millis;
+            let t1 = t0 + ms(20);
+            let t2 = t0 + ms(45);
+            l.record(t0, false, ms(1), ms(19), ms(19), ms(20));
+            l.record(t1, false, ms(1), ms(19), ms(19), ms(20));
+            l.record(t2, false, ms(1), ms(19), ms(19), ms(20));
+
+            let m0 = mono_ms(origin, t0);
+            let m2 = mono_ms(origin, t2);
+            assert_eq!(l.snap.first_cycle_mono_ms, m0);
+            assert_eq!(l.snap.last_cycle_mono_ms, m2);
+            // First interval opens at t0, last closes at t2.
+            assert_eq!(l.snap.first_interval_start_mono_ms, m0);
+            assert_eq!(l.snap.last_interval_end_mono_ms, m2);
+            assert_eq!(
+                l.snap.last_interval_end_mono_ms - l.snap.first_interval_start_mono_ms,
+                45
+            );
+            assert_eq!(l.snap.interval_n, 2);
+            assert_eq!(l.snap.interval_ns, 45_000_000);
+
+            // Wall endpoints are tick-start backdates (nonzero once samples exist).
+            assert!(l.snap.first_interval_ms > 0);
+            assert!(l.snap.last_interval_ms >= l.snap.first_interval_ms);
+            assert!(l.snap.first_cycle_ms > 0);
+            assert_eq!(l.snap.last_cycle_ms, l.snap.last_interval_ms);
+
+            // Publish freshness is distinct from sample endpoints.
+            l.flush_slot(false);
+            assert!(l.snap.updated_ms > 0);
+            // updated_ms is wall-at-flush; mono endpoints are Local-origin ms —
+            // different clocks/meanings. Wall publish should not rewrite mono.
+            assert_eq!(l.snap.first_interval_start_mono_ms, m0);
+            assert_eq!(l.snap.last_interval_end_mono_ms, m2);
+            // Scene separation remains fail-closed constant.
+            assert_eq!(SCENE_TRANSITION_SEPARATION, "unavailable");
+            assert_eq!(FLUSH_LAG_MAX_CYCLES, 50);
+            assert_eq!(FLUSH_LAG_MAX_MS, 1000);
+            ENABLED.store(false, Relaxed);
+        });
+    }
+
+    #[test]
+    fn park_mode_breaks_advance_counters_not_interval_endpoints_across_gap() {
+        with_lock(|| {
+            enable_clean();
+            let mut l = Local::new(3).expect("enabled");
+            let origin = l.origin;
+            let t = Instant::now();
+            let ms = Duration::from_millis;
+            l.record(t, false, ms(1), ms(19), ms(19), ms(20));
+            l.record(t + ms(20), false, ms(1), ms(19), ms(19), ms(20));
+            let end_before_park = l.snap.last_interval_end_mono_ms;
+            assert_eq!(end_before_park, mono_ms(origin, t + ms(20)));
+            l.parked();
+            assert_eq!(l.snap.park_n, 1);
+            // Large gap after park must not extend last_interval_end.
+            l.record(t + ms(5000), false, ms(1), ms(19), ms(19), ms(20));
+            assert_eq!(l.snap.last_interval_end_mono_ms, end_before_park);
+            assert_eq!(l.snap.interval_n, 1);
+            assert_eq!(l.snap.anchor_miss_n, 2);
+            // Mode break also does not invent an interval endpoint across modes.
+            l.record(t + ms(5020), true, ms(1), ms(19), ms(19), ms(20));
+            assert_eq!(l.snap.mode_break_n, 1);
+            assert_eq!(l.snap.last_interval_end_mono_ms, end_before_park);
+            l.record(t + ms(5040), true, ms(1), ms(19), ms(19), ms(20));
+            assert_eq!(l.snap.interval_n, 2);
+            assert_eq!(
+                l.snap.last_interval_end_mono_ms,
+                mono_ms(origin, t + ms(5040))
+            );
+            // first interval start remains the pre-park opening tick.
+            assert_eq!(l.snap.first_interval_start_mono_ms, mono_ms(origin, t));
             ENABLED.store(false, Relaxed);
         });
     }

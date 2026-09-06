@@ -803,6 +803,8 @@ impl Run {
                 })).collect())
             }).unwrap_or(serde_json::Value::Null);
             // Per-slot absolute start-to-start intervals (sibling field; null while off).
+            // Built in two json! layers so the field count stays under the crate
+            // serde_json recursion limit (same pattern as renderer_profile).
             value["scheduling_slots"] = host::cadence::read_slots()
                 .map(|slots| {
                     let now_ms = std::time::SystemTime::now()
@@ -818,7 +820,7 @@ impl Run {
                                 } else {
                                     serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
                                 };
-                                serde_json::json!({
+                                let mut row = serde_json::json!({
                                     "slot_id": s.slot_id,
                                     "generation": s.generation,
                                     "updated_ms": s.updated_ms,
@@ -843,15 +845,59 @@ impl Run {
                                     "anchor_miss_n": s.anchor_miss_n,
                                     "first_interval_ms": s.first_interval_ms,
                                     "last_interval_ms": s.last_interval_ms,
+                                    "first_interval_start_mono_ms": s.first_interval_start_mono_ms,
+                                    "last_interval_end_mono_ms": s.last_interval_end_mono_ms,
                                     "first_cycle_ms": s.first_cycle_ms,
                                     "last_cycle_ms": s.last_cycle_ms,
+                                    "first_cycle_mono_ms": s.first_cycle_mono_ms,
+                                    "last_cycle_mono_ms": s.last_cycle_mono_ms,
                                     "sleep_excess_buckets": s.sleep_excess,
                                     "interval_excess_buckets": s.interval_excess,
                                     "ended_lost_n": host::cadence::ended_lost_n(),
-                                    "interval_means": "tick_start_to_start_same_drawing_no_park_absolute_not_excess",
-                                    "mode_break_means": "drawing_latch_flip_while_anchor_present_excluded_from_intervals",
-                                    "park_means": "idle_park_cleared_start_anchor_excluded_from_intervals",
-                                })
+                                });
+                                if let Some(obj) = row.as_object_mut() {
+                                    obj.insert(
+                                        "flush_lag_max_cycles".into(),
+                                        host::cadence::FLUSH_LAG_MAX_CYCLES.into(),
+                                    );
+                                    obj.insert(
+                                        "flush_lag_max_ms".into(),
+                                        host::cadence::FLUSH_LAG_MAX_MS.into(),
+                                    );
+                                    obj.insert(
+                                        "scene_transition_separation".into(),
+                                        host::cadence::SCENE_TRANSITION_SEPARATION.into(),
+                                    );
+                                    obj.insert(
+                                        "interval_endpoint_means".into(),
+                                        "tick_start_instant_wall_backdated_and_local_mono_not_post_sleep_record".into(),
+                                    );
+                                    obj.insert(
+                                        "updated_ms_means".into(),
+                                        "registry_publish_freshness_not_sample_endpoint".into(),
+                                    );
+                                    obj.insert(
+                                        "jsonl_row_time_is_not_interval_endpoint".into(),
+                                        true.into(),
+                                    );
+                                    obj.insert(
+                                        "observe_window_means".into(),
+                                        "use_counter_deltas_with_endpoint_stamps_never_nominal_jsonl_delta_t".into(),
+                                    );
+                                    obj.insert(
+                                        "interval_means".into(),
+                                        "tick_start_to_start_same_drawing_no_park_absolute_not_excess".into(),
+                                    );
+                                    obj.insert(
+                                        "mode_break_means".into(),
+                                        "drawing_latch_flip_while_anchor_present_excluded_from_intervals".into(),
+                                    );
+                                    obj.insert(
+                                        "park_means".into(),
+                                        "idle_park_cleared_start_anchor_excluded_from_intervals".into(),
+                                    );
+                                }
+                                row
                             })
                             .collect(),
                     )
