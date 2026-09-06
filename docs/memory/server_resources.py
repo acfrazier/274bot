@@ -232,6 +232,7 @@ def run(pid: int, output: pathlib.Path, interval: float, duration: float, *, for
         return 0
     except (SampleError, OSError) as exc:
         write({"type": "error", "status": "fail", "reason": str(exc), "partial_sample_count": count, "ended_utc": _utc_now()})
+        print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     finally:
         out.close()

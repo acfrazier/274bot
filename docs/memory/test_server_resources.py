@@ -74,6 +74,16 @@ class ValidationTests(unittest.TestCase):
 
 
 class CliSmokeTests(unittest.TestCase):
+    def test_required_mid_run_failure_prints_fail(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = pathlib.Path(td) / "samples.jsonl"
+            cmd = [sys.executable, str(ROOT / "server_resources.py"), "999999992", str(out), "--duration", "0.1"]
+            completed = subprocess.run(cmd, text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 1)
+            self.assertIn("FAIL:", completed.stderr)
+            rows = [json.loads(line) for line in out.read_text().splitlines()]
+            self.assertEqual(rows[-1]["type"], "error")
+
     def test_short_controlled_self_sample(self):
         with tempfile.TemporaryDirectory() as td:
             out = pathlib.Path(td) / "samples.jsonl"
