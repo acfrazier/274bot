@@ -1,0 +1,106 @@
+{
+  "date": "2026-09-06",
+  "scope": "Execution docs, installed Hermes skill and review-route correction; no provider/auth or Hermes engine changes",
+  "tracked_docs_commit": "63863c1",
+  "files": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/AGENTS.md",
+      "sha256": "7db2a9ada470df3d3d57a4903c944150962f618789ca20aa69ed26e18481cd00",
+      "symlink": false,
+      "resolved": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/AGENTS.md"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/AGENTS.md",
+      "sha256": "7db2a9ada470df3d3d57a4903c944150962f618789ca20aa69ed26e18481cd00",
+      "symlink": false,
+      "resolved": "/Users/acfrazier/experiments/274bot/AGENTS.md"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/execution.md",
+      "sha256": "82298e5beee455b8fe8614e9728d4715343fc669958b4438e9c9e63f4b9fdea4",
+      "symlink": false,
+      "resolved": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/execution.md"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/STATE.md",
+      "sha256": "72647878d7bb9654a95738e04b94ad1adcd318e2308f90ebd2f7c79b2b76f876",
+      "symlink": false,
+      "resolved": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/STATE.md"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/docs/superpowers/STATE.md",
+      "sha256": "acbb4191bb657e3f28a3dee802479469f9bac4f40bc76107ce923c115a405295",
+      "symlink": false,
+      "resolved": "/Users/acfrazier/experiments/274bot/docs/superpowers/STATE.md"
+    },
+    {
+      "path": "/Users/acfrazier/.hermes/skills/software-development/274bot-sdd/SKILL.md",
+      "sha256": "44c88cfe69c4369702a7a4de64b97d243f3f93d152a09936e6ba84a4aa82dec9",
+      "symlink": false,
+      "resolved": "/Users/acfrazier/.hermes/skills/software-development/274bot-sdd/SKILL.md"
+    },
+    {
+      "path": "/Users/acfrazier/.hermes/profiles/orch/skills/software-development/274bot-sdd/SKILL.md",
+      "sha256": "44c88cfe69c4369702a7a4de64b97d243f3f93d152a09936e6ba84a4aa82dec9",
+      "symlink": true,
+      "resolved": "/Users/acfrazier/.hermes/skills/software-development/274bot-sdd/SKILL.md"
+    }
+  ],
+  "validation": [
+    "Both skill entry points pass quick_validate.py",
+    "Actual Hermes skill_view under orch profile returns success and new content",
+    "git common-dir fallback resolves primary checkout; active STATE and plan exist",
+    "Primary and active AGENTS contents identical",
+    "git diff --check clean for workflow changes"
+  ],
+  "qualification_review_correction": {
+    "original_task": "t_88c0a26d",
+    "invalid_review_run": 40,
+    "invalid_model": "grok-composer-2.5-fast",
+    "override_cleared": true,
+    "corrective_task": "t_61419501",
+    "reviewer": "grok-4.5",
+    "verdict": "APPROVE",
+    "reviewed_commit": "b904577",
+    "tests_passed": 16
+  },
+  "prior_local_docs_backup": "/Users/acfrazier/.hermes/backups/274bot-workflow-20260906",
+  "prior_state_snapshot": "/Users/acfrazier/experiments/274bot/docs/superpowers/history/2026-09-06-state-before-workflow-fix.md",
+  "workflow_review_task": "t_5b4f2547",
+  "whole_campaign_review": "pending; Grok4.6 still required",
+  "workflow_review_verdict": "APPROVE",
+  "post_review_changes": [
+    "Update current STATE to completed workflow review and N16 awaiting review",
+    "Remove obsolete Flash label from AGENTS Git role without changing its rule"
+  ],
+  "files_at_receipt": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/AGENTS.md",
+      "sha256": "2beb68289ed563ae575fadf8c2037d405d71999bcb5643f8cbb69654f1aa5d00"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/AGENTS.md",
+      "sha256": "2beb68289ed563ae575fadf8c2037d405d71999bcb5643f8cbb69654f1aa5d00"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/execution.md",
+      "sha256": "82298e5beee455b8fe8614e9728d4715343fc669958b4438e9c9e63f4b9fdea4"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/STATE.md",
+      "sha256": "6137d02058c83357fd02e5e13325d5eb06aa725a21283846c36388d736ff996c"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/docs/superpowers/STATE.md",
+      "sha256": "acbb4191bb657e3f28a3dee802479469f9bac4f40bc76107ce923c115a405295"
+    },
+    {
+      "path": "/Users/acfrazier/.hermes/skills/software-development/274bot-sdd/SKILL.md",
+      "sha256": "44c88cfe69c4369702a7a4de64b97d243f3f93d152a09936e6ba84a4aa82dec9"
+    },
+    {
+      "path": "/Users/acfrazier/.hermes/profiles/orch/skills/software-development/274bot-sdd/SKILL.md",
+      "sha256": "44c88cfe69c4369702a7a4de64b97d243f3f93d152a09936e6ba84a4aa82dec9"
+    }
+  ]
+}

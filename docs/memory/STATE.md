@@ -11,17 +11,19 @@ verify it on resume because a worker may finish after this snapshot.
 
 ## Current work and next actions
 
-1. Execution correction is being finalized: profile-based dispatch without task
-   model pins, automatic same-card review, one shared Hermes skill, and portable
-   resume pointers. The operator authorized these fixes after a read-only audit.
+1. Execution correction is complete: profile-based dispatch without task model
+   pins, automatic same-card review, one shared Hermes skill, and portable resume
+   pointers. Commit `63863c1` passed Grok4.5 walkthrough review `t_5b4f2547`;
+   [receipt](grok-4.5-execution-workflow-review.txt). Final receipt update also
+   removes the obsolete Flash role label; no Git permission changed.
 2. Qualification gate `b904577` is implemented. Original task `t_88c0a26d`
    completed, but its first review retained a Composer override and is not the
    required Grok4.5 review. The pin was removed. Corrective card `t_61419501`
    completed with Grok4.5 approval; [receipt](grok-4.5-qualification-gate-review.txt).
    Sixteen tests passed, including real corrected-run exit0 and failed-run exit1.
 3. Task `t_9cd0e197` adds N=16 and explicit opt-in panel reference policies. It is
-   in implementation/test at this update, with no task model override. Monitor
-   it through Grok4.5 review. Its scope does not prove actual GPU backend,
+   implemented at `9f687af` and awaiting Grok4.5 review at this update, with no
+   task model override. Monitor it through review. Its scope does not prove actual GPU backend,
    completed-frame cadence or responsiveness, and includes no live run.
 4. After policy review, add bounded observed renderer/backend/cadence and missing
    responsiveness proof. Build immutable release binaries and qualify the three

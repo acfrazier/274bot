@@ -1,0 +1,28 @@
+Task t_5b4f2547: Review corrected execution workflow and resume path
+  status:    done
+  assignee:  reviewer
+  workspace: dir @ /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f
+  max-retries: 1 (task)
+  created:   2026-09-06 15:04 by orch
+  started:   2026-09-06 15:05
+  completed: 2026-09-06 15:06
+
+Body:
+Read-only Grok4.5 review and practical walkthrough of execution-docs commit63863c1 in /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f. Review only AGENTS.md, docs/execution.md, docs/memory/STATE.md, performance-finish-plan acceptance clarification, and qualification-gate correction receipt. Also inspect installed shared skill /Users/acfrazier/.hermes/skills/software-development/274bot-sdd/SKILL.md and orch-profile symlink at /Users/acfrazier/.hermes/profiles/orch/skills/software-development/274bot-sdd/SKILL.md; primary checkout AGENTS.md and docs/superpowers/STATE.md local pointer. Existing active worker changes outside scope must be ignored. Do not change files, dispatch tasks, build Rust, launch live, or manipulate real cards.
+
+Walk through these cases using the docs and read-only CLI help/config/code as needed: cold resume from an old worktree without STATE; Codex externally creates an implementer card and receives no Hermes notification; implementer hands off to reviewer with review_dispatch=true; an exceptional model pin remains on a closed review; failed stochastic live cell but bounded diagnosis already authorized; provisional memory improvement while baseline exceeds final budget. Verify the instructions resolve each without model substitution, duplicate review, lost wakeup assumptions, phantom acceptance, or archive crawl. Check shared/profile skill resolution and links. Verify configured profiles using only non-secret model/provider settings, and final Grok4.6 preserved. Check no Git permissions expanded or budgets raised. Finish APPROVE or REQUEST CHANGES with concrete findings; complete this reviewer-only docs card. Do not review ongoing N16 implementation.
+
+Latest summary:
+APPROVE. Independent Grok-4.5 (xai-oauth, no task model override) docs review of 63863c1 execution workflow. All six walkthrough cases resolve from AGENTS/execution/STATE/plan/skill without model substitution, duplicate review, lost-wakeup assumptions, phantom acceptance, archive crawl, budget raises, or Git permission expansion. Profiles match AGENTS (implementer composer-2.5-fast, reviewer 4.5, branchreviewer 4.6); review_dispatch=true; shared 274bot-sdd skill + orch SKILL.md symlink verified. Non-blocking nits only: STATE item 1 still says correction “being finalized”; AGENTS Git bullet still says “Flash / SDD implementer”.
+
+Events (6):
+  [2026-09-06 15:04] created {'assignee': 'reviewer', 'status': 'ready', 'parents': [], 'tenant': None, 'workspace_kind': 'dir', 'workspace_path': '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f', 'branch_name': None, 'project_id': None, 'skills': None, 'goal_mode': None, 'model_override': None, 'provider_override': None}
+  [2026-09-06 15:05] [run 43] claimed {'lock': 'merlot.local:90763', 'expires': 1788722408, 'run_id': 43}
+  [2026-09-06 15:05] [run 43] spawned {'pid': 90765}
+  [2026-09-06 15:05] [run 43] heartbeat
+  [2026-09-06 15:06] [run 43] heartbeat
+  [2026-09-06 15:06] [run 43] completed {'result_len': 0, 'summary': 'APPROVE. Independent Grok-4.5 (xai-oauth, no task model override) docs review of 63863c1 execution workflow. All six walkthrough cases resolve from AGENTS/execution/STATE/plan/skill without model substitution, duplicate review, lost-wakeup assumptions, phantom acceptance, archive crawl, budget raises, or Git permission expansion. Profiles match AGENTS (implementer composer-2.5-fast, reviewer 4.5, '}
+
+Runs (1):
+  #43  completed    @reviewer  106s  2026-09-06 15:05
+        → APPROVE. Independent Grok-4.5 (xai-oauth, no task model override) docs review of 63863c1 execution workflow. All six walkthrough cases resolve from AGENTS/execu
