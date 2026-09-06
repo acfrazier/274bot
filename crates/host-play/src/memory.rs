@@ -235,11 +235,11 @@ struct Seed {
 }
 
 /// Per-slot Thiever seed runners installed by [`Run::prepare`] for
-/// active/lifecycle. Idle leaves this empty so the slot hook is a no-op.
+/// seeded-idle/active/lifecycle. Unseeded idle leaves this empty.
 static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None);
 
 /// Called from the existing frontend slot observe hook. Drives the Thiever
-/// scenario seed/proof; idle installs no seeds.
+/// scenario seed/proof; unseeded idle installs no seeds.
 pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: bool) {
     crate::memory_diagnostics::frame(c, name, hold);
     let seed = {
@@ -267,6 +267,13 @@ fn seeded_idle_scenario() -> scenario::Scenario {
     scenario.settings.start_script = None;
     scenario.settings.terminal_shot = None;
     scenario
+}
+
+fn seed_runner(scenario: scenario::Scenario, name: &str, world: Option<Arc<nav::world::NavWorld>>) -> Seed {
+    let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+    runner.set_live_names(&[name.to_owned()]);
+    runner.set_deadline(Duration::from_secs(1800));
+    Seed { runner, started: false }
 }
 
 type ScriptCard = (
@@ -318,6 +325,13 @@ impl Run {
         let path = dir.join("vault");
         let mut vault = Vault::create(&path, &pass).map_err(|e| e.to_string())?;
 
+        // One immutable pack per benchmark runner set. The production Play
+        // owns its separate, already-shared world; no per-account decode here.
+        let seed_world = if config.workload == Workload::Idle {
+            None
+        } else {
+            nav::world::NavWorld::load_pack(&scenario::default_pack_path()).ok().map(Arc::new)
+        };
         let mut seeds = HashMap::new();
         for (i, name) in names.iter().enumerate() {
             let mut settings = ProfileSettings::default();
@@ -338,15 +352,10 @@ impl Run {
                     scenario::thiever_sustained_scenario()
                 } else { scenario::get("thiever").ok_or("missing Thiever scenario")? };
                 scenario.settings.terminal_shot = None;
-                let mut runner = scenario::ScenarioRunner::new(scenario);
-                runner.set_live_names(&[name.clone()]);
-                runner.set_deadline(Duration::from_secs(1800));
+                let seed = seed_runner(scenario, name, seed_world.clone());
                 seeds.insert(
                     name.clone(),
-                    Arc::new(Mutex::new(Seed {
-                        runner,
-                        started: false,
-                    })),
+                    Arc::new(Mutex::new(seed)),
                 );
             }
         }
@@ -960,6 +969,27 @@ mod tests {
             "focus_index {idx} out of 0..{}",
             run.names.len()
         );
+    }
+
+    #[test]
+    fn seed_runners_share_world_but_keep_independent_state() {
+        let world = Arc::new(nav::world::NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
+            }, Default::default(), vec![],
+        ));
+        let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()));
+        let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()));
+        assert_eq!(Arc::strong_count(&world), 3, "both runners must retain the injected world");
+        assert_eq!(a.runner.profile_name(), "seed_a");
+        assert_eq!(b.runner.profile_name(), "seed_b");
+        a.started = true;
+        assert!(!b.started);
+        drop(a);
+        assert_eq!(Arc::strong_count(&world), 2);
+        drop(b);
+        assert_eq!(Arc::strong_count(&world), 1);
     }
 
     #[test]
