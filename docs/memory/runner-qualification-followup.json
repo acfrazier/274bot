@@ -1,0 +1,937 @@
+{
+  "diagnostic_only": true,
+  "performance_acceptance": false,
+  "run": "docs/memory/diagnostics/20260906T183535Z_panel_n32_active",
+  "metadata": {
+    "stack_logging_mode": null,
+    "host_sources_sha256": "dc8b85e97e1ec064ff41354ee227dc65c17c70c55b05d0a8fe52a1477f6e88b5",
+    "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+    "frontend": "panel",
+    "n": 32,
+    "workload": "active",
+    "warmup_s": 30,
+    "observe_s": 180,
+    "nav_pack": "/Users/acfrazier/.274bot/274bot.navpack",
+    "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+    "nav_flags": "/Users/acfrazier/.274bot/274bot.navflags",
+    "diagnostic_only": true,
+    "scheduling_profile": false,
+    "diagnostic_sidecar": true,
+    "nav_captures": true,
+    "single_renderer": true,
+    "render_policy": "fixed-one",
+    "terminal": false,
+    "terminal_size": null,
+    "debug": false,
+    "sustain": true,
+    "stack_logging": false,
+    "binary": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-stop-build/panel-play-system",
+    "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+    "host_commit": "e36b8aebe3a308009b8ac22fc68158620350ce92",
+    "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+    "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260906T183535Z_panel_n32_active",
+    "started_unix": 1788719735.352608,
+    "pid": 86369,
+    "exit_code": 0,
+    "ended_unix": 1788720156.791614
+  },
+  "control_qualification": {
+    "run": "docs/memory/diagnostics/20260906T183535Z_panel_n32_active",
+    "n": 32,
+    "counting": false,
+    "diagnostics": true,
+    "qualified": true,
+    "errors": [],
+    "observation_s": 178.62845466700003,
+    "cpu_seconds": 105.376366,
+    "cpu_cores": 0.5899192611638672,
+    "client_ticks_per_slot_s": 36.416720461064095,
+    "median_resident_bytes": 2019819520.0,
+    "steal_gains": {
+      "live15161_0": 15,
+      "live15161_1": 14,
+      "live15161_2": 16,
+      "live15161_3": 16,
+      "live15161_4": 24,
+      "live15161_5": 18,
+      "live15161_6": 10,
+      "live15161_7": 14,
+      "live15161_8": 24,
+      "live15161_9": 16,
+      "live15161_10": 8,
+      "live15161_11": 13,
+      "live15161_12": 11,
+      "live15161_13": 19,
+      "live15161_14": 8,
+      "live15161_15": 25,
+      "live15161_16": 16,
+      "live15161_17": 17,
+      "live15161_18": 31,
+      "live15161_19": 22,
+      "live15161_20": 12,
+      "live15161_21": 12,
+      "live15161_22": 18,
+      "live15161_23": 18,
+      "live15161_24": 15,
+      "live15161_25": 20,
+      "live15161_26": 16,
+      "live15161_27": 21,
+      "live15161_28": 11,
+      "live15161_29": 28,
+      "live15161_30": 10,
+      "live15161_31": 15
+    },
+    "diagnostic_only": true
+  },
+  "functional_summary": {
+    "diagnostic_only": true,
+    "complete": true,
+    "exit_code": 0,
+    "binary_sha256": "616196ac16974c67ef331b107d17a87f907b963a7fc7e3256ef96d3754136c9b",
+    "requested_slots": 32,
+    "requested_observe_s": 180,
+    "observation_samples": 178,
+    "observation_sample_span_s": 178.62845466700003,
+    "ready_counts": {
+      "32": 178
+    },
+    "active_counts": {
+      "32": 178
+    },
+    "median_resident_bytes": 2019819520.0,
+    "unavailable_metrics": [],
+    "failures": [],
+    "final_sample": {
+      "frontend": "panel",
+      "n": 32,
+      "workload": "active",
+      "elapsed_s": 420.984966917,
+      "phase": "teardown",
+      "ready": 32,
+      "active": 0,
+      "resident_bytes": 1686700032,
+      "peak_resident_bytes": 2049507328,
+      "rust_allocations": null,
+      "rust_allocated_bytes": null,
+      "rust_live_bytes": null,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "v8_used_bytes": 0,
+      "v8_total_bytes": 0,
+      "gpu_tracked_bytes": 18467480,
+      "process_cpu_user_s": 151.395737,
+      "process_cpu_system_s": 44.90965,
+      "allocation_counting": false,
+      "diagnostic_sidecar": true,
+      "gpu_buffer_bytes": 1223488,
+      "gpu_texture_bytes": 17243992,
+      "gpu_peak_tracked_bytes": 19690616,
+      "v8_live_isolates": 0,
+      "v8_sampled_isolates": 0,
+      "v8_max_sample_age_ms": null,
+      "script_tick_count": 0,
+      "script_tick_total_ns": 0,
+      "script_tick_max_ns": 0,
+      "snapshot_sum_isolate_peak_capacity": 0,
+      "client_tick_count": 344013,
+      "client_tick_total_ns": 626359956009,
+      "client_tick_max_ns": 129409125,
+      "ui_draw_count": 19493,
+      "ui_draw_total_ns": 27212792395,
+      "ui_draw_max_ns": 321520917,
+      "ui_frame_count": 19493,
+      "ui_frame_total_ns": 31791312682,
+      "ui_frame_max_ns": 321540625,
+      "scheduling": null
+    },
+    "slots": {
+      "live15161_0": {
+        "observation_xp_gain": 702,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 12.8k",
+            "Steals: 22 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 22,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_1": {
+        "observation_xp_gain": 655,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2664, 3306, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 13.4k",
+            "Steals: 18 | Ate: 2 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: no",
+            "HP: 94%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 18,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 22,
+        "errors": []
+      },
+      "live15161_10": {
+        "observation_xp_gain": 374,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 9.3k",
+            "Steals: 16 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 16,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_11": {
+        "observation_xp_gain": 515,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 16.9k",
+            "Steals: 29 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 29,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_12": {
+        "observation_xp_gain": 515,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 14.9k",
+            "Steals: 20 | Ate: 2 | Picked: 0",
+            "Food: 22 | Bank trips: 1 | Stunned: yes",
+            "HP: 94%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 20,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 22,
+        "errors": []
+      },
+      "live15161_13": {
+        "observation_xp_gain": 843,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 14.6k",
+            "Steals: 25 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 80%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 25,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_14": {
+        "observation_xp_gain": 375,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 8.8k",
+            "Steals: 15 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: yes",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 15,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_15": {
+        "observation_xp_gain": 1170,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 20.1k",
+            "Steals: 34 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 34,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_16": {
+        "observation_xp_gain": 702,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 15.6k",
+            "Steals: 20 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 94%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 20,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_17": {
+        "observation_xp_gain": 796,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 19.3k",
+            "Steals: 33 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 80%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 33,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_18": {
+        "observation_xp_gain": 1451,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 25.4k",
+            "Steals: 43 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 43,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_19": {
+        "observation_xp_gain": 1030,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 4m | Target: Guard | XP/hr: 17.9k",
+            "Steals: 24 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 94%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 24,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_2": {
+        "observation_xp_gain": 749,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 14.0k",
+            "Steals: 24 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 80%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 24,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_20": {
+        "observation_xp_gain": 562,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 14.1k",
+            "Steals: 24 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 24,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_21": {
+        "observation_xp_gain": 561,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 9.4k",
+            "Steals: 16 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 16,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_22": {
+        "observation_xp_gain": 842,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 18.7k",
+            "Steals: 32 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 100%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 32,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_23": {
+        "observation_xp_gain": 796,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 17.1k",
+            "Steals: 29 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 100%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 29,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_24": {
+        "observation_xp_gain": 702,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 14.6k",
+            "Steals: 25 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 25,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_25": {
+        "observation_xp_gain": 936,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 18.1k",
+            "Steals: 31 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 100%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 31,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_26": {
+        "observation_xp_gain": 749,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 14.0k",
+            "Steals: 24 | Ate: 3 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: yes",
+            "HP: 90%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 24,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_27": {
+        "observation_xp_gain": 936,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 19.3k",
+            "Steals: 33 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 84%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 33,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_28": {
+        "observation_xp_gain": 515,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 14.6k",
+            "Steals: 25 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 25,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_29": {
+        "observation_xp_gain": 1263,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 26.8k",
+            "Steals: 46 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 88%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 46,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_3": {
+        "observation_xp_gain": 749,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 16.3k",
+            "Steals: 28 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: yes",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 28,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_30": {
+        "observation_xp_gain": 468,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 13.4k",
+            "Steals: 23 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 23,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_31": {
+        "observation_xp_gain": 655,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 12.8k",
+            "Steals: 22 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 92%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 22,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_4": {
+        "observation_xp_gain": 1077,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 20.5k",
+            "Steals: 35 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 80%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 35,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_5": {
+        "observation_xp_gain": 842,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 16.3k",
+            "Steals: 28 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 100%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 28,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_6": {
+        "observation_xp_gain": 468,
+        "final_paint": {
+          "title": "ThievingBot \u2014 stunned \u2014 waiting",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 16.3k",
+            "Steals: 28 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: yes",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 28,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_7": {
+        "observation_xp_gain": 655,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3297, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 13.4k",
+            "Steals: 23 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 23,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      },
+      "live15161_8": {
+        "observation_xp_gain": 1076,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2654, 3310, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 16.3k",
+            "Steals: 28 | Ate: 2 | Picked: 0",
+            "Food: 21 | Bank trips: 1 | Stunned: no",
+            "HP: 80%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 28,
+        "eats": 2,
+        "bank_trips": 1,
+        "food": 21,
+        "errors": []
+      },
+      "live15161_9": {
+        "observation_xp_gain": 749,
+        "final_paint": {
+          "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+          "lines": [
+            "Runtime: 5m | Target: Guard | XP/hr: 16.3k",
+            "Steals: 28 | Ate: 3 | Picked: 0",
+            "Food: 20 | Bank trips: 1 | Stunned: no",
+            "HP: 96%",
+            "",
+            "",
+            "Pause/Resume: host \u00b7 Stop: ScriptRunner.stop()"
+          ]
+        },
+        "steals": 28,
+        "eats": 3,
+        "bank_trips": 1,
+        "food": 20,
+        "errors": []
+      }
+    },
+    "terminal": false,
+    "instrumentation": {
+      "v8_used_bytes": {
+        "samples": 178,
+        "min": 144032776,
+        "median": 204802028.0,
+        "max": 257964936
+      },
+      "v8_total_bytes": {
+        "samples": 178,
+        "min": 231473152,
+        "median": 365166592.0,
+        "max": 386924544
+      },
+      "v8_live_isolates": {
+        "samples": 178,
+        "min": 32,
+        "median": 32.0,
+        "max": 32
+      },
+      "v8_sampled_isolates": {
+        "samples": 178,
+        "min": 32,
+        "median": 32.0,
+        "max": 32
+      },
+      "v8_max_sample_age_ms": {
+        "samples": 178,
+        "min": 632,
+        "median": 901.5,
+        "max": 1221
+      },
+      "snapshot_inflight_bytes": {
+        "samples": 178,
+        "min": 0,
+        "median": 0.0,
+        "max": 825880
+      },
+      "snapshot_inflight_capacity": {
+        "samples": 178,
+        "min": 0,
+        "median": 0.0,
+        "max": 825880
+      },
+      "snapshot_sum_isolate_peak_capacity": {
+        "samples": 178,
+        "min": 9130488,
+        "median": 9130488.0,
+        "max": 9130488
+      },
+      "gpu_buffer_bytes": {
+        "samples": 178,
+        "min": 1223056,
+        "median": 1223488.0,
+        "max": 1223488
+      },
+      "gpu_texture_bytes": {
+        "samples": 178,
+        "min": 17243992,
+        "median": 17243992.0,
+        "max": 17243992
+      },
+      "gpu_peak_tracked_bytes": {
+        "samples": 178,
+        "min": 19688600,
+        "median": 19690616.0,
+        "max": 19690616
+      }
+    },
+    "latency": {
+      "client_tick": {
+        "observation_count": 208162,
+        "observation_mean_ms": 2.083011519412765,
+        "lifetime_max_ms": 129.409125,
+        "counter_monotonic": true
+      },
+      "script_tick": {
+        "observation_count": 9536,
+        "observation_mean_ms": 0.1173925673238255,
+        "lifetime_max_ms": 3.062666,
+        "counter_monotonic": true
+      },
+      "ui_draw": {
+        "observation_count": 8124,
+        "observation_mean_ms": 1.8500771251846382,
+        "lifetime_max_ms": 321.520917,
+        "counter_monotonic": true
+      },
+      "ui_frame": {
+        "observation_count": 8124,
+        "observation_mean_ms": 2.0807339670113243,
+        "lifetime_max_ms": 321.540625,
+        "counter_monotonic": true
+      }
+    }
+  },
+  "server_source_evidence": [
+    {
+      "path": "/Users/acfrazier/experiments/Server/content/scripts/macro events/scripts/general/macro_event_mime.rs2",
+      "sha256": "615a1410a5506bd542c5ba01321bedaf7b56a93cd221ce3469e4a2af3cfe5d37"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/Server/content/scripts/macro events/scripts/general/macro_event_maze.rs2",
+      "sha256": "77a57f189dd0bf0115d7e1822502ddaca3c6063ec7f430e0fc02a161eefa94a0"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/Server/content/scripts/macro events/configs/macro_events.enum",
+      "sha256": "ef545055b3a75f93f5a870f92aa335c47f5616a5fba275b2eac32aed2e633b08"
+    }
+  ],
+  "prior_endpoints": {
+    "live14f0f_11": {
+      "position": [
+        2008,
+        4762,
+        0
+      ],
+      "mapping": "Mime entry at (2008,4764), followed by scripted z -= 2"
+    },
+    "live14f0f_1": {
+      "position": [
+        2891,
+        4597,
+        0
+      ],
+      "mapping": "Exact macro_maze_teleports entry 0_45_71_11_53"
+    }
+  },
+  "causality": "Strong source-coordinate inference; previous clean run has no verbose event timeline and follow-up did not reproduce it. Readiness dips remain unattributed.",
+  "observation_area_check": {
+    "bounds": {
+      "x": [
+        2600,
+        2700
+      ],
+      "z": [
+        3200,
+        3400
+      ]
+    },
+    "out_of_area_ingame_scene2_slots": [],
+    "hold_samples": 1,
+    "hold_slot": "live15161_23",
+    "hold_elapsed_s": 181.825480875
+  },
+  "acceptance_status": "Reverse comparison remains rejected. Candidate performance acceptance pending; no further blind repeats."
+}
