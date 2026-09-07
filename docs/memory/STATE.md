@@ -679,3 +679,26 @@ Public host development branch remains e318; main/client stable branches unchang
 Remaining campaign gates: final absolute budgets, matched savings/regression/latency,
 three modes, lifecycle/scaling, native Windows cadence fix if indicated, whole-branch
 Grok4.6 and authorized integration. Continue measurement and implementation.
+
+## 2026-09-07 18:11 UTC — Windows reboot boundary
+
+Operator requested Hyper-V enablement and notification at a safe reboot point,
+including firmware checks. Dell BIOS WMI confirms Virtualization=Enabled and
+VtForDirectIo=Enabled; VBS is running and hypervisor already present. Generic
+Win32_Processor false flags are masked in this state, not proof BIOS is disabled.
+Hyper-V full feature was Disabled. After N1C completed and its archive was copied
+and SHA verified locally, root enabled Microsoft-Hyper-V-All with -All -NoRestart.
+Result:Enabled,RestartNeeded=true. SSH service running/Automatic. Root has NOT
+rebooted; user notified safe boundary. Hold further Windows builds/live until
+reboot coordination is resolved. No Linux VM has been created yet.
+
+N1C completed0 at18:09:30UTC; actual native reader2539 replay bound/qualified,
+no missing match keys, native and managed resource status available. Archive
+SHAa1df925bbebf7b91909cadc0fd6224be2d86dd9cafc0872f29585dec59791045, preserved under
+diagnostics/windows-native-conpty-e3188e2-c. Actual ConPTY helper18892 was captured
+in launcher metadata; inspect final role accounting and metrics next, then review.
+No new matched saving or final acceptance claim. Live server24224 remains up;
+reboot will replace its identity, so future cells require fresh server sidecars.
+Panel attribution corrected a3f729d is in round2Grok review t_e142021e. Native
+reader fixture/replay review t_af39df26 still running. Both run on Mac and can
+continue through the Windows reboot.
