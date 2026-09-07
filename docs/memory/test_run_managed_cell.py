@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -100,6 +101,9 @@ class FixtureTree:
             [sys.executable, "-c", "import time; time.sleep(600)"]
         )
         self._owned = [self.helper, self.game_server]
+        self.server_identity.write_text(json.dumps({
+            'pid': self.game_server.pid,
+            'start_identity': sr.sample_process(self.game_server.pid, timeout=2)['start_identity']}))
 
     def _write_fixture_launcher(self, path: pathlib.Path) -> pathlib.Path:
         path.write_text(
@@ -123,10 +127,13 @@ def main():
         # Never print metadata; hang then exit 1
         time.sleep(observe + teardown)
         sys.exit(1)
+    elif mode == 'orphan_after_start':
+        child = subprocess.Popen([sys.executable, '-c',
+            'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'])
     else:
         child = subprocess.Popen(
             [sys.executable, "-c",
-             "import time,sys; time.sleep(%s); sys.exit(0)" % (observe + teardown)]
+             "import time,sys; time.sleep(%s); sys.exit(0)" % (observe + teardown + (1 if mode == 'delayed' else 0))]
         )
     started = time.time()
     meta = {
@@ -149,14 +156,23 @@ def main():
         qual = run / "samples.qualification.jsonl"
         # Partial line then complete after short delay (tests retain partials).
         with qual.open("ab") as q:
-            q.write(b'{"phase":"partial"')
+            q.write(b'{"phase":"observe-start"')
             q.flush()
             time.sleep(min(0.15, observe * 0.25))
-            q.write(b',"ok":true}\n')
+            q.write(b',"elapsed_s":0,"slots":[{}]}\n')
             q.flush()
+        if mode == 'orphan_after_start':
+            meta.update(exit_code=0, ended_unix=time.time())
+            (run/'metadata.json').write_text(json.dumps(meta)+'\n')
+            return
+        if mode == 'delayed':
+            time.sleep(1)
         time.sleep(max(0.0, observe - 0.15))
         with qual.open("ab") as q:
-            q.write(b'{"phase":"observe_end"}\n')
+            if mode != 'missing_end':
+                q.write(b'{"phase":"observe-end","elapsed_s":1,"slots":[{}]}\n')
+            if mode == 'duplicate_end':
+                q.write(b'{"phase":"observe-end","elapsed_s":1,"slots":[{}]}\n')
         if mode == "early_fail":
             rc = child.wait(timeout=5)
             meta.update(exit_code=rc, ended_unix=time.time())
@@ -253,6 +269,7 @@ class ManagedCellTests(unittest.TestCase):
         spec_path = self.fx.root / "spec.json"
         _write(spec_path, json.dumps(spec))
         kwargs.setdefault("accounting_script", ACCOUNTING)
+        kwargs.setdefault('_test_launcher', True)
         return rmc.run_managed_cell(spec_path, self.fx.cells, **kwargs)
 
     def test_successful_observation_then_delayed_teardown(self):
@@ -281,6 +298,65 @@ class ManagedCellTests(unittest.TestCase):
             self.assertFalse(_alive(report["launcher_pid"]))
         if report.get("collector_pid"):
             self.assertFalse(_alive(report["collector_pid"]))
+
+    def test_real_delayed_qualification_controls_stop(self):
+        spec = self.fx.base_spec(observe=.5, teardown=1, mode='delayed', interval=.15)
+        report = self._run(spec)
+        self.assertEqual(report['status'], 'completed', report)
+        self.assertGreaterEqual(report['collector_stop_after_observe_s'], .3)
+        rows = [json.loads(line) for line in
+                (pathlib.Path(report['cell_dir'])/'process_accounting.jsonl').read_text().splitlines()]
+        self.assertGreater(rows[-1]['elapsed_s'], 1.5)
+
+    def test_missing_or_duplicate_boundary_fails_durable_receipt(self):
+        for mode in ('missing_end', 'duplicate_end'):
+            with self.subTest(mode=mode):
+                report = self._run(self.fx.base_spec(mode=mode, cell_id=mode, interval=.15))
+                receipt = json.loads((pathlib.Path(report['cell_dir'])/'receipt.json').read_text())
+                self.assertEqual(report['status'], 'failed_or_unavailable')
+                self.assertEqual(receipt['status'], 'failed_or_unavailable')
+                self.assertTrue(receipt['runner_errors'])
+
+    def test_launcher_exit_does_not_leave_term_ignoring_frontend(self):
+        # Short test cleanup bounds; production retains its declared 15 seconds.
+        actual_cleanup = rmc._cleanup_frontend
+        with mock.patch.object(rmc, '_cleanup_frontend',
+                               side_effect=lambda *a, **kw: actual_cleanup(*a, **kw, wait_s=.2)):
+            report = self._run(self.fx.base_spec(mode='orphan_after_start', interval=.15))
+        self.assertFalse(_alive(report['frontend_pid']), report)
+        self.assertIn('SIGKILL', report['cleanup']['frontend']['signals'])
+        self.assertTrue(_alive(self.fx.helper.pid))
+        self.assertTrue(_alive(self.fx.game_server.pid))
+
+    def test_identity_mismatch_cleanup_never_signals_foreign_process(self):
+        result = rmc._cleanup_frontend(self.fx.helper.pid, 'wrong identity', backend='system', wait_s=.01)
+        self.assertTrue(result['orphan_risk'])
+        self.assertEqual(result['signals'], [])
+        self.assertTrue(_alive(self.fx.helper.pid))
+
+    def test_invalid_specs_and_actual_launcher_mismatch_precede_launch(self):
+        cases = [{'sampler_interval_s': float('inf')}, {'max_wall_s': float('nan')},
+                 {'ambient_helpers': {'collector': self.fx.helper.pid}},
+                 {'ambient_helpers': {'helper': self.fx.game_server.pid}},
+                 {'id': '../outside'}, {'process_backend':'unknown'}]
+        for change in cases:
+            with self.subTest(change=change), self.assertRaises(rmc.CellError):
+                rmc.validate_spec(self.fx.base_spec() | change)
+        result = self._run(self.fx.base_spec(), _test_launcher=False)
+        self.assertEqual(result['status'], 'preflight_failed')
+        self.assertFalse(result['launched'])
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'native macOS backend')
+    def test_native_backend_preflight_matches_native_collector_identity(self):
+        spec = self.fx.base_spec(interval=.15)
+        spec['process_backend']='libproc'
+        native = rmc.pa.process_sampler('libproc')(self.fx.game_server.pid, timeout=2)
+        self.fx.server_identity.write_text(json.dumps({'pid':self.fx.game_server.pid,
+                                                     'start_identity':native['start_identity']}))
+        report = self._run(spec)
+        self.assertEqual(report['status'], 'completed', report)
+        launch = json.loads((pathlib.Path(report['cell_dir'])/'launch.json').read_text())
+        self.assertEqual(launch['sampler']['process_backend'], 'libproc')
 
     def test_early_frontend_fail_stops_collector_no_retry(self):
         spec = self.fx.base_spec(observe=0.3, teardown=0.2, mode="early_fail", cell_id="early")
@@ -359,6 +435,12 @@ class ManagedCellTests(unittest.TestCase):
         report = self._run(spec)
         self.assertEqual(report["status"], "preflight_failed")
         self.assertFalse(report.get("launched", True))
+
+    def test_nonobject_server_identity_is_durable_preflight_failure(self):
+        self.fx.server_identity.write_text('[]')
+        result = self._run(self.fx.base_spec())
+        self.assertEqual(result['status'], 'preflight_failed')
+        self.assertFalse(result['launched'])
 
     def test_argv_inconsistent_with_spec_rejected(self):
         spec = self.fx.base_spec(cell_id="bad_argv")

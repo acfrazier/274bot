@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import sys
@@ -25,6 +27,7 @@ import build_provenance as bp  # noqa: E402
 import managed_receipt as mr  # noqa: E402
 import run_diagnostic as rd  # noqa: E402
 import server_resources as sr  # noqa: E402
+import process_accounting as pa  # noqa: E402
 
 CLEANUP_WAIT_S = 15.0
 SAMPLE_TIMEOUT_S = 2.0
@@ -44,7 +47,7 @@ def _is_pos_num(value: Any) -> bool:
         isinstance(value, (int, float))
         and not isinstance(value, bool)
         and value > 0
-        and value == value
+        and math.isfinite(value)
     )
 
 
@@ -59,8 +62,8 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
     """Fail closed on missing/invalid fields. Returns a normalized copy."""
     out = dict(spec)
     cell_id = out.get("id")
-    if not isinstance(cell_id, str) or not cell_id.strip():
-        raise CellError("spec.id must be a non-empty string")
+    if not isinstance(cell_id, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', cell_id) is None:
+        raise CellError("spec.id must be a safe single path component")
     index = out.get("index")
     if type(index) is not int or index < 1:
         raise CellError("spec.index must be an integer >= 1")
@@ -96,8 +99,10 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
         raise CellError("spec.ambient_helpers must be an object of role→pid")
     cleaned_ambient: Dict[str, int] = {}
     for name, pid in ambient.items():
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(name, str) or not name.strip() or name != name.strip():
             raise CellError("ambient helper role names must be non-empty strings")
+        if name in ('game_server', 'controller', 'launcher', 'collector', 'sampler'):
+            raise CellError('reserved ambient role name')
         if type(pid) is not int or isinstance(pid, bool) or pid <= 0:
             raise CellError(f"ambient helper {name!r} pid must be a positive int")
         cleaned_ambient[name] = pid
@@ -113,9 +118,15 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
                 isinstance(val, (int, float))
                 and not isinstance(val, bool)
                 and val >= 0
-                and val == val
+                and math.isfinite(val)
             ):
                 raise CellError(f"spec.{key} must be a finite nonnegative number")
+    out.setdefault('process_backend', 'system')
+    if out['process_backend'] not in ('system', 'libproc'):
+        raise CellError('invalid process_backend')
+    pids = [gs, os.getpid(), *cleaned_ambient.values()]
+    if len(pids) != len(set(pids)):
+        raise CellError('duplicate process role PID')
     return out
 
 
@@ -132,7 +143,8 @@ def parse_diagnostic_argv(diag_argv: Sequence[str]) -> argparse.Namespace:
     return args
 
 
-def require_argv_consistent_with_spec(spec: Mapping[str, Any], args: argparse.Namespace) -> None:
+def require_argv_consistent_with_spec(spec: Mapping[str, Any], args: argparse.Namespace,
+                                    *, _test_launcher=False) -> None:
     if not args.binary or not args.build_manifest or not args.build_role:
         raise CellError("diagnostic_argv must include --binary --build-manifest --build-role")
     bin_s = str(pathlib.Path(args.binary).resolve())
@@ -145,9 +157,20 @@ def require_argv_consistent_with_spec(spec: Mapping[str, Any], args: argparse.Na
         raise CellError("diagnostic --build-role does not match spec.build_role")
     if args.frontend != spec["frontend"]:
         raise CellError("diagnostic frontend does not match spec.frontend")
+    if not _test_launcher:
+        argv = spec['launcher_argv']
+        if (len(argv) < 3 or pathlib.Path(argv[0]).resolve() != pathlib.Path(sys.executable).resolve()
+                or pathlib.Path(argv[1]).resolve() != pathlib.Path(rd.__file__).resolve()
+                or argv[2:] != spec['diagnostic_argv']):
+            raise CellError('launcher argv must invoke this run_diagnostic with the declared arguments')
+        for key, actual in (('observe_s', args.observe), ('warmup_s', args.warmup)):
+            if key in spec and spec[key] != actual:
+                raise CellError('timing differs from diagnostic argv: ' + key)
 
 
 def exclusive_cell_dir(cells_root: pathlib.Path, cell_id: str) -> pathlib.Path:
+    if not isinstance(cell_id, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', cell_id) is None:
+        raise CellError('unsafe cell id')
     path = pathlib.Path(cells_root) / cell_id
     path.mkdir(parents=True, exist_ok=False)
     (path / "logs").mkdir(exist_ok=False)
@@ -180,12 +203,17 @@ def preflight(
     for key in ("server_identity_path", "host_conditions_path"):
         p = pathlib.Path(spec[key]).resolve(strict=True)
         json.loads(p.read_text())
-    server_sample = sr.sample_process(int(spec["game_server_pid"]), timeout=sample_timeout)
+    sample = pa.process_sampler(spec['process_backend'])
+    server_sample = sample(int(spec["game_server_pid"]), timeout=sample_timeout)
+    identity = json.loads(pathlib.Path(spec['server_identity_path']).read_text())
+    if (not isinstance(identity, dict) or type(identity.get('pid')) is not int or identity['pid'] != spec['game_server_pid']
+            or identity.get('start_identity') != server_sample.get('start_identity')):
+        raise CellError('server sidecar differs from sampled PID/start identity')
     ambient_identities: Dict[str, Any] = {}
     for name, pid in sorted(spec["ambient_helpers"].items()):
         ambient_identities[name] = {
             "pid": pid,
-            "sample": sr.sample_process(int(pid), timeout=sample_timeout),
+            "sample": sample(int(pid), timeout=sample_timeout),
         }
     return {
         "provenance": provenance,
@@ -231,10 +259,10 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _start_identity(pid: int, timeout: float = SAMPLE_TIMEOUT_S) -> Optional[str]:
+def _start_identity(pid: int, timeout: float = SAMPLE_TIMEOUT_S, backend='system') -> Optional[str]:
     try:
-        return sr.sample_process(pid, timeout=timeout).get("start_identity")
-    except (sr.SampleError, OSError):
+        return pa.process_sampler(backend)(pid, timeout=timeout).get("start_identity")
+    except (sr.SampleError, OSError, ValueError):
         return None
 
 
@@ -247,7 +275,7 @@ def _terminate_owned(
     frontend_identity: Optional[str] = None,
     launcher_pid: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Terminate an owned child only. Optional frontend escalation is identity-checked."""
+    """Terminate/reap an owned direct child. Frontend cleanup is independent."""
     info: Dict[str, Any] = {"label": label, "signaled": False, "exit_code": None}
     if proc is None:
         return info
@@ -266,23 +294,6 @@ def _terminate_owned(
         return info
     except subprocess.TimeoutExpired:
         pass
-    if (
-        frontend_pid
-        and launcher_pid
-        and frontend_identity
-        and label == "launcher"
-        and _pid_alive(frontend_pid)
-    ):
-        current = _start_identity(frontend_pid)
-        if current == frontend_identity:
-            try:
-                os.kill(frontend_pid, signal.SIGTERM)
-                info["frontend_sigterm"] = True
-            except OSError as exc:
-                info["frontend_sigterm_error"] = str(exc)
-            deadline = time.monotonic() + wait_s
-            while time.monotonic() < deadline and _pid_alive(frontend_pid):
-                time.sleep(0.05)
     try:
         proc.kill()
     except OSError:
@@ -297,8 +308,88 @@ def _terminate_owned(
     return info
 
 
+def _cleanup_frontend(pid, identity, *, backend, wait_s=CLEANUP_WAIT_S):
+    """Independently clean a captured owned frontend, even after launcher exit."""
+    result = {'pid': pid, 'signals': [], 'orphan_risk': False}
+    if pid is None or not _pid_alive(pid):
+        return result
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not _pid_alive(pid):
+            return result
+        # Recheck immediately before EACH signal, including escalation.
+        if not identity or _start_identity(pid, backend=backend) != identity:
+            result.update(orphan_risk=True, reason='frontend identity unavailable or changed; no signal')
+            return result
+        try:
+            os.kill(pid, sig)
+            result['signals'].append(sig.name)
+        except ProcessLookupError:
+            return result
+        deadline = time.monotonic() + wait_s
+        while time.monotonic() < deadline:
+            if not _pid_alive(pid):
+                return result
+            time.sleep(.05)
+    result['orphan_risk'] = _pid_alive(pid)
+    return result
+
+
+def _capture_owned_frontend(pid, launcher_pid, forbidden, backend):
+    if type(pid) is not int or pid <= 0 or pid in forbidden:
+        raise CellError('invalid or foreign frontend PID')
+    if not _pid_alive(pid):
+        return pid, None
+    try:
+        parent = int(subprocess.check_output(
+            ['ps', '-o', 'ppid=', '-p', str(pid)], text=True, timeout=SAMPLE_TIMEOUT_S).strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        if not _pid_alive(pid):
+            return pid, None
+        raise CellError('cannot establish frontend parent ownership')
+    if parent != launcher_pid:
+        raise CellError('frontend is not a child of the owned launcher')
+    return pid, _start_identity(pid, backend=backend)
+
+
+class QualificationBoundaries:
+    """Exact ordered native boundary pair; malformed evidence never completes."""
+    def __init__(self):
+        self.start = None
+        self.end = None
+        self.end_received_mono = None
+        self.errors = []
+
+    def consume(self, line, now):
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError('qualification row is not an object')
+            phase = row.get('phase')
+            if phase not in ('observe-start', 'observe-end'):
+                raise ValueError('unexpected qualification phase')
+            elapsed = row.get('elapsed_s')
+            if type(elapsed) not in (int,float) or not math.isfinite(elapsed) or elapsed < 0:
+                raise ValueError('invalid qualification elapsed')
+            if not isinstance(row.get('slots'), list) or not row['slots']:
+                raise ValueError('missing qualification slots')
+            if phase == 'observe-start':
+                if self.start is not None or self.end is not None:
+                    raise ValueError('duplicate or reversed start')
+                self.start = row
+            else:
+                if self.start is None or self.end is not None or elapsed <= self.start['elapsed_s']:
+                    raise ValueError('missing start, duplicate end or reset elapsed')
+                self.end = row
+                self.end_received_mono = now
+        except (ValueError, TypeError) as error:
+            self.errors.append(str(error))
+
+    def failures(self):
+        return self.errors + ([] if self.start is not None and self.end is not None else ['missing observation boundary'])
+
+
 def _build_sampler_config(
-    spec: Mapping[str, Any], roles: Mapping[str, int], argv: Sequence[str]
+    spec: Mapping[str, Any], roles: Mapping[str, int], argv: Sequence[str], accounting_script=DEFAULT_ACCOUNTING
 ) -> Dict[str, Any]:
     return {
         "interval_s": float(spec["sampler_interval_s"]),
@@ -307,9 +398,10 @@ def _build_sampler_config(
         "schema": 2,
         "roles": {k: int(v) for k, v in roles.items()},
         "argv": list(argv),
-        "module": str(DEFAULT_ACCOUNTING.resolve()),
-        "module_sha256": bp.file_sha256(DEFAULT_ACCOUNTING)
-        if DEFAULT_ACCOUNTING.is_file()
+        "process_backend": spec['process_backend'],
+        "module": str(pathlib.Path(accounting_script).resolve()),
+        "module_sha256": bp.file_sha256(accounting_script)
+        if pathlib.Path(accounting_script).is_file()
         else None,
     }
 
@@ -368,6 +460,7 @@ def run_managed_cell(
     *,
     accounting_script: Optional[pathlib.Path] = None,
     cwd: Optional[pathlib.Path] = None,
+    _test_launcher: bool = False,
 ) -> Dict[str, Any]:
     """Run exactly one managed cell. Never retries. Never signals server/ambient."""
     accounting_script = pathlib.Path(accounting_script or DEFAULT_ACCOUNTING)
@@ -395,13 +488,17 @@ def run_managed_cell(
     collector_stop_requested = False
     collector_stop_mono: Optional[float] = None
     observe_end_mono: Optional[float] = None
+    backend = 'system'
+    boundaries = QualificationBoundaries()
+    runner_errors = []
 
     # --- validate + exclusive cell dir + preflight (no children) ---
     try:
         raw_spec = load_spec(spec_path)
         spec = validate_spec(raw_spec)
+        backend = spec['process_backend']
         args = parse_diagnostic_argv(spec["diagnostic_argv"])
-        require_argv_consistent_with_spec(spec, args)
+        require_argv_consistent_with_spec(spec, args, _test_launcher=_test_launcher)
     except (CellError, ValueError, OSError, TypeError, json.JSONDecodeError) as exc:
         # Reserve a report dir when id is known so failures are durable.
         raw: Any = None
@@ -412,7 +509,7 @@ def run_managed_cell(
         except Exception:
             raw = None
             cid = None
-        if isinstance(cid, str) and cid.strip():
+        if isinstance(cid, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', cid):
             try:
                 cell_dir = exclusive_cell_dir(pathlib.Path(cells_root), cid)
                 report["cell_dir"] = str(cell_dir)
@@ -479,15 +576,16 @@ def run_managed_cell(
             server_identity_path=spec["server_identity_path"],
             host_conditions_path=spec["host_conditions_path"],
             sampler_config=_build_sampler_config(
-                spec, sampler_roles_placeholder, sampler_argv_preview
+                spec, sampler_roles_placeholder, sampler_argv_preview, accounting_script
             ),
         )
         report["launch_started_utc"] = launch_rec["started_utc"]
 
         launcher_log = cell_dir / "logs" / "launcher.log"
         env = os.environ.copy()
-        env["FIXTURE_BINARY"] = pf["binary"]
-        env["FIXTURE_EFFECTIVE_CLI"] = json.dumps(effective_cli)
+        if _test_launcher:
+            env["FIXTURE_BINARY"] = pf["binary"]
+            env["FIXTURE_EFFECTIVE_CLI"] = json.dumps(effective_cli)
         wall_deadline = time.monotonic() + float(spec["max_wall_s"])
         t0 = time.monotonic()
         log_fh = launcher_log.open("xb")
@@ -526,6 +624,7 @@ def run_managed_cell(
             str(sampler_out),
             "--interval",
             str(float(spec["sampler_interval_s"])),
+            '--process-backend', backend,
         ]
         report["sampler_argv"] = collector_argv
         report["sampler_roles"] = roles
@@ -552,8 +651,6 @@ def run_managed_cell(
         log_tail = IncrementalLines(launcher_log)
         qual_tail: Optional[IncrementalLines] = None
         interval = float(spec["sampler_interval_s"])
-        observe_s = float(pf["observe_s"])
-        warmup_s = float(pf["warmup_s"])
         metadata: Optional[Dict[str, Any]] = None
 
         while True:
@@ -569,24 +666,20 @@ def run_managed_cell(
                     metadata = meta
                     run_dir = pathlib.Path(str(meta["run_dir"])) if meta.get("run_dir") else None
                     if meta.get("pid") is not None:
-                        frontend_pid = int(meta["pid"])
-                        frontend_identity = _start_identity(frontend_pid)
+                        frontend_pid, frontend_identity = _capture_owned_frontend(
+                            meta['pid'], launcher.pid,
+                            {*roles.values(), collector.pid if collector else -1}, backend)
                     report["frontend_pid"] = frontend_pid
                     report["frontend_start_identity"] = frontend_identity
                     report["run_dir"] = str(run_dir) if run_dir else None
                     if run_dir is not None:
                         qual_tail = IncrementalLines(run_dir / "samples.qualification.jsonl")
-                    started_unix = meta.get("started_unix")
-                    if isinstance(started_unix, (int, float)):
-                        elapsed_wall = time.time() - float(started_unix)
-                        remain = max(0.0, warmup_s + observe_s - elapsed_wall)
-                        observe_end_mono = now + remain
-                    else:
-                        observe_end_mono = now + warmup_s + observe_s
 
             if qual_tail is not None:
                 for qline in qual_tail.poll():
                     qualification_lines.append(qline)
+                    boundaries.consume(qline, time.monotonic())
+                observe_end_mono = boundaries.end_received_mono
 
             if (
                 not collector_stop_requested
@@ -623,64 +716,32 @@ def run_managed_cell(
                 run_dir = pathlib.Path(str(meta["run_dir"]))
                 report["run_dir"] = str(run_dir)
             if meta and frontend_pid is None and meta.get("pid") is not None:
-                frontend_pid = int(meta["pid"])
-                frontend_identity = _start_identity(frontend_pid)
+                frontend_pid, frontend_identity = _capture_owned_frontend(
+                    meta['pid'], launcher.pid,
+                    {*roles.values(), collector.pid if collector else -1}, backend)
 
-        if max_wall_exceeded:
-            _terminate_owned(collector, label="collector", wait_s=CLEANUP_WAIT_S)
-            _terminate_owned(
-                launcher,
-                label="launcher",
-                wait_s=CLEANUP_WAIT_S,
-                frontend_pid=frontend_pid,
-                frontend_identity=frontend_identity,
-                launcher_pid=launcher.pid if launcher else None,
-            )
-        else:
-            if launcher is not None and launcher.poll() is None:
-                remaining = max(0.1, wall_deadline - time.monotonic())
-                try:
-                    launcher.wait(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    max_wall_exceeded = True
-                    report["max_wall_exceeded"] = True
-                    _terminate_owned(collector, label="collector", wait_s=CLEANUP_WAIT_S)
-                    _terminate_owned(
-                        launcher,
-                        label="launcher",
-                        wait_s=CLEANUP_WAIT_S,
-                        frontend_pid=frontend_pid,
-                        frontend_identity=frontend_identity,
-                        launcher_pid=launcher.pid if launcher else None,
-                    )
-            if launcher is not None and launcher.poll() is not None:
-                launcher_exit = launcher.returncode
-            if collector is not None and collector.poll() is None:
-                collector.send_signal(signal.SIGTERM)
-            if collector is not None:
-                try:
-                    collector.wait(timeout=CLEANUP_WAIT_S)
-                except subprocess.TimeoutExpired:
-                    _terminate_owned(collector, label="collector", wait_s=CLEANUP_WAIT_S)
-
-        if launcher is not None and launcher.poll() is not None:
-            launcher_exit = launcher.returncode
-        if collector is not None and collector.poll() is not None:
-            collector_exit = collector.returncode
-
+        # The loop exits only on launcher completion or the external deadline.
+        # Reap direct children and independently inspect the captured frontend.
         cleanup = {
-            "launcher": _terminate_owned(
-                launcher if launcher and launcher.poll() is None else None,
-                label="launcher",
-                frontend_pid=frontend_pid,
-                frontend_identity=frontend_identity,
-                launcher_pid=launcher.pid if launcher else None,
-            ),
-            "collector": _terminate_owned(
-                collector if collector and collector.poll() is None else None,
-                label="collector",
-            ),
+            "collector": _terminate_owned(collector, label="collector"),
+            "launcher": _terminate_owned(launcher, label="launcher"),
+            "frontend": _cleanup_frontend(frontend_pid, frontend_identity, backend=backend),
         }
+        launcher_exit = launcher.poll() if launcher is not None else launcher_exit
+        collector_exit = collector.poll() if collector is not None else collector_exit
+        if qual_tail is not None:
+            for qline in qual_tail.poll():
+                qualification_lines.append(qline)
+                boundaries.consume(qline, time.monotonic())
+            if qual_tail.partial:
+                runner_errors.append('partial qualification row at completion')
+        runner_errors.extend(boundaries.failures())
+        if collector_stop_mono is None and not max_wall_exceeded:
+            runner_errors.append('collector did not reach post-observation stop boundary')
+        if max_wall_exceeded:
+            runner_errors.append('max_wall_exceeded')
+        if any(info.get('orphan_risk') for info in cleanup.values()):
+            runner_errors.append('owned child cleanup unresolved')
         report["cleanup"] = cleanup
         report["startup"] = startup
         report["qualification_line_count"] = len(qualification_lines)
@@ -711,6 +772,7 @@ def run_managed_cell(
                 run_dir=str(run_dir) if run_dir is not None else None,
                 launcher_exit_code=int(launcher_exit) if isinstance(launcher_exit, int) else 1,
                 sampler_result=sampler_result,
+                runner_errors=runner_errors,
             )
             report["receipt_status"] = receipt.get("status")
             report["binding_errors"] = receipt.get("binding_errors")
@@ -728,8 +790,6 @@ def run_managed_cell(
         write_json(cell_dir / "cell_report.json", report)
         return report
 
-    except FileExistsError:
-        raise
     except Exception as exc:
         report["status"] = "failed_or_unavailable"
         report["error"] = str(exc)
@@ -742,6 +802,7 @@ def run_managed_cell(
             frontend_identity=frontend_identity,
             launcher_pid=launcher.pid if launcher else None,
         )
+        report['frontend_cleanup'] = _cleanup_frontend(frontend_pid, frontend_identity, backend=backend)
         if cell_dir is not None:
             try:
                 write_json(cell_dir / "cell_report.json", report)
@@ -767,6 +828,7 @@ def run_managed_cell(
                             else 1,
                             "output": str(out_path) if out_path.is_file() else None,
                         },
+                        runner_errors=[str(exc)],
                     )
             except Exception:
                 pass
@@ -785,12 +847,6 @@ def build_cli() -> argparse.ArgumentParser:
     p.add_argument(
         "cells_root", type=pathlib.Path, help="parent directory for exclusive cell dirs"
     )
-    p.add_argument(
-        "--accounting-script",
-        type=pathlib.Path,
-        default=DEFAULT_ACCOUNTING,
-        help="process_accounting.py path (tests may inject a fixture)",
-    )
     return p
 
 
@@ -798,7 +854,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = build_cli()
     a = p.parse_args(list(argv) if argv is not None else None)
     try:
-        report = run_managed_cell(a.spec, a.cells_root, accounting_script=a.accounting_script)
+        report = run_managed_cell(a.spec, a.cells_root)
     except FileExistsError as exc:
         print(
             json.dumps({"status": "error", "error": f"cell dir exists: {exc}"}),
