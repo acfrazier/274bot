@@ -530,7 +530,7 @@ fn route_or_bank_fetch(
 pub fn default_pack_path() -> std::path::PathBuf {
     match std::env::var("NAV_PACK") {
         Ok(p) => std::path::PathBuf::from(p),
-        Err(_) => match std::env::var("HOME") {
+        Err(_) => match client::operator_home() {
             Ok(home) => std::path::PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
             Err(_) => std::path::PathBuf::from(".274bot/274bot.navpack"),
         },

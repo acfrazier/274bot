@@ -644,7 +644,7 @@ pub fn drain_json_files() -> JsonDrainResult {
 
     let root = match std::env::var("274BOT_SMOKE_DIR") {
         Ok(d) if !d.is_empty() => PathBuf::from(d),
-        _ => match std::env::var("HOME") {
+        _ => match client::operator_home() {
             Ok(home) => PathBuf::from(format!("{home}/.274bot/smoke")),
             Err(_) => PathBuf::from(".274bot/smoke"),
         },

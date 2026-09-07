@@ -18,7 +18,7 @@ const LUMBRIDGE: WorldTile = WorldTile {
 fn pack_path() -> PathBuf {
     match std::env::var("NAV_PACK") {
         Ok(p) => PathBuf::from(p),
-        Err(_) => match std::env::var("HOME") {
+        Err(_) => match client::operator_home() {
             Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
             Err(_) => PathBuf::from(".274bot/274bot.navpack"),
         },
