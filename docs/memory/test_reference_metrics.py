@@ -718,6 +718,74 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         self.assertEqual(g["slots"][0]["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "coverage_flag_absent")
 
+    def _contained_pair(self, *, canceled_end=5, ended=False, publisher=True):
+        """A publisher-timestamped span with a warmup-only cancel offset."""
+        bounds = list(rm.LATENCY_BOUNDS_MS)
+        start_row = {
+            "slot_id": 7, "generation": 1, "sample_age_ms": 400,
+            "decode_edge_n": 100, "dispatch_n": 90,
+            "decode_canceled_n": 5, "decode_lost_n": 0,
+            "decode_dropped_n": 0, "decode_pending_n": 0,
+            "decode_coverage_complete": False,
+            "decode_latency_buckets": [0, 0, 0, 10, 80, 0, 0, 0, 0, 0, 0],
+            "latency_bound_ms": bounds, "ended": ended,
+        }
+        end_row = dict(start_row)
+        end_row.update({
+            "decode_edge_n": 300, "dispatch_n": 290,
+            "decode_canceled_n": canceled_end,
+            "decode_latency_buckets": [0, 0, 0, 30, 170, 0, 0, 0, 0, 0, 0],
+        })
+        if publisher:
+            for row, elapsed in ((start_row, 40.0), (end_row, 160.0)):
+                row["updated_ms"] = int((_meta()["started_unix"] + elapsed - 0.3) * 1000)
+        return (
+            {"phase": "observe", "elapsed_s": 40.0, "responsiveness_profile": [start_row]},
+            {"phase": "observe", "elapsed_s": 160.0, "responsiveness_profile": [end_row]},
+        )
+
+    def test_decode_uses_contained_delta_not_lifetime_coverage_flag(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        g = rm.evaluate_decode(meta, [start, end], target_ms=100)
+        self.assertEqual(g["status"], "available")
+        self.assertEqual(g["target_verdict"], "meet")
+        slot = g["slots"][0]
+        self.assertEqual(slot["decode_canceled_n_delta"], 0)
+        self.assertEqual(slot["accounting_offset"], 5)
+        self.assertTrue(slot["contained_window"])
+
+    def test_decode_cancellation_inside_contained_span_rejected(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair(canceled_end=6)
+        g = rm.evaluate_decode(meta, [start, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "coverage_lost_or_incomplete")
+
+    def test_decode_missing_publisher_timestamp_unavailable(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair(publisher=False)
+        g = rm.evaluate_decode(meta, [start, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "publisher_timestamp_missing")
+
+    def test_decode_middle_cancellation_cannot_be_hidden_by_inner_segment(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        middle = json.loads(json.dumps(start))
+        middle["elapsed_s"] = 100.0
+        row = middle["responsiveness_profile"][0]
+        row["updated_ms"] = int((meta["started_unix"] + 99.7) * 1000)
+        row["decode_edge_n"] = 200
+        row["dispatch_n"] = 189
+        row["decode_canceled_n"] = 6
+        end["responsiveness_profile"][0]["decode_canceled_n"] = 7
+        end["responsiveness_profile"][0]["decode_edge_n"] = 302
+        end["responsiveness_profile"][0]["updated_ms"] = int((meta["started_unix"] + 159.7) * 1000)
+        g = rm.evaluate_decode(meta, [start, middle, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "coverage_lost_or_incomplete")
+
 
 class ObservationWindowTests(unittest.TestCase):
     def test_boundaries_and_contamination_intersection(self):

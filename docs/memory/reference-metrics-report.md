@@ -3,6 +3,36 @@
 Task `t_135ceb9f` (recovery of timed-out `t_8bade183`). **No final performance
 or lifecycle acceptance claim.**
 
+## Contained responsiveness windows (follow-up)
+
+Decode now has a narrow contained-window adapter for serializers that emit
+`updated_ms`, `sample_age_ms`, `decode_edge_n`, and `dispatch_n`. It selects the
+maximal timestamp-contained span first (publisher update after warmup, monotonic
+sample order, stable `(slot_id, generation)`, unfinished boundaries rejected),
+then validates the whole selected span. It differences decode edge/dispatch and
+cancellation/lost/drop/pending counters, retains the stable edge-dispatch-cancel
+accounting offset, and does not interpret cumulative `decode_coverage_complete`
+as a window flag. It never searches for a favorable inner segment after a bad
+middle; excluded boundary samples are reported explicitly. Input uses the same
+publisher boundary proof with `input_start_n`/`input_complete_n`, but remains
+unavailable when no input events exist. Missing, malformed, stale, reset,
+restarted, or clock-misaligned publisher evidence fails closed.
+
+The qualified control N=1 cell `20260907T004143Z_tui_n1_active` and candidate
+N=1 cell `20260907T004608Z_tui_n1_active` each prove a contained decode span:
+197 edge/dispatch events, zero cancellation/lost/drop/pending deltas, and
+coarse p99 bound 25–40 ms (target 100 ms). Their lifetime cancellation counts
+(11 and 14) remain visible and do not become window cancellations. Input remains
+unavailable because `input_start_n=0`; this is not an input pass. The failed
+N=16 run `20260907T005032Z_tui_n16_active` remains unqualified and cannot pass
+overall; its partial decode observations are not acceptance evidence.
+
+This adapter does not prove the requested 2 ms paired margin: the histogram
+bounds remain coarse (25–40 ms), not a precise 2 ms measurement. Resource
+strict eligibility remains unavailable without attributable sampler/serializer
+overhead evidence. Hardware presentation/scanout timestamps, generated input
+events, and target-hardware validation remain unavailable.
+
 ## Scope (this card only)
 
 | Deliverable | Role |
@@ -109,15 +139,17 @@ hardware-presentation endpoint remain outside this card.
      no overwrite (immutable evidence)
    - `final_acceptance_claim` always `false`
 
-## Cumulative end-snapshot cancel / pending (warmup limitation)
+## Legacy cumulative end-snapshot cancel / pending (warmup limitation)
 
-Core integrity for decode / input / gpu uses **end-snapshot** counters
+The legacy path and GPU adapter use **end-snapshot** counters
 (`*_canceled_n`, `*_dropped_n`, `*_lost_n`, `*_pending_n`, coverage flags) on the
 observe-end row — **not** observe-window deltas and **not** boundary pending
 accounting. Startup warmup cancellations that remain in the cumulative end
 snapshot can therefore **conservatively** make decode/input/gpu **unavailable**
-even when the steady observe-window delta would be clean. This is intentional
-fail-closed for the narrow core.
+even when the steady observe-window delta would be clean. This remains
+fail-closed when publisher timestamps and accounting fields are absent. The
+contained decode/input adapter above is the only exception, and only when its
+raw boundary proof succeeds.
 
 A later adapter may account for non-zero boundary pending without rejecting the
 window. The GPU interval adapter currently requires both endpoint pending
@@ -141,7 +173,7 @@ Product `gpu` never reaches that path on completion-latency alone.
 
 ```text
 python3 docs/memory/test_reference_metrics.py
-→ 61 passed
+→ 65 passed
 ```
 
 Coverage includes: empty/overflow/missing histograms; counter reset; generation

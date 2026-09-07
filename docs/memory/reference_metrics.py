@@ -619,6 +619,134 @@ def _slot_hist_delta(
     return delta, None
 
 
+def _contained_responsiveness_pair(
+    meta: dict, samples: list[dict], key: tuple[Any, Any], prefix: str,
+) -> tuple[Optional[dict], Optional[dict], dict]:
+    """Choose the longest publisher-contained, completed counter span.
+
+    ``*_coverage_complete`` is cumulative and may be false because warmup had
+    cancellations.  This adapter instead proves a window from the publisher
+    timestamps and counter deltas.  It never treats a lifetime flag as a
+    window flag, and it only considers the deterministic longest valid span.
+    """
+    observed = [s for s in samples if isinstance(s, dict) and s.get("phase") == "observe"]
+    candidates = []
+    started = meta.get("started_unix")
+    warmup = meta.get("warmup_s", 0)
+    if not _finite(started) or not _finite(warmup):
+        return None, None, {"reason": "publisher_alignment_unavailable"}
+    rows = []
+    for sample_index, sample in enumerate(observed):
+        elapsed = sample.get("elapsed_s")
+        if not _finite(elapsed):
+            return None, None, {"reason": "invalid_observation_elapsed"}
+        matches = [r for r in (sample.get("responsiveness_profile") or [])
+                   if isinstance(r, dict) and (r.get("slot_id"), r.get("generation")) == key]
+        if len(matches) != 1:
+            continue
+        row = matches[0]
+        age = row.get("sample_age_ms")
+        updated = row.get("updated_ms")
+        if not _finite(age) or float(age) < 0:
+            return None, None, {"reason": "publisher_age_invalid"}
+        if not _finite(updated):
+            return None, None, {"reason": "publisher_timestamp_missing"}
+        publisher_elapsed = float(updated) / 1000.0 - float(started)
+        # The sample was serialized after the publisher update.  Allow a
+        # small clock/serialization uncertainty, but do not invent alignment.
+        if publisher_elapsed < float(elapsed) - float(age) / 1000.0 - 0.1:
+            return None, None, {"reason": "publisher_age_misaligned"}
+        if publisher_elapsed > float(elapsed) + 0.1:
+            return None, None, {"reason": "publisher_timestamp_after_sample"}
+        rows.append((sample_index, float(elapsed), publisher_elapsed, row))
+    if len(rows) < 2:
+        return None, None, {"reason": "publisher_timestamp_missing"}
+    if any(b[1] <= a[1] for a, b in zip(rows, rows[1:])):
+        return None, None, {"reason": "non_increasing_observation_elapsed"}
+
+    if prefix == "input":
+        start_item, end_item = rows[0], rows[-1]
+        srow, erow = start_item[3], end_item[3]
+        if srow.get("ended") is True or erow.get("ended") is True:
+            return None, None, {"reason": "boundary_ended"}
+        fields = {
+            name: f"input_{name}_n"
+            for name in ("start", "complete", "canceled", "lost", "dropped", "pending")
+        }
+        values = [srow.get(field) for field in fields.values()] + [erow.get(field) for field in fields.values()]
+        if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
+            return None, None, {"reason": "counter_missing_or_malformed"}
+        deltas = {name: int(erow[field]) - int(srow[field]) for name, field in fields.items()}
+        if any(value < 0 for value in deltas.values()):
+            return None, None, {"reason": "counter_reset"}
+        if any(deltas[name] for name in ("canceled", "lost", "dropped")):
+            return None, None, {"reason": "coverage_lost_or_incomplete"}
+        if srow[fields["pending"]] != 0 or erow[fields["pending"]] != 0:
+            return None, None, {"reason": "boundary_pending_incomplete"}
+        return srow, erow, {
+            "contained_window": True,
+            "selected_start_elapsed_s": start_item[1],
+            "selected_end_elapsed_s": end_item[1],
+            "publisher_start_elapsed_s": start_item[2],
+            "publisher_end_elapsed_s": end_item[2],
+            "coverage_excluded_edges": {"before_start_samples": start_item[0],
+                                         "after_end_samples": len(observed) - 1 - end_item[0]},
+            "counter_deltas": deltas,
+        }
+
+    names = {
+        "edge": f"{prefix}_edge_n",
+        "dispatch": "dispatch_n",
+        "canceled": f"{prefix}_canceled_n",
+        "lost": f"{prefix}_lost_n",
+        "dropped": f"{prefix}_dropped_n",
+        "pending": f"{prefix}_pending_n",
+    }
+    # Boundaries are selected solely by publisher containment.  Do not search
+    # for a shorter clean subspan after seeing a cancellation in the middle.
+    start_item, end_item = rows[0], rows[-1]
+    srow, erow = start_item[3], end_item[3]
+    if float(start_item[2]) < float(warmup):
+        eligible = [item for item in rows if float(item[2]) >= float(warmup)]
+        if eligible:
+            start_item = eligible[0]
+            srow = start_item[3]
+    if srow.get("ended") is True or erow.get("ended") is True:
+        return None, None, {"reason": "boundary_ended"}
+    counter_names = tuple(names.values())
+    values = [srow.get(name) for name in counter_names] + [erow.get(name) for name in counter_names]
+    if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
+        return None, None, {"reason": "counter_missing_or_malformed"}
+    deltas = {name: int(erow[field]) - int(srow[field]) for name, field in names.items()}
+    if any(value < 0 for value in deltas.values()):
+        return None, None, {"reason": "counter_reset"}
+    if any(deltas[name] for name in ("canceled", "lost", "dropped")):
+        return None, None, {"reason": "coverage_lost_or_incomplete"}
+    if srow[names["pending"]] != 0 or erow[names["pending"]] != 0:
+        return None, None, {"reason": "boundary_pending_incomplete"}
+    offsets = [int(row[names["edge"]]) - int(row[names["dispatch"]]) - int(row[names["canceled"]])
+               for row in (srow, erow)]
+    if offsets[0] != offsets[1] or deltas["edge"] != deltas["dispatch"] + deltas["canceled"]:
+        return None, None, {"reason": "accounting_identity_mismatch"}
+    candidates.append((end_item[1] - start_item[1], -start_item[1], start_item, end_item, deltas, offsets[0]))
+    if not candidates:
+        return None, None, {"reason": "coverage_lost_or_incomplete"}
+    _, _, start_item, end_item, deltas, offset = max(candidates)
+    return start_item[3], end_item[3], {
+        "contained_window": True,
+        "selected_start_elapsed_s": start_item[1],
+        "selected_end_elapsed_s": end_item[1],
+        "publisher_start_elapsed_s": start_item[2],
+        "publisher_end_elapsed_s": end_item[2],
+        "coverage_excluded_edges": {
+            "before_start_samples": start_item[0],
+            "after_end_samples": len(observed) - 1 - end_item[0],
+        },
+        "counter_deltas": deltas,
+        "accounting_offset": offset,
+    }
+
+
 def evaluate_decode(
     meta: dict,
     samples: list[dict],
@@ -654,6 +782,16 @@ def evaluate_decode(
             slots.append(_unavailable("missing_start_slot", slot_id=key[0], generation=key[1], gate="decode"))
             continue
 
+        raw_fields = {"decode_edge_n", "dispatch_n"}
+        contained = {}
+        if any(field in srow or field in erow for field in raw_fields):
+            contained_start, contained_end, contained = _contained_responsiveness_pair(meta, samples, key, "decode")
+            if contained_start is None or contained_end is None:
+                slots.append(_unavailable(contained.get("reason", "contained_window_unavailable"),
+                                          slot_id=key[0], generation=key[1], gate="decode"))
+                continue
+            srow, erow = contained_start, contained_end
+
         # Coverage / integrity on end snapshot (cumulative). Drops/cancels/lost
         # or incomplete/absent coverage cannot pass.
         dropped = int(erow.get("decode_dropped_n") or 0)
@@ -661,7 +799,7 @@ def evaluate_decode(
         lost = int(erow.get("decode_lost_n") or 0)
         pending = int(erow.get("decode_pending_n") or 0)
         coverage = erow.get("decode_coverage_complete")
-        if dropped or canceled or lost or pending:
+        if not contained and (dropped or canceled or lost or pending):
             slots.append(
                 _unavailable(
                     "coverage_lost_or_incomplete",
@@ -676,7 +814,7 @@ def evaluate_decode(
                 )
             )
             continue
-        if coverage is None:
+        if not contained and coverage is None:
             slots.append(
                 _unavailable(
                     "coverage_flag_absent",
@@ -687,7 +825,7 @@ def evaluate_decode(
                 )
             )
             continue
-        if coverage is False:
+        if not contained and coverage is False:
             slots.append(
                 _unavailable(
                     "coverage_incomplete",
@@ -741,6 +879,9 @@ def evaluate_decode(
             "sample_age_ms": erow.get("sample_age_ms"),
             "freshness_field": "sample_age_ms",
         }
+        if contained:
+            row.update(contained)
+            row["decode_canceled_n_delta"] = contained["counter_deltas"]["canceled"]
         if bounds.get("status") == "available" and verdict == "meet":
             row["status"] = "available"
             any_available = True
@@ -836,12 +977,22 @@ def evaluate_input(
             )
             continue
 
+        raw_fields = {"input_start_n", "input_complete_n"}
+        contained = {}
+        if all(field in srow and field in erow for field in raw_fields):
+            contained_start, contained_end, contained = _contained_responsiveness_pair(meta, samples, key, "input")
+            if contained_start is None or contained_end is None:
+                slots.append(_unavailable(contained.get("reason", "contained_window_unavailable"),
+                                          slot_id=key[0], generation=key[1], gate="input"))
+                continue
+            srow, erow = contained_start, contained_end
+
         dropped = int(erow.get("input_dropped_n") or 0)
         canceled = int(erow.get("input_canceled_n") or 0)
         lost = int(erow.get("input_lost_n") or 0)
         pending = int(erow.get("input_pending_n") or 0)
         coverage = erow.get("input_coverage_complete")
-        if dropped or canceled or lost or pending:
+        if not contained and (dropped or canceled or lost or pending):
             slots.append(
                 _unavailable(
                     "coverage_lost_or_incomplete",
@@ -856,7 +1007,7 @@ def evaluate_input(
                 )
             )
             continue
-        if coverage is None:
+        if not contained and coverage is None:
             slots.append(
                 _unavailable(
                     "coverage_flag_absent",
@@ -867,7 +1018,7 @@ def evaluate_input(
                 )
             )
             continue
-        if coverage is False:
+        if not contained and coverage is False:
             slots.append(
                 _unavailable(
                     "coverage_incomplete",
@@ -946,6 +1097,8 @@ def evaluate_input(
             "sample_age_ms": erow.get("sample_age_ms"),
             "freshness_field": "sample_age_ms",
         }
+        if contained:
+            row.update(contained)
         if bounds.get("status") == "available":
             row["status"] = "available"
             if verdict != "meet":
