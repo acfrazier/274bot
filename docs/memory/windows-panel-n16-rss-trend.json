@@ -1,0 +1,130 @@
+{
+  "n16-focused-one-console-intel": {
+    "source": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/windows-panel-n16-20260907/n16-focused-one-console-intel/raw-run-01/samples.jsonl",
+    "sha256": "8351cb01a75bc3a9f1ecc453efc03973187a2d4e6fda12c084ca0f7df7564899",
+    "rows": 119,
+    "first_elapsed_s": 103.1156419,
+    "last_elapsed_s": 222.4790937,
+    "third_partition": "consecutive row indices [i*N//3:(i+1)*N//3], i=0,1,2",
+    "fields": {
+      "resident_bytes": {
+        "first": 1090154496,
+        "last": 837668864,
+        "minimum": 837668864,
+        "maximum": 1163481088,
+        "median": 988098560,
+        "last_minus_first": -252485632,
+        "consecutive_row_thirds_medians": [
+          1150033920,
+          990963712.0,
+          900864000.0
+        ]
+      },
+      "v8_used_bytes": {
+        "first": 111039056,
+        "last": 132403488,
+        "minimum": 98173904,
+        "maximum": 143622608,
+        "median": 119857656,
+        "last_minus_first": 21364432,
+        "consecutive_row_thirds_medians": [
+          111330216,
+          117807580.0,
+          129563772.0
+        ]
+      },
+      "v8_total_bytes": {
+        "first": 146538496,
+        "last": 190054400,
+        "minimum": 145227776,
+        "maximum": 200015872,
+        "median": 192151552,
+        "last_minus_first": 43515904,
+        "consecutive_row_thirds_medians": [
+          181927936,
+          193331200.0,
+          194772992.0
+        ]
+      },
+      "gpu_tracked_bytes": {
+        "first": 18385472,
+        "last": 18385904,
+        "minimum": 18385472,
+        "maximum": 18385904,
+        "median": 18385904,
+        "last_minus_first": 432,
+        "consecutive_row_thirds_medians": [
+          18385904,
+          18385904.0,
+          18385904.0
+        ]
+      }
+    },
+    "performance_acceptance": false,
+    "stationary_plateau_proven": false
+  },
+  "n16-focused-plus-background-console-intel": {
+    "source": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/windows-panel-n16-20260907/n16-focused-plus-background-console-intel/raw-run-01/samples.jsonl",
+    "sha256": "9641722862bdd38e1cd6692112f67bb11fedeab8eef14ff751975b9cce3424e9",
+    "rows": 119,
+    "first_elapsed_s": 122.4445722,
+    "last_elapsed_s": 241.5067232,
+    "third_partition": "consecutive row indices [i*N//3:(i+1)*N//3], i=0,1,2",
+    "fields": {
+      "resident_bytes": {
+        "first": 2594455552,
+        "last": 1403437056,
+        "minimum": 1403437056,
+        "maximum": 2597179392,
+        "median": 1985867776,
+        "last_minus_first": -1191018496,
+        "consecutive_row_thirds_medians": [
+          2440577024,
+          1993162752.0,
+          1630775296.0
+        ]
+      },
+      "v8_used_bytes": {
+        "first": 107099776,
+        "last": 107081344,
+        "minimum": 103090960,
+        "maximum": 160395616,
+        "median": 135507760,
+        "last_minus_first": -18432,
+        "consecutive_row_thirds_medians": [
+          130824784,
+          149152144.0,
+          130411956.0
+        ]
+      },
+      "v8_total_bytes": {
+        "first": 157286400,
+        "last": 186646528,
+        "minimum": 156499968,
+        "maximum": 198180864,
+        "median": 186384384,
+        "last_minus_first": 29360128,
+        "consecutive_row_thirds_medians": [
+          177471488,
+          186646528.0,
+          189923328.0
+        ]
+      },
+      "gpu_tracked_bytes": {
+        "first": 149211176,
+        "last": 150823256,
+        "minimum": 149211176,
+        "maximum": 150823256,
+        "median": 150389672,
+        "last_minus_first": 1612080,
+        "consecutive_row_thirds_medians": [
+          149665064,
+          150389672.0,
+          150672920.0
+        ]
+      }
+    },
+    "performance_acceptance": false,
+    "stationary_plateau_proven": false
+  }
+}
