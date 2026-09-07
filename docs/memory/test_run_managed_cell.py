@@ -23,6 +23,7 @@ import build_provenance as bp  # noqa: E402
 import cache_provenance as cp  # noqa: E402
 import managed_receipt as mr  # noqa: E402
 import run_managed_cell as rmc  # noqa: E402
+import run_diagnostic as rd  # noqa: E402
 import server_resources as sr  # noqa: E402
 
 MEMORY = ROOT
@@ -297,6 +298,75 @@ class ManagedCellTests(unittest.TestCase):
         kwargs.setdefault("accounting_script", ACCOUNTING)
         kwargs.setdefault('_test_launcher', True)
         return rmc.run_managed_cell(spec_path, self.fx.cells, **kwargs)
+
+    def test_conpty_helper_handoff_missing_fails_closed(self):
+        with mock.patch.object(rmc.sys, 'platform', 'win32'):
+            with self.assertRaises(rmc.CellError):
+                rmc._capture_conpty_helpers({}, 100, set(), 'system')
+
+    def test_windows_non_conpty_handoff_does_not_require_helpers(self):
+        with mock.patch.object(rmc.sys, 'platform', 'win32'):
+            self.assertEqual(
+                rmc._capture_conpty_helpers(
+                    {'terminal_transport': 'panel'}, 100, set(), 'system', required=False
+                ),
+                {},
+            )
+
+    def test_conpty_discovery_empty_fails_closed(self):
+        fake_parent = mock.Mock()
+        fake_parent.child_processes.return_value = []
+        fake_parent.select_conpty_helpers.return_value = []
+        with mock.patch.dict(sys.modules, {"windows_process_parent": fake_parent}):
+            with self.assertRaises(RuntimeError):
+                rd.conpty_helper_handoff(launcher_pid=100, frontend_pid=200, platform="win32")
+        fake_parent.child_processes.assert_called_once_with(100)
+        fake_parent.select_conpty_helpers.assert_called_once_with([], frontend_pid=200)
+
+    def test_unix_collector_starts_once_before_metadata_processing(self):
+        calls = []
+        real_popen = rmc.subprocess.Popen
+
+        def recording_popen(argv, *args, **kwargs):
+            calls.append(tuple(str(value) for value in argv))
+            return real_popen(argv, *args, **kwargs)
+
+        with mock.patch.object(rmc.subprocess, "Popen", side_effect=recording_popen):
+            report = self._run(self.fx.base_spec(observe=.4, teardown=.5, interval=.15))
+        self.assertEqual(report["status"], "completed", report)
+        accounting_calls = [call for call in calls if str(ACCOUNTING) in call]
+        launcher_calls = [call for call in calls if str(self.fx.fixture_launcher) in call]
+        self.assertEqual(len(accounting_calls), 1, calls)
+        self.assertEqual(len(launcher_calls), 1, calls)
+        self.assertLess(calls.index(launcher_calls[0]), calls.index(accounting_calls[0]), calls)
+        self.assertNotIn("conpty_helper_0=", " ".join(accounting_calls[0]))
+
+    def test_conpty_helper_handoff_identity_and_parent_are_bound(self):
+        fake_parent = mock.Mock()
+        fake_parent.parent_pid.return_value = 100
+        with mock.patch.dict(sys.modules, {'windows_process_parent': fake_parent}):
+            with mock.patch.object(rmc.sys, 'platform', 'win32'), \
+                    mock.patch.object(rmc, '_start_identity', return_value='creation:7'):
+                result = rmc._capture_conpty_helpers(
+                    {'conpty_helpers': [{'pid': 200, 'parent_pid': 100,
+                                         'image_name': 'conhost.exe',
+                                         'start_identity': 'creation:7'}]},
+                    100, {300}, 'system')
+        self.assertEqual(result, {'conpty_helper_0': {'pid': 200, 'start_identity': 'creation:7'}})
+        fake_parent.parent_pid.assert_called_once_with(200)
+
+    def test_conpty_helper_handoff_rejects_pid_reuse(self):
+        fake_parent = mock.Mock()
+        fake_parent.parent_pid.return_value = 100
+        with mock.patch.dict(sys.modules, {'windows_process_parent': fake_parent}):
+            with mock.patch.object(rmc.sys, 'platform', 'win32'), \
+                    mock.patch.object(rmc, '_start_identity', return_value='creation:new'):
+                with self.assertRaises(rmc.CellError):
+                    rmc._capture_conpty_helpers(
+                        {'conpty_helpers': [{'pid': 200, 'parent_pid': 100,
+                                             'image_name': 'conhost.exe',
+                                             'start_identity': 'creation:old'}]},
+                        100, set(), 'system')
 
     def test_successful_observation_then_delayed_teardown(self):
         spec = self.fx.base_spec(observe=0.5, teardown=1.0, mode="ok", interval=0.15)

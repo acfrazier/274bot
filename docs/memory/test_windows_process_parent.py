@@ -25,6 +25,7 @@ class FakeToolhelp:
         self.last_error = 0
         self.fail_first = False
         self.fail_snap = False
+        self.images = {}
 
     def CreateToolhelp32Snapshot(self, flags, pid):
         assert flags == wpp.TH32CS_SNAPPROCESS
@@ -57,6 +58,7 @@ class FakeToolhelp:
         entry = ctypes.cast(entry_p, ctypes.POINTER(wpp.PROCESSENTRY32W)).contents
         entry.th32ProcessID = pid
         entry.th32ParentProcessID = parent
+        entry.szExeFile = self.images.get(pid, "python.exe")
         return True
 
     def CloseHandle(self, handle):
@@ -115,6 +117,27 @@ class WindowsParentTests(unittest.TestCase):
                 close_handle=fake.CloseHandle,
                 get_last_error=fake.GetLastError,
             )
+
+    def test_child_processes_returns_direct_children_with_images(self):
+        fake = FakeToolhelp([(10, 1), (42, 7), (99, 42), (100, 42)])
+        fake.images.update({42: "tui.exe", 99: "conhost.exe", 100: "other.exe"})
+        children = wpp.child_processes(42, api=fake)
+        self.assertEqual(children, [
+            {"pid": 99, "parent_pid": 42, "image_name": "conhost.exe"},
+            {"pid": 100, "parent_pid": 42, "image_name": "other.exe"},
+        ])
+        self.assertEqual(fake.closed, [fake.snap])
+
+    def test_select_conpty_helpers_excludes_frontend_and_non_conhost(self):
+        children = [
+            {"pid": 10, "image_name": "conhost.exe"},
+            {"pid": 20, "image_name": "ConHost.EXE"},
+            {"pid": 30, "image_name": "python.exe"},
+        ]
+        self.assertEqual(wpp.select_conpty_helpers(children, frontend_pid=10), [
+            {"pid": 20, "image_name": "ConHost.EXE"},
+        ])
+        self.assertEqual(wpp.select_conpty_helpers(children, frontend_pid=999), children[:2])
 
 
 if __name__ == "__main__":

@@ -83,7 +83,13 @@ def _process(receipt, native, server_identity):
     declared = _object(sampler.get('roles'), 'prelaunch roles')
     if not {'game_server','controller'} <= set(declared) or {'launcher','collector'} & set(declared):
         raise ValueError('invalid prelaunch role set')
-    if set(roles) != set(declared) | {'launcher','collector'}:
+    helper_names = {name for name in roles if name.startswith('conpty_helper_')}
+    handed_off = result.get('conpty_helpers')
+    if helper_names and (not isinstance(handed_off, dict) or set(handed_off) != helper_names):
+        raise ValueError('ConPTY helper handoff differs from runtime roles')
+    if not helper_names and handed_off not in (None, {}):
+        raise ValueError('unexpected ConPTY helper handoff')
+    if set(roles) != set(declared) | {'launcher','collector'} | helper_names:
         raise ValueError('runtime roles differ from declared and owned processes')
     for name,pid in declared.items():
         role = _object(roles[name], 'role ' + name)
@@ -94,6 +100,10 @@ def _process(receipt, native, server_identity):
         pid = result.get(role + '_pid')
         if type(pid) is not int or type(roles[role].get('pid')) is not int or roles[role]['pid'] != pid:
             raise ValueError('owned child PID differs from receipt')
+    for name in sorted(helper_names):
+        helper = _object((handed_off or {}).get(name), name)
+        if helper != roles[name]:
+            raise ValueError('ConPTY helper identity differs from receipt role')
     if roles['game_server'] != {k:server_identity.get(k) for k in ('pid','start_identity')}:
         raise ValueError('sampled server identity differs from server sidecar')
     modules = _object(sampler.get('modules'), 'sampler modules')

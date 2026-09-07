@@ -8,7 +8,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from ctypes import wintypes
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from server_resources import SampleError
 
@@ -124,3 +124,37 @@ def parent_pid(
         raise SampleError(f"process PID {pid} not found in process snapshot")
     finally:
         close_handle(snap)
+
+
+def child_processes(parent: int, *, api: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """Return direct children of an explicit PID with image names."""
+    parent = _validate_pid(parent)
+    bound: Any = api or ToolhelpApi()
+    snap = bound.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap in (None, 0, INVALID_HANDLE_VALUE, -1):
+        raise SampleError(f"CreateToolhelp32Snapshot failed (Win32 error {int(bound.GetLastError())})")
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if not bound.Process32FirstW(snap, ctypes.byref(entry)):
+            raise SampleError(f"Process32FirstW failed (Win32 error {int(bound.GetLastError())})")
+        result: List[Dict[str, Any]] = []
+        while True:
+            if int(entry.th32ParentProcessID) == parent:
+                result.append({"pid": int(entry.th32ProcessID), "parent_pid": parent,
+                               "image_name": str(entry.szExeFile)})
+            if not bound.Process32NextW(snap, ctypes.byref(entry)):
+                break
+        return result
+    finally:
+        bound.CloseHandle(snap)
+
+
+def select_conpty_helpers(children: List[Dict[str, Any]], *, frontend_pid: int) -> List[Dict[str, Any]]:
+    """Select direct conhost children, excluding the frontend PID itself."""
+    return sorted(
+        [child for child in children
+         if isinstance(child, dict) and child.get("pid") != frontend_pid
+         and str(child.get("image_name", "")).casefold() == "conhost.exe"],
+        key=lambda child: int(child["pid"]),
+    )

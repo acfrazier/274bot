@@ -581,6 +581,38 @@ def _capture_owned_frontend(pid, launcher_pid, forbidden, backend):
     return pid, _start_identity(pid, backend=backend)
 
 
+def _capture_conpty_helpers(meta, launcher_pid, forbidden, backend, *, required=True):
+    """Validate the identity-bound ConPTY handoff before collector start."""
+    if sys.platform != 'win32':
+        return {}
+    helpers = meta.get('conpty_helpers') if isinstance(meta, dict) else None
+    if not isinstance(helpers, list) or not helpers:
+        if not required:
+            return {}
+        raise CellError('required ConPTY helper handoff missing')
+    try:
+        import windows_process_parent as wpp  # type: ignore
+    except ImportError as exc:
+        raise CellError(f'Windows ConPTY helper ownership unavailable: {exc}') from exc
+    out = {}
+    for index, helper in enumerate(helpers):
+        if not isinstance(helper, dict) or type(helper.get('pid')) is not int:
+            raise CellError('invalid ConPTY helper handoff')
+        pid = int(helper['pid'])
+        if pid in forbidden or pid <= 0 or helper.get('parent_pid') != launcher_pid:
+            raise CellError('ConPTY helper ownership mismatch')
+        if str(helper.get('image_name', '')).casefold() != 'conhost.exe':
+            raise CellError('ConPTY helper image mismatch')
+        if wpp.parent_pid(pid) != launcher_pid:
+            raise CellError('ConPTY helper is not a child of the owned launcher')
+        identity = helper.get('start_identity')
+        actual = _start_identity(pid, backend=backend)
+        if not isinstance(identity, str) or not identity or actual != identity:
+            raise CellError('ConPTY helper identity unavailable or changed')
+        out[f'conpty_helper_{index}'] = {'pid': pid, 'start_identity': identity}
+    return out
+
+
 class QualificationBoundaries:
     """Exact ordered native boundary pair; malformed evidence never completes."""
     def __init__(self):
@@ -954,51 +986,46 @@ def run_managed_cell(
         collector_stop_path = (cell_dir / COLLECTOR_STOP_BASENAME).resolve()
         if collector_stop_path.exists():
             raise CellError(f'stale collector stop path: {collector_stop_path}')
-        # Stop IPC must stay inside the exclusive cell directory.
         try:
             collector_stop_path.relative_to(cell_dir.resolve())
         except ValueError as exc:
             raise CellError(f'collector stop path escapes cell dir: {collector_stop_path}') from exc
-        role_args = [f"{name}={pid}" for name, pid in sorted(roles.items())]
-        collector_argv = [
-            sys.executable,
-            str(accounting_script),
-            *role_args,
-            str(sampler_out),
-            "--interval",
-            str(float(spec["sampler_interval_s"])),
-            '--process-backend', backend,
-            '--stop-file', str(collector_stop_path),
-        ]
-        report["sampler_argv"] = collector_argv
-        report["sampler_roles"] = roles
-        report["collector_stop_path"] = str(collector_stop_path)
-        t1 = time.monotonic()
-        collector_out_fh = (cell_dir / "logs" / "collector.stdout").open("xb")
-        try:
-            collector = subprocess.Popen(
-                collector_argv,
-                cwd=str(_ROOT),
-                stdout=collector_out_fh,
-                stderr=subprocess.STDOUT,
-            )
-            report["collector_pid"] = collector.pid
-            startup["collector_start_gap_s"] = time.monotonic() - t1
-            startup["roles"] = roles
-            role_identities["collector"] = _role_identity(
-                collector.pid, backend=backend, role="collector"
-            )
-        except OSError as exc:
-            # Sampler failed to start — record, do not replace, continue to wait launcher.
-            collector = None
-            collector_exit = 127
-            report["sampler_premature_exit"] = 127
-            report["sampler_start_error"] = str(exc)
-            startup["collector_start_error"] = str(exc)
-            runner_errors.append(f"collector identity unavailable: {exc}")
-        except CellError as exc:
-            runner_errors.append(str(exc))
-            # Collector may still be running; continue observation and fail receipt honestly.
+        collector_started = False
+
+        def start_collector():
+            nonlocal collector, collector_out_fh, collector_exit, collector_started
+            role_args = [f"{name}={pid}" for name, pid in sorted(roles.items())]
+            collector_argv = [sys.executable, str(accounting_script), *role_args,
+                              str(sampler_out), "--interval", str(float(spec["sampler_interval_s"])),
+                              '--process-backend', backend, '--stop-file', str(collector_stop_path)]
+            report["sampler_argv"] = collector_argv
+            report["sampler_roles"] = dict(roles)
+            report["collector_stop_path"] = str(collector_stop_path)
+            t1 = time.monotonic()
+            collector_out_fh = (cell_dir / "logs" / "collector.stdout").open("xb")
+            try:
+                collector = subprocess.Popen(collector_argv, cwd=str(_ROOT),
+                                              stdout=collector_out_fh, stderr=subprocess.STDOUT)
+                report["collector_pid"] = collector.pid
+                startup["collector_start_gap_s"] = time.monotonic() - t1
+                startup["roles"] = dict(roles)
+                role_identities["collector"] = _role_identity(collector.pid, backend=backend, role="collector")
+                collector_started = True
+            except OSError as exc:
+                collector = None
+                collector_exit = 127
+                report["sampler_premature_exit"] = 127
+                report["sampler_start_error"] = str(exc)
+                startup["collector_start_error"] = str(exc)
+                runner_errors.append(f"collector identity unavailable: {exc}")
+            except CellError as exc:
+                runner_errors.append(str(exc))
+
+        # Unix collection ordering is unchanged: begin sampling immediately
+        # after the launcher is owned. Windows waits for metadata so it can
+        # distinguish ConPTY terminal transport from panel/headless paths.
+        if sys.platform != 'win32':
+            start_collector()
 
         log_tail = IncrementalLines(launcher_log)
         qual_tail: Optional[IncrementalLines] = None
@@ -1021,6 +1048,18 @@ def run_managed_cell(
                         frontend_pid, frontend_identity = _capture_owned_frontend(
                             meta['pid'], launcher.pid,
                             {*roles.values(), collector.pid if collector else -1}, backend)
+                    needs_conpty_helpers = (
+                        sys.platform == 'win32'
+                        and meta.get('terminal_transport') == 'conpty'
+                    )
+                    helpers = _capture_conpty_helpers(
+                        meta, launcher.pid, { *roles.values(), frontend_pid or -1 }, backend,
+                        required=needs_conpty_helpers,
+                    )
+                    role_identities.update(helpers)
+                    roles.update({name: info['pid'] for name, info in helpers.items()})
+                    if not collector_started:
+                        start_collector()
                     report["frontend_pid"] = frontend_pid
                     report["frontend_start_identity"] = frontend_identity
                     report["run_dir"] = str(run_dir) if run_dir else None
@@ -1032,6 +1071,10 @@ def run_managed_cell(
                     qualification_lines.append(qline)
                     boundaries.consume(qline, time.monotonic())
                 observe_end_mono = boundaries.end_received_mono
+
+            if metadata is None and launcher.poll() is not None and not collector_started:
+                runner_errors.append('managed launcher produced no identity-bound metadata')
+                break
 
             # After a validated observe-end, keep the collector alive for at
             # least two sampler intervals even if the launcher already exited.
@@ -1200,6 +1243,11 @@ def run_managed_cell(
                 and type(info.get("pid")) is int
                 and isinstance(info.get("start_identity"), str)
                 and info["start_identity"]
+            },
+            "conpty_helpers": {
+                name: {"pid": int(info["pid"]), "start_identity": info["start_identity"]}
+                for name, info in role_identities.items()
+                if name.startswith("conpty_helper_")
             },
             "launcher_pid": int(launcher.pid) if launcher is not None else report.get("launcher_pid"),
             "collector_pid": int(collector.pid)

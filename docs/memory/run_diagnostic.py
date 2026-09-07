@@ -223,6 +223,26 @@ def require_terminal_transport(*, platform=None):
         raise RuntimeError(f'{_UNIX_TTY_IMPORT_REQUIRED} ({error})') from error
     return 'unix', fcntl, pty, termios
 
+def conpty_helper_handoff(*, launcher_pid, frontend_pid, platform=None):
+    """Discover identity-bound direct ConPTY helpers before observation."""
+    if (sys.platform if platform is None else platform) != 'win32':
+        return []
+    import windows_process_parent as wpp
+    import windows_process_sample as wps
+    children = wpp.child_processes(int(launcher_pid))
+    selected = wpp.select_conpty_helpers(children, frontend_pid=int(frontend_pid))
+    if not selected:
+        raise RuntimeError('required ConPTY conhost helper ownership unavailable')
+    helpers = []
+    for child in selected:
+        sample = wps.sample_process(int(child['pid']), timeout=2.0)
+        identity = sample.get('start_identity')
+        if not isinstance(identity, str) or not identity:
+            raise RuntimeError(f"ConPTY helper PID {child['pid']} identity unavailable")
+        helpers.append({'pid': int(child['pid']), 'start_identity': identity,
+                        'parent_pid': int(launcher_pid), 'image_name': 'conhost.exe'})
+    return helpers
+
 def main(argv=None):
     p = build_parser()
     a = p.parse_args(argv)
@@ -319,6 +339,9 @@ def main(argv=None):
                         pass
                 reader = threading.Thread(target=drain_terminal, name='conpty-drain')
                 reader.start()
+                meta['conpty_helpers'] = conpty_helper_handoff(
+                    launcher_pid=os.getpid(), frontend_pid=child.pid
+                )
             else:
                 _tag, fcntl, pty, termios = transport
                 master, slave = pty.openpty()
