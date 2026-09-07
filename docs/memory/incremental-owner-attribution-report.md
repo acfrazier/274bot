@@ -27,7 +27,7 @@ Reproduce stack grouping with `python3 docs/memory/diagnostics/incremental-owner
 | Interface templates | 8.565 | 8.565 | 0 |
 | Other shared client unpack | 5.290 | 5.290 | 0 |
 
-The largest individual non-VM constructor group is 4,719,536 bytes/6 allocations at N1 and 75,512,576 bytes/96 at N16 (exact 16x). Navigation has one 62.141 MiB decode group plus one 7.781 MiB sibling in each process; shared-nav ownership persists. These captures do not support multiplying animation unpack storage by bot count.
+The largest individual non-VM constructor group is 4,719,536 bytes/6 allocations at N1 and 75,512,576 bytes/96 at N16 (exact 16x). Navigation has one 62.141 MiB decode allocation and a normalized 8.156 MiB sibling group containing two allocations in each process; shared-nav ownership persists. These captures do not support multiplying animation unpack storage by bot count.
 
 VM/thread mapping stack totals increase by 1213.188 MiB but are **not RSS** and are excluded from the heap-owner ranking. vmmap reports the same 75.4M resident `MALLOC_LARGE` and 70.0M `MALLOC_LARGE (empty)` rows in both captures; the empty region is not attributed to a live allocation owner here. Malloc zone total resident is 199.6M/600.5M and allocated 156.4M/448.1M in vmmap display units. These zone and footprint numbers are diagnostic, do not sum to process RSS, and are not subtracted from clean resource results. Retained free pages/fragmentation remain a separate unproven opportunity.
 
