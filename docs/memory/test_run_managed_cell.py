@@ -362,15 +362,23 @@ class ManagedCellTests(unittest.TestCase):
         """The delayed Windows start includes the handed-off helper role."""
         calls = []
         real_popen = rmc.subprocess.Popen
+        native_platform = sys.platform
+        if native_platform == "win32":
+            import windows_process_parent as native_parent
+            read_native_parent = native_parent.parent_pid
+        else:
+            read_native_parent = rmc.parent_pid
 
         def recording_popen(argv, *args, **kwargs):
             calls.append(tuple(str(value) for value in argv))
             return real_popen(argv, *args, **kwargs)
 
         fake_parent = mock.Mock()
-        fake_parent.parent_pid.side_effect = lambda pid: int(
-            subprocess.check_output(["ps", "-o", "ppid=", "-p", str(pid)], text=True).strip()
-        )
+        def portable_parent(pid):
+            with mock.patch.object(sys, "platform", native_platform):
+                return read_native_parent(pid)
+
+        fake_parent.parent_pid.side_effect = portable_parent
 
         def capture_helpers(meta, launcher_pid, forbidden, backend, *, required=True):
             self.assertTrue(required)
@@ -388,7 +396,7 @@ class ManagedCellTests(unittest.TestCase):
             # The production Windows branch is selected by the runner patch;
             # keep fixture identity sampling on this host's native backend.
             old_platform = sys.platform
-            sys.platform = "darwin"
+            sys.platform = native_platform
             try:
                 return real_sampler(pid, timeout=timeout)
             finally:
