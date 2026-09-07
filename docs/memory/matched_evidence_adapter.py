@@ -364,6 +364,18 @@ def match_keys_complete(keys: dict) -> Optional[str]:
             if val not in ("fixed", "stop_controlled"):
                 return key
             continue
+        if key == "terminal_size":
+            # Panel launches are deliberately non-terminal. Explicit null is
+            # an inapplicable geometry field, not missing evidence.
+            if keys.get("frontend") == "panel" and keys.get("terminal") is False:
+                return key if val is not None else None
+            if (
+                type(val) is not list
+                or len(val) != 2
+                or any(type(size) is not int or size <= 0 for size in val)
+            ):
+                return key
+            continue
         if _deep_missing(val):
             return key
     return None

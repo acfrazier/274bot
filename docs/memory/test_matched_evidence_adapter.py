@@ -1640,6 +1640,37 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
 
 
 class NativeRuntimeContractTests(unittest.TestCase):
+    def test_nonterminal_panel_null_size_is_explicitly_inapplicable(self):
+        base: dict = {key: True for key in mea.MATCH_KEY_FIELDS}
+        base.update(
+            frontend='panel', n=1, terminal=False, terminal_size=None,
+            sampler_duration_mode='fixed', sampler_duration_s_requested=1,
+        )
+        self.assertIsNone(
+            mea.match_keys_complete(base)
+        )
+        omitted = dict(base)
+        omitted.pop('terminal_size')
+        self.assertEqual(
+            mea.match_keys_complete(omitted),
+            'terminal_size',
+        )
+        tui = dict(base, frontend='tui')
+        self.assertEqual(
+            mea.match_keys_complete(tui),
+            'terminal_size',
+        )
+        terminal = dict(base, terminal=True)
+        self.assertEqual(
+            mea.match_keys_complete(terminal),
+            'terminal_size',
+        )
+        sized = dict(base, terminal_size=[120, 40])
+        self.assertEqual(
+            mea.match_keys_complete(sized),
+            'terminal_size',
+        )
+
     def test_one_renderer_mode_accepts_explicit_absence(self):
         proof = _native_qual_proof(n=16, name_prefix='panel', started_unix=1000,
                                   settings_override={'frontend':'panel', 'render_policy_requested':'focused-one'})

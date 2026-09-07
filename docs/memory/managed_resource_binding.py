@@ -4,6 +4,7 @@ Called after the receipt/build/workload binding, not a replacement for it.
 No caller-supplied performance or overhead label is promoted to evidence.
 """
 import json
+import os
 import pathlib
 
 import build_provenance as bp
@@ -32,6 +33,18 @@ def _bound_file(record, path_key, hash_key):
     if bp.file_sha256(path) != digest:
         raise ValueError('file hash mismatch: ' + path_key)
     return path, digest
+
+
+def _same_directory_identity(left, right):
+    """Compare existing directories by filesystem identity, not spelling."""
+    try:
+        left_path = pathlib.Path(left)
+        right_path = pathlib.Path(right)
+        if not left_path.is_dir() or not right_path.is_dir():
+            return False
+        return os.path.samefile(left_path, right_path)
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _roles_require_windows_process_sample(roles):
@@ -63,7 +76,9 @@ def _cache(receipt, native):
     if not before <= mr._timestamp(receipt['started_utc']) < mr._timestamp(receipt['ended_utc']) <= after:
         raise ValueError('cache verification does not bracket managed cell')
     settings = _object(native['match_keys']['qualification_settings'], 'native settings')
-    if settings.get('cache_dir_canonical_available') is not True or settings.get('cache_dir_canonical') != value['cache_dir']:
+    if settings.get('cache_dir_canonical_available') is not True or not _same_directory_identity(
+        settings.get('cache_dir_canonical'), value['cache_dir']
+    ):
         raise ValueError('native cache directory differs from fingerprint')
     if bp.file_sha256(path) != digest:
         raise ValueError('cache fingerprint changed while reading')

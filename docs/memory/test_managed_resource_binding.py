@@ -108,6 +108,21 @@ class BindingTests(unittest.TestCase):
         path.write_text('changed')
         self.assertEqual(rb.bind(self.receipt,self.native,self.server)['status'],'unavailable')
 
+    def test_cache_directory_uses_filesystem_identity(self):
+        alias = self.root / 'cache-alias'
+        alias.symlink_to(self.cache, target_is_directory=True)
+        native = copy.deepcopy(self.native)
+        native['match_keys']['qualification_settings']['cache_dir_canonical'] = str(alias)
+        self.assertEqual(rb.bind(self.receipt, native, self.server)['status'], 'available')
+
+        different = self.root / 'different-cache'
+        different.mkdir()
+        native['match_keys']['qualification_settings']['cache_dir_canonical'] = str(different)
+        self.assertEqual(rb.bind(self.receipt, native, self.server)['status'], 'unavailable')
+
+        native['match_keys']['qualification_settings']['cache_dir_canonical'] = str(self.root / 'missing-cache')
+        self.assertEqual(rb.bind(self.receipt, native, self.server)['status'], 'unavailable')
+
     def test_native_origin_and_server_identity_required(self):
         for native in (self.native|{'status':'unavailable'},
                        self.native|{'observation_wall_span_source':'launcher_plus_elapsed'},
