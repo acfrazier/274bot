@@ -162,6 +162,10 @@ def main():
             [sys.executable, "-c",
              "import time,sys; time.sleep(%s); sys.exit(0)" % (observe + teardown + (1 if mode == 'delayed' else 0))]
         )
+    helper = None
+    if mode == "conpty_fake":
+        # Exercise the Windows delayed collector handoff on non-Windows CI.
+        helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
     started = time.time()
     meta = {
         "pid": child.pid,
@@ -176,6 +180,16 @@ def main():
         "n": 1,
         "workload": "idle",
     }
+    if helper is not None:
+        meta.update(
+            terminal_transport="conpty",
+            conpty_helpers=[{
+                "pid": helper.pid,
+                "parent_pid": os.getpid(),
+                "image_name": "conhost.exe",
+                "start_identity": "fixture-helper",
+            }],
+        )
     if mode != "missing_meta":
         print(json.dumps(meta), flush=True)
         (run / "metadata.json").write_text(json.dumps(dict(meta)) + "\n")
@@ -208,6 +222,9 @@ def main():
             sys.exit(0)
         time.sleep(teardown)
         rc = child.wait(timeout=max(5, teardown + 2))
+        if helper is not None:
+            helper.terminate()
+            helper.wait(timeout=5)
         meta.update(exit_code=rc, ended_unix=time.time())
         (run / "metadata.json").write_text(json.dumps(meta) + "\n")
         print(json.dumps({"run_dir": str(run), "exit_code": rc}), flush=True)
@@ -340,6 +357,68 @@ class ManagedCellTests(unittest.TestCase):
         self.assertEqual(len(launcher_calls), 1, calls)
         self.assertLess(calls.index(launcher_calls[0]), calls.index(accounting_calls[0]), calls)
         self.assertNotIn("conpty_helper_0=", " ".join(accounting_calls[0]))
+
+    def test_windows_conpty_starts_once_after_helpers_are_bound(self):
+        """The delayed Windows start includes the handed-off helper role."""
+        calls = []
+        real_popen = rmc.subprocess.Popen
+
+        def recording_popen(argv, *args, **kwargs):
+            calls.append(tuple(str(value) for value in argv))
+            return real_popen(argv, *args, **kwargs)
+
+        fake_parent = mock.Mock()
+        fake_parent.parent_pid.side_effect = lambda pid: int(
+            subprocess.check_output(["ps", "-o", "ppid=", "-p", str(pid)], text=True).strip()
+        )
+
+        def capture_helpers(meta, launcher_pid, forbidden, backend, *, required=True):
+            self.assertTrue(required)
+            helper = meta["conpty_helpers"][0]
+            return {
+                "conpty_helper_0": {
+                    "pid": helper["pid"],
+                    "start_identity": rmc._start_identity(helper["pid"], backend=backend),
+                }
+            }
+
+        real_sampler = rmc.pa.process_sampler("system")
+
+        def portable_sampler(pid, *, timeout):
+            # The production Windows branch is selected by the runner patch;
+            # keep fixture identity sampling on this host's native backend.
+            old_platform = sys.platform
+            sys.platform = "darwin"
+            try:
+                return real_sampler(pid, timeout=timeout)
+            finally:
+                sys.platform = old_platform
+
+        with mock.patch.object(rmc.sys, "platform", "win32"), \
+                mock.patch.dict(sys.modules, {"windows_process_parent": fake_parent}), \
+                mock.patch.object(rmc.pa, "process_sampler", return_value=portable_sampler), \
+                mock.patch.object(rmc, "_capture_conpty_helpers", side_effect=capture_helpers), \
+                mock.patch.object(rmc.subprocess, "Popen", side_effect=recording_popen):
+            report = self._run(
+                self.fx.base_spec(
+                    observe=.4, teardown=.6, interval=.15, mode="conpty_fake", cell_id="conpty_once"
+                )
+            )
+        # The simulated win32 cleanup cannot query a Unix frontend after it
+        # exits; the durable assertions below target delayed collector wiring.
+        self.assertIn(report["status"], ("completed", "failed_or_unavailable"), report)
+        self.assertEqual(report["sampler_result"]["exit_code"], 0, report)
+        accounting_calls = [call for call in calls if str(ACCOUNTING) in call]
+        launcher_calls = [call for call in calls if str(self.fx.fixture_launcher) in call]
+        self.assertEqual(len(accounting_calls), 1, calls)
+        self.assertEqual(len(launcher_calls), 1, calls)
+        self.assertLess(calls.index(launcher_calls[0]), calls.index(accounting_calls[0]), calls)
+        self.assertIn("conpty_helper_0=", " ".join(accounting_calls[0]))
+        self.assertIn("conpty_helper_0", report["sampler_result"]["role_identities"])
+        self.assertEqual(
+            report["sampler_result"]["conpty_helpers"],
+            {"conpty_helper_0": report["sampler_result"]["role_identities"]["conpty_helper_0"]},
+        )
 
     def test_conpty_helper_handoff_identity_and_parent_are_bound(self):
         fake_parent = mock.Mock()
