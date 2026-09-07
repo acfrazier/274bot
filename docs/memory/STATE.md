@@ -9,7 +9,7 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current actions — 2026-09-07 21:10 UTC
+## Current actions — 2026-09-07 21:24 UTC
 
 - Continue approved performance-finish-plan.md; final budgets, matched savings,
   latency/lifecycle/scaling, all three modes and final Grok4.6 remain unfinished.
@@ -48,6 +48,31 @@ verify it on resume because a worker may finish after this snapshot.
   LuCI proposes generic ifname migration: not approved/applied. Router diagnosis
   remains separate from local-server performance runs. Pending user symptom
   question distinguishes direct-IP from discovery/casting/SMB failures.
+
+- User now defers further network tuning unless problems recur. Actual direct
+  32MiB TCP crossband34.6716MB/s upload30.9854download; temp firewall/listener
+  removed verified0. Saved originalMLO profilePublic, anotherMLO2Private;
+  RDP andSSH Private-only, currentmainSSIDPrivate. RDP3389 reachable Mac5GHz
+  to laptop2.4GHz. One self-restoring savedMLO connection probe could not join
+  (networkunavailable), original restoredverified. No routerforwardingfailure
+  established. Routertemporarykey removed; freshkeySSHdenied; LuCInokeys;
+  localtemporarykeypair removed. No routernetworksettingschanged.
+- Windows controls t_aeb44c31 approved actualGrok4.5 run389 session
+  20260907_171825_491146, reportb24236c. Rootfixed process-only PowerShell
+  invocation policy, hashverifiedtransfers/nativePSparser; preflightfailed
+  Officeauto-restart, then authorized quietcleanupbefore-explicit-nvidia and
+  preflightpassed. SamefrozenNVIDIAconsole diagnosticstarted21:22:50 task
+  274bot-BotTest-managed-panel-36825a9-console-nvidia. ActualPID3272session2;
+  run20260907T212252Z_panel_n1_active. Rootreadstartup: exactrequested+actual
+  NVIDIA Vulkan,1680x870scale1.5Fifo,focusedvisible. Completionpending;
+  noIntelcell yet. Pollactualtaskthenfullbinding/captures beforeIntel.
+- Userawayfrom21:22 for45–60min; continuecampaign, deferphysicalasksuntil
+  ~22:07–22:22UTC. Userrequests clamshell withoutimpact. FinishGPUcomparison
+  then inspect/configure plugged-in lid/no-sleep behavior withrollback;
+  actualclosed-lid display/cadence/SSHtest requireslaterphysicalaction. No
+  clamshell power/BIOS/displaydriverchanges yet. Controller uses bounded
+  SetThreadExecutionState SYSTEM+DISPLAY,finallyreleased; no humanwake needed
+  during currentcapture. Do notclaimclosedlid validated frompowerpolicyalone.
 
 ## Previous boundary — 2026-09-07 20:39 UTC
 
