@@ -9,7 +9,47 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current actions — 2026-09-07 20:39 UTC
+## Current actions — 2026-09-07 21:10 UTC
+
+- Continue approved performance-finish-plan.md; final budgets, matched savings,
+  latency/lifecycle/scaling, all three modes and final Grok4.6 remain unfinished.
+- Corrected Linux batch stopped at candidate N16: 17.386014s, slot12 tick19
+  Unknown error before observation. Reference N16 qualified. No candidate
+  performance comparison; indices3..8 not run. Approved report84707a6 lives
+  under diagnostics/borrowed-fingerprint-corrected-native-screen-report.md.
+  Diagnosis t_0107305c has actual reviewer run380 changes requested, Luna382
+  correcting doc only; wait for final same-card review. No VPS workload active
+  at last check. Existing failure lacks underlying exception; do not blindly
+  rerun or assume a configurable diagnostic channel exists without code proof.
+- Windows adapter selector36825a9 on isolated windows-submit-attribution with
+  client5ee9 passed actualGrok4.5 review373; native build and384 panel lib tests
+  pass (memory-profile-no-alloc). Frozen staged binary SHA87c24665563ef8a55751244a52f7d25c7edf68e3117e84f2ff464add596c71fb,
+  852file sourcecf0175c549c573a37ebd8af31242b2eb817946a716f76b2785d3d4d8a76f3bca.
+  Stage C:\ProgramData\274bot-Test\panel-36825a9. No new live adapter cells yet.
+  Luna t_aeb44c31 prepares local console controls and same-card review; root
+  must inspect, transfer and execute both adapters and verify actual selection.
+- Native console dxdiag completed0 with BotTest active/unlocked console2:
+  Intel(R)Graphics32.0.101.8991 drives internal2560x1600 at240Hz; NVIDIA
+  RTX5060Laptop32.0.16.1686 currentmodeUnknown. This is display routing at
+  probe time, not proof of panel rendering adapter. Preserve same console.
+  Dell/Office three services stopped startupunchanged; Intel preserved;
+  ProcessLasso/governor were absent, so remove old hardcoded running=true.
+  VM remains Off. Native preparatory evidence copied+10files hash verified in
+  diagnostics/windows-explicit-adapter-20260907/adapter-preparation-20260907.
+- User authorized longstanding router repair with nobody else using network,
+  superseding earlier observation-only restriction. User fixed Windows firewall
+  for this Mac's new IP10.0.0.81; SSH to Windows10.0.0.205 works again. Ordinary
+ 5GHz-to-2.4GHz issue also reported; current SSH crosses those bands successfully.
+  GL-BE9300 firmware4.9.0 up-to-date UI; all3 ordinary radios bridge br-lan,
+  isolate0; live bridge isolationoff/floodon/ap_bridge1, correct mutual ARP.
+  Laptop actual2.4GHz, Mac5GHz. No router network setting changed. Root added
+  one temporary diagnostic SSH publickey via authenticated LuCI; remove only
+  that key when done. Backup download blocked by Codex; not obtained or bypassed.
+  LuCI proposes generic ifname migration: not approved/applied. Router diagnosis
+  remains separate from local-server performance runs. Pending user symptom
+  question distinguishes direct-IP from discovery/casting/SMB failures.
+
+## Previous boundary — 2026-09-07 20:39 UTC
 
 - Continue approved performance-finish-plan.md. No final campaign acceptance or
   newly accepted RSS saving. Final budgets, latency/lifecycle/scaling, three
