@@ -169,9 +169,16 @@ def _mac_sample(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
 
 def _windows_sample(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
     # Explicit Win32 ctypes backend; never falls back to another OS after failure.
+    # Script entry loads this file as ``__main__`` while the backend does
+    # ``from server_resources import SampleError``, so the backend's SampleError
+    # class object can differ from this module's. Translate at the adapter only.
+    from windows_process_sample import SampleError as WinSampleError
     from windows_process_sample import sample_process as win_sample
 
-    return win_sample(pid, timeout=timeout)
+    try:
+        return win_sample(pid, timeout=timeout)
+    except WinSampleError as exc:
+        raise SampleError(str(exc)) from exc
 
 
 def sample_process(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:

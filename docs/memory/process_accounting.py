@@ -10,10 +10,10 @@ identity, counter reset, cadence loss, required-grid miss, or required-role
 sample failure yields exit 1 with partial records retained.
 
 Modes:
-  fixed duration: full required-grid coverage → exit 0 / status ok /
+  fixed duration: full required-grid coverage -> exit 0 / status ok /
     completion required_grid_complete. Actual duration coverage is separate.
-    Early orchestrator stop → incomplete / exit 1.
-  stop_controlled (duration=None): requested stop → exit 0 / status closed /
+    Early orchestrator stop -> incomplete / exit 1.
+  stop_controlled (duration=None): requested stop -> exit 0 / status closed /
     completion controlled_stop with honest first/last spans and no
     full-duration flag. Future readers must independently require coverage.
 """

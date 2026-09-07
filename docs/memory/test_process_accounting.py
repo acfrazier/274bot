@@ -466,8 +466,20 @@ class InjectedCollectorTests(unittest.TestCase):
             text=True,
             capture_output=True,
         )
-        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertNotIn("--force", completed.stdout)
+        # Windows consoles often default to cp1252; U+2192 in argparse text crashed --help.
+        try:
+            completed.stdout.encode("cp1252")
+            completed.stderr.encode("cp1252")
+        except UnicodeEncodeError as exc:
+            self.fail(f"CLI --help must be cp1252-encodable for Windows consoles: {exc}")
+        # Module docstring is argparse description=; keep it portable too.
+        doc = pa.__doc__ or ""
+        try:
+            doc.encode("cp1252")
+        except UnicodeEncodeError as exc:
+            self.fail(f"process_accounting __doc__ (argparse description) not cp1252-safe: {exc}")
 
     def test_sample_timeout_default_finite_stop_controlled(self):
         """Stop-controlled path always gets a finite positive timeout (default 5s)."""

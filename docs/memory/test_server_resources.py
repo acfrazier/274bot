@@ -118,6 +118,7 @@ class CliSmokeTests(unittest.TestCase):
             completed = subprocess.run(cmd, text=True, capture_output=True)
             self.assertEqual(completed.returncode, 1)
             self.assertIn("FAIL:", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
             rows = [json.loads(line) for line in out.read_text().splitlines()]
             self.assertEqual(rows[-1]["type"], "error")
 
@@ -132,6 +133,70 @@ class CliSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(sum(row.get("type") == "sample" for row in rows), 2)
             self.assertEqual(rows[-1]["type"], "summary")
             self.assertEqual(rows[-1]["status"], "ok")
+
+    def test_windows_sample_translates_backend_sample_error(self):
+        """Dual-import: backend SampleError must become this module's SampleError.
+
+        Script entry loads server_resources as __main__; windows_process_sample
+        imports server_resources by name. Catch the backend type in _windows_sample
+        and re-raise sr.SampleError so run/main except SampleError still works.
+        """
+        import types
+
+        backend_err_cls = type("SampleError", (RuntimeError,), {})
+        self.assertIsNot(backend_err_cls, sr.SampleError)
+
+        fake_wps = types.ModuleType("windows_process_sample")
+        fake_wps.SampleError = backend_err_cls
+
+        def boom(_pid, timeout=None):
+            raise backend_err_cls(
+                "process PID 999999991 not found or invalid (Win32 error 87)"
+            )
+
+        fake_wps.sample_process = boom
+
+        with mock.patch.dict(sys.modules, {"windows_process_sample": fake_wps}):
+            with self.assertRaises(sr.SampleError) as cm:
+                sr._windows_sample(999999991)
+            self.assertIs(type(cm.exception), sr.SampleError)
+            self.assertNotIsInstance(cm.exception, backend_err_cls)
+            self.assertIn("not found", str(cm.exception).lower())
+            self.assertIsInstance(cm.exception.__cause__, backend_err_cls)
+
+    def test_windows_backend_error_through_run_prints_fail_not_traceback(self):
+        """Backend SampleError via _windows_sample -> run -> FAIL: + exit 1, no Traceback."""
+        import io
+        import types
+        from contextlib import redirect_stderr
+
+        backend_err_cls = type("SampleError", (RuntimeError,), {})
+        fake_wps = types.ModuleType("windows_process_sample")
+        fake_wps.SampleError = backend_err_cls
+        fake_wps.sample_process = lambda _pid, timeout=None: (_ for _ in ()).throw(
+            backend_err_cls("process PID 999999991 not found or invalid (Win32 error 87)")
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            out = pathlib.Path(td) / "samples.jsonl"
+            buf = io.StringIO()
+            with mock.patch.dict(sys.modules, {"windows_process_sample": fake_wps}):
+                with redirect_stderr(buf):
+                    status = sr.run(
+                        999999991,
+                        out,
+                        0.1,
+                        0.2,
+                        sample_fn=sr._windows_sample,
+                        pressure_fn=lambda: {"status": "unavailable"},
+                    )
+            err = buf.getvalue()
+            self.assertEqual(status, 1)
+            self.assertIn("FAIL:", err)
+            self.assertNotIn("Traceback", err)
+            rows = [json.loads(line) for line in out.read_text().splitlines()]
+            self.assertEqual(rows[-1]["type"], "error")
+            self.assertIn("not found", rows[-1]["reason"].lower())
 
 
 if __name__ == "__main__":
