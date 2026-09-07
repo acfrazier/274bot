@@ -1,0 +1,9 @@
+[package]
+name = "scene-layout-census"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+client = { path = "../../../../vendor/fr-client-rust/crates/client" }
