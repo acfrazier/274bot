@@ -258,6 +258,10 @@ HOST_CONDITIONS = {
 NATIVE_WINDOWS_CONDITIONS = {
     "platform": "Windows-11-10.0.26100-SP0",
     "user": "BotTest",
+    "purpose": "frozen native host observation",
+    "builds_stopped_before_run": True,
+    "terminal_transport_expected": True,
+    "panel_render_attribution": False,
     "performance_acceptance": False,
     "native_preflight": {
         "adapter": "nvidia",
@@ -815,6 +819,12 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         value["native_preflight"]["performanceAcceptance"] = None
         self.assertFalse(mea._native_windows_conditions_complete(value))
 
+        for field in ("purpose", "builds_stopped_before_run", "terminal_transport_expected", "panel_render_attribution"):
+            with self.subTest(field=field):
+                value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+                value[field] = None
+                self.assertFalse(mea._native_windows_conditions_complete(value))
+
     def test_native_windows_conditions_file_binds_without_rewriting_provenance(self):
         ref, _, manifest, server = self._positive_pair()
         host = self.root / "host.json"
@@ -829,6 +839,29 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertEqual(bound["match_keys"]["host_conditions"], NATIVE_WINDOWS_CONDITIONS)
         self.assertEqual(json.loads(host.read_text()), NATIVE_WINDOWS_CONDITIONS)
         self.assertEqual(receipt["host_conditions_sha256"], digest)
+
+    def test_native_windows_conditions_fail_closed_for_malformed_and_inconsistent_observations(self):
+        value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+        value["native_preflight"]["consoleSessionId"] = "two"
+        self.assertFalse(mea._native_windows_conditions_complete(value))
+        value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+        value["process_lasso"]["running"] = True
+        self.assertFalse(mea._native_windows_conditions_complete(value))
+        value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+        value["native_preflight"]["processLasso"]["running"] = True
+        self.assertFalse(mea._native_windows_conditions_complete(value))
+        value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+        value["native_preflight"]["processLasso"]["files"] = [{"path": "", "sha256": "bad"}]
+        self.assertFalse(mea._native_windows_conditions_complete(value))
+        value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+        value["dxdiag"][0]["cardName"] = "different"
+        self.assertFalse(mea._native_windows_conditions_complete(value))
+
+    def test_legacy_host_conditions_keep_recursive_strict_validation(self):
+        self.assertTrue(mea._host_conditions_complete(HOST_CONDITIONS))
+        invalid = json.loads(json.dumps(HOST_CONDITIONS))
+        invalid["nested"] = {"required": None}
+        self.assertFalse(mea._host_conditions_complete(invalid))
 
     def test_positive_binding_and_qualification_overhead_unavailable(self):
         ref, cand, manifest, server = self._positive_pair()

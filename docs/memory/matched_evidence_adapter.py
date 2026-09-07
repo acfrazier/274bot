@@ -196,6 +196,11 @@ def _deep_missing(value: Any) -> bool:
     return False
 
 
+def _native_windows_conditions_recognized(value: Any) -> bool:
+    """Treat the native marker as a distinct, fail-closed schema."""
+    return isinstance(value, dict) and "native_preflight" in value
+
+
 def _native_windows_conditions_complete(value: Any) -> bool:
     """Accept only the bounded native Windows observation shape."""
     if not isinstance(value, dict):
@@ -204,6 +209,11 @@ def _native_windows_conditions_complete(value: Any) -> bool:
         return False
     if type(value.get("user")) is not str or not value["user"]:
         return False
+    if type(value.get("purpose")) is not str or not value["purpose"]:
+        return False
+    for field in ("builds_stopped_before_run", "terminal_transport_expected", "panel_render_attribution"):
+        if type(value.get(field)) is not bool:
+            return False
     pre = value.get("native_preflight")
     if not isinstance(pre, dict):
         return False
@@ -265,8 +275,19 @@ def _native_windows_conditions_complete(value: Any) -> bool:
         return False
     if not isinstance(lasso.get("processes"), list):
         return False
+    if lasso["running"] and not lasso["processes"]:
+        return False
     if "files" in lasso and not isinstance(lasso["files"], list):
         return False
+    for file_entry in lasso.get("files", []):
+        if not isinstance(file_entry, dict):
+            return False
+        path = file_entry.get("path")
+        digest = file_entry.get("sha256")
+        if type(path) is not str or not path:
+            return False
+        if type(digest) is not str or len(digest) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digest):
+            return False
     dxdiag = pre.get("dxdiag")
     if not isinstance(dxdiag, list) or not dxdiag:
         return False
@@ -277,7 +298,9 @@ def _native_windows_conditions_complete(value: Any) -> bool:
             if type(display.get(field)) is not str or not display[field]:
                 return False
         for field in ("currentMode", "hybridGraphicsGPU", "monitorName"):
-            if field in display and display[field] is not None and type(display[field]) is not str:
+            if field in display and display[field] is not None and (
+                type(display[field]) is not str or not display[field]
+            ):
                 return False
     server = pre.get("server")
     if not isinstance(server, dict) or type(server.get("ProcessId")) is not int:
@@ -295,9 +318,19 @@ def _native_windows_conditions_complete(value: Any) -> bool:
             return False
         if not isinstance(duplicate.get("processes"), list):
             return False
-    if "dxdiag" in value and not isinstance(value["dxdiag"], list):
-        return False
+        if not _typed_equal(duplicate, lasso):
+            return False
+    if "dxdiag" in value:
+        if not isinstance(value["dxdiag"], list) or not _typed_subset_equal(value["dxdiag"], dxdiag):
+            return False
     return True
+
+
+def _host_conditions_complete(value: Any) -> bool:
+    """Validate native observations by schema; retain strict legacy behavior."""
+    if _native_windows_conditions_recognized(value):
+        return _native_windows_conditions_complete(value)
+    return isinstance(value, dict) and not _deep_missing(value)
 
 
 def _typed_equal(left, right):
@@ -307,6 +340,17 @@ def _typed_equal(left, right):
         return left.keys() == right.keys() and all(_typed_equal(left[k], right[k]) for k in left)
     if isinstance(left, list):
         return len(left) == len(right) and all(_typed_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def _typed_subset_equal(left, right):
+    """Compare a duplicate observation while allowing omitted optional fields."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return all(key in right and _typed_subset_equal(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_typed_subset_equal(a, b) for a, b in zip(left, right))
     return left == right
 
 
@@ -1058,14 +1102,12 @@ def _bind_side(
             hc = _load_json(hcp)
         except (OSError, json.JSONDecodeError) as exc:
             return _unavailable("host_conditions_unreadable", path=str(hcp), error=str(exc))
-        if not isinstance(hc, dict) or (
-            not _native_windows_conditions_complete(hc) and _deep_missing(hc)
-        ):
+        if not _host_conditions_complete(hc):
             return _unavailable("host_conditions_invalid", path=str(hcp))
         server_extras["host_conditions"] = hc
-    elif isinstance(meta.get("host_conditions"), dict) and not _deep_missing(meta.get("host_conditions")):
+    elif _host_conditions_complete(meta.get("host_conditions")):
         server_extras["host_conditions"] = meta.get("host_conditions")
-    elif isinstance(receipt.get("host_conditions"), dict) and not _deep_missing(receipt.get("host_conditions")):
+    elif _host_conditions_complete(receipt.get("host_conditions")):
         server_extras["host_conditions"] = receipt.get("host_conditions")
     else:
         return _unavailable("host_conditions_missing")
