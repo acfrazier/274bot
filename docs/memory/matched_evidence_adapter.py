@@ -368,7 +368,9 @@ def match_keys_complete(keys: dict) -> Optional[str]:
             # Panel launches are deliberately non-terminal. Explicit null is
             # an inapplicable geometry field, not missing evidence.
             if keys.get("frontend") == "panel" and keys.get("terminal") is False:
-                return key if val is not None else None
+                if val is not None:
+                    return key
+                continue
             if (
                 type(val) is not list
                 or len(val) != 2

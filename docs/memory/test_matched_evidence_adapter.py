@@ -1649,6 +1649,11 @@ class NativeRuntimeContractTests(unittest.TestCase):
         self.assertIsNone(
             mea.match_keys_complete(base)
         )
+        missing_post_terminal_size = dict(base, host_conditions=None)
+        self.assertEqual(
+            mea.match_keys_complete(missing_post_terminal_size),
+            'host_conditions',
+        )
         omitted = dict(base)
         omitted.pop('terminal_size')
         self.assertEqual(
