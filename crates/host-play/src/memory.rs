@@ -1489,7 +1489,17 @@ impl Run {
     fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
         // Slots first (progress evidence), then elapsed, then settings.
         let slots = self.qualification_slots(play);
+        // Bracket the harness Instant read in wall time. The launcher has a
+        // different elapsed-time origin and cannot supply this correlation.
+        let wall_before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs_f64());
         let elapsed_s = self.started.elapsed().as_secs_f64();
+        let wall_after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs_f64());
         // Child module can read private parent `Play.options` — no public API.
         let settings = qualification_settings_value(
             &play.options,
@@ -1500,7 +1510,12 @@ impl Run {
             self.diagnostics,
             self.failure_capture,
         );
-        let value = serialize_qualification_boundary(phase, slots, elapsed_s, Some(settings));
+        let mut value = serialize_qualification_boundary(phase, slots, elapsed_s, Some(settings));
+        value["elapsed_wall_bracket"] = serde_json::json!({
+            "before_unix_s": wall_before,
+            "after_unix_s": wall_after,
+            "meaning": "SystemTime reads bracketing this row's harness elapsed Instant read",
+        });
         writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
     }
 

@@ -58,6 +58,26 @@ class FakeChildrenRusage:
 
 
 class ConfigTests(unittest.TestCase):
+    def test_wall_bracket_encloses_sampling_but_not_later_pressure_work(self):
+        clock = Clock()
+        def sample(pid, timeout):
+            clock.sleep(0.01)
+            return _sample('same')
+        def pressure():
+            clock.sleep(0.02)
+            return {'status': 'unavailable'}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp) / 'samples.jsonl'
+            pa.run({'a': 1}, out, interval=1.0, duration=0.5,
+                   include_collector_self=False, sample_fn=sample,
+                   pressure_fn=pressure, monotonic_fn=clock.monotonic,
+                   sleep_fn=clock.sleep, utc_fn=lambda: str(clock.now))
+            rows = [json.loads(line) for line in out.read_text().splitlines()]
+            row = next(r for r in rows if r['type'] == 'sample')
+            self.assertEqual(float(row['acquisition_before_utc']), 0.0)
+            self.assertEqual(float(row['acquisition_after_utc']), 0.01)
+            self.assertEqual(float(row['utc']), 0.03)
+
     def test_parse_roles_ok(self):
         roles = pa.parse_role_specs(["game_server=123", "launcher=456"])
         self.assertEqual(roles, {"game_server": 123, "launcher": 456})

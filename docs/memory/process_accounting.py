@@ -489,6 +489,8 @@ def run(
                 "overwrite_permitted": False,
                 "bracketing": {
                     "tick": [
+                        "acquisition_before_utc",
+                        "acquisition_after_utc",
                         "scheduled_monotonic_s",
                         "acquisition_start_monotonic_s",
                         "acquisition_end_monotonic_s",
@@ -582,6 +584,7 @@ def run(
             tick_failed = False
             tick_reason: Optional[str] = None
             children_before = _children_rusage_snapshot(rusage_children_fn)
+            tick_wall_before = utc_fn()
             tick_acq_start = monotonic_fn()
 
             # Deterministic role order; per-role real brackets + remaining timeout recompute.
@@ -662,6 +665,7 @@ def run(
                     break
 
             tick_acq_end = monotonic_fn()
+            tick_wall_after = utc_fn()
             children_after = _children_rusage_snapshot(rusage_children_fn)
             children_cost = _children_cost_delta(children_before, children_after)
 
@@ -673,6 +677,8 @@ def run(
                 write(
                     {
                         "type": "sample",
+                        "acquisition_before_utc": tick_wall_before,
+                        "acquisition_after_utc": tick_wall_after,
                         "utc": utc_fn(),
                         "monotonic_s": tick_acq_start,
                         "elapsed_s": tick_acq_start - monotonic_start,
@@ -697,6 +703,8 @@ def run(
             write(
                 {
                     "type": "sample",
+                    "acquisition_before_utc": tick_wall_before,
+                    "acquisition_after_utc": tick_wall_after,
                     "utc": utc_fn(),
                     "monotonic_s": tick_acq_start,
                     "elapsed_s": tick_acq_start - monotonic_start,
