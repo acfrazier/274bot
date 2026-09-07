@@ -7,9 +7,14 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 client = { workspace = true }
-libc = "0.2"
 num-bigint = "0.4"
 vault = { path = "../vault" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Networking_WinSock"] }
 
 # Dev-only: real queue.on_submitted_work_done smoke (soft-skips without adapter).
 [dev-dependencies]

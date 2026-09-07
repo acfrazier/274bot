@@ -687,6 +687,10 @@ enum ParkWake {
 /// previous no-consumption wake (EOF or a packet still mid-flight) leaves
 /// the socket permanently readable, so re-polling it would busy-spin.
 /// No socket and no control channel falls back to sleeping the timeout.
+///
+/// Unix production body is stack `[pollfd; 2]` + inline `libc::poll` (no
+/// heap). Windows counterpart uses fixed `[WSAPOLLFD; 2]` + `WSAPoll`.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Duration) -> ParkWake {
     let mut fds = [libc::pollfd {
@@ -743,6 +747,80 @@ fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Dur
         }
     }
     ParkWake::Timeout
+}
+
+/// Windows park: fixed-size stack `WSAPoll` arrays (max 2 handles), same
+/// control-drain / socket-priority / timeout semantics as the Unix body.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn park(client: &Client, ctl: Option<&SlotPark>, poll_socket: bool, timeout: Duration) -> ParkWake {
+    use windows_sys::Win32::Networking::WinSock::{
+        WSAPoll, POLLERR, POLLHUP, POLLIN, POLLNVAL, SOCKET, WSAPOLLFD,
+    };
+    let mut fds = [WSAPOLLFD {
+        fd: SOCKET::MAX,
+        events: 0,
+        revents: 0,
+    }; 2];
+    let mut n = 0usize;
+    if let Some(ctl) = ctl {
+        fds[n] = WSAPOLLFD {
+            fd: ctl.raw_socket() as SOCKET,
+            events: POLLIN,
+            revents: 0,
+        };
+        n += 1;
+    }
+    let socket = if poll_socket {
+        client.stream.as_ref().map(|stream| {
+            fds[n] = WSAPOLLFD {
+                fd: stream.raw_socket() as SOCKET,
+                events: POLLIN,
+                revents: 0,
+            };
+            let idx = n;
+            n += 1;
+            idx
+        })
+    } else {
+        None
+    };
+    if n == 0 {
+        thread::sleep(timeout);
+        return ParkWake::Timeout;
+    }
+    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    let rc = unsafe { WSAPoll(fds.as_mut_ptr(), n as u32, ms) };
+    if rc > 0 {
+        let fired = |i: usize| fds[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL) != 0;
+        let control_fired = ctl.is_some() && fired(0);
+        if control_fired {
+            // Consume the kick bytes: an undrained control handle stays
+            // readable and would re-fire every park (busy loop).
+            ctl.unwrap().drain();
+        }
+        if let Some(i) = socket {
+            if fired(i) {
+                return ParkWake::Socket;
+            }
+        }
+        if control_fired {
+            return ParkWake::Control;
+        }
+    }
+    ParkWake::Timeout
+}
+
+#[cfg(test)]
+fn stream_wait_handle(stream: &client::io::ClientStream) -> slot_io::WaitHandle {
+    #[cfg(unix)]
+    {
+        stream.fd()
+    }
+    #[cfg(windows)]
+    {
+        stream.raw_socket()
+    }
 }
 
 /// Watch-only repaint bound: the rail/sidecar picture refreshes once a
@@ -2489,6 +2567,107 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("stop must still return the slot");
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn park_prefers_socket_when_control_and_socket_both_ready() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let stream =
+            client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        c.stream = Some(stream);
+        let (mut server, _) = listener.accept().unwrap();
+        let (wake, park_end) = crate::slot_io::wake_channel();
+
+        server.write_all(&[1]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let h = stream_wait_handle(c.stream.as_ref().unwrap());
+            if slot_io::wait_readable(&[h], Duration::from_millis(0))[0] {
+                break;
+            }
+            assert!(Instant::now() < deadline, "socket never ready");
+            thread::sleep(Duration::from_millis(5));
+        }
+        wake.wake();
+        assert_eq!(
+            park(&c, Some(&park_end), true, Duration::from_millis(1000)),
+            ParkWake::Socket,
+            "socket must win when both control and socket are ready"
+        );
+    }
+
+    #[test]
+    fn park_suppresses_socket_when_poll_socket_false() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let stream =
+            client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        c.stream = Some(stream);
+        let (mut server, _) = listener.accept().unwrap();
+        let (wake, park_end) = crate::slot_io::wake_channel();
+
+        server.write_all(&[1]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let h = stream_wait_handle(c.stream.as_ref().unwrap());
+            if slot_io::wait_readable(&[h], Duration::from_millis(0))[0] {
+                break;
+            }
+            assert!(Instant::now() < deadline, "socket never ready");
+            thread::sleep(Duration::from_millis(5));
+        }
+        // Socket is readable, but poll_socket=false (stalled path): only control
+        // is waited. Without a kick, park must time out instead of busy-spinning.
+        let start = Instant::now();
+        assert_eq!(
+            park(&c, Some(&park_end), false, Duration::from_millis(50)),
+            ParkWake::Timeout
+        );
+        assert!(start.elapsed() >= Duration::from_millis(30));
+        wake.wake();
+        assert_eq!(
+            park(&c, Some(&park_end), false, Duration::from_millis(1000)),
+            ParkWake::Control,
+            "with socket suppressed, a control kick must still wake as Control"
+        );
+    }
+
+    #[test]
+    fn park_no_fds_sleeps_timeout() {
+        let c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let start = Instant::now();
+        assert_eq!(
+            park(&c, None, true, Duration::from_millis(60)),
+            ParkWake::Timeout
+        );
+        assert!(start.elapsed() >= Duration::from_millis(40));
     }
 
     /// The guardian kicks from `client_frame` right after `after_drain`

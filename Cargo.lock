@@ -691,6 +691,7 @@ dependencies = [
  "softbuffer",
  "tungstenite",
  "wgpu",
+ "windows-sys 0.59.0",
  "winit",
 ]
 
@@ -2310,6 +2311,7 @@ dependencies = [
  "pollster",
  "vault",
  "wgpu",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
