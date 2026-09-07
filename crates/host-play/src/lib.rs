@@ -2477,13 +2477,55 @@ fn step_nav_bot<D: Driver>(
         edges: world.map(|w| w.graph.edges.as_slice()),
         ..TravelOptions::default()
     };
-    #[cfg(feature="memory-profile")]
-    if memory_diagnostics::enabled() {
-        options.on_event=Some(Box::new(|event|memory_diagnostics::navigation(name,||format!("{event:?}"))));
-        options.on_leg=Some(Box::new(|leg,phase|memory_diagnostics::navigation(name,||match leg {
-            nav::router::Leg::Walk{tiles,..}=>format!("Leg {phase:?} Walk tiles={} from={:?} to={:?}",tiles.len(),tiles.first(),tiles.last()),
-            nav::router::Leg::Transport{edge}=>format!("Leg {phase:?} {:?} id={} open_id={:?} from={:?} to={:?} option={}",edge.kind,edge.loc_id,edge.open_loc_id,edge.at,edge.to,edge.option),
-        })));
+    #[cfg(feature = "memory-profile")]
+    {
+        let diag = memory_diagnostics::enabled();
+        let cap = nav_capture::enabled();
+        if diag || cap {
+            options.on_event = Some(Box::new(move |event| {
+                if diag {
+                    memory_diagnostics::navigation(name, || format!("{event:?}"));
+                }
+                if cap {
+                    if let nav::traveller::TravelEvent::WalkAttempt {
+                        tick,
+                        at,
+                        aim,
+                        refusal,
+                    } = &event
+                    {
+                        nav_capture::walk_attempt(
+                            name,
+                            *tick,
+                            (at.x, at.z, at.level),
+                            (aim.x, aim.z, aim.level),
+                            refusal.as_ref().map(|r| format!("{r:?}")),
+                        );
+                    }
+                }
+            }));
+        }
+        if diag {
+            options.on_leg = Some(Box::new(|leg, phase| {
+                memory_diagnostics::navigation(name, || match leg {
+                    nav::router::Leg::Walk { tiles, .. } => format!(
+                        "Leg {phase:?} Walk tiles={} from={:?} to={:?}",
+                        tiles.len(),
+                        tiles.first(),
+                        tiles.last()
+                    ),
+                    nav::router::Leg::Transport { edge } => format!(
+                        "Leg {phase:?} {:?} id={} open_id={:?} from={:?} to={:?} option={}",
+                        edge.kind,
+                        edge.loc_id,
+                        edge.open_loc_id,
+                        edge.at,
+                        edge.to,
+                        edge.option
+                    ),
+                })
+            }));
+        }
     }
     let queued = {
         let mut all = navs.lock().unwrap();
@@ -3781,8 +3823,57 @@ fn spawn_slot_thread(
                             let running = script_running(&slot_scripts, name);
                             let inv = observe_script_inv(running, tick_edge, c);
                             observe_rebuild_snapshot(&mut nav_snapshot, c, tick_edge);
-                            #[cfg(feature="memory-profile")]
-                            nav_capture::observe(name,&nav_snapshot,c.draw,running);
+                            #[cfg(feature = "memory-profile")]
+                            if nav_capture::enabled() {
+                                // Default-off: no path clone / nav lock until capture is on.
+                                let (route_generation, route_dest, current_aim) = {
+                                    let all = slot_navs.lock().unwrap();
+                                    match all.get(name) {
+                                        Some(bot) => {
+                                            let dest = bot.route.as_ref().map(|r| {
+                                                (r.dest.x, r.dest.z, r.dest.level)
+                                            });
+                                            let aim = bot
+                                                .traveller
+                                                .current_aim()
+                                                .map(|t| (t.x, t.z, t.level));
+                                            let gen = bot.route.as_ref().map(|_| bot.route_generation);
+                                            (gen, dest, aim)
+                                        }
+                                        None => (None, None, None),
+                                    }
+                                };
+                                // Bound strings/path sample before retain — no full path clone/scan.
+                                let (guardian, pre_trunc) = nav_capture::GuardianObs::bounded(
+                                    status.kind.map(|k| format!("{k:?}")),
+                                    status.name.clone(),
+                                    status.ours,
+                                    status.handling,
+                                    status.hold,
+                                    status.cooldown,
+                                    format!("{:?}", status.claim),
+                                );
+                                let input = nav_capture::ObserveInput {
+                                    player_gen: c.gens.player,
+                                    chat_gen: c.gens.chat,
+                                    guardian,
+                                    try_move_path: nav_capture::BoundedPath::sample(
+                                        &c.try_move_path,
+                                        c.try_move_nearest,
+                                    ),
+                                    route_generation,
+                                    route_dest,
+                                    current_aim,
+                                    pre_truncated_strings: pre_trunc,
+                                };
+                                nav_capture::observe(
+                                    name,
+                                    &nav_snapshot,
+                                    c.draw,
+                                    running,
+                                    Some(&input),
+                                );
+                            }
                             let nav_armed = slot_navs.lock().unwrap().get(name).is_some_and(|b| {
                                 b.route.is_some() || b.bank_fetch.is_some()
                             });

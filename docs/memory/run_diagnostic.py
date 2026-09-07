@@ -8,7 +8,7 @@ def build_parser():
     p.add_argument('frontend', choices=['panel','tui'])
     p.add_argument('n', type=int, choices=[1,16,32,128])
     p.add_argument('workload', choices=['idle','seeded-idle','active','lifecycle'])
-    p.add_argument('--nav-captures', action='store_true', help='Diagnostic only: capture navigation checkpoints and failure, temporarily focusing affected bot')
+    p.add_argument('--nav-captures', action='store_true', help='Diagnostic only: navigation checkpoints/failure. Panel: requires --single-renderer or --focused-one (GPU focus). TUI: data-only JSON evidence under captures/ (no renderer select / screenshots)')
     p.add_argument('--single-renderer', action='store_true', help='Panel legacy: fixed slot zero draws; other slots simulate only (BOT_MEMORY_SINGLE_RENDERER)')
     p.add_argument('--focused-one', action='store_true', help='Panel: fixed slot0 full-rate GPU; others simulation-only (deterministic prefs)')
     p.add_argument('--focused-background', action='store_true', help='Panel: fixed slot0 full-rate; other slots draw at 1 fps skip-paint')
@@ -38,8 +38,9 @@ def validate_args(a, parser):
     if a.frontend != 'panel' and any(panel_modes):
         parser.error('panel render flags require frontend panel')
     one_draw = a.single_renderer or a.focused_one
-    if a.nav_captures and (a.frontend != 'panel' or not one_draw):
-        parser.error('--nav-captures requires panel --single-renderer or --focused-one')
+    if a.nav_captures and a.frontend == 'panel' and not one_draw:
+        parser.error('--nav-captures on panel requires --single-renderer or --focused-one')
+    # TUI --nav-captures is allowed as data-only diagnostic mode (no panel draw flags).
     if a.gpu_completion_profile:
         if a.frontend != 'panel':
             parser.error('--gpu-completion-profile requires frontend panel')

@@ -943,12 +943,46 @@ impl TuiSession {
             app.focused = Some(run.focus_index());
             if let Some(play) = self.play.as_mut() {
                 play.focus(&run.names[run.focus_index()]);
+                // Data-only nav capture: drain checkpoint JSON immediately —
+                // no GUI focus, no screenshots, no 25s terminal wait (panel
+                // keeps its own screenshot drain/timeout semantics).
+                if host_play::nav_capture::enabled() {
+                    let write_notes = host_play::nav_capture::drain_json_files();
+                    for note in &write_notes {
+                        eprintln!("[nav-capture] {note}");
+                    }
+                }
                 match run.poll(play) {
-                    Ok(true) => {
+                    Ok(true)
+                        if !host_play::nav_capture::enabled()
+                            || !host_play::nav_capture::pending() =>
+                    {
+                        if host_play::nav_capture::enabled() {
+                            let write_notes = host_play::nav_capture::drain_json_files();
+                            for note in &write_notes {
+                                eprintln!("[nav-capture] {note}");
+                            }
+                        }
                         eprintln!("PASS: memory tui observation complete");
                         std::process::exit(0);
                     }
-                    Ok(false) => {}
+                    Ok(_) => {}
+                    Err(error) if host_play::nav_capture::enabled() => {
+                        // Immediate drain of existing checkpoints / failure
+                        // boundary already latched by nav failure path.
+                        // Preserve original Err/exit1 — never hold for observe.
+                        let write_notes = host_play::nav_capture::drain_json_files();
+                        for note in &write_notes {
+                            eprintln!("[nav-capture] {note}");
+                        }
+                        if write_notes.is_empty() && !host_play::nav_capture::pending() {
+                            eprintln!(
+                                "[nav-capture] no checkpoint JSON drained (missing capture or already empty)"
+                            );
+                        }
+                        eprintln!("FAIL: memory tui: {error}");
+                        std::process::exit(1);
+                    }
                     Err(error) => {
                         eprintln!("FAIL: memory tui: {error}");
                         std::process::exit(1);

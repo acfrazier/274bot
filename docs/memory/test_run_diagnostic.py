@@ -57,6 +57,21 @@ class RunDiagnosticCli(unittest.TestCase):
         a = p.parse_args(["panel", "16", "idle", "--nav-captures", "--focused-one"])
         rd.validate_args(a, p)
 
+    def test_nav_captures_allows_tui_data_only(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a = p.parse_args(["tui", "16", "active", "--nav-captures", "--headless"])
+        rd.validate_args(a, p)
+        self.assertTrue(a.nav_captures)
+        self.assertEqual(a.frontend, "tui")
+        env = rd.build_child_env(a, "/tmp/nav-tui-run", base_env={"PATH": "/usr/bin", "HOME": "/tmp"})
+        self.assertEqual(env.get("BOT_NAV_CAPTURES"), "1")
+        self.assertIn("captures", env.get("274BOT_SMOKE_DIR", ""))
+        help_proc = run_cli("--help")
+        self.assertIn("TUI", help_proc.stdout)
+        self.assertIn("data-only", help_proc.stdout.lower())
+
     def test_requested_render_policy_metadata_names(self):
         import run_diagnostic as rd
 

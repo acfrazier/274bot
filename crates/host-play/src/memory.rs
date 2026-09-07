@@ -441,7 +441,9 @@ impl Run {
         use vault::{Profile, ProfileSettings, Vault};
 
         let names = crate::mint_live_names(config.n);
-        if frontend=="panel" {crate::nav_capture::enable(&names);}
+        // Opt-in BOT_NAV_CAPTURES: panel keeps GPU screenshot drain; TUI uses
+        // data-only JSON drain. enable() is a no-op unless the env is set.
+        crate::nav_capture::enable(&names);
         let diagnostics = std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1");
         // Resolved once at harness setup (not re-read per sample/failure).
         let failure_capture =
