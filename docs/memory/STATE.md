@@ -205,3 +205,58 @@ bounded diagnosis may continue after a failed proof. Historical state is evidenc
 Live task `t_672f4ac3` acknowledged concurrent Hermes test activity beginning
 2026-09-06T22:21:17Z. Its affected observations must remain diagnostic for resource/
 latency acceptance; preserve gameplay qualification separately. No blind reruns.
+
+## Matched shared-nav screen stopped on script failure (2026-09-07 UTC)
+
+Current Rust sources remain `6345fbc`, client `451759f2`; later commits are
+measurement tooling, Docker environment and reports. The reviewed immutable
+control/candidate binaries are recorded in [build manifest](shared-nav-build-manifest.json).
+Control is `d373ea0` (only shared-nav change reverted). Dedicated target directories
+avoided the preserved failed shared-target build attempt.
+
+Grok-4.5 approved per-slot scheduling tooling `fd8f907` and resource-tool hardening
+`bd5dc1e`. Resource numbers remain diagnostic: strict eligibility cannot be
+unlocked by an `overhead: measured` label; actual attributable overhead evidence
+support remains missing. Negative values, idle-budget misuse and non-increasing
+timestamps fail closed. Decode coverage still conservatively rejects lifetime
+cancellations; the qualified first control has no new cancellations in observe.
+
+The first quiet short screen (`t_54b3b727`) stopped after three attempted cells:
+
+- Control N1: exit 0, workload qualified; median RSS 367.125 MiB, CPU 0.0378257 cores.
+- Shared-nav N1: exit 0, workload qualified; median RSS 296.015625 MiB, CPU
+  0.0409057 cores. First-pair RSS difference is -71.109375 MiB, but CPU is
+  about +8.14%, outside the 5% margin. Both scheduling windows meet the target
+  with p99 bounds 25–26 ms. This is not accepted CPU/RSS savings, repeated-run
+  variation, overhead qualification or an absolute-budget pass.
+- Shared-nav N16: FAIL + exit 1 before observation completed. Exact failure:
+  `livefd010_5: script requested stop on tick 289; isolate stopping`.
+  All 16 were initially ready/active, but only about 110.56 seconds of observation
+  completed. No observe-end qualification exists. Do not claim N16 qualified.
+- Remaining control N16 and four overhead cells were not run. No retry until the
+  functional failure is understood. Raw artifacts are preserved under
+  `diagnostics/shared-nav-clean-screen-20260907T004029Z/` and its linked runs.
+
+Forensics card `t_872d244a` is read-only plus a scoped report. Existing clean
+artifacts retain the generic Stop line but not the script's stored stopReason or
+failure-time runtime snapshot. Do not assume a bank, navigation or food cause.
+A bounded failure-capture diagnostic may follow the evidence review; do not
+change loadouts, script timeouts or behavior to obtain a passing benchmark.
+Offline responsiveness-window task `t_3a521e21` follows the screen review; it may
+only qualify contained spans supported by the actual timestamps and counter
+accounting. Input has no events, and coarse decode bins cannot automatically
+prove the 2 ms paired regression margin.
+
+Linux environment follow-up `33ac6b5` / report correction `5c8f16d` passed
+Grok-4.5 review. Full host and memory-feature suites passed as non-root with the
+catalog mounted read-only. Mesa lavapipe makes the overlay test pass, but the
+full client suite fails `gpu_textured_shade_scales_texel_brightness` at
+`gpu_texture.rs:485`: shade 16 expected red near 223, got 255. Cause undiagnosed;
+no test weakening or native Linux GPU acceptance. Exact commands and image
+identities are in [Linux follow-up](linux-reference-followup.md).
+
+Operator noVNC viewer remains running on localhost6080 (old desktop image,
+runtime x11vnc fix applied); rebuilt desktop image is available separately.
+Existing Chroma service was not changed. These are ambient helpers, not free
+resources to omit from later accounting. No target-hardware, final matrix,
+lifecycle, 128-capacity, remaining-candidate or whole-branch acceptance yet.
