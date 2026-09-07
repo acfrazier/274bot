@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "date": "2026-09-07",
+  "scope": "diagnostic comparison; no performance or lifecycle acceptance",
+  "common": {
+    "host": "Windows 11 10.0.26100",
+    "binary_commit": "36825a9f0a07a19610439c691f6dfe3d2e1cbf48",
+    "binary_sha256": "87c24665563ef8a55751244a52f7d25c7edf68e3117e84f2ff464add596c71fb",
+    "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+    "backend": "Vulkan",
+    "present_mode": "Fifo",
+    "diagnostic": true,
+    "workload": "active",
+    "observed_seconds": "approximately 120",
+    "p99_method": "histogram bucket upper bound; not a precise percentile"
+  },
+  "runs": [
+    {"id":"open-nvidia","state":"open","adapter":"NVIDIA GeForce RTX 5060 Laptop GPU","client_ticks_s":49.0126503795,"gpu_callback_hz":49.0126973291,"interval_buckets_upper_ms":[10,20,25,40,50,100,250,500,1000,2000],"interval_bucket_counts":[133,271,5354,121,16,0,0,0,0,0,0],"p99_upper_ms":40,"gaps_250_500ms":0,"captures":3,"visual_proof":"all three open captures inspected"},
+    {"id":"open-intel","state":"open","adapter":"Intel(R) Graphics","client_ticks_s":48.9285420538,"gpu_callback_hz":48.9366348653,"interval_buckets_upper_ms":[10,20,25,40,50,100,250,500,1000,2000],"interval_bucket_counts":[127,129,5418,130,2,0,0,0,0,0,0],"p99_upper_ms":40,"gaps_250_500ms":0,"captures":3,"visual_proof":"all three open captures inspected"},
+    {"id":"closed-nvidia","state":"closed","adapter":"NVIDIA GeForce RTX 5060 Laptop GPU","client_ticks_s":28.1562866810,"gpu_callback_hz":28.2887815838,"interval_buckets_upper_ms":[10,20,25,40,50,100,250,500,1000,2000],"interval_bucket_counts":[139,203,2843,28,0,0,0,124,0,0,0],"p99_upper_ms":500,"gaps_250_500ms":124,"captures":1,"visual_proof":"scene-ready only; bank/return not reviewed","trace_acquire_p99_ms":429.7271,"trace_scene_p99_ms":423.0419,"issue":"closed-lid NVIDIA cadence degradation persists"},
+    {"id":"closed-intel","state":"closed","adapter":"Intel(R) Graphics","client_ticks_s":48.9023460488,"gpu_callback_hz":48.9017736150,"interval_buckets_upper_ms":[10,20,25,40,50,100,250,500,1000,2000],"interval_bucket_counts":[119,120,5429,120,1,0,0,0,0,0,0],"p99_upper_ms":40,"gaps_250_500ms":0,"captures":3,"visual_proof":"scene-ready, bank, and return inspected","trace_acquire_p99_ms":0.0258,"trace_scene_p99_ms":0.1489},
+    {"id":"reopened-nvidia","state":"reopened","adapter":"NVIDIA GeForce RTX 5060 Laptop GPU","client_ticks_s":48.8900101689,"gpu_callback_hz":48.8901042708,"interval_buckets_upper_ms":[10,20,25,40,50,100,250,500,1000,2000],"interval_bucket_counts":[84,155,5521,86,0,0,0,0,0,0,0],"p99_upper_ms":40,"gaps_250_500ms":0,"captures":1,"visual_proof":"not reviewed by root","trace_acquire_p99_ms":0.0392,"trace_scene_p99_ms":0.108}
+  ],
+  "derived_comparisons": {
+    "closed_nvidia_vs_open_nvidia_client_tick_change_percent": -42.5530,
+    "reopened_nvidia_vs_open_nvidia_client_tick_change_percent": -0.2502,
+    "closed_intel_vs_open_intel_client_tick_change_percent": -0.0535,
+    "interpretation": "A-B-A association is consistent with recovery after reopening, while the closed NVIDIA cell remains degraded; one run per cell cannot establish causality or a universal clamshell result."
+  },
+  "resources": {
+    "frontend_current_rss": "unavailable; do not substitute ru_maxrss/high-water",
+    "frontend_cpu": "not available as a separately attributable current frontend measure in these bindings",
+    "managed_resources": "available",
+    "roles": ["game_server","controller","bootstrap","launcher","collector"],
+    "reopened_nvidia_example": {"game_server_median_rss_bytes":481462272,"game_server_cpu_seconds":3.09375,"controller_median_rss_bytes":29683712,"controller_cpu_seconds":0.46875,"bootstrap_median_rss_bytes":70639616,"bootstrap_cpu_seconds":0.0,"launcher_median_rss_bytes":23080960,"launcher_cpu_seconds":0.0,"collector_median_rss_bytes":23924736,"collector_cpu_seconds":1.5625},
+    "caveat": "helper overhead is unmeasured; these are diagnostic role observations, not savings or accepted budgets"
+  },
+  "provenance": {
+    "reader": "901c2b0; approved actual Grok4.5 run400",
+    "reader_archive_sha256": "9798259155e03ecd041624802e0247ab21ce2005828538ecb567a745004a5654",
+    "bindings": 5,
+    "binding_status": "all bound and qualified; all final_acceptance_claim false; all original raw files unchanged",
+    "power": "AC lid action already DoNothing; only AC idle sleep changed 1800s to 0; AC1 and Ultimate Performance verified during closed Intel; battery unchanged",
+    "visual_coverage": "open all six captures, closed NVIDIA scene-ready only, closed Intel all three; reopened NVIDIA capture not reviewed"
+  },
+  "decision": "Keep explicit adapter selection diagnostic-only. Investigate/implement a Windows NVIDIA closed-lid presentation/scheduling discriminator before any production policy change; do not claim Intel selector as ordinary production selection or authorize another run from this report."
+}
