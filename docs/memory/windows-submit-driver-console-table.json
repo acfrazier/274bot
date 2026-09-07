@@ -76,8 +76,9 @@
       "receipt": "console/managed-panel-attribution-submit-3a2cf3e-61686-console-a/independent-binding-reader-2539cab.json",
       "qualified_workload": true,
       "exit_code": 0,
-      "observation_s": 119.0,
+      "observation_s": 119.7222399,
       "client_ticks_per_slot_s": 48.913217835644595,
+      "median_resident_bytes": 540743680,
       "gpu_callbacks_per_slot_s": 48.929923169604855,
       "native_driver_version": "32.0.16.1686",
       "submit_trace": {
