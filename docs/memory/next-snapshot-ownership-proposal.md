@@ -182,10 +182,35 @@ Slot thread (host run_client observe + frame):
 - `PubBlob { provenance, body: Arc<…> }`.
 - On rebuild of family F for owner O:
   1. Compute prospective provenance from `Client`.
-  2. If `FamilyPub` has F with equal provenance → `Arc::clone` into O’s
-     `GameSnapshot` field; do not walk.
-  3. Else walk/build a new `Vec`, wrap `Arc::new`, store in `FamilyPub`,
-     install in O.
+  2. If `FamilyPub` has F with equal provenance → `Arc::clone` the body into
+     O’s private field **and still advance O’s private gates/stamps exactly
+     as a successful walk would today** (see gate sync below); do not walk.
+  3. Else walk/build a **fresh** `Vec` (never mutate a shared Arc body), wrap
+     `Arc::new`, store in `FamilyPub`, install in O, and advance the same
+     gates/stamps.
+- **Gate/stamp sync on every install (share or walk):** Today
+  `InvIfaceGate::moved` always writes `iface`/`inv` from the client when
+  consulted, and `rebuild_loc` always updates `loc_gen` (via `track`) and
+  `loc_model_stamp` when it decides to rebuild. A share path that only
+  clones the Arc and skips the walk **must still** set on receiving owner O:
+  - Widgets: `widgets_gate.iface` / `widgets_gate.inv` ← `client.gens.iface` /
+    `client.gens.inv` (same side effect as `widgets_gate.moved`).
+  - Side tabs: `side_tabs_gate.iface` / `side_tabs_gate.inv` likewise.
+  - Loc: `loc_gen` ← `client.gens.scene` and `loc_model_stamp` ←
+    `loc_model_stamp(client)` (same as a dirty loc rebuild).
+  Without this, the next quiet-frame gate consult can re-fire a false
+  “moved,” or skip a real move, desyncing stale/dirty behavior versus
+  today’s rebuild path. Returning `true`/`false` from the family rebuild
+  helper must match today’s meaning (content installed vs gate said stay).
+- **Replace-only Arc bodies (non-mutation):** Today `rebuild_widgets` /
+  `rebuild_side_tabs` / `rebuild_loc` `clear()` + push **in place** on a
+  uniquely owned `Vec`. Under sharing that is forbidden on a multi-ref Arc:
+  never mutate through a shared `Arc` (`clear`, push, index mut, interior
+  field writes). On rebuild always allocate a fresh `Vec`, then
+  `Arc::new` / swap the field pointer. In-place `clear`+reuse only when
+  `Arc::get_mut` proves unique ownership is an **optional** micro-opt, not
+  required. Serde still emits the **inner sequence** shape (no Arc wrapper
+  in JSON).
 - Owners may still hold an **older** Arc after a new publication (previous
   epoch). That is intentional: distinct epochs stay readable until that owner
   rebuilds. Dropping the last Arc frees the body (bounded by owner count ×
@@ -194,6 +219,10 @@ Slot thread (host run_client observe + frame):
 - Host `SlotLoop::snapshot`, host-play `nav_snapshot`, and panel `nav_states`
   remain separate structs; only heavy vector fields become Arc-backed
   privately.
+- Live share rate also depends on **observe-before-drain vs after-drain**
+  epoch skew (frame order above): owners that rebuild on different packet
+  epochs will not match provenance until their stamps catch up; that is
+  expected, not a merge of epochs.
 
 ### Public API compatibility
 
@@ -239,14 +268,15 @@ RSS/CPU deltas require the matched experiment below.
 
 | | Today | Proposed |
 |---|---|---|
-| Walks per stamp change | Up to \(k\) full widget/loc walks | **One** walk + \(k\) Arc clones |
-| Quiet frames | Gates skip rebuild; \(k\) retained duplicate bodies | Gates skip; \(k\) Arc clones of **one** body |
-| Refcount | None | Atomic inc/dec on install/drop; should be cheap vs walk |
+| Walks per stamp change | Up to \(k\) full widget/loc walks | **One** walk + up to \(k\) Arc clones on **install** (owners that rebuild this stamp) |
+| Quiet frames (no install) | Gates skip rebuild; \(k\) retained duplicate bodies | Gates skip; owners **retain existing Arc refs** to one body — **no** per-quiet-frame Arc clones |
+| Refcount | None | Atomic inc/dec only on install / owner drop / epoch publish replace; should be cheap vs walk |
 | Risk | — | Extra indirection; must not add fleet-wide locks (slot-local only) |
 
-Net: should **reduce** CPU on multi-owner rebuild edges; quiet RSS depends on
-whether duplicate bodies were resident. Reject if clean CPU regresses beyond
-plan margins without clear allocation removal.
+Net: should **reduce** CPU on multi-owner rebuild edges; quiet frames stay
+gate-skip with stable refs (refcount churn is not a quiet-frame cost). Quiet
+RSS depends on whether duplicate bodies were resident. Reject if clean CPU
+regresses beyond plan margins without clear allocation removal.
 
 ## Old / new test oracle
 
@@ -268,6 +298,16 @@ plan margins without clear allocation removal.
 
 - When two owners rebuild with equal provenance, `Arc::ptr_eq` on internal
   bodies (test-only access or cfg).
+- Shared install advances the receiving owner’s private gates/stamps to the
+  same values a walk would (`widgets_gate` / `side_tabs_gate` iface+inv;
+  `loc_gen` + `loc_model_stamp`). After share, a second rebuild call with
+  **unchanged** client gens returns false (gate stay) without allocating or
+  walking; after a real iface/inv/scene/model move, rebuild runs and is not
+  stuck on a stale gate.
+- Bodies are replace-only: after share, mutating one owner’s view storage
+  must be impossible without unique ownership; a rebuild always installs a
+  new Arc pointer when content is rebuilt (no in-place clear of a shared
+  body).
 - When iface/inv (or loc stamp) moves, no ptr_eq with previous blob; content
   matches a fresh independent rebuild golden.
 - Owner A holding epoch E0 while owner B publishes E1: A still reads E0
@@ -332,9 +372,11 @@ targets **active IsolateBuf ~30.6 MiB** class churn
    shells, preserving distinct epochs and public read APIs.
 2. **Largest redundant family:** retained **WidgetView** vectors (with
    side-tab nested trees); LocView same pattern secondary.
-3. **Hard gates:** provenance audit for non-gen inputs; no mutable shared
-   `GameSnapshot`; no cross-client intern; no family dropping for script
-   subsets; no double-counting appearance/animation wins.
+3. **Hard gates:** provenance audit for non-gen inputs; share install must
+   sync owner family gates/stamps; replace-only Arc bodies (no shared
+   in-place mutate); no mutable shared `GameSnapshot`; no cross-client intern;
+   no family dropping for script subsets; no double-counting
+   appearance/animation wins.
 4. **If rejected:** consumed-buffer pool (≤2 per isolate, return after
    materialize) as the independent §4B candidate with the lifetime table
    above.
