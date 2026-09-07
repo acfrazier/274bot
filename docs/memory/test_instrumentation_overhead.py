@@ -48,8 +48,8 @@ def _roles(
             controller_pid,
             f"ctrl-{controller_pid}",
             1.0 * cpu_scale,
-            300_000_000 * rss_scale,
-            0.02 * cpu_scale,
+            27_000_000 * rss_scale,
+            0.004 * cpu_scale,
         ),
         "game_server": _role(
             "game_server",
@@ -208,8 +208,12 @@ def _native_keys(*, profiles_on: bool, n: int = 16, **overrides) -> dict:
             else [{"ordinal": 0, "status": "disabled_profile_off"}]
         ),
     }
+    renderers = keys.pop('renderer_config_by_ordinal')
+    renderers = [{**renderers[0], 'ordinal': i} for i in range(n)]
     keys.update(overrides)
-    return keys
+    return {'qualification_settings': keys,
+            'slot_runtime_settings_by_ordinal': [{'ordinal': i, 'draw': False, 'lowmem': True} for i in range(n)],
+            'renderer_config_by_ordinal': renderers}
 
 
 def _side(
@@ -290,8 +294,14 @@ def _side(
         "analysis": {
             "gates": {
                 "resources": {
-                    "cpu_cores": {"value": 0.03 * cpu_scale},
-                    "resident_median_bytes": {"value": 300_000_000 * cpu_scale},
+                    "cpu_cores": 0.03 * cpu_scale,
+                    "cpu_seconds": 3.6 * cpu_scale,
+                    "observation_s": 120.0,
+                    "resident_median_bytes": 300_000_000 * cpu_scale,
+                    "resident_max_bytes": 310_000_000 * cpu_scale,
+                    "peak_resident_bytes": 320_000_000 * cpu_scale,
+                    "contaminated": False,
+                    "status": "unavailable", "reason": "missing_resource_provenance",
                 },
                 "scheduling": {"status": endpoint_scheduling},
             }
@@ -334,6 +344,45 @@ def _quartet(**kwargs) -> list[dict]:
 
 
 class InstrumentationOverheadTests(unittest.TestCase):
+    def test_controller_cpu_cannot_drive_host_screen(self):
+        sides = _quartet()
+        for i in (1, 2):
+            sides[i]['managed_resources']['process']['roles']['controller']['cpu_cores_interval'] = [9.0, 10.0]
+        out = self._analyze(sides)
+        self.assertEqual(out['cpu_5pct_screen']['status'], 'within_5pct_empirical_screen')
+        self.assertIn('controller', out['helpers'])
+        self.assertEqual(out['host']['resident_median_bytes']['off_values'][0], 300_000_000)
+        self.assertEqual(out['helpers']['controller']['resident_median_bytes']['off_values'][0], 27_000_000)
+
+    def test_missing_rust_host_counters_does_not_fall_back_to_controller(self):
+        sides = _quartet()
+        sides[0]['analysis']['gates']['resources'].pop('cpu_cores')
+        out = self._analyze(sides)
+        self.assertEqual(out['reason'], 'process_role_metrics_unavailable')
+
+    def test_nested_native_runtime_and_env_mismatches_rejected(self):
+        for variant in ('port', 'extra_env', 'actual_flag', 'requested_flag', 'slot_runtime'):
+            with self.subTest(variant=variant):
+                sides = _quartet()
+                keys = sides[1]['native_qualification']['match_keys']
+                config = keys['qualification_settings']
+                if variant == 'port': config['port'] = 43595
+                if variant == 'extra_env': config['env_flags_requested']['OTHER'] = True
+                if variant == 'actual_flag': config['scheduling_profile_enabled'] = False
+                if variant == 'requested_flag': config['env_flags_requested']['BOT_SCHEDULING_PROFILE'] = False
+                if variant == 'slot_runtime': keys['slot_runtime_settings_by_ordinal'][0]['lowmem'] = False
+                out = self._analyze(sides)
+                self.assertIn(out['reason'], ('disallowed_native_match_key_mismatch', 'native_profile_contract_invalid'))
+
+    def test_cpu_range_crossing_margin_is_inconclusive(self):
+        out = ioh._cpu_screen([1.0, 1.03], [1.05, 1.06])
+        self.assertEqual(out['status'], 'inconclusive')
+        self.assertEqual(out['reason'], 'observed_ratio_range_crosses_margin')
+
+    def test_no_public_binding_injection(self):
+        with self.assertRaises(TypeError):
+            ioh.analyze_instrumentation_overhead(['a']*4, manifest_path='x', bind_side=lambda *a, **k: {})
+
     def _analyze(self, sides: list[dict], **kwargs):
         paths = [f"/fake/{i}.json" for i in range(4)]
 
@@ -341,17 +390,15 @@ class InstrumentationOverheadTests(unittest.TestCase):
             idx = paths.index(str(path))
             return sides[idx]
 
-        return ioh.analyze_instrumentation_overhead(
-            paths,
-            manifest_path="/fake/manifest.json",
-            bind_side=fake_bind,
-            **kwargs,
-        )
+        with mock.patch.object(ioh.mea, 'bind_side', side_effect=fake_bind):
+            return ioh.analyze_instrumentation_overhead(
+                paths, manifest_path="/fake/manifest.json", **kwargs)
 
     def test_happy_path_resource_deltas_and_cpu_screen(self):
         result = self._analyze(_quartet())
         self.assertEqual(result["status"], "resource_deltas_available", result)
-        self.assertTrue(result["instrumentation_overhead_measured"])
+        self.assertFalse(result["instrumentation_overhead_measured"])
+        self.assertTrue(result["resource_deltas_available"])
         self.assertFalse(result["final_acceptance_claim"])
         self.assertFalse(result["pair_eligible"])
         self.assertFalse(result["accepted_rss_saving"])
@@ -392,7 +439,6 @@ class InstrumentationOverheadTests(unittest.TestCase):
         out = ioh.analyze_instrumentation_overhead(
             ["a", "b", "c"],
             manifest_path="m",
-            bind_side=lambda *a, **k: {},
         )
         self.assertEqual(out["reason"], "require_exactly_four_ordered_receipt_paths")
 
@@ -530,19 +576,17 @@ class InstrumentationOverheadTests(unittest.TestCase):
 
     def test_cpu_regression_screen(self):
         sides = _quartet()
-        # Inflate ON controller cores beyond 5%.
+        # Inflate Rust host CPU; controller must not drive the screen.
         for idx in (1, 2):
-            role = sides[idx]["managed_resources"]["process"]["roles"]["controller"]
-            role["cpu_cores_interval"] = [0.05, 0.05]
-            role["cpu_s_enclosing_observation"] = 5.0
+            sides[idx]['analysis']['gates']['resources']['cpu_cores'] = 0.05
         result = self._analyze(sides)
         self.assertEqual(result["cpu_5pct_screen"]["status"], "regression", result["cpu_5pct_screen"])
 
     def test_cpu_inconclusive_on_wide_spread(self):
         sides = _quartet()
         # OFF replicates differ by >5%.
-        sides[0]["managed_resources"]["process"]["roles"]["controller"]["cpu_cores_interval"] = [0.02, 0.02]
-        sides[3]["managed_resources"]["process"]["roles"]["controller"]["cpu_cores_interval"] = [0.03, 0.03]
+        sides[0]["analysis"]["gates"]["resources"]["cpu_cores"] = 0.02
+        sides[3]["analysis"]["gates"]["resources"]["cpu_cores"] = 0.03
         result = self._analyze(sides)
         self.assertEqual(result["cpu_5pct_screen"]["status"], "inconclusive", result["cpu_5pct_screen"])
 
@@ -565,12 +609,8 @@ class InstrumentationOverheadTests(unittest.TestCase):
             return _quartet()[len(called) - 1]
 
         paths = [f"/p/{i}" for i in range(4)]
-        ioh.analyze_instrumentation_overhead(
-            paths,
-            manifest_path="/manifest.json",
-            bind_side=tracking_bind,
-            role="candidate",
-        )
+        with mock.patch.object(ioh.mea, 'bind_side', side_effect=tracking_bind):
+            ioh.analyze_instrumentation_overhead(paths, manifest_path="/manifest.json", role="candidate")
         self.assertEqual(len(called), 4)
         self.assertTrue(all(c[1] == "candidate" for c in called))
         self.assertTrue(all(c[2] == "/manifest.json" for c in called))
@@ -580,7 +620,8 @@ class InstrumentationOverheadTests(unittest.TestCase):
         for s in sides:
             s["n"] = 1
             s["match_keys"]["n"] = 1
-            s["native_qualification"]["match_keys"]["n"] = 1
+            s["native_qualification"]["match_keys"]["qualification_settings"]["n"] = 1
+            s["native_qualification"]["match_keys"]["renderer_config_by_ordinal"] = s["native_qualification"]["match_keys"]["renderer_config_by_ordinal"][:1]
         result = self._analyze(sides, expected_n=16)
         self.assertEqual(result["status"], "partial", result)
         self.assertFalse(result["instrumentation_overhead_measured"])

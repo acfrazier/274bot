@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import pathlib
 import sys
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 ROOT = pathlib.Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -76,7 +76,7 @@ ALLOWED_NATIVE_KEY_DIFFS = frozenset(
     }
 )
 
-HOST_ROLE = "controller"
+HOST_ROLE = "rust_host"
 SERVER_ROLE = "game_server"
 OWNED_ROLES_PID_MAY_DIFFER = frozenset({"controller", "launcher", "collector"})
 # Server + ambient identities must be equal across the quartet.
@@ -213,7 +213,7 @@ def _role_metrics(role_row: Mapping[str, Any]) -> Optional[dict]:
         if cores_lo is not None and cores_hi is not None
         else None,
         # Prefer upper core bound (conservative) when screening ratios.
-        "cpu_cores_conservative": cores_hi
+        "cpu_cores_comparison_value": cores_hi
         if cores_hi is not None
         else None,
     }
@@ -232,46 +232,34 @@ def _extract_cell_resources(side: Mapping[str, Any]) -> Optional[dict]:
         if metrics is None:
             return None
         roles_out[name] = metrics
-    if HOST_ROLE not in roles_out or SERVER_ROLE not in roles_out:
+    if not {'controller', 'launcher', 'collector', SERVER_ROLE}.issubset(roles_out):
         return None
-    helpers = {
-        name: metrics
-        for name, metrics in roles_out.items()
-        if name not in (HOST_ROLE, SERVER_ROLE)
+    resources = side.get('analysis', {}).get('gates', {}).get('resources', {})
+    # The old resource gate stays unavailable until overhead is measured. Its
+    # numeric host counters are usable here only after independent side/native/
+    # cache/process qualification; do not replace this owner with a helper.
+    required = ('cpu_cores', 'cpu_seconds', 'observation_s', 'resident_median_bytes',
+                'resident_max_bytes', 'peak_resident_bytes')
+    numbers = {key: _finite_nonneg(resources.get(key)) for key in required}
+    if (any(value is None for value in numbers.values())
+            or numbers['observation_s'] <= 0 or resources.get('contaminated') is not False):
+        return None
+    host = {
+        'source': 'samples.jsonl_via_independently_bound_analysis',
+        **numbers,
+        'cpu_s_enclosing_observation': numbers['cpu_seconds'],
+        'cpu_cores_comparison_value': numbers['cpu_cores'],
+        'cpu_endpoint_semantics': 'host sample counter delta / monotonic sampled span; point estimate',
+        'sampled_resident_peak_bytes': numbers['resident_max_bytes'],
     }
-    # Separate launcher host samples (samples.jsonl) — never subtract from roles.
-    samples_host = None
-    analysis = side.get("analysis") if isinstance(side.get("analysis"), dict) else {}
-    gates = analysis.get("gates") if isinstance(analysis.get("gates"), dict) else {}
-    resources = gates.get("resources") if isinstance(gates.get("resources"), dict) else {}
-    cpu_cores = resources.get("cpu_cores") if isinstance(resources, dict) else None
-    if isinstance(cpu_cores, dict):
-        cpu_val = _finite_nonneg(cpu_cores.get("value"))
-    else:
-        cpu_val = _finite_nonneg(cpu_cores)
-    rss_val = resources.get("resident_median_bytes") if isinstance(resources, dict) else None
-    if isinstance(rss_val, dict):
-        rss_val = rss_val.get("value")
-    rss_val = _finite_nonneg(rss_val)
-    if cpu_val is not None or rss_val is not None:
-        samples_host = {
-            "source": "samples.jsonl_via_analysis_gates_resources",
-            "cpu_cores": cpu_val,
-            "resident_median_bytes": rss_val,
-            "note": (
-                "Diagnostic host process counters from the run sampler; "
-                "not subtracted from continuous role accounting and not an "
-                "accepted RSS saving."
-            ),
-        }
     return {
-        "host": {"role": HOST_ROLE, **roles_out[HOST_ROLE]},
-        "server": {"role": SERVER_ROLE, **roles_out[SERVER_ROLE]},
-        "helpers": helpers,
-        "roles": roles_out,
-        "samples_host_process": samples_host,
-        "process_backend": process.get("process_backend"),
-        "continuous_coverage": process.get("continuous_coverage") is True,
+        'host': host,
+        'server': {'role': SERVER_ROLE, **roles_out[SERVER_ROLE]},
+        'helpers': {name: value for name, value in roles_out.items() if name != SERVER_ROLE},
+        'roles': roles_out,
+        'metric_owners': {**roles_out, HOST_ROLE: host},
+        'process_backend': process.get('process_backend'),
+        'continuous_coverage': process.get('continuous_coverage') is True,
     }
 
 
@@ -341,11 +329,11 @@ def _cpu_screen(off_vals: Sequence[float], on_vals: Sequence[float]) -> dict:
         )
         return out
     if conservative_ratio > CPU_SCREEN_RATIO:
-        out["status"] = "regression"
-        out["reason"] = (
-            f"conservative_ONmax/OFFmin={conservative_ratio:.6f} "
-            f"> {CPU_SCREEN_RATIO}"
-        )
+        best_ratio = min(on_vals) / max(off_vals)
+        out['on_min_over_off_max'] = best_ratio
+        out['status'] = 'regression' if best_ratio > CPU_SCREEN_RATIO else 'inconclusive'
+        out['reason'] = ('entire_observed_ratio_range_exceeds_margin' if best_ratio > CPU_SCREEN_RATIO
+                         else 'observed_ratio_range_crosses_margin')
         return out
     out["status"] = "within_5pct_empirical_screen"
     out["reason"] = (
@@ -471,9 +459,36 @@ def _diff_keys(left: Mapping[str, Any], right: Mapping[str, Any], allowed: froze
     for key in names:
         if key in allowed:
             continue
-        if left.get(key) != right.get(key):
+        if not mea._typed_equal(left.get(key), right.get(key)):
             bad.append(key)
     return bad
+
+
+def _native_invariant(side, setting):
+    keys = side['native_qualification']['match_keys']
+    if not isinstance(keys, dict) or not isinstance(keys.get('qualification_settings'), dict):
+        raise ValueError('nested qualification_settings required')
+    normalized = dict(keys)
+    config = dict(keys['qualification_settings'])
+    env = config.get('env_flags_requested')
+    if not isinstance(env, dict):
+        raise ValueError('requested profile environment flags missing')
+    env = dict(env)
+    for key in PROFILE_GROUP_KEYS + (GPU_PROFILE_KEY,):
+        expected = setting == 'on' and key != GPU_PROFILE_KEY
+        if config.pop(key + '_enabled', None) is not expected:
+            raise ValueError('actual profile flag disagrees: ' + key)
+        if env.pop('BOT_' + key.upper(), None) is not expected:
+            raise ValueError('requested profile flag disagrees: ' + key)
+    config['env_flags_requested'] = env  # all other flags remain exact-match
+    normalized['qualification_settings'] = config
+    renderers = normalized.pop('renderer_config_by_ordinal', None)
+    expected_status = 'enabled' if setting == 'on' else 'disabled_profile_off'
+    if (not isinstance(renderers, list) or len(renderers) != side['n']
+            or any(not isinstance(row, dict) or row.get('ordinal') != i
+                   or row.get('status') != expected_status for i, row in enumerate(renderers))):
+        raise ValueError('renderer ordinal or instrumentation availability invalid')
+    return normalized
 
 
 def _identity_check(role_sets: Sequence[Mapping[str, Mapping[str, Any]]]) -> Optional[str]:
@@ -512,9 +527,8 @@ def _bind_one(
     diagnostics: bool,
     server_identity_path: Optional[pathlib.Path | str],
     host_conditions_path: Optional[pathlib.Path | str],
-    bind_side: Callable[..., dict],
 ) -> dict:
-    return bind_side(
+    return mea.bind_side(
         receipt_path,
         role=role,
         manifest_path=manifest_path,
@@ -535,18 +549,13 @@ def analyze_instrumentation_overhead(
     server_identity_path: Optional[pathlib.Path | str] = None,
     host_conditions_path: Optional[pathlib.Path | str] = None,
     expected_n: int = EXPECTED_PROTOCOL_N,
-    bind_side: Optional[Callable[..., dict]] = None,
 ) -> dict:
     """Analyze the predeclared OFF/ON/ON/OFF same-binary overhead quartet.
 
     ``receipt_paths`` must be exactly four paths in order off_a, on_a, on_b,
-    off_b. Each side is bound by invoking ``bind_side`` (default:
-    ``matched_evidence_adapter.bind_side``). Caller-supplied bound dicts or
+    off_b. Each side is bound by invoking ``matched_evidence_adapter.bind_side``. Caller-supplied bound dicts or
     overhead booleans are never trusted as evidence.
     """
-    if bind_side is None:
-        bind_side = mea.bind_side
-
     if not isinstance(receipt_paths, (list, tuple)) or len(receipt_paths) != 4:
         return _unavailable(
             "require_exactly_four_ordered_receipt_paths",
@@ -564,7 +573,6 @@ def analyze_instrumentation_overhead(
             diagnostics=diagnostics,
             server_identity_path=server_identity_path,
             host_conditions_path=host_conditions_path,
-            bind_side=bind_side,
         )
         if not isinstance(side, dict):
             return _unavailable("bind_side_returned_non_object", index=idx, path=str(path))
@@ -737,29 +745,24 @@ def analyze_instrumentation_overhead(
                 partial=partial,
             )
 
-    # Native runtime/cache/host/server settings equality by ordinal (except allowed).
-    base_native = sides[0].get("native_qualification") or {}
-    base_nk = base_native.get("match_keys") if isinstance(base_native, Mapping) else None
-    if not isinstance(base_nk, Mapping):
-        return _unavailable("native_match_keys_missing", partial=partial)
-    for i, side in enumerate(sides[1:], start=1):
-        native = side.get("native_qualification") or {}
-        nk = native.get("match_keys") if isinstance(native, Mapping) else None
-        if not isinstance(nk, Mapping):
-            return _unavailable(
-                "native_match_keys_missing",
-                label=EXPECTED_CELL_LABELS[i],
-                partial=partial,
-            )
-        bad = _diff_keys(base_nk, nk, ALLOWED_NATIVE_KEY_DIFFS)
-        if bad:
-            return _unavailable(
-                "disallowed_native_match_key_mismatch",
-                label=EXPECTED_CELL_LABELS[i],
-                differing_keys=bad,
-                remaining_conditions=["native_settings_equal_except_allowed_profile_toggles"],
-                partial=partial,
-            )
+    if any(side.get('match_keys', {}).get('frontend') != 'tui' for side in sides):
+        return _unavailable('protocol_requires_tui', partial=partial)
+
+    # Native keys are nested. Strip only the exact profile toggles, after
+    # checking that actual flags and requested flags agree with each cell.
+    native_invariants = []
+    for i, side in enumerate(sides):
+        try:
+            native_invariants.append(_native_invariant(side, settings[i]))
+        except (ValueError, TypeError, KeyError) as error:
+            return _unavailable('native_profile_contract_invalid', label=EXPECTED_CELL_LABELS[i], detail=str(error), partial=partial)
+    for i, value in enumerate(native_invariants[1:], 1):
+        if not mea._typed_equal(native_invariants[0], value):
+            return _unavailable('disallowed_native_match_key_mismatch', label=EXPECTED_CELL_LABELS[i], partial=partial)
+    # ON observations must report the same actual renderer configuration.
+    on_renderers = [sides[i]['native_qualification']['match_keys']['renderer_config_by_ordinal'] for i in (1, 2)]
+    if not mea._typed_equal(*on_renderers):
+        return _unavailable('on_renderer_settings_mismatch', partial=partial)
 
     # n equality + protocol expectation.
     ns = [side.get("n") for side in sides]
@@ -805,33 +808,33 @@ def analyze_instrumentation_overhead(
     partial["latency_overhead"] = latency
 
     # Per-role observed values across OFF/ON replicates.
-    role_names = sorted(cell_resources[0]["roles"])
+    role_names = sorted(cell_resources[0]["metric_owners"])
     per_role: dict[str, Any] = {}
     for name in role_names:
         off_cpu = [
-            cell_resources[0]["roles"][name]["cpu_s_enclosing_observation"],
-            cell_resources[3]["roles"][name]["cpu_s_enclosing_observation"],
+            cell_resources[0]["metric_owners"][name]["cpu_s_enclosing_observation"],
+            cell_resources[3]["metric_owners"][name]["cpu_s_enclosing_observation"],
         ]
         on_cpu = [
-            cell_resources[1]["roles"][name]["cpu_s_enclosing_observation"],
-            cell_resources[2]["roles"][name]["cpu_s_enclosing_observation"],
+            cell_resources[1]["metric_owners"][name]["cpu_s_enclosing_observation"],
+            cell_resources[2]["metric_owners"][name]["cpu_s_enclosing_observation"],
         ]
         off_rss = [
-            cell_resources[0]["roles"][name]["resident_median_bytes"],
-            cell_resources[3]["roles"][name]["resident_median_bytes"],
+            cell_resources[0]["metric_owners"][name]["resident_median_bytes"],
+            cell_resources[3]["metric_owners"][name]["resident_median_bytes"],
         ]
         on_rss = [
-            cell_resources[1]["roles"][name]["resident_median_bytes"],
-            cell_resources[2]["roles"][name]["resident_median_bytes"],
+            cell_resources[1]["metric_owners"][name]["resident_median_bytes"],
+            cell_resources[2]["metric_owners"][name]["resident_median_bytes"],
         ]
         off_cores = []
         on_cores = []
         for idx in (0, 3):
-            c = cell_resources[idx]["roles"][name].get("cpu_cores_conservative")
+            c = cell_resources[idx]["metric_owners"][name].get("cpu_cores_comparison_value")
             if c is not None:
                 off_cores.append(c)
         for idx in (1, 2):
-            c = cell_resources[idx]["roles"][name].get("cpu_cores_conservative")
+            c = cell_resources[idx]["metric_owners"][name].get("cpu_cores_comparison_value")
             if c is not None:
                 on_cores.append(c)
         category = (
@@ -870,9 +873,11 @@ def analyze_instrumentation_overhead(
                     "an accepted RSS saving"
                 ),
             },
-            "cpu_cores_conservative": {
+            "cpu_cores_comparison_value": {
                 "off_values": off_cores,
                 "on_values": on_cores,
+                "endpoint_semantics": ('host sampled-span point estimates' if name == HOST_ROLE
+                                       else 'helper/server acquisition-interval upper endpoints; full intervals retained per cell'),
                 "paired_deltas_on_minus_off": (
                     {
                         "off_a_to_on_a": _paired_delta(on_cores[0], off_cores[0]),
@@ -884,31 +889,12 @@ def analyze_instrumentation_overhead(
             },
         }
 
-    # Host CPU screen uses controller conservative cores when available, else cpu_s.
+    # Only the independently bound Rust process counters drive the host screen.
     host = per_role[HOST_ROLE]
-    host_off_cores = host["cpu_cores_conservative"]["off_values"]
-    host_on_cores = host["cpu_cores_conservative"]["on_values"]
-    if len(host_off_cores) == 2 and len(host_on_cores) == 2:
-        cpu_screen = _cpu_screen(host_off_cores, host_on_cores)
-        cpu_screen["metric"] = "controller_cpu_cores_conservative"
-    else:
-        cpu_screen = _cpu_screen(host["cpu_s"]["off_values"], host["cpu_s"]["on_values"])
-        cpu_screen["metric"] = "controller_cpu_s_enclosing_observation"
-
-    # Samples-host process (analysis gates) deltas — separate channel.
-    samples_off = []
-    samples_on = []
-    for idx, bucket in ((0, samples_off), (3, samples_off), (1, samples_on), (2, samples_on)):
-        sh = cell_resources[idx].get("samples_host_process")
-        if isinstance(sh, Mapping) and sh.get("cpu_cores") is not None:
-            bucket.append(sh["cpu_cores"])
-    samples_host_screen = None
-    if len(samples_off) == 2 and len(samples_on) == 2:
-        samples_host_screen = _cpu_screen(samples_off, samples_on)
-        samples_host_screen["metric"] = "samples_jsonl_host_cpu_cores"
-        samples_host_screen["note"] = (
-            "Separate from continuous controller role accounting; not subtracted"
-        )
+    cpu_screen = _cpu_screen(host['cpu_cores_comparison_value']['off_values'],
+                             host['cpu_cores_comparison_value']['on_values'])
+    cpu_screen['metric'] = 'rust_host_cpu_cores_from_samples_jsonl'
+    cpu_screen['endpoint_semantics'] = 'host monotonic sampled spans; not helper acquisition intervals'
 
     helpers_report = {
         name: per_role[name]
@@ -933,8 +919,9 @@ def analyze_instrumentation_overhead(
         "final_acceptance_claim": False,
         "pair_eligible": False,
         "accepted_rss_saving": False,
-        "instrumentation_overhead_measured": overall_measured,
-        "instrumentation_overhead_measured_means": (
+        "resource_deltas_available": overall_measured,
+        "instrumentation_overhead_measured": False,
+        "resource_deltas_available_means": (
             "four qualified same-binary OFF/ON/ON/OFF cells produced separable "
             "host/server/helper resource deltas under continuous process evidence; "
             "does not prove sampler causal perturbation, latency p99 overhead, "
@@ -967,10 +954,9 @@ def analyze_instrumentation_overhead(
         "helpers": helpers_report,
         "per_role": per_role,
         "cpu_5pct_screen": cpu_screen,
-        "samples_host_cpu_5pct_screen": samples_host_screen,
-        "latency_overhead": latency,
+                "latency_overhead": latency,
         "renderer_notes": renderer_notes,
-        "remaining_conditions": remaining,
+        "remaining_conditions": remaining + ["latency_overhead_unmeasured", "sampler_causal_perturbation_unmeasured"],
         "partial": partial,
         "notes": [
             "No subtraction of helper CPU/RSS or malloc bytes from host.",
