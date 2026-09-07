@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "status": "stopped_preflight",
+  "performance_acceptance": false,
+  "attempted_cells": 1,
+  "completed_cells": 0,
+  "qualified_cells": 0,
+  "sequence": [
+    {"index": 1, "role": "reference", "n": 16, "id": "reference_n16_01", "status": "preflight_failed", "launched": false, "error": "invalid client sources"}
+  ],
+  "remaining_sequence_not_run": [
+    "candidate_n16_02", "candidate_n16_03", "reference_n16_04",
+    "reference_n1_05", "candidate_n1_06", "candidate_n1_07", "reference_n1_08"
+  ],
+  "metrics": null,
+  "failure_artifact": "diagnostics/borrowed-fingerprint-native-screen-20260907/cells/reference_n16_01/cell_report.json",
+  "failure_boundary": "preflight before launcher start; no silent retry"
+}
