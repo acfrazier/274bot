@@ -5,9 +5,49 @@ import unittest
 from unittest import mock
 
 import managed_receipt as mr
+import cache_provenance as cp
 
 
 class ManagedReceiptTests(unittest.TestCase):
+    def add_cache_launch(self):
+        cache, unpack = self.root/'cache', self.root/'unpack'
+        cache.mkdir()
+        unpack.mkdir()
+        for name in cp.JAGS:
+            (cache/name).write_text(name)
+        snapshot = unpack/cp.file_sha256(cache/'versionlist')[:16]
+        snapshot.mkdir()
+        for name in cp.SNAPSHOTS:
+            (snapshot/name).write_text(name)
+        artifact = self.root/'cache.json'
+        artifact.write_text(json.dumps(cp.capture(cache, unpack)))
+        # Separate launch artifact; no retroactive amendment of the first one.
+        self.launch_path = self.root/'cache-launch.json'
+        self.utc.return_value = '2026-09-07T04:00:00Z'
+        self.launch = mr.create_launch(
+            self.launch_path, cell_id='cache_cell', index=2, kind='matched',
+            effective_cli=self.argv, binary=self.binary,
+            manifest_path=self.root/'manifest.json',
+            server_identity_path=self.root/'server_identity.json',
+            host_conditions_path=self.root/'host_conditions.json',
+            sampler_config={'interval_s':1}, cache_provenance_path=artifact)
+        self.utc.return_value = '2026-09-07T04:01:01Z'
+        return cache, artifact
+
+    def test_cache_binding_verified_on_both_sides_of_launch(self):
+        self.add_cache_launch()
+        result = self.finish()
+        self.assertEqual(result['status'], 'completed', result['binding_errors'])
+        self.assertIn('cache_verified_before_launch_utc', result)
+        self.assertIn('cache_verified_after_completion_utc', result)
+
+    def test_changed_cache_file_or_snapshot_fails_completion(self):
+        cache, artifact = self.add_cache_launch()
+        (cache/'config').write_text('changed bytes')
+        result = self.finish()
+        self.assertIn('cache_provenance_changed_or_invalid', result['binding_errors'])
+        self.assertNotIn('cache_verified_after_completion_utc', result)
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

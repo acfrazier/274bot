@@ -33,6 +33,13 @@ class CacheProvenanceTests(unittest.TestCase):
         cp.recheck(value)
         self.assertEqual(value, cp.capture(self.cache, self.unpack))
 
+    def test_verify_recomputes_complete_scope_not_only_supplied_files(self):
+        value = cp.capture(self.cache, self.unpack)
+        self.assertEqual(cp.verify_snapshot(value), value)
+        value['files'].pop()
+        with self.assertRaisesRegex(ValueError, 'complete current fingerprint'):
+            cp.verify_snapshot(value)
+
     def test_missing_required_snapshot_rejected(self):
         (self.snapshot / 'models.bin').unlink()
         with self.assertRaisesRegex(ValueError, 'required cache input missing'):

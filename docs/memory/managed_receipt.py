@@ -10,6 +10,7 @@ import math
 import pathlib
 
 from build_provenance import file_sha256
+import cache_provenance as cp
 
 
 RAW_FILES = ('metadata.json', 'samples.jsonl', 'samples.qualification.jsonl')
@@ -39,7 +40,7 @@ def _timestamp(value):
 
 def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
                   manifest_path, server_identity_path, host_conditions_path,
-                  sampler_config):
+                  sampler_config, cache_provenance_path=None):
     """Call immediately before starting the launcher; never overwrites a cell."""
     if not isinstance(cell_id, str) or not cell_id or type(index) is not int or index < 1:
         raise ValueError('invalid cell id/index')
@@ -55,6 +56,16 @@ def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
              'effective_cli': effective_cli, 'binary': str(pathlib.Path(binary).resolve(strict=True)),
              'sampler': sampler_config, 'performance_acceptance': False}
     value['binary_sha256'] = file_sha256(value['binary'])
+    if cache_provenance_path is not None:
+        cache_path = pathlib.Path(cache_provenance_path).resolve(strict=True)
+        cache_sha = file_sha256(cache_path)
+        cache_value = cp.verify_snapshot(_load(cache_path))
+        if file_sha256(cache_path) != cache_sha:
+            raise ValueError('cache snapshot changed during launch verification')
+        value['cache_provenance_path'] = str(cache_path)
+        value['cache_provenance_sha256'] = cache_sha
+        value['cache_content_identity_sha256'] = cache_value['content_identity_sha256']
+        value['cache_verified_before_launch_utc'] = utc_now()
     for label, source in (('manifest', manifest_path), ('server_identity', server_identity_path),
                           ('host_conditions', host_conditions_path)):
         source = pathlib.Path(source).resolve(strict=True)
@@ -139,6 +150,18 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result):
             errors.append(label + '_unreadable_at_completion')
     if file_sha256(launch_path) != launch_sha:
         errors.append('launch_changed_during_completion')
+    if 'cache_provenance_path' in launch:
+        try:
+            cache_path = pathlib.Path(launch['cache_provenance_path'])
+            if file_sha256(cache_path) != launch['cache_provenance_sha256']:
+                raise ValueError('snapshot changed')
+            cache_value = cp.verify_snapshot(_load(cache_path))
+            if (file_sha256(cache_path) != launch['cache_provenance_sha256']
+                    or cache_value['content_identity_sha256'] != launch['cache_content_identity_sha256']):
+                raise ValueError('cache identity changed')
+            receipt['cache_verified_after_completion_utc'] = utc_now()
+        except (ValueError, OSError, TypeError, KeyError):
+            errors.append('cache_provenance_changed_or_invalid')
     if run_dir is not None:
         for name, digest in receipt['raw_hashes'].items():
             try:

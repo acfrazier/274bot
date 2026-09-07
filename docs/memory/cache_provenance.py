@@ -15,6 +15,16 @@ SNAPSHOTS = ('models.bin', 'anims.bin')
 STORE_FILES = ('main_file_cache.dat', *(f'main_file_cache.idx{i}' for i in range(1, 5)))
 
 
+def verify_snapshot(value):
+    """Recompute the complete scope; an omitted file cannot evade recheck."""
+    if not isinstance(value, dict):
+        raise ValueError('cache snapshot must be an object')
+    actual = capture(value['cache_dir_requested'], value['unpack_root_requested'])
+    if json.dumps(actual, sort_keys=True, allow_nan=False) != json.dumps(value, sort_keys=True, allow_nan=False):
+        raise ValueError('cache snapshot differs from complete current fingerprint')
+    return actual
+
+
 def capture(cache_dir, unpack_root):
     """Capture explicit paths using the current client local-cache resolution.
 
