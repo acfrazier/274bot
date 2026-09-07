@@ -9,6 +9,45 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-07 23:22 UTC
+
+- Operator approved milestone review cadence and a fresh Astra/Grok comparison.
+  Workflow recorded in docs/execution.md at 1e33b7a. Preserve task Grok4.5 and
+  final whole-branch Grok4.6. Root must freeze a common source/evidence scope
+  after prerequisite reviews, then run independent Astra orch and Grok4.6
+  branchreviewer milestone passes before expensive native comparison work.
+  Reconcile confirmed findings, overlap, false positives, later misses and time;
+  no standing profile defaults changed and no trial result claimed yet.
+- A1 mechanism prototype 2d12d68 passed actual Grok4.5/xai-oauth session
+  20260907_191441_31306c (t_ca8f5ab9). Real builders/CX1-CX6 fixture evidence,
+  no real fleet hit rate or RSS claim. Opt-in real-owner candidate t_b1e57f6d
+  started implementer 23:20. Preserve feature-off baseline and owner gates;
+  capture current overlap/overhead before the 10MiB lane-expansion decision.
+- Scene census corrected 6f1f37d after Grok linked-chain findings and root
+  omitted-retained-core finding. Actual Grok4.5 round2 approved session
+  20260907_191742_4acf79. Complete core sketch152B, Square184B, stamp68B;
+  sparse fixtures' inline differences13/20B are NOT real map or RSS evidence.
+  Representative scene/attach-detach occupancy remains missing. Broad scene
+  migration remains parked pending that evidence, not proved uneconomic.
+- Panel lazy upload t_364f38a3 Composer stalled provider before edits. Root
+  preserved failure and reassigned Luna; daa97f7 now in Grok4.5 review.
+  ROOT OUTSTANDING: placeholder [0,0,0,255] may change original zero-alpha
+  pixels; required no-frame and CPU/GPU/unbind readback oracles incomplete.
+  Same-card comment records issue; verify disposition before acceptance.
+- N16 report t_a1c169ef in actual review. Recovery cd10161 originally added
+  unsafe arbitrary-derived-host override. Root reclaimed review and required
+  removal, original strict bindings remain FAILED. Luna t_56055d47 correcting
+  future producer plus separately labeled recovery only; no accepted binding.
+- Native mode gap now directs t_76784332 read-only renderer-owner follow-up,
+  actual Astra/openai-codex session20260907_191842_45e6f3. Inspect measured
+  host36825a9/client5ee9 source, distinguish persistent/transient and CPU/driver
+  unknowns; no pool implementation or attribution of whole952MiB gap authorized
+  by a guessed subtraction. No native live/build running from root this phase.
+- Campaign client still3456edc; reviewed Windows attribution/selector branch
+  at windows-panel-attribution host36825a9/client5ee9 is NOT integrated yet.
+  Root owns that integration after current source workers and review boundary.
+  Final performance/latency/lifecycle/scaling and full Grok4.6 remain unfinished.
+
 ## Latest boundary — 2026-09-07 23:10 UTC
 
 - Operator explicitly requested architecture fan-out; three independent Astra
