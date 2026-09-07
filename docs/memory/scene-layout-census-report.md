@@ -4,16 +4,15 @@ Date: 2026-09-07
 
 Decision
 
-Park broad client scene-store migration for now. The bounded executable
-fixture confirms that `Square` is already 184 bytes on this target and that the
-lossless 17-i32 `GroundStamp` is 68 bytes. In the two deliberately sparse,
-structural fixtures, replacing boxed tile/stamp payloads with the proposed
-arena/index/free-list plus conservative renderer side arrays leaves a positive
-payload difference of 1,534 and 2,297 bytes respectively. That is a useful
-structural discriminator, but it is not a material deployment-sized benefit,
-not an RSS result, and not evidence about real map occupancy. Do not broaden the
-migration without a real existing scene fixture census and allocation-owner
-proof.
+Park broad client scene-store migration for now. The bounded executable fixture
+confirms that `Square` is 184 bytes on this target, the complete retained core
+sketch is 152 bytes, and the lossless 17-i32 `GroundStamp` is 68 bytes. After
+including every retained `Square` core field, linked boxes, stamp indices and
+the conservative renderer side arrays, the structural payload difference is
+only 13 and 20 bytes in the two deliberately sparse fixtures. That is not a
+material deployment-sized benefit, not an RSS result, and not evidence about
+real map occupancy. Do not broaden the migration without a real existing scene
+fixture census and allocation-owner proof.
 
 Scope and source trace
 
@@ -63,19 +62,23 @@ measurements.
 
 Fixture results and arithmetic (bytes)
 
-| fixture | occupied | linked | stamps | grid slots | old tile payload | old stamp payload | arena | indices | free list | side arrays | replacement | old - replacement |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| scene A | 10 | 11 | 4 | 256 | 1,840 | 272 | 272 | 40 | 16 | 250 | 578 | 1,534 |
-| scene B | 15 | 16 | 7 | 256 | 2,760 | 476 | 476 | 60 | 28 | 375 | 939 | 2,297 |
-
-`old tile payload = occupied * size_of::<Square>()`; `old stamp payload =
-stamps * 68`. The proposed replacement is `stamps * 68 + occupied * 4 +
-stamps * 4 + occupied * (1 + 6 * 4)`. The one-byte term packs the three
-boolean draw flags; the six i32 terms conservatively cover draw level, four
-side counters, and fill stamp. This intentionally does not claim that every
-render-only field can safely move: direct accesses, picking, linked ordering,
-model invalidation, stored heights, and overlay lifecycle still require a full
-migration audit.
+| fixture | occupied | linked | stamps | grid slots | old tile payload | old stamp payload | arena | indices | free list | retained core | side arrays | replacement | old - replacement |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| scene A | 10 | 11 | 5 | 256 | 2,024 | 340 | 340 | 44 | 20 | 1,672 | 275 | 2,351 | 13 |
+| scene B | 15 | 16 | 7 | 256 | 2,944 | 476 | 476 | 64 | 28 | 2,432 | 400 | 3,400 | 20 |
+`old tile payload = linked * size_of::<Square>()`; `old stamp payload = stamps *
+68`. The proposed replacement is `stamps * 68 + linked * 4 + stamps * 4 +
+linked * size_of::<RetainedSquareCore>() + linked * (1 + 6 * 4)`. The executable
+defines `RetainedSquareCore` with target alignment and includes coordinates,
+levels, sprite indices/spans, `quick_ground`, all retained object handles,
+linked identity, sprite counts, and `model_stamp`. Thus every non-render-only
+`Square` owner in the old inline body is represented exactly once; the separate
+pointed-to object allocations are intentionally outside both body totals.
+Linked boxes are included in every linked-keyed term, not only grid heads. The
+one-byte term packs the three boolean draw flags; the six i32 terms cover draw
+level, four side counters, and fill stamp. Moving these fields remains subject
+to a full direct-access, picking, linked-ordering, model-invalidation,
+stored-height, and overlay-lifecycle audit.
 
 Capacity and lifetime notes
 
@@ -83,8 +86,10 @@ The fixture's `World::new(4, 8, 8)` creates 256 tile-grid slots; each nested
 vector is populated to its requested length/capacity. That grid is a fixed
 `Option<Box<Square>>` pointer table and is not included in the old live-tile
 payload table above. The experiment does not guess allocator headers, Box
-allocation rounding, Vec spare capacity, or the memory for `Ground`, linked
-boxes, entities, collision, occlusion, and heightmaps. A replacement arena
+allocation rounding, Vec spare capacity, or the memory for `Ground`, object
+handles' pointed-to allocations, entities, collision, occlusion, and heightmaps.
+The 13/20-byte figures are therefore only complete inline-body structural
+comparisons, not net savings claims. A replacement arena
 must update an existing stamp slot, return deleted slots to a bounded free
 list, and reset all indices at build-generation boundaries; appending-only
 accounting would be invalid.
@@ -115,10 +120,14 @@ changed.
 
 Recommendation
 
-The measured structural deltas are positive but immaterial compared with the
+The corrected structural deltas are positive but immaterial compared with the
 campaign's measured multi-megabyte/per-client gaps, and they come from sparse
-synthetic fixtures. Park broad scene representation migration. If revisited,
-first add a read-only census against an existing client scene fixture with
-real build-plane variants and headless attach/detach, then measure allocator
-owners separately. Do not infer an RSS saving or authorize cross-client scene
-sharing from this experiment.
+synthetic fixtures. Park broad scene representation migration. No existing
+real-scene/attach-detach census was available in the bounded checkout, and no
+usable fixture was found without expanding into live/native work, which this
+task forbade. If revisited, first add a read-only census against an existing
+client scene fixture with real build-plane variants and headless attach/detach,
+then measure allocator owners separately. Required input is representative
+occupied/linked/stamp counts, capacities and owner attribution for those
+scenes. Do not infer an RSS saving or authorize cross-client scene sharing from
+this experiment.

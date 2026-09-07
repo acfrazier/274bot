@@ -17,9 +17,12 @@ counts must not be generalized to native workload occupancy.
 
 The program prints `size_of` results from the actual client types and counts
 occupied slots, linked-square depth, and overlay stamps after the operations.
-The replacement arithmetic is an explicitly conservative sketch: 68-byte
-`GroundStamp` arena entries, one u32 tile stamp index, one u32 free-list entry
-per stamp, and six i32 plus one byte per occupied tile for proposed renderer
-side arrays. Allocator metadata, Vec capacity slack, alignment, and retained
-simulation fields are excluded and must be measured separately before any
-migration.
+The replacement arithmetic is an explicitly conservative layout bound: 68-byte
+`GroundStamp` arena entries, one u32 tile index, one u32 free-list entry per
+stamp, a complete retained simulation-core record per `Square` (including linked
+boxes), and six i32 plus one byte per retained `Square` for proposed renderer
+side arrays. The executable defines that core with target alignment and includes
+coordinates, levels, sprite indices/spans, quick ground, all retained object
+handles, linked identity, sprite counts, and model invalidation. Allocator
+metadata, Vec capacity slack, and the separately owned pointed-to objects remain
+outside this payload bound and must be measured before migration.
