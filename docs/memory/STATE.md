@@ -9,6 +9,53 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-07 23:10 UTC
+
+- Operator explicitly requested architecture fan-out; three independent Astra
+  orch reports A b5f3b92/B fa6b883/C64dde78 all passed actualGrok4.5 reviews
+  t_1effd619/t_63d63bc7/t_44acaa83. Root synthesis326d96e selects bounded
+  experiments, no target relaxation or broad rewrite. Existing Composer lane
+  t_97e3926f had two no-handoff exits; reclaimed/parked, not completed, no repeat.
+  Three successors running: t_ca8f5ab9 real-builder exact-dedup prototype;
+  t_364f38a3 lazy GPU-view CPU-upload owner removal; t_9c83d16e scene layout/
+  occupancy census. Script buffer-pool remains queued conceptually, not dispatched.
+- Failure attribution bc0a30c+ce6ea7d approved actualGrok4.5 t_d3665ce6 with actual
+  throw/termination/capture-off/reset tests. No native new binary proof yet.
+- Native Intel N16 controls37ca48e approved actualGrok4.5 after archive fixes.
+  Six transferred files hashverified staged ProgramData/274bot-Test/
+  n16-controls-37ca48e. User unlocked console; fresh preflight passes.
+  Focused-one task225219 / raw225220 completed0 andqualified16/16,
+  119.3634518s, median988098560bytes(942.324MiB), CPU.5720449core,
+  client48.75864ticks/slot/s. Root directly viewedall3captures; bank-arrival
+  image already closedbank22foods, returnbanktrip1; initialotherbotspreparing.
+- Background task225959 / raw230000 completed0 qualified16/16,
+  119.062151s, median1985867776bytes(1893.871MiB), CPU.6300543core,
+  client48.57967ticks/slot/s. Actualrenderer counts acrossobserve1vs16;
+  background15paint~.9904-.9909fps, focused~48.57. GPUtracked17.534vs143.423MiB
+  is separate accounting; ~952MiBRSSgap NOT fully attributed to GPU.
+  No backgroundPNG (controller nav-captures onlyfocused-one); visualgap retained.
+- Botharchives downloaded/extracted/allmanifestfileshashverified under
+  diagnostics/windows-panel-n16-20260907. FocusedonearchiveSHA
+  bb2de5d68281c027109bc75f2392bdec2be45b5c649af60d9298b50097db8b7c,
+  background7fe09f3f14e921f45c3baba3b854c1b80b2019e5e8f4b58312bebe39f7ebd175.
+  Independentreader901c2b0 BOTHFAIL host_conditions_invalid: producer omitted
+  pre.server thoughchecked. Originalfullpre.processes hasnode6728creation
+  /Date(1788811072102)/ matching originalserveridentityFILETIME
+  134332846721025908. Recovery/futureproducerfix t_56055d47 Luna active, must
+  derive NEW explicitreconstruction with sourcehashes, preservealloriginals/
+  failedbindings. No provisionalindependentbindingpass asserted.
+- N16 raw report/recompute t_a1c169ef Luna ready; includeactualper-slot/cadence,
+  prooflimitations and reviewed recoveryonlyifavailable. No performanceacceptance.
+- OfficeClickToRun restarted22:58:01, AFTER firstobservationend22:56:04.659;
+  restoredstop22:59:49 beforebackground. Operator nowexplicitlyallows temporary
+  disabling. Root afterbothruns23:06:19 disabled/stoppedONLYDellTechHub,
+  DellClientManagementService,ClickToRunSvc. OriginalAutomatic/delayedstart
+  settings+restore script savedProgramData/274bot-Test/quiet-services-disabled-
+  20260907 and copiedlocaldiagnostics. Previousquiet-services-20260907archive
+  preserved. No frontend running now. Return services at campaignend using
+  savedreceipt/policy or onuserrequest. No globalPowerShellpolicychanged;
+  invoke reviewedscriptfileswith scopedExecutionPolicyBypass asbefore.
+
 ## Latest boundary — 2026-09-07 22:43 UTC
 
 - Operator clarified architecture freedom EXCEPT maintained script compatibility
