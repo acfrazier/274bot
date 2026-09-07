@@ -1270,6 +1270,49 @@ impl TuiSession {
     }
 }
 
+/// Retain the slot that successfully recorded a TUI input start until the
+/// next successful `terminal.draw`, then flush **that** origin.
+///
+/// One event is read per loop iteration, so a single `Option<u64>` is enough
+/// (no per-loop allocation or registry scan). Only set when
+/// [`host::responsiveness_profile::note_input_start`] returns true — disabled
+/// or dropped starts must not fabricate an ack. Do not take/flush on draw
+/// error; the retained origin waits for the next successful draw.
+///
+/// Host `Local` Drop already cuts `INPUT_PENDING` for a slot_id and counts
+/// lost; this Option does not claim generation coverage beyond that existing
+/// hook. Flushing a slot with no remaining pending is a host no-op.
+fn remember_tui_input_origin(origin: &mut Option<u64>, started: bool, slot_id: u64) {
+    if started {
+        *origin = Some(slot_id);
+    }
+}
+
+/// After a successful draw only: acknowledge the retained input origin slot.
+fn flush_tui_input_origin(origin: &mut Option<u64>, at: Instant) {
+    if let Some(slot_id) = origin.take() {
+        host::responsiveness_profile::note_tui_draw_flush(slot_id, at);
+    }
+}
+
+/// Old producer routing (focus-at-draw): complete only the post-pump focused
+/// slot. Kept for regression proof that this strands a prior-focus start.
+#[cfg(test)]
+fn flush_tui_input_focused_at_draw(focused_slot_id: u64, at: Instant) {
+    host::responsiveness_profile::note_tui_draw_flush(focused_slot_id, at);
+}
+
+/// Record a TUI key/MouseDown start against `name` when present; on success
+/// retain that slot as the next-draw flush origin.
+fn note_tui_input_start_for_focus(origin: &mut Option<u64>, name: Option<&str>, at: Instant) {
+    let Some(name) = name else {
+        return;
+    };
+    let slot_id = host::responsiveness_profile::slot_id_for(name);
+    let started = host::responsiveness_profile::note_input_start(slot_id, at, 0);
+    remember_tui_input_origin(origin, started, slot_id);
+}
+
 /// The crossterm event loop. `--live` runs headed when a controlling
 /// terminal is available (the operator watches the panes) and degrades to
 /// a headless pump loop otherwise, so the PASS/FAIL still lands in CI.
@@ -1299,6 +1342,8 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     .map_err(|e| format!("terminal setup: {e}"))?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
+    // Origin slot of a successfully-recorded key/MouseDown until next ok draw.
+    let mut input_flush_origin: Option<u64> = None;
 
     let result = (|| loop {
         session.pump(&mut app);
@@ -1315,23 +1360,18 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
                 app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
             })
             .map_err(|e| e.to_string())?;
-        if let Some(name) = app.focused_name() {
-            host::responsiveness_profile::note_tui_draw_flush(
-                host::responsiveness_profile::slot_id_for(&name),
-                Instant::now(),
-            );
-        }
+        // Flush the input-start origin, not post-pump focused_name (focus may
+        // have rotated in session.pump before this draw).
+        flush_tui_input_origin(&mut input_flush_origin, Instant::now());
         }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
-                    if let Some(name) = app.focused_name() {
-                        let _ = host::responsiveness_profile::note_input_start(
-                            host::responsiveness_profile::slot_id_for(&name),
-                            Instant::now(),
-                            0,
-                        );
-                    }
+                    note_tui_input_start_for_focus(
+                        &mut input_flush_origin,
+                        app.focused_name().as_deref(),
+                        Instant::now(),
+                    );
                     if app.params_state.open {
                         app.params_on_key(&mut session.script_settings, &session.loadouts, k);
                     } else if app.loadouts_on_key(&mut session.loadouts, k) {
@@ -1342,13 +1382,11 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
                 }
                 Event::Mouse(m) => {
                     if let MouseEventKind::Down(_) = m.kind {
-                        if let Some(name) = app.focused_name() {
-                            let _ = host::responsiveness_profile::note_input_start(
-                                host::responsiveness_profile::slot_id_for(&name),
-                                Instant::now(),
-                                0,
-                            );
-                        }
+                        note_tui_input_start_for_focus(
+                            &mut input_flush_origin,
+                            app.focused_name().as_deref(),
+                            Instant::now(),
+                        );
                         let action = app.on_click(m.column, m.row);
                         dispatch(&mut session, &mut app, action);
                     }
@@ -2179,5 +2217,174 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             "BankBudget pump must drive deposit on the Driver (pos {before} → {})",
             c.out.pos
         );
+    }
+
+    // --- TUI input origin ack (focus change before next draw) ---------------
+    // Serialize against host process-wide responsiveness registry / pending.
+    static INPUT_ORIGIN_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn row_for(sid: u64) -> host::responsiveness_profile::SlotObservation {
+        host::responsiveness_profile::read()
+            .expect("profile enabled")
+            .into_iter()
+            .find(|s| s.slot_id == sid && !s.ended)
+            .expect("live row")
+    }
+
+    /// Old focus-at-draw routing: start on A, pump would move focus to B, flush
+    /// B only — A stays open, B is not a real completion target.
+    #[test]
+    fn old_focus_at_draw_flush_strands_prior_origin() {
+        let _g = INPUT_ORIGIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        host::responsiveness_profile::enable();
+        host::responsiveness_profile::set_input_surface(
+            host::responsiveness_profile::InputSurface::Tui,
+        );
+        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-old-a",
+        ))
+        .expect("enabled");
+        let b = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-old-b",
+        ))
+        .expect("enabled");
+        let sid_a = a.slot_id();
+        let sid_b = b.slot_id();
+        let t0 = Instant::now();
+        assert!(host::responsiveness_profile::note_input_start(sid_a, t0, 0));
+        // Simulate post-pump focus B then old draw flush on focused name only.
+        flush_tui_input_focused_at_draw(sid_b, t0 + Duration::from_millis(5));
+        let ra = row_for(sid_a);
+        let rb = row_for(sid_b);
+        assert_eq!(ra.input_start_n, 1);
+        assert_eq!(ra.input_complete_n, 0, "old routing leaves A open");
+        assert_eq!(ra.input_pending_n, 1);
+        assert_eq!(rb.input_start_n, 0);
+        assert_eq!(rb.input_complete_n, 0, "B never started; no fabricated complete");
+        // keep Locals alive through asserts
+        drop((a, b));
+    }
+
+    /// Correct routing: start on A, focus becomes B before next draw, flush
+    /// retained origin A — A completes promptly; B is not fabricated.
+    #[test]
+    fn origin_flush_completes_a_when_focus_moves_to_b() {
+        let _g = INPUT_ORIGIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        host::responsiveness_profile::enable();
+        host::responsiveness_profile::set_input_surface(
+            host::responsiveness_profile::InputSurface::Tui,
+        );
+        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-fix-a",
+        ))
+        .expect("enabled");
+        let b = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-fix-b",
+        ))
+        .expect("enabled");
+        let sid_a = a.slot_id();
+        let sid_b = b.slot_id();
+        let mut origin = None;
+        let t0 = Instant::now();
+        note_tui_input_start_for_focus(&mut origin, Some("tui-origin-fix-a"), t0);
+        assert_eq!(origin, Some(sid_a));
+        // Focus would now be B (pump); draw succeeds → flush origin A.
+        flush_tui_input_origin(&mut origin, t0 + Duration::from_millis(5));
+        assert!(origin.is_none());
+        let ra = row_for(sid_a);
+        let rb = row_for(sid_b);
+        assert_eq!(ra.input_start_n, 1);
+        assert_eq!(ra.input_complete_n, 1, "A completes on next successful draw");
+        assert_eq!(ra.input_pending_n, 0);
+        assert_eq!(rb.input_complete_n, 0, "B not fabricated");
+        assert_eq!(rb.input_start_n, 0);
+        drop((a, b));
+    }
+
+    #[test]
+    fn origin_flush_same_focus_still_completes() {
+        let _g = INPUT_ORIGIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        host::responsiveness_profile::enable();
+        host::responsiveness_profile::set_input_surface(
+            host::responsiveness_profile::InputSurface::Tui,
+        );
+        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-same-a",
+        ))
+        .expect("enabled");
+        let sid_a = a.slot_id();
+        let mut origin = None;
+        let t0 = Instant::now();
+        note_tui_input_start_for_focus(&mut origin, Some("tui-origin-same-a"), t0);
+        flush_tui_input_origin(&mut origin, t0 + Duration::from_millis(3));
+        let ra = row_for(sid_a);
+        assert_eq!(ra.input_complete_n, 1);
+        assert_eq!(ra.input_pending_n, 0);
+        drop(a);
+    }
+
+    #[test]
+    fn no_start_does_not_fabricate_ack_on_draw() {
+        let _g = INPUT_ORIGIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        host::responsiveness_profile::enable();
+        host::responsiveness_profile::set_input_surface(
+            host::responsiveness_profile::InputSurface::Tui,
+        );
+        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-nostart-a",
+        ))
+        .expect("enabled");
+        let sid_a = a.slot_id();
+        let mut origin = None;
+        // No focused name → no start.
+        note_tui_input_start_for_focus(&mut origin, None, Instant::now());
+        assert!(origin.is_none());
+        // Successful start=false must not retain a slot either.
+        remember_tui_input_origin(&mut origin, false, sid_a);
+        assert!(origin.is_none());
+        flush_tui_input_origin(&mut origin, Instant::now());
+        let ra = row_for(sid_a);
+        assert_eq!(ra.input_start_n, 0);
+        assert_eq!(ra.input_complete_n, 0);
+        drop(a);
+    }
+
+    #[test]
+    fn origin_not_flushed_until_draw_success() {
+        let _g = INPUT_ORIGIN_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        host::responsiveness_profile::enable();
+        host::responsiveness_profile::set_input_surface(
+            host::responsiveness_profile::InputSurface::Tui,
+        );
+        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+            "tui-origin-hold-a",
+        ))
+        .expect("enabled");
+        let sid_a = a.slot_id();
+        let mut origin = None;
+        let t0 = Instant::now();
+        note_tui_input_start_for_focus(&mut origin, Some("tui-origin-hold-a"), t0);
+        assert_eq!(origin, Some(sid_a));
+        // Draw error path: do not call flush_tui_input_origin — origin retained.
+        assert_eq!(origin, Some(sid_a));
+        let ra = row_for(sid_a);
+        assert_eq!(ra.input_complete_n, 0);
+        assert_eq!(ra.input_pending_n, 1);
+        // Later successful draw flushes the held origin.
+        flush_tui_input_origin(&mut origin, t0 + Duration::from_millis(10));
+        let ra = row_for(sid_a);
+        assert_eq!(ra.input_complete_n, 1);
+        assert_eq!(ra.input_pending_n, 0);
+        drop(a);
     }
 }
