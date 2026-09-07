@@ -9,6 +9,51 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-07 22:06 UTC
+
+- Separate operator-authorized 289 client campaign is dispatched on existing
+  Hermes 274bot board: t_95bef768, profile orch. Actual running session
+  20260907_180531_b6524f is gpt-6-astra/openai-codex, verified with tool activity.
+  Checkout /Users/acfrazier/experiments/FR-client-289, branch
+  codex/revision-289-client, prepared716f79c from published r274-bh-modular
+  4f2048ea. It owns source/fixtures, reviewed plan and staged client port;
+  host memory remains active and isolated. Root owns repo hygiene, no workers
+  on measured Windows/VPS/VM hosts. Poll actual orch and child reviews.
+- User supplied X post2097043464538264003; root directly read it in browser:
+  global paid-plan usage reset announced around6pm PST Sep7. Pacific local
+  interpretation is9pmEastern, not a guaranteed exact reset time. No banked
+  credit consumed; last account read67%used, one available reset.
+- Both explicit open-lid GPU cells completed/qualified: Nvidia49.01265client
+  ticks/s and49.01270GPUcallbacks/s; Intel48.92854/48.93663. Same frozen
+  36825a9/client5ee9 binary; all6captures directly inspected. Raw under
+  diagnostics/windows-explicit-adapter-20260907. No final acceptance.
+- AC clamshell configuration: lidAC alreadyDoNothing; changed only active
+  UltimatePerformance ACidleSleep1800s to0, verified backup/restore receipt.
+  Battery settings unchanged. Power proof archive copied/hashverified under
+  diagnostics/windows-clamshell-20260907/clamshell-20260907.
+- User physically closed lid. SSH and active/unlocked console remained.
+  Nvidia closed run214756 completed0/qualified but28.15629clientticks/s,
+  28.28878GPUcallbacks/s;124callbackgaps250-500ms, scene-submit/acquire
+  ~430ms stalls. Onlyscene-readycapture, directly inspected; no bank/return
+  capture proof. Intelclosed215345 completed0/qualified48.90235ticks/s,
+  all3scene/bank/returncaptures directly inspected. AC1/UltimatePerformance
+  and boundedPythonDISPLAY+SYSTEMrequests verified duringIntel.
+- User reopened lid. Nvidia215922 completed0/qualified48.89001ticks/s,
+  confirming recovery in this bounded A-B-A diagnostic. All3newrawarchives
+  downloaded/extracted/hashverified in windows-clamshell-20260907, with
+  five-run-comparison.json. This is diagnostic association, not universal
+  clamshell/noimpact or final campaign acceptance. No frontend left running.
+- Native host-observation reader repair901c2b0 now approved actualGrok4.5
+  run400/session20260907_175530_bee75d, after two changes-requested rounds.
+  Root still must transfer new reader, run native tests and replay all
+  independent bindings with NEW output names. Original2539 Nvidia failed
+  host_conditions_invalid output must remain preserved.
+- Linux bounded debug rerun report0a12844 t_d3225874 approved perboard;
+  root still must verify actual reviewer model and downloaded raw archives.
+  Original Unknown error did not reproduce with debug, not a proven fix.
+  Resolve investigate-or-park decision before further matched cells. Final
+  budgets/latency/lifecycle/scaling and whole-branchGrok4.6 remain unfinished.
+
 ## Current actions — 2026-09-07 21:24 UTC
 
 - Continue approved performance-finish-plan.md; final budgets, matched savings,
