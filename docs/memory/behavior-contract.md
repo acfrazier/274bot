@@ -25,6 +25,22 @@ The resource targets and final qualification in performance-finish-plan.md remai
 - Preserve responsiveness, lifecycle cleanup and memory/CPU goals as independently
   tested requirements. A lower allocation count cannot excuse a missed gate.
 
+## Game fidelity and inherited client timing
+
+Operator clarification: the 20ms client tick derives from the Java client's
+execution model; architectural freedom must preserve what makes the game behave
+like the game. Treat logical client progression and ordering as semantic until
+source and functional evidence prove a mechanism is incidental.
+
+Host scheduling mechanics may change, but this does not authorize fewer logical
+client updates, a variable-step simulation, catch-up batching, or altered ordering
+of packet processing, input, movement, animation, camera, audio and interface work.
+Any such proposal needs a separate explicit fidelity analysis and equivalent
+observable sequences under load and transitions. Similar average FPS is not that
+proof. Keep the current 20ms logical client scheduling target and existing cadence
+gates while optimizing the surrounding host. Preserve client fence and port
+maintainability; do not turn a host memory optimization into a game-engine rewrite.
+
 ## Mechanisms open to redesign
 
 Ownership, queues, caches, threads, scheduling mechanics, internal state transport,
