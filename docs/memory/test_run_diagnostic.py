@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import os
 import subprocess
 import sys
 import unittest
@@ -21,6 +22,15 @@ def run_cli(*args: str) -> subprocess.CompletedProcess:
 
 
 class RunDiagnosticCli(unittest.TestCase):
+    def test_help_survives_windows_redirected_output_encoding(self):
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), '--help'],
+            cwd=ROOT, capture_output=True,
+            env={**os.environ, 'PYTHONIOENCODING': 'cp1252'},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(b'--responsiveness-fine', proc.stdout)
+
     def test_accepts_n16_in_help_choices(self):
         proc = run_cli("--help")
         self.assertEqual(proc.returncode, 0)

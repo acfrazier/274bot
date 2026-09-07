@@ -49,8 +49,8 @@ def build_parser():
     p.add_argument('--scheduling-profile', action='store_true', help='Collect batched active-loop work/sleep/interval diagnostics')
     p.add_argument('--render-profile', action='store_true', help='Collect per-slot renderer residency and host paint cadence')
     p.add_argument('--gpu-completion-profile', action='store_true', help='Panel+render-profile: bounded GPU queue.on_submitted_work_done completion samples')
-    p.add_argument('--responsiveness-profile', action='store_true', help='Collect decode→script and input→UI endpoint latencies')
-    p.add_argument('--responsiveness-fine', action='store_true', help='With --responsiveness-profile: also collect ≤1ms fine latency histograms (recorded in metadata)')
+    p.add_argument('--responsiveness-profile', action='store_true', help='Collect decode-to-script and input-to-UI endpoint latencies')
+    p.add_argument('--responsiveness-fine', action='store_true', help='With --responsiveness-profile: also collect <=1ms fine latency histograms (recorded in metadata)')
     p.add_argument('--observe', type=int, default=600)
     p.add_argument('--warmup', type=int, default=120)
     return p
