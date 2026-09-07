@@ -29,6 +29,7 @@ import qualify_control as qc  # noqa: E402
 import reference_metrics as rm  # noqa: E402
 import run_diagnostic as rd  # noqa: E402
 import build_provenance as bp  # noqa: E402
+import managed_resource_binding as mrb  # noqa: E402
 
 PASS_MEANS = (
     "artifact-bound matched evidence reader only; "
@@ -1005,6 +1006,12 @@ def _bind_side(
             native_qualification_reason=native_qualification.get("reason"),
         )
 
+    managed_resources = mrb.bind(receipt, native_qualification, sid)
+    if managed_resources.get('status') == 'available':
+        # These keys come from the native boundary and pre/post-bound cache and
+        # collector artifacts, never caller-supplied renderer/cache labels.
+        match_keys.update(managed_resources['match_keys'])
+
     overhead_status = _evaluate_helper_overhead(
         receipt=receipt,
         cell_dir=canonical_path(cell_dir) if cell_dir is not None else receipt_path.parent,
@@ -1076,6 +1083,7 @@ def _bind_side(
         "observation_wall_span": wall_span,
         "observation_wall_span_source": wall_span_source,
         "overhead": overhead_status,
+        "managed_resources": managed_resources,
         "shaped_for_compare": shaped,
         "endpoint_notes": {
             "scheduling": (analysis.get("gates") or {}).get("scheduling"),
