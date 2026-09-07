@@ -2207,6 +2207,13 @@ mod tests {
         assert!(err.contains("LIVE=1"), "got {err}");
     }
 
+    // Keep these fixtures on the OS null device; the read-only handle below
+    // must still reject writes on both platforms.
+    #[cfg(windows)]
+    const NULL_DEVICE: &str = "NUL";
+    #[cfg(not(windows))]
+    const NULL_DEVICE: &str = "/dev/null";
+
     /// Minimal Run for failure-helper unit tests — no mint/vault/prepare.
     fn harness_stub(
         failure_capture: bool,
@@ -2215,8 +2222,8 @@ mod tests {
     ) -> Run {
         let sink = std::fs::OpenOptions::new()
             .write(true)
-            .open("/dev/null")
-            .expect("/dev/null");
+            .open(NULL_DEVICE)
+            .expect("open null device");
         Run {
             config: unit_config(1, Workload::Idle),
             names: vec!["unit0".into()],
@@ -2302,8 +2309,8 @@ mod tests {
         // Read-only fd forces best-effort writeln fail without mint/vault.
         let q = std::fs::OpenOptions::new()
             .read(true)
-            .open("/dev/null")
-            .expect("open /dev/null read-only");
+            .open(NULL_DEVICE)
+            .expect("open null device read-only");
         let mut run = harness_stub(true, false, q);
         let failure = String::from("Thiever seed/proof failed for unit0: boom");
         let err1 = run
@@ -2390,7 +2397,7 @@ mod tests {
         assert!(run.diagnostic_output.is_some());
         let run_off = harness_stub(false, false, std::fs::OpenOptions::new()
             .write(true)
-            .open("/dev/null")
+            .open(NULL_DEVICE)
             .unwrap());
         assert!(!run_off.failure_capture);
         assert!(!run_off.diagnostics);
