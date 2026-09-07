@@ -2456,12 +2456,17 @@ def _finite(value: Any) -> bool:
 
 # Match keys must be present and equal across paired sides. Binary/source build
 # digests are side provenance: present and role-correct, but allowed to differ.
+# Include scheduling/failure/nav/fine instrumentation — absent must not drop out
+# of equality (compare ALL non-side keys; never silently ignore supplied flags).
 RESOURCE_MATCH_KEY_FIELDS = (
     "frontend", "n", "workload", "render_policy", "render_policy_requested",
     "single_renderer", "diagnostic_sidecar", "allocation_counting",
+    "scheduling_profile", "responsiveness_profile", "responsiveness_fine",
+    "render_profile", "gpu_completion_profile", "stack_logging",
+    "sustain", "terminal", "terminal_size",
     "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
     "cache_settings", "catalog_sha256", "feature_flags", "allocator_provenance",
-    "client_sources_sha256",
+    "client_sources_sha256", "failure_capture", "nav_captures",
 )
 
 RESOURCE_SIDE_PROVENANCE_FIELDS = (
@@ -2477,11 +2482,11 @@ RESOURCE_PROVENANCE_FIELDS = (
 
 
 def resource_match_keys_from_meta(meta: dict) -> dict:
-    """Equality-checked match keys only (no binary/host source side digests)."""
-    out = {key: meta.get(key) for key in RESOURCE_MATCH_KEY_FIELDS}
-    if out["render_policy"] is None and out["frontend"] == "tui":
-        out["render_policy"] = "none"
-    return out
+    """Equality-checked match keys only (no binary/host source side digests).
+
+    Never default TUI null render_policy to \"none\" — absent stays None/unavailable.
+    """
+    return {key: meta.get(key) for key in RESOURCE_MATCH_KEY_FIELDS}
 
 
 def resource_side_provenance_from_meta(meta: dict) -> dict:
@@ -2623,7 +2628,7 @@ def compare_matched_runs(candidate: dict, reference: dict, *, cpu_margin: float 
             return {field: metadata.get(field) for field in RESOURCE_SIDE_PROVENANCE_FIELDS}
         return {}
 
-    # Equality-checked match keys (no binary/host source side digests).
+    # Core resource fixture keys must be present (not side digests).
     match_prov_keys = (
         "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
         "cache_settings", "catalog_sha256", "feature_flags",
@@ -2643,9 +2648,11 @@ def compare_matched_runs(candidate: dict, reference: dict, *, cpu_margin: float 
             return out
 
     def _match_only(md: Any) -> dict:
+        """All non-side keys — full equality guard minus binary/source digests."""
         if not isinstance(md, dict):
             return {}
-        return {k: md.get(k) for k in RESOURCE_MATCH_KEY_FIELDS}
+        side = set(RESOURCE_SIDE_PROVENANCE_FIELDS)
+        return {k: v for k, v in md.items() if k not in side}
 
     if _match_only(candidate.get("match_metadata")) != _match_only(reference.get("match_metadata")):
         out["reason"] = "mismatched_provenance_or_settings"

@@ -32,6 +32,11 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _tag(label: str) -> str:
+    """Stable 64-hex digest used as realistic hash/commit stand-in."""
+    return _sha(label.encode("utf-8"))
+
+
 def _write_json(path: pathlib.Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2) + "\n")
@@ -42,7 +47,8 @@ def _write_jsonl(path: pathlib.Path, rows) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
-def _active_samples(n: int = 1, observe_s: int = 30, t0: float = 0.0):
+def _active_samples(n: int = 1, observe_s: int = 30, t0: float = 5.0):
+    """Observe samples with elapsed_s offset so wall span sits inside process envelope."""
     rows = [
         dict(
             phase="observe",
@@ -80,6 +86,20 @@ def _active_samples(n: int = 1, observe_s: int = 30, t0: float = 0.0):
     return rows, proof
 
 
+HOST_CONDITIONS = {
+    "hw.ncpu": 8,
+    "hw.memsize": 16_000_000_000,
+    "brand": "synthetic-test-host",
+}
+
+CLIENT_COMMIT = _tag("client-commit-shared")
+CLIENT_SOURCES = _tag("client-sources-shared")
+NAV_PACK = _tag("nav-pack-shared")
+NAV_FLAGS = _tag("nav-flags-shared")
+CATALOG = _tag("catalog-shared")
+ALLOCATOR = "std::alloc::System"
+
+
 def _complete_meta(
     *,
     run_dir: str,
@@ -88,8 +108,9 @@ def _complete_meta(
     started_unix: float,
     ended_unix: float,
     n: int = 1,
-    host_sources: str = "host-src-ref",
-    client_sources: str = "client-src-shared",
+    host_sources: str,
+    client_sources: str = CLIENT_SOURCES,
+    client_commit: str = CLIENT_COMMIT,
     extra: dict | None = None,
 ) -> dict:
     meta = {
@@ -104,14 +125,14 @@ def _complete_meta(
         "run_dir": run_dir,
         "binary": binary,
         "binary_sha256": binary_sha256,
-        "host_commit": "checkout-not-build",
-        "client_commit": "client-aaa",
+        "host_commit": _tag("checkout-not-build"),
+        "client_commit": client_commit,
         "host_sources_sha256": host_sources,
         "client_sources_sha256": client_sources,
-        "nav_pack_sha256": "nav-pack-aaa",
-        "nav_flags_sha256": "nav-flags-aaa",
+        "nav_pack_sha256": NAV_PACK,
+        "nav_flags_sha256": NAV_FLAGS,
         "render_policy": "none",
-        "render_policy_requested": "none",
+        "render_policy_requested": True,
         "scheduling_profile": True,
         "responsiveness_profile": True,
         "responsiveness_fine": False,
@@ -126,16 +147,38 @@ def _complete_meta(
         "allocation_counting": False,
         "renderer_settings": {"quality": "default"},
         "cache_settings": {"cache": "default"},
-        "catalog_sha256": "catalog-aaa",
-        "feature_flags": {"feature": True},
-        "allocator_provenance": "system",
+        "catalog_sha256": CATALOG,
+        "feature_flags": {"requested": "memory-profile-no-alloc", "locked": True, "allocation_counting": False},
+        "allocator_provenance": ALLOCATOR,
         "failure_capture": False,
         "nav_captures": False,
         "pid": 1,
+        "host_conditions": dict(HOST_CONDITIONS),
     }
     if extra:
         meta.update(extra)
     return meta
+
+
+def _effective_cli(*, binary: str, n: int, frontend: str = "tui") -> list:
+    return [
+        "python3",
+        "run_diagnostic.py",
+        frontend,
+        n,
+        "active",
+        "--sustain",
+        "--no-diagnostics",
+        "--scheduling-profile",
+        "--render-profile",
+        "--responsiveness-profile",
+        "--binary",
+        binary,
+        "--warmup",
+        "5",
+        "--observe",
+        "30",
+    ]
 
 
 def _build_side(
@@ -158,8 +201,12 @@ def _build_side(
     include_server: bool = True,
     forge_overhead_measured: bool = False,
     meta_extra: dict | None = None,
+    receipt_extra: dict | None = None,
+    omit_receipt_fields: tuple[str, ...] = (),
+    binary_path_override: pathlib.Path | None = None,
 ) -> dict:
     """Create one synthetic side: binary, run dir, receipt, mini-manifest fragment."""
+    del include_server  # reserved
     cell = root / cell_name
     cell.mkdir(parents=True, exist_ok=True)
     run_dir = root / "runs" / run_name
@@ -168,9 +215,11 @@ def _build_side(
     bin_dir.mkdir(parents=True, exist_ok=True)
 
     bin_name = f"{role}-tui.bin"
-    bin_path = bin_dir / bin_name
-    bin_path.write_bytes(binary_bytes)
-    bin_sha = _sha(binary_bytes)
+    bin_path = binary_path_override if binary_path_override is not None else (bin_dir / bin_name)
+    if binary_path_override is None or not bin_path.exists():
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.write_bytes(binary_bytes)
+    bin_sha = _sha(bin_path.read_bytes())
 
     meta_sha = "deadbeef" * 8 if corrupt_meta_sha else bin_sha
     meta = _complete_meta(
@@ -187,12 +236,22 @@ def _build_side(
     _write_json(run_dir / "metadata.json", meta)
 
     if not skip_samples:
-        rows, proof = _active_samples(n=n, observe_s=30)
+        rows, proof = _active_samples(n=n, observe_s=30, t0=5.0)
         if qualify_fail:
             for slot in proof[1]["slots"]:
                 slot["runtime"]["paint"]["lines"] = ["Steals: 2"]
         _write_jsonl(run_dir / "samples.jsonl", rows)
         _write_jsonl(run_dir / "samples.qualification.jsonl", proof)
+
+    raw_hashes = {
+        "metadata.json": mea.sha256_file(run_dir / "metadata.json"),
+        "samples.jsonl": mea.sha256_file(run_dir / "samples.jsonl") if (run_dir / "samples.jsonl").is_file() else None,
+        "samples.qualification.jsonl": (
+            mea.sha256_file(run_dir / "samples.qualification.jsonl")
+            if (run_dir / "samples.qualification.jsonl").is_file()
+            else None
+        ),
+    }
 
     receipt = {
         "id": f"{role}_n{n}",
@@ -202,8 +261,10 @@ def _build_side(
         "binary": str(bin_path),
         "run_dir": receipt_run_dir if receipt_run_dir is not None else str(run_dir),
         "exit_code": exit_code,
+        "effective_cli": _effective_cli(binary=str(bin_path), n=n),
         "started_utc": "2026-09-07T00:00:00Z",
         "ended_utc": "2026-09-07T00:01:00Z",
+        "raw_hashes": raw_hashes,
         "sampler": {
             "pid_was": 100,
             "exit_code": 0,
@@ -215,9 +276,15 @@ def _build_side(
             ),
             "output": str(cell / "server_resources.jsonl"),
         },
+        "host_conditions": dict(HOST_CONDITIONS),
         "qualification": {"qualified": True, "errors": []},  # label must be ignored
         "status": "completed",
     }
+    if receipt_extra:
+        receipt.update(receipt_extra)
+    for field in omit_receipt_fields:
+        receipt.pop(field, None)
+
     receipt_path = cell / "receipt.json"
     _write_json(receipt_path, receipt)
     # Snapshot helpers only — not continuous accounting.
@@ -243,6 +310,7 @@ def _build_side(
         "build_commit": build_commit,
         "sources_sha": sources_sha,
         "bin_name": bin_name,
+        "raw_hashes": raw_hashes,
     }
 
 
@@ -269,8 +337,8 @@ def _write_manifest(root: pathlib.Path, ref: dict, cand: dict) -> pathlib.Path:
             "sources_sha256_pre": ref["sources_sha"],
             "sources_sha256_post": ref["sources_sha"],
             "client": {
-                "commit": "client-aaa",
-                "sources_sha256": "client-src-shared",
+                "commit": CLIENT_COMMIT,
+                "sources_sha256": CLIENT_SOURCES,
             },
         },
         "candidate": {
@@ -279,20 +347,20 @@ def _write_manifest(root: pathlib.Path, ref: dict, cand: dict) -> pathlib.Path:
             "sources_sha256_pre": cand["sources_sha"],
             "sources_sha256_post": cand["sources_sha"],
             "client": {
-                "commit": "client-aaa",
-                "sources_sha256": "client-src-shared",
+                "commit": CLIENT_COMMIT,
+                "sources_sha256": CLIENT_SOURCES,
             },
         },
         "features": {
             "requested": "memory-profile-no-alloc",
             "locked": True,
-            "allocator": "std::alloc::System",
+            "allocator": ALLOCATOR,
             "allocation_counting": False,
         },
-        "catalog": {"js_scripts_json_sha256": "catalog-aaa"},
+        "catalog": {"js_scripts_json_sha256": CATALOG},
         "nav": {
-            "nav_pack_sha256": "nav-pack-aaa",
-            "nav_flags_sha256": "nav-flags-aaa",
+            "nav_pack_sha256": NAV_PACK,
+            "nav_flags_sha256": NAV_FLAGS,
         },
         "server": {"target": "local"},
     }
@@ -329,8 +397,8 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             binary_bytes=b"CONTROL-BINARY-v1",
             started_unix=1_000_000.0,
             ended_unix=1_000_100.0,
-            build_commit="commit-control-aaaa",
-            sources_sha="sources-control-aaaa",
+            build_commit=_tag("commit-control-aaaa"),
+            sources_sha=_tag("sources-control-aaaa"),
         )
         cand = _build_side(
             self.root,
@@ -340,8 +408,8 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             binary_bytes=b"CANDIDATE-BINARY-v2",
             started_unix=1_000_200.0,
             ended_unix=1_000_300.0,
-            build_commit="commit-candidate-bbbb",
-            sources_sha="sources-candidate-bbbb",
+            build_commit=_tag("commit-candidate-bbbb"),
+            sources_sha=_tag("sources-candidate-bbbb"),
             **cand_kw,
         )
         manifest = _write_manifest(self.root, ref, cand)
@@ -370,6 +438,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertTrue(cand_b["qualified"], cand_b.get("qualification"))
         self.assertEqual(ref_b["status"], "bound")
         self.assertEqual(cand_b["status"], "bound")
+        self.assertEqual(ref_b["raw_hash_status"], "receipt_recorded_and_verified")
         # Different side provenance allowed.
         self.assertNotEqual(
             ref_b["side_provenance"]["binary_sha256"],
@@ -408,10 +477,58 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         ref, cand, manifest, server = self._positive_pair(
             meta_extra={"nav_flags_sha256": None},
         )
-        # Clear manifest nav so enrichment cannot fill the hole.
-        man = json.loads(manifest.read_text())
-        man["nav"]["nav_flags_sha256"] = None
-        _write_json(manifest, man)
+        # Manifest still has nav flags — must NOT enrich missing metadata.
+        cand_b = mea.bind_side(
+            cand["receipt_path"],
+            role="candidate",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=cand["cell"],
+        )
+        ref_b = mea.bind_side(
+            ref["receipt_path"],
+            role="reference",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=ref["cell"],
+        )
+        self.assertTrue(ref_b["binding_ok"], ref_b)
+        self.assertTrue(cand_b["binding_ok"], cand_b)
+        self.assertEqual(mea.match_keys_complete(cand_b["match_keys"]), "nav_flags_sha256")
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertEqual(pair["reason"], "missing_match_key")
+
+    def test_null_render_policy_stays_unavailable(self):
+        ref, cand, manifest, server = self._positive_pair(
+            meta_extra={"render_policy": None},
+        )
+        cand_b = mea.bind_side(
+            cand["receipt_path"],
+            role="candidate",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=cand["cell"],
+        )
+        ref_b = mea.bind_side(
+            ref["receipt_path"],
+            role="reference",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=ref["cell"],
+        )
+        self.assertTrue(cand_b["binding_ok"], cand_b)
+        self.assertIsNone(cand_b["match_keys"].get("render_policy"))
+        self.assertEqual(mea.match_keys_complete(cand_b["match_keys"]), "render_policy")
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertEqual(pair["reason"], "missing_match_key")
+        # resource_match_keys must not default TUI null → "none"
+        keys = rm.resource_match_keys_from_meta({"frontend": "tui", "render_policy": None})
+        self.assertIsNone(keys.get("render_policy"))
+
+    def test_nested_null_renderer_settings_unavailable(self):
+        ref, cand, manifest, server = self._positive_pair(
+            meta_extra={"renderer_settings": {"quality": None}},
+        )
         cand_b = mea.bind_side(
             cand["receipt_path"],
             role="candidate",
@@ -428,6 +545,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         )
         pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
         self.assertEqual(pair["reason"], "missing_match_key")
+        self.assertEqual(pair.get("candidate_missing_match_key"), "renderer_settings")
 
     def test_swapped_binary_hash_rejected(self):
         ref, cand, manifest, server = self._positive_pair(corrupt_meta_sha=True)
@@ -441,6 +559,82 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertFalse(cand_b["binding_ok"])
         self.assertEqual(cand_b["reason"], "binary_hash_mismatch_metadata")
 
+    def test_receipt_binary_mismatch_rejected(self):
+        other = self.root / "bins" / "other.bin"
+        other.parent.mkdir(parents=True, exist_ok=True)
+        other.write_bytes(b"OTHER-BINARY")
+        ref, cand, manifest, server = self._positive_pair(
+            receipt_extra={"binary": str(other)},
+        )
+        cand_b = mea.bind_side(
+            cand["receipt_path"],
+            role="candidate",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=cand["cell"],
+        )
+        self.assertFalse(cand_b["binding_ok"])
+        self.assertEqual(cand_b["reason"], "receipt_metadata_binary_mismatch")
+
+    def test_copied_same_hash_non_canonical_path_rejected(self):
+        ref, cand, manifest, server = self._positive_pair()
+        # Copy candidate binary to a different path with identical bytes.
+        copy_path = self.root / "bins-copy" / "candidate-copy.bin"
+        copy_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cand["binary_path"], copy_path)
+        # Point metadata + receipt + CLI at the copy; keep manifest on original path.
+        meta = json.loads((cand["run_dir"] / "metadata.json").read_text())
+        meta["binary"] = str(copy_path)
+        _write_json(cand["run_dir"] / "metadata.json", meta)
+        receipt = json.loads(cand["receipt_path"].read_text())
+        receipt["binary"] = str(copy_path)
+        receipt["effective_cli"] = _effective_cli(binary=str(copy_path), n=1)
+        receipt["raw_hashes"] = {
+            "metadata.json": mea.sha256_file(cand["run_dir"] / "metadata.json"),
+            "samples.jsonl": mea.sha256_file(cand["run_dir"] / "samples.jsonl"),
+            "samples.qualification.jsonl": mea.sha256_file(
+                cand["run_dir"] / "samples.qualification.jsonl"
+            ),
+        }
+        _write_json(cand["receipt_path"], receipt)
+        cand_b = mea.bind_side(
+            cand["receipt_path"],
+            role="candidate",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=cand["cell"],
+        )
+        self.assertFalse(cand_b["binding_ok"], cand_b)
+        self.assertEqual(cand_b["reason"], "binary_path_not_manifest_canonical_path")
+
+    def test_missing_receipt_fields_rejected(self):
+        ref, cand, manifest, server = self._positive_pair(
+            omit_receipt_fields=("id", "index", "kind", "effective_cli", "started_utc", "ended_utc"),
+        )
+        cand_b = mea.bind_side(
+            cand["receipt_path"],
+            role="candidate",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=cand["cell"],
+        )
+        self.assertFalse(cand_b["binding_ok"])
+        self.assertEqual(cand_b["reason"], "receipt_missing_field")
+        self.assertIn(cand_b.get("field"), {"id", "index", "kind", "effective_cli", "started_utc", "ended_utc"})
+
+    def test_missing_receipt_raw_hashes_not_binding_ok(self):
+        ref, cand, manifest, server = self._positive_pair(omit_receipt_fields=("raw_hashes",))
+        cand_b = mea.bind_side(
+            cand["receipt_path"],
+            role="candidate",
+            manifest_path=manifest,
+            server_identity_path=server,
+            cell_dir=cand["cell"],
+        )
+        self.assertFalse(cand_b["binding_ok"])
+        self.assertEqual(cand_b["reason"], "receipt_raw_hashes_missing")
+        self.assertEqual(cand_b.get("raw_hash_status"), "live_snapshot_only")
+
     def test_role_specific_differing_source_allowed_when_bound(self):
         ref, cand, manifest, server = self._positive_pair()
         ref_b = mea.bind_side(
@@ -451,12 +645,12 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             cand["receipt_path"], role="candidate", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand["cell"],
         )
-        self.assertTrue(ref_b["binding_ok"] and cand_b["binding_ok"])
+        self.assertTrue(ref_b["binding_ok"] and cand_b["binding_ok"], (ref_b, cand_b))
         self.assertNotEqual(
             ref_b["side_provenance"]["manifest_sources_sha256"],
             cand_b["side_provenance"]["manifest_sources_sha256"],
         )
-        # Wrong role binding (candidate receipt as reference) must fail hash/role.
+        # Wrong role binding (candidate receipt as reference) must fail path/hash/role.
         wrong = mea.bind_side(
             cand["receipt_path"], role="reference", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand["cell"],
@@ -466,6 +660,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             wrong["reason"],
             {
                 "binary_hash_mismatch_manifest",
+                "binary_path_not_manifest_canonical_path",
                 "binary_not_bound_to_manifest_entry",
             },
         )
@@ -484,12 +679,13 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         ref = _build_side(
             self.root, role="reference", cell_name="c1", run_name="r1",
             binary_bytes=b"A", started_unix=1000.0, ended_unix=1100.0,
-            build_commit="c1", sources_sha="s1",
+            build_commit=_tag("c1"), sources_sha=_tag("s1"),
         )
+        # Observation wall = started+5 .. started+35 → overlap with ref.
         cand = _build_side(
             self.root, role="candidate", cell_name="c2", run_name="r2",
-            binary_bytes=b"B", started_unix=1050.0, ended_unix=1150.0,
-            build_commit="c2", sources_sha="s2",
+            binary_bytes=b"B", started_unix=1020.0, ended_unix=1120.0,
+            build_commit=_tag("c2"), sources_sha=_tag("s2"),
         )
         manifest = _write_manifest(self.root, ref, cand)
         server = _server_identity(self.root)
@@ -501,6 +697,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             cand["receipt_path"], role="candidate", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand["cell"],
         )
+        self.assertTrue(ref_b["binding_ok"] and cand_b["binding_ok"], (ref_b, cand_b))
         pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
         self.assertEqual(pair["reason"], "overlapping_observation_windows")
 
@@ -508,7 +705,6 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         ref, cand, manifest, server = self._positive_pair(
             receipt_run_dir="/tmp/does-not-match-meta-run",
         )
-        # receipt points at missing dir
         cand_b = mea.bind_side(
             cand["receipt_path"], role="candidate", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand["cell"],
@@ -516,13 +712,35 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertFalse(cand_b["binding_ok"])
         self.assertEqual(cand_b["reason"], "run_dir_missing")
 
+    def test_metadata_run_dir_missing_field_rejected(self):
+        ref, cand, manifest, server = self._positive_pair()
+        meta = json.loads((cand["run_dir"] / "metadata.json").read_text())
+        del meta["run_dir"]
+        _write_json(cand["run_dir"] / "metadata.json", meta)
+        receipt = json.loads(cand["receipt_path"].read_text())
+        receipt["raw_hashes"] = {
+            "metadata.json": mea.sha256_file(cand["run_dir"] / "metadata.json"),
+            "samples.jsonl": mea.sha256_file(cand["run_dir"] / "samples.jsonl"),
+            "samples.qualification.jsonl": mea.sha256_file(
+                cand["run_dir"] / "samples.qualification.jsonl"
+            ),
+        }
+        _write_json(cand["receipt_path"], receipt)
+        cand_b = mea.bind_side(
+            cand["receipt_path"], role="candidate", manifest_path=manifest,
+            server_identity_path=server, cell_dir=cand["cell"],
+        )
+        self.assertFalse(cand_b["binding_ok"])
+        self.assertEqual(cand_b["reason"], "metadata_missing_field")
+        self.assertEqual(cand_b.get("field"), "run_dir")
+
     def test_failed_qualification(self):
         ref, cand, manifest, server = self._positive_pair(qualify_fail=True)
         cand_b = mea.bind_side(
             cand["receipt_path"], role="candidate", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand["cell"],
         )
-        self.assertTrue(cand_b["binding_ok"])
+        self.assertTrue(cand_b["binding_ok"], cand_b)
         self.assertFalse(cand_b["qualified"])
         self.assertEqual(cand_b["status"], "unavailable")
         self.assertEqual(cand_b["reason"], "workload_not_qualified")
@@ -566,12 +784,12 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         ref = _build_side(
             self.root, role="reference", cell_name="c1", run_name="r1",
             binary_bytes=b"A16", started_unix=1000.0, ended_unix=1100.0,
-            build_commit="c1", sources_sha="s1", n=16,
+            build_commit=_tag("c1"), sources_sha=_tag("s1"), n=16,
         )
         cand = _build_side(
             self.root, role="candidate", cell_name="c2", run_name="r2",
             binary_bytes=b"B16", started_unix=1200.0, ended_unix=1300.0,
-            build_commit="c2", sources_sha="s2", n=16,
+            build_commit=_tag("c2"), sources_sha=_tag("s2"), n=16,
         )
         manifest = _write_manifest(self.root, ref, cand)
         server = _server_identity(self.root)
@@ -583,6 +801,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             cand["receipt_path"], role="candidate", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand["cell"],
         )
+        self.assertTrue(ref_b["binding_ok"] and cand_b["binding_ok"], (ref_b, cand_b))
         pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
         self.assertEqual(pair["reason"], "missing_stable_slot_ordinals")
 
@@ -602,23 +821,17 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertEqual(pair["reason"], "overhead_unavailable")
 
     def test_match_key_mismatch(self):
-        ref, cand, manifest, server = self._positive_pair(
-            meta_extra={"frontend": "panel"},
-        )
-        # Candidate panel won't find panel binary key in our tui-only mini manifest
-        # unless we only mutate after bind. Bind both as tui then tweak keys.
+        ref, cand, manifest, server = self._positive_pair()
         ref_b = mea.bind_side(
             ref["receipt_path"], role="reference", manifest_path=manifest,
             server_identity_path=server, cell_dir=ref["cell"],
         )
-        # Rebuild candidate as tui then change match key.
         cand2 = _build_side(
             self.root, role="candidate", cell_name="cell_cand2", run_name="run_cand2",
             binary_bytes=b"CANDIDATE-BINARY-v3", started_unix=1_000_200.0,
-            ended_unix=1_000_300.0, build_commit="commit-candidate-bbbb",
-            sources_sha="sources-candidate-bbbb",
+            ended_unix=1_000_300.0, build_commit=_tag("commit-candidate-bbbb"),
+            sources_sha=_tag("sources-candidate-bbbb"),
         )
-        # Point manifest candidate binary at cand2
         man = json.loads(manifest.read_text())
         man["binaries"]["candidate_tui_play"] = {
             "path": str(cand2["binary_path"]),
@@ -637,6 +850,41 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
         self.assertEqual(pair["reason"], "match_key_mismatch")
         self.assertIn("sustain", pair.get("differing_keys") or [])
+
+    def test_failure_capture_mismatch_not_dropped_by_whitelist(self):
+        """compare_matched_runs must not drop instrumentation flags from equality."""
+        base = {
+            "status": "available",
+            "overhead": "measured",
+            "cpu_cores": 0.1,
+            "resident_median_bytes": 100,
+            "contaminated": False,
+            "match_metadata": {
+                "frontend": "tui",
+                "n": 1,
+                "workload": "active",
+                "nav_pack_sha256": NAV_PACK,
+                "nav_flags_sha256": NAV_FLAGS,
+                "renderer_settings": {"quality": "default"},
+                "cache_settings": {"cache": "default"},
+                "catalog_sha256": CATALOG,
+                "feature_flags": {"f": True},
+                "allocator_provenance": ALLOCATOR,
+                "client_sources_sha256": CLIENT_SOURCES,
+                "failure_capture": False,
+                "scheduling_profile": True,
+            },
+            "side_provenance": {
+                "binary_sha256": _tag("bin-a"),
+                "host_sources_sha256": _tag("host-a"),
+            },
+        }
+        cand = dict(base)
+        cand["match_metadata"] = dict(base["match_metadata"], failure_capture=True)
+        cand["side_provenance"] = dict(base["side_provenance"], binary_sha256=_tag("bin-b"))
+        out = rm.compare_matched_runs(cand, base)
+        self.assertEqual(out["reason"], "mismatched_provenance_or_settings")
+        self.assertNotEqual(out.get("cpu_non_regression"), True)
 
     def test_preserve_failed_cell(self):
         cell = mea.preserve_failed_cell(
@@ -663,10 +911,14 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             "catalog_sha256": "cat",
             "feature_flags": {"f": True},
             "allocator_provenance": "system",
+            "failure_capture": False,
+            "scheduling_profile": True,
         }
         keys = rm.resource_match_keys_from_meta(meta)
         self.assertNotIn("binary_sha256", keys)
         self.assertNotIn("host_sources_sha256", keys)
+        self.assertIn("failure_capture", keys)
+        self.assertIn("scheduling_profile", keys)
         side = rm.resource_side_provenance_from_meta(meta)
         self.assertEqual(side["binary_sha256"], "bin-a")
         other = dict(meta, binary_sha256="bin-b", host_sources_sha256="host-b")
@@ -696,7 +948,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertFalse(pair.get("pair_eligible"))
         self.assertEqual(pair.get("status"), "unavailable")
         self.assertFalse(pair.get("final_acceptance_claim"))
-        # May bind sides or fail match keys depending on enrichment; never a pass.
+        # Legacy N1 lacks receipt raw hashes / host conditions / some match keys.
         self.assertIn(
             pair.get("reason"),
             {
@@ -708,9 +960,16 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             },
         )
         self.assertTrue(pair.get("preserved_cells"))
-        # Must not claim acceptance from old report labels.
         self.assertNotEqual(pair.get("reason"), "paired_within_margin")
         self.assertNotIn(pair.get("status"), ("available", "accepted", "pass"))
+        # Must not claim binding_ok on incomplete legacy receipt chain.
+        ref = pair.get("reference") or {}
+        cand = pair.get("candidate") or {}
+        if ref.get("binding_ok") or cand.get("binding_ok"):
+            # If a side somehow binds, pair still unavailable and not accepted.
+            self.assertFalse(pair.get("pair_eligible"))
+        else:
+            self.assertEqual(pair.get("reason"), "side_binding_failed")
 
 
 if __name__ == "__main__":

@@ -62,6 +62,8 @@ MATCH_KEY_FIELDS = (
     "server_start_identity",
     "server_port_listen",
     "sampler_interval_s",
+    "sampler_duration_s_requested",
+    "host_conditions",
 )
 
 # Present and role-correct; may differ across reference vs candidate.
@@ -71,9 +73,13 @@ SIDE_PROVENANCE_FIELDS = (
     "binary_sha256",
     "manifest_binary_key",
     "manifest_build_commit",
+    "manifest_sources_sha256_pre",
+    "manifest_sources_sha256_post",
     "manifest_sources_sha256",
+    "manifest_sources_stable",
     "manifest_branch",
     "client_commit",
+    "client_sources_sha256",
     "host_commit_checkout",  # current checkout label only; not build authority
 )
 
@@ -83,7 +89,33 @@ REQUIRED_RUN_FILES = (
     "samples.qualification.jsonl",
 )
 
-# Manifest binary key by (role, frontend)
+REQUIRED_RECEIPT_FIELDS = (
+    "id",
+    "index",
+    "kind",
+    "run_dir",
+    "exit_code",
+    "binary",
+    "effective_cli",
+    "started_utc",
+    "ended_utc",
+)
+
+REQUIRED_METADATA_FIELDS = (
+    "run_dir",
+    "exit_code",
+    "binary",
+    "binary_sha256",
+    "frontend",
+    "n",
+    "workload",
+    "warmup_s",
+    "observe_s",
+    "started_unix",
+    "ended_unix",
+    "pid",
+)
+
 _MANIFEST_BINARY_KEYS = {
     ("reference", "tui"): "control_tui_play",
     ("control", "tui"): "control_tui_play",
@@ -97,6 +129,23 @@ _ROLE_MANIFEST_SIDE = {
     "reference": "control",
     "control": "control",
     "candidate": "candidate",
+}
+
+_FLAG_TO_META = {
+    "--sustain": ("sustain", True),
+    "--no-sustain": ("sustain", False),
+    "--scheduling-profile": ("scheduling_profile", True),
+    "--render-profile": ("render_profile", True),
+    "--responsiveness-profile": ("responsiveness_profile", True),
+    "--responsiveness-fine": ("responsiveness_fine", True),
+    "--gpu-completion-profile": ("gpu_completion_profile", True),
+    "--diagnostics": ("diagnostic_sidecar", True),
+    "--no-diagnostics": ("diagnostic_sidecar", False),
+    "--single-renderer": ("single_renderer", True),
+    "--stack-logging": ("stack_logging", True),
+    "--allocation-counting": ("allocation_counting", True),
+    "--failure-capture": ("failure_capture", True),
+    "--nav-captures": ("nav_captures", True),
 }
 
 
@@ -120,6 +169,21 @@ def _is_missing(value: Any) -> bool:
         return True
     if value == {} or value == []:
         return True
+    return False
+
+
+def _deep_missing(value: Any) -> bool:
+    """True if value is missing or any nested dict/list leaf is null/empty."""
+    if _is_missing(value):
+        return True
+    if isinstance(value, dict):
+        if not value:
+            return True
+        return any(_deep_missing(v) for v in value.values())
+    if isinstance(value, list):
+        if not value:
+            return True
+        return any(_deep_missing(v) for v in value)
     return False
 
 
@@ -154,33 +218,32 @@ def _file_hash_if_present(path: pathlib.Path) -> Optional[str]:
     return sha256_file(path)
 
 
-def _observation_wall_span(meta: dict, samples: list[dict]) -> Optional[tuple[float, float]]:
-    """Return (start_unix, end_unix) for the observation window when possible.
+def _observation_wall_span_from_analysis(analysis: dict, meta: dict) -> Optional[tuple[float, float]]:
+    """Reuse analyzed observation_window bounds; never whole-process span alone.
 
-    Prefer host wall timestamps from metadata; fall back to started_unix +
-    sample elapsed_s offsets. Process-local mono origins are never compared
-    across runs.
+    Requires finite increasing obs_start/obs_end contained in process times when
+    process times exist. Process-local mono origins are never compared across runs.
     """
+    window = analysis.get("observation_window") if isinstance(analysis, dict) else None
+    if not isinstance(window, dict):
+        return None
+    if window.get("status") == "unavailable":
+        return None
+    start = window.get("obs_start_unix")
+    end = window.get("obs_end_unix")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return None
+    start_f, end_f = float(start), float(end)
+    if not (end_f > start_f):
+        return None
     started = meta.get("started_unix")
     ended = meta.get("ended_unix")
     if isinstance(started, (int, float)) and isinstance(ended, (int, float)):
-        if ended > started:
-            return (float(started), float(ended))
-    observe = [
-        row
-        for row in samples
-        if isinstance(row, dict) and row.get("phase") == "observe"
-    ]
-    if (
-        isinstance(started, (int, float))
-        and len(observe) >= 2
-        and all(isinstance(r.get("elapsed_s"), (int, float)) for r in observe)
-    ):
-        t0 = float(observe[0]["elapsed_s"])
-        t1 = float(observe[-1]["elapsed_s"])
-        if t1 > t0:
-            return (float(started) + t0, float(started) + t1)
-    return None
+        if start_f < float(started) - 1e-6 or end_f > float(ended) + 1e-6:
+            return None
+        if not (float(ended) > float(started)):
+            return None
+    return (start_f, end_f)
 
 
 def _windows_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:
@@ -221,24 +284,28 @@ def _normalize_role(role: str) -> str:
 
 
 def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
-    """Build strict match-key dict. Missing/null members stay present as None."""
+    """Build strict match-key dict. Missing/null members stay present as None.
+
+    Never default TUI render_policy null → \"none\". Absent stays unavailable.
+    """
     out: dict[str, Any] = {}
     for key in MATCH_KEY_FIELDS:
         if key in (
             "server_start_identity",
             "server_port_listen",
             "sampler_interval_s",
+            "sampler_duration_s_requested",
+            "host_conditions",
         ):
             continue
-        val = meta.get(key)
-        if key == "render_policy" and val is None and meta.get("frontend") == "tui":
-            val = "none"
-        out[key] = val
+        out[key] = meta.get(key)
     if extras:
         for key in (
             "server_start_identity",
             "server_port_listen",
             "sampler_interval_s",
+            "sampler_duration_s_requested",
+            "host_conditions",
         ):
             if key in extras:
                 out[key] = extras[key]
@@ -246,11 +313,11 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
 
 
 def match_keys_complete(keys: dict) -> Optional[str]:
-    """Return missing field name if any match key is null/empty; else None."""
+    """Return missing field name if any match key is null/empty/nested-null."""
     for key in MATCH_KEY_FIELDS:
         if key not in keys:
             return key
-        if _is_missing(keys.get(key)):
+        if _deep_missing(keys.get(key)):
             return key
     return None
 
@@ -265,20 +332,128 @@ def construct_side_provenance(
     manifest_side: dict,
 ) -> dict:
     client = manifest_side.get("client") if isinstance(manifest_side.get("client"), dict) else {}
+    pre = manifest_side.get("sources_sha256_pre")
+    post = manifest_side.get("sources_sha256_post")
+    stable = (
+        isinstance(pre, str)
+        and isinstance(post, str)
+        and pre != ""
+        and post != ""
+        and pre == post
+    )
     return {
         "role": role,
         "binary_path": str(binary_path),
         "binary_sha256": binary_sha256,
         "manifest_binary_key": manifest_key,
         "manifest_build_commit": _build_commit_from_side(manifest_side),
-        "manifest_sources_sha256": manifest_side.get("sources_sha256_pre")
-        or manifest_side.get("sources_sha256_post"),
+        "manifest_sources_sha256_pre": pre,
+        "manifest_sources_sha256_post": post,
+        "manifest_sources_sha256": pre if stable else None,
+        "manifest_sources_stable": stable,
         "manifest_branch": manifest_side.get("branch"),
-        "client_commit": client.get("commit") or meta.get("client_commit"),
+        "client_commit": client.get("commit"),
+        "client_sources_sha256": client.get("sources_sha256"),
         "host_commit_checkout": meta.get("host_commit"),
         # Explicit: checkout host_commit is not build authority.
         "host_commit_is_build_authority": False,
     }
+
+
+def _cli_flag_value(cli: list, flag: str) -> Optional[str]:
+    for i, tok in enumerate(cli):
+        if tok == flag and i + 1 < len(cli):
+            return str(cli[i + 1])
+    return None
+
+
+def _validate_effective_cli(receipt: dict, meta: dict) -> Optional[str]:
+    """Require recorded launch CLI to agree with metadata launch identity."""
+    cli = receipt.get("effective_cli")
+    if not isinstance(cli, list) or len(cli) < 5:
+        return "receipt_effective_cli_invalid"
+    # Typical: [python, script, frontend, n, workload, flags..., --binary, path, ...]
+    try:
+        frontend_tok = str(cli[2])
+        n_tok = int(cli[3])
+        workload_tok = str(cli[4])
+    except (TypeError, ValueError, IndexError):
+        return "receipt_effective_cli_parse_failed"
+    if frontend_tok != meta.get("frontend"):
+        return "receipt_cli_frontend_mismatch"
+    if n_tok != meta.get("n"):
+        return "receipt_cli_n_mismatch"
+    if workload_tok != meta.get("workload"):
+        return "receipt_cli_workload_mismatch"
+
+    bin_tok = _cli_flag_value(cli, "--binary")
+    if _is_missing(bin_tok):
+        return "receipt_cli_missing_binary"
+    if canonical_path(bin_tok) != canonical_path(meta.get("binary")):
+        return "receipt_cli_binary_mismatch"
+
+    warm = _cli_flag_value(cli, "--warmup")
+    obs = _cli_flag_value(cli, "--observe")
+    if warm is None or obs is None:
+        return "receipt_cli_missing_timing"
+    try:
+        warm_f = float(warm)
+        obs_f = float(obs)
+    except ValueError:
+        return "receipt_cli_timing_unparseable"
+    if float(meta.get("warmup_s")) != warm_f:
+        return "receipt_cli_warmup_mismatch"
+    if float(meta.get("observe_s")) != obs_f:
+        return "receipt_cli_observe_mismatch"
+
+    # Flag-derived bools must agree with metadata when the flag family is known.
+    present = set(str(t) for t in cli)
+    for flag, (meta_key, expected_when_present) in _FLAG_TO_META.items():
+        if flag not in present:
+            continue
+        meta_val = meta.get(meta_key)
+        if meta_val is None:
+            return f"receipt_cli_flag_meta_missing:{meta_key}"
+        if bool(meta_val) != bool(expected_when_present):
+            return f"receipt_cli_flag_mismatch:{meta_key}"
+    return None
+
+
+def _validate_meta_against_manifest_fixtures(meta: dict, manifest: dict, manifest_side: dict) -> Optional[str]:
+    """When both metadata and manifest carry a fixture field, they must agree.
+
+    Never fill missing metadata from the manifest.
+    """
+    nav = manifest.get("nav") if isinstance(manifest.get("nav"), dict) else {}
+    catalog = manifest.get("catalog") if isinstance(manifest.get("catalog"), dict) else {}
+    features = manifest.get("features") if isinstance(manifest.get("features"), dict) else {}
+    client = manifest_side.get("client") if isinstance(manifest_side.get("client"), dict) else {}
+
+    pairs = [
+        ("nav_pack_sha256", nav.get("nav_pack_sha256")),
+        ("nav_flags_sha256", nav.get("nav_flags_sha256")),
+        ("catalog_sha256", catalog.get("js_scripts_json_sha256")),
+        ("client_sources_sha256", client.get("sources_sha256")),
+        ("client_commit", client.get("commit")),
+    ]
+    for meta_key, man_val in pairs:
+        meta_val = meta.get(meta_key)
+        if _is_missing(meta_val) or _is_missing(man_val):
+            continue
+        if meta_val != man_val:
+            return f"metadata_manifest_mismatch:{meta_key}"
+
+    if not _is_missing(meta.get("allocator_provenance")) and not _is_missing(features.get("allocator")):
+        if meta.get("allocator_provenance") != features.get("allocator"):
+            return "metadata_manifest_mismatch:allocator_provenance"
+
+    meta_ff = meta.get("feature_flags")
+    if isinstance(meta_ff, dict) and features:
+        # Compare overlapping keys only when both present.
+        for k in ("requested", "locked", "allocation_counting"):
+            if k in meta_ff and k in features and meta_ff.get(k) != features.get(k):
+                return f"metadata_manifest_mismatch:feature_flags.{k}"
+    return None
 
 
 def bind_side(
@@ -289,14 +464,14 @@ def bind_side(
     counting: bool = False,
     diagnostics: bool = False,
     server_identity_path: Optional[pathlib.Path | str] = None,
+    host_conditions_path: Optional[pathlib.Path | str] = None,
     cell_dir: Optional[pathlib.Path | str] = None,
 ) -> dict:
     """Bind one cell receipt through the authoritative artifact chain.
 
-    Returns a structured dict. ``binding_ok`` means receipt→metadata→binary→
-    manifest→raw files chained successfully and qualification was recomputed.
-    ``pair_eligible`` is never set True here (pair checks are separate);
-    overhead remains unavailable without continuous helper accounting.
+    ``binding_ok`` requires the full receipt→metadata→recorded raw hashes→
+    exact named manifest binary path→independent qualify/analyze chain.
+    ``pair_eligible`` is never set True here.
     """
     role_n = _normalize_role(role)
     if role_n not in ("reference", "control", "candidate"):
@@ -316,10 +491,11 @@ def bind_side(
     if not isinstance(receipt, dict):
         return _unavailable("receipt_not_object", path=str(receipt_path))
 
-    run_dir_raw = receipt.get("run_dir")
-    if _is_missing(run_dir_raw):
-        return _unavailable("receipt_missing_run_dir", path=str(receipt_path))
-    run_dir = canonical_path(run_dir_raw)
+    for field in REQUIRED_RECEIPT_FIELDS:
+        if field not in receipt or _is_missing(receipt.get(field)):
+            return _unavailable("receipt_missing_field", field=field, path=str(receipt_path))
+
+    run_dir = canonical_path(receipt["run_dir"])
     if not run_dir.is_dir():
         return _unavailable("run_dir_missing", path=str(run_dir))
 
@@ -339,38 +515,86 @@ def bind_side(
     if not isinstance(meta, dict):
         return _unavailable("metadata_not_object", path=str(meta_path))
 
-    meta_run = meta.get("run_dir")
-    if not _is_missing(meta_run):
-        if canonical_path(meta_run) != run_dir:
-            return _unavailable(
-                "receipt_metadata_run_dir_mismatch",
-                receipt_run_dir=str(run_dir),
-                metadata_run_dir=str(canonical_path(meta_run)),
-            )
+    for field in REQUIRED_METADATA_FIELDS:
+        if field not in meta or _is_missing(meta.get(field)):
+            return _unavailable("metadata_missing_field", field=field, run_dir=str(run_dir))
+
+    if canonical_path(meta["run_dir"]) != run_dir:
+        return _unavailable(
+            "receipt_metadata_run_dir_mismatch",
+            receipt_run_dir=str(run_dir),
+            metadata_run_dir=str(canonical_path(meta["run_dir"])),
+        )
 
     receipt_exit = receipt.get("exit_code")
     meta_exit = meta.get("exit_code")
-    if receipt_exit is not None and meta_exit is not None and receipt_exit != meta_exit:
+    if receipt_exit != meta_exit:
         return _unavailable(
             "receipt_metadata_exit_mismatch",
             receipt_exit=receipt_exit,
             metadata_exit=meta_exit,
         )
 
-    raw_hashes = {
+    # Receipt binary must agree with metadata binary (canonical path).
+    if canonical_path(receipt["binary"]) != canonical_path(meta["binary"]):
+        return _unavailable(
+            "receipt_metadata_binary_mismatch",
+            receipt_binary=str(canonical_path(receipt["binary"])),
+            metadata_binary=str(canonical_path(meta["binary"])),
+        )
+
+    cli_err = _validate_effective_cli(receipt, meta)
+    if cli_err is not None:
+        return _unavailable(cli_err, path=str(receipt_path))
+
+    started = meta.get("started_unix")
+    ended = meta.get("ended_unix")
+    if not (isinstance(started, (int, float)) and isinstance(ended, (int, float)) and float(ended) > float(started)):
+        return _unavailable("metadata_time_envelope_invalid", run_dir=str(run_dir))
+
+    # Live snapshot hashes of raw artifacts.
+    snapshot_hashes = {
         "metadata.json": _file_hash_if_present(meta_path),
         "samples.jsonl": _file_hash_if_present(run_dir / "samples.jsonl"),
         "samples.qualification.jsonl": _file_hash_if_present(
             run_dir / "samples.qualification.jsonl"
         ),
     }
-    if any(v is None for v in raw_hashes.values()):
-        return _unavailable("raw_hash_failed", path=str(run_dir), raw_hashes=raw_hashes)
+    if any(v is None for v in snapshot_hashes.values()):
+        return _unavailable("raw_hash_failed", path=str(run_dir), raw_hashes=snapshot_hashes)
 
-    # Completed run identity = canonical run dir + completed artifact hashes.
+    # Binding requires receipt-recorded raw hashes (not merely a live snapshot).
+    recorded = receipt.get("raw_hashes") or receipt.get("artifact_hashes")
+    if not isinstance(recorded, dict) or not recorded:
+        return _unavailable(
+            "receipt_raw_hashes_missing",
+            path=str(receipt_path),
+            snapshot_hashes=snapshot_hashes,
+            raw_hash_status="live_snapshot_only",
+        )
+    for name, snap in snapshot_hashes.items():
+        if name not in recorded or _is_missing(recorded.get(name)):
+            return _unavailable(
+                "receipt_raw_hash_field_missing",
+                field=name,
+                path=str(receipt_path),
+                raw_hash_status="incomplete_recorded",
+            )
+        if recorded.get(name) != snap:
+            return _unavailable(
+                "receipt_raw_hash_mismatch",
+                field=name,
+                recorded=recorded.get(name),
+                actual=snap,
+                raw_hash_status="recorded_mismatch",
+            )
+    raw_hashes = dict(snapshot_hashes)
+    raw_hash_status = "receipt_recorded_and_verified"
+
     run_identity = {
         "run_dir": str(run_dir),
         "raw_hashes": raw_hashes,
+        "raw_hash_status": raw_hash_status,
         "identity_sha256": sha256_bytes(
             json.dumps(
                 {"run_dir": str(run_dir), "raw_hashes": raw_hashes},
@@ -379,10 +603,7 @@ def bind_side(
         ),
     }
 
-    binary_raw = meta.get("binary") or receipt.get("binary")
-    if _is_missing(binary_raw):
-        return _unavailable("missing_binary_path", run_dir=str(run_dir))
-    binary_path = canonical_path(binary_raw)
+    binary_path = canonical_path(meta["binary"])
     if not binary_path.is_file():
         return _unavailable("binary_missing", path=str(binary_path))
 
@@ -392,8 +613,6 @@ def bind_side(
         return _unavailable("binary_unreadable", path=str(binary_path), error=str(exc))
 
     meta_sha = meta.get("binary_sha256")
-    if _is_missing(meta_sha):
-        return _unavailable("metadata_missing_binary_sha256", run_dir=str(run_dir))
     if meta_sha != actual_sha:
         return _unavailable(
             "binary_hash_mismatch_metadata",
@@ -410,14 +629,9 @@ def bind_side(
         return _unavailable("manifest_not_object", path=str(manifest_path))
 
     frontend = meta.get("frontend")
-    if _is_missing(frontend):
-        return _unavailable("metadata_missing_frontend", run_dir=str(run_dir))
-
-    # Role key: treat reference and control as the control manifest side.
     role_for_key = "control" if role_n in ("reference", "control") else "candidate"
     manifest_key = _MANIFEST_BINARY_KEYS.get((role_for_key, str(frontend)))
     if manifest_key is None:
-        # Also try the literal role name for reference→control_tui mapping
         manifest_key = _MANIFEST_BINARY_KEYS.get((role_n, str(frontend)))
     if manifest_key is None:
         return _unavailable(
@@ -443,10 +657,11 @@ def bind_side(
         )
 
     entry_path = canonical_path(entry_path_raw)
-    if entry_path != binary_path and entry_sha != actual_sha:
-        # Paths may differ only if content hash still matches the named entry.
+    # Exact canonical named manifest binary path required (symlink→same path OK).
+    # A same-hash copy at a different path is not the declared path.
+    if entry_path != binary_path:
         return _unavailable(
-            "binary_not_bound_to_manifest_entry",
+            "binary_path_not_manifest_canonical_path",
             key=manifest_key,
             binary_path=str(binary_path),
             manifest_path=str(entry_path),
@@ -460,30 +675,6 @@ def bind_side(
             actual_sha256=actual_sha,
             manifest_sha256=entry_sha,
         )
-    if entry_path != binary_path:
-        # Same hash, different path — require the named manifest path to exist
-        # and hash-match (duplicate reference ok when content matches).
-        if not entry_path.is_file():
-            return _unavailable(
-                "manifest_binary_path_missing",
-                path=str(entry_path),
-                key=manifest_key,
-            )
-        try:
-            entry_actual = sha256_file(entry_path)
-        except OSError as exc:
-            return _unavailable(
-                "manifest_binary_unreadable",
-                path=str(entry_path),
-                error=str(exc),
-            )
-        if entry_actual != entry_sha:
-            return _unavailable(
-                "manifest_binary_file_hash_mismatch",
-                path=str(entry_path),
-                expected=entry_sha,
-                actual=entry_actual,
-            )
 
     manifest_side = _manifest_side_block(manifest, role_for_key)
     if manifest_side is None:
@@ -507,64 +698,108 @@ def bind_side(
             role=role_for_key,
             side_provenance=side_prov,
         )
-    if _is_missing(side_prov.get("manifest_sources_sha256")):
+    if not side_prov.get("manifest_sources_stable"):
         return _unavailable(
-            "manifest_sources_sha256_missing",
+            "manifest_sources_sha256_unstable_or_missing",
+            role=role_for_key,
+            side_provenance=side_prov,
+        )
+    if _is_missing(side_prov.get("client_commit")) or _is_missing(side_prov.get("client_sources_sha256")):
+        return _unavailable(
+            "manifest_client_provenance_missing",
             role=role_for_key,
             side_provenance=side_prov,
         )
 
-    # Server / sampler identity (non-sensitive only).
+    # Metadata client fields, when present, must match manifest client block.
+    if not _is_missing(meta.get("client_commit")) and meta.get("client_commit") != side_prov.get("client_commit"):
+        return _unavailable(
+            "metadata_manifest_client_commit_mismatch",
+            metadata=meta.get("client_commit"),
+            manifest=side_prov.get("client_commit"),
+        )
+    if not _is_missing(meta.get("client_sources_sha256")) and meta.get("client_sources_sha256") != side_prov.get(
+        "client_sources_sha256"
+    ):
+        return _unavailable(
+            "metadata_manifest_client_sources_mismatch",
+            metadata=meta.get("client_sources_sha256"),
+            manifest=side_prov.get("client_sources_sha256"),
+        )
+    # host_sources on metadata, when present, must match stable manifest sources.
+    if not _is_missing(meta.get("host_sources_sha256")) and meta.get("host_sources_sha256") != side_prov.get(
+        "manifest_sources_sha256"
+    ):
+        return _unavailable(
+            "metadata_manifest_host_sources_mismatch",
+            metadata=meta.get("host_sources_sha256"),
+            manifest=side_prov.get("manifest_sources_sha256"),
+        )
+
+    fix_err = _validate_meta_against_manifest_fixtures(meta, manifest, manifest_side)
+    if fix_err is not None:
+        return _unavailable(fix_err, run_dir=str(run_dir))
+
+    # Features/allocator fixture bindings required on manifest for side completeness.
+    features = manifest.get("features") if isinstance(manifest.get("features"), dict) else {}
+    if _is_missing(features.get("allocator")):
+        return _unavailable("manifest_allocator_missing", path=str(manifest_path))
+    if "allocation_counting" not in features:
+        return _unavailable("manifest_allocation_counting_missing", path=str(manifest_path))
+
+    # Server / sampler / host identity (non-sensitive only). Never invent.
     server_extras: dict[str, Any] = {}
-    if server_identity_path is not None:
-        sip = canonical_path(server_identity_path)
-        if sip.is_file():
-            try:
-                sid = _load_json(sip)
-            except (OSError, json.JSONDecodeError) as exc:
-                return _unavailable(
-                    "server_identity_unreadable",
-                    path=str(sip),
-                    error=str(exc),
-                )
-            if isinstance(sid, dict):
-                server_extras["server_start_identity"] = sid.get("start_identity")
-                server_extras["server_port_listen"] = sid.get("port_listen")
-        else:
-            return _unavailable("server_identity_missing", path=str(sip))
+    if server_identity_path is None:
+        return _unavailable("server_identity_path_required")
+    sip = canonical_path(server_identity_path)
+    if not sip.is_file():
+        return _unavailable("server_identity_missing", path=str(sip))
+    try:
+        sid = _load_json(sip)
+    except (OSError, json.JSONDecodeError) as exc:
+        return _unavailable(
+            "server_identity_unreadable",
+            path=str(sip),
+            error=str(exc),
+        )
+    if not isinstance(sid, dict):
+        return _unavailable("server_identity_not_object", path=str(sip))
+    if _is_missing(sid.get("start_identity")):
+        return _unavailable("server_start_identity_missing", path=str(sip))
+    if _is_missing(sid.get("port_listen")):
+        return _unavailable("server_port_listen_missing", path=str(sip))
+    server_extras["server_start_identity"] = sid.get("start_identity")
+    server_extras["server_port_listen"] = sid.get("port_listen")
 
     sampler = receipt.get("sampler") if isinstance(receipt.get("sampler"), dict) else {}
-    if "interval_s" in sampler:
-        server_extras["sampler_interval_s"] = sampler.get("interval_s")
+    if _is_missing(sampler.get("interval_s")):
+        return _unavailable("receipt_sampler_interval_missing")
+    if _is_missing(sampler.get("duration_s_requested")):
+        return _unavailable("receipt_sampler_duration_missing")
+    server_extras["sampler_interval_s"] = sampler.get("interval_s")
+    server_extras["sampler_duration_s_requested"] = sampler.get("duration_s_requested")
 
-    # Catalog / nav fixture hashes may live only on the manifest today.
-    features = manifest.get("features") if isinstance(manifest.get("features"), dict) else {}
-    catalog = manifest.get("catalog") if isinstance(manifest.get("catalog"), dict) else {}
-    nav = manifest.get("nav") if isinstance(manifest.get("nav"), dict) else {}
+    # Host conditions: required non-sensitive machine identity blob.
+    if host_conditions_path is not None:
+        hcp = canonical_path(host_conditions_path)
+        if not hcp.is_file():
+            return _unavailable("host_conditions_missing", path=str(hcp))
+        try:
+            hc = _load_json(hcp)
+        except (OSError, json.JSONDecodeError) as exc:
+            return _unavailable("host_conditions_unreadable", path=str(hcp), error=str(exc))
+        if not isinstance(hc, dict) or _deep_missing(hc):
+            return _unavailable("host_conditions_invalid", path=str(hcp))
+        server_extras["host_conditions"] = hc
+    elif isinstance(meta.get("host_conditions"), dict) and not _deep_missing(meta.get("host_conditions")):
+        server_extras["host_conditions"] = meta.get("host_conditions")
+    elif isinstance(receipt.get("host_conditions"), dict) and not _deep_missing(receipt.get("host_conditions")):
+        server_extras["host_conditions"] = receipt.get("host_conditions")
+    else:
+        return _unavailable("host_conditions_missing")
 
-    # Enrich meta copy for match-key construction without mutating on-disk meta.
-    meta_view = dict(meta)
-    if _is_missing(meta_view.get("nav_flags_sha256")) and not _is_missing(nav.get("nav_flags_sha256")):
-        meta_view["nav_flags_sha256"] = nav.get("nav_flags_sha256")
-    if _is_missing(meta_view.get("catalog_sha256")) and not _is_missing(
-        catalog.get("js_scripts_json_sha256")
-    ):
-        meta_view["catalog_sha256"] = catalog.get("js_scripts_json_sha256")
-    if _is_missing(meta_view.get("feature_flags")) and features:
-        meta_view["feature_flags"] = {
-            "requested": features.get("requested"),
-            "locked": features.get("locked"),
-            "allocation_counting": features.get("allocation_counting"),
-        }
-    if _is_missing(meta_view.get("allocator_provenance")) and features.get("allocator"):
-        meta_view["allocator_provenance"] = features.get("allocator")
-    if _is_missing(meta_view.get("client_sources_sha256")):
-        client = manifest_side.get("client") if isinstance(manifest_side.get("client"), dict) else {}
-        if client.get("sources_sha256"):
-            meta_view["client_sources_sha256"] = client.get("sources_sha256")
-    # renderer_settings / cache_settings: still required when pairing; do not invent.
-
-    match_keys = construct_match_keys(meta_view, extras=server_extras)
+    # Metadata is authoritative — no manifest enrichment of missing match keys.
+    match_keys = construct_match_keys(meta, extras=server_extras)
 
     # Independent qualification (never trust receipt.qualification labels).
     qualification = qc.qualify(run_dir, counting=counting, diagnostics=diagnostics)
@@ -575,37 +810,55 @@ def bind_side(
         diagnostics=diagnostics,
     )
 
-    # Observation window (wall clock) for pair overlap checks.
-    try:
-        samples = rm.load_run_samples(run_dir)
-    except (OSError, ValueError, FileNotFoundError) as exc:
-        return _unavailable("samples_unreadable", error=str(exc), path=str(run_dir))
+    # Post-read content recheck: raw files must still match recorded hashes.
+    recheck = {
+        "metadata.json": _file_hash_if_present(meta_path),
+        "samples.jsonl": _file_hash_if_present(run_dir / "samples.jsonl"),
+        "samples.qualification.jsonl": _file_hash_if_present(
+            run_dir / "samples.qualification.jsonl"
+        ),
+    }
+    if recheck != raw_hashes:
+        return _unavailable(
+            "raw_hash_changed_after_read",
+            before=raw_hashes,
+            after=recheck,
+            raw_hash_status="mutated_after_bind_read",
+        )
 
-    wall_span = _observation_wall_span(meta, samples)
+    wall_span = _observation_wall_span_from_analysis(analysis, meta)
+    if wall_span is None:
+        return _unavailable(
+            "observation_window_invalid",
+            observation_window=analysis.get("observation_window") if isinstance(analysis, dict) else None,
+        )
 
-    # Helper overhead: snapshots alone never prove continuous accounting.
     overhead_status = _evaluate_helper_overhead(
         receipt=receipt,
         cell_dir=canonical_path(cell_dir) if cell_dir is not None else receipt_path.parent,
     )
 
+    try:
+        samples = rm.load_run_samples(run_dir)
+    except (OSError, ValueError, FileNotFoundError) as exc:
+        return _unavailable("samples_unreadable", error=str(exc), path=str(run_dir))
+
     qualified = qualification.get("qualified") is True and not qualification.get("errors")
     exit_ok = meta_exit == 0
-    binding_ok = True  # chain above succeeded
+    binding_ok = True
 
-    # Resource-shaped diagnostic payload for existing helpers (not pair pass).
     resources_gate = (analysis.get("gates") or {}).get("resources") or {}
     shaped = {
         "status": resources_gate.get("status", "unavailable"),
         "reason": resources_gate.get("reason"),
-        "match_metadata": rm.resource_match_keys_from_meta(meta_view),
+        "match_metadata": rm.resource_match_keys_from_meta(meta),
         "side_provenance": {
             "binary_sha256": actual_sha,
             "host_sources_sha256": side_prov.get("manifest_sources_sha256"),
             "manifest_build_commit": side_prov.get("manifest_build_commit"),
             "role": side_prov.get("role"),
         },
-        "overhead": "unknown",  # never promote from receipt labels
+        "overhead": "unknown",
         "cpu_cores": resources_gate.get("cpu_cores"),
         "resident_median_bytes": resources_gate.get("resident_median_bytes"),
         "contaminated": bool((analysis.get("observation_window") or {}).get("contaminated")),
@@ -633,6 +886,7 @@ def bind_side(
         "run_dir": str(run_dir),
         "run_identity": run_identity,
         "raw_hashes": raw_hashes,
+        "raw_hash_status": raw_hash_status,
         "binary_path": str(binary_path),
         "binary_sha256": actual_sha,
         "manifest_path": str(manifest_path),
@@ -675,7 +929,7 @@ def _evaluate_helper_overhead(*, receipt: dict, cell_dir: pathlib.Path) -> dict:
     before = cell_dir / "helper_resources_before.json"
     after = cell_dir / "helper_resources_after.json"
     has_snapshots = before.is_file() and after.is_file()
-    continuous = False  # no continuous helper CPU/RSS series in current artifacts
+    continuous = False
     return {
         "status": "unavailable",
         "reason": "helper_overhead_accounting_missing",
@@ -694,14 +948,11 @@ def bind_pair(
     *,
     reference: dict,
     candidate: dict,
-    require_match_keys_complete: bool = True,
-    allow_n_gt1_without_ordinals: bool = False,
 ) -> dict:
     """Combine two bind_side results into a pair assessment.
 
     Distinguishes binding success from final pair-gate eligibility.
-    Diagnostic compare_matched_runs / paired_fine_p99 may still run under
-    status=unavailable; they never unlock acceptance.
+    No caller bypasses for incomplete match keys or N>1 without ordinals.
     """
     out: dict[str, Any] = {
         "status": "unavailable",
@@ -727,6 +978,16 @@ def bind_pair(
         out["candidate_reason"] = candidate.get("reason")
         return out
 
+    # Recorded raw-hash binding required on both sides.
+    if reference.get("raw_hash_status") != "receipt_recorded_and_verified":
+        out["reason"] = "reference_raw_hash_not_receipt_bound"
+        out["reference_raw_hash_status"] = reference.get("raw_hash_status")
+        return out
+    if candidate.get("raw_hash_status") != "receipt_recorded_and_verified":
+        out["reason"] = "candidate_raw_hash_not_receipt_bound"
+        out["candidate_raw_hash_status"] = candidate.get("raw_hash_status")
+        return out
+
     out["binding_ok"] = True
 
     if not reference.get("qualified") or not candidate.get("qualified"):
@@ -750,6 +1011,9 @@ def bind_pair(
     if not (isinstance(ref_span, (list, tuple)) and isinstance(cand_span, (list, tuple))):
         out["reason"] = "observation_window_unavailable"
         return out
+    if len(ref_span) != 2 or len(cand_span) != 2:
+        out["reason"] = "observation_window_unavailable"
+        return out
     if _windows_overlap(tuple(ref_span), tuple(cand_span)):  # type: ignore[arg-type]
         out["reason"] = "overlapping_observation_windows"
         out["reference_span"] = ref_span
@@ -758,17 +1022,15 @@ def bind_pair(
 
     ref_keys = reference.get("match_keys") or {}
     cand_keys = candidate.get("match_keys") or {}
-    if require_match_keys_complete:
-        miss_r = match_keys_complete(ref_keys)
-        miss_c = match_keys_complete(cand_keys)
-        if miss_r or miss_c:
-            out["reason"] = "missing_match_key"
-            out["reference_missing_match_key"] = miss_r
-            out["candidate_missing_match_key"] = miss_c
-            return out
+    miss_r = match_keys_complete(ref_keys)
+    miss_c = match_keys_complete(cand_keys)
+    if miss_r or miss_c:
+        out["reason"] = "missing_match_key"
+        out["reference_missing_match_key"] = miss_r
+        out["candidate_missing_match_key"] = miss_c
+        return out
 
     if ref_keys != cand_keys:
-        # Identify first differing key for diagnostics.
         diff = sorted(
             k
             for k in set(ref_keys) | set(cand_keys)
@@ -778,30 +1040,29 @@ def bind_pair(
         out["differing_keys"] = diff
         return out
 
-    # N>1 requires ordinals or predeclared fleet-worst-case (not implemented).
     n_ref = reference.get("n")
     n_cand = candidate.get("n")
     if n_ref != n_cand:
         out["reason"] = "n_mismatch"
         return out
     if isinstance(n_ref, int) and n_ref > 1:
-        if not allow_n_gt1_without_ordinals and not (
+        if not (
             reference.get("slot_ordinals_present") and candidate.get("slot_ordinals_present")
         ):
             out["reason"] = "missing_stable_slot_ordinals"
             return out
 
-    # Endpoint family notes: decode ≠ input ≠ GPU ≠ TUI flush. Require same
-    # availability class when both sides report endpoint gate dicts.
+    # Endpoint family notes: decode ≠ input ≠ GPU ≠ TUI flush.
     ref_ep = reference.get("endpoint_notes") or {}
     cand_ep = candidate.get("endpoint_notes") or {}
     for name in ("decode", "input", "gpu", "scheduling"):
         r = ref_ep.get(name) if isinstance(ref_ep.get(name), dict) else None
         c = cand_ep.get(name) if isinstance(cand_ep.get(name), dict) else None
         if r is None or c is None:
-            continue
-        # Mismatch only when one side has available and the other does not with
-        # a different reason class that implies different endpoint semantics.
+            # Missing endpoint semantics on either side → unavailable, not equal.
+            out["reason"] = "endpoint_semantics_unavailable"
+            out["endpoint"] = name
+            return out
         if r.get("status") == "available" and c.get("status") != "available":
             out["reason"] = "endpoint_mismatch"
             out["endpoint"] = name
@@ -811,17 +1072,14 @@ def bind_pair(
             out["endpoint"] = name
             return out
 
-    # Overhead: both sides must have measured continuous helper accounting.
     ref_oh = reference.get("overhead") or {}
     cand_oh = candidate.get("overhead") or {}
     if ref_oh.get("measured") is not True or cand_oh.get("measured") is not True:
         out["reason"] = "overhead_unavailable"
         out["reference_overhead"] = ref_oh
         out["candidate_overhead"] = cand_oh
-        # Still emit diagnostic compare under unavailable eligibility.
         shaped_r = reference.get("shaped_for_compare") or {}
         shaped_c = candidate.get("shaped_for_compare") or {}
-        # Force overhead unknown so compare_matched_runs stays closed.
         shaped_r = dict(shaped_r)
         shaped_c = dict(shaped_c)
         shaped_r["overhead"] = "unknown"
@@ -835,7 +1093,6 @@ def bind_pair(
         )
         return out
 
-    # Even with measured overhead, this reader still does not claim acceptance.
     shaped_r = reference.get("shaped_for_compare") or {}
     shaped_c = candidate.get("shaped_for_compare") or {}
     out["compare_matched_runs"] = rm.compare_matched_runs(shaped_c, shaped_r)
@@ -851,6 +1108,7 @@ def read_matched_pair(
     candidate_receipt: pathlib.Path | str,
     manifest_path: pathlib.Path | str,
     server_identity_path: Optional[pathlib.Path | str] = None,
+    host_conditions_path: Optional[pathlib.Path | str] = None,
     counting: bool = False,
     diagnostics: bool = False,
     preserve_cells: Optional[list[dict]] = None,
@@ -863,6 +1121,7 @@ def read_matched_pair(
         counting=counting,
         diagnostics=diagnostics,
         server_identity_path=server_identity_path,
+        host_conditions_path=host_conditions_path,
     )
     cand = bind_side(
         candidate_receipt,
@@ -871,6 +1130,7 @@ def read_matched_pair(
         counting=counting,
         diagnostics=diagnostics,
         server_identity_path=server_identity_path,
+        host_conditions_path=host_conditions_path,
     )
     pair = bind_pair(reference=ref, candidate=cand)
     if preserve_cells:
