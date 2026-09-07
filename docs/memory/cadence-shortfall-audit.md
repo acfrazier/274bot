@@ -164,24 +164,27 @@ Fixing or accepting the rate miss is separate from p99 headroom already present.
    - If bare sleep reproduces ~5–10 ms excess and ~36 Hz effective period for a 20 ms request, the limiter is **outside** client/host work (OS/runtime sleep), and game-path optimization will not recover 40 Hz under the current sleep API.
    - If bare sleep is near-exact and only the host loop shows excess, instrument **pre-sleep / post-sleep / post-record** splits inside `run_client` (diagnostic build only) at `crates/host/src/lib.rs:278–284`.
 
-2. Optional second diagnostic (still non-shipping): one-shot **absolute deadline** sleep behind an env flag (`sleep_until = start + FRAME_MS`) vs current relative leftover, same N1 fixture, compare `requested_sleep` / `actual_sleep` / interval means. Measurement-only if the flag defaults off and tick work path is unchanged.
+2. Optional second diagnostic (still non-shipping): only if bare sleep is near-exact and the host loop still shows excess — split **pre-sleep / post-sleep / post-record** Instant marks inside `run_client` at `crates/host/src/lib.rs:278–284` (diagnostic build). Do **not** treat `sleep_until(start + FRAME_MS)` as a distinct rate fix to A/B here: current leftover already targets approximately that wake (see correction section).
 
 Do **not** use JSONL row Δt as the interval window; keep counter deltas + endpoint rules from `per-slot-scheduling-report.md`.
 
 ## Smallest safe correction candidate (propose only — not implemented)
 
-If the bare-sleep probe confirms OS/runtime overshoot on relative sleeps:
+**Equivalence note (required):** the current path already does `rest = FRAME_MS.checked_sub(work)` then `thread::sleep(rest)` after measuring `work` from `start` (`crates/host/src/lib.rs` 276–280). That **already intends** wake at approximately **`start + FRAME_MS`**. Replacing it with `sleep_until(start + FRAME_MS)` (or equivalent absolute wait from this tick’s start) is **nearly equivalent for on-time cycles**. It does **not**, by itself, absorb systematic **late** OS wakeups past the deadline. Dominant evidence here is late sleep (~7.7 ms mean excess, ~80% in (5, 10] ms): a late wake still makes the next `start` late; another wait rebased from that late `start` to `start + FRAME_MS` **cannot recover** the mean rate. Do **not** claim absolute-from-this-tick-start fixes the observed late-sleep excess without new evidence.
+
+If the bare-sleep probe confirms OS/runtime overshoot on relative duration sleeps:
 
 | Proposal | Detail |
 |:---|:---|
-| **What** | Keep **20 ms** period intent and leftover-after-work policy; replace **relative** `thread::sleep(rest)` with **sleep until tick-start + FRAME_MS** (absolute deadline), still skipping sleep when `work ≥ FRAME_MS`. |
+| **What (correction class)** | Keep **20 ms** period intent and leftover-after-work policy; change scheduling to **phase-locked / catch-up**: maintain a fixed phase grid (`next = next + FRAME_MS`, or `origin + n·FRAME_MS`); sleep only while `now < next`; when already late, **skip or shorten** sleep so overshoot does **not** add a full extra period each cycle. Still skip sleep when work already past the next boundary (same overrun skip intent as today). |
 | **Where** | `crates/host/src/lib.rs` **273–284** (only production sleep site for this path). Optionally mirror later only if a cell uses `Client::run` / GameShell sleep (`game_shell.rs` 182–185, `client.rs` 10491–10493) and that path is shown short. |
-| **Why** | Relative leftover sleep **re-bases** every cycle on “sleep N ms from now,” so each wakeup overshoot **adds** to the period. Absolute deadline from `start` absorbs overshoot into the next wait when the OS wakes early/late within the period (platform APIs permitting). |
-| **Preserve** | Tick body, observe/script order, park bounds, `FRAME_MS == 20 ms`, no invented tick-end opcode, no busy-spin default. |
-| **Risks** | Platform-specific absolute wait (`clock_nanosleep`, mach continuum, etc.); must not change behavior when work overruns; need Linux + macOS evidence; CPU spin-tail hybrids need explicit CPU-budget review on the low-end plan. |
-| **Not proposed without new evidence** | Shortening `FRAME_MS`, raising script load, disabling profiles to “pass” gates, or treating p99-only as full simulation acceptance. |
+| **Why** | Evidence shows mean period ≈ work + **actual** sleep with **late** wake dominating. Relative leftover (and absolute-from-this-`start`) both re-base the next deadline from a late wake, so excess **accumulates** into mean rate. Phase-lock/catch-up is the behavior class that prevents that accumulation while preserving a 20 ms nominal step. |
+| **Not the fix class** | Absolute deadline **from this tick’s `start` alone** (`sleep_until(start + FRAME_MS)` without an advancing `next` grid). Near-equivalent to leftover; does not address late-wakeup rate loss on this evidence. |
+| **Preserve** | Tick body, observe/script order, park bounds, `FRAME_MS == 20 ms`, no invented tick-end opcode, no busy-spin default. Catch-up must not invent extra ticks or change tick semantics beyond sleep duration when late. |
+| **Risks** | Burst of shortened sleeps after stalls; platform wait API choice; must not change behavior when work overruns the boundary; need Linux + macOS evidence; CPU spin-tail hybrids need explicit CPU-budget review on the low-end plan. |
+| **Not proposed without new evidence** | Shortening `FRAME_MS`, raising script load, disabling profiles to “pass” gates, treating p99-only as full simulation acceptance, or shipping absolute-from-start as the late-excess remedy. |
 
-If bare sleep does **not** overshoot, do not land an absolute-deadline change; chase host-loop time outside `client_tick` first.
+**Order:** bare-sleep diagnostic first (preferred). Only after OS/runtime overshoot is confirmed (or host-only excess is isolated) evaluate a **phase-lock/catch-up** change at the lines above. If bare sleep does **not** overshoot, do not land a sleep-policy change; chase host-loop time outside `client_tick` first.
 
 ## Files / lines reference
 
@@ -200,4 +203,4 @@ If bare sleep does **not** overshoot, do not land an absolute-deadline change; c
 
 ## Bottom line
 
-The repeated N1 **~36 loops/s** result is the reciprocal of a **~27.7 ms** mean start-to-start period. The host **requests** ~**19.7 ms** sleep after **~0.28 ms** work toward a **20 ms** budget; **actual** sleep averages **~27.4 ms**, with excess dominated by the **(5, 10] ms** bucket and **no** work overruns. That is sufficient evidence that **leftover relative `thread::sleep` overshoot**, not simulation work cost, accounts for the rate gate miss on these Mac TUI cells. It is **not** sufficient to name a specific macOS kernel timer mechanism without a bare-sleep or OS-trace diagnostic. Smallest next step: bare sleep excess cell; smallest behavior-preserving correction to evaluate after that: absolute deadline sleep at `host/src/lib.rs` 273–284.
+The repeated N1 **~36 loops/s** result is the reciprocal of a **~27.7 ms** mean start-to-start period. The host **requests** ~**19.7 ms** sleep after **~0.28 ms** work toward a **20 ms** budget; **actual** sleep averages **~27.4 ms**, with excess dominated by the **(5, 10] ms** bucket and **no** work overruns. That is sufficient evidence that **leftover relative `thread::sleep` overshoot**, not simulation work cost, accounts for the rate gate miss on these Mac TUI cells. It is **not** sufficient to name a specific macOS kernel timer mechanism without a bare-sleep or OS-trace diagnostic. Current leftover already aims at ~`start + FRAME_MS`; absolute-from-this-start is not a distinct late-excess fix. Smallest next step: bare sleep excess cell; smallest behavior-preserving correction class to evaluate after confirmed OS/runtime overshoot: **phase-lock / catch-up** (`next += FRAME_MS`) at `host/src/lib.rs` 273–284 — not implemented here.
