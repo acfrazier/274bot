@@ -9,58 +9,61 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current actions — 2026-09-07 19:42 UTC
+## Current actions — 2026-09-07 20:39 UTC
 
-- Continue approved performance-finish-plan.md. Native Linux N16 still misses
-  memory/CPU targets; Windows panel misses simulation/render cadence. No final
-  campaign acceptance or newly accepted RSS saving.
-- t_ab1637ae (Luna): freeze matched Linux e318/188a borrowed-fingerprint binaries.
-  Baseline required checks passed; candidate build remains live in the isolated
-  amd64 Docker container. Await actual Grok4.5 review before native VPS pairs.
-  Screen protocol is borrowed-fingerprint-native-screen-protocol.md (2526bbb).
-- Native causal report716eb01 passed Grok4.5 t_c037f97a. ~31ms acquire,
-  ~32 UI fps, ~17 client ticks/s and ~58ms work spans are measured. Static
-  wgpu-core29.0.4 shared-device fence coupling exists; runtime lock stalls and
-  RDP causality remain unproven. Root directly viewed the scene-ready capture.
-- Submit diagnostic t_ada38c88 approved actual Grok4.5 round2 run359,
-  session20260907_153013_9e569e. Host3a2cf3e/client5ee9b6e committed on the
-  isolated codex/windows-submit-attribution branch. Native Windows release build
-  passed; all851 source hashes match before/after. Binary SHA256
-  a4f50f53b1047fa7c72b04bbd310110542b6359b3512e0666f10750fbc61a96d.
-  Native profiling and selected GPU integration checks passed; full logs retained.
-- Old-driver submit trace is running under limited BotTest in
-  C:\Users\BotTest\274bot-runs\managed-panel-attribution-submit-3a2cf3e-61656-a.
-  Same30s warmup/120s observation and panel diagnostics as prior a3f trace.
-  Await actual completion, qualification/binding, dropped-record and overlap
-  analysis. CPU submission-expression spans include encoder.finish argument
-  evaluation; these are not isolated lock measurements or GPU execution time.
-- Hyper-V builder native setup passed actual Grok4.5 t_f48dee57,
-  session20260907_150811_0664b8. Root shut the guest down gracefully via SSH;
-  native preflight confirms VM Off for the old-driver trace. Project build on
-  this VM remains unproven; Linux matched freeze still runs on Mac Docker.
-- Installed NVIDIA driver remains616.56 at old-trace preflight. Root exported
-  and hashed its219-file package for rollback. NVIDIA-signed616.64 remains in
-  C:\TNUC; official hotfix616.86 also downloaded, signature Valid, SHA256
-  e14b1c806bd7d7657c612da6144a3412ed9f055a067548ea05ecd30a7d7ed7e4.
-  Operator authorizes hotfix comparison and needed Windows restarts. Install
-  only after preserving the old-driver trace, then reuse the same binary and
-  settings. No driver change or second reboot has occurred yet.
-- Operator signed out Austen. BotTest RDP2 is the only logged-on session.
-  Root removed two identified stale SSH probe trees and temporarily stopped
-  DellTechHub,DellClientManagementService,ClickToRunSvc plus their identified
-  leftover children. Startup types unchanged; restore receipts/script retained
-  C:\ProgramData\274bot-Test\quiet-services-20260907. Intel services preserved.
-  Recheck/reapply this quiet state after reboot for an equal comparison.
-- Network diagnostics: direct TCP11.124MB/s up/9.892MB/s down, both machines
-  on2.4GHz at observation. SSH is not the sole limit; band causality remains
-  unproven. Test listener/firewall removed. Operator permits throughput tests
-  but forbids resetting other users' connections. No router or Wi-Fi changes.
-- Viewer requirement: start windowed near panel+taskbar size, small margin.
-  Do not change RDP/display/protocol during an ongoing run.
-- Final low-end absolute budgets, matched regression/latency evidence, three
-  modes, lifecycle/scaling, candidate dispositions, whole-branch Grok4.6 and
-  authorized integration remain incomplete. Earlier next-step prose below is
-  an evidence snapshot, superseded by this list.
+- Continue approved performance-finish-plan.md. No final campaign acceptance or
+  newly accepted RSS saving. Final budgets, latency/lifecycle/scaling, three
+  modes, whole-branch Grok4.6 and authorized integration remain incomplete.
+- Linux frozen pair e318/188a approved actual Grok4.5 t_ab1637ae round2 run362.
+  Original native screen t_67b27dc9 failed before frontend launch on invalid
+  client source digest; corrected failure report3033bc2 approved reviewer run366.
+  Preserve diagnostics/borrowed-fingerprint-native-screen-20260907. Root also
+  found missing engine env, wrong cache path, incorrect binding argument and
+  changed timeout in its runner; do not reuse it by only fixing the manifest.
+- Root prepared a separate corrected batch under docs/memory/diagnostics/
+  borrowed-fingerprint-native-screen-20260907b, same path suffix on Concord.
+  run_corrected_cell.py SHA112e64886dfbc5e2008d9e967d74fecdee3e410676ccdee6a55509aceae8bbbf.
+  Both-role native preflights passed with no frontend; first reference N16
+  completed0 and independently bound/qualified. Luna t_419f51fa now owns
+  remaining indices2..8 in the original R/C/C/R N16 then N1 protocol, preserves
+  raw evidence and stops on any failure. Root must not overlap VPS loads.
+  Real183-file client digest98714ee076d808e4589bedb3e3c16af1005e98c6bc54a28e1087c0dfcf73f865;
+  original immutable binaries unchanged. Wait for actual same-card Grok4.5 review.
+- Windows diagnostic host3a2cf3e/client5ee9b6e on isolated
+  codex/windows-submit-attribution passed native build/profiling/GPU tests.
+  Same binary SHAa4f50f53b1047fa7c72b04bbd310110542b6359b3512e0666f10750fbc61a96d
+  used in three completed, independently bound/qualified N1 panel diagnostics:
+  driver616.56 RDP, hotfix616.86 RDP, hotfix616.86 physical console.
+  Raw docs/memory/diagnostics/windows-submit-driver-comparison-20260907.
+  RDP about16 client ticks/GPU callbacks per second, console about49. All-emitted
+  surface acquire mean30.55/30.54/0.0194ms. Long submission-expression spans
+  disappeared at console; expressions include encoder.finish argument evaluation.
+  Overlap is association, not a measured lock stall. Startup size2240x1160 scale2
+  versus1680x870 scale1.5 and session/display differences remain confounders.
+  Callback delivery is not hardware scanout. Console scheduling/GPU diagnostic
+  targets meet; no full input/latency/final resource acceptance. Root viewed
+  all3 console captures (thieving, bank22food, return route); visual proof is
+  capture-time only. Luna t_cca9b913 writes comparison report then Grok4.5 review.
+- NVIDIA-signed616.86 hotfix installed with operator authorization; reboot
+  completed19:54UTC and native driver32.0.16.1686 verified. Old616.56 driver
+  export219files/2.85GB retained;616.64 installer also preserved. Hotfix alone
+  showed no observed RDP cadence improvement. Keep current driver pending evidence.
+- Hyper-V274bot-builder remains Off during all three traces. Project build on
+  that guest is still unproven. DellTechHub,DellClientManagementService and
+  ClickToRunSvc temporarily stopped after reboot/console login; startup types
+  unchanged and Intel preserved. Windows local server now PID6728 creation
+  windows_creation_filetime:134332846721025908 (recheck before new cells).
+- Operator briefly reconnected RDP after console test, then disconnected again
+  and requests integrated-GPU/display-routing investigation and comparison.
+  Root prepared read-only WMI/dxdiag console probe; SSH22 currently times out
+  while RDP3389 answers. Asked operator to check awake/sshd locally, keeping
+  RDP disconnected. No probe reached Windows yet; no adapter or BIOS change.
+  Panel explicitly requests HighPerformance; do not claim an env override is
+  supported without verifying actual selected adapter. Hardware routing unproven.
+- Network observation only; no router/Wi-Fi changes or resetting others.
+  Previous TCP tests11.124MB/s up/9.892MB/s down; both2.4GHz observed. Viewer
+  should start windowed near panel+taskbar size with small margin; preserve
+  display/session during ongoing runs. Earlier prose below is evidence only.
 
 ## Earlier execution milestones (evidence snapshots)
 
