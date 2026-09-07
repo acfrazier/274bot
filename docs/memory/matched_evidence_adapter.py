@@ -69,6 +69,7 @@ MATCH_KEY_FIELDS = (
     "server_port_listen",
     "server_configuration",
     "sampler_interval_s",
+    "sampler_duration_mode",
     "sampler_duration_s_requested",
     "host_conditions",
 )
@@ -312,6 +313,7 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
             "server_port_listen",
             "server_configuration",
             "sampler_interval_s",
+            "sampler_duration_mode",
             "sampler_duration_s_requested",
             "host_conditions",
         ):
@@ -323,6 +325,7 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
             "server_port_listen",
             "server_configuration",
             "sampler_interval_s",
+            "sampler_duration_mode",
             "sampler_duration_s_requested",
             "host_conditions",
         ):
@@ -332,11 +335,33 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
 
 
 def match_keys_complete(keys: dict) -> Optional[str]:
-    """Return missing field name if any match key is null/empty/nested-null."""
+    """Return missing field name if any match key is null/empty/nested-null.
+
+    ``sampler_duration_s_requested`` may be explicit null only when
+    ``sampler_duration_mode == \"stop_controlled\"`` (schema-2 continuous).
+    Fixed mode still requires a finite positive requested duration.
+    """
+    mode = keys.get("sampler_duration_mode")
     for key in MATCH_KEY_FIELDS:
         if key not in keys:
             return key
-        if _deep_missing(keys.get(key)):
+        val = keys.get(key)
+        if key == "sampler_duration_s_requested":
+            if mode == "stop_controlled":
+                if val is not None:
+                    return key
+                continue
+            if type(val) not in (int, float):
+                return key
+            fval = float(val)
+            if not math.isfinite(fval) or fval <= 0:
+                return key
+            continue
+        if key == "sampler_duration_mode":
+            if val not in ("fixed", "stop_controlled"):
+                return key
+            continue
+        if _deep_missing(val):
             return key
     return None
 
@@ -843,16 +868,43 @@ def _bind_side(
     server_extras["server_port_listen"] = sid.get("port_listen")
     server_extras['server_configuration'] = sid.get('configuration')
 
-    sampler = receipt.get("sampler") if isinstance(receipt.get("sampler"), dict) else {}
-    if _is_missing(sampler.get("interval_s")):
+    sampler_raw = receipt.get("sampler")
+    sampler: dict[str, Any] = sampler_raw if isinstance(sampler_raw, dict) else {}
+    interval = sampler.get("interval_s")
+    if type(interval) not in (int, float):
         return _unavailable("receipt_sampler_interval_missing")
-    if _is_missing(sampler.get("duration_s_requested")):
-        return _unavailable("receipt_sampler_duration_missing")
-    for field in ('interval_s', 'duration_s_requested'):
-        if type(sampler[field]) not in (int, float) or not math.isfinite(sampler[field]) or sampler[field] <= 0:
-            return _unavailable('receipt_sampler_configuration_invalid', field=field)
-    server_extras["sampler_interval_s"] = sampler.get("interval_s")
-    server_extras["sampler_duration_s_requested"] = sampler.get("duration_s_requested")
+    interval_f = float(interval)
+    if not math.isfinite(interval_f) or interval_f <= 0:
+        return _unavailable("receipt_sampler_configuration_invalid", field="interval_s")
+    duration_mode = sampler.get("duration_mode")
+    duration_req = sampler.get("duration_s_requested")
+    # Legacy receipts omit duration_mode; treat present positive duration as fixed.
+    if duration_mode is None:
+        if "duration_s_requested" not in sampler:
+            return _unavailable("receipt_sampler_duration_missing")
+        duration_mode = "fixed"
+    if duration_mode not in ("fixed", "stop_controlled"):
+        return _unavailable("receipt_sampler_duration_mode_invalid", field="duration_mode")
+    if duration_mode == "fixed":
+        if type(duration_req) not in (int, float):
+            return _unavailable("receipt_sampler_configuration_invalid", field="duration_s_requested")
+        duration_f = float(duration_req)
+        if not math.isfinite(duration_f) or duration_f <= 0:
+            return _unavailable("receipt_sampler_configuration_invalid", field="duration_s_requested")
+    else:
+        # stop_controlled: duration_s_requested must be explicit JSON null.
+        if "duration_s_requested" not in sampler:
+            return _unavailable("receipt_sampler_duration_missing")
+        if duration_req is not None:
+            return _unavailable(
+                "receipt_sampler_stop_controlled_duration_must_be_null",
+                field="duration_s_requested",
+            )
+    server_extras["sampler_interval_s"] = interval_f
+    server_extras["sampler_duration_mode"] = duration_mode
+    server_extras["sampler_duration_s_requested"] = (
+        float(duration_req) if duration_mode == "fixed" else None
+    )
 
     # Host conditions: required non-sensitive machine identity blob.
     if host_conditions_path is not None:
@@ -913,11 +965,44 @@ def _bind_side(
     if sha256_file(receipt_path) != receipt_file_sha256:
         return _unavailable('receipt_changed_after_read')
 
-    wall_span = _observation_wall_span_from_analysis(analysis, meta)
+    native_qualification = consume_native_qualification(run_dir, n=meta.get("n"), meta=meta)
+    wall_span_source = None
+    if native_qualification.get("status") == "available" and native_qualification.get("observation_wall_span"):
+        wall_span = tuple(native_qualification["observation_wall_span"])
+        wall_span_source = "native_elapsed_wall_bracket"
+    else:
+        wall_span = _observation_wall_span_from_analysis(analysis, meta)
+        wall_span_source = "analysis_observation_window" if wall_span is not None else None
+        # Malformed native brackets (rows present with ordinals but invalid wall) fail closed
+        # when the file already carries native-shaped boundaries.
+        if native_qualification.get("reason") == "elapsed_wall_bracket_missing":
+            # Legacy qualification rows without brackets keep analysis fallback.
+            pass
+        elif native_qualification.get("slot_ordinals_present") is False and native_qualification.get("reason") not in (
+            None,
+            "qualification_empty",
+            "qualification_file_missing",
+            "settings_missing_or_not_object",
+            "observe_start_settings:settings_missing_or_not_object",
+        ):
+            # If qualification looks native-shaped (ordinals attempted) but failed validation
+            # including wall brackets, do not silently fall back to launcher+elapsed.
+            reason = native_qualification.get("reason") or ""
+            if isinstance(reason, str) and (
+                reason.startswith("elapsed_wall")
+                or reason.startswith("wall_")
+                or reason.startswith("boundary_elapsed")
+                or "wall_bracket" in reason
+            ):
+                return _unavailable(
+                    "native_observation_wall_bracket_invalid",
+                    native_reason=reason,
+                )
     if wall_span is None:
         return _unavailable(
             "observation_window_invalid",
             observation_window=analysis.get("observation_window") if isinstance(analysis, dict) else None,
+            native_qualification_reason=native_qualification.get("reason"),
         )
 
     overhead_status = _evaluate_helper_overhead(
@@ -929,6 +1014,7 @@ def _bind_side(
         samples = rm.load_run_samples(run_dir)
     except (OSError, ValueError, FileNotFoundError) as exc:
         return _unavailable("samples_unreadable", error=str(exc), path=str(run_dir))
+    del samples  # loaded to ensure readability; metrics come from analysis
     if any(_file_hash_if_present(run_dir / name) != digest for name, digest in raw_hashes.items()):
         return _unavailable('raw_hash_changed_after_sample_read')
 
@@ -988,6 +1074,7 @@ def _bind_side(
         "exit_code": meta_exit,
         "analysis": analysis,
         "observation_wall_span": wall_span,
+        "observation_wall_span_source": wall_span_source,
         "overhead": overhead_status,
         "shaped_for_compare": shaped,
         "endpoint_notes": {
@@ -997,7 +1084,9 @@ def _bind_side(
             "gpu": (analysis.get("gates") or {}).get("gpu"),
         },
         "n": meta.get("n"),
-        "slot_ordinals_present": _slot_ordinals_present(samples, meta),
+        "native_qualification": native_qualification,
+        "slot_ordinals_present": _slot_ordinals_present_from_native(native_qualification),
+        "ordinal_mapping": native_qualification.get("ordinal_mapping"),
     }
 
 
@@ -1013,17 +1102,443 @@ def bind_side(receipt_path, *, role, manifest_path, counting=False, diagnostics=
         return _unavailable('artifact_validation_failed', detail=str(error))
 
 
-def _slot_ordinals_present(samples: list[dict], meta: dict) -> bool:
-    """Stable fixture/ordinal mapping across runs is not yet emitted by launcher."""
-    del samples, meta
-    return False
+def _finite_number(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(float(value))
+
+
+def _load_qualification_boundaries(run_dir: pathlib.Path) -> tuple[Optional[list[dict]], Optional[str]]:
+    path = run_dir / "samples.qualification.jsonl"
+    if not path.is_file():
+        return None, "qualification_file_missing"
+    try:
+        rows: list[dict] = []
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            if not isinstance(obj, dict):
+                return None, f"qualification_row_not_object:{line_no}"
+            rows.append(obj)
+        return rows, None
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return None, f"qualification_unreadable:{exc}"
+
+
+# Stable per-slot runtime settings compared across runs (loop_cycle is freshness only).
+_RUNTIME_SETTINGS_MATCH_FIELDS = (
+    "lowmem",
+    "midi_active",
+    "midi_volume",
+    "wave_enabled",
+    "wave_volume",
+    "draw",
+)
+
+# Global qualification settings that are equality match keys when native rows exist.
+_QUAL_SETTINGS_MATCH_FIELDS = (
+    "host",
+    "port",
+    "lowmem_requested",
+    "mainland",
+    "frontend",
+    "n",
+    "workload",
+    "render_policy_requested",
+    "single_renderer",
+    "diagnostics",
+    "failure_capture",
+    "scheduling_profile_enabled",
+    "render_profile_enabled",
+    "gpu_completion_profile_enabled",
+    "responsiveness_profile_enabled",
+    "responsiveness_fine_enabled",
+)
+
+_WALL_BRACKET_TOL_S = 1.0
+_WALL_BRACKET_MAX_WIDTH_S = 5.0
+
+
+def _extract_runtime_settings_match(rs: Any) -> tuple[Optional[dict], Optional[str]]:
+    """Null/missing settings cannot fill defaults; observed false is distinct from null."""
+    if rs is None:
+        return None, "runtime_settings_null"
+    if not isinstance(rs, dict):
+        return None, "runtime_settings_not_object"
+    out: dict[str, Any] = {}
+    for field in _RUNTIME_SETTINGS_MATCH_FIELDS:
+        if field not in rs:
+            return None, f"runtime_settings_missing:{field}"
+        val = rs[field]
+        if val is None:
+            return None, f"runtime_settings_null_field:{field}"
+        if field in ("lowmem", "midi_active", "wave_enabled", "draw"):
+            if type(val) is not bool:
+                return None, f"runtime_settings_type:{field}"
+        elif field in ("midi_volume", "wave_volume"):
+            if type(val) is not int:
+                return None, f"runtime_settings_type:{field}"
+        out[field] = val
+    # Freshness only — require typed presence, never equality-match across runs.
+    if "loop_cycle" not in rs or type(rs["loop_cycle"]) not in (int, float) or not math.isfinite(float(rs["loop_cycle"])):
+        return None, "runtime_settings_loop_cycle_invalid"
+    if rs.get("loop_cycle_meaning") != "client_mainloop_counter":
+        return None, "runtime_settings_loop_cycle_meaning_invalid"
+    return out, None
+
+
+def _extract_renderer_match(slot: dict, *, profile_enabled: bool) -> tuple[Optional[dict], Optional[str]]:
+    """Renderer optional when profile off (explicit disabled); required when on."""
+    if not profile_enabled:
+        if "renderer" in slot and slot.get("renderer") is not None:
+            # Profile off should not publish live renderer rows as match evidence.
+            return {"status": "disabled_profile_off"}, None
+        return {"status": "disabled_profile_off"}, None
+    renderer = slot.get("renderer")
+    if not isinstance(renderer, dict):
+        return None, "renderer_required_when_profile_enabled"
+    if renderer.get("available") is not True:
+        return None, "renderer_available_not_true"
+    backend = renderer.get("backend")
+    if not isinstance(backend, str) or not backend:
+        return None, "renderer_backend_missing"
+    for field, expected_type in (
+        ("renderer_present", bool),
+        ("draw", bool),
+        ("full_rate", bool),
+        ("ended", bool),
+    ):
+        if type(renderer.get(field)) is not expected_type:
+            return None, f"renderer_field_invalid:{field}"
+    if type(renderer.get("generation")) not in (int, float):
+        return None, "renderer_generation_invalid"
+    # Stable config only — omit timestamps, generation, run-local slot_id.
+    return {
+        "status": "enabled",
+        "backend": backend,
+        "renderer_present": renderer["renderer_present"],
+        "draw": renderer["draw"],
+        "full_rate": renderer["full_rate"],
+        "ended": renderer["ended"],
+    }, None
+
+
+def _validate_slot_rows(slots: Any, *, n: int, phase: str) -> tuple[Optional[list[dict]], Optional[str]]:
+    if not isinstance(slots, list):
+        return None, f"slots_not_array:{phase}"
+    if len(slots) != n:
+        return None, f"slots_count_mismatch:{phase}"
+    rows: list[dict] = []
+    ordinals: set[int] = set()
+    names: set[str] = set()
+    resp_ids: set[Any] = set()
+    cadence_ids: set[Any] = set()
+    for idx, slot in enumerate(slots):
+        if not isinstance(slot, dict):
+            return None, f"slot_not_object:{phase}:{idx}"
+        ordinal = slot.get("ordinal")
+        if type(ordinal) is not int or isinstance(ordinal, bool):
+            return None, f"ordinal_invalid:{phase}:{idx}"
+        if ordinal in ordinals:
+            return None, f"ordinal_duplicate:{phase}:{ordinal}"
+        ordinals.add(ordinal)
+        name = slot.get("name")
+        if not isinstance(name, str) or not name:
+            return None, f"slot_name_invalid:{phase}:{idx}"
+        if name in names:
+            return None, f"slot_name_duplicate:{phase}:{name}"
+        names.add(name)
+        resp_id = slot.get("responsiveness_slot_id")
+        cadence_id = slot.get("cadence_slot_id")
+        if type(resp_id) not in (int, float) or type(cadence_id) not in (int, float):
+            return None, f"slot_ids_invalid:{phase}:{idx}"
+        if resp_id in resp_ids:
+            return None, f"responsiveness_slot_id_duplicate:{phase}"
+        if cadence_id in cadence_ids:
+            return None, f"cadence_slot_id_duplicate:{phase}"
+        resp_ids.add(resp_id)
+        cadence_ids.add(cadence_id)
+        rows.append(slot)
+    expected = set(range(n))
+    if ordinals != expected:
+        return None, f"ordinals_not_complete_0_to_n_minus_1:{phase}"
+    # Order by ordinal for stable mapping (array order must also match ordinals).
+    ordered = sorted(rows, key=lambda s: s["ordinal"])
+    for i, slot in enumerate(ordered):
+        if slot["ordinal"] != i:
+            return None, f"ordinal_sort_gap:{phase}"
+    # Prefer native emission order already matching ordinals.
+    for i, slot in enumerate(rows):
+        if slot.get("ordinal") != i:
+            return None, f"slots_not_ordinal_ordered:{phase}"
+    return rows, None
+
+
+def _extract_settings_match(settings: Any) -> tuple[Optional[dict], Optional[str]]:
+    if not isinstance(settings, dict):
+        return None, "settings_missing_or_not_object"
+    out: dict[str, Any] = {}
+    for field in _QUAL_SETTINGS_MATCH_FIELDS:
+        if field not in settings:
+            return None, f"settings_missing:{field}"
+        val = settings[field]
+        if val is None:
+            return None, f"settings_null:{field}"
+        out[field] = val
+    env = settings.get("env_flags_requested")
+    if not isinstance(env, dict) or not env:
+        return None, "env_flags_requested_missing"
+    for flag in (
+        "BOT_SCHEDULING_PROFILE",
+        "BOT_RENDER_PROFILE",
+        "BOT_GPU_COMPLETION_PROFILE",
+        "BOT_RESPONSIVENESS_PROFILE",
+        "BOT_RESPONSIVENESS_FINE",
+    ):
+        if flag not in env or type(env[flag]) is not bool:
+            return None, f"env_flags_requested_invalid:{flag}"
+    out["env_flags_requested"] = {k: env[k] for k in sorted(env) if type(env[k]) is bool}
+    # Cache canonical path is a match key when available; unavailable is explicit gap.
+    canon_ok = settings.get("cache_dir_canonical_available")
+    if type(canon_ok) is not bool:
+        return None, "cache_dir_canonical_available_invalid"
+    if canon_ok:
+        canon = settings.get("cache_dir_canonical")
+        if not isinstance(canon, str) or not canon:
+            return None, "cache_dir_canonical_missing"
+        out["cache_dir_canonical"] = canon
+        out["cache_dir_canonical_available"] = True
+    else:
+        # Do not invent a path; record unavailable marker as match key value.
+        out["cache_dir_canonical"] = None
+        out["cache_dir_canonical_available"] = False
+        reason = settings.get("cache_dir_canonical_reason")
+        if not isinstance(reason, str) or not reason:
+            return None, "cache_dir_canonical_reason_missing"
+        out["cache_dir_canonical_reason"] = reason
+    # cache_content_hash is always null at boundary — never a trustable match key.
+    if settings.get("cache_content_hash") is not None:
+        return None, "cache_content_hash_unexpected_non_null"
+    # Physical audio output stays unobserved; settings markers must not invent it.
+    audio = settings.get("client_audio_actual")
+    if isinstance(audio, dict) and audio.get("physical_output_available") is True:
+        return None, "physical_audio_output_must_remain_unobserved"
+    return out, None
+
+
+def _wall_span_from_native_boundaries(
+    start: dict, end: dict, meta: dict
+) -> tuple[Optional[tuple[float, float]], Optional[str]]:
+    """Prefer native elapsed_wall_bracket envelope (start.before → end.after)."""
+    sb = start.get("elapsed_wall_bracket")
+    eb = end.get("elapsed_wall_bracket")
+    if not isinstance(sb, dict) or not isinstance(eb, dict):
+        return None, "elapsed_wall_bracket_missing"
+    s_before, s_after = sb.get("before_unix_s"), sb.get("after_unix_s")
+    e_before, e_after = eb.get("before_unix_s"), eb.get("after_unix_s")
+    vals = (s_before, s_after, e_before, e_after)
+    if not all(_finite_number(v) for v in vals):
+        return None, "elapsed_wall_bracket_nonfinite"
+    s_before_f, s_after_f = float(s_before), float(s_after)
+    e_before_f, e_after_f = float(e_before), float(e_after)
+    if not (s_before_f <= s_after_f and e_before_f <= e_after_f):
+        return None, "elapsed_wall_bracket_unordered"
+    if (s_after_f - s_before_f) > _WALL_BRACKET_MAX_WIDTH_S or (e_after_f - e_before_f) > _WALL_BRACKET_MAX_WIDTH_S:
+        return None, "elapsed_wall_bracket_too_wide"
+    obs_start, obs_end = s_before_f, e_after_f
+    if not (obs_end > obs_start):
+        return None, "wall_span_non_positive"
+    started = meta.get("started_unix")
+    ended = meta.get("ended_unix")
+    if _finite_number(started) and _finite_number(ended):
+        if obs_start < float(started) - 1e-3 or obs_end > float(ended) + 1e-3:
+            return None, "wall_span_outside_launcher_envelope"
+        if not (float(ended) > float(started)):
+            return None, "launcher_time_envelope_invalid"
+    se, ee = start.get("elapsed_s"), end.get("elapsed_s")
+    if not (_finite_number(se) and _finite_number(ee)):
+        return None, "boundary_elapsed_s_invalid"
+    se_f, ee_f = float(se), float(ee)
+    if ee_f < se_f:
+        return None, "boundary_elapsed_s_decreasing"
+    elapsed_d = ee_f - se_f
+    wall_lo = e_before_f - s_after_f
+    wall_hi = e_after_f - s_before_f
+    if elapsed_d - wall_hi > _WALL_BRACKET_TOL_S:
+        return None, "elapsed_exceeds_wall_bracket_envelope"
+    if wall_lo - elapsed_d > _WALL_BRACKET_TOL_S:
+        return None, "wall_bracket_envelope_inconsistent_with_elapsed"
+    return (obs_start, obs_end), None
+
+
+def consume_native_qualification(
+    run_dir: pathlib.Path | str,
+    *,
+    n: Any,
+    meta: Optional[dict] = None,
+) -> dict:
+    """Validate hash-bound samples.qualification.jsonl native ordinals/settings.
+
+    Cross-run identity is ordinal only. Run-local names/slot ids must be unique
+    and stable start→end within a run, but are never equality-matched across runs.
+    """
+    out: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": None,
+        "slot_ordinals_present": False,
+        "ordinal_mapping": None,
+        "match_keys": None,
+        "observation_wall_span": None,
+        "observation_wall_span_source": None,
+        "physical_audio_output": "unobserved",
+        "cache_content_hash": None,
+        "cache_content_hash_note": "null_at_boundary; fingerprint integration pending",
+        "overhead": "unavailable_until_process_evidence_integrated",
+    }
+    if type(n) is not int or isinstance(n, bool) or n < 1:
+        out["reason"] = "n_invalid"
+        return out
+    meta = meta if isinstance(meta, dict) else {}
+    rows, err = _load_qualification_boundaries(canonical_path(run_dir))
+    if err is not None or rows is None:
+        out["reason"] = err or "qualification_unavailable"
+        return out
+    if not rows:
+        out["reason"] = "qualification_empty"
+        return out
+
+    # Exactly one ordered observe-start then observe-end (no extras).
+    phases = [r.get("phase") for r in rows]
+    if phases != ["observe-start", "observe-end"]:
+        # Allow only those two phases present once each in order.
+        if phases.count("observe-start") != 1 or phases.count("observe-end") != 1:
+            out["reason"] = "qualification_phase_count_invalid"
+            return out
+        start_i = phases.index("observe-start")
+        end_i = phases.index("observe-end")
+        if start_i >= end_i or len(rows) != 2:
+            out["reason"] = "qualification_phase_order_or_extra_rows"
+            return out
+    start, end = rows[0], rows[1]
+    if start.get("phase") != "observe-start" or end.get("phase") != "observe-end":
+        out["reason"] = "qualification_phase_order_or_extra_rows"
+        return out
+
+    start_slots, serr = _validate_slot_rows(start.get("slots"), n=n, phase="observe-start")
+    if serr or start_slots is None:
+        out["reason"] = serr
+        return out
+    end_slots, eerr = _validate_slot_rows(end.get("slots"), n=n, phase="observe-end")
+    if eerr or end_slots is None:
+        out["reason"] = eerr
+        return out
+
+    # Within-run stable mapping: name + instrumentation ids equal at each ordinal.
+    ordinal_mapping: list[dict[str, Any]] = []
+    for i in range(n):
+        s_slot, e_slot = start_slots[i], end_slots[i]
+        if s_slot.get("name") != e_slot.get("name"):
+            out["reason"] = f"slot_name_changed_across_boundaries:{i}"
+            return out
+        if s_slot.get("responsiveness_slot_id") != e_slot.get("responsiveness_slot_id"):
+            out["reason"] = f"responsiveness_slot_id_changed:{i}"
+            return out
+        if s_slot.get("cadence_slot_id") != e_slot.get("cadence_slot_id"):
+            out["reason"] = f"cadence_slot_id_changed:{i}"
+            return out
+        ordinal_mapping.append(
+            {
+                "ordinal": i,
+                # Run-local identity only — exposed for within-run mapping, not cross-run keys.
+                "name": s_slot["name"],
+                "responsiveness_slot_id": s_slot["responsiveness_slot_id"],
+                "cadence_slot_id": s_slot["cadence_slot_id"],
+            }
+        )
+
+    start_settings, sserr = _extract_settings_match(start.get("settings"))
+    if sserr or start_settings is None:
+        out["reason"] = f"observe_start_settings:{sserr}"
+        return out
+    end_settings, eserr = _extract_settings_match(end.get("settings"))
+    if eserr or end_settings is None:
+        out["reason"] = f"observe_end_settings:{eserr}"
+        return out
+    if start_settings != end_settings:
+        out["reason"] = "runtime_config_changed_between_observe_start_and_end"
+        out["settings_start"] = start_settings
+        out["settings_end"] = end_settings
+        return out
+
+    render_enabled = start_settings.get("render_profile_enabled") is True
+    if type(start_settings.get("render_profile_enabled")) is not bool:
+        out["reason"] = "render_profile_enabled_not_bool"
+        return out
+
+    slot_runtime_keys: list[dict[str, Any]] = []
+    slot_renderer_keys: list[dict[str, Any]] = []
+    for i in range(n):
+        s_slot, e_slot = start_slots[i], end_slots[i]
+        s_rs, rserr = _extract_runtime_settings_match(s_slot.get("runtime_settings"))
+        if rserr or s_rs is None:
+            out["reason"] = f"observe_start_runtime_settings:{i}:{rserr}"
+            return out
+        e_rs, rerr = _extract_runtime_settings_match(e_slot.get("runtime_settings"))
+        if rerr or e_rs is None:
+            out["reason"] = f"observe_end_runtime_settings:{i}:{rerr}"
+            return out
+        if s_rs != e_rs:
+            out["reason"] = f"runtime_settings_changed_across_boundaries:{i}"
+            return out
+        slot_runtime_keys.append({"ordinal": i, **s_rs})
+
+        s_ren, renerr = _extract_renderer_match(s_slot, profile_enabled=render_enabled)
+        if renerr or s_ren is None:
+            out["reason"] = f"observe_start_renderer:{i}:{renerr}"
+            return out
+        e_ren, reerr = _extract_renderer_match(e_slot, profile_enabled=render_enabled)
+        if reerr or e_ren is None:
+            out["reason"] = f"observe_end_renderer:{i}:{reerr}"
+            return out
+        if s_ren != e_ren:
+            out["reason"] = f"renderer_config_changed_across_boundaries:{i}"
+            return out
+        slot_renderer_keys.append({"ordinal": i, **s_ren})
+
+    wall_span, wall_err = _wall_span_from_native_boundaries(start, end, meta)
+    if wall_err or wall_span is None:
+        out["reason"] = wall_err
+        return out
+
+    match_keys = {
+        "qualification_settings": start_settings,
+        # Ordered by ordinal — cross-run identity is ordinal, not name/id.
+        "slot_runtime_settings_by_ordinal": slot_runtime_keys,
+        "renderer_config_by_ordinal": slot_renderer_keys,
+    }
+    out.update(
+        {
+            "status": "available",
+            "reason": None,
+            "slot_ordinals_present": True,
+            "ordinal_mapping": ordinal_mapping,
+            "match_keys": match_keys,
+            "observation_wall_span": list(wall_span),
+            "observation_wall_span_source": "native_elapsed_wall_bracket",
+        }
+    )
+    return out
+
+
+def _slot_ordinals_present_from_native(native: dict) -> bool:
+    return native.get("status") == "available" and native.get("slot_ordinals_present") is True
 
 
 def _evaluate_helper_overhead(*, receipt: dict, cell_dir: pathlib.Path) -> dict:
     """Overhead stays unavailable without continuous helper accounting.
 
     Snapshot before/after files and receipt.sampler.overhead labels are not
-    sufficient. Do not invent a measured status.
+    sufficient. Do not invent a measured status. Root process_evidence module
+    is separate subsequent work.
     """
     sampler = receipt.get("sampler") if isinstance(receipt.get("sampler"), dict) else {}
     label = sampler.get("overhead")
@@ -1040,7 +1555,8 @@ def _evaluate_helper_overhead(*, receipt: dict, cell_dir: pathlib.Path) -> dict:
         "measured": False,
         "note": (
             "Real overhead requires declared OFF/ON/ON/OFF cells plus continuous "
-            "helper/process/server accounting; snapshots and labels are not enough"
+            "helper/process/server accounting; snapshots and labels are not enough. "
+            "process_evidence integration is separate and pending."
         ),
     }
 
@@ -1054,6 +1570,7 @@ def bind_pair(
 
     Distinguishes binding success from final pair-gate eligibility.
     No caller bypasses for incomplete match keys or N>1 without ordinals.
+    Cross-run slot identity is ordinal only when native qualification is present.
     """
     out: dict[str, Any] = {
         "status": "unavailable",
@@ -1146,12 +1663,51 @@ def bind_pair(
     if n_ref != n_cand:
         out["reason"] = "n_mismatch"
         return out
+
+    ref_native = reference.get("native_qualification") or {}
+    cand_native = candidate.get("native_qualification") or {}
+    ref_nat_ok = ref_native.get("status") == "available"
+    cand_nat_ok = cand_native.get("status") == "available"
+
     if isinstance(n_ref, int) and n_ref > 1:
         if not (
             reference.get("slot_ordinals_present") and candidate.get("slot_ordinals_present")
         ):
             out["reason"] = "missing_stable_slot_ordinals"
+            out["reference_native_reason"] = ref_native.get("reason")
+            out["candidate_native_reason"] = cand_native.get("reason")
             return out
+        if not (ref_nat_ok and cand_nat_ok):
+            out["reason"] = "native_qualification_unavailable"
+            out["reference_native_reason"] = ref_native.get("reason")
+            out["candidate_native_reason"] = cand_native.get("reason")
+            return out
+
+    # When either side has validated native qualification, both must and match keys equal.
+    if ref_nat_ok or cand_nat_ok:
+        if not (ref_nat_ok and cand_nat_ok):
+            out["reason"] = "native_qualification_asymmetric"
+            out["reference_native_reason"] = ref_native.get("reason")
+            out["candidate_native_reason"] = cand_native.get("reason")
+            return out
+        ref_nm = ref_native.get("match_keys")
+        cand_nm = cand_native.get("match_keys")
+        if not isinstance(ref_nm, dict) or not isinstance(cand_nm, dict):
+            out["reason"] = "native_match_keys_missing"
+            return out
+        if ref_nm != cand_nm:
+            diff_n = sorted(
+                k for k in set(ref_nm) | set(cand_nm) if ref_nm.get(k) != cand_nm.get(k)
+            )
+            out["reason"] = "native_match_key_mismatch"
+            out["differing_native_keys"] = diff_n
+            return out
+        out["native_ordinal_mapping"] = {
+            "reference": ref_native.get("ordinal_mapping"),
+            "candidate": cand_native.get("ordinal_mapping"),
+            "cross_run_identity": "ordinal",
+            "note": "names and run-local slot ids are not cross-run match keys",
+        }
 
     # Endpoint family notes: decode ≠ input ≠ GPU ≠ TUI flush.
     ref_ep = reference.get("endpoint_notes") or {}
@@ -1268,6 +1824,7 @@ __all__ = [
     "canonical_path",
     "construct_match_keys",
     "construct_side_provenance",
+    "consume_native_qualification",
     "match_keys_complete",
     "preserve_failed_cell",
     "read_matched_pair",

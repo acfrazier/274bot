@@ -88,6 +88,166 @@ def _active_samples(n: int = 1, observe_s: int = 30, t0: float = 5.0):
     return rows, proof
 
 
+def _runtime_settings(*, lowmem=False, midi_active=False, midi_volume=0,
+                      wave_enabled=False, wave_volume=0, draw=True, loop_cycle=1):
+    return {
+        "lowmem": lowmem,
+        "midi_active": midi_active,
+        "midi_volume": midi_volume,
+        "wave_enabled": wave_enabled,
+        "wave_volume": wave_volume,
+        "draw": draw,
+        "loop_cycle": loop_cycle,
+        "loop_cycle_meaning": "client_mainloop_counter",
+    }
+
+
+def _qual_settings(*, n=1, render_profile_enabled=True, **overrides):
+    base = {
+        "cache_dir": "/tmp/qual-cache",
+        "cache_dir_canonical": "/private/tmp/qual-cache",
+        "cache_dir_canonical_available": True,
+        "cache_content_hash": None,
+        "cache_content_hash_reason": "not_hashed_at_boundary; launcher/preflight may hash path independently",
+        "host": "127.0.0.1",
+        "port": 43594,
+        "lowmem_requested": False,
+        "mainland": True,
+        "frontend": "tui",
+        "n": n,
+        "workload": "active",
+        "render_policy_requested": "none",
+        "single_renderer": False,
+        "diagnostics": False,
+        "failure_capture": False,
+        "env_flags_requested": {
+            "BOT_SCHEDULING_PROFILE": True,
+            "BOT_RENDER_PROFILE": True,
+            "BOT_GPU_COMPLETION_PROFILE": False,
+            "BOT_RESPONSIVENESS_PROFILE": True,
+            "BOT_RESPONSIVENESS_FINE": False,
+        },
+        "scheduling_profile_enabled": True,
+        "render_profile_enabled": render_profile_enabled,
+        "gpu_completion_profile_enabled": False,
+        "responsiveness_profile_enabled": True,
+        "responsiveness_fine_enabled": False,
+        "client_lowmem_actual": {
+            "available": True,
+            "source": "per_slot",
+            "path": "slots[].runtime_settings.lowmem",
+            "note": "null until first observed frame",
+        },
+        "client_audio_actual": {
+            "settings_available": True,
+            "settings_source": "per_slot",
+            "settings_path": "slots[].runtime_settings.{midi_active,midi_volume,wave_enabled,wave_volume}",
+            "settings_note": "MIDI/wave enable+volume scalars",
+            "physical_output_available": False,
+            "physical_output_reason": "host speaker/device/sink ownership is not observed",
+        },
+        "client_renderer_actual": (
+            {
+                "available": True,
+                "source": "per_slot",
+                "path": "slots[].renderer",
+                "note": "scoped render_profile",
+            }
+            if render_profile_enabled
+            else {"available": False, "reason": "render_profile disabled"}
+        ),
+    }
+    base.update(overrides)
+    return base
+
+
+def _native_qual_proof(
+    *,
+    n: int,
+    name_prefix: str,
+    started_unix: float,
+    observe_s: float = 30.0,
+    t0: float = 5.0,
+    render_profile_enabled: bool = True,
+    runtime_settings=None,
+    settings_override=None,
+    mutate=None,
+):
+    """Build native-shaped observe-start/end qualification boundaries."""
+    settings = _qual_settings(n=n, render_profile_enabled=render_profile_enabled)
+    if settings_override:
+        settings = dict(settings)
+        settings.update(settings_override)
+    rs_base = runtime_settings if runtime_settings is not None else _runtime_settings()
+
+    def slots_for(phase_tag: str, loop_base: int):
+        out = []
+        for i in range(n):
+            name = f"{name_prefix}{i}" if n > 1 else name_prefix
+            rs = dict(rs_base)
+            rs["loop_cycle"] = loop_base + i  # freshness differs; not a match key
+            slot = {
+                "ordinal": i,
+                "name": name,
+                "responsiveness_slot_id": 1000 + i + hash(name_prefix) % 100,
+                "cadence_slot_id": 2000 + i + hash(name_prefix) % 100,
+                "state": "Running",
+                "error": None,
+                "runtime": {"paint": {"lines": [f"Steals: {2 if phase_tag == 'start' else 7}"]}},
+                "client": {"ingame": True, "scene_state": 2, "x": 1, "z": 2, "level": 0},
+                "runtime_settings": rs,
+            }
+            if render_profile_enabled:
+                slot["renderer"] = {
+                    "available": True,
+                    "source": "host::render_profile::read",
+                    "slot_id": 3000 + i,
+                    "generation": 1 if phase_tag == "start" else 2,
+                    "renderer_present": True,
+                    "backend": "cpu",
+                    "draw": True,
+                    "full_rate": False,
+                    "updated_ms": 100 if phase_tag == "start" else 200,
+                    "ended": False,
+                }
+            out.append(slot)
+        return out
+
+    start_elapsed = t0
+    end_elapsed = t0 + observe_s
+    start_before = started_unix + start_elapsed
+    start_after = start_before + 0.001
+    end_before = started_unix + end_elapsed
+    end_after = end_before + 0.001
+    proof = [
+        {
+            "phase": "observe-start",
+            "elapsed_s": start_elapsed,
+            "slots": slots_for("start", 10),
+            "settings": dict(settings),
+            "elapsed_wall_bracket": {
+                "before_unix_s": start_before,
+                "after_unix_s": start_after,
+                "meaning": "SystemTime reads bracketing this row's harness elapsed Instant read",
+            },
+        },
+        {
+            "phase": "observe-end",
+            "elapsed_s": end_elapsed,
+            "slots": slots_for("end", 1000),
+            "settings": dict(settings),
+            "elapsed_wall_bracket": {
+                "before_unix_s": end_before,
+                "after_unix_s": end_after,
+                "meaning": "SystemTime reads bracketing this row's harness elapsed Instant read",
+            },
+        },
+    ]
+    if mutate:
+        mutate(proof)
+    return proof
+
+
 HOST_CONDITIONS = {
     "hw.ncpu": 8,
     "hw.memsize": 16_000_000_000,
@@ -208,6 +368,13 @@ def _build_side(
     receipt_extra: dict | None = None,
     omit_receipt_fields: tuple[str, ...] = (),
     binary_path_override: pathlib.Path | None = None,
+    native_qual: bool = False,
+    name_prefix: str | None = None,
+    runtime_settings=None,
+    settings_override=None,
+    qual_mutate=None,
+    duration_mode: str | None = None,
+    duration_s_requested=60,
 ) -> dict:
     """Create one synthetic side: binary, run dir, receipt, mini-manifest fragment."""
     del include_server  # reserved
@@ -242,6 +409,18 @@ def _build_side(
 
     if not skip_samples:
         rows, proof = _active_samples(n=n, observe_s=30, t0=5.0)
+        if native_qual:
+            prefix = name_prefix if name_prefix is not None else ("ref" if role == "reference" else "cand")
+            proof = _native_qual_proof(
+                n=n,
+                name_prefix=prefix,
+                started_unix=started_unix,
+                observe_s=30.0,
+                t0=5.0,
+                runtime_settings=runtime_settings,
+                settings_override=settings_override,
+                mutate=qual_mutate,
+            )
         if qualify_fail:
             for slot in proof[1]["slots"]:
                 slot["runtime"]["paint"]["lines"] = ["Steals: 2"]
@@ -258,6 +437,28 @@ def _build_side(
         ),
     }
 
+    sampler = {
+        "pid_was": 100,
+        "exit_code": 0,
+        "interval_s": 1.0,
+        "overhead": (
+            "measured" if forge_overhead_measured
+            else "unmeasured; no matched overhead proof for sampler"
+        ),
+        "output": str(cell / "server_resources.jsonl"),
+    }
+    if duration_mode is None:
+        sampler["duration_s_requested"] = duration_s_requested
+    elif duration_mode == "fixed":
+        sampler["duration_mode"] = "fixed"
+        sampler["duration_s_requested"] = duration_s_requested
+    elif duration_mode == "stop_controlled":
+        sampler["duration_mode"] = "stop_controlled"
+        sampler["duration_s_requested"] = None
+    else:
+        sampler["duration_mode"] = duration_mode
+        sampler["duration_s_requested"] = duration_s_requested
+
     receipt = {
         "id": f"{role}_n{n}",
         "index": 1 if role == "reference" else 2,
@@ -270,17 +471,7 @@ def _build_side(
         "started_utc": datetime.datetime.fromtimestamp(started_unix - 1, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
         "ended_utc": datetime.datetime.fromtimestamp(ended_unix + 1, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
         "raw_hashes": raw_hashes,
-        "sampler": {
-            "pid_was": 100,
-            "exit_code": 0,
-            "interval_s": 1.0,
-            "duration_s_requested": 60,
-            "overhead": (
-                "measured" if forge_overhead_measured
-                else "unmeasured; no matched overhead proof for sampler"
-            ),
-            "output": str(cell / "server_resources.jsonl"),
-        },
+        "sampler": sampler,
         "host_conditions": dict(HOST_CONDITIONS),
         "qualification": {"qualified": True, "errors": []},  # label must be ignored
         "status": "completed",
@@ -1106,6 +1297,313 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             self.assertFalse(pair.get("pair_eligible"))
         else:
             self.assertEqual(pair.get("reason"), "side_binding_failed")
+
+    def _bind_native_pair(self, **kwargs):
+        ref = _build_side(
+            self.root, role="reference", cell_name="nref", run_name="nrun_ref",
+            binary_bytes=b"NREF", started_unix=2_000_000.0, ended_unix=2_000_100.0,
+            build_commit=_tag("n-ref-c"), sources_sha=_tag("n-ref-s"),
+            native_qual=True, name_prefix="alpha", **kwargs,
+        )
+        cand = _build_side(
+            self.root, role="candidate", cell_name="ncand", run_name="nrun_cand",
+            binary_bytes=b"NCAND", started_unix=2_000_200.0, ended_unix=2_000_300.0,
+            build_commit=_tag("n-cand-c"), sources_sha=_tag("n-cand-s"),
+            native_qual=True, name_prefix="beta", **kwargs,
+        )
+        manifest = _write_manifest(self.root, ref, cand)
+        server = _server_identity(self.root)
+        ref_b = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                              server_identity_path=server, cell_dir=ref["cell"])
+        cand_b = mea.bind_side(cand["receipt_path"], role="candidate", manifest_path=manifest,
+                               server_identity_path=server, cell_dir=cand["cell"])
+        return ref, cand, manifest, server, ref_b, cand_b
+
+    def test_n16_match_by_ordinal_despite_different_names(self):
+        """Cross-run identity is ordinal; generated names may differ per side."""
+        _, _, _, _, ref_b, cand_b = self._bind_native_pair(n=16)
+        self.assertTrue(ref_b["binding_ok"], ref_b)
+        self.assertTrue(cand_b["binding_ok"], cand_b)
+        self.assertTrue(ref_b["slot_ordinals_present"])
+        self.assertTrue(cand_b["slot_ordinals_present"])
+        self.assertEqual(ref_b["observation_wall_span_source"], "native_elapsed_wall_bracket")
+        # Names differ across sides.
+        ref_names = [m["name"] for m in ref_b["ordinal_mapping"]]
+        cand_names = [m["name"] for m in cand_b["ordinal_mapping"]]
+        self.assertNotEqual(ref_names, cand_names)
+        self.assertTrue(all(n.startswith("alpha") for n in ref_names))
+        self.assertTrue(all(n.startswith("beta") for n in cand_names))
+        # Native match keys equal (by ordinal, not name).
+        self.assertEqual(
+            ref_b["native_qualification"]["match_keys"],
+            cand_b["native_qualification"]["match_keys"],
+        )
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertTrue(pair["binding_ok"])
+        self.assertEqual(pair["reason"], "overhead_unavailable")
+        self.assertEqual(pair["native_ordinal_mapping"]["cross_run_identity"], "ordinal")
+        # loop_cycle not in match keys
+        rs0 = ref_b["native_qualification"]["match_keys"]["slot_runtime_settings_by_ordinal"][0]
+        self.assertNotIn("loop_cycle", rs0)
+
+    def test_native_duplicate_ordinal_rejected(self):
+        def mutate(proof):
+            proof[0]["slots"][1]["ordinal"] = 0
+        # CLI allows only n in {1,16,32,128}; use 16 for multi-slot native cases.
+        ref = _build_side(
+            self.root, role="reference", cell_name="c1", run_name="r1",
+            binary_bytes=b"A", started_unix=1000.0, ended_unix=1100.0,
+            build_commit=_tag("c"), sources_sha=_tag("s"), n=16,
+            native_qual=True, qual_mutate=mutate,
+        )
+        cand = _build_side(
+            self.root, role="candidate", cell_name="c2", run_name="r2",
+            binary_bytes=b"B", started_unix=1200.0, ended_unix=1300.0,
+            build_commit=_tag("c2"), sources_sha=_tag("s2"), n=16, native_qual=True,
+        )
+        manifest = _write_manifest(self.root, ref, cand)
+        server = _server_identity(self.root)
+        ref_b = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                              server_identity_path=server, cell_dir=ref["cell"])
+        self.assertTrue(ref_b["binding_ok"], ref_b)
+        self.assertFalse(ref_b["slot_ordinals_present"])
+        self.assertIn("ordinal_duplicate", ref_b["native_qualification"]["reason"])
+
+    def test_native_missing_reordered_mismatched_ids(self):
+        def missing_slot(proof):
+            proof[0]["slots"] = proof[0]["slots"][:-1]
+
+        def reordered(proof):
+            proof[0]["slots"] = list(reversed(proof[0]["slots"]))
+            # keep ordinal values so order check fails
+            for i, s in enumerate(proof[0]["slots"]):
+                s["ordinal"] = len(proof[0]["slots"]) - 1 - i
+
+        def mismatched_ids(proof):
+            proof[1]["slots"][0]["responsiveness_slot_id"] = 999999
+
+        for name, mut in (
+            ("missing", missing_slot),
+            ("reordered", reordered),
+            ("mismatched_ids", mismatched_ids),
+        ):
+            with self.subTest(case=name):
+                root = pathlib.Path(tempfile.mkdtemp(dir=self.root))
+                ref = _build_side(
+                    root, role="reference", cell_name="c1", run_name="r1",
+                    binary_bytes=b"A" + name.encode(), started_unix=1000.0, ended_unix=1100.0,
+                    build_commit=_tag(name + "c"), sources_sha=_tag(name + "s"), n=16,
+                    native_qual=True, qual_mutate=mut,
+                )
+                cand = _build_side(
+                    root, role="candidate", cell_name="c2", run_name="r2",
+                    binary_bytes=b"B" + name.encode(), started_unix=1200.0, ended_unix=1300.0,
+                    build_commit=_tag(name + "c2"), sources_sha=_tag(name + "s2"), n=16,
+                    native_qual=True,
+                )
+                manifest = _write_manifest(root, ref, cand)
+                server = _server_identity(root)
+                ref_b = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                                      server_identity_path=server, cell_dir=ref["cell"])
+                self.assertTrue(ref_b["binding_ok"], ref_b)
+                self.assertFalse(ref_b["slot_ordinals_present"], ref_b["native_qualification"])
+                cand_b = mea.bind_side(cand["receipt_path"], role="candidate", manifest_path=manifest,
+                                       server_identity_path=server, cell_dir=cand["cell"])
+                pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+                self.assertFalse(pair.get("pair_eligible"))
+                self.assertIn(
+                    pair["reason"],
+                    {
+                        "missing_stable_slot_ordinals",
+                        "native_qualification_asymmetric",
+                        "native_qualification_unavailable",
+                        # Missing slots can also fail independent workload qualification first.
+                        "side_not_qualified",
+                    },
+                )
+
+    def test_none_vs_false_runtime_settings(self):
+        def null_rs(proof):
+            for boundary in proof:
+                for slot in boundary["slots"]:
+                    slot["runtime_settings"] = None
+
+        # Observed false is valid.
+        _, _, _, _, ref_b, cand_b = self._bind_native_pair(
+            n=16, runtime_settings=_runtime_settings(lowmem=False, draw=False),
+        )
+        self.assertTrue(ref_b.get("binding_ok"), ref_b)
+        self.assertTrue(ref_b["slot_ordinals_present"])
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertEqual(pair["reason"], "overhead_unavailable")
+
+        # Null cannot fill defaults → native unavailable (direct consume; n need not be CLI-legal).
+        ref = _build_side(
+            self.root, role="reference", cell_name="nullref", run_name="nullrun",
+            binary_bytes=b"NULLR", started_unix=3_000_000.0, ended_unix=3_000_100.0,
+            build_commit=_tag("nullc"), sources_sha=_tag("nulls"), n=16,
+            native_qual=True, qual_mutate=null_rs,
+        )
+        native = mea.consume_native_qualification(
+            ref["run_dir"], n=16, meta=json.loads((ref["run_dir"] / "metadata.json").read_text())
+        )
+        self.assertEqual(native["status"], "unavailable")
+        self.assertIn("runtime_settings_null", native["reason"])
+
+    def test_differing_runtime_scalars_backend_cadence(self):
+        # Different lowmem across sides → native match key mismatch.
+        ref = _build_side(
+            self.root, role="reference", cell_name="d1", run_name="dr1",
+            binary_bytes=b"D1", started_unix=4_000_000.0, ended_unix=4_000_100.0,
+            build_commit=_tag("d1c"), sources_sha=_tag("d1s"), n=16, native_qual=True,
+            runtime_settings=_runtime_settings(lowmem=True),
+        )
+        cand = _build_side(
+            self.root, role="candidate", cell_name="d2", run_name="dr2",
+            binary_bytes=b"D2", started_unix=4_000_200.0, ended_unix=4_000_300.0,
+            build_commit=_tag("d2c"), sources_sha=_tag("d2s"), n=16, native_qual=True,
+            runtime_settings=_runtime_settings(lowmem=False),
+        )
+        manifest = _write_manifest(self.root, ref, cand)
+        server = _server_identity(self.root)
+        ref_b = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                              server_identity_path=server, cell_dir=ref["cell"])
+        cand_b = mea.bind_side(cand["receipt_path"], role="candidate", manifest_path=manifest,
+                               server_identity_path=server, cell_dir=cand["cell"])
+        self.assertTrue(ref_b.get("binding_ok") and cand_b.get("binding_ok"), (ref_b, cand_b))
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertEqual(pair["reason"], "native_match_key_mismatch")
+
+        # Backend difference — isolate in nested root so fixture rebinding stays local.
+        def backend_gpu(proof):
+            for b in proof:
+                for s in b["slots"]:
+                    if "renderer" in s:
+                        s["renderer"]["backend"] = "gpu"
+
+        root_b = pathlib.Path(tempfile.mkdtemp(dir=self.root))
+        ref2 = _build_side(
+            root_b, role="reference", cell_name="b1", run_name="br1",
+            binary_bytes=b"B1", started_unix=5_000_000.0, ended_unix=5_000_100.0,
+            build_commit=_tag("b1c"), sources_sha=_tag("b1s"), n=16, native_qual=True,
+        )
+        cand2 = _build_side(
+            root_b, role="candidate", cell_name="b2", run_name="br2",
+            binary_bytes=b"B2", started_unix=5_000_200.0, ended_unix=5_000_300.0,
+            build_commit=_tag("b2c"), sources_sha=_tag("b2s"), n=16, native_qual=True,
+            qual_mutate=backend_gpu,
+        )
+        man2 = _write_manifest(root_b, ref2, cand2)
+        server2 = _server_identity(root_b)
+        ref_b2 = mea.bind_side(ref2["receipt_path"], role="reference", manifest_path=man2,
+                               server_identity_path=server2, cell_dir=ref2["cell"])
+        cand_b2 = mea.bind_side(cand2["receipt_path"], role="candidate", manifest_path=man2,
+                                server_identity_path=server2, cell_dir=cand2["cell"])
+        self.assertTrue(ref_b2.get("binding_ok") and cand_b2.get("binding_ok"), (ref_b2, cand_b2))
+        pair2 = mea.bind_pair(reference=ref_b2, candidate=cand_b2)
+        self.assertEqual(pair2["reason"], "native_match_key_mismatch")
+
+        # Cadence/profile enabled difference.
+        root_p = pathlib.Path(tempfile.mkdtemp(dir=self.root))
+        ref3 = _build_side(
+            root_p, role="reference", cell_name="p1", run_name="pr1",
+            binary_bytes=b"P1", started_unix=6_000_000.0, ended_unix=6_000_100.0,
+            build_commit=_tag("p1c"), sources_sha=_tag("p1s"), n=16, native_qual=True,
+            settings_override={"scheduling_profile_enabled": True},
+        )
+        cand3 = _build_side(
+            root_p, role="candidate", cell_name="p2", run_name="pr2",
+            binary_bytes=b"P2", started_unix=6_000_200.0, ended_unix=6_000_300.0,
+            build_commit=_tag("p2c"), sources_sha=_tag("p2s"), n=16, native_qual=True,
+            settings_override={"scheduling_profile_enabled": False},
+        )
+        man3 = _write_manifest(root_p, ref3, cand3)
+        server3 = _server_identity(root_p)
+        ref_b3 = mea.bind_side(ref3["receipt_path"], role="reference", manifest_path=man3,
+                               server_identity_path=server3, cell_dir=ref3["cell"])
+        cand_b3 = mea.bind_side(cand3["receipt_path"], role="candidate", manifest_path=man3,
+                                server_identity_path=server3, cell_dir=cand3["cell"])
+        self.assertTrue(ref_b3.get("binding_ok") and cand_b3.get("binding_ok"), (ref_b3, cand_b3))
+        pair3 = mea.bind_pair(reference=ref_b3, candidate=cand_b3)
+        self.assertEqual(pair3["reason"], "native_match_key_mismatch")
+
+    def test_stop_controlled_duration_mode(self):
+        ref, cand, manifest, server, ref_b, cand_b = self._bind_native_pair(
+            n=1, duration_mode="stop_controlled", duration_s_requested=None,
+        )
+        self.assertTrue(ref_b["binding_ok"], ref_b)
+        self.assertEqual(ref_b["match_keys"]["sampler_duration_mode"], "stop_controlled")
+        self.assertIsNone(ref_b["match_keys"]["sampler_duration_s_requested"])
+        self.assertIsNone(mea.match_keys_complete(ref_b["match_keys"]))
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertEqual(pair["reason"], "overhead_unavailable")
+
+        # Fixed mode still rejects null duration.
+        bad = _build_side(
+            self.root, role="reference", cell_name="fix1", run_name="fx1",
+            binary_bytes=b"FX", started_unix=7_000_000.0, ended_unix=7_000_100.0,
+            build_commit=_tag("fxc"), sources_sha=_tag("fxs"),
+            duration_mode="fixed", duration_s_requested=None,
+        )
+        cand_ok = _build_side(
+            self.root, role="candidate", cell_name="fx2", run_name="fx2",
+            binary_bytes=b"FY", started_unix=7_000_200.0, ended_unix=7_000_300.0,
+            build_commit=_tag("fyc"), sources_sha=_tag("fys"),
+        )
+        man = _write_manifest(self.root, bad, cand_ok)
+        server = _server_identity(self.root)
+        bound = mea.bind_side(bad["receipt_path"], role="reference", manifest_path=man,
+                              server_identity_path=server)
+        self.assertFalse(bound["binding_ok"])
+        self.assertEqual(bound["reason"], "receipt_sampler_configuration_invalid")
+
+        # stop_controlled with non-null duration rejected.
+        bad2 = _build_side(
+            self.root, role="reference", cell_name="sc1", run_name="sc1",
+            binary_bytes=b"SC", started_unix=8_000_000.0, ended_unix=8_000_100.0,
+            build_commit=_tag("scc"), sources_sha=_tag("scs"),
+            duration_mode="stop_controlled", duration_s_requested=30,
+        )
+        # force non-null after build
+        receipt = json.loads(bad2["receipt_path"].read_text())
+        receipt["sampler"]["duration_s_requested"] = 30
+        _write_json(bad2["receipt_path"], receipt)
+        cand2 = _build_side(
+            self.root, role="candidate", cell_name="sc2", run_name="sc2",
+            binary_bytes=b"SD", started_unix=8_000_200.0, ended_unix=8_000_300.0,
+            build_commit=_tag("sdc"), sources_sha=_tag("sds"),
+        )
+        man2 = _write_manifest(self.root, bad2, cand2)
+        server = _server_identity(self.root)
+        bound2 = mea.bind_side(bad2["receipt_path"], role="reference", manifest_path=man2,
+                               server_identity_path=server)
+        self.assertFalse(bound2["binding_ok"])
+        self.assertEqual(bound2["reason"], "receipt_sampler_stop_controlled_duration_must_be_null")
+
+    def test_runtime_config_transition_start_end_unavailable(self):
+        def change_end_settings(proof):
+            proof[1]["settings"] = dict(proof[1]["settings"])
+            proof[1]["settings"]["lowmem_requested"] = True
+
+        ref = _build_side(
+            self.root, role="reference", cell_name="tr1", run_name="tr1",
+            binary_bytes=b"TR", started_unix=9_000_000.0, ended_unix=9_000_100.0,
+            build_commit=_tag("trc"), sources_sha=_tag("trs"), n=16,
+            native_qual=True, qual_mutate=change_end_settings,
+        )
+        meta = json.loads((ref["run_dir"] / "metadata.json").read_text())
+        native = mea.consume_native_qualification(ref["run_dir"], n=16, meta=meta)
+        self.assertEqual(native["status"], "unavailable")
+        self.assertEqual(native["reason"], "runtime_config_changed_between_observe_start_and_end")
+
+    def test_positive_still_reaches_overhead_unavailable_without_native(self):
+        """Legacy synthetic N=1 without native rows still binds; ordinals absent OK for n=1."""
+        ref, cand, manifest, server = self._positive_pair()
+        ref_b = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                              server_identity_path=server, cell_dir=ref["cell"])
+        self.assertTrue(ref_b["binding_ok"])
+        self.assertFalse(ref_b["slot_ordinals_present"])
+        self.assertEqual(ref_b["match_keys"]["sampler_duration_mode"], "fixed")
 
 
 if __name__ == "__main__":

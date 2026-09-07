@@ -2,8 +2,9 @@
 
 The reader binds explicit receipts to immutable saved binaries and their raw
 run artifacts before invoking the existing qualifier and metric analyzer.
-It does not establish performance acceptance. Overhead validation and stable
-ordinal consumption remain unavailable pending their separate integration.
+It does not establish performance acceptance. Helper overhead stays unavailable
+until separate process_evidence integration; pair eligibility still ends at
+`overhead_unavailable` when binding and native match keys succeed.
 
 ## Required artifact chain
 
@@ -34,41 +35,93 @@ ordinal consumption remain unavailable pending their separate integration.
 Explicit launcher/sampler failure, receipt binding_errors, missing/changed
 artifacts and inconsistent time/CLI/configuration are rejected. A binding is
 not eligibility: missing runtime match keys, qualification failure, overlapping
-observation windows, missing ordinal mapping, endpoint mismatch or unknown
-helper overhead still prevent a pair from being eligible. Configuration
-comparison retains every non-side key in the metric adapter. Server identity
-includes PID plus process start identity; its non-sensitive configuration is
-an explicit separate required match key.
+observation windows, missing ordinal mapping, native match-key mismatch,
+endpoint mismatch or unknown helper overhead still prevent a pair from being
+eligible. Configuration comparison retains every non-side key in the metric
+adapter. Server identity includes PID plus process start identity; its
+non-sensitive configuration is an explicit separate required match key.
+
+## Native qualification (ordinals / settings / wall brackets)
+
+`consume_native_qualification` reads hash-bound `samples.qualification.jsonl`
+and validates:
+
+- Exactly one ordered `observe-start` then `observe-end`.
+- Typed complete N slots with ordinals `0..N-1` exactly once, array order
+  matching ordinals, unique names and responsiveness/cadence slot IDs per
+  boundary.
+- Within-run stable name and instrumentation IDs across start→end at each
+  ordinal. Cross-run identity is **ordinal only** — generated names and
+  run-local slot IDs are exposed in `ordinal_mapping` but are never equality
+  match keys across runs.
+- Actual per-slot `runtime_settings` (lowmem/midi/wave bool+int + draw).
+  `loop_cycle` is freshness-only (typed presence + meaning required; not
+  compared across runs). Null/missing settings cannot fill matching defaults;
+  observed `false` is distinct from null.
+- Global qualification settings (host/port/lowmem_requested/mainland/frontend/n/
+  workload/render_policy/single_renderer/diagnostics/failure_capture/profile
+  enabled flags + env_flags_requested + cache canonical availability). Renderer
+  rows optional when render profile is off (explicit disabled marker); required
+  when enabled with stable backend/presence/draw/full_rate/ended (no timestamps,
+  generation, or run-local renderer slot ids in match keys).
+- Start/end runtime config must be equal; transition →
+  `runtime_config_changed_between_observe_start_and_end`.
+- Physical audio output remains unobserved (`physical_output_available` must
+  not be true). `cache_content_hash` stays null at boundary (fingerprint
+  integration pending separately).
+- Prefer native `elapsed_wall_bracket` envelope (start.before → end.after) for
+  `observation_wall_span` when brackets validate (finite, ordered, within
+  launcher envelope, elapsed consistent within tolerance). Source labeled
+  `native_elapsed_wall_bracket`. Legacy rows without brackets keep analysis
+  observation-window fallback; malformed native brackets fail closed.
+
+When native qualification is available on either side of a pair, both sides
+must be available and their native match-key dicts must equal
+(`native_match_key_mismatch` otherwise). N>1 without validated ordinals →
+`missing_stable_slot_ordinals`.
+
+## Sampler duration_mode (schema-2)
+
+Match keys include `sampler_duration_mode` (`fixed` | `stop_controlled`).
+
+- Legacy receipts omit `duration_mode`; a present positive
+  `duration_s_requested` is treated as `fixed`.
+- `fixed` still requires finite positive `duration_s_requested`.
+- `stop_controlled` requires the key present with explicit JSON null (not
+  omitted). Non-null under stop_controlled is rejected.
+- Duration is never invented; continuous sampling coverage is not faked.
 
 ## Validation
 
 `python3 -m unittest test_matched_evidence_adapter
- test_reference_metrics.ResourceAdapterTests -q` passed 34 tests. Fixtures use
-real binary/asset bytes and persisted hashes, UTC envelopes matching their
+ test_reference_metrics.ResourceAdapterTests -q` passed **42** tests. Fixtures
+use real binary/asset bytes and persisted hashes, UTC envelopes matching their
 metadata timestamps, completed nested build provenance and unchanged sidecars.
 The positive fixture proves binding and qualification only, then reaches
-`overhead_unavailable`.
+`overhead_unavailable`. Multi-slot CLI-legal n is `{1,16,32,128}`.
 
-Nineteen production-path negative cases cover invalid/mismatched UTC,
-missing/extra profile flags, duplicate timing arguments, missing manifest
-fixtures, invalid source digests, wrong manifest hashes, corrupt assets, swapped
-server sidecars, nonfinite metadata, bool PID/feature confusion, absent/changed
-build completion, launcher/sampler failure, explicit binding errors, and
-digest-only runtime fixtures (sha fields kept, path fields omitted).
-Additional tests cover changed checkout labels remaining distinct from saved
-builds, file mutation during independent analysis and host-sidecar mutation.
-The six repeat root probes are saved in
-`diagnostics/adapter-contract-review-20260907T040246Z/root-round3-probes.json`;
-all now return unavailable with binding_ok false. No live run or binary build
-was performed for this Python correction.
+Native cases cover: N16 ordinal match despite different generated names;
+duplicate/missing/reordered/mismatched IDs; None vs false runtime settings;
+differing runtime scalars/backend/scheduling_profile_enabled; stop_controlled
+null duration vs fixed null / stop_controlled non-null; start→end settings
+transition unavailable; legacy N1 without native rows still binds with
+`slot_ordinals_present=False` and default `sampler_duration_mode=fixed`.
 
-## Remaining work
+Earlier production-path negatives (UTC, profile flags, manifests, digests,
+sidecars, build completion, launcher/sampler failure, binding errors,
+digest-only fixtures, mutation probes) remain green. No live run or binary
+build was performed for this Python integration.
 
-The legacy N1 fixtures remain unavailable; no raw artifacts are enriched or
-rewritten. New managed receipts must be produced at actual launch/completion.
-Actual renderer/cache settings, full host/server/helper provenance and cache
-content hashes still need independent capture. New native ordinal rows and
-schema-2 continuous process accounting are not yet consumed here. The approved
-OFF/ON/ON/OFF overhead sequence and matched repeated performance/lifecycle
-matrix have not been accepted. No caller overhead/qualified label unlocks a
-pass, and no confidence or latency margin is invented.
+## Remaining work / honest gaps
+
+- Helper overhead stays unavailable until process_evidence is integrated;
+  snapshots and receipt sampler overhead labels are not enough.
+- Cache content fingerprint integration is separate (root optional cache
+  receipt path); boundary hash stays null and is not a match key.
+- Physical audio output remains unobserved by design.
+- The approved OFF/ON/ON/OFF overhead sequence and matched repeated
+  performance/lifecycle matrix have not been accepted. No caller
+  overhead/qualified label unlocks a pass, and no confidence or latency
+  margin is invented.
+- Legacy N1 fixtures without native rows remain bindable; ordinals absent is
+  OK only for n=1. N>1 requires validated native ordinals.
