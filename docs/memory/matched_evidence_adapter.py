@@ -196,6 +196,110 @@ def _deep_missing(value: Any) -> bool:
     return False
 
 
+def _native_windows_conditions_complete(value: Any) -> bool:
+    """Accept only the bounded native Windows observation shape."""
+    if not isinstance(value, dict):
+        return False
+    if type(value.get("platform")) is not str or not value["platform"]:
+        return False
+    if type(value.get("user")) is not str or not value["user"]:
+        return False
+    pre = value.get("native_preflight")
+    if not isinstance(pre, dict):
+        return False
+    if type(pre.get("adapter")) is not str or not pre["adapter"]:
+        return False
+    if type(pre.get("utc")) is not str or not pre["utc"]:
+        return False
+    if type(pre.get("consoleSessionId")) is not int:
+        return False
+    vm = pre.get("vm")
+    if not isinstance(vm, dict):
+        return False
+    if type(vm.get("Name")) is not str or not vm["Name"]:
+        return False
+    if type(vm.get("State")) is not str or not vm["State"]:
+        return False
+    if type(vm.get("MemoryAssigned")) is not int or vm["MemoryAssigned"] < 0:
+        return False
+    services = pre.get("quietServices")
+    if not isinstance(services, list) or not services:
+        return False
+    for service in services:
+        if not isinstance(service, dict):
+            return False
+        for field in ("Name", "Status"):
+            if type(service.get(field)) is not str or not service[field]:
+                return False
+    drivers = pre.get("drivers")
+    if not isinstance(drivers, list) or not drivers:
+        return False
+    for driver in drivers:
+        if not isinstance(driver, dict):
+            return False
+        for field in ("Name", "DriverVersion", "PNPDeviceID"):
+            if type(driver.get(field)) is not str or not driver[field]:
+                return False
+    sessions = pre.get("sessions")
+    if not isinstance(sessions, list) or not sessions or any(
+        type(session) is not str or not session for session in sessions
+    ):
+        return False
+    processes = pre.get("processes")
+    if not isinstance(processes, list):
+        return False
+    for process in processes:
+        if not isinstance(process, dict):
+            return False
+        for field in ("ProcessId", "ParentProcessId", "SessionId"):
+            if type(process.get(field)) is not int:
+                return False
+        for field in ("Name", "CreationDate"):
+            if type(process.get(field)) is not str or not process[field]:
+                return False
+        command_line = process.get("CommandLine")
+        if command_line is not None and (type(command_line) is not str or not command_line):
+            return False
+    lasso = pre.get("processLasso")
+    if not isinstance(lasso, dict) or type(lasso.get("running")) is not bool:
+        return False
+    if not isinstance(lasso.get("processes"), list):
+        return False
+    if "files" in lasso and not isinstance(lasso["files"], list):
+        return False
+    dxdiag = pre.get("dxdiag")
+    if not isinstance(dxdiag, list) or not dxdiag:
+        return False
+    for display in dxdiag:
+        if not isinstance(display, dict):
+            return False
+        for field in ("cardName", "driverVersion"):
+            if type(display.get(field)) is not str or not display[field]:
+                return False
+        for field in ("currentMode", "hybridGraphicsGPU", "monitorName"):
+            if field in display and display[field] is not None and type(display[field]) is not str:
+                return False
+    server = pre.get("server")
+    if not isinstance(server, dict) or type(server.get("ProcessId")) is not int:
+        return False
+    for field in ("Name", "CreationDate"):
+        if type(server.get(field)) is not str or not server[field]:
+            return False
+    if type(pre.get("performanceAcceptance")) is not bool:
+        return False
+    if type(value.get("performance_acceptance")) is not bool:
+        return False
+    if "process_lasso" in value:
+        duplicate = value["process_lasso"]
+        if not isinstance(duplicate, dict) or type(duplicate.get("running")) is not bool:
+            return False
+        if not isinstance(duplicate.get("processes"), list):
+            return False
+    if "dxdiag" in value and not isinstance(value["dxdiag"], list):
+        return False
+    return True
+
+
 def _typed_equal(left, right):
     if type(left) is not type(right):
         return False
@@ -376,6 +480,10 @@ def match_keys_complete(keys: dict) -> Optional[str]:
                 or len(val) != 2
                 or any(type(size) is not int or size <= 0 for size in val)
             ):
+                return key
+            continue
+        if key == "host_conditions":
+            if not _native_windows_conditions_complete(val) and _deep_missing(val):
                 return key
             continue
         if _deep_missing(val):
@@ -950,7 +1058,9 @@ def _bind_side(
             hc = _load_json(hcp)
         except (OSError, json.JSONDecodeError) as exc:
             return _unavailable("host_conditions_unreadable", path=str(hcp), error=str(exc))
-        if not isinstance(hc, dict) or _deep_missing(hc):
+        if not isinstance(hc, dict) or (
+            not _native_windows_conditions_complete(hc) and _deep_missing(hc)
+        ):
             return _unavailable("host_conditions_invalid", path=str(hcp))
         server_extras["host_conditions"] = hc
     elif isinstance(meta.get("host_conditions"), dict) and not _deep_missing(meta.get("host_conditions")):

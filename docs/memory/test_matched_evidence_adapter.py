@@ -255,6 +255,29 @@ HOST_CONDITIONS = {
     "brand": "synthetic-test-host",
 }
 
+NATIVE_WINDOWS_CONDITIONS = {
+    "platform": "Windows-11-10.0.26100-SP0",
+    "user": "BotTest",
+    "performance_acceptance": False,
+    "native_preflight": {
+        "adapter": "nvidia",
+        "utc": "2026-09-07T21:22:13.9682564Z",
+        "consoleSessionId": 2,
+        "vm": {"Name": "274bot-builder", "State": "Off", "MemoryAssigned": 0},
+        "quietServices": [{"Name": "ClickToRunSvc", "Status": "Stopped"}],
+        "drivers": [{"Name": "NVIDIA GPU", "DriverVersion": "1.0", "PNPDeviceID": "PCI\\\\VEN_10DE"}],
+        "sessions": [" console 2 Active "],
+        "processes": [],
+        "processLasso": {"running": False, "processes": []},
+        "dxdiag": [{"cardName": "NVIDIA GPU", "driverVersion": "1.0", "currentMode": None,
+                     "hybridGraphicsGPU": None, "monitorName": None}],
+        "server": {"ProcessId": 6728, "Name": "node.exe", "CreationDate": "/Date(1)/"},
+        "performanceAcceptance": False,
+    },
+    "process_lasso": {"running": False, "processes": []},
+    "dxdiag": [{"cardName": "NVIDIA GPU", "driverVersion": "1.0", "monitorName": None}],
+}
+
 CLIENT_COMMIT = _tag("client-commit-shared")
 CLIENT_SOURCES = _tag("client-sources-shared")
 NAV_PACK = _tag("nav-pack-shared")
@@ -773,6 +796,39 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
                               server_identity_path=server, host_conditions_path=host)
         self.assertFalse(bound['binding_ok'])
         self.assertEqual(bound['reason'], 'receipt_host_conditions_hash_mismatch')
+
+    def test_native_windows_conditions_allow_observed_optional_absence(self):
+        self.assertTrue(mea._native_windows_conditions_complete(NATIVE_WINDOWS_CONDITIONS))
+
+    def test_native_windows_conditions_require_identity_and_controls(self):
+        for field in (("platform", None), ("user", "")):
+            with self.subTest(field=field[0]):
+                value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+                value[field[0]] = field[1]
+                self.assertFalse(mea._native_windows_conditions_complete(value))
+        for field in ("vm", "drivers", "sessions", "processLasso", "dxdiag", "server"):
+            with self.subTest(field=field):
+                value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+                value["native_preflight"][field] = None
+                self.assertFalse(mea._native_windows_conditions_complete(value))
+        value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
+        value["native_preflight"]["performanceAcceptance"] = None
+        self.assertFalse(mea._native_windows_conditions_complete(value))
+
+    def test_native_windows_conditions_file_binds_without_rewriting_provenance(self):
+        ref, _, manifest, server = self._positive_pair()
+        host = self.root / "host.json"
+        _write_json(host, NATIVE_WINDOWS_CONDITIONS)
+        receipt = json.loads(ref["receipt_path"].read_text())
+        digest = mea.sha256_file(host)
+        receipt.update(host_conditions_path=str(host), host_conditions_sha256=digest)
+        _write_json(ref["receipt_path"], receipt)
+        bound = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                              server_identity_path=server, host_conditions_path=host)
+        self.assertTrue(bound["binding_ok"], bound)
+        self.assertEqual(bound["match_keys"]["host_conditions"], NATIVE_WINDOWS_CONDITIONS)
+        self.assertEqual(json.loads(host.read_text()), NATIVE_WINDOWS_CONDITIONS)
+        self.assertEqual(receipt["host_conditions_sha256"], digest)
 
     def test_positive_binding_and_qualification_overhead_unavailable(self):
         ref, cand, manifest, server = self._positive_pair()
