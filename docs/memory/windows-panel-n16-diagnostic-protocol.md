@@ -100,7 +100,15 @@ allow preparation for N=16 while preserving the per-cell 30/120/60 timings:
 ```
 
 If a cell fails, preserve its output and scheduled-task state; do not reuse its
-name, retry until favorable, or overwrite the archive. The managed runner owns
+name, retry until favorable, or overwrite the archive. Run the archive helper
+even when the controller, frontend, sampler, or qualification step failed. It
+copies the managed receipt tree, every receipt-referenced `run_dir` raw tree,
+and the matching launcher log into immutable `raw-run-NN`/`launcher.log`
+destinations (or records a missing referenced directory), then hashes every
+archived file listed in `archive-manifest.json`.
+The receipt exit/status remains evidence, not a qualification verdict; failed or
+incomplete bundles must be retained and must never be relabeled as qualified.
+The managed runner owns
 only its frontend/collector children and performs its normal owned-process
 cleanup. It does not signal the game server or ambient helper PIDs.
 
