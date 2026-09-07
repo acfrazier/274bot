@@ -478,3 +478,8 @@ validation and whole-branch Grok-4.6, then resume JavaScript compatibility.
 ## 2026-09-07 06:32 UTC — managed pipeline live qualification
 
 Fresh N1 cell completed with independent workload/native/cache/process binding available after reviewed f93ec76 path fix; prior failed cell preserved. See [managed-pipeline-qualification-report.md](managed-pipeline-qualification-report.md). All six declared process roles continuously cover native observation. No accepted performance saving or overhead verdict: median host RSS 285.969 MiB and 36.123 loops/s miss N1 targets; input still unobserved. Cadence audit and offline four-cell overhead analysis delegated; no current live process.
+
+
+## 2026-09-07 07:36 UTC — N16 overhead screen complete
+
+All four declared OFF/ON/ON/OFF cells qualified and bound with continuous helper/server accounting. See [instrumentation-overhead-live-report.md](instrumentation-overhead-live-report.md). Host CPU profiles ON measured 13.8–15.6% above OFF in the empirical screen; no profiling RSS effect established. Use clean profile-off CPU comparisons and separate latency companions. N16 Mac median RSS883–927MiB and ~37.1loops/s remain target misses. Real PTY probes produce native input samples but aggregate input gate is unproven; t_b0bc0948 diagnoses focus/publisher cuts. No accepted optimization savings yet.
