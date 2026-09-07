@@ -12,7 +12,11 @@ relabel caller ``qualified`` / ``overhead`` labels as evidence.
 from __future__ import annotations
 
 import hashlib
+import contextlib
+import datetime
+import io
 import json
+import math
 import pathlib
 import sys
 from typing import Any, Optional
@@ -23,6 +27,8 @@ if str(ROOT) not in sys.path:
 
 import qualify_control as qc  # noqa: E402
 import reference_metrics as rm  # noqa: E402
+import run_diagnostic as rd  # noqa: E402
+import build_provenance as bp  # noqa: E402
 
 PASS_MEANS = (
     "artifact-bound matched evidence reader only; "
@@ -61,6 +67,7 @@ MATCH_KEY_FIELDS = (
     "nav_captures",
     "server_start_identity",
     "server_port_listen",
+    "server_configuration",
     "sampler_interval_s",
     "sampler_duration_s_requested",
     "host_conditions",
@@ -187,6 +194,16 @@ def _deep_missing(value: Any) -> bool:
     return False
 
 
+def _typed_equal(left, right):
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_typed_equal(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_typed_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 def sha256_file(path: pathlib.Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -293,6 +310,7 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
         if key in (
             "server_start_identity",
             "server_port_listen",
+            "server_configuration",
             "sampler_interval_s",
             "sampler_duration_s_requested",
             "host_conditions",
@@ -303,6 +321,7 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
         for key in (
             "server_start_identity",
             "server_port_listen",
+            "server_configuration",
             "sampler_interval_s",
             "sampler_duration_s_requested",
             "host_conditions",
@@ -368,54 +387,46 @@ def _cli_flag_value(cli: list, flag: str) -> Optional[str]:
 
 
 def _validate_effective_cli(receipt: dict, meta: dict) -> Optional[str]:
-    """Require recorded launch CLI to agree with metadata launch identity."""
+    """Use the launcher's actual parser, including last-wins option semantics."""
     cli = receipt.get("effective_cli")
-    if not isinstance(cli, list) or len(cli) < 5:
+    if not isinstance(cli, list) or len(cli) < 5 or not all(isinstance(x, str) for x in cli):
         return "receipt_effective_cli_invalid"
-    # Typical: [python, script, frontend, n, workload, flags..., --binary, path, ...]
     try:
-        frontend_tok = str(cli[2])
-        n_tok = int(cli[3])
-        workload_tok = str(cli[4])
-    except (TypeError, ValueError, IndexError):
+        parser = rd.build_parser()
+        with contextlib.redirect_stderr(io.StringIO()):
+            args = parser.parse_args(cli[2:])
+            rd.validate_args(args, parser)
+    except (SystemExit, TypeError, ValueError):
         return "receipt_effective_cli_parse_failed"
-    if frontend_tok != meta.get("frontend"):
-        return "receipt_cli_frontend_mismatch"
-    if n_tok != meta.get("n"):
-        return "receipt_cli_n_mismatch"
-    if workload_tok != meta.get("workload"):
-        return "receipt_cli_workload_mismatch"
-
-    bin_tok = _cli_flag_value(cli, "--binary")
-    if _is_missing(bin_tok):
+    if args.binary is None:
         return "receipt_cli_missing_binary"
-    if canonical_path(bin_tok) != canonical_path(meta.get("binary")):
+    if canonical_path(args.binary) != canonical_path(meta.get("binary")):
         return "receipt_cli_binary_mismatch"
-
-    warm = _cli_flag_value(cli, "--warmup")
-    obs = _cli_flag_value(cli, "--observe")
-    if warm is None or obs is None:
+    if "--warmup" not in cli or "--observe" not in cli:
         return "receipt_cli_missing_timing"
-    try:
-        warm_f = float(warm)
-        obs_f = float(obs)
-    except ValueError:
-        return "receipt_cli_timing_unparseable"
-    if float(meta.get("warmup_s")) != warm_f:
-        return "receipt_cli_warmup_mismatch"
-    if float(meta.get("observe_s")) != obs_f:
-        return "receipt_cli_observe_mismatch"
-
-    # Flag-derived bools must agree with metadata when the flag family is known.
-    present = set(str(t) for t in cli)
-    for flag, (meta_key, expected_when_present) in _FLAG_TO_META.items():
-        if flag not in present:
-            continue
-        meta_val = meta.get(meta_key)
-        if meta_val is None:
-            return f"receipt_cli_flag_meta_missing:{meta_key}"
-        if bool(meta_val) != bool(expected_when_present):
-            return f"receipt_cli_flag_mismatch:{meta_key}"
+    values = {
+        "frontend": args.frontend, "n": args.n, "workload": args.workload,
+        "warmup_s": args.warmup, "observe_s": args.observe,
+        "sustain": args.sustain, "diagnostic_sidecar": not args.no_diagnostics,
+        "failure_capture": args.failure_capture, "nav_captures": args.nav_captures,
+        "single_renderer": args.single_renderer,
+        "terminal": args.frontend == 'tui' and not args.headless,
+        "render_policy": rd.requested_render_policy(args), "render_policy_requested": True,
+        "stack_logging": args.stack_logging or args.stack_logging_lite,
+        "stack_logging_mode": 'lite' if args.stack_logging_lite else ('1' if args.stack_logging else None),
+        "debug": args.debug,
+    }
+    for field in ('scheduling_profile', 'render_profile', 'gpu_completion_profile',
+                  'responsiveness_profile', 'responsiveness_fine'):
+        values[field] = getattr(args, field)
+    for field, expected in values.items():
+        if field not in meta or meta[field] != expected or (type(expected) is bool and type(meta[field]) is not bool):
+            return f"receipt_cli_metadata_mismatch:{field}"
+    if args.build_manifest is not None:
+        if canonical_path(args.build_manifest) != canonical_path(receipt.get('manifest_path')):
+            return 'receipt_cli_manifest_mismatch'
+        if args.build_role != receipt.get('_binding_role'):
+            return 'receipt_cli_build_role_mismatch'
     return None
 
 
@@ -437,7 +448,7 @@ def _validate_meta_against_manifest_fixtures(meta: dict, manifest: dict, manifes
         ("client_commit", client.get("commit")),
     ]
     for meta_key, man_val in pairs:
-        meta_val = meta.get(meta_key)
+        meta_val = meta.get('build_provenance', {}).get(meta_key) if meta_key.startswith('client_') else meta.get(meta_key)
         if _is_missing(meta_val) or _is_missing(man_val):
             continue
         if meta_val != man_val:
@@ -456,7 +467,7 @@ def _validate_meta_against_manifest_fixtures(meta: dict, manifest: dict, manifes
     return None
 
 
-def bind_side(
+def _bind_side(
     receipt_path: pathlib.Path | str,
     *,
     role: str,
@@ -485,7 +496,9 @@ def bind_side(
         return _unavailable("missing_manifest", path=str(manifest_path))
 
     try:
-        receipt = _load_json(receipt_path)
+        receipt_bytes = receipt_path.read_bytes()
+        receipt = json.loads(receipt_bytes)
+        receipt_file_sha256 = sha256_bytes(receipt_bytes)
     except (OSError, json.JSONDecodeError) as exc:
         return _unavailable("receipt_unreadable", error=str(exc), path=str(receipt_path))
     if not isinstance(receipt, dict):
@@ -494,6 +507,32 @@ def bind_side(
     for field in REQUIRED_RECEIPT_FIELDS:
         if field not in receipt or _is_missing(receipt.get(field)):
             return _unavailable("receipt_missing_field", field=field, path=str(receipt_path))
+    if not isinstance(receipt['id'], str) or type(receipt['index']) is not int or receipt['index'] < 1:
+        return _unavailable('receipt_identity_invalid')
+    if receipt['kind'] not in ('matched', 'overhead', 'diagnostic') or type(receipt['exit_code']) is not int:
+        return _unavailable('receipt_kind_or_exit_invalid')
+    if receipt.get('binding_errors') or receipt.get('status') == 'failed_or_unavailable':
+        return _unavailable('receipt_reports_binding_errors')
+    if 'launcher_exit_code' in receipt and (type(receipt['launcher_exit_code']) is not int or receipt['launcher_exit_code'] != 0):
+        return _unavailable('launcher_failed_or_invalid')
+    sampler_result = receipt.get('sampler_result')
+    if sampler_result is not None and (not isinstance(sampler_result, dict) or type(sampler_result.get('exit_code')) is not int or sampler_result['exit_code'] != 0):
+        return _unavailable('sampler_failed_or_invalid')
+    receipt['_binding_role'] = 'reference' if role_n in ('control', 'reference') else 'candidate'
+
+    def utc_seconds(value):
+        if not isinstance(value, str) or not value.endswith('Z'):
+            raise ValueError('receipt time requires explicit UTC')
+        return datetime.datetime.fromisoformat(value[:-1] + '+00:00').timestamp()
+
+    receipt_start, receipt_end = utc_seconds(receipt['started_utc']), utc_seconds(receipt['ended_utc'])
+    if not receipt_end > receipt_start:
+        return _unavailable('receipt_time_envelope_invalid')
+    if not receipt.get('manifest_path') or canonical_path(receipt['manifest_path']) != manifest_path:
+        return _unavailable('receipt_manifest_path_mismatch_or_missing')
+    bp._digest(receipt.get('manifest_sha256'), 'receipt manifest hash')
+    if sha256_file(manifest_path) != receipt['manifest_sha256']:
+        return _unavailable('receipt_manifest_hash_mismatch')
 
     run_dir = canonical_path(receipt["run_dir"])
     if not run_dir.is_dir():
@@ -518,6 +557,18 @@ def bind_side(
     for field in REQUIRED_METADATA_FIELDS:
         if field not in meta or _is_missing(meta.get(field)):
             return _unavailable("metadata_missing_field", field=field, run_dir=str(run_dir))
+    for field in ('n', 'pid', 'exit_code'):
+        if type(meta[field]) is not int or (field != 'exit_code' and meta[field] < 1):
+            return _unavailable('metadata_integer_invalid', field=field)
+    for field in ('warmup_s', 'observe_s', 'started_unix', 'ended_unix'):
+        if type(meta[field]) not in (int, float) or not math.isfinite(meta[field]) or meta[field] < 0:
+            return _unavailable('metadata_number_invalid', field=field)
+    if not receipt_start <= meta['started_unix'] < meta['ended_unix'] <= receipt_end:
+        return _unavailable('receipt_metadata_time_envelope_mismatch')
+    if type(meta.get('allocation_counting')) is not bool or meta['allocation_counting'] != counting:
+        return _unavailable('allocation_counting_configuration_mismatch')
+    if type(meta.get('diagnostic_sidecar')) is not bool or meta['diagnostic_sidecar'] != diagnostics:
+        return _unavailable('diagnostic_configuration_mismatch')
 
     if canonical_path(meta["run_dir"]) != run_dir:
         return _unavailable(
@@ -546,6 +597,25 @@ def bind_side(
     cli_err = _validate_effective_cli(receipt, meta)
     if cli_err is not None:
         return _unavailable(cli_err, path=str(receipt_path))
+
+    # Reuse the reviewed launcher verifier instead of duplicating a weaker
+    # manifest/fixture implementation. It verifies real canonical file paths.
+    verified_build = bp.verify_build(manifest_path, receipt['_binding_role'], meta['frontend'],
+                                     meta['binary'], meta.get('nav_pack'), meta.get('nav_flags'), meta.get('catalog_path'))
+    recorded_build = meta.get('build_provenance')
+    if not isinstance(recorded_build, dict) or recorded_build.get('status') != 'verified' or recorded_build.get('completion_status') != 'unchanged':
+        return _unavailable('completed_build_provenance_missing_or_invalid')
+    for field, expected in verified_build.items():
+        if not _typed_equal(recorded_build.get(field), expected):
+            return _unavailable('metadata_build_provenance_mismatch', field=field)
+    # All runtime fields remain explicit. Build client identities come from the
+    # recorded and verified nested build object, never checkout source labels.
+    for field in ('feature_flags', 'allocator_provenance', 'allocation_counting'):
+        if not _typed_equal(meta.get(field), verified_build[field]):
+            return _unavailable('metadata_build_configuration_mismatch', field=field)
+    for field, file_key in (('nav_pack_sha256', 'nav_pack'), ('nav_flags_sha256', 'nav_flags'), ('catalog_sha256', 'catalog')):
+        if meta.get(field) != verified_build['files'][file_key]['sha256']:
+            return _unavailable('metadata_runtime_fixture_mismatch', field=field)
 
     started = meta.get("started_unix")
     ended = meta.get("ended_unix")
@@ -711,30 +781,8 @@ def bind_side(
             side_provenance=side_prov,
         )
 
-    # Metadata client fields, when present, must match manifest client block.
-    if not _is_missing(meta.get("client_commit")) and meta.get("client_commit") != side_prov.get("client_commit"):
-        return _unavailable(
-            "metadata_manifest_client_commit_mismatch",
-            metadata=meta.get("client_commit"),
-            manifest=side_prov.get("client_commit"),
-        )
-    if not _is_missing(meta.get("client_sources_sha256")) and meta.get("client_sources_sha256") != side_prov.get(
-        "client_sources_sha256"
-    ):
-        return _unavailable(
-            "metadata_manifest_client_sources_mismatch",
-            metadata=meta.get("client_sources_sha256"),
-            manifest=side_prov.get("client_sources_sha256"),
-        )
-    # host_sources on metadata, when present, must match stable manifest sources.
-    if not _is_missing(meta.get("host_sources_sha256")) and meta.get("host_sources_sha256") != side_prov.get(
-        "manifest_sources_sha256"
-    ):
-        return _unavailable(
-            "metadata_manifest_host_sources_mismatch",
-            metadata=meta.get("host_sources_sha256"),
-            manifest=side_prov.get("manifest_sources_sha256"),
-        )
+    # Legacy top-level source/client labels describe the checkout. The actual
+    # binary source/client evidence was independently verified above.
 
     fix_err = _validate_meta_against_manifest_fixtures(meta, manifest, manifest_side)
     if fix_err is not None:
@@ -754,6 +802,10 @@ def bind_side(
     sip = canonical_path(server_identity_path)
     if not sip.is_file():
         return _unavailable("server_identity_missing", path=str(sip))
+    if not receipt.get('server_identity_path') or canonical_path(receipt['server_identity_path']) != sip:
+        return _unavailable('receipt_server_identity_path_mismatch_or_missing')
+    if receipt.get('server_identity_sha256') != sha256_file(sip):
+        return _unavailable('receipt_server_identity_hash_mismatch')
     try:
         sid = _load_json(sip)
     except (OSError, json.JSONDecodeError) as exc:
@@ -764,18 +816,24 @@ def bind_side(
         )
     if not isinstance(sid, dict):
         return _unavailable("server_identity_not_object", path=str(sip))
-    if _is_missing(sid.get("start_identity")):
+    if not isinstance(sid.get('start_identity'), str) or not sid['start_identity']:
         return _unavailable("server_start_identity_missing", path=str(sip))
-    if _is_missing(sid.get("port_listen")):
+    if type(sid.get('port_listen')) is not int or not 0 < sid['port_listen'] < 65536:
         return _unavailable("server_port_listen_missing", path=str(sip))
-    server_extras["server_start_identity"] = sid.get("start_identity")
+    if type(sid.get('pid')) is not int or sid['pid'] <= 0:
+        return _unavailable('server_pid_missing_or_invalid')
+    server_extras["server_start_identity"] = {'pid': sid['pid'], 'start_identity': sid['start_identity']}
     server_extras["server_port_listen"] = sid.get("port_listen")
+    server_extras['server_configuration'] = sid.get('configuration')
 
     sampler = receipt.get("sampler") if isinstance(receipt.get("sampler"), dict) else {}
     if _is_missing(sampler.get("interval_s")):
         return _unavailable("receipt_sampler_interval_missing")
     if _is_missing(sampler.get("duration_s_requested")):
         return _unavailable("receipt_sampler_duration_missing")
+    for field in ('interval_s', 'duration_s_requested'):
+        if type(sampler[field]) not in (int, float) or not math.isfinite(sampler[field]) or sampler[field] <= 0:
+            return _unavailable('receipt_sampler_configuration_invalid', field=field)
     server_extras["sampler_interval_s"] = sampler.get("interval_s")
     server_extras["sampler_duration_s_requested"] = sampler.get("duration_s_requested")
 
@@ -784,6 +842,10 @@ def bind_side(
         hcp = canonical_path(host_conditions_path)
         if not hcp.is_file():
             return _unavailable("host_conditions_missing", path=str(hcp))
+        if not receipt.get('host_conditions_path') or canonical_path(receipt['host_conditions_path']) != hcp:
+            return _unavailable('receipt_host_conditions_path_mismatch_or_missing')
+        if receipt.get('host_conditions_sha256') != sha256_file(hcp):
+            return _unavailable('receipt_host_conditions_hash_mismatch')
         try:
             hc = _load_json(hcp)
         except (OSError, json.JSONDecodeError) as exc:
@@ -800,6 +862,7 @@ def bind_side(
 
     # Metadata is authoritative — no manifest enrichment of missing match keys.
     match_keys = construct_match_keys(meta, extras=server_extras)
+    match_keys['client_sources_sha256'] = recorded_build['client_sources_sha256']
 
     # Independent qualification (never trust receipt.qualification labels).
     qualification = qc.qualify(run_dir, counting=counting, diagnostics=diagnostics)
@@ -825,6 +888,13 @@ def bind_side(
             after=recheck,
             raw_hash_status="mutated_after_bind_read",
         )
+    bp.recheck_files(verified_build['files'])
+    if sha256_file(sip) != receipt['server_identity_sha256']:
+        return _unavailable('server_identity_changed_after_read')
+    if host_conditions_path is not None and sha256_file(hcp) != receipt['host_conditions_sha256']:
+        return _unavailable('host_conditions_changed_after_read')
+    if sha256_file(receipt_path) != receipt_file_sha256:
+        return _unavailable('receipt_changed_after_read')
 
     wall_span = _observation_wall_span_from_analysis(analysis, meta)
     if wall_span is None:
@@ -842,6 +912,8 @@ def bind_side(
         samples = rm.load_run_samples(run_dir)
     except (OSError, ValueError, FileNotFoundError) as exc:
         return _unavailable("samples_unreadable", error=str(exc), path=str(run_dir))
+    if any(_file_hash_if_present(run_dir / name) != digest for name, digest in raw_hashes.items()):
+        return _unavailable('raw_hash_changed_after_sample_read')
 
     qualified = qualification.get("qualified") is True and not qualification.get("errors")
     exit_ok = meta_exit == 0
@@ -910,6 +982,18 @@ def bind_side(
         "n": meta.get("n"),
         "slot_ordinals_present": _slot_ordinals_present(samples, meta),
     }
+
+
+def bind_side(receipt_path, *, role, manifest_path, counting=False, diagnostics=False,
+              server_identity_path=None, host_conditions_path=None, cell_dir=None):
+    """Malformed or unreadable artifacts are unavailable, never a traceback/pass."""
+    try:
+        return _bind_side(receipt_path, role=role, manifest_path=manifest_path,
+                          counting=counting, diagnostics=diagnostics,
+                          server_identity_path=server_identity_path,
+                          host_conditions_path=host_conditions_path, cell_dir=cell_dir)
+    except (ValueError, TypeError, KeyError, OSError, OverflowError) as error:
+        return _unavailable('artifact_validation_failed', detail=str(error))
 
 
 def _slot_ordinals_present(samples: list[dict], meta: dict) -> bool:

@@ -7,12 +7,14 @@ Distinguishes binding success from final pair-gate eligibility.
 from __future__ import annotations
 
 import hashlib
+import datetime
 import json
 import pathlib
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -140,6 +142,8 @@ def _complete_meta(
         "gpu_completion_profile": False,
         "diagnostic_sidecar": False,
         "stack_logging": False,
+        "stack_logging_mode": None,
+        "debug": False,
         "single_renderer": False,
         "sustain": True,
         "terminal": True,
@@ -165,7 +169,7 @@ def _effective_cli(*, binary: str, n: int, frontend: str = "tui") -> list:
         "python3",
         "run_diagnostic.py",
         frontend,
-        n,
+        str(n),
         "active",
         "--sustain",
         "--no-diagnostics",
@@ -234,6 +238,7 @@ def _build_side(
     )
     meta["exit_code"] = exit_code
     _write_json(run_dir / "metadata.json", meta)
+    (cell / 'fixture-meta-path.txt').write_text(str(run_dir / 'metadata.json'))
 
     if not skip_samples:
         rows, proof = _active_samples(n=n, observe_s=30, t0=5.0)
@@ -262,8 +267,8 @@ def _build_side(
         "run_dir": receipt_run_dir if receipt_run_dir is not None else str(run_dir),
         "exit_code": exit_code,
         "effective_cli": _effective_cli(binary=str(bin_path), n=n),
-        "started_utc": "2026-09-07T00:00:00Z",
-        "ended_utc": "2026-09-07T00:01:00Z",
+        "started_utc": datetime.datetime.fromtimestamp(started_unix - 1, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+        "ended_utc": datetime.datetime.fromtimestamp(ended_unix + 1, datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
         "raw_hashes": raw_hashes,
         "sampler": {
             "pid_was": 100,
@@ -336,6 +341,8 @@ def _write_manifest(root: pathlib.Path, ref: dict, cand: dict) -> pathlib.Path:
             "branch": "control-branch",
             "sources_sha256_pre": ref["sources_sha"],
             "sources_sha256_post": ref["sources_sha"],
+            "sources_stable_across_build": True,
+            "build_exit": 0,
             "client": {
                 "commit": CLIENT_COMMIT,
                 "sources_sha256": CLIENT_SOURCES,
@@ -346,6 +353,8 @@ def _write_manifest(root: pathlib.Path, ref: dict, cand: dict) -> pathlib.Path:
             "branch": "candidate-branch",
             "sources_sha256_pre": cand["sources_sha"],
             "sources_sha256_post": cand["sources_sha"],
+            "sources_stable_across_build": True,
+            "build_exit": 0,
             "client": {
                 "commit": CLIENT_COMMIT,
                 "sources_sha256": CLIENT_SOURCES,
@@ -364,6 +373,12 @@ def _write_manifest(root: pathlib.Path, ref: dict, cand: dict) -> pathlib.Path:
         },
         "server": {"target": "local"},
     }
+    for section, key, label in (('nav', 'nav_pack', 'nav-pack-shared'),
+                                ('nav', 'nav_flags', 'nav-flags-shared'),
+                                ('catalog', 'js_scripts_json', 'catalog-shared')):
+        asset = root / key
+        asset.write_bytes(label.encode())
+        manifest[section][key] = str(asset)
     _write_json(path, manifest)
     return path
 
@@ -376,10 +391,37 @@ def _server_identity(root: pathlib.Path) -> pathlib.Path:
             "pid": 9,
             "start_identity": "macos_lstart:test",
             "port_listen": 43594,
+            "configuration": {"target": "local", "version": "synthetic-fixture-server"},
             "note": "explicit PID only; argv/env not recorded",
         },
     )
+    _bind_fixture_artifacts(root, root / 'manifest.json', path)
     return path
+
+
+def _bind_fixture_artifacts(root, manifest_path, server_path):
+    """Create a real persisted fixture chain without repairing test omissions."""
+    manifest = json.loads(manifest_path.read_text())
+    for receipt_path in root.glob('*/receipt.json'):
+        receipt = json.loads(receipt_path.read_text())
+        # Fixture path itself (not deliberately corrupted receipt run_dir).
+        meta_path = pathlib.Path((receipt_path.parent / 'fixture-meta-path.txt').read_text())
+        if not meta_path.is_file():
+            continue
+        meta = json.loads(meta_path.read_text())
+        role = 'reference' if meta['binary'] == manifest['binaries']['control_tui_play']['path'] else 'candidate'
+        meta.update(nav_pack=manifest['nav']['nav_pack'], nav_flags=manifest['nav']['nav_flags'],
+                    catalog_path=manifest['catalog']['js_scripts_json'])
+        build = mea.bp.verify_build(manifest_path, role, meta['frontend'], meta['binary'],
+                                    meta['nav_pack'], meta['nav_flags'], meta['catalog_path'])
+        build['completion_status'] = 'unchanged'
+        meta['build_provenance'] = build
+        _write_json(meta_path, meta)
+        if isinstance(receipt.get('raw_hashes'), dict):
+            receipt['raw_hashes']['metadata.json'] = mea.sha256_file(meta_path)
+        receipt.update(manifest_path=str(manifest_path), manifest_sha256=mea.sha256_file(manifest_path),
+                       server_identity_path=str(server_path), server_identity_sha256=mea.sha256_file(server_path))
+        _write_json(receipt_path, receipt)
 
 
 class MatchedEvidenceAdapterTests(unittest.TestCase):
@@ -415,6 +457,90 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         manifest = _write_manifest(self.root, ref, cand)
         server = _server_identity(self.root)
         return ref, cand, manifest, server
+
+    def test_root_contract_counterexamples_rejected(self):
+        probes = ('invalid_utc', 'wrong_utc_envelope', 'missing_enabled_flag', 'extra_enabled_flag',
+                  'duplicate_observe', 'missing_manifest_fixtures', 'bad_source_digest',
+                  'wrong_manifest_hash', 'asset_corruption', 'server_sidecar_swap',
+                  'nonfinite_metadata', 'bool_pid', 'missing_build_proof', 'changed_build_proof',
+                  'launcher_failed', 'sampler_failed', 'explicit_binding_error', 'bool_feature')
+        for probe in probes:
+            with self.subTest(probe=probe):
+                ref, _, manifest_path, server = self._positive_pair()
+                receipt = json.loads(ref['receipt_path'].read_text())
+                meta_path = ref['run_dir'] / 'metadata.json'
+                meta = json.loads(meta_path.read_text())
+                manifest = json.loads(manifest_path.read_text())
+                if probe == 'invalid_utc': receipt['started_utc'] = 'nonsense'
+                if probe == 'wrong_utc_envelope': receipt['started_utc'] = '2026-09-07T00:00:00Z'
+                if probe == 'missing_enabled_flag': receipt['effective_cli'].remove('--scheduling-profile')
+                if probe == 'extra_enabled_flag': receipt['effective_cli'].append('--failure-capture')
+                if probe == 'duplicate_observe': receipt['effective_cli'] += ['--observe', '999']
+                if probe == 'missing_manifest_fixtures': manifest.pop('nav')
+                if probe == 'bad_source_digest':
+                    manifest['control']['sources_sha256_pre'] = 'junk'
+                    manifest['control']['sources_sha256_post'] = 'junk'
+                if probe == 'nonfinite_metadata': meta['observe_s'] = float('nan')
+                if probe == 'bool_pid': meta['pid'] = True
+                if probe == 'missing_build_proof': meta.pop('build_provenance')
+                if probe == 'changed_build_proof': meta['build_provenance']['completion_status'] = 'changed'
+                if probe == 'launcher_failed': receipt['launcher_exit_code'] = 1
+                if probe == 'sampler_failed': receipt['sampler_result'] = {'exit_code': 1}
+                if probe == 'explicit_binding_error': receipt['binding_errors'] = ['failed']
+                if probe == 'bool_feature': meta['feature_flags']['locked'] = 1
+                _write_json(manifest_path, manifest)
+                receipt['manifest_sha256'] = mea.sha256_file(manifest_path)
+                if probe == 'wrong_manifest_hash': receipt['manifest_sha256'] = '0' * 64
+                _write_json(meta_path, meta)
+                receipt['raw_hashes']['metadata.json'] = mea.sha256_file(meta_path)
+                _write_json(ref['receipt_path'], receipt)
+                if probe == 'asset_corruption': pathlib.Path(meta['nav_flags']).write_bytes(b'corrupt')
+                if probe == 'server_sidecar_swap': _write_json(server, {'pid': 10, 'start_identity': 'different', 'port_listen': 43594})
+                bound = mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest_path, server_identity_path=server)
+                self.assertFalse(bound['binding_ok'], (probe, bound))
+                self.assertEqual(bound['status'], 'unavailable')
+
+    def test_checkout_labels_can_differ_from_saved_binary_sources(self):
+        ref, _, manifest, server = self._positive_pair()
+        meta_path = ref['run_dir'] / 'metadata.json'
+        meta = json.loads(meta_path.read_text())
+        for field in ('host_commit', 'host_sources_sha256', 'client_commit', 'client_sources_sha256'):
+            meta[field] = _tag('different-checkout-' + field)
+        meta['checkout_source_labels_only'] = True
+        _write_json(meta_path, meta)
+        receipt = json.loads(ref['receipt_path'].read_text())
+        receipt['raw_hashes']['metadata.json'] = mea.sha256_file(meta_path)
+        _write_json(ref['receipt_path'], receipt)
+        bound = mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest, server_identity_path=server)
+        self.assertTrue(bound['binding_ok'], bound)
+        self.assertEqual(bound['match_keys']['client_sources_sha256'], CLIENT_SOURCES)
+
+    def test_fixture_change_during_independent_analysis_is_rejected(self):
+        ref, _, manifest, server = self._positive_pair()
+        actual = mea.qc.qualify
+        def mutate_then_qualify(*args, **kwargs):
+            (self.root / 'nav_flags').write_bytes(b'changed during analysis')
+            return actual(*args, **kwargs)
+        with mock.patch.object(mea.qc, 'qualify', side_effect=mutate_then_qualify):
+            bound = mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest, server_identity_path=server)
+        self.assertFalse(bound['binding_ok'], bound)
+        self.assertIn('changed during evidence', bound.get('detail', ''))
+
+    def test_host_conditions_file_must_match_persisted_hash(self):
+        ref, _, manifest, server = self._positive_pair()
+        host = self.root / 'host.json'
+        _write_json(host, HOST_CONDITIONS)
+        receipt = json.loads(ref['receipt_path'].read_text())
+        receipt.update(host_conditions_path=str(host), host_conditions_sha256=mea.sha256_file(host))
+        _write_json(ref['receipt_path'], receipt)
+        bound = mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest,
+                              server_identity_path=server, host_conditions_path=host)
+        self.assertTrue(bound['binding_ok'], bound)
+        _write_json(host, dict(HOST_CONDITIONS, brand='different-host'))
+        bound = mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest,
+                              server_identity_path=server, host_conditions_path=host)
+        self.assertFalse(bound['binding_ok'])
+        self.assertEqual(bound['reason'], 'receipt_host_conditions_hash_mismatch')
 
     def test_positive_binding_and_qualification_overhead_unavailable(self):
         ref, cand, manifest, server = self._positive_pair()
@@ -493,10 +619,10 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             cell_dir=ref["cell"],
         )
         self.assertTrue(ref_b["binding_ok"], ref_b)
-        self.assertTrue(cand_b["binding_ok"], cand_b)
-        self.assertEqual(mea.match_keys_complete(cand_b["match_keys"]), "nav_flags_sha256")
+        self.assertFalse(cand_b["binding_ok"], cand_b)
+        self.assertEqual(cand_b['reason'], 'metadata_runtime_fixture_mismatch')
         pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
-        self.assertEqual(pair["reason"], "missing_match_key")
+        self.assertEqual(pair["reason"], "side_binding_failed")
 
     def test_null_render_policy_stays_unavailable(self):
         ref, cand, manifest, server = self._positive_pair(
@@ -516,11 +642,10 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             server_identity_path=server,
             cell_dir=ref["cell"],
         )
-        self.assertTrue(cand_b["binding_ok"], cand_b)
-        self.assertIsNone(cand_b["match_keys"].get("render_policy"))
-        self.assertEqual(mea.match_keys_complete(cand_b["match_keys"]), "render_policy")
+        self.assertFalse(cand_b["binding_ok"], cand_b)
+        self.assertEqual(cand_b['reason'], 'receipt_cli_metadata_mismatch:render_policy')
         pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
-        self.assertEqual(pair["reason"], "missing_match_key")
+        self.assertEqual(pair["reason"], "side_binding_failed")
         # resource_match_keys must not default TUI null → "none"
         keys = rm.resource_match_keys_from_meta({"frontend": "tui", "render_policy": None})
         self.assertIsNone(keys.get("render_policy"))
@@ -605,7 +730,8 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             cell_dir=cand["cell"],
         )
         self.assertFalse(cand_b["binding_ok"], cand_b)
-        self.assertEqual(cand_b["reason"], "binary_path_not_manifest_canonical_path")
+        self.assertEqual(cand_b["reason"], "artifact_validation_failed")
+        self.assertIn('binary path differs', cand_b['detail'])
 
     def test_missing_receipt_fields_rejected(self):
         ref, cand, manifest, server = self._positive_pair(
@@ -662,6 +788,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
                 "binary_hash_mismatch_manifest",
                 "binary_path_not_manifest_canonical_path",
                 "binary_not_bound_to_manifest_entry",
+                "artifact_validation_failed",
             },
         )
 
@@ -840,6 +967,7 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             "size_bytes": cand2["binary_path"].stat().st_size,
         }
         _write_json(manifest, man)
+        _bind_fixture_artifacts(self.root, manifest, server)
         cand_b = mea.bind_side(
             cand2["receipt_path"], role="candidate", manifest_path=manifest,
             server_identity_path=server, cell_dir=cand2["cell"],
