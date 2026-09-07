@@ -9,6 +9,46 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-07 23:58 UTC
+
+- First independent reviewer trial completed on isolated
+  .worktrees/windows-lazy-upload-candidate, source36825a9..81dc003/client5ee9.
+  Astra t_9d3a8275 session20260907_194345_da3878 actualAstra/openai-codex330s;
+  Grok t_f74f8e9b session20260907_194345_77bfb1 actualGrok4.6/xai-oauth388s.
+  Both found the same low productionCOPY_SRC/test-readback issue; no ranking.
+  Both encountered Hermes unattended inline-Python approval blocks; operator
+  noted this and root confirmed. Time is confounded, not model speed. No guard
+  settings changed; execution workflow32b0d0c records this qualification.
+- Root fixed flags/test proof on isolated3118e96. Full panel388/388 at81dc003;
+  subsequent required-GPU11/11 with7actualAppleM4Max/Metal device-ready records,
+  normal production cargo check0. Follow-up manifest14a5cd1 and report
+  lazy-upload-milestone-reconciliation.md. Grok4.6 follow-up t_f6265320 pending.
+  AFTER approval, repackage3118e96 for Windows: prepared81dc003 archive/script
+  in /private/tmp/274bot-windows-setup-20260907 is superseded, never executed.
+  Native client5ee9 unchanged; Windows runtime/source manifest852files differs
+  from baseline in game_view.rs only. No candidate native run/build yet.
+- A1 7c05f5c per-task review passed but ROOT DID NOT ACCEPT integration:
+  username-global registry violates slot-instance ownership, required actual
+  overlap diagnostics absent and real-owner regressions incomplete. Completed
+  card could not reopen; corrective t_cc437480 running implementer. Read latest
+  root comment on t_b1e57f6d. No native A1 screen before correction/review.
+- Renderer-owner design a9d096c approved actualGrok4.5. Isolated source task
+  t_5f03e5bb at .worktrees/windows-render-owner-census, host/client branch
+  codex/windows-render-owner-census, preparedfa871c9 from36825a9/client5ee9.
+  Worker may edit client source but ROOT commits client/gitlink after reviewed
+  exact file hashes. Initial8a365ff corrected after reviewer found missing
+  populated/exclusive/capacity tests and omitted PixMaps/normal arrays. Poll
+  current review; no native use. Native private-commit companion still needed
+  to distinguish resident decay from retained allocations; do not fake pressure.
+- N16 temporal supplement9f32a0d proves sharply falling RSS across119observe
+  rows per mode: first/last1039.652/798.863MiB and2474.266/1338.422MiB.
+  V8total/GPUlogical totals do not fall correspondingly; no stationary plateau
+  or inferred causal RSS decomposition. Astra independently recomputed it.
+  Recovery bdb5e29 approved actualGrok4.5; root ran both CLI reconstructions
+  locally into diagnostics/windows-panel-n16-20260907/orchestrator-recovery-
+  bdb5e29, originals hash-unchanged. Original full bindings stayFAILED; no
+  derived override remains. Future producer fix exists; not staged natively yet.
+
 ## Latest boundary — 2026-09-07 23:22 UTC
 
 - Operator approved milestone review cadence and a fresh Astra/Grok comparison.
