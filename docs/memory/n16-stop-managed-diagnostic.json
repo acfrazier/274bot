@@ -1,0 +1,131 @@
+{
+  "task": "t_aa5316e0",
+  "kind": "n16_stop_managed_diagnostic",
+  "branch": "codex/memory-diagnostics",
+  "run_dir": "docs/memory/diagnostics/20260907T014123Z_tui_n16_active",
+  "binary": "docs/memory/diagnostics/n16-stop-diagnostic-build-20260907T012907Z/tui-play-n16-stop-diagnostic-system-20260907T012907Z",
+  "binary_sha256": "13a1221c3f0d6f03ca3884894b36d6c995c3c7b3e7bcf70567aa50d8223557aa",
+  "binary_sha_verified_by": "shasum -a 256",
+  "host_commit": "944fb60923b8a2ce533c9ac676396f9bdc929437",
+  "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+  "host_sources_sha256": "9fee9ab6804e283293b2ad2797eff22f170fdd72d8709beb253601123fb587a8",
+  "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+  "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "requested": {
+    "frontend": "tui",
+    "n": 16,
+    "workload": "active",
+    "sustain": true,
+    "warmup_s": 30,
+    "observe_s": 300,
+    "diagnostic_sidecar": true,
+    "counting": false,
+    "stack_logging": false,
+    "debug": false,
+    "scheduling_profile": false,
+    "render_profile": false,
+    "responsiveness_profile": false
+  },
+  "process": {
+    "exit_code": 1,
+    "started_unix": 1788745283.766059,
+    "ended_unix": 1788745606.373536,
+    "wall_duration_s": 322.60747718811035,
+    "failure": "live121fc_14: script requested stop on tick 529; isolate stopping"
+  },
+  "qualification": {
+    "command": "python3 docs/memory/qualify_control.py docs/memory/diagnostics/20260907T014123Z_tui_n16_active --diagnostics --no-write",
+    "exit_code": 1,
+    "qualified": false,
+    "errors": [
+      "missing boundary qualification",
+      "observation incomplete",
+      "process failed or incomplete"
+    ],
+    "boundaries_present": ["observe-start"],
+    "boundaries_missing": ["observe-end"],
+    "observe_start_elapsed_s": 102.800417542,
+    "observation_s_reported": 218.536770417
+  },
+  "artifacts": {
+    "samples_jsonl_lines": 314,
+    "samples_diagnostics_jsonl_lines": 315,
+    "samples_qualification_jsonl_lines": 1,
+    "sample_phases": {
+      "seed": 72,
+      "warmup": 29,
+      "observe": 213
+    },
+    "diagnostic_terminal_elapsed_s": 322.415266709,
+    "diagnostic_stop_reason_hits": 0,
+    "qualification_stop_reason_field": "absent",
+    "raw_artifacts_modified": false
+  },
+  "slot_progress_terminal": {
+    "all_states": "Running",
+    "slots_with_error": 1,
+    "failing_slot": "live121fc_14",
+    "failing_slot_error": "script requested stop on tick 529; isolate stopping",
+    "dispatched": {
+      "live121fc_0": 519,
+      "live121fc_1": 420,
+      "live121fc_2": 509,
+      "live121fc_3": 506,
+      "live121fc_4": 506,
+      "live121fc_5": 506,
+      "live121fc_6": 506,
+      "live121fc_7": 506,
+      "live121fc_8": 420,
+      "live121fc_9": 506,
+      "live121fc_10": 506,
+      "live121fc_11": 509,
+      "live121fc_12": 509,
+      "live121fc_13": 506,
+      "live121fc_14": 506,
+      "live121fc_15": 509
+    },
+    "last_completed_tick": {
+      "live121fc_0": 533,
+      "live121fc_1": 440,
+      "live121fc_2": 528,
+      "live121fc_3": 529,
+      "live121fc_4": 529,
+      "live121fc_5": 528,
+      "live121fc_6": 529,
+      "live121fc_7": 529,
+      "live121fc_8": 440,
+      "live121fc_9": 529,
+      "live121fc_10": 529,
+      "live121fc_11": 528,
+      "live121fc_12": 528,
+      "live121fc_13": 529,
+      "live121fc_14": 529,
+      "live121fc_15": 528
+    }
+  },
+  "verdict": {
+    "original_script_stop_reproduced": true,
+    "stop_reason_captured": false,
+    "qualified": false,
+    "n16_supported": false,
+    "performance_acceptance": false,
+    "capacity_claims_resolved": false,
+    "final_lifecycle_claims_resolved": false
+  },
+  "predecessors": {
+    "authorized_interrupted": "docs/memory/diagnostics/20260907T012918Z_tui_n16_active",
+    "unauthorized_aborted": "docs/memory/diagnostics/20260907T013727Z_tui_n16_active",
+    "original_failure": "docs/memory/diagnostics/20260907T005032Z_tui_n16_active"
+  },
+  "limitations": [
+    "No observe-end or teardown boundary; process exited 1 at the script-stop failure.",
+    "Diagnostic sidecar was enabled, so resource observations are excluded from performance acceptance.",
+    "Failure string was retained in diagnostics, but no stop_reason field/value was emitted in qualification artifacts.",
+    "This reproduces the failure class and does not establish root cause or authorize a retry.",
+    "Reported source hashes are launch provenance and were not independently recomputed in this read-only review."
+  ],
+  "changed_files": [
+    "docs/memory/n16-stop-managed-diagnostic.md",
+    "docs/memory/n16-stop-managed-diagnostic.json"
+  ]
+}
