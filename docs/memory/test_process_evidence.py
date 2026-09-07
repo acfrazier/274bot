@@ -52,6 +52,8 @@ class EvidenceTests(unittest.TestCase):
         mutations = [
             lambda r: r[2].update(sample_index=9),
             lambda r: r[2].update(roles={}),
+            lambda r: r[2]['roles'].update(server=None),
+            lambda r: r[2]['roles']['server'].update(cpu=['invalid']),
             lambda r: r[2]['roles']['server'].update(start_identity='reused'),
             lambda r: r[2]['roles']['server']['cpu'].update(cumulative_user_s=0),
             lambda r: r[-1].update(sample_count=999),

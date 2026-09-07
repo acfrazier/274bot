@@ -105,6 +105,8 @@ def _validate(path, digest, *, roles, observation, interval_s, duration_mode,
             raise ValueError('missing or extra role sample')
         for name, identity in roles.items():
             r = row['roles'][name]
+            if not isinstance(r, dict):
+                raise ValueError('role sample must be an object')
             if r.get('status') != 'ok' or r.get('role') != name or type(r.get('pid')) is not int or r['pid'] != identity['pid'] or r.get('start_identity') != identity['start_identity']:
                 raise ValueError('failed role or changed identity')
             ra = number(r.get('acquisition_start_monotonic_s'), 'role start')
@@ -112,6 +114,8 @@ def _validate(path, digest, *, roles, observation, interval_s, duration_mode,
             if not a <= ra <= rb <= b:
                 raise ValueError('role acquisition outside sweep')
             cpu = r.get('cpu') or {}
+            if not isinstance(cpu, dict):
+                raise ValueError('CPU sample must be an object')
             u = number(cpu.get('cumulative_user_s'), 'user CPU')
             s = number(cpu.get('cumulative_system_s'), 'system CPU')
             rss = number(r.get('resident_bytes'), 'RSS')
