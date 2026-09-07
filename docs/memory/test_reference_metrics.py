@@ -722,7 +722,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         """A publisher-timestamped span with a warmup-only cancel offset."""
         bounds = list(rm.LATENCY_BOUNDS_MS)
         start_row = {
-            "slot_id": 7, "generation": 1, "sample_age_ms": 400,
+            "slot_id": 7, "generation": 1, "sample_age_ms": 0,
             "decode_edge_n": 100, "dispatch_n": 90,
             "decode_canceled_n": 5, "decode_lost_n": 0,
             "decode_dropped_n": 0, "decode_pending_n": 0,
@@ -737,10 +737,10 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
             "decode_latency_buckets": [0, 0, 0, 30, 170, 0, 0, 0, 0, 0, 0],
         })
         if publisher:
-            for row, elapsed in ((start_row, 40.0), (end_row, 160.0)):
+            for row, elapsed in ((start_row, 40.5), (end_row, 160.0)):
                 row["updated_ms"] = int((_meta()["started_unix"] + elapsed - 0.3) * 1000)
         return (
-            {"phase": "observe", "elapsed_s": 40.0, "responsiveness_profile": [start_row]},
+            {"phase": "observe", "elapsed_s": 40.5, "responsiveness_profile": [start_row]},
             {"phase": "observe", "elapsed_s": 160.0, "responsiveness_profile": [end_row]},
         )
 
@@ -748,12 +748,8 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         meta = _meta(responsiveness_profile=True)
         start, end = self._contained_pair()
         g = rm.evaluate_decode(meta, [start, end], target_ms=100)
-        self.assertEqual(g["status"], "available")
-        self.assertEqual(g["target_verdict"], "meet")
-        slot = g["slots"][0]
-        self.assertEqual(slot["decode_canceled_n_delta"], 0)
-        self.assertEqual(slot["accounting_offset"], 5)
-        self.assertTrue(slot["contained_window"])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_missing")
 
     def test_decode_cancellation_inside_contained_span_rejected(self):
         meta = _meta(responsiveness_profile=True)
@@ -785,6 +781,48 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         g = rm.evaluate_decode(meta, [start, middle, end])
         self.assertEqual(g["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "coverage_lost_or_incomplete")
+
+    def test_observation_bound_not_warmup_duration(self):
+        meta = _meta(responsiveness_profile=True, warmup_s=30)
+        start, end = self._contained_pair()
+        start["elapsed_s"] = 29.0
+        start["responsiveness_profile"][0]["updated_ms"] = int((meta["started_unix"] + 28.7) * 1000)
+        g = rm.evaluate_decode(meta, [start, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_missing")
+
+    def test_interior_counter_reset_cannot_recover_beyond_start(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        middle = json.loads(json.dumps(start))
+        middle["elapsed_s"] = 100.0
+        row = middle["responsiveness_profile"][0]
+        row["updated_ms"] = int((meta["started_unix"] + 99.7) * 1000)
+        row["decode_edge_n"] = 10
+        row["dispatch_n"] = 5
+        g = rm.evaluate_decode(meta, [start, middle, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "counter_reset")
+
+    def test_interior_missing_publisher_row_rejects_whole_window(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        middle = {"phase": "observe", "elapsed_s": 100.0, "responsiveness_profile": []}
+        g = rm.evaluate_decode(meta, [start, middle, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "publisher_slot_row_missing_or_duplicate")
+
+    def test_interior_duplicate_publisher_row_rejects_whole_window(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        middle = json.loads(json.dumps(start))
+        middle["elapsed_s"] = 100.0
+        row = middle["responsiveness_profile"][0]
+        row["updated_ms"] = int((meta["started_unix"] + 99.7) * 1000)
+        middle["responsiveness_profile"].append(json.loads(json.dumps(row)))
+        g = rm.evaluate_decode(meta, [start, middle, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "publisher_slot_row_missing_or_duplicate")
 
 
 class ObservationWindowTests(unittest.TestCase):

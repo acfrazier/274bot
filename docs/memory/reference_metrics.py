@@ -622,19 +622,14 @@ def _slot_hist_delta(
 def _contained_responsiveness_pair(
     meta: dict, samples: list[dict], key: tuple[Any, Any], prefix: str,
 ) -> tuple[Optional[dict], Optional[dict], dict]:
-    """Choose the longest publisher-contained, completed counter span.
+    """Audit one deterministic maximal publisher-contained counter span.
 
     ``*_coverage_complete`` is cumulative and may be false because warmup had
     cancellations.  This adapter instead proves a window from the publisher
     timestamps and counter deltas.  It never treats a lifetime flag as a
-    window flag, and it only considers the deterministic longest valid span.
+    window flag or selects a favorable inner segment.
     """
     observed = [s for s in samples if isinstance(s, dict) and s.get("phase") == "observe"]
-    candidates = []
-    started = meta.get("started_unix")
-    warmup = meta.get("warmup_s", 0)
-    if not _finite(started) or not _finite(warmup):
-        return None, None, {"reason": "publisher_alignment_unavailable"}
     rows = []
     for sample_index, sample in enumerate(observed):
         elapsed = sample.get("elapsed_s")
@@ -643,7 +638,8 @@ def _contained_responsiveness_pair(
         matches = [r for r in (sample.get("responsiveness_profile") or [])
                    if isinstance(r, dict) and (r.get("slot_id"), r.get("generation")) == key]
         if len(matches) != 1:
-            continue
+            return None, None, {"reason": "publisher_slot_row_missing_or_duplicate",
+                                "sample_index": sample_index}
         row = matches[0]
         age = row.get("sample_age_ms")
         updated = row.get("updated_ms")
@@ -651,47 +647,61 @@ def _contained_responsiveness_pair(
             return None, None, {"reason": "publisher_age_invalid"}
         if not _finite(updated):
             return None, None, {"reason": "publisher_timestamp_missing"}
-        publisher_elapsed = float(updated) / 1000.0 - float(started)
-        # The sample was serialized after the publisher update.  Allow a
-        # small clock/serialization uncertainty, but do not invent alignment.
-        if publisher_elapsed < float(elapsed) - float(age) / 1000.0 - 0.1:
-            return None, None, {"reason": "publisher_age_misaligned"}
-        if publisher_elapsed > float(elapsed) + 0.1:
-            return None, None, {"reason": "publisher_timestamp_after_sample"}
-        rows.append((sample_index, float(elapsed), publisher_elapsed, row))
+        # updated_ms is validated serializer evidence only: launcher wall time
+        # has no proven mapping to elapsed_s.  Age gives a one-sided bound.
+        publisher_lower = float(elapsed) - float(age) / 1000.0
+        rows.append((sample_index, float(elapsed), row, publisher_lower,
+                     float(elapsed), float(age)))
     if len(rows) < 2:
         return None, None, {"reason": "publisher_timestamp_missing"}
     if any(b[1] <= a[1] for a, b in zip(rows, rows[1:])):
         return None, None, {"reason": "non_increasing_observation_elapsed"}
 
+    observe_lb, observe_ub = rows[0][1], rows[-1][1]
+    start_candidates = [item for item in rows if item[3] >= observe_lb]
+    end_candidates = [item for item in rows if item[4] <= observe_ub]
+    if not start_candidates or not end_candidates:
+        return None, None, {"reason": "publisher_window_not_contained",
+                            "missing_capability": "native_sample_publisher_bracket"}
+    start_item, end_item = start_candidates[0], end_candidates[-1]
+    if start_item[0] >= end_item[0]:
+        return None, None, {"reason": "publisher_window_too_short"}
+    selected = rows[start_item[0]:end_item[0] + 1]
+    if len(selected) != end_item[0] - start_item[0] + 1:
+        return None, None, {"reason": "publisher_slot_row_missing_or_duplicate"}
+
     if prefix == "input":
-        start_item, end_item = rows[0], rows[-1]
-        srow, erow = start_item[3], end_item[3]
+        srow, erow = start_item[2], end_item[2]
         if srow.get("ended") is True or erow.get("ended") is True:
             return None, None, {"reason": "boundary_ended"}
         fields = {
             name: f"input_{name}_n"
             for name in ("start", "complete", "canceled", "lost", "dropped", "pending")
         }
-        values = [srow.get(field) for field in fields.values()] + [erow.get(field) for field in fields.values()]
-        if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
-            return None, None, {"reason": "counter_missing_or_malformed"}
-        deltas = {name: int(erow[field]) - int(srow[field]) for name, field in fields.items()}
+        parsed = []
+        for item in selected:
+            values = [item[2].get(field) for field in fields.values()]
+            if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
+                return None, None, {"reason": "counter_missing_or_malformed"}
+            parsed.append({name: int(item[2][field]) for name, field in fields.items()})
+        for before, after in zip(parsed, parsed[1:]):
+            if any(after[name] < before[name] for name in fields):
+                return None, None, {"reason": "counter_reset"}
+        deltas = {name: parsed[-1][name] - parsed[0][name] for name in fields}
         if any(value < 0 for value in deltas.values()):
             return None, None, {"reason": "counter_reset"}
         if any(deltas[name] for name in ("canceled", "lost", "dropped")):
             return None, None, {"reason": "coverage_lost_or_incomplete"}
-        if srow[fields["pending"]] != 0 or erow[fields["pending"]] != 0:
+        if parsed[0]["pending"] != 0 or parsed[-1]["pending"] != 0:
             return None, None, {"reason": "boundary_pending_incomplete"}
-        return srow, erow, {
-            "contained_window": True,
+        # Input has the same missing native bracket as decode; keep the
+        # validated accounting visible in the reason rather than passing.
+        return None, None, {
+            "reason": "publisher_clock_bracket_missing",
+            "missing_capability": "native_sample_publisher_bracket",
             "selected_start_elapsed_s": start_item[1],
             "selected_end_elapsed_s": end_item[1],
-            "publisher_start_elapsed_s": start_item[2],
-            "publisher_end_elapsed_s": end_item[2],
-            "coverage_excluded_edges": {"before_start_samples": start_item[0],
-                                         "after_end_samples": len(observed) - 1 - end_item[0]},
-            "counter_deltas": deltas,
+            "sample_ages_ms": [item[5] for item in selected],
         }
 
     names = {
@@ -702,50 +712,42 @@ def _contained_responsiveness_pair(
         "dropped": f"{prefix}_dropped_n",
         "pending": f"{prefix}_pending_n",
     }
-    # Boundaries are selected solely by publisher containment.  Do not search
-    # for a shorter clean subspan after seeing a cancellation in the middle.
-    start_item, end_item = rows[0], rows[-1]
-    srow, erow = start_item[3], end_item[3]
-    if float(start_item[2]) < float(warmup):
-        eligible = [item for item in rows if float(item[2]) >= float(warmup)]
-        if eligible:
-            start_item = eligible[0]
-            srow = start_item[3]
+    # Boundaries are selected before validating outcomes; never hide a bad
+    # middle by choosing a favorable inner segment.
+    srow, erow = start_item[2], end_item[2]
     if srow.get("ended") is True or erow.get("ended") is True:
         return None, None, {"reason": "boundary_ended"}
     counter_names = tuple(names.values())
-    values = [srow.get(name) for name in counter_names] + [erow.get(name) for name in counter_names]
-    if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
-        return None, None, {"reason": "counter_missing_or_malformed"}
-    deltas = {name: int(erow[field]) - int(srow[field]) for name, field in names.items()}
+    parsed = []
+    for item in selected:
+        values = [item[2].get(name) for name in counter_names]
+        if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
+            return None, None, {"reason": "counter_missing_or_malformed"}
+        parsed.append({name: int(item[2][name]) for name in counter_names})
+    for before, after in zip(parsed, parsed[1:]):
+        if any(after[name] < before[name] for name in counter_names):
+            return None, None, {"reason": "counter_reset"}
+    deltas = {name: parsed[-1][field] - parsed[0][field] for name, field in names.items()}
     if any(value < 0 for value in deltas.values()):
         return None, None, {"reason": "counter_reset"}
     if any(deltas[name] for name in ("canceled", "lost", "dropped")):
         return None, None, {"reason": "coverage_lost_or_incomplete"}
-    if srow[names["pending"]] != 0 or erow[names["pending"]] != 0:
+    if parsed[0][names["pending"]] != 0 or parsed[-1][names["pending"]] != 0:
         return None, None, {"reason": "boundary_pending_incomplete"}
-    offsets = [int(row[names["edge"]]) - int(row[names["dispatch"]]) - int(row[names["canceled"]])
-               for row in (srow, erow)]
-    if offsets[0] != offsets[1] or deltas["edge"] != deltas["dispatch"] + deltas["canceled"]:
+    offsets = [row[names["edge"]] - row[names["dispatch"]] - row[names["canceled"]]
+               for row in parsed]
+    if len(set(offsets)) != 1 or deltas["edge"] != deltas["dispatch"] + deltas["canceled"]:
         return None, None, {"reason": "accounting_identity_mismatch"}
-    candidates.append((end_item[1] - start_item[1], -start_item[1], start_item, end_item, deltas, offsets[0]))
-    if not candidates:
-        return None, None, {"reason": "coverage_lost_or_incomplete"}
-    _, _, start_item, end_item, deltas, offset = max(candidates)
-    return start_item[3], end_item[3], {
-        "contained_window": True,
-        "selected_start_elapsed_s": start_item[1],
-        "selected_end_elapsed_s": end_item[1],
-        "publisher_start_elapsed_s": start_item[2],
-        "publisher_end_elapsed_s": end_item[2],
-        "coverage_excluded_edges": {
-            "before_start_samples": start_item[0],
-            "after_end_samples": len(observed) - 1 - end_item[0],
-        },
-        "counter_deltas": deltas,
-        "accounting_offset": offset,
-    }
-
+    # The current serializer has no monotonic bracket around the registry read
+    # and sample capture.  Age therefore supplies only a one-sided relation;
+    # do not turn it into a contained-window pass without native proof.
+    return None, None, {"reason": "publisher_clock_bracket_missing",
+                        "missing_capability": "native_sample_publisher_bracket",
+                        "selected_start_elapsed_s": start_item[1],
+                        "selected_end_elapsed_s": end_item[1],
+                        "sample_ages_ms": [item[5] for item in selected],
+                        "coverage_excluded_edges": {"before_start_samples": start_item[0],
+                                                     "after_end_samples": len(observed) - 1 - end_item[0]}}
 
 def evaluate_decode(
     meta: dict,
