@@ -34,9 +34,9 @@ sleep 0.5
 openbox >"$LOGDIR/openbox.log" 2>&1 &
 echo $! >"$LOGDIR/openbox.pid"
 
-# VNC scrapes Xvfb. Listen on all interfaces inside the container network
-# namespace; compose publishes 127.0.0.1:6080 only on the host.
-x11vnc -display "$DISPLAY" -rfbport "$VNC_PORT" -forever -shared -nopw -localhost false \
+# VNC scrapes Xvfb on container loopback; websockify connects locally.
+# Compose publishes only the browser viewer on host 127.0.0.1:6080.
+x11vnc -display "$DISPLAY" -rfbport "$VNC_PORT" -forever -shared -nopw -localhost \
   >"$LOGDIR/x11vnc.log" 2>&1 &
 echo $! >"$LOGDIR/x11vnc.pid"
 

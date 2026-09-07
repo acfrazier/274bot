@@ -69,14 +69,22 @@ RUN rustup component add rustfmt clippy \
 WORKDIR /work
 
 # External runtime dirs (bind-mounted at run time; empty placeholders only).
-RUN mkdir -p /runtime/home /runtime/engine /runtime/cache /cargo-home /target \
+# Non-root `memref` (uid 1000) is the default exec user so DAC tests that chmod
+# 0500 tempdirs still fail for the process (root would bypass). Entrypoint
+# starts as root to bind relay :80, then drops via runuser.
+RUN groupadd --gid 1000 memref \
+    && useradd --uid 1000 --gid 1000 --home-dir /runtime/home --shell /bin/bash --no-create-home memref \
+    && mkdir -p /runtime/home /runtime/engine /runtime/cache /cargo-home /target \
+    && chown -R memref:memref /runtime/home /runtime/cache /cargo-home /target \
     && chmod 755 /runtime /cargo-home /target
 
 ENV CARGO_HOME=/cargo-home \
     CARGO_TARGET_DIR=/target \
-    PATH="/cargo-home/bin:${PATH}" \
+    PATH="/cargo-home/bin:/usr/local/cargo/bin:${PATH}" \
     # Local world defaults; engine reached via loopback relay (see scripts).
     BOT_TARGET=local \
+    # Drop to this user after root-only relay bind (override MEMORY_REF_DROP_USER=root to stay root).
+    MEMORY_REF_DROP_USER=memref \
     # Default off; set BOT_CPU=1 for CpuPix3D (honest software path).
     # Do not claim native Linux GPU performance from Docker Desktop on macOS.
     RUST_BACKTRACE=1

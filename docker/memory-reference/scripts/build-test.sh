@@ -14,9 +14,10 @@ usage: build-test.sh <command>
 commands:
   fmt                 cargo fmt --check (host + client manifests)
   clippy              cargo clippy -D warnings (host + client; needs native libs)
-  test-host           cargo test --workspace  (274bot crates only)
+  test-host           cargo test --workspace --exclude client (274bot crates only)
+  test-host-memory    host-play/panel/tui tests with memory-profile-no-alloc
   test-client         cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
-  test-unit           test-host + test-client with SKIP_GPU=1 (CI parity)
+  test-unit           test-host + test-host-memory + test-client with SKIP_GPU=1 (CI parity)
   build-release-tui   release tui-play (system allocator profile for ref cells)
   build-release-panel release panel-play (same features)
   build-release-ref   both release frontends with memory-profile-no-alloc
@@ -51,13 +52,27 @@ cmd_clippy() {
 
 cmd_test_host() {
   need_work
-  # Host workspace unit/integration tests. GPU-ignored tests stay ignored.
-  SKIP_GPU="${SKIP_GPU:-1}" cargo test --workspace
+  # Host workspace unit/integration tests only. Cargo can still surface the path
+  # dep `client` in the package graph; exclude it so host vs client stay separate.
+  # GPU-ignored tests stay ignored; SKIP_GPU=1 is not GPU proof.
+  SKIP_GPU="${SKIP_GPU:-1}" cargo test --workspace --exclude client
+}
+
+cmd_test_host_memory() {
+  need_work
+  # Memory-campaign crates must also pass under the no-alloc profiling feature set
+  # used by release reference frontends (not default features alone).
+  export SKIP_GPU="${SKIP_GPU:-1}"
+  cargo test -p host-play --features memory-profile-no-alloc
+  cargo test -p panel --features memory-profile-no-alloc
+  cargo test -p tui --features memory-profile-no-alloc
 }
 
 cmd_test_client() {
   need_work
-  # Client submodule is a separate manifest (not a workspace member).
+  # Client submodule is a separate cargo manifest (vendor workspace).
+  # Run here — not under the host workspace — even if path-dep metadata lists client.
+  # Do not demote GPU failures to ignored; SKIP_GPU unavailability is recorded as such.
   SKIP_GPU="${SKIP_GPU:-1}" cargo test \
     --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
 }
@@ -65,6 +80,7 @@ cmd_test_client() {
 cmd_test_unit() {
   export SKIP_GPU="${SKIP_GPU:-1}"
   cmd_test_host
+  cmd_test_host_memory
   cmd_test_client
 }
 
@@ -129,6 +145,7 @@ main() {
     fmt) cmd_fmt "$@" ;;
     clippy) cmd_clippy "$@" ;;
     test-host) cmd_test_host "$@" ;;
+    test-host-memory) cmd_test_host_memory "$@" ;;
     test-client) cmd_test_client "$@" ;;
     test-unit) cmd_test_unit "$@" ;;
     build-release-tui) cmd_build_release_tui "$@" ;;

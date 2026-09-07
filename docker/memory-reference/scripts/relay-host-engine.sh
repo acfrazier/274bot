@@ -42,8 +42,8 @@ memory_ref_start_relay() {
     >"$logdir/game.log" 2>&1 &
   echo $! >"$logdir/game.pid"
 
-  # Port 80 may need capabilities if not root; image runs as root by default
-  # for prep simplicity. Prefer non-root later with authbind/cap if hardened.
+  # Port 80 may need root at bind time; entrypoint starts as root then drops
+  # to memref for the user command. Socat children keep the root bind.
   socat -d -d \
     TCP-LISTEN:"${jag_port}",bind=127.0.0.1,fork,reuseaddr \
     TCP:"${host}:${jag_port}",connect-timeout=5 \
