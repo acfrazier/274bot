@@ -520,3 +520,36 @@ Appearance longer report85c2307 approved by Grok4.5 taskt_4ddb56d9 run240 after 
 See [animation-resource-evidence.md](animation-resource-evidence.md). Frozen122005Z client852 reference/e17 candidate: N1 short RCCR RSS reduction14.5625MiB exceeds4.890625MiB spread, CPU ratio range1.044355–1.094287 INCONCLUSIVE. N16 onlythreequalifiedcells: finalreference raw130136Z exits0 but ordinal1zero steals/banking stall; rejected binding retained and N16 quartet incomplete, no replacement run. One predeclared longer N1 R/C120warm600observe60normal completes/qualifiesboth; median316751872/297598976bytes, CPU.032437940/.027702589, gains62/55. One-pair18.265625MiB RSS/0.854018CPUratio descriptive only; no accepted performance. NativecandidateN1 raw133932Z qualifies18steals, vmmap/malloc_historyexit0insideobserve/hashesverified; old451capture vsnewe17 animationfamily27809440->5630992allocatedbytes, selected21485568byteclonepathgone. Allocation differences are not RSS; survivingnestedbase allocations391040bytes/8858records, no exactbase-objectcountinferred. Source already approved Grok4.5; combined evidence review next. Provisionally retain representation, fullperformanceclaimsparked; no furtherrepeatstageforthischange.
 
 Operator supplied Windows x86_64 production laptop10.0.0.205, Ultra9275HX/mobile5060/64GBDDR5-5600, primarypanelusageRDP. RDPconnected afteroperatorchangednetworkPublic->Private; userisrunningpreparedkey-onlyOpenSSHbootstrap, SSHconnectionnotyetverified. DedicatedMacpublickeysetupkeptoutsidecheckout, no privatecredentialsinreports. PreferrednextnativeWindowspanel+virtualizedLinuxx86_64, not furtherMacamd64emulation; LinuxVMstillnotbaremetal. Read-onlyWindowsreadinessaudit t_3fa4e17a running (no builds/code/remoteactions), rootownssetup. CurrentRustRSS/CPUreadersunavailableWindows, actualbuild/test/measurementproofpending. ExistingMacDockerimages/vieweruntouched. All Macrootlive/capture sessionscomplete; server4719/supervisor4718remainuserownedalive. CurrentprofileON/latency/absolutetargets/panel/lifecycle/scaling/environmentproof/finalwholebranchGrok4.6stillpending.
+
+
+## 2026-09-07 15:55 UTC — native server fixture and workflow correction
+
+Operator reconfirmed the configured Hermes workflow; AGENTS.md now explicitly
+records profile/model/provider and same-card review, superseding old Flash
+assignments (8f53f78). Primary checkout instructions also updated, preserving its
+existing uncommitted edits. Reviewed Windows BotTest panel/TUI remote-server smoke,
+sampler dependency pin and modal provenance are committed at e7241a3.
+
+Native Windows isolated server now runs as BotTest/session3, Node24.19.0 PID24224,
+loopback80/43594/8898. Original Mac reverse-forward tunnel PID686 stopped by root;
+Mac server4719/supervisor4718 untouched. Native fixture is based on server4c95f87
+with recorded operator seed handler, loopback binds, fresh local keys/SQLite,
+packed cache and minimal runtime content. First startup missing wordenc preserved;
+first live TUI failed seed exit1 with no guards because GameMap.init requires
+srcDir/maps before reading packed maps. Both map CSVs added with hashes. Intermediate
+PowerShell UTF8 BOM config parse failure preserved and corrected without BOM.
+Current startup logs confirm7322 static NPCs and no errors. Fresh corrected TUI
+smoke bottest-native-tui-20260907b started; first failed run copied locally under
+diagnostics/windows-native-server-20260907a. No matched measurements or savings
+accepted. Source/config additions must remain separately bound in evidence.
+
+Active Hermes tasks: t_1d185f15 restores proven in-campaign main-modal lazy-upload
+regression (client edits only, root owns git); t_f1304afa implements managed
+collector stop/owned cleanup/Windows parent identity; t_9778aec4 fixes diagnostic
+Windows imports/panel/home explicit paths. Root owns native Windows tests and
+runner home-helper integration after ownership clears. Each needs verified
+Grok4.5 review; final whole-branch Grok4.6 remains mandatory. Real Windows ConPTY,
+managed binding qualification, final resource/latency/panel/lifecycle/scaling and
+Linux constrained VM/VPS validation remain incomplete. Operator offers a small
+2GB/2-core Xeon VPS and permits considering laptop Linux VM; no reboot/sign-out
+authorized yet.
