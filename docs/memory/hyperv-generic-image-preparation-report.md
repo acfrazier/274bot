@@ -28,7 +28,7 @@ The source image was downloaded once from the pinned official URL and was not mo
 
 ## Offline image evidence
 
-Inspection used a temporary official `ubuntu:24.04` Linux ARM64 container on the native ARM64 Mac (`uname -m`: `aarch64`). The container was temporary and used read-only source mounts; no existing campaign container, volume, image, or build image was used. The recorded base-image pull digest was `sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`.
+Inspection used a temporary official `ubuntu:24.04` Linux ARM64 container on the native ARM64 Mac (`uname -m`: `aarch64`). The container was temporary and used read-only source mounts; no existing campaign container, volume, image, or build image was used.
 
 The source GPT layout was inspected after a read-only QCOW2-to-raw inspection conversion:
 
@@ -79,10 +79,10 @@ Evidence files:
 
 - `diagnostics/hyperv-image-preparation-20260907/source/release-page.html`
 - `diagnostics/hyperv-image-preparation-20260907/source/SHA256SUMS`
-- `diagnostics/hyperv-image-preparation-20260907/logs/arm64-prep.log`
 - `diagnostics/hyperv-image-preparation-20260907/logs/convert.log`
 - `diagnostics/hyperv-image-preparation-20260907/logs/resize.log`
 - `diagnostics/hyperv-image-preparation-20260907/logs/gpt.log`
 - `diagnostics/hyperv-image-preparation-20260907/logs/datasource-inspection.log`
 - `diagnostics/hyperv-image-preparation-20260907/logs/filesystem-inspection.log`
+- `diagnostics/hyperv-image-preparation-20260907/logs/tool-install.log`
 - `diagnostics/hyperv-image-preparation-20260907/logs/final-verify.log`
