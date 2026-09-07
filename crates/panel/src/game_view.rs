@@ -45,11 +45,12 @@ impl FrameGpu for Gpu<'_> {
     }
 }
 
-/// RGBA8 game texture registered with the ImGui renderer. Texture data is
-/// always APPLET_W×APPLET_H; only the Image widget display size scales.
+/// Game texture registered with the ImGui renderer. A new view owns only a
+/// 1×1 empty placeholder; the APPLET_W×APPLET_H CPU texture is lazy and the
+/// Image widget's display size remains independent of the backing texture.
 pub struct GameView {
     pub tex_id: TextureId,
-    /// A 1×1 black placeholder avoids allocating a full upload texture for GPU-only views.
+    /// A 1×1 empty placeholder avoids allocating a full upload texture for GPU-only views.
     placeholder: wgpu::Texture,
     placeholder_view: wgpu::TextureView,
     /// Allocated lazily when a CPU frame is actually presented.
@@ -92,8 +93,9 @@ pub struct PresentStats {
 }
 
 impl GameView {
-    /// Create the 765×503 RGBA8 texture and register it. Call once from the
-    /// first frame, when `gpu.device()` is live.
+    /// Create and register the empty placeholder. The 765×503 RGBA8 CPU
+    /// texture is created only if a CPU frame is presented. Call once from
+    /// the first frame, when `gpu.device()` is live.
     pub fn init(gpu: &mut impl FrameGpu) -> Self {
         let placeholder = gpu.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("274 game image placeholder"),
@@ -106,7 +108,9 @@ impl GameView {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let placeholder_view = placeholder.create_view(&wgpu::TextureViewDescriptor::default());
@@ -117,7 +121,8 @@ impl GameView {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &[0, 0, 0, 255],
+            // Match the old zero-initialized, not-yet-uploaded applet texture.
+            &[0, 0, 0, 0],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
@@ -217,7 +222,9 @@ impl GameView {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -499,6 +506,141 @@ mod tests {
         fn unregister_texture(&mut self, tex_id: TextureId) {
             self.unregistered.push(tex_id.id());
         }
+    }
+
+    fn read_rgba(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Vec<u8> {
+        let bytes_per_row = (width * 4).div_ceil(256) * 256;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("274 panel test readback"),
+            size: (bytes_per_row * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("274 panel test readback encoder"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        loop {
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            if let Ok(result) = rx.recv_timeout(std::time::Duration::from_millis(1)) {
+                result.expect("panel test texture readback must map");
+                break;
+            }
+        }
+        let data = slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for row in 0..height as usize {
+            let start = row * bytes_per_row as usize;
+            pixels.extend_from_slice(&data[start..start + width as usize * 4]);
+        }
+        drop(data);
+        buffer.unmap();
+        pixels
+    }
+
+    #[test]
+    fn initialized_placeholder_matches_empty_pixels() {
+        let Some((device, queue)) = headless_gpu() else {
+            return;
+        };
+        let mut gpu = RecordingGpu::new(device.clone(), queue.clone());
+        let view = GameView::init(&mut gpu);
+
+        let texture = gpu
+            .last_registered()
+            .expect("init registers the placeholder texture");
+        assert_eq!(read_rgba(&device, &queue, texture, 1, 1), [0, 0, 0, 0]);
+        assert!(view.cpu_texture().is_none());
+    }
+
+    #[test]
+    fn gpu_first_unbind_restores_empty_placeholder_pixels() {
+        let Some((device, queue)) = headless_gpu() else {
+            return;
+        };
+        let mut gpu = RecordingGpu::new(device.clone(), queue.clone());
+        let mut view = GameView::init(&mut gpu);
+        view.present(
+            &mut gpu,
+            FrameOutput::Texture(frame_handle(&device, &queue)),
+        );
+        view.unbind_client(&mut gpu);
+
+        let texture = gpu
+            .last_registered()
+            .expect("unbind re-registers the owned placeholder");
+        assert_eq!(read_rgba(&device, &queue, texture, 1, 1), [0, 0, 0, 0]);
+        assert!(view.cpu_texture().is_none());
+    }
+
+    #[test]
+    fn cpu_pixels_survive_gpu_bind_and_unbind() {
+        let Some((device, queue)) = headless_gpu() else {
+            return;
+        };
+        let mut gpu = RecordingGpu::new(device.clone(), queue.clone());
+        let mut view = GameView::init(&mut gpu);
+        let mut pixels = vec![0i32; (APPLET_W * APPLET_H) as usize];
+        pixels[0] = 0x0012_3456;
+        pixels[1] = 0x00ab_cdef_u32 as i32;
+        view.present(
+            &mut gpu,
+            FrameOutput::PixMap(PixMap {
+                width: APPLET_W as i32,
+                height: APPLET_H as i32,
+                pixels,
+            }),
+        );
+        let cpu_texture = view.cpu_texture().expect("CPU present creates an owner");
+        assert_eq!(
+            &read_rgba(&device, &queue, cpu_texture, APPLET_W, APPLET_H)[..8],
+            [0x12, 0x34, 0x56, 255, 0xab, 0xcd, 0xef, 255]
+        );
+
+        view.present(
+            &mut gpu,
+            FrameOutput::Texture(frame_handle(&device, &queue)),
+        );
+        view.unbind_client(&mut gpu);
+        let retained = gpu
+            .last_registered()
+            .expect("unbind re-registers the retained CPU owner");
+        assert_eq!(
+            &read_rgba(&device, &queue, retained, APPLET_W, APPLET_H)[..8],
+            [0x12, 0x34, 0x56, 255, 0xab, 0xcd, 0xef, 255]
+        );
     }
 
     /// The shared-device seam: a `Texture` frame's consume path registers

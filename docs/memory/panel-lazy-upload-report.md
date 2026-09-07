@@ -9,9 +9,9 @@ The panel callers in `app.rs` remain unchanged. Client texture ownership, `Frame
 ## Verification
 
 - `cargo test -p panel game_view`
-- Result: 8 passed, 0 failed (including the existing direct GPU bind, stable texture identity, disposal, readback, pixel packing, and RGBA tests).
-- Added assertions prove GPU-first initialization and first GPU bind have no CPU owner, while the CPU fallback allocates the owner on demand.
-- Disposal still unregisters exactly once through the consuming `dispose` path; the direct-bind test verifies replacement unregistration and the second `unbind_client` no-op.
+- Result: 11 passed, 0 failed in an isolated clean worktree with the panel correction applied (including direct GPU bind, stable texture identity, disposal, placeholder readback, CPU-retained pixel readback, texture readback, pixel packing, and RGBA tests).
+- Pixel readback oracles prove the initialized placeholder and GPU-first → unbind path remain zero/transparent, while CPU-used → GPU → unbind retains the previously uploaded pixels.
+- Assertions prove GPU-first initialization and first GPU bind have no CPU owner, while the CPU fallback allocates the owner on demand. Disposal still unregisters exactly once through the consuming `dispose` path; the direct-bind test verifies replacement unregistration and the second `unbind_client` no-op.
 
 Warnings from unrelated existing `host` and `script` code remain; no warnings were introduced in the panel change.
 
