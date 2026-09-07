@@ -1,5 +1,7 @@
 # 274bot
 
+> **Development branch: `codex/memory-diagnostics`.** This branch publishes ongoing memory, diagnostics, and native-platform work. It has not passed final campaign acceptance and is not a stable release. For normal use, stay on `main` or a published release. See [development status](DEVELOPMENT.md) for verified progress and remaining gates.
+
 **Alpha `0.1.2`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
 
 This tag is the public surface for the **host + API + nav execute + guardian + TUI**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — the 0.1.5 TS shim is next. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
