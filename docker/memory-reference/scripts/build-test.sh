@@ -125,6 +125,18 @@ cmd_smoke_paths() {
   echo "SKIP_GPU=${SKIP_GPU:-}"
   echo "BOT_CPU=${BOT_CPU:-}"
   echo "platform=$(uname -m)"
+  echo "uid=$(id -u) user=$(id -un 2>/dev/null || true)"
+  if [[ -n "${RS2B0T:-}" ]]; then
+    echo "RS2B0T=${RS2B0T}"
+    if [[ -f "${RS2B0T}/src/bot/scripts/index.ts" ]]; then
+      echo "RS2B0T_index=ok"
+    else
+      echo "RS2B0T_index=MISSING"
+    fi
+  else
+    echo "RS2B0T="
+    echo "RS2B0T_index=unset"
+  fi
   echo "toolchain_file="
   cat rust-toolchain.toml 2>/dev/null || true
   if [[ -d vendor/fr-client-rust ]]; then

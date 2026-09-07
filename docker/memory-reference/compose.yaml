@@ -60,6 +60,8 @@ services:
       <<: *common-env
       MEMORY_REF_PROFILE: build
       # Optional: BOT_VAULT_PASS, RS2B0T, NAV_PACK — pass at run time only.
+      # host-run.sh auto-detects ~/experiments/rs2b0t and bind-mounts it RO at
+      # the matching container path when running ref/ref-desktop.
       BOT_VAULT_PASS: ${BOT_VAULT_PASS:-}
       RS2B0T: ${RS2B0T:-}
       BOT_CPU: ${BOT_CPU:-}

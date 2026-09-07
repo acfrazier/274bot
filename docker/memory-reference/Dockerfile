@@ -57,7 +57,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
             xterm \
             dbus-x11 \
             libgl1-mesa-dri \
+            libegl1 \
+            libglx-mesa0 \
+            libgl1 \
             mesa-utils \
+            mesa-vulkan-drivers \
+            vulkan-tools \
         ; fi \
     && rm -rf /var/lib/apt/lists/*
 

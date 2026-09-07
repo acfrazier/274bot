@@ -29,8 +29,56 @@ export MEMORY_REF_ARCH MEMORY_REF_PLATFORM
 export MEMORY_REF_IMAGE="${MEMORY_REF_IMAGE:-274bot-memory-ref:1.98.0-bookworm-${MEMORY_REF_ARCH}}"
 export MEMORY_REF_DESKTOP_IMAGE="${MEMORY_REF_DESKTOP_IMAGE:-274bot-memory-ref:1.98.0-bookworm-desktop-${MEMORY_REF_ARCH}}"
 
+# Optional rs2b0t catalog: mount host path RO at the *same* container path so
+# tests/apps that resolve index.ts under the operator checkout path succeed.
+# Default to the known local checkout when unset and present.
+# Keep the mount path in MEMORY_REF_RS2B0T_HOST; do not export RS2B0T into the
+# compose process env by default (compose.yaml forwards RS2B0T and several
+# script unit tests prefer process $RS2B0T over scratch path files).
+MEMORY_REF_RS2B0T_HOST="${MEMORY_REF_RS2B0T_HOST:-${RS2B0T:-}}"
+if [[ -z "${MEMORY_REF_RS2B0T_HOST}" && -d "${HOME}/experiments/rs2b0t/src/bot/scripts" ]]; then
+  MEMORY_REF_RS2B0T_HOST="${HOME}/experiments/rs2b0t"
+fi
+if [[ -n "${MEMORY_REF_RS2B0T_HOST}" ]]; then
+  if [[ ! -d "$MEMORY_REF_RS2B0T_HOST" ]]; then
+    echo "host-run: catalog host path is not a directory: $MEMORY_REF_RS2B0T_HOST" >&2
+    exit 2
+  fi
+  if [[ ! -f "$MEMORY_REF_RS2B0T_HOST/src/bot/scripts/index.ts" ]]; then
+    echo "host-run: catalog missing src/bot/scripts/index.ts under $MEMORY_REF_RS2B0T_HOST" >&2
+    exit 2
+  fi
+  if [[ "$MEMORY_REF_RS2B0T_HOST" != /* ]]; then
+    MEMORY_REF_RS2B0T_HOST="$(cd "$MEMORY_REF_RS2B0T_HOST" && pwd)"
+  fi
+  export MEMORY_REF_RS2B0T_HOST
+fi
+
 COMPOSE=(docker compose -f "$REF_DIR/compose.yaml")
 
+# Extra compose run flags: matching-path catalog mount (read-only).
+# Use a Bash array — never unquoted $(...) word-splitting — so paths with
+# spaces/globs stay a single -v source:target:ro.
+#
+# Default: mount only. Set MEMORY_REF_EXPORT_RS2B0T=1 to also pass -e RS2B0T=
+# for live/panel cells. Unit test suites must leave that off.
+catalog_args=()
+if [[ -n "${MEMORY_REF_RS2B0T_HOST:-}" ]]; then
+  catalog_args=(-v "${MEMORY_REF_RS2B0T_HOST}:${MEMORY_REF_RS2B0T_HOST}:ro")
+  if [[ "${MEMORY_REF_EXPORT_RS2B0T:-0}" == "1" ]]; then
+    catalog_args+=(-e "RS2B0T=${MEMORY_REF_RS2B0T_HOST}")
+  fi
+fi
+
+# Compose run env: strip host RS2B0T unless export requested so unit tests
+# see unset process env (persisted ~/.274bot/rs2b0t-path still works via mount).
+compose_run_env() {
+  if [[ "${MEMORY_REF_EXPORT_RS2B0T:-0}" == "1" ]]; then
+    export RS2B0T="${MEMORY_REF_RS2B0T_HOST:-${RS2B0T:-}}"
+  else
+    unset RS2B0T || true
+  fi
+}
 usage() {
   cat <<EOF
 usage: host-run.sh <command> [args...]
@@ -52,6 +100,8 @@ env:
   MEMORY_REF_CPUS=2.0 MEMORY_REF_MEM=4g
   ENGINE_DIR  BOT_VAULT_PASS  RS2B0T  BOT_CPU  SKIP_GPU
   MEMORY_REF_HOST_ENGINE=host.docker.internal
+  MEMORY_REF_RS2B0T_HOST  host catalog path (default: $RS2B0T or ~/experiments/rs2b0t)
+  MEMORY_REF_EXPORT_RS2B0T=1  also set container $RS2B0T (off for unit tests)
 
 repo root: $REPO_ROOT
 EOF
@@ -168,21 +218,23 @@ cmd_build_desktop() {
 
 cmd_shell() {
   cmd_check_daemon || return 1
-  (cd "$REF_DIR" && MEMORY_REF_ARCH="$MEMORY_REF_ARCH" MEMORY_REF_PLATFORM="$MEMORY_REF_PLATFORM" \
-    "${COMPOSE[@]}" run --rm --name "memory-ref-${MEMORY_REF_ARCH}-shell" ref bash)
+  (cd "$REF_DIR" && compose_run_env && MEMORY_REF_ARCH="$MEMORY_REF_ARCH" MEMORY_REF_PLATFORM="$MEMORY_REF_PLATFORM" \
+    "${COMPOSE[@]}" run --rm --name "memory-ref-${MEMORY_REF_ARCH}-shell" \
+      "${catalog_args[@]}" ref bash)
 }
 
 cmd_shell_desktop() {
   cmd_check_daemon || return 1
-  (cd "$REF_DIR" && MEMORY_REF_ARCH="$MEMORY_REF_ARCH" MEMORY_REF_PLATFORM="$MEMORY_REF_PLATFORM" \
+  (cd "$REF_DIR" && compose_run_env && MEMORY_REF_ARCH="$MEMORY_REF_ARCH" MEMORY_REF_PLATFORM="$MEMORY_REF_PLATFORM" \
     "${COMPOSE[@]}" --profile desktop run --rm --service-ports \
-      --name "memory-ref-${MEMORY_REF_ARCH}-desktop" ref-desktop bash)
+      --name "memory-ref-${MEMORY_REF_ARCH}-desktop" \
+      "${catalog_args[@]}" ref-desktop bash)
 }
 
 cmd_run() {
   cmd_check_daemon || return 1
-  (cd "$REF_DIR" && MEMORY_REF_ARCH="$MEMORY_REF_ARCH" MEMORY_REF_PLATFORM="$MEMORY_REF_PLATFORM" \
-    "${COMPOSE[@]}" run --rm ref "$@")
+  (cd "$REF_DIR" && compose_run_env && MEMORY_REF_ARCH="$MEMORY_REF_ARCH" MEMORY_REF_PLATFORM="$MEMORY_REF_PLATFORM" \
+    "${COMPOSE[@]}" run --rm "${catalog_args[@]}" ref "$@")
 }
 
 cmd_tui_limits() {
@@ -191,6 +243,13 @@ cmd_tui_limits() {
   echo "MEMORY_REF_CPUS=${MEMORY_REF_CPUS:-2.0}"
   echo "MEMORY_REF_MEM=${MEMORY_REF_MEM:-4g}"
   echo "image=$MEMORY_REF_IMAGE"
+  if [[ -n "${MEMORY_REF_RS2B0T_HOST:-}" ]]; then
+    echo "MEMORY_REF_RS2B0T_HOST=$MEMORY_REF_RS2B0T_HOST"
+    echo "MEMORY_REF_EXPORT_RS2B0T=${MEMORY_REF_EXPORT_RS2B0T:-0}"
+    echo "catalog_index=$MEMORY_REF_RS2B0T_HOST/src/bot/scripts/index.ts"
+  else
+    echo "MEMORY_REF_RS2B0T_HOST="
+  fi
 }
 
 main() {
