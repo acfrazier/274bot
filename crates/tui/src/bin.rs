@@ -946,40 +946,25 @@ impl TuiSession {
                 // Data-only nav capture: drain checkpoint JSON immediately —
                 // no GUI focus, no screenshots, no 25s terminal wait (panel
                 // keeps its own screenshot drain/timeout semantics).
+                // Do not gate Ok/Err completion on pending screenshot-style
+                // queues: drain always dequeues/discards and reports counts.
                 if host_play::nav_capture::enabled() {
-                    let write_notes = host_play::nav_capture::drain_json_files();
-                    for note in &write_notes {
-                        eprintln!("[nav-capture] {note}");
-                    }
+                    report_nav_json_drain(host_play::nav_capture::drain_json_files());
                 }
                 match run.poll(play) {
-                    Ok(true)
-                        if !host_play::nav_capture::enabled()
-                            || !host_play::nav_capture::pending() =>
-                    {
+                    Ok(true) => {
                         if host_play::nav_capture::enabled() {
-                            let write_notes = host_play::nav_capture::drain_json_files();
-                            for note in &write_notes {
-                                eprintln!("[nav-capture] {note}");
-                            }
+                            report_nav_json_drain(host_play::nav_capture::drain_json_files());
                         }
                         eprintln!("PASS: memory tui observation complete");
                         std::process::exit(0);
                     }
-                    Ok(_) => {}
+                    Ok(false) => {}
                     Err(error) if host_play::nav_capture::enabled() => {
                         // Immediate drain of existing checkpoints / failure
                         // boundary already latched by nav failure path.
                         // Preserve original Err/exit1 — never hold for observe.
-                        let write_notes = host_play::nav_capture::drain_json_files();
-                        for note in &write_notes {
-                            eprintln!("[nav-capture] {note}");
-                        }
-                        if write_notes.is_empty() && !host_play::nav_capture::pending() {
-                            eprintln!(
-                                "[nav-capture] no checkpoint JSON drained (missing capture or already empty)"
-                            );
-                        }
+                        report_nav_json_drain(host_play::nav_capture::drain_json_files());
                         eprintln!("FAIL: memory tui: {error}");
                         std::process::exit(1);
                     }
@@ -1424,6 +1409,17 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
     let spawned = session.spawn_all();
     if spawned > 0 {
         app.error = Some(format!("spawned {spawned} slot(s)"));
+    }
+}
+
+/// Report data-only nav-capture drain counts/notes. Never gates harness exit.
+#[cfg(feature = "memory-profile")]
+fn report_nav_json_drain(result: host_play::nav_capture::JsonDrainResult) {
+    for note in &result.notes {
+        eprintln!("[nav-capture] {note}");
+    }
+    if let Some(note) = result.completion_note() {
+        eprintln!("[nav-capture] {note}");
     }
 }
 

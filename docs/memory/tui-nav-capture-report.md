@@ -8,8 +8,10 @@ Scope: bounded diagnostic instrumentation only — no live run, no behavior fix,
 ### Enable / drain
 - `BOT_NAV_CAPTURES=1` enables capture for **panel and TUI** (`memory.rs` no longer panel-gates `enable`).
 - Launcher: `--nav-captures` allowed on **TUI** as data-only mode; panel still requires `--single-renderer` or `--focused-one`.
-- TUI drain: `nav_capture::drain_json_files()` writes checkpoint JSON under `274BOT_SMOKE_DIR` (or `~/ .274bot/smoke`) with `"drain":"tui-data-only"`. No renderer select, no GPU screenshots, **no 25s terminal wait**.
-- On TUI harness `Err`: immediate drain of existing ready checkpoints, print honest missing-capture note if empty, **preserve original error + exit 1**.
+- TUI drain: `nav_capture::drain_json_files() -> JsonDrainResult` writes checkpoint JSON under `274BOT_SMOKE_DIR` (or `~/.274bot/smoke`) with `"drain":"tui-data-only"`. No renderer select, no GPU screenshots, **no 25s terminal wait**.
+- `JsonDrainResult` carries `attempted` / `written` / `failed` / `notes`. Missing-capture stderr uses `completion_note()` from **counts** (not “empty notes”). Successful writes leave `notes` empty and do **not** print missing-capture.
+- Drain always dequeues the ready queue first; mkdir/write failure discards queued items, clears the data-only terminal latch, and reports loss counts so `pending()` cannot hang TUI `Ok(true)`.
+- TUI does **not** gate harness exit on `pending()` (data-only; panel screenshot wait unchanged). On `Err`: immediate drain + original error + exit 1.
 - Panel screenshot focus/timing remains in `panel::nav_capture` (unchanged).
 
 ### Correlation ring (enabled only)
@@ -60,10 +62,10 @@ Scope: bounded diagnostic instrumentation only — no live run, no behavior fix,
 
 ```text
 cargo test -p host-play --lib --features memory-profile nav_capture -- --test-threads=1
-# 12 passed
+# 14 passed (includes mkdir-discard + completion_note + successful write counts)
 
 cargo test -p host-play --lib --features memory-profile -- --test-threads=1
-# 163 passed
+# 165 passed
 
 python3 docs/memory/test_run_diagnostic.py -v
 # 12 passed

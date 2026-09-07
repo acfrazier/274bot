@@ -576,12 +576,58 @@ pub fn view(name: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// Counts and notes from a TUI/headless data-only drain.
+/// `attempted == written + failed`. Successful writes are counted even when
+/// `notes` is empty — callers must not treat empty notes as "nothing drained".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JsonDrainResult {
+    pub attempted: usize,
+    pub written: usize,
+    pub failed: usize,
+    pub notes: Vec<String>,
+}
+
+impl JsonDrainResult {
+    /// Honest missing-capture / loss line for harness stderr (None when writes succeeded).
+    pub fn completion_note(&self) -> Option<String> {
+        if self.written > 0 {
+            return None;
+        }
+        if self.attempted == 0 {
+            Some("no checkpoint JSON drained (missing capture or already empty)".into())
+        } else {
+            Some(format!(
+                "nav-capture drain loss: attempted={} written=0 failed={}",
+                self.attempted, self.failed
+            ))
+        }
+    }
+}
+
 /// TUI / headless data-only drain: write checkpoint JSON under the shot root
 /// without selecting renderers or waiting for GPU screenshots.
-/// Best-effort: I/O errors are reported in the return value and never replace
-/// the original application error.
-pub fn drain_json_files() -> Vec<String> {
-    let mut notes = Vec::new();
+///
+/// Best-effort: I/O errors never replace the original application error.
+/// Always dequeues every ready checkpoint (and clears the data-only terminal
+/// latch) so `pending()` cannot hang a TUI Ok/Err exit after a writer failure.
+pub fn drain_json_files() -> JsonDrainResult {
+    let mut result = JsonDrainResult::default();
+    // Dequeue first so mkdir/write failure cannot leave the queue latched.
+    let mut items = Vec::new();
+    while let Some(checkpoint) = take() {
+        items.push(checkpoint);
+    }
+    // Data-only path does not wait for a later observe/screenshot; drop any
+    // panel-style terminal latch so pending() is false after this drain.
+    if let Some(state) = STATE.get() {
+        let mut s = state.lock().unwrap();
+        s.terminal = None;
+    }
+    result.attempted = items.len();
+    if items.is_empty() {
+        return result;
+    }
+
     let root = match std::env::var("274BOT_SMOKE_DIR") {
         Ok(d) if !d.is_empty() => PathBuf::from(d),
         _ => match std::env::var("HOME") {
@@ -590,10 +636,16 @@ pub fn drain_json_files() -> Vec<String> {
         },
     };
     if let Err(e) = std::fs::create_dir_all(&root) {
-        notes.push(format!("nav-capture mkdir {}: {e}", root.display()));
-        return notes;
+        result.failed = items.len();
+        result.notes.push(format!(
+            "nav-capture mkdir {}: {e}; discarded {} queued checkpoint(s)",
+            root.display(),
+            items.len()
+        ));
+        return result;
     }
-    while let Some(checkpoint) = take() {
+
+    for checkpoint in items {
         let stamp = {
             let secs = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -620,20 +672,28 @@ pub fn drain_json_files() -> Vec<String> {
         })) {
             Ok(s) => s,
             Err(e) => {
-                notes.push(format!("nav-capture serialize {}: {e}", checkpoint.label));
+                result.failed += 1;
+                result
+                    .notes
+                    .push(format!("nav-capture serialize {}: {e}", checkpoint.label));
                 continue;
             }
         };
         match std::fs::write(&path, body) {
             Ok(()) => {
+                result.written += 1;
                 eprintln!("[nav-capture] wrote {}", path.display());
             }
             Err(e) => {
-                notes.push(format!("nav-capture write {}: {e}", path.display()));
+                result.failed += 1;
+                result
+                    .notes
+                    .push(format!("nav-capture write {}: {e}", path.display()));
             }
         }
     }
-    notes
+    debug_assert_eq!(result.attempted, result.written + result.failed);
+    result
 }
 
 #[cfg(test)]
@@ -988,11 +1048,26 @@ mod tests {
         );
     }
 
+    fn push_ready_checkpoint(label: &str, detail: Value) {
+        let snap = GameSnapshot::new();
+        if let Some(state) = STATE.get() {
+            let mut s = state.lock().unwrap();
+            s.views.entry("drain-bot".into()).or_insert(Value::Null);
+            s.terminal = Some("drain-bot".into());
+            s.push("drain-bot", label, &snap, detail);
+        } else {
+            let _ = STATE.set(Mutex::new(fresh_state(&["drain-bot"])));
+            let mut s = STATE.get().unwrap().lock().unwrap();
+            s.terminal = Some("drain-bot".into());
+            s.push("drain-bot", label, &snap, detail);
+        }
+    }
+
     #[test]
-    fn drain_json_files_writes_and_writer_failure_is_reported() {
+    fn drain_json_files_counts_successful_writes() {
         let _g = TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!(
-            "274bot-nav-drain-{}-{}",
+            "274bot-nav-drain-ok-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1004,46 +1079,114 @@ mod tests {
         std::env::set_var("274BOT_SMOKE_DIR", &dir);
         std::env::set_var("BOT_NAV_CAPTURES", "1");
 
-        if let Some(state) = STATE.get() {
-            let mut s = state.lock().unwrap();
-            let snap = GameSnapshot::new();
-            s.push("drain-bot", "nav-failure", &snap, json!({"why": "test"}));
-        } else {
-            let _ = STATE.set(Mutex::new(fresh_state(&["drain-bot"])));
-            let mut s = STATE.get().unwrap().lock().unwrap();
-            let snap = GameSnapshot::new();
-            s.push("drain-bot", "nav-failure", &snap, json!({"why": "test"}));
-        }
-        drop(_g);
-        let notes = drain_json_files();
+        push_ready_checkpoint("nav-failure", json!({"why": "test"}));
+        assert!(
+            pending(),
+            "queued checkpoint must mark pending before drain"
+        );
+        let result = drain_json_files();
+        assert_eq!(result.attempted, 1, "{result:?}");
+        assert_eq!(result.written, 1, "{result:?}");
+        assert_eq!(result.failed, 0, "{result:?}");
+        assert!(result.notes.is_empty(), "success notes empty: {result:?}");
+        assert!(
+            result.completion_note().is_none(),
+            "successful write must not print missing-capture; got {:?}",
+            result.completion_note()
+        );
+        assert!(!pending(), "pending must clear after successful drain");
         let written: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
             .collect();
-        assert!(
-            !written.is_empty() || !notes.is_empty(),
-            "expected write or honest note; notes={notes:?}"
-        );
-        if let Some(entry) = written.first() {
-            let text = std::fs::read_to_string(entry.path()).unwrap();
-            assert!(text.contains("tui-data-only"));
-            assert!(text.contains("event"));
-        }
+        assert_eq!(written.len(), 1);
+        let text = std::fs::read_to_string(written[0].path()).unwrap();
+        assert!(text.contains("tui-data-only"));
+        assert!(text.contains("event"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn drain_mkdir_failure_discards_queue_clears_pending_and_reports_loss() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-nav-drain-mkdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // File path where a directory is required → create_dir_all fails.
         let blocker = dir.join("not-a-dir");
         std::fs::write(&blocker, b"x").unwrap();
         std::env::set_var("274BOT_SMOKE_DIR", blocker.join("child"));
-        if let Some(state) = STATE.get() {
-            let mut s = state.lock().unwrap();
-            let snap = GameSnapshot::new();
-            s.push("drain-bot", "scene-ready", &snap, Value::Null);
-        }
-        let notes = drain_json_files();
+        std::env::set_var("BOT_NAV_CAPTURES", "1");
+
+        push_ready_checkpoint("nav-failure", json!({"why": "mkdir-fail"}));
+        push_ready_checkpoint("scene-ready", Value::Null);
+        assert!(pending());
+        let result = drain_json_files();
+        assert_eq!(result.written, 0, "{result:?}");
+        assert!(result.attempted >= 1, "{result:?}");
+        assert_eq!(result.failed, result.attempted, "{result:?}");
         assert!(
-            notes.iter().any(|n| n.contains("nav-capture")),
-            "expected honest write failure note, got {notes:?}"
+            result
+                .notes
+                .iter()
+                .any(|n| n.contains("mkdir") && n.contains("discarded")),
+            "expected mkdir+discard note, got {:?}",
+            result.notes
+        );
+        let loss = result.completion_note().expect("loss note required");
+        assert!(
+            loss.contains("drain loss")
+                && loss.contains(&format!("attempted={}", result.attempted))
+                && loss.contains("written=0"),
+            "loss note={loss}"
+        );
+        assert!(
+            !pending(),
+            "mkdir failure must clear ready+terminal so TUI Ok(true) cannot hang"
+        );
+        // Production harness completion: original Ok/Err preserved; drain loss
+        // is advisory only (exit decision is independent of pending()).
+        let harness_ok = true; // Ok(true) path
+        let may_exit = harness_ok && !pending();
+        assert!(
+            may_exit,
+            "after drain, harness may complete without pending gate hang"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn completion_note_helper_distinguishes_empty_success_from_loss() {
+        let empty = JsonDrainResult::default();
+        assert_eq!(
+            empty.completion_note().as_deref(),
+            Some("no checkpoint JSON drained (missing capture or already empty)")
+        );
+        let ok = JsonDrainResult {
+            attempted: 2,
+            written: 2,
+            failed: 0,
+            notes: vec![],
+        };
+        assert!(ok.completion_note().is_none());
+        let loss = JsonDrainResult {
+            attempted: 3,
+            written: 0,
+            failed: 3,
+            notes: vec!["nav-capture mkdir /x: err; discarded 3 queued checkpoint(s)".into()],
+        };
+        assert_eq!(
+            loss.completion_note().as_deref(),
+            Some("nav-capture drain loss: attempted=3 written=0 failed=3")
+        );
     }
 
     #[test]
