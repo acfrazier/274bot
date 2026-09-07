@@ -98,19 +98,25 @@ separate fixed/incremental table should remain unchanged.
 
 ## Bounded structural estimate (not a resident-savings claim)
 
-Without archive contents or a resident measurement, only a structural upper
-bound is defensible. For one decoded frame, the unpacked transform storage is
-approximately `4 * 4 * size_of(i32)` bytes for the four transform vectors
-(`ti`, `tx`, `ty`, `tz`), plus vector capacities/headers and the cloned base.
-For a base with `S` groups and total label bytes `L`, each frame's base clone
-contains approximately `S * size_of(Option<Vec<u8>>)` bytes for the labels
-outer allocation, `S` small vector allocations/headers, `L` label payload bytes,
-and `S` type bytes, in addition to allocator overhead. A read-time `get` clone
-has the same shape for the frame's populated capacities.
+Without archive contents or a resident measurement, only a symbolic structural
+accounting is defensible. For one decoded frame with `F = frame.size` populated
+transforms, the four transform payloads contribute `4 * F * size_of(i32)`;
+`anim_frame.rs:186-190` copies exactly the populated `[..current]` ranges into
+those vectors. For a base with `S` groups and total label bytes `L`, the payload
+terms are `S * size_of(u8)` for `type` and `L * size_of(u8)` for label bytes.
 
-This is a byte-layout accounting aid only. Capacities, archive distributions,
-allocator rounding, overlap with the historical stack filter, clone lifetime,
-and dirty/resident status are unknown. It must not be converted into resident
+Separate from those payloads, the Rust layout includes the relevant `Vec`/`Option`
+headers: four `Option<Vec<i32>>` fields on `AnimFrame`, one `Option<Vec<u8>>`
+for `AnimBase::type`, one `Option<Vec<Option<Vec<u8>>>>` for `labels`, and one
+inner `Vec<u8>` header per label slot (with at most `S` nonempty label
+allocations). These headers are not additional payload bytes, and `S` inner
+headers are already contained in the outer labels allocation; do not count them
+twice. Clone behavior and allocator capacities are implementation details, so
+this accounting does not assert that source capacities are retained.
+
+This is a byte-layout accounting aid only. Archive distributions, allocator
+rounding, overlap with the historical stack filter, clone lifetime, and
+dirty/resident status are unknown. It must not be converted into resident
 savings or a new budget result without a matched native measurement.
 
 ## Compatibility boundary
