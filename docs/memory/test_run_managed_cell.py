@@ -29,6 +29,7 @@ MEMORY = ROOT
 ACCOUNTING = MEMORY / "process_accounting.py"
 SERVER_RESOURCES = MEMORY / "server_resources.py"
 NATIVE_PROCESS_SAMPLE = MEMORY / "native_process_sample.py"
+WINDOWS_PROCESS_SAMPLE = MEMORY / "windows_process_sample.py"
 
 
 def _make_cache_tree(root: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
@@ -717,6 +718,42 @@ class ManagedCellTests(unittest.TestCase):
         self.assertEqual(
             result["role_identities"]["game_server"]["start_identity"], native["start_identity"]
         )
+
+    def test_windows_sampler_module_bound_when_producer_is_win32(self):
+        """Launch pin includes windows_process_sample.py only for win32 system producer."""
+        roles = {"game_server": 1, "controller": 2, "ambient": 3}
+        argv = [sys.executable, str(ACCOUNTING), "out.jsonl"]
+        with mock.patch.object(rmc.sys, "platform", "win32"):
+            cfg = rmc._build_sampler_config(
+                {"sampler_interval_s": 0.25, "process_backend": "system"},
+                roles,
+                argv,
+                accounting_script=ACCOUNTING,
+            )
+        self.assertEqual(
+            set(cfg["modules"]),
+            {"process_accounting.py", "server_resources.py", "windows_process_sample.py"},
+        )
+        self.assertEqual(
+            pathlib.Path(cfg["modules"]["windows_process_sample.py"]["path"]).resolve(),
+            WINDOWS_PROCESS_SAMPLE.resolve(),
+        )
+        self.assertEqual(
+            cfg["modules"]["windows_process_sample.py"]["sha256"], _sha(WINDOWS_PROCESS_SAMPLE)
+        )
+        # Non-Windows producer must not pin the unused Windows module.
+        with mock.patch.object(rmc.sys, "platform", "darwin"):
+            cfg_mac = rmc._build_sampler_config(
+                {"sampler_interval_s": 0.25, "process_backend": "system"},
+                roles,
+                argv,
+                accounting_script=ACCOUNTING,
+            )
+        self.assertEqual(
+            set(cfg_mac["modules"]),
+            {"process_accounting.py", "server_resources.py"},
+        )
+        self.assertNotIn("windows_process_sample.py", cfg_mac["modules"])
 
     def test_module_mutation_before_completion_fails_runner(self):
         injected = self.fx.root / "mut_accounting.py"

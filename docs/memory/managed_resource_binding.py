@@ -12,6 +12,11 @@ import managed_receipt as mr
 import process_evidence as pe
 
 
+# Actual Win32 ctypes sampler identity prefix (windows_process_sample.py).
+# Used to require that dependency from producer evidence, not reader sys.platform.
+_WINDOWS_CREATION_IDENTITY_PREFIX = 'windows_creation_filetime:'
+
+
 def _object(value, name):
     if not isinstance(value, dict) or not value:
         raise ValueError('missing object: ' + name)
@@ -27,6 +32,25 @@ def _bound_file(record, path_key, hash_key):
     if bp.file_sha256(path) != digest:
         raise ValueError('file hash mismatch: ' + path_key)
     return path, digest
+
+
+def _roles_require_windows_process_sample(roles):
+    """True when runtime role identities prove the Win32 sampler produced them.
+
+    Historical Windows receipts carry ``windows_creation_filetime:<u64>``
+    start identities. A Mac/Linux reader must still demand the bound
+    ``windows_process_sample.py`` bytes rather than blessing an unbound receipt
+    because the reviewing machine is not win32.
+    """
+    if not isinstance(roles, dict):
+        return False
+    for identity in roles.values():
+        if not isinstance(identity, dict):
+            continue
+        start = identity.get('start_identity')
+        if isinstance(start, str) and start.startswith(_WINDOWS_CREATION_IDENTITY_PREFIX):
+            return True
+    return False
 
 
 def _cache(receipt, native):
@@ -79,6 +103,10 @@ def _process(receipt, native, server_identity):
         expected.add('native_process_sample.py')
     elif backend != 'system':
         raise ValueError('unsupported sampler backend')
+    # system backend on Windows uses windows_process_sample via server_resources.
+    # Require that pin from producer identity evidence (not reader platform).
+    if backend == 'system' and _roles_require_windows_process_sample(roles):
+        expected.add('windows_process_sample.py')
     if set(modules) != expected:
         raise ValueError('incomplete sampler dependency bindings')
     bindings = {}

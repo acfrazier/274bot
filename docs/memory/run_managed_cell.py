@@ -35,6 +35,7 @@ SAMPLE_TIMEOUT_S = 2.0
 DEFAULT_ACCOUNTING = _ROOT / "process_accounting.py"
 DEFAULT_SERVER_RESOURCES = _ROOT / "server_resources.py"
 DEFAULT_NATIVE_PROCESS_SAMPLE = _ROOT / "native_process_sample.py"
+DEFAULT_WINDOWS_PROCESS_SAMPLE = _ROOT / "windows_process_sample.py"
 
 
 class CellError(RuntimeError):
@@ -447,6 +448,21 @@ def _build_sampler_config(
         modules['native_process_sample.py'] = {
             'path': str(native),
             'sha256': bp.file_sha256(native) if native.is_file() else None,
+        }
+    # Win32 system counters live in windows_process_sample.py (imported by
+    # server_resources). Pin those bytes whenever this host is the producer.
+    # Readers must not infer this from their own sys.platform — binding validation
+    # uses producer identity/provenance evidence instead.
+    if sys.platform == 'win32' and spec.get('process_backend') == 'system':
+        windows = pathlib.Path(DEFAULT_WINDOWS_PROCESS_SAMPLE).resolve()
+        try:
+            import windows_process_sample as wps  # type: ignore
+            windows = pathlib.Path(wps.__file__).resolve()
+        except Exception:
+            pass
+        modules['windows_process_sample.py'] = {
+            'path': str(windows),
+            'sha256': bp.file_sha256(windows) if windows.is_file() else None,
         }
     return {
         "interval_s": float(spec["sampler_interval_s"]),
