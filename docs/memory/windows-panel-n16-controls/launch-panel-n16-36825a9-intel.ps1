@@ -6,6 +6,11 @@ if(-not (Test-Path $runner)){throw 'Controller missing'}
 if(-not (Test-Path (Join-Path $stage 'panel-play.exe'))){throw 'Frozen binary missing'}
 if(-not (Test-Path (Join-Path $stage 'preflight-panel-n16-intel.json'))){throw 'Run matching preflight first'}
 $label='n16-'+$Mode+'-console-intel'; $staged=Join-Path $stage ("run-"+$label+'.py'); Copy-Item $runner $staged -Force
+if($Mode -eq 'focused-plus-background'){
+    $focusedRunner=Join-Path $PSScriptRoot 'run-panel-n16-focused-one-36825a9-intel.py'
+    if(-not (Test-Path $focusedRunner)){throw 'Focused-one controller missing for shared background entrypoint'}
+    Copy-Item $focusedRunner (Join-Path $stage 'run-panel-n16-focused-one-36825a9-intel.py') -Force
+}
 $launcher=Join-Path $stage ("launch-"+$label+'.ps1'); $log=Join-Path $botHome ('274bot-runs\managed-panel-36825a9-'+$label+'-launcher.log')
 @"
 `$ErrorActionPreference='Continue'
@@ -16,7 +21,7 @@ exit `$LASTEXITCODE
 $name='274bot-BotTest-managed-panel-36825a9-'+$label
 if(Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue){throw 'Task exists; preserve raw output and do not reuse this name'}
 $action=New-ScheduledTaskAction -Execute 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$launcher+'"') -WorkingDirectory $stage
-$principal=New-ScheduledTaskPrincipal -UserId 'DESKTOP-SL99R6D\BotTest' -LogonType Interactive -RunLevel Limited
+$principal=New-ScheduledTaskPrincipal -UserId 'DESKTOP-SL99R6C\BotTest' -LogonType Interactive -RunLevel Limited
 $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 18)
 Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings|Out-Null
 Start-ScheduledTask -TaskName $name
