@@ -334,3 +334,31 @@ the old 34.5 MiB allocation attribution is not a per-client RSS amount.
 artifact/qualification bindings, separates common configuration from each build's
 provenance, and preserves the predeclared off/on/on/off overhead sequence. Its
 implementation and real overhead evidence are still pending.
+
+### 2026-09-07 03:35 UTC — failure-only capture reviewed
+
+`t_d102507c` passed Grok-4.5 review (run 144) on `cd4df60` and report
+`4b675fe`. Failure capture resolves independently from periodic diagnostics,
+latches before cached-row production/I/O, and preserves the original harness
+error even if evidence writes fail. Reviewer reruns passed host-play with
+memory-profile (152), script load_isolate with memory-profile (153), and launcher
+tests (11). See [failure-only capture report](failure-only-capture-report.md).
+
+Bounded TUI route/guardian capture `t_45abc379` and the artifact-backed matched
+evidence reader `t_39ba45ce` are in implementation. A single managed N16
+diagnostic waits for reviewed capture code and all workers/builds to be quiet.
+No new live attempt or matched-performance acceptance has occurred.
+
+A pre-existing live-name truncation collision was demonstrated algebraically
+in diagnostics/live-name-collision-20260907.json. An out-of-scope implementer
+change to the naming algorithm was reverted before commit/live use; the failure
+capture tests instead avoid unnecessary mint calls. Identity behavior remains
+unchanged; fresh-name qualification remains a separate concern.
+
+Root reproduced the Linux GPU shade test failure in isolation using the cached
+test executable with SKIP_GPU=0: shade 16 expected approximately 223, observed
+255, exit 101. An earlier invocation inherited SKIP_GPU=1 and skipped, which is
+not a successful GPU test. Read-only forensics `t_f4cb042f` will investigate; no
+shader/test expectation change is authorized by that card. Full Linux client
+regression, native GPU evidence, absolute budgets, matched overhead, lifecycle
+runs, and the final whole-branch Grok-4.6 review remain pending.
