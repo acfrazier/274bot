@@ -14,8 +14,8 @@
 | **Observed** | Adapter on container `memory-ref-amd64-view` is **not** Vulkan/lavapipe: wgpu selects **`Gl` / `llvmpipe (LLVM 15.0.6, 128 bits)` / Mesa 22.3.6** even when `WGPU_BACKEND=vulkan` is set. No Vulkan ICD directory in this image. |
 | **Observed** | Mesh packing is exact: every textured vertex carries the requested shade (hist size 1, key = input). |
 | **Observed** | At shade **16**, red-dominant pixels are **bimodal**: **64544 @ 223** (correct block-1) and **8874 @ 255** (previous block-0). Interior shade **17** is **unimodal 73418 @ 223**. |
-| **Observed** | Same boundary pattern at 32/48/64/80/96/112: majority at expected brightness, minority at **one previous block**; shade+1 interiors clean. |
-| **Inferred (strong, not direct FS proof)** | Perspective-correct smooth interpolation of the packed shade `f32`, then `u32(in.hsl)` **truncation**, drops a minority of fragments just below integer block boundaries (e.g. 15.999→15→block0). Direct fragment `in.hsl` values were **not** instrumented (would require shader/production hooks out of scope). |
+| **Observed** | Boundaries 32/48/64/80/96/112 contain both expected and previous-block brightness. The previous block is the majority at 80 and 112. Tested interiors 17/33/49/65 are clean. |
+| **Inferred (strong, not direct FS proof)** | Perspective-correct smooth interpolation of the packed shade `f32`, then `u32(in.hsl)` **truncation**, may drop fragments just below integer block boundaries (e.g. 15.999→15→block0). Direct fragment `in.hsl` values were **not** instrumented. |
 | **Rejected / not supported** | “Factor path never takes effect” — **contradicted** by the large correct majority at shade 16 and clean interiors. |
 | **Not demonstrated** | Any causal link to host memory-campaign changes or shared GPU memory. Failure is client mesh+shader+test-metric behavior under this software GL stack. |
 
@@ -83,7 +83,7 @@ Receipts: `docs/memory/diagnostics/linux-gpu-shade-out/` (`probe-report.txt`, `r
 1. **Mesh** (`world.rs`): textured faces pack raw `face_colour_{a,b,c}` into `GpuVertex.abhsl` low 16 bits. Test model `face_render_type=2` uses per-corner a/b/c; test sets all equal.
 2. **VS** (`gpu.rs` SCENE_SHADER): `out.hsl = f32(hsl)` with **default (perspective-correct) interpolation** — not `@interpolate(flat)`.
 3. **FS**: `let s = u32(in.hsl) & 0x7fu; let block = (s >> 4u) & 3u;` then factors `1.0, 0.875, 0.75, 0.625` and optional half for bit6. **`u32(f32)` truncates toward zero.**
-4. **Test metric** (`gpu_texture.rs:476–487`): `max_red` among red-dominant pixels, tolerance ±8. A **minority** of full-bright outliers fails the case even when the mode is correct.
+4. **Test metric** (`gpu_texture.rs:476–487`): `max_red` among red-dominant pixels, tolerance ±8. At shade 16, the 8,874 full-bright pixels fail the case despite 64,544 correctly shaded pixels. Other boundaries can have a majority in the wrong block.
 
 ## Probe results (summary)
 
@@ -106,12 +106,12 @@ Shader-mirror expectations (CPU): shade 16 → block 1 → factor 0.875 → red 
 | 96 | 96 | 112 | no | 96×51059, 112×22359 | {96:6} |
 | 112 | 80 | 96 | no | 96×40083, 80×33335 | {112:6} |
 
-Pattern: **block boundaries and half-bit boundaries** show a secondary population at the **previous** discrete brightness; **+1 interiors** are clean single bins. Mesh never shows mixed shades.
+Pattern: **block boundaries and half-bit boundaries** show mixed populations at the expected and previous discrete brightness; **tested +1 interiors (17/33/49/65)** are clean single bins. Interiors 81/97/113 were not sampled. Mesh never shows mixed shades.
 
 ## Hypothesis ranking
 
-1. **Primary (best fit to evidence):** Smooth perspective-correct interpolation of constant-but-not-flat shade `f32` + **truncating** `u32(in.hsl)` yields a minority of fragments with `s` one below the integer shade at block edges → previous `block` factor. Mode remains correct; **`max_red` reports the high outlier**. Direct `in.hsl` still unobserved.
-2. **Secondary:** Test metric choice (`max` vs mode/percentile) amplifies (1) into a hard fail; metric is working as written, not a flake.
+1. **Primary (best fit to evidence):** Smooth perspective-correct interpolation of constant-but-not-flat shade `f32` + **truncating** `u32(in.hsl)` may yield fragments with `s` one below the integer shade at block edges → previous `block` factor. The wrong block is a minority at shade 16 and a majority at shades 80/112; **`max_red` detects the incorrect brightness in either case**. Direct `in.hsl` still unobserved.
+2. **Test interpretation:** The existing maximum-pixel assertion detects incorrect brightness as intended. Replacing it with a mode or percentile could hide errors and is not a proposed correction.
 3. **Not primary:** Missing block_factor in binary — disproved (symbols + correct majority pixels).
 4. **Not primary:** Mesh packing wrong shade — disproved (exact hist).
 5. **Not demonstrated:** Memory-campaign / shared buffer corruption.
@@ -119,11 +119,11 @@ Pattern: **block boundaries and half-bit boundaries** show a secondary populatio
 
 ## Smallest next correction / repro (proposed only — **not implemented**)
 
-Preferred production-safe candidates (pick one in a later fix card; verify with this probe’s hist + existing test):
+No production correction is selected or proven safe by these measurements. A later diagnostic could inspect fragment shade values directly in an isolated shader probe before considering changes.
 
-1. **FS:** decode shade with rounding, e.g. `u32(round(in.hsl))` or `u32(in.hsl + 0.5)` before bit ops — preserves smooth Gouraud intent if shades ever differ per corner.
-2. **VS/FS interface:** `@interpolate(flat)` on `hsl` when used as a bitfield (may change multi-shade textured Gouraud if that exists).
-3. **Test-only (weaker product fix):** assert on **mode** or p95 of red-dom hist instead of `max_red` — documents tolerance of boundary outliers but does **not** fix shading; task forbids weakening tests on this card.
+Rounding before conversion would move quantization thresholds by half a shade unit; flat interpolation could change faces whose corner shades differ. Either would require authorization for a behavior change, varied-corner textured-shading regressions, and comparison with CPU shading. The existing assertion and tolerance should remain intact.
+
+The original raw probe's `INFERENCE_HINT` text overstates a factor-path failure; its numeric histograms support the narrower boundary hypothesis above. Raw output has been retained unchanged.
 
 **Repro for a fix card:** re-run `linux-gpu-shade-probe` and require shade 16 hist unimodal at 223 (or max_red within ±8) under the same Gl/llvmpipe identity; then isolated `gpu_texture` exact test with `SKIP_GPU=0`.
 
