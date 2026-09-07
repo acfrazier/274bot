@@ -673,6 +673,7 @@ def _bind_side(
     diagnostics: bool = False,
     server_identity_path: Optional[pathlib.Path | str] = None,
     host_conditions_path: Optional[pathlib.Path | str] = None,
+    derived_host_conditions_path: Optional[pathlib.Path | str] = None,
     cell_dir: Optional[pathlib.Path | str] = None,
 ) -> dict:
     """Bind one cell receipt through the authoritative artifact chain.
@@ -1090,6 +1091,7 @@ def _bind_side(
     )
 
     # Host conditions: required non-sensitive machine identity blob.
+    dhcp = None
     if host_conditions_path is not None:
         hcp = canonical_path(host_conditions_path)
         if not hcp.is_file():
@@ -1102,8 +1104,21 @@ def _bind_side(
             hc = _load_json(hcp)
         except (OSError, json.JSONDecodeError) as exc:
             return _unavailable("host_conditions_unreadable", path=str(hcp), error=str(exc))
-        if not _host_conditions_complete(hc):
+        if not _host_conditions_complete(hc) and derived_host_conditions_path is None:
             return _unavailable("host_conditions_invalid", path=str(hcp))
+        if derived_host_conditions_path is not None:
+            dhcp = canonical_path(derived_host_conditions_path)
+            if not dhcp.is_file():
+                return _unavailable("derived_host_conditions_missing", path=str(dhcp))
+            try:
+                derived_hc = _load_json(dhcp)
+            except (OSError, json.JSONDecodeError) as exc:
+                return _unavailable("derived_host_conditions_unreadable", path=str(dhcp), error=str(exc))
+            if not _host_conditions_complete(derived_hc):
+                return _unavailable("derived_host_conditions_invalid", path=str(dhcp))
+            hc = derived_hc
+            server_extras["derived_host_conditions_path"] = str(dhcp)
+            server_extras["derived_host_conditions_sha256"] = sha256_file(dhcp)
         server_extras["host_conditions"] = hc
     elif _host_conditions_complete(meta.get("host_conditions")):
         server_extras["host_conditions"] = meta.get("host_conditions")
@@ -1139,6 +1154,8 @@ def _bind_side(
         return _unavailable('server_identity_changed_after_read')
     if host_conditions_path is not None and sha256_file(hcp) != receipt['host_conditions_sha256']:
         return _unavailable('host_conditions_changed_after_read')
+    if dhcp is not None and sha256_file(dhcp) != server_extras['derived_host_conditions_sha256']:
+        return _unavailable('derived_host_conditions_changed_after_read')
     if sha256_file(receipt_path) != receipt_file_sha256:
         return _unavailable('receipt_changed_after_read')
 
@@ -1275,13 +1292,16 @@ def _bind_side(
 
 
 def bind_side(receipt_path, *, role, manifest_path, counting=False, diagnostics=False,
-              server_identity_path=None, host_conditions_path=None, cell_dir=None):
+              server_identity_path=None, host_conditions_path=None,
+              derived_host_conditions_path=None, cell_dir=None):
     """Malformed or unreadable artifacts are unavailable, never a traceback/pass."""
     try:
         return _bind_side(receipt_path, role=role, manifest_path=manifest_path,
                           counting=counting, diagnostics=diagnostics,
                           server_identity_path=server_identity_path,
-                          host_conditions_path=host_conditions_path, cell_dir=cell_dir)
+                          host_conditions_path=host_conditions_path,
+                          derived_host_conditions_path=derived_host_conditions_path,
+                          cell_dir=cell_dir)
     except (ValueError, TypeError, KeyError, OSError, OverflowError) as error:
         return _unavailable('artifact_validation_failed', detail=str(error))
 

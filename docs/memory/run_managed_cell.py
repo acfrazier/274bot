@@ -235,15 +235,28 @@ def preflight(
         pathlib.Path(spec["nav_flags"]),
         pathlib.Path(spec["catalog_path"]),
     )
+    sidecars = {}
     for key in ("server_identity_path", "host_conditions_path"):
         p = pathlib.Path(spec[key]).resolve(strict=True)
-        json.loads(p.read_text())
+        sidecars[key] = json.loads(p.read_text())
     sample = pa.process_sampler(spec['process_backend'])
     server_sample = sample(int(spec["game_server_pid"]), timeout=sample_timeout)
     identity = json.loads(pathlib.Path(spec['server_identity_path']).read_text())
     if (not isinstance(identity, dict) or type(identity.get('pid')) is not int or identity['pid'] != spec['game_server_pid']
             or identity.get('start_identity') != server_sample.get('start_identity')):
         raise CellError('server sidecar differs from sampled PID/start identity')
+    host = sidecars['host_conditions_path']
+    native = host.get('native_preflight') if isinstance(host, dict) else None
+    if isinstance(native, dict):
+        checked_server = native.get('server')
+        if not isinstance(checked_server, dict):
+            raise CellError('native host conditions must serialize checked server')
+        if (checked_server.get('ProcessId') != spec['game_server_pid']
+                or checked_server.get('Name') != 'node.exe'
+                or checked_server.get('SessionId') != 2
+                or not isinstance(checked_server.get('CreationDate'), str)
+                or not checked_server['CreationDate']):
+            raise CellError('native host conditions server does not match preflight server')
     ambient_identities: Dict[str, Any] = {}
     for name, pid in sorted(spec["ambient_helpers"].items()):
         ambient_identities[name] = {
@@ -253,6 +266,7 @@ def preflight(
     return {
         "provenance": provenance,
         "server_sample": server_sample,
+        "checked_server": native.get('server') if isinstance(native, dict) else None,
         "server_pid": int(spec["game_server_pid"]),
         "ambient_identities": ambient_identities,
         "binary": str(binary),
@@ -871,6 +885,7 @@ def run_managed_cell(
         {
             "server_pid": pf["server_pid"],
             "server_start_identity": pf["server_sample"].get("start_identity"),
+            "checked_server": pf.get("checked_server"),
             "ambient": {
                 k: v["sample"].get("start_identity") for k, v in pf["ambient_identities"].items()
             },
