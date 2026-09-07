@@ -189,6 +189,21 @@ pub struct PlayOptions {
     pub mainland: bool,
 }
 
+/// Live client scalar settings copied at status publication (memory-profile
+/// only). Pure scalars — never paths or heap clones. `loop_cycle` is the
+/// client main-loop counter (freshness), not a server/player generation.
+#[cfg(feature = "memory-profile")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClientRuntimeSettingsSnapshot {
+    pub lowmem: bool,
+    pub midi_active: bool,
+    pub midi_volume: i32,
+    pub wave_enabled: bool,
+    pub wave_volume: i32,
+    pub draw: bool,
+    pub loop_cycle: i32,
+}
+
 /// Pollable per-slot view; the slot threads update it after each frame.
 #[derive(Debug, Clone)]
 pub struct SlotStatus {
@@ -239,6 +254,10 @@ pub struct SlotStatus {
     /// isolate each observe — the TUI shows it in the chat pane in place
     /// of the game chat.
     pub script_paint: Option<script::shim::ScriptPaint>,
+    /// Memory-profile only: last observed live client scalar settings.
+    /// `None` until the first observe frame publishes this row.
+    #[cfg(feature = "memory-profile")]
+    pub runtime_settings: Option<ClientRuntimeSettingsSnapshot>,
 }
 
 impl SlotStatus {
@@ -545,7 +564,24 @@ impl Default for SlotStatus {
             chat_head: String::new(),
             random: RandomStatus::default(),
             script_paint: None,
+            #[cfg(feature = "memory-profile")]
+            runtime_settings: None,
         }
+    }
+}
+
+/// Copy live client scalar settings onto a snapshot. No path clones, no
+/// heap, no clock — pure field reads. Production-shared with tests.
+#[cfg(feature = "memory-profile")]
+pub fn capture_client_runtime_settings(c: &Client) -> ClientRuntimeSettingsSnapshot {
+    ClientRuntimeSettingsSnapshot {
+        lowmem: c.config.lowmem,
+        midi_active: c.midi_active,
+        midi_volume: c.midi_volume,
+        wave_enabled: c.wave_enabled,
+        wave_volume: c.wave_volume,
+        draw: c.draw,
+        loop_cycle: c.loop_cycle,
     }
 }
 
@@ -3802,6 +3838,12 @@ fn spawn_slot_thread(
                                         s.chat_head = c.chat_text[0].clone();
                                         s.random = status.clone();
                                         publish_script_paint(s, paint.as_ref());
+                                        #[cfg(feature = "memory-profile")]
+                                        {
+                                            // Existing status lock only; pure scalars.
+                                            s.runtime_settings =
+                                                Some(capture_client_runtime_settings(c));
+                                        }
                                         if let Some(lp) = &c.local_player {
                                             let (tx, tz) = player_world_tile(
                                                 c.map_build_base_x,
@@ -4566,6 +4608,68 @@ mod tests {
     fn slot_status_walk_defaults_cleared() {
         let s = SlotStatus::default();
         assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
+        #[cfg(feature = "memory-profile")]
+        assert!(s.runtime_settings.is_none(), "untouched None until first observe");
+    }
+
+    /// Production capture helper reads live Client scalars — not hardcoded defaults.
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn capture_client_runtime_settings_sees_live_scalars() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        // Mutate away from constructor defaults so capture cannot be a constant.
+        c.config.lowmem = false;
+        c.midi_active = false;
+        c.midi_volume = 42;
+        c.wave_enabled = false;
+        c.wave_volume = 7;
+        c.draw = false;
+        c.loop_cycle = 99;
+        let snap = capture_client_runtime_settings(&c);
+        assert_eq!(
+            snap,
+            ClientRuntimeSettingsSnapshot {
+                lowmem: false,
+                midi_active: false,
+                midi_volume: 42,
+                wave_enabled: false,
+                wave_volume: 7,
+                draw: false,
+                loop_cycle: 99,
+            }
+        );
+        // Observed all-false / zero volumes still populate Some on status.
+        let mut s = SlotStatus {
+            username: "t".into(),
+            ..SlotStatus::default()
+        };
+        assert!(s.runtime_settings.is_none());
+        s.runtime_settings = Some(snap);
+        assert_eq!(s.runtime_settings, Some(snap));
+        assert_ne!(s.runtime_settings, None);
+        // True/high values also round-trip through the same helper.
+        c.config.lowmem = true;
+        c.midi_active = true;
+        c.midi_volume = 100;
+        c.wave_enabled = true;
+        c.wave_volume = 50;
+        c.draw = true;
+        c.loop_cycle = 1;
+        let snap2 = capture_client_runtime_settings(&c);
+        assert!(snap2.lowmem && snap2.midi_active && snap2.wave_enabled && snap2.draw);
+        assert_eq!((snap2.midi_volume, snap2.wave_volume, snap2.loop_cycle), (100, 50, 1));
     }
 
     #[test]

@@ -342,6 +342,60 @@ struct QualificationSlotFields {
     error: Option<String>,
     runtime: serde_json::Value,
     client: Option<serde_json::Value>,
+    /// Live client scalar settings from SlotStatus; null until first observe.
+    runtime_settings: Option<serde_json::Value>,
+    /// Scoped render_profile row when profiler enabled and a match exists.
+    renderer: Option<serde_json::Value>,
+}
+
+/// Serialize a captured client runtime settings snapshot (or null if never
+/// observed). Additive on the slot row; does not invent defaults.
+fn runtime_settings_value(
+    snap: Option<crate::ClientRuntimeSettingsSnapshot>,
+) -> Option<serde_json::Value> {
+    snap.map(|s| {
+        serde_json::json!({
+            "lowmem": s.lowmem,
+            "midi_active": s.midi_active,
+            "midi_volume": s.midi_volume,
+            "wave_enabled": s.wave_enabled,
+            "wave_volume": s.wave_volume,
+            "draw": s.draw,
+            // Client main-loop counter (freshness), not server/player generation.
+            "loop_cycle": s.loop_cycle,
+            "loop_cycle_meaning": "client_mainloop_counter",
+        })
+    })
+}
+
+/// Scoped render_profile evidence for one fixture name. Never dumps histories.
+/// Off / missing stays unavailable; backend string is observed residency only.
+fn renderer_evidence_for(
+    name: &str,
+    observations: Option<&[host::render_profile::SlotObservation]>,
+) -> Option<serde_json::Value> {
+    let Some(obs) = observations else {
+        return None;
+    };
+    let id = host::render_profile::slot_id_for(name);
+    // Prefer non-ended live row; fall back to any matching generation.
+    let row = obs
+        .iter()
+        .find(|o| o.slot_id == id && !o.ended)
+        .or_else(|| obs.iter().find(|o| o.slot_id == id))?;
+    Some(serde_json::json!({
+        "available": true,
+        "source": "host::render_profile::read",
+        "slot_id": row.slot_id,
+        "generation": row.generation,
+        "renderer_present": row.renderer_present,
+        // Absent → null; cpu/cpu_fallback/gpu are observed backend labels.
+        "backend": row.backend.as_str(),
+        "draw": row.draw,
+        "full_rate": row.full_rate,
+        "updated_ms": row.updated_ms,
+        "ended": row.ended,
+    }))
 }
 
 /// Build one qualification slot row per entry in `names` (authoritative fixture
@@ -355,7 +409,7 @@ fn qualification_slot_rows(
         .enumerate()
         .map(|(ordinal, name)| {
             let f = fields_for(name);
-            serde_json::json!({
+            let mut row = serde_json::json!({
                 "ordinal": ordinal,
                 "name": name,
                 // Run-local FNV ids: map instrumentation onto fixture ordinal.
@@ -366,7 +420,14 @@ fn qualification_slot_rows(
                 "error": f.error,
                 "runtime": f.runtime,
                 "client": f.client,
-            })
+                // Additive: null until first observed frame publishes settings.
+                "runtime_settings": f.runtime_settings,
+            });
+            // Additive renderer evidence when profile on and a row matched.
+            if let Some(renderer) = f.renderer {
+                row["renderer"] = renderer;
+            }
+            row
         })
         .collect()
 }
@@ -422,8 +483,8 @@ fn qualification_settings_value(
     settings.insert("host".into(), options.host.clone().into());
     settings.insert("port".into(), options.port.into());
     // PlayOptions.lowmem is the wall option selected at Play::new. Per-slot
-    // ClientConfig.lowmem comes from vault ProfileSettings and may differ;
-    // live client lowmem/audio/renderer are not on SlotStatus.
+    // live Client.config.lowmem is captured on SlotStatus.runtime_settings
+    // (memory-profile) after the first observe frame.
     settings.insert("lowmem_requested".into(), options.lowmem.into());
     settings.insert("mainland".into(), options.mainland.into());
     settings.insert("frontend".into(), frontend.into());
@@ -468,23 +529,42 @@ fn qualification_settings_value(
         "responsiveness_fine_enabled".into(),
         host::responsiveness_profile::fine_enabled().into(),
     );
+    // Per-slot live scalars are on slots[].runtime_settings (null until first
+    // observe). Global markers point at that source — do not invent values.
     settings.insert(
         "client_lowmem_actual".into(),
-        unavailable_client_state(
-            "per-slot ClientConfig.lowmem / live Client.lowmem not exposed on Play statuses without invasive instrumentation",
-        ),
+        serde_json::json!({
+            "available": true,
+            "source": "per_slot",
+            "path": "slots[].runtime_settings.lowmem",
+            "note": "null until first observed frame; live Client.config.lowmem scalar, not PlayOptions.lowmem_requested",
+        }),
     );
     settings.insert(
         "client_audio_actual".into(),
-        unavailable_client_state(
-            "per-slot audio/music gate not exposed on Play statuses without invasive instrumentation",
-        ),
+        serde_json::json!({
+            "settings_available": true,
+            "settings_source": "per_slot",
+            "settings_path": "slots[].runtime_settings.{midi_active,midi_volume,wave_enabled,wave_volume}",
+            "settings_note": "MIDI/wave enable+volume scalars from live Client; null until first observed frame",
+            "physical_output_available": false,
+            "physical_output_reason": "host speaker/device/sink ownership is not observed; do not infer physical audio output from midi/wave booleans",
+        }),
     );
     settings.insert(
         "client_renderer_actual".into(),
-        unavailable_client_state(
-            "per-slot renderer backend/mode not exposed on Play statuses without invasive instrumentation",
-        ),
+        if host::render_profile::enabled() {
+            serde_json::json!({
+                "available": true,
+                "source": "per_slot",
+                "path": "slots[].renderer",
+                "note": "scoped host::render_profile::read match by slot_id_for(name); absent when no matching row; requested GPU is not actual backend",
+            })
+        } else {
+            unavailable_client_state(
+                "render_profile disabled; per-slot actual backend not published (requested GPU is not actual backend)",
+            )
+        },
     );
     serde_json::Value::Object(settings)
 }
@@ -1378,8 +1458,12 @@ impl Run {
     // pre-failure-capture path (flag off / success rows unchanged).
     fn qualification_slots(&self, play: &Play) -> Vec<serde_json::Value> {
         let statuses = play.statuses();
+        // One read per boundary when enabled; never entire histories.
+        let render_obs = host::render_profile::read();
+        let render_slice = render_obs.as_deref();
         qualification_slot_rows(&self.names, |name| {
-            let client = statuses.iter().find(|s| s.username == name).map(|s| {
+            let status = statuses.iter().find(|s| s.username == name);
+            let client = status.map(|s| {
                 serde_json::json!({
                     "ingame": s.ingame,
                     "scene_state": s.scene_state,
@@ -1388,11 +1472,16 @@ impl Run {
                     "level": s.tile_level
                 })
             });
+            let runtime_settings =
+                runtime_settings_value(status.and_then(|s| s.runtime_settings));
+            let renderer = renderer_evidence_for(name, render_slice);
             QualificationSlotFields {
                 state: format!("{:?}", play.script_state(name)),
                 error: play.script_last_error(name),
                 runtime: play.memory_script_progress(name),
                 client,
+                runtime_settings,
+                renderer,
             }
         })
     }
@@ -2280,6 +2369,9 @@ mod tests {
                 "z": 2,
                 "level": 0
             })),
+            // Untouched: null until first observe (distinct from observed false).
+            runtime_settings: None,
+            renderer: None,
         }
     }
 
@@ -2295,10 +2387,12 @@ mod tests {
         assert!(row["error"].is_null());
         assert_eq!(row["runtime"]["dispatched"], 1);
         assert_eq!(row["client"]["ingame"], true);
-        // Legacy keys still present.
-        for key in ["name", "state", "error", "runtime", "client"] {
-            assert!(row.get(key).is_some(), "missing legacy key {key}");
+        // Legacy keys still present; runtime_settings additive (null until observe).
+        for key in ["name", "state", "error", "runtime", "client", "runtime_settings"] {
+            assert!(row.get(key).is_some(), "missing key {key}");
         }
+        assert!(row["runtime_settings"].is_null());
+        assert!(row.get("renderer").is_none());
     }
 
     #[test]
@@ -2384,13 +2478,26 @@ mod tests {
         assert_eq!(s["diagnostics"], false);
         assert_eq!(s["failure_capture"], true);
         assert_eq!(s["cache_content_hash"], serde_json::Value::Null);
-        assert_eq!(s["client_lowmem_actual"]["available"], false);
-        assert_eq!(s["client_audio_actual"]["available"], false);
-        assert_eq!(s["client_renderer_actual"]["available"], false);
-        assert!(
-            s["client_lowmem_actual"]["reason"].as_str().unwrap().contains("invasive"),
-            "unavailable must carry reason, not assumed default"
+        // Live scalars are per-slot; globals point at slots[].runtime_settings.
+        assert_eq!(s["client_lowmem_actual"]["available"], true);
+        assert_eq!(s["client_lowmem_actual"]["source"], "per_slot");
+        assert_eq!(
+            s["client_lowmem_actual"]["path"],
+            "slots[].runtime_settings.lowmem"
         );
+        assert_eq!(s["client_audio_actual"]["settings_available"], true);
+        assert_eq!(s["client_audio_actual"]["settings_source"], "per_slot");
+        assert_eq!(s["client_audio_actual"]["physical_output_available"], false);
+        assert!(s["client_audio_actual"]["physical_output_reason"]
+            .as_str()
+            .unwrap()
+            .contains("not observed"));
+        // render_profile off in unit tests → still unavailable at global marker.
+        assert_eq!(s["client_renderer_actual"]["available"], false);
+        assert!(s["client_renderer_actual"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("render_profile"));
     }
 
     #[test]
@@ -2417,10 +2524,11 @@ mod tests {
         assert_eq!(s["frontend"], "panel");
         assert_eq!(s["render_policy_requested"], "focused-one");
         assert_eq!(s["single_renderer"], true);
-        // Actual live client state must not be invented as false/default.
+        // Actual live lowmem is not invented as a boolean here — per_slot path.
         assert_ne!(s["client_lowmem_actual"], false);
         assert_ne!(s["client_lowmem_actual"], true);
-        assert_eq!(s["client_lowmem_actual"]["available"], false);
+        assert_eq!(s["client_lowmem_actual"]["available"], true);
+        assert_eq!(s["client_lowmem_actual"]["source"], "per_slot");
         assert!(s["cache_dir_canonical"].is_null());
         assert_eq!(s["cache_dir_canonical_available"], false);
     }
@@ -2448,5 +2556,139 @@ mod tests {
         let value = serialize_qualification_boundary("observe-end", vec![], 1.0, None);
         assert_eq!(value["phase"], "observe-end");
         assert!(value.get("settings").is_none());
+    }
+
+    #[test]
+    fn runtime_settings_none_vs_observed_false_are_distinct() {
+        assert!(runtime_settings_value(None).is_none());
+        let observed_false = crate::ClientRuntimeSettingsSnapshot {
+            lowmem: false,
+            midi_active: false,
+            midi_volume: 0,
+            wave_enabled: false,
+            wave_volume: 0,
+            draw: false,
+            loop_cycle: 0,
+        };
+        let v = runtime_settings_value(Some(observed_false)).expect("Some snapshot");
+        assert_eq!(v["lowmem"], false);
+        assert_eq!(v["midi_active"], false);
+        assert_eq!(v["wave_enabled"], false);
+        assert_eq!(v["draw"], false);
+        assert_eq!(v["loop_cycle"], 0);
+        assert_eq!(v["loop_cycle_meaning"], "client_mainloop_counter");
+        // Not null object — observed false is an object with false booleans.
+        assert!(v.is_object());
+    }
+
+    #[test]
+    fn qualification_rows_match_settings_by_name_not_status_order() {
+        // Status vector order differs from fixture names order.
+        let names = vec!["z_last".into(), "a_first".into(), "m_mid".into()];
+        let snap_z = crate::ClientRuntimeSettingsSnapshot {
+            lowmem: true,
+            midi_active: true,
+            midi_volume: 1,
+            wave_enabled: true,
+            wave_volume: 2,
+            draw: true,
+            loop_cycle: 10,
+        };
+        let snap_a = crate::ClientRuntimeSettingsSnapshot {
+            lowmem: false,
+            midi_active: false,
+            midi_volume: 3,
+            wave_enabled: false,
+            wave_volume: 4,
+            draw: false,
+            loop_cycle: 20,
+        };
+        // Only z and a observed; m stays None.
+        let by_name = |name: &str| match name {
+            "z_last" => Some(snap_z),
+            "a_first" => Some(snap_a),
+            _ => None,
+        };
+        let rows = qualification_slot_rows(&names, |name| {
+            let mut f = stub_fields(name);
+            f.runtime_settings = runtime_settings_value(by_name(name));
+            f
+        });
+        assert_eq!(rows[0]["name"], "z_last");
+        assert_eq!(rows[0]["ordinal"], 0);
+        assert_eq!(rows[0]["runtime_settings"]["loop_cycle"], 10);
+        assert_eq!(rows[0]["runtime_settings"]["lowmem"], true);
+        assert_eq!(rows[1]["name"], "a_first");
+        assert_eq!(rows[1]["ordinal"], 1);
+        assert_eq!(rows[1]["runtime_settings"]["loop_cycle"], 20);
+        assert_eq!(rows[1]["runtime_settings"]["lowmem"], false);
+        assert_eq!(rows[2]["name"], "m_mid");
+        assert_eq!(rows[2]["ordinal"], 2);
+        assert!(rows[2]["runtime_settings"].is_null());
+    }
+
+    #[test]
+    fn renderer_evidence_for_matches_slot_id_and_skips_missing() {
+        assert!(renderer_evidence_for("nobody", None).is_none());
+        assert!(renderer_evidence_for("nobody", Some(&[])).is_none());
+        let id = host::render_profile::slot_id_for("alice");
+        const B: usize = host::render_profile::INTERVAL_BOUNDS_MS.len() + 1;
+        let obs = host::render_profile::SlotObservation {
+            slot_id: id,
+            generation: 3,
+            renderer_present: true,
+            backend: host::render_profile::BackendObs::Cpu,
+            prefer_cpu: Some(true),
+            ingame: true,
+            scene_state: 2,
+            draw: true,
+            full_rate: false,
+            client_loop_n: 0,
+            paint_n: 0,
+            skip_n: 0,
+            stable_paint_n: 0,
+            transition_paint_n: 0,
+            stable_paint_intervals: 0,
+            stable_paint_interval_ns: 0,
+            stable_paint_interval_buckets: [0; B],
+            transition_paint_intervals: 0,
+            transition_paint_interval_ns: 0,
+            transition_paint_interval_buckets: [0; B],
+            attach_n: 0,
+            detach_n: 0,
+            backend_change_n: 0,
+            updated_ms: 1234,
+            ended: false,
+            gpu_frame_n: 0,
+            cpu_frame_n: 0,
+            gpu_registered_n: 0,
+            gpu_completed_n: 0,
+            gpu_dropped_n: 0,
+            gpu_lost_n: 0,
+            gpu_pending_n: 0,
+            gpu_oldest_pending_age_ms: 0,
+            gpu_stable_completed_n: 0,
+            gpu_transition_completed_n: 0,
+            gpu_completion_latency_n: 0,
+            gpu_completion_latency_ns: 0,
+            gpu_completion_latency_buckets: [0; B],
+            gpu_stable_completion_intervals: 0,
+            gpu_stable_completion_interval_ns: 0,
+            gpu_stable_completion_interval_buckets: [0; B],
+            gpu_transition_completion_intervals: 0,
+            gpu_transition_completion_interval_ns: 0,
+            gpu_transition_completion_interval_buckets: [0; B],
+        };
+        let v = renderer_evidence_for("alice", Some(&[obs.clone()])).expect("matched");
+        assert_eq!(v["available"], true);
+        assert_eq!(v["slot_id"], id);
+        assert_eq!(v["generation"], 3);
+        assert_eq!(v["backend"], "cpu");
+        assert_eq!(v["draw"], true);
+        assert_eq!(v["full_rate"], false);
+        assert_eq!(v["updated_ms"], 1234);
+        assert_eq!(v["renderer_present"], true);
+        // Wrong name → no match.
+        assert!(renderer_evidence_for("bob", Some(&[obs])).is_none());
     }
 }
