@@ -46,10 +46,13 @@ For each slot, the reader follows this chain and verifies every link:
    reader validates provenance and pairing; it does not reimplement histogram,
    scheduling, decode, input, GPU, or resource math.
 
-A receipt path, run path, binary path, or manifest path outside the declared
-artifact root is rejected. Symlinks and duplicate references should resolve to
-one canonical file and be rejected if their content/hash does not match the
-recorded artifact.
+Paths are authorized by the explicit receipt fields, manifest entries, and
+provenance-lock paths, then canonicalized and hash-checked; there is no blanket
+single-artifact-root rule. This permits the approved frozen binaries in the
+shared-nav-build directory, run directories in their timestamped sibling
+directories, batch receipts, and the shared build manifest to be bound exactly
+as recorded. Symlinks and duplicate references should resolve to one canonical
+file and be rejected if their content/hash does not match the recorded artifact.
 
 ## Required fields and current availability
 
@@ -67,7 +70,7 @@ current evidence until the launcher/receipt/build output records it.
 | Navigation/catalog fixture | metadata `nav_pack_sha256`, `nav_flags_sha256`; manifest nav hashes and catalog `js_scripts_json_sha256`, `rs2b0t_commit` | exact equality across sides for the authorized fixture; absent/null never matches | nav pack hash available and matches manifest; nav flags and catalog hash are absent in current run metadata (visible only in external manifest/report) |
 | Frontend/workload/scale | metadata `frontend`, `n`, `workload`, `terminal`, `terminal_size`; render policy fields | exact equality: frontend, N, workload, terminal mode/geometry; use the approved profile key | Available for current TUI N=1 cells; failed N16 is not eligible |
 | Render/allocator/instrumentation policy | metadata `render_policy`, `render_policy_requested`, `scheduling_profile`, `render_profile`, `gpu_completion_profile`, `responsiveness_profile`, `responsiveness_fine`, `diagnostic_sidecar`, `stack_logging`, `single_renderer`, `sustain`; explicit feature/allocator fields required | exact equality for a paired metric; profile-on vs profile-off is an overhead experiment, not a candidate/reference pair; no absent flag defaults to false | Launcher flags are available; `feature_flags`, `allocator_provenance`, renderer settings, cache settings are absent/null in current resource metadata |
-| Server condition | receipt sampler `pid_was`, command, interval, duration, output; server resource summary PID/interval/sample count/exit; batch host conditions | exact server identity/start identity, target, sampler version/config, interval/duration, and successful complete output; helper overhead must be separately evidenced | PID/interval/duration and output paths are available; server start identity/argv-env and sampler/helper overhead proof are missing |
+| Server condition | receipt sampler `pid_was`, command, interval, duration, output; `server_identity.json` `pid`, `start_identity`, `port_listen`, `preflight_utc`; server resource summary PID/interval/sample count/exit; batch host conditions | exact server identity/start identity, target, sampler version/config, interval/duration, and successful complete output; helper overhead must be separately evidenced. Require explicit non-sensitive relevant settings/version/start identity, not a full argv/env dump | PID/interval/duration/output paths and server `start_identity` are available; server target is available from the manifest/batch. Sampler/helper overhead proof and selected pressure counter are missing; argv/env are explicitly not recorded and are not required |
 | Host/helper condition | batch `host_conditions`; Docker/VNC/Chroma identities and stats where present; sampler/helper process identities and CPU/RSS time series | same machine/OS/arch/CPU entitlement/RAM, server/helper versions and accounting scope; concurrent contamination rejects the cell | Host conditions and ambient helper snapshots are available; process-level helper CPU/RSS deltas and pressure are unavailable |
 | Metric endpoint | raw field names and profile flags: decode, input visible acknowledgment, TUI flush, GPU callback/completion; `reference_metrics` gate status/endpoint notes | exact endpoint semantics must match; decode is not input, TUI flush is not GPU completion, GPU completion is not scanout | Scheduling rows exist; decode/input are unavailable in inspected TUI N=1 cells; no physical presentation endpoint |
 | Observation contamination | observation window from raw timestamps plus existing contamination intersection; batch quiet-boundary receipts | both runs must have clean, non-overlapping observation windows and approved order; any overlap makes pair unavailable | N=1 cells are workload-qualified but resource overhead is unknown; do not infer clean acceptance from their report labels |
@@ -90,10 +93,19 @@ roles `reference` and `candidate`. The reader must:
    identities, and distinct non-overlapping observation windows. A run cannot
    serve as both sides, and a duplicate artifact hash cannot masquerade as a
    second run.
-4. Require the same matching key for frontend, N, workload, fixture hashes,
+4. Split the comparison input into two classes. **Match keys**, which must be
+   present and equal on both sides, are frontend, N, workload, fixture hashes,
    terminal geometry, allocator, server target/config, cache/renderer policy,
-   profile flags, sampling configuration, host/helper conditions, and endpoint
-   semantics. Any missing member makes the pair unavailable rather than equal.
+   profile flags, sampling configuration, host/helper machine conditions, and
+   endpoint semantics. Any missing or null member makes the pair unavailable,
+   never equal. **Side provenance** is separate and must be present and
+   role-correct but may differ: binary SHA-256, build/source commits and source
+   digests, client/build manifest entry, and manifest role/path. The current
+   `reference_metrics._resource_match_metadata` and `compare_matched_runs`
+   include `binary_sha256` and `host_sources_sha256` in equality-checked
+   metadata, so the adapter must shape those as side fields (or the smallest
+   later helper change must compare only match keys) rather than feeding the
+   full provenance-bearing dictionary as `match_metadata`.
 5. Require exact named provenance on each side. The candidate's source/build
    commit is allowed to differ from the reference's; each must match its own
    manifest role and expected binary hash. Do not require identical source
@@ -102,8 +114,11 @@ roles `reference` and `candidate`. The reader must:
    `reference_metrics`; accept only the requested gate/endpoint status. A
    string label in a receipt, report, or caller payload cannot qualify a run.
 7. Return a structured unavailable reason with the missing field/path when any
-   check fails. Never emit a numeric paired delta alongside an eligibility pass
-   if qualification, provenance, endpoint, or overhead evidence is missing.
+   check fails. Diagnostic arithmetic from existing helpers may still be
+   emitted with `status=unavailable` (for example `diagnostic_margin_ms` or
+   resource numeric rollups); it must not be labeled `paired_within_margin`, an
+   eligible paired result, or an acceptance pass when qualification,
+   provenance, endpoint, or overhead evidence is missing.
 
 The existing `compare_matched_runs` can remain the final diagnostic delta
 helper. Its `single_pair_no_variation` result is not significance or acceptance.
@@ -141,12 +156,14 @@ valid. `sample_self` startup/residual snapshots do not measure helper overhead.
 The old receipts explicitly say sampler overhead is unmeasured; their numeric
 CPU/RSS values remain diagnostic only.
 
-The minimum acceptable overhead evidence is a predeclared, fully completed
-same-binary/configuration sequence such as `off → on → off → on`, or another
-approved order that includes at least two off and two on observations. Every
-cell needs its own raw samples, receipt, qualified completion, helper accounting,
-and matched host/server conditions. Preserve failed/unrun cells. The adapter
-should report process, server, helper, and instrumentation deltas separately;
+The existing predeclared batch's approved same-binary/configuration overhead
+order is `candidate_n16_overhead_off_a → candidate_n16_overhead_on_a →
+candidate_n16_overhead_on_b → candidate_n16_overhead_off_b` (`off → on → on →
+off`). That is the order to consume; do not redefine it as a different minimum
+protocol. Every cell needs its own raw samples, receipt, qualified completion,
+helper accounting, and matched host/server conditions. Preserve failed/unrun
+cells. The adapter should report process, server, helper, and instrumentation
+deltas separately;
 it must not invent confidence margins or turn a noisy sequence into `measured`.
 If the sampler cannot provide continuous helper CPU/RSS and start/stop identity,
 that is an environmental capability gap, not an adapter pass.
@@ -154,13 +171,14 @@ that is an environmental capability gap, not an adapter pass.
 ## Fine p99 and the 2 ms rule
 
 Fine histograms and mono clock brackets can produce a single-run conservative
-bound. A paired result may be numeric only after both runs pass the artifact,
-qualification, endpoint, and matching checks above. Then apply the existing
-rule `candidate_upper - reference_lower <= 2 ms` using the candidate's fine
-upper bound and reference's fine lower bound. If any proof is absent, return
-`status=unavailable`, reason `missing_capability` (with a precise missing field)
-or `paired_matched_run_evidence_pending`; do not expose a `paired_within_margin`
-boolean and do not call the diagnostic `paired_fine_p99_margin` a pass.
+bound. A pair may be eligible only after both runs pass the artifact, qualification,
+endpoint, and matching checks above. Then apply the existing rule
+`candidate_upper - reference_lower <= 2 ms` using the candidate's fine upper
+bound and reference's fine lower bound. Existing `paired_fine_p99_margin` may
+still provide diagnostic arithmetic when proof is incomplete, but its result
+must remain `status=unavailable` with reason `missing_capability` (with a
+precise missing field) or `paired_matched_run_evidence_pending`; do not expose
+`paired_within_margin` or call that diagnostic margin a pass.
 Decode and input remain separate endpoint families. TUI flush remains distinct
 from GPU queue callback completion, and neither is a physical display scanout
 measurement.
@@ -178,6 +196,9 @@ Python test module. It should own only:
 
 - artifact path/hash and receipt-to-metadata-to-manifest binding;
 - strict non-null matching-key construction;
+- side-provenance construction outside equality-checked `match_metadata`,
+  including the minimal shaping/equality adjustment needed because authorized
+  control and candidate binary/source hashes differ;
 - recomputed qualification invocation;
 - preservation of failed/unrun cells;
 - emission of adapter-approved inputs to existing metric/comparison helpers.
