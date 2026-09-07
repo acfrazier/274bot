@@ -54,18 +54,31 @@ emulator paint, OS compositor scanout, or a physical display acknowledgement.
 ## Decode coverage and latency
 
 The raw rows contain decode starts/dispatches and latency histograms, but the
-selected native spans are not coverage-complete:
+selected native spans are not coverage-complete. The two views must remain
+separate: final observe-end counters are cumulative over the whole raw run,
+whereas the adapter's selected-span values are boundary deltas.
 
-| Platform | Decode edge | Dispatch | Canceled | Unmatched canceled | Lost | Dropped | Pending | Coarse p99 upper | Fine p99 upper |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Windows | 269 | 254 | 15 | 1 | 0 | 0 | 1 | 25 ms | 23 ms |
-| Linux | 283 | 273 | 11 | 1 | 0 | 0 | 0 | 25 ms | 24 ms |
+Raw final observe-end counters (cumulative, not selected-span deltas):
 
-The offline reader therefore reports Windows decode unavailable for
-`boundary_pending_incomplete`; Linux has conserved bounded histograms and
-available diagnostic p99 arithmetic, but `decode_coverage_complete` remains false
-because the raw cumulative row records cancellation(s). These rows cannot support
-an accepted decode-latency or end-to-end input/decode claim. Decode means
+|| Platform | Decode edge | Dispatch | Canceled | Unmatched canceled | Lost | Dropped | Pending | Coarse p99 upper | Fine p99 upper |
+||---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+|| Windows | 269 | 254 | 15 | 1 | 0 | 0 | 1 | 25 ms | 23 ms |
+|| Linux | 283 | 273 | 11 | 1 | 0 | 0 | 0 | 25 ms | 25 ms |
+
+Selected-span adapter results (counter/histogram deltas and status):
+
+|| Platform | Edge delta | Dispatch delta | Canceled delta | Pending delta | Fine p99 upper | Sample n | Coverage/status |
+||---|---:|---:|---:|---:|---:|---:|---|
+|| Windows | unavailable | unavailable | unavailable | unavailable | unavailable | — | `unavailable: boundary_pending_incomplete` |
+|| Linux | 198 | 198 | 0 | 0 | 24 ms | 198 | available, `decode_coverage_complete: false` |
+
+The Windows gate is unavailable for `boundary_pending_incomplete` (its
+start-boundary edge/dispatch values are 71/57 and its end-boundary values are
+269/254, with pending changing from 0 to 1). Linux has conserved selected-span
+histograms and available diagnostic p99 arithmetic, but
+`decode_coverage_complete` remains false even though its selected deltas have
+zero cancellation and pending. Neither view supports an accepted decode-latency
+or end-to-end input/decode claim. Decode means
 `PLAYER_INFO_after_drain_to_on_game_tick_entry`, not packet-decode wall time.
 
 ## Per-slot scheduling evidence
