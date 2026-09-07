@@ -26,6 +26,13 @@ if str(ROOT) not in sys.path:
 SCHED_EXCESS_BOUNDS_MS = (1, 2, 5, 10, 20)  # + overflow bucket
 SCHED_BASELINE_MS = 20  # client-loop budget; interval = baseline + excess
 INTERVAL_BOUNDS_MS = (10, 20, 25, 40, 50, 100, 250, 500, 1000, 2000)
+# Host cadence per-slot histogram.  These are inclusive upper edges; the final
+# bucket is overflow and never supplies a finite p99 upper bound.
+SLOT_INTERVAL_BOUNDS_MS = (
+    5, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 42, 45, 50, 100, 250,
+    500, 1000,
+)
 LATENCY_BOUNDS_MS = (5, 10, 20, 25, 40, 50, 100, 250, 500, 1000)
 
 PASS_MEANS = (
@@ -234,6 +241,163 @@ def subtract_scalar(end: Any, start: Any) -> Optional[int]:
     if ev < sv:
         return None
     return ev - sv
+
+
+def compare_paired_p99_bounds(
+    candidate: dict, reference: dict, *, margin_ms: float = 2.0
+) -> dict:
+    """Conservative paired non-regression check using only bucket bounds.
+
+    The worst defensible candidate-vs-reference difference is candidate upper
+    minus reference lower.  No exact percentile or interpolation is inferred.
+    """
+    if not isinstance(candidate, dict) or not isinstance(reference, dict):
+        return {"status": "inconclusive", "reason": "missing_p99_bounds", "margin_ms": margin_ms}
+    if candidate.get("status") != "available" or reference.get("status") != "available":
+        return {"status": "inconclusive", "reason": "missing_p99_bounds", "margin_ms": margin_ms}
+    try:
+        difference = float(candidate["upper_ms"]) - float(reference["lower_ms"])
+    except (KeyError, TypeError, ValueError):
+        return {"status": "inconclusive", "reason": "missing_p99_bounds", "margin_ms": margin_ms}
+    result = {
+        "status": "available" if difference <= margin_ms else "inconclusive",
+        "target_verdict": "meet" if difference <= margin_ms else "unproven",
+        "candidate_upper_ms": candidate["upper_ms"],
+        "reference_lower_ms": reference["lower_ms"],
+        "worst_case_difference_ms": difference,
+        "margin_ms": margin_ms,
+        "precise_percentile": False,
+    }
+    if difference > margin_ms:
+        result["reason"] = "candidate_upper_minus_reference_lower_exceeds_margin"
+    return result
+
+
+def evaluate_scheduling_slots(
+    meta: dict,
+    samples: list[dict],
+    *,
+    target_interval_ms: float = 40.0,
+    min_fps: float = 40.0,
+) -> dict:
+    """Qualify per-slot cadence from endpoint-stamped cumulative snapshots.
+
+    The duration is the closing ``last_cycle_mono_ms`` minus the opening one.
+    It is computed independently within each slot's Local origin; absolute
+    monotonic values are never compared across slots or with global elapsed_s.
+    """
+    unavailable = lambda reason, **extra: _unavailable(  # noqa: E731
+        reason, gate="scheduling", target_verdict="unavailable", **extra
+    )
+    if not meta.get("scheduling_profile"):
+        return unavailable("profile_disabled", satisfies_per_slot_requirement=False)
+    start, end = _observe_pair(samples)
+    if start is None or end is None:
+        return unavailable("no_observe_samples", satisfies_per_slot_requirement=False)
+    s_map, e_map, err, disappeared = _pair_slot_maps(
+        start.get("scheduling_slots"), end.get("scheduling_slots")
+    )
+    if err:
+        return unavailable(err, disappeared=[[a, b] for a, b in disappeared])
+    assert s_map is not None and e_map is not None
+    if set(s_map) != set(e_map):
+        start_slots = {key[0] for key in s_map}
+        end_slots = {key[0] for key in e_map}
+        if start_slots == end_slots and start_slots:
+            return unavailable(
+                "generation_mismatch", expected_slot_set=sorted(s_map), observed_slot_set=sorted(e_map)
+            )
+        return unavailable(
+            "slot_set_changed", expected_slot_set=sorted(s_map), observed_slot_set=sorted(e_map)
+        )
+    if not e_map:
+        return unavailable("no_slot_rows", expected_slot_set=[])
+
+    slots = []
+    for key in sorted(e_map):
+        srow, erow = s_map[key], e_map[key]
+        base = {"slot_id": key[0], "generation": key[1], "expected_slot": True}
+        age_err = _sample_age_reason(srow) or _sample_age_reason(erow)
+        if age_err:
+            slots.append(_unavailable(age_err, **base, freshness_field="sample_age_ms"))
+            continue
+        for fresh_row in (srow, erow):
+            age = fresh_row.get("sample_age_ms")
+            lag_limit = fresh_row.get("flush_lag_max_ms", 1000)
+            if isinstance(age, (int, float)) and isinstance(lag_limit, (int, float)) and age > lag_limit:
+                age_err = "stale_snapshot"
+                break
+        if age_err:
+            slots.append(_unavailable(age_err, **base, freshness_field="sample_age_ms"))
+            continue
+        if erow.get("ended"):
+            slots.append(_unavailable("slot_ended", **base))
+            continue
+        if int(erow.get("ended_lost_n") or 0) or int(srow.get("ended_lost_n") or 0):
+            slots.append(_unavailable("ended_rows_lost", **base, ended_lost_n=erow.get("ended_lost_n")))
+            continue
+        try:
+            duration_ms = float(erow["last_cycle_mono_ms"]) - float(srow["last_cycle_mono_ms"])
+        except (KeyError, TypeError, ValueError):
+            slots.append(_unavailable("missing_last_cycle_endpoint", **base))
+            continue
+        if duration_ms <= 0:
+            slots.append(_unavailable("invalid_last_cycle_endpoint_span", **base, measured_duration_ms=duration_ms))
+            continue
+        cycle_delta = subtract_scalar(erow.get("cycle_n"), srow.get("cycle_n"))
+        interval_delta = subtract_scalar(erow.get("interval_n"), srow.get("interval_n"))
+        mode_delta = subtract_scalar(erow.get("mode_break_n"), srow.get("mode_break_n"))
+        park_delta = subtract_scalar(erow.get("park_n"), srow.get("park_n"))
+        anchor_delta = subtract_scalar(erow.get("anchor_miss_n"), srow.get("anchor_miss_n"))
+        if None in (cycle_delta, interval_delta, mode_delta, park_delta, anchor_delta):
+            slots.append(_unavailable("counter_reset", **base))
+            continue
+        if cycle_delta != interval_delta + mode_delta + park_delta + anchor_delta:
+            slots.append(_unavailable("interval_coverage_mismatch", **base,
+                                       cycle_delta=cycle_delta, interval_n_delta=interval_delta,
+                                       mode_break_n_delta=mode_delta, park_n_delta=park_delta,
+                                       anchor_miss_n_delta=anchor_delta))
+            continue
+        if erow.get("interval_coverage_complete") is not True:
+            slots.append(_unavailable("coverage_incomplete", **base))
+            continue
+        delta, hist_err = _slot_hist_delta(srow, erow, "interval_buckets")
+        if hist_err:
+            slots.append(_unavailable(hist_err, **base))
+            continue
+        try:
+            bound_tuple = tuple(int(x) for x in (erow.get("interval_bound_ms") or SLOT_INTERVAL_BOUNDS_MS))
+        except (TypeError, ValueError):
+            slots.append(_unavailable("malformed_interval_bounds", **base))
+            continue
+        bounds = p99_lower_upper_ms(delta, bound_tuple)
+        if bounds.get("status") != "available":
+            slots.append(_unavailable(bounds.get("reason", "interval_unavailable"), **base, p99=bounds))
+            continue
+        fps = cycle_delta / (duration_ms / 1000.0)
+        verdict = "meet" if fps >= min_fps and bounds["upper_ms"] <= target_interval_ms else "miss"
+        slots.append({**base, "status": "available", "measured_duration_ms": duration_ms,
+                      "interval_n_delta": interval_delta, "cycle_n_delta": cycle_delta,
+                      "mode_break_n_delta": mode_delta, "park_n_delta": park_delta,
+                      "anchor_miss_n_delta": anchor_delta, "p99": bounds,
+                      "observed_fps": fps, "observed_iterations_per_s": fps,
+                      "target_interval_ms": target_interval_ms,
+                      "target_verdict": verdict,
+                      "coverage_math": "cycle_delta = interval_delta + mode_break_delta + park_delta + anchor_miss_delta",
+                      "scene_transition_separation": erow.get("scene_transition_separation", "unavailable"),
+                      "global_mono_alignment_claim": False,
+                      "jsonl_row_time_is_not_interval_endpoint": True})
+    if not slots or any(s.get("status") != "available" for s in slots):
+        return unavailable("no_complete_qualified_per_slot", slots=slots,
+                           expected_slot_set=sorted(e_map), full_fleet_coverage=False)
+    verdicts = {s["target_verdict"] for s in slots}
+    return {"status": "available", "gate": "scheduling", "slots": slots,
+            "expected_slot_set": sorted(e_map), "qualified_slot_n": len(slots),
+            "full_fleet_coverage": True, "worst_qualified_slot": min(
+                slots, key=lambda s: (s["observed_fps"], -s["p99"]["upper_ms"]))["slot_id"],
+            "target_verdict": "meet" if verdicts == {"meet"} else "miss",
+            "satisfies_per_slot_requirement": verdicts == {"meet"},
+            "global_mono_alignment_claim": False, "pass_means": PASS_MEANS}
 
 
 def _parse_utc(value: Any) -> Optional[float]:
@@ -1416,7 +1580,10 @@ def analyze_run(
         meta, samples, contamination_from=contamination_from
     )
     result["gates"] = {
-        "scheduling": evaluate_scheduling(meta, samples),
+        # The scheduling gate is per-slot only. Keep legacy process-wide groups
+        # as a separately named diagnostic; they must not satisfy this gate.
+        "scheduling": evaluate_scheduling_slots(meta, samples),
+        "scheduling_process_wide": evaluate_scheduling(meta, samples),
         "decode": evaluate_decode(meta, samples),
         "input": evaluate_input(meta, samples),
         "gpu": evaluate_gpu(meta, samples),

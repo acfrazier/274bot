@@ -43,8 +43,23 @@ hardware-presentation endpoint remain outside this card.
    is 0**, not 20: `interval.saturating_sub(budget)` puts sub-budget intervals in
    bucket 0, so ≥20 ms cannot be proven from that bucket. Upper `20 + excess_upper`
    is sound. Groups are **process-wide** drawing/non-drawing with up to **49-cycle
-   batch lag** → cannot prove per-slot or exact observation coverage; gate stays
-   `unavailable` / `target_verdict=unavailable` even when diagnostic bounds exist.
+   batch lag** → cannot prove per-slot or exact observation coverage; they remain
+   diagnostic and cannot satisfy the per-slot gate.
+   Per-slot scheduling is now adapted from `scheduling_slots`: the gate differences
+   cumulative counters and histograms using each slot's start/end
+   `last_cycle_mono_ms` endpoints. It reports the actual measured duration,
+   observed iterations/fps, qualified worst slot, and full-fleet coverage. A
+   slot's local monotonic origin is used only for its own duration; no absolute
+   mono comparison across slots or against global `elapsed_s` is made. The
+   lifetime `first_interval_*` fields are deliberately ignored because they
+   generally include warmup. Coverage is checked as
+   `cycle_delta = interval_delta + mode_break_delta + park_delta + anchor_miss_delta`;
+   resets, ended/lost rows, stale/missing snapshots, duplicate/missing expected
+   slots, and incomplete coverage fail closed. `scene_transition_separation`
+   remains unavailable, so this is not steady-scene-only proof.
+   A paired candidate/reference p99 comparison is accepted only when the
+   conservative bound `candidate_upper - reference_lower <= 2 ms`; otherwise
+   it is `inconclusive`. No interpolation or exact percentile is claimed.
 7. **GPU product gate** — `--require gpu` is the **product frame/cadence** gate.
    The adapter now differences stable completion interval histograms,
    `stable_completed_n`, and registration/completion/lost/dropped/pending
@@ -99,7 +114,7 @@ Product `gpu` never reaches that path on completion-latency alone.
 
 ```text
 python3 docs/memory/test_reference_metrics.py
-→ 45 passed
+→ 54 passed
 ```
 
 Coverage includes: empty/overflow/missing histograms; counter reset; generation
@@ -122,11 +137,12 @@ grants acceptance).
 ## Explicit non-claims / remaining gaps
 
 - No RSS/CPU resource gate productization.
-- No per-slot scheduling instrumentation (host emits process-wide only today).
+- Legacy process-wide scheduling remains diagnostic; per-slot scheduling is
+  qualified only when endpoint-stamped `scheduling_slots` rows are present.
 - GPU interval evidence is callback-delivery cadence, not a true presentation
   or scanout endpoint; hardware/scanout completion remains unavailable.
-- The adapter is per observed renderer slot, but host scheduling remains
-  process-wide; no per-slot scheduling p99 is claimed.
+- Per-slot scheduling p99 is bounded tooling evidence only; it does not provide
+  scene separation, resource/RSS acceptance, or hardware presentation proof.
 - No live paired overhead runs; no budget acceptance; no STATE update on this card.
 - Flags-off reference cells cannot prove missing p99 — they correctly fail require.
 - Resource/RSS rollups, overhead attribution, and true presentation timestamps

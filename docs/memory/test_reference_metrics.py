@@ -196,6 +196,117 @@ class SchedulingExcessBoundsTests(unittest.TestCase):
         self.assertEqual(g["reason"], "profile_disabled")
 
 
+class PerSlotSchedulingTests(unittest.TestCase):
+    def _row(self, *, slot=1, generation=1, mono=0, cycle=0, intervals=0,
+             ended=False, age=10, interval_bucket=None, mode_break=0,
+             park=0, anchor_miss=0, lost=0):
+        buckets = [0] * (len(rm.SLOT_INTERVAL_BOUNDS_MS) + 1)
+        if interval_bucket is not None:
+            buckets[interval_bucket] = intervals
+        return {
+            "slot_id": slot, "generation": generation, "sample_age_ms": age,
+            "updated_ms": 123, "ended": ended, "cycle_n": cycle,
+            "interval_n": intervals, "interval_buckets": buckets,
+            "interval_bound_ms": list(rm.SLOT_INTERVAL_BOUNDS_MS),
+            "interval_coverage_complete": cycle == intervals + mode_break + park + anchor_miss,
+            "mode_break_n": mode_break, "park_n": park, "anchor_miss_n": anchor_miss,
+            "ended_lost_n": lost, "last_cycle_mono_ms": mono,
+            "last_cycle_ms": 1_000_000 + mono,
+            "flush_lag_max_ms": 1000, "flush_lag_max_cycles": 50,
+            "scene_transition_separation": "unavailable",
+        }
+
+    def _pair(self, start, end):
+        return [
+            {"phase": "observe", "elapsed_s": 1, "scheduling_slots": start},
+            {"phase": "observe", "elapsed_s": 999, "scheduling_slots": end},
+        ]
+
+    def test_uses_last_cycle_endpoints_not_lifetime_first_interval(self):
+        meta = _meta(scheduling_profile=True)
+        start = self._row(mono=10_000, cycle=100, intervals=99, interval_bucket=3, anchor_miss=1)
+        start.update({"first_interval_start_mono_ms": 1, "first_interval_ms": 1})
+        end = self._row(mono=11_000, cycle=140, intervals=139, interval_bucket=3, anchor_miss=1)
+        end.update({"first_interval_start_mono_ms": 1, "first_interval_ms": 1})
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
+        self.assertEqual(result["status"], "available")
+        slot = result["slots"][0]
+        self.assertEqual(slot["measured_duration_ms"], 1000)
+        self.assertEqual(slot["interval_n_delta"], 40)
+        self.assertEqual(slot["target_verdict"], "meet")
+        self.assertEqual(slot["coverage_math"], "cycle_delta = interval_delta + mode_break_delta + park_delta + anchor_miss_delta")
+
+    def test_local_origins_are_not_compared_between_slots(self):
+        meta = _meta(scheduling_profile=True)
+        s1 = self._row(slot=1, mono=100_000, cycle=0)
+        e1 = self._row(slot=1, mono=101_000, cycle=40, intervals=40, interval_bucket=3)
+        s2 = self._row(slot=2, mono=7, cycle=0)
+        e2 = self._row(slot=2, mono=1_007, cycle=40, intervals=40, interval_bucket=3)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([s1, s2], [e1, e2]))
+        self.assertEqual(result["status"], "available")
+        self.assertEqual({s["measured_duration_ms"] for s in result["slots"]}, {1000})
+        self.assertFalse(result["global_mono_alignment_claim"])
+
+    def test_missing_or_ended_slot_is_unavailable(self):
+        meta = _meta(scheduling_profile=True)
+        start = self._row(cycle=0)
+        end = self._row(cycle=40, intervals=40, interval_bucket=3, ended=True)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["slots"][0]["reason"], "slot_ended")
+
+    def test_flush_lag_and_insufficient_span_are_unavailable(self):
+        meta = _meta(scheduling_profile=True)
+        start = self._row(mono=10_000, cycle=0, age=2001)
+        end = self._row(mono=11_000, cycle=40, intervals=40, interval_bucket=27)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
+        self.assertEqual(result["slots"][0]["reason"], "stale_snapshot")
+        start = self._row(mono=10_000, cycle=0)
+        end = self._row(mono=10_000, cycle=40, intervals=40, interval_bucket=27)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
+        self.assertEqual(result["slots"][0]["reason"], "invalid_last_cycle_endpoint_span")
+
+    def test_mode_and_park_counters_are_excluded_from_interval_rate(self):
+        meta = _meta(scheduling_profile=True)
+        start = self._row(mono=10_000, cycle=0)
+        end = self._row(mono=11_000, cycle=42, intervals=40, interval_bucket=27,
+                        mode_break=1, park=1)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["slots"][0]["interval_n_delta"], 40)
+        self.assertEqual(result["slots"][0]["mode_break_n_delta"], 1)
+        self.assertEqual(result["slots"][0]["park_n_delta"], 1)
+
+    def test_end_only_expected_slot_is_rejected(self):
+        meta = _meta(scheduling_profile=True)
+        start = self._row(mono=10_000, cycle=0)
+        end = self._row(mono=11_000, cycle=40, intervals=40, interval_bucket=27)
+        extra = self._row(slot=2, mono=11_000, cycle=40, intervals=40, interval_bucket=27)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end, extra]))
+        self.assertEqual(result["reason"], "slot_set_changed")
+
+    def test_paired_bounds_are_inconclusive_when_margin_not_proven(self):
+        candidate = {"status": "available", "lower_ms": 20, "upper_ms": 22}
+        reference = {"status": "available", "lower_ms": 19, "upper_ms": 21}
+        result = rm.compare_paired_p99_bounds(candidate, reference)
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertEqual(result["reason"], "candidate_upper_minus_reference_lower_exceeds_margin")
+
+    def test_one_ms_histogram_bounds_and_counter_reset(self):
+        meta = _meta(scheduling_profile=True)
+        start = self._row(cycle=0, mono=10_000)
+        end = self._row(cycle=40, intervals=40, interval_bucket=27, mono=11_000)
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
+        self.assertEqual(result["slots"][0]["p99"]["upper_ms"], 40)
+        reset = self._row(cycle=40, intervals=40, interval_bucket=3)
+        start_reset = self._row(cycle=0, mono=10_000)
+        reset["last_cycle_mono_ms"] = 11_000
+        start_reset["interval_buckets"][0] = 2
+        reset["interval_buckets"][0] = 1
+        result = rm.evaluate_scheduling_slots(meta, self._pair([start_reset], [reset]))
+        self.assertEqual(result["slots"][0]["reason"], "counter_reset")
+
+
 class DecodeInputGpuSyntheticTests(unittest.TestCase):
     def _resp_pair(self, **end_extra):
         bounds = list(rm.LATENCY_BOUNDS_MS)
