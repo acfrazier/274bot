@@ -1015,10 +1015,14 @@ mod isolate {
             let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
             #[cfg(feature = "memory-profile")]
             let counters = crate::memory_profile::registered();
-            // Resolve diagnostic mode once at isolate creation (not per stop/tick).
+            // Resolve stop-reason capture once at isolate creation (not per stop/tick).
+            // Full diagnostics and failure-only capture both enable the same cache;
+            // host-play keeps Run.diagnostics separate from failure_capture.
             #[cfg(feature = "memory-profile")]
-            if std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1") {
-                counters.enable_diagnostics();
+            if std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1")
+                || std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1")
+            {
+                counters.enable_stop_reason_capture();
             }
             #[cfg(feature = "memory-profile")]
             let thread_counters = counters.clone();
@@ -1123,8 +1127,9 @@ mod isolate {
         pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> { self.counters.clone() }
 
         /// Read cached counters only; do not pump messages or probe JS.
-        /// When diagnostics were enabled at spawn, may include `stop_reason`
-        /// (string, including empty) or `null` if capture was unavailable.
+        /// When stop-reason capture was enabled at spawn (diagnostics and/or
+        /// failure-capture), may include `stop_reason` (string, including empty)
+        /// or `null` if capture was unavailable.
         #[cfg(feature = "memory-profile")]
         pub fn memory_progress(&self) -> serde_json::Value {
             use std::sync::atomic::Ordering::Relaxed;
@@ -1133,7 +1138,7 @@ mod isolate {
                 "last_completed_tick":self.last_completed.load(Relaxed),
                 "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
                 "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(tick,t)|(*tick,t.elapsed().as_millis()))});
-            if self.counters.diagnostics_enabled() {
+            if self.counters.stop_reason_capture_enabled() {
                 match self.counters.stop_reason() {
                     StopReasonCapture::Absent => {}
                     StopReasonCapture::Unavailable => {
@@ -1339,15 +1344,15 @@ mod isolate {
         }
     } )()"#;
 
-    /// When diagnostics are enabled, cache a bounded stop reason on `counters`
-    /// before Runtime drop. Swallows all capture failures as Unavailable.
+    /// When stop-reason capture is enabled, cache a bounded stop reason on
+    /// `counters` before Runtime drop. Swallows all capture failures as Unavailable.
     #[cfg(feature = "memory-profile")]
     fn capture_stop_reason_diag(
         runtime: &mut Runtime,
         counters: &crate::memory_profile::Counters,
     ) {
         use crate::memory_profile::{Counters, StopReasonCapture};
-        if !counters.diagnostics_enabled() {
+        if !counters.stop_reason_capture_enabled() {
             return;
         }
         let capture = match runtime.eval::<Option<String>>(STOP_REASON_CAPTURE_JS) {
@@ -2669,9 +2674,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         )
                         .unwrap_or(false);
                     if stopped {
-                        // Opt-in diagnostics only: cache bounded stopReason on
-                        // the counters Arc before Runtime drop. No new channel
-                        // messages; capture errors must not change Stop.
+                        // Opt-in stop-reason capture (diagnostics or failure-only):
+                        // cache bounded stopReason on the counters Arc before
+                        // Runtime drop. No new channel messages; capture errors
+                        // must not change Stop.
                         #[cfg(feature = "memory-profile")]
                         capture_stop_reason_diag(&mut runtime, &counters);
                         let _ = out.send(ThreadMsg::Completed(n));

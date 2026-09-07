@@ -1,9 +1,11 @@
 //! Passive per-isolate accounting. Snapshot gauges cover queued and decoding
 //! buffers, including capacity; no extra channel messages or JS probes.
 //!
-//! When `BOT_MEMORY_DIAGNOSTICS=1` is resolved once at isolate creation, a
-//! bounded optional stop-reason string may be retained on this Arc for the
-//! diagnostic `memory_progress` payload only. It is never part of [`Counters::snapshot`].
+//! When `BOT_MEMORY_DIAGNOSTICS=1` or `BOT_MEMORY_FAILURE_CAPTURE=1` is resolved
+//! once at isolate creation, a bounded optional stop-reason string may be
+//! retained on this Arc for the `memory_progress` payload only. It is never
+//! part of [`Counters::snapshot`]. Failure-capture enables this cache without
+//! the host-play periodic diagnostic sidecar.
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}};
 
 /// Max Unicode scalars retained for an opt-in diagnostic stop reason.
@@ -12,10 +14,10 @@ pub const STOP_REASON_CAP: usize = 1024;
 /// Opt-in diagnostic capture of `ScriptRunner.stop` / `host.stopReason`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum StopReasonCapture {
-    /// No stop observed yet, or diagnostics were off (nothing written).
+    /// No stop observed yet, or stop-reason capture was off (nothing written).
     #[default]
     Absent,
-    /// Diagnostics on; own data-property string missing, non-string, accessor, or eval failed.
+    /// Capture on; own data-property string missing, non-string, accessor, or eval failed.
     Unavailable,
     /// Own data-property string (may be empty); length ≤ [`STOP_REASON_CAP`].
     Value(String),
@@ -34,9 +36,10 @@ pub struct Counters {
     pub tick_count: AtomicU64,
     pub tick_ns: AtomicU64,
     pub tick_max_ns: AtomicU64,
-    /// Resolved once at isolate creation from `BOT_MEMORY_DIAGNOSTICS=1` (or test enable).
-    diagnostics: AtomicBool,
-    /// Bounded stop reason for diagnostic progress only; not retained on snapshot rows.
+    /// Resolved once at isolate creation from `BOT_MEMORY_DIAGNOSTICS=1`,
+    /// `BOT_MEMORY_FAILURE_CAPTURE=1`, or test enable. Gates stop-reason cache only.
+    stop_reason_capture: AtomicBool,
+    /// Bounded stop reason for progress payloads only; not retained on snapshot rows.
     stop_reason: Mutex<StopReasonCapture>,
 }
 impl Counters {
@@ -53,11 +56,19 @@ impl Counters {
         let ns=elapsed.as_nanos().min(u64::MAX as u128) as u64;
         self.tick_ns.fetch_add(ns,Relaxed);self.tick_max_ns.fetch_max(ns,Relaxed);self.tick_count.fetch_add(1,Relaxed);
     }
+    /// Enable bounded stop-reason retention (diagnostics and/or failure-capture).
     pub fn enable_diagnostics(&self) {
-        self.diagnostics.store(true, Relaxed);
+        self.stop_reason_capture.store(true, Relaxed);
+    }
+    /// Same as [`Self::enable_diagnostics`]; name for failure-only harness mode.
+    pub fn enable_stop_reason_capture(&self) {
+        self.enable_diagnostics();
     }
     pub fn diagnostics_enabled(&self) -> bool {
-        self.diagnostics.load(Relaxed)
+        self.stop_reason_capture.load(Relaxed)
+    }
+    pub fn stop_reason_capture_enabled(&self) -> bool {
+        self.diagnostics_enabled()
     }
     /// Write once on the first stop observation; later calls are no-ops.
     pub fn record_stop_reason(&self, capture: StopReasonCapture) {

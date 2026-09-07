@@ -15,6 +15,7 @@ def build_parser():
     p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')
     p.add_argument('--debug', action='store_true')
     p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
+    p.add_argument('--failure-capture', action='store_true', help='Set BOT_MEMORY_FAILURE_CAPTURE=1 (failure-boundary stop-reason). Independent of diagnostics; pair with --no-diagnostics for failure-only mode (no periodic sidecar)')
     p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
     p.add_argument('--sustain', action='store_true')
     stack_logging = p.add_mutually_exclusive_group()
@@ -58,6 +59,69 @@ def requested_render_policy(a):
         return 'focused-plus-background'
     return 'rotating-all'
 
+# Keys always scrubbed from the child env so parent shell pollution cannot leak.
+_SCRUB_CHILD_ENV = (
+    'BOT_CPU', 'BOT_LIVE', 'BOT_DEBUG', 'MallocStackLogging', 'MallocStackLoggingNoCompact',
+    'BOT_MEMORY_SUSTAIN', 'BOT_MEMORY_SINGLE_RENDERER', 'BOT_MEMORY_RENDER_POLICY',
+    'BOT_MEMORY_FAILURE_CAPTURE', 'BOT_NAV_CAPTURES', 'BOT_SCHEDULING_PROFILE',
+    'BOT_RENDER_PROFILE', 'BOT_GPU_COMPLETION_PROFILE', 'BOT_RESPONSIVENESS_PROFILE',
+    'BOT_RESPONSIVENESS_FINE',
+)
+
+def build_child_env(a, run_dir, base_env=None):
+    """Construct the host-play child environment from CLI args.
+
+    Shared by main and unit tests so scrub/set regressions are caught against
+    the real launcher path (tests must not reimplement pop/set).
+    `run_dir` may be str or pathlib.Path; samples.jsonl is placed under it.
+    """
+    run = pathlib.Path(run_dir)
+    env = dict(base_env) if base_env is not None else os.environ.copy()
+    for k in _SCRUB_CHILD_ENV:
+        env.pop(k, None)
+    env.update(
+        LIVE='1',
+        BOT_TARGET='local',
+        BOT_MEMORY_N=str(a.n),
+        BOT_MEMORY_WORKLOAD=a.workload,
+        BOT_MEMORY_OUTPUT=str(run / 'samples.jsonl'),
+        BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
+        BOT_MEMORY_WARMUP_S=str(a.warmup),
+        BOT_MEMORY_OBSERVE_S=str(a.observe),
+    )
+    env.setdefault('RS2B0T', '/Users/acfrazier/experiments/rs2b0t')
+    # Scrub inherited failure-capture above; set only when the CLI flag is on.
+    if a.failure_capture:
+        env['BOT_MEMORY_FAILURE_CAPTURE'] = '1'
+    if a.debug:
+        env['BOT_DEBUG'] = '1'
+    if a.nav_captures:
+        env['BOT_NAV_CAPTURES'] = '1'
+        env['274BOT_SMOKE_DIR'] = str(run / 'captures')
+    if a.single_renderer:
+        env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
+    elif a.focused_one:
+        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-one'
+    elif a.focused_background:
+        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-plus-background'
+    if a.sustain:
+        env['BOT_MEMORY_SUSTAIN'] = '1'
+    if a.stack_logging:
+        env['MallocStackLogging'] = '1'
+    if a.stack_logging_lite:
+        env['MallocStackLogging'] = 'lite'
+    if a.scheduling_profile:
+        env['BOT_SCHEDULING_PROFILE'] = '1'
+    if a.render_profile:
+        env['BOT_RENDER_PROFILE'] = '1'
+    if a.gpu_completion_profile:
+        env['BOT_GPU_COMPLETION_PROFILE'] = '1'
+    if a.responsiveness_profile:
+        env['BOT_RESPONSIVENESS_PROFILE'] = '1'
+    if a.responsiveness_fine:
+        env['BOT_RESPONSIVENESS_FINE'] = '1'
+    return env
+
 def main(argv=None):
     p = build_parser()
     a = p.parse_args(argv)
@@ -67,31 +131,7 @@ def main(argv=None):
     binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
     run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
     run.mkdir(parents=True, exist_ok=False)
-    env = os.environ.copy()
-    for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_MEMORY_RENDER_POLICY','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE','BOT_RENDER_PROFILE','BOT_GPU_COMPLETION_PROFILE','BOT_RESPONSIVENESS_PROFILE','BOT_RESPONSIVENESS_FINE']:
-        env.pop(k, None)
-    env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
-               BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
-               BOT_MEMORY_WARMUP_S=str(a.warmup), BOT_MEMORY_OBSERVE_S=str(a.observe))
-    env.setdefault('RS2B0T','/Users/acfrazier/experiments/rs2b0t')
-    if a.debug: env['BOT_DEBUG'] = '1'
-    if a.nav_captures:
-        env['BOT_NAV_CAPTURES'] = '1'
-        env['274BOT_SMOKE_DIR'] = str(run/'captures')
-    if a.single_renderer:
-        env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
-    elif a.focused_one:
-        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-one'
-    elif a.focused_background:
-        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-plus-background'
-    if a.sustain: env['BOT_MEMORY_SUSTAIN'] = '1'
-    if a.stack_logging: env['MallocStackLogging'] = '1'
-    if a.stack_logging_lite: env['MallocStackLogging'] = 'lite'
-    if a.scheduling_profile: env['BOT_SCHEDULING_PROFILE'] = '1'
-    if a.render_profile: env['BOT_RENDER_PROFILE'] = '1'
-    if a.gpu_completion_profile: env['BOT_GPU_COMPLETION_PROFILE'] = '1'
-    if a.responsiveness_profile: env['BOT_RESPONSIVENESS_PROFILE'] = '1'
-    if a.responsiveness_fine: env['BOT_RESPONSIVENESS_FINE'] = '1'
+    env = build_child_env(a, run)
     def git(*args):
         return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
     def source_digest(directory):
@@ -109,7 +149,7 @@ def main(argv=None):
     render_policy = requested_render_policy(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
                 nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
-                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,gpu_completion_profile=a.gpu_completion_profile,responsiveness_profile=a.responsiveness_profile,responsiveness_fine=a.responsiveness_fine,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
+                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,gpu_completion_profile=a.gpu_completion_profile,responsiveness_profile=a.responsiveness_profile,responsiveness_fine=a.responsiveness_fine,diagnostic_sidecar=not a.no_diagnostics,failure_capture=a.failure_capture,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                 host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),

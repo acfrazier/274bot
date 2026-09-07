@@ -5453,6 +5453,62 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// Failure-capture env alone enables stop-reason cache without diagnostics env.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_failure_capture_env_without_diagnostics() {
+    struct Guard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+    impl Guard {
+        fn set(key: &'static str, val: &str) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, val);
+            Self { key, prev }
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+    let _fc = Guard::set("BOT_MEMORY_FAILURE_CAPTURE", "1");
+    let _diag = Guard {
+        key: "BOT_MEMORY_DIAGNOSTICS",
+        prev: std::env::var_os("BOT_MEMORY_DIAGNOSTICS"),
+    };
+    std::env::remove_var("BOT_MEMORY_DIAGNOSTICS");
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('fail-only'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    assert!(
+        iso.memory_metrics_handle().stop_reason_capture_enabled(),
+        "FAILURE_CAPTURE=1 must enable stop-reason capture at spawn"
+    );
+    iso.on_game_tick(1);
+    let logs = wait_stop_logs(&iso);
+    assert!(
+        logs.iter()
+            .any(|l| l == "script requested stop on tick 1; isolate stopping"),
+        "generic stop log must be preserved: {logs:?}"
+    );
+    wait_isolate_dead(&iso);
+    assert_eq!(iso.memory_progress()["stop_reason"], "fail-only");
+    assert!(
+        iso.memory_metrics().get("stop_reason").is_none(),
+        "metrics snapshot must not carry stop_reason"
+    );
+    iso.join();
+}
+
 /// New isolate does not retain a prior isolate's stop reason.
 #[cfg(feature = "memory-profile")]
 #[test]

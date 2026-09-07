@@ -358,6 +358,11 @@ pub struct Run {
     card: Option<ScriptCard>,
     output: std::fs::File,
     diagnostics: bool,
+    /// `BOT_MEMORY_FAILURE_CAPTURE=1`: one failure-boundary qualification row +
+    /// isolate stop-reason cache, without the periodic diagnostic sidecar.
+    pub failure_capture: bool,
+    /// Latched once a failure-boundary write is attempted (success or I/O fail).
+    failure_boundary_attempted: bool,
     /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
     pub single_renderer: bool,
     /// Requested panel draw/focus cell; TUI leaves this at [`RenderPolicy::RotatingAll`].
@@ -438,6 +443,9 @@ impl Run {
         let names = crate::mint_live_names(config.n);
         if frontend=="panel" {crate::nav_capture::enable(&names);}
         let diagnostics = std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1");
+        // Resolved once at harness setup (not re-read per sample/failure).
+        let failure_capture =
+            std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1");
         if diagnostics {
             crate::memory_diagnostics::enable(&names);
         }
@@ -540,6 +548,8 @@ impl Run {
             card,
             output,
             diagnostics,
+            failure_capture,
+            failure_boundary_attempted: false,
             diagnostic_output,
             qualification_output,
             single_renderer,
@@ -646,11 +656,15 @@ impl Run {
                 };
                 match status {
                     scenario::RunnerStatus::Failed(msg) => {
-                        let failure = format!("Thiever seed/proof failed for {name}: {msg}");
-                        if self.diagnostics {
-                            self.write_diagnostics(play, Some(&failure))?;
-                        }
-                        return Err(failure);
+                        let failure =
+                            format!("Thiever seed/proof failed for {name}: {msg}");
+                        return self
+                            .handle_harness_failure(
+                                failure,
+                                |run| run.qualification_slots(play),
+                                |run, err| run.write_diagnostics(play, Some(err)),
+                            )
+                            .map(|never| match never {});
                     }
                     scenario::RunnerStatus::Passed => {
                         seeded += 1;
@@ -667,8 +681,13 @@ impl Run {
                 }
                 if let Some(error) = play.script_last_error(name) {
                     let failure = format!("{name}: {error}");
-                    if self.diagnostics { self.write_diagnostics(play, Some(&failure))?; }
-                    return Err(failure);
+                    return self
+                        .handle_harness_failure(
+                            failure,
+                            |run| run.qualification_slots(play),
+                            |run, err| run.write_diagnostics(play, Some(err)),
+                        )
+                        .map(|never| match never {});
                 }
             }
         }
@@ -792,6 +811,7 @@ impl Run {
             value["process_cpu_system_s"] = cpu.map(|v| v.1).into();
             value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
             value["diagnostic_sidecar"] = self.diagnostics.into();
+            value["failure_capture"] = self.failure_capture.into();
             // Requested mode metadata only — not observed GPU/cadence proof.
             value["single_renderer"] = self.single_renderer.into();
             value["render_policy"] = self.render_policy.as_str().into();
@@ -1179,17 +1199,88 @@ impl Run {
 
     // Two boundary reads preserve script progress evidence when verbose
     // diagnostic collection is disabled. Never drains logs or sends actions.
-    fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
+    // Slot reads run before elapsed_s so observe-boundary timing matches the
+    // pre-failure-capture path (flag off / success rows unchanged).
+    fn qualification_slots(&self, play: &Play) -> Vec<serde_json::Value> {
         let statuses = play.statuses();
-        let slots: Vec<_> = self.names.iter().map(|name| serde_json::json!({
-            "name": name,
-            "state": format!("{:?}", play.script_state(name)),
-            "error": play.script_last_error(name),
-            "runtime": play.memory_script_progress(name),
-            "client": statuses.iter().find(|s| &s.username == name).map(|s| serde_json::json!({"ingame":s.ingame,"scene_state":s.scene_state,"x":s.tile_x,"z":s.tile_z,"level":s.tile_level})),
-        })).collect();
-        let value = serde_json::json!({"phase":phase,"elapsed_s":self.started.elapsed().as_secs_f64(),"slots":slots});
-        writeln!(self.qualification_output, "{value}").map_err(|e|e.to_string())
+        self.names
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "state": format!("{:?}", play.script_state(name)),
+                    "error": play.script_last_error(name),
+                    "runtime": play.memory_script_progress(name),
+                    "client": statuses.iter().find(|s| &s.username == name).map(|s| serde_json::json!({
+                        "ingame": s.ingame,
+                        "scene_state": s.scene_state,
+                        "x": s.tile_x,
+                        "z": s.tile_z,
+                        "level": s.tile_level
+                    })),
+                })
+            })
+            .collect()
+    }
+
+    fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
+        let slots = self.qualification_slots(play);
+        let value = serde_json::json!({
+            "phase": phase,
+            "elapsed_s": self.started.elapsed().as_secs_f64(),
+            "slots": slots
+        });
+        writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
+    }
+
+    /// Returns true the first time failure-capture should attempt a row.
+    fn arm_failure_boundary_once(&mut self) -> bool {
+        if !self.failure_capture || self.failure_boundary_attempted {
+            return false;
+        }
+        self.failure_boundary_attempted = true;
+        true
+    }
+
+    /// Production seed/script failure exit used by `poll`/`advance` and unit tests.
+    ///
+    /// Flag contract:
+    /// - Latch **before** the slots producer and I/O. Disabled or already-latched
+    ///   paths never call `slots` (no cached state copies/locks).
+    /// - `failure_capture`: at most one best-effort qualification row; write
+    ///   failures never replace `failure`.
+    /// - `diagnostics`: `diag` runs only when on. If `failure_capture` is also
+    ///   on, diag write errors are swallowed so the original `failure` is kept.
+    ///   If `failure_capture` is off, legacy `?` semantics apply (diag Err wins).
+    /// - neither on: returns `failure` with no producer/I/O.
+    fn handle_harness_failure<S, D>(
+        &mut self,
+        failure: String,
+        slots: S,
+        diag: D,
+    ) -> Result<std::convert::Infallible, String>
+    where
+        S: FnOnce(&Self) -> Vec<serde_json::Value>,
+        D: FnOnce(&mut Self, &str) -> Result<(), String>,
+    {
+        if self.arm_failure_boundary_once() {
+            let rows = slots(self);
+            let value = serde_json::json!({
+                "phase": "failure-boundary",
+                "elapsed_s": self.started.elapsed().as_secs_f64(),
+                "slots": rows,
+                "record": "failure-boundary",
+                "failure": &failure,
+            });
+            let _ = writeln!(self.qualification_output, "{value}");
+        }
+        if self.diagnostics {
+            let r = diag(self, &failure);
+            if !self.failure_capture {
+                r?;
+            }
+        }
+        Err(failure)
     }
 
     fn write_diagnostics(&mut self, play: &Play, failure: Option<&str>) -> Result<(), String> {
@@ -1229,6 +1320,14 @@ mod tests {
 
     /// Env mutation is process-global; serialize these tests.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Recover from a prior poisoned lock so one panicking test does not
+    /// cascade through the whole env-serialized suite.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     struct EnvGuard {
         keys: Vec<&'static str>,
@@ -1286,7 +1385,7 @@ mod tests {
 
     #[test]
     fn parse_render_policy_defaults_rotating_all() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = clear_render_env();
         assert_eq!(
             parse_render_policy("panel").unwrap(),
@@ -1300,7 +1399,7 @@ mod tests {
 
     #[test]
     fn parse_render_policy_legacy_single_renderer() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = clear_render_env();
         std::env::set_var("BOT_MEMORY_SINGLE_RENDERER", "1");
         assert_eq!(
@@ -1312,7 +1411,7 @@ mod tests {
 
     #[test]
     fn parse_render_policy_explicit_modes() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = clear_render_env();
         std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-one");
         assert_eq!(
@@ -1329,7 +1428,7 @@ mod tests {
 
     #[test]
     fn parse_render_policy_rejects_conflict_and_unknown() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = clear_render_env();
         std::env::set_var("BOT_MEMORY_SINGLE_RENDERER", "1");
         std::env::set_var("BOT_MEMORY_RENDER_POLICY", "focused-one");
@@ -1341,7 +1440,7 @@ mod tests {
 
     #[test]
     fn prepare_reads_focused_one_policy_and_pins_focus() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "RS2B0T",
             "BOT_MEMORY_OUTPUT",
@@ -1357,7 +1456,7 @@ mod tests {
 
     #[test]
     fn config_from_env_accepts_n16() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
@@ -1371,7 +1470,7 @@ mod tests {
 
     #[test]
     fn prepare_background_policy_pins_focus() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "RS2B0T",
             "BOT_MEMORY_OUTPUT",
@@ -1387,7 +1486,7 @@ mod tests {
 
     #[test]
     fn prepare_legacy_single_renderer_keeps_flag() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "RS2B0T",
             "BOT_MEMORY_OUTPUT",
@@ -1403,7 +1502,7 @@ mod tests {
 
     #[test]
     fn prepare_tui_rejects_panel_render_policy() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "RS2B0T",
             "BOT_MEMORY_OUTPUT",
@@ -1423,7 +1522,7 @@ mod tests {
 
     #[test]
     fn config_from_env_none_without_bot_memory_n() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
@@ -1435,7 +1534,7 @@ mod tests {
 
     #[test]
     fn config_from_env_rejects_invalid_n() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
@@ -1448,7 +1547,7 @@ mod tests {
 
     #[test]
     fn config_from_env_rejects_invalid_workload() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
@@ -1462,7 +1561,7 @@ mod tests {
 
     #[test]
     fn config_from_env_rejects_zero_durations() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
@@ -1479,7 +1578,7 @@ mod tests {
 
     #[test]
     fn config_from_env_defaults_idle_and_durations() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&[
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
@@ -1601,7 +1700,7 @@ mod tests {
 
     #[test]
     fn prepare_idle_mints_n_names_vault_under_temp_no_card() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let run = Run::prepare(unit_config(1, Workload::Idle), "unit").expect("idle prepare");
         assert_eq!(run.names.len(), 1);
@@ -1642,7 +1741,7 @@ mod tests {
 
     #[test]
     fn bind_seed_nav_from_play_preserves_arc_identity() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
         let world = Arc::new(nav::world::NavWorld::from_parts(
             nav::collision::WorldCollision {
@@ -1673,7 +1772,7 @@ mod tests {
 
     #[test]
     fn bind_seed_nav_from_play_none_keeps_missing_pack() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let run = Run::prepare_unseeded(unit_config(1, Workload::SeededIdle), "unit")
             .expect("unseeded prepare");
@@ -1696,7 +1795,7 @@ mod tests {
 
     #[test]
     fn prepare_with_seed_nav_from_play_matches_bind() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let world = Arc::new(nav::world::NavWorld::from_parts(
             nav::collision::WorldCollision {
@@ -1740,7 +1839,7 @@ mod tests {
 
     #[test]
     fn prepare_seeded_idle_runs_seed_without_catalog() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
         std::env::set_var("BOT_MEMORY_N", "1");
         std::env::set_var("BOT_MEMORY_WORKLOAD", "seeded-idle");
@@ -1755,7 +1854,7 @@ mod tests {
 
     #[test]
     fn prepare_idle_n32_mints_thirty_two_unique_names() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let run = Run::prepare(unit_config(32, Workload::Idle), "unit").expect("idle n=32");
         assert_eq!(run.names.len(), 32);
@@ -1769,7 +1868,7 @@ mod tests {
 
     #[test]
     fn prepare_active_errors_without_rs2b0t() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let err = match Run::prepare(unit_config(1, Workload::Active), "unit") {
             Err(e) => e,
@@ -1780,7 +1879,7 @@ mod tests {
 
     #[test]
     fn prepare_lifecycle_errors_without_rs2b0t() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let err = match Run::prepare(unit_config(1, Workload::Lifecycle), "unit") {
             Err(e) => e,
@@ -1791,9 +1890,199 @@ mod tests {
 
     #[test]
     fn require_live_benchmark_errors_without_live_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvGuard::clear(&["LIVE"]);
         let err = require_live_benchmark().expect_err("LIVE unset");
         assert!(err.contains("LIVE=1"), "got {err}");
+    }
+
+    /// Minimal Run for failure-helper unit tests — no mint/vault/prepare.
+    fn harness_stub(
+        failure_capture: bool,
+        diagnostics: bool,
+        qualification_output: std::fs::File,
+    ) -> Run {
+        let sink = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("/dev/null");
+        Run {
+            config: unit_config(1, Workload::Idle),
+            names: vec!["unit0".into()],
+            vault: PathBuf::from("/tmp/274bot-fc-stub-vault-unused"),
+            pass: String::new(),
+            frontend: "unit",
+            started: Instant::now(),
+            warm: None,
+            observing: None,
+            last_sample: None,
+            lifecycle_cycle: 0,
+            stopped: false,
+            teardown: None,
+            card: None,
+            output: sink.try_clone().expect("clone sink"),
+            diagnostics,
+            failure_capture,
+            failure_boundary_attempted: false,
+            single_renderer: false,
+            render_policy: RenderPolicy::RotatingAll,
+            diagnostic_output: diagnostics.then(|| sink.try_clone().expect("diag sink")),
+            qualification_output,
+        }
+    }
+
+    fn unique_qfile(tag: &str) -> (PathBuf, std::fs::File) {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-fc-stub-{}-{}",
+            tag,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("qualification.jsonl");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        (path, f)
+    }
+
+    /// One prepare integration: env resolves failure_capture without diagnostics sidecar.
+    #[test]
+    fn prepare_failure_capture_without_diagnostics_sidecar() {
+        let _lock = env_lock();
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-fc-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("samples.jsonl");
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_DIAGNOSTICS",
+            "BOT_MEMORY_FAILURE_CAPTURE",
+        ]);
+        std::env::set_var("BOT_MEMORY_OUTPUT", &out);
+        std::env::set_var("BOT_MEMORY_FAILURE_CAPTURE", "1");
+        std::env::remove_var("BOT_MEMORY_DIAGNOSTICS");
+        let run = Run::prepare(unit_config(1, Workload::Idle), "unit").expect("prepare");
+        assert!(run.failure_capture);
+        assert!(!run.diagnostics);
+        assert!(run.diagnostic_output.is_none());
+        assert!(!run.failure_boundary_attempted);
+        assert!(out.exists());
+        assert!(out.with_extension("qualification.jsonl").exists());
+        assert!(
+            !out.with_extension("diagnostics.jsonl").exists(),
+            "failure-capture alone must not create diagnostics.jsonl"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_harness_failure_preserves_err_and_latches_on_writer_fail() {
+        // Read-only fd forces best-effort writeln fail without mint/vault.
+        let q = std::fs::OpenOptions::new()
+            .read(true)
+            .open("/dev/null")
+            .expect("open /dev/null read-only");
+        let mut run = harness_stub(true, false, q);
+        let failure = String::from("Thiever seed/proof failed for unit0: boom");
+        let err1 = run
+            .handle_harness_failure(
+                failure.clone(),
+                |_| vec![],
+                |_, _| panic!("diag must not run when diagnostics is off"),
+            )
+            .expect_err("must return harness failure");
+        assert_eq!(err1, failure);
+        assert!(run.failure_boundary_attempted);
+        let err2 = run
+            .handle_harness_failure(
+                failure.clone(),
+                |_| panic!("slots producer must not run when already latched"),
+                |_, _| panic!("diag must not run when diagnostics is off"),
+            )
+            .expect_err("repeat must still return original failure");
+        assert_eq!(err2, failure);
+        assert!(run.failure_boundary_attempted);
+    }
+
+    #[test]
+    fn handle_harness_failure_noop_when_flag_off() {
+        let (qpath, q) = unique_qfile("off");
+        let before = std::fs::metadata(&qpath).map(|m| m.len()).unwrap_or(0);
+        let mut run = harness_stub(false, false, q);
+        let err = run
+            .handle_harness_failure(
+                "unit0: script stopped".into(),
+                |_| panic!("slots producer must not run when failure_capture is off"),
+                |_, _| panic!("diag must not run when diagnostics is off"),
+            )
+            .expect_err("still returns failure");
+        assert_eq!(err, "unit0: script stopped");
+        assert!(!run.failure_boundary_attempted);
+        let after = std::fs::metadata(&qpath).map(|m| m.len()).unwrap_or(0);
+        assert_eq!(before, after, "flag off must not write a failure row");
+        let _ = std::fs::remove_dir_all(qpath.parent().unwrap());
+    }
+
+    #[test]
+    fn handle_harness_failure_diag_err_swallowed_when_capture_on() {
+        let (_qpath, q) = unique_qfile("diag-cap");
+        let mut run = harness_stub(true, true, q);
+        let failure = String::from("orig-seed-err");
+        let err = run
+            .handle_harness_failure(
+                failure.clone(),
+                |_| vec![],
+                |_, _| Err("diag-disk-full".into()),
+            )
+            .expect_err("must return failure");
+        assert_eq!(
+            err, failure,
+            "failure_capture on: original Err survives diag write fail"
+        );
+        assert!(run.failure_boundary_attempted);
+        let _ = std::fs::remove_dir_all(_qpath.parent().unwrap());
+    }
+
+    #[test]
+    fn handle_harness_failure_diag_err_wins_when_capture_off() {
+        let (_qpath, q) = unique_qfile("legacydiag");
+        let mut run = harness_stub(false, true, q);
+        let err = run
+            .handle_harness_failure(
+                "orig-seed-err".into(),
+                |_| panic!("slots producer must not run when failure_capture is off"),
+                |_, _| Err("diag-disk-full".into()),
+            )
+            .expect_err("legacy diag ? must surface");
+        assert_eq!(err, "diag-disk-full");
+        assert!(!run.failure_boundary_attempted);
+        let _ = std::fs::remove_dir_all(_qpath.parent().unwrap());
+    }
+
+    #[test]
+    fn failure_capture_and_diagnostics_flags_independent_on_stub() {
+        let (_qpath, q) = unique_qfile("both");
+        let run = harness_stub(true, true, q);
+        assert!(run.failure_capture);
+        assert!(run.diagnostics);
+        assert!(run.diagnostic_output.is_some());
+        let run_off = harness_stub(false, false, std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .unwrap());
+        assert!(!run_off.failure_capture);
+        assert!(!run_off.diagnostics);
+        let _ = std::fs::remove_dir_all(_qpath.parent().unwrap());
     }
 }

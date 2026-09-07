@@ -125,6 +125,55 @@ class RunDiagnosticCli(unittest.TestCase):
         bad = run_cli("panel", "1", "idle", "--responsiveness-fine")
         self.assertNotEqual(bad.returncode, 0)
 
+    def test_failure_capture_flag_independent_of_diagnostics(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        only = p.parse_args(["panel", "1", "idle", "--no-diagnostics", "--failure-capture"])
+        rd.validate_args(only, p)
+        self.assertTrue(only.failure_capture)
+        self.assertTrue(only.no_diagnostics)
+        both = p.parse_args(["panel", "16", "active", "--failure-capture"])
+        rd.validate_args(both, p)
+        self.assertTrue(both.failure_capture)
+        self.assertFalse(both.no_diagnostics)
+        off = p.parse_args(["tui", "1", "idle"])
+        self.assertFalse(off.failure_capture)
+        help_proc = run_cli("--help")
+        self.assertIn("--failure-capture", help_proc.stdout)
+        self.assertIn("--no-diagnostics", help_proc.stdout)
+        self.assertIn("failure-only", help_proc.stdout)
+
+    def test_failure_capture_env_scrubbed_unless_flag(self):
+        """Inherited BOT_MEMORY_FAILURE_CAPTURE must not leak when CLI flag is off."""
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a_off = p.parse_args(["panel", "1", "idle", "--no-diagnostics"])
+        rd.validate_args(a_off, p)
+        a_on = p.parse_args(["panel", "1", "idle", "--no-diagnostics", "--failure-capture"])
+        rd.validate_args(a_on, p)
+        polluted = {
+            "BOT_MEMORY_FAILURE_CAPTURE": "1",
+            "BOT_RESPONSIVENESS_FINE": "1",
+            "PATH": "/usr/bin",
+            "HOME": "/tmp",
+        }
+        env_off = rd.build_child_env(a_off, "/tmp/fc-off-run", base_env=polluted)
+        self.assertNotIn("BOT_MEMORY_FAILURE_CAPTURE", env_off)
+        self.assertNotIn("BOT_RESPONSIVENESS_FINE", env_off)
+        self.assertEqual(env_off["BOT_MEMORY_DIAGNOSTICS"], "0")
+        env_on = rd.build_child_env(a_on, "/tmp/fc-on-run", base_env=polluted)
+        self.assertEqual(env_on.get("BOT_MEMORY_FAILURE_CAPTURE"), "1")
+        self.assertNotIn("BOT_RESPONSIVENESS_FINE", env_on)
+        self.assertEqual(env_on["BOT_MEMORY_DIAGNOSTICS"], "0")
+        # Flag alone (diagnostics default on) remains legal.
+        a_both = p.parse_args(["panel", "1", "idle", "--failure-capture"])
+        rd.validate_args(a_both, p)
+        env_both = rd.build_child_env(a_both, "/tmp/fc-both-run", base_env=polluted)
+        self.assertEqual(env_both.get("BOT_MEMORY_FAILURE_CAPTURE"), "1")
+        self.assertEqual(env_both["BOT_MEMORY_DIAGNOSTICS"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()
