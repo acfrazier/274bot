@@ -56,6 +56,45 @@ live acceptance run or integration may rely on an invalid review. Keep clean
 measurements free of concurrent builds, agent tests, other benchmarks and native
 profiling. Diagnostic overlap must be recorded and excluded from performance claims.
 
+## Review cadence and reviewer trial
+
+Operator approved this trial on 2026-09-07. Keep existing profile defaults,
+same-card per-task Grok 4.5 review, and required final whole-branch Grok 4.6.
+
+- Before substantial architecture implementation, review the ownership model,
+  behavior invariants, expected benefit, and a bounded experiment that could
+  disprove the proposal. A design approval does not establish a measured win.
+- At a completed integration milestone, review the combined changes before
+  expensive native comparison work. Trigger this at changes crossing observation
+  publication, script transport, client/rendering ownership, or lifecycle
+  boundaries, or when evidence invalidates a shared assumption. Use coherent
+  capabilities and risk, rather than a fixed number of commits.
+- After measurements, independently recompute important results from the raw
+  artifacts and verify that fixture coverage and accounting support the claims.
+  Source review alone does not approve an evidence conclusion.
+- At campaign completion, review the whole branch and the requirement-to-evidence
+  mapping. Earlier milestones narrow the unresolved questions; they do not
+  replace the required final Grok 4.6 pass.
+
+For the first integration checkpoint, trial a fresh Astra session using the
+existing `orch` profile as an independent reviewer alongside a Grok 4.6 session
+using `branchreviewer`. These are separate milestone reviews, not duplicate
+routine reviews of every task. Neither reviewer implements its own fixes.
+Root freezes an exact base/head pair and evidence manifest after prerequisite
+task reviews, gives both reviewers the same contract, diff, relevant surrounding
+code, test evidence and known unresolved issues, and withholds the other trial
+reviewer's new findings until each independent pass is submitted. Do not evaluate
+a moving HEAD or imply that uncommitted worker changes were reviewed.
+
+Root reconciles the findings against source, raw evidence or reproductions and
+records severity, confirmed unique findings, overlap, rejected findings and why,
+later-discovered misses, actual model/provider, reviewed commits and elapsed time.
+Retain legitimate disagreements for resolution; do not decide by majority vote
+or raw finding count. One trial supplies local evidence, not a general model
+ranking. Change standing reviewer assignments only after the operator decides.
+Fix material findings, obtain the appropriate follow-up review, then release
+dependent native work. Independent preparation can continue in the meantime.
+
 ## Monitoring from this session
 
 CLI creation is not a promise of a notification to Codex. An external Codex
