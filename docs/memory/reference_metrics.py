@@ -636,6 +636,34 @@ def _hist_sum(buckets: Optional[list]) -> Optional[int]:
     return total
 
 
+def _exact_int_bounds_tuple(bound_list: Any, expected: tuple[int, ...]) -> bool:
+    """True only when bound_list is exact finite nonnegative ints matching expected.
+
+    Rejects bools, fractional floats (5.9), NaN/inf (no OverflowError via int()),
+    strings, and wrong length/order. No lossy int() coercion.
+    """
+    if not isinstance(bound_list, (list, tuple)):
+        return False
+    if len(bound_list) != len(expected):
+        return False
+    for x, exp in zip(bound_list, expected):
+        # bool is a subclass of int — reject explicitly.
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            return False
+        if isinstance(x, float):
+            if not math.isfinite(x) or x < 0:
+                return False
+            # Exact integer-valued float only (5.0 ok; 5.9 reject). No bare int(inf).
+            as_int = int(x)
+            if x != as_int or as_int != exp:
+                return False
+        else:
+            # pure int
+            if x < 0 or x != exp:
+                return False
+    return True
+
+
 def _int_counter_delta(start_row: dict, end_row: dict, key: str) -> tuple[Optional[int], Optional[str]]:
     """Non-negative integer delta for a cumulative counter field when present on both rows."""
     if key not in start_row and key not in end_row:
@@ -894,23 +922,141 @@ def paired_fine_p99_margin(
 # not independently-qualified matched-run proof. Keep arithmetic helper above.
 
 
+def _validate_row_hist_conservation(row: dict, prefix: str) -> Optional[dict]:
+    """Per selected native row: hist sum == latency_n == dispatch/complete (+ fine).
+
+    Required under the responsiveness profile: coarse hist, latency_n, and the
+    event counter the publisher always emits. Fine is optional but when present
+    must conserve against the same row's coarse hist and latency_n. Does not
+    search for a favorable sub-window — callers audit every selected row.
+    """
+    if prefix == "decode":
+        coarse_key = "decode_latency_buckets"
+        fine_key = "decode_fine_latency_buckets"
+        lat_key = "decode_latency_n"
+        event_key = "dispatch_n"
+        event_hist_reason = "histogram_dispatch_mismatch"
+        lat_event_reason = "latency_n_dispatch_mismatch"
+    elif prefix == "input":
+        coarse_key = "input_latency_buckets"
+        fine_key = "input_fine_latency_buckets"
+        lat_key = "input_latency_n"
+        event_key = "input_complete_n"
+        event_hist_reason = "histogram_complete_mismatch"
+        lat_event_reason = "latency_n_complete_mismatch"
+    else:
+        return {"reason": "unknown_prefix", "prefix": prefix}
+
+    if coarse_key not in row or row.get(coarse_key) is None:
+        return {"reason": "histogram_missing", "field": coarse_key}
+    if lat_key not in row or row.get(lat_key) is None:
+        return {"reason": "latency_counter_incomplete", "field": lat_key}
+    if event_key not in row or row.get(event_key) is None:
+        return {"reason": "counter_missing_or_malformed", "field": event_key}
+
+    coarse = row.get(coarse_key)
+    if not isinstance(coarse, list):
+        return {"reason": "histogram_malformed", "field": coarse_key}
+    expected_coarse_w = len(LATENCY_BOUNDS_MS) + 1
+    if len(coarse) != expected_coarse_w:
+        return {"reason": "coarse_histogram_width_mismatch", "field": coarse_key}
+
+    bound_list = row.get("latency_bound_ms")
+    if bound_list is None:
+        return {"reason": "latency_bounds_missing", "field": "latency_bound_ms"}
+    if not _exact_int_bounds_tuple(bound_list, LATENCY_BOUNDS_MS):
+        return {"reason": "latency_bounds_schema_mismatch", "field": "latency_bound_ms"}
+
+    coarse_sum = _hist_sum(coarse)
+    if coarse_sum is None:
+        return {"reason": "histogram_malformed", "field": coarse_key}
+
+    lat_v = row.get(lat_key)
+    if not _finite(lat_v) or float(lat_v) != int(lat_v) or int(lat_v) < 0:
+        return {"reason": "latency_counter_malformed", "field": lat_key}
+    lat_n = int(lat_v)
+
+    ev_v = row.get(event_key)
+    if not _finite(ev_v) or float(ev_v) != int(ev_v) or int(ev_v) < 0:
+        return {"reason": "counter_missing_or_malformed", "field": event_key}
+    event_n = int(ev_v)
+
+    if coarse_sum != lat_n:
+        return {"reason": "histogram_latency_n_mismatch", "field": coarse_key,
+                "hist_sum": coarse_sum, "latency_n": lat_n}
+    if coarse_sum != event_n:
+        return {"reason": event_hist_reason, "field": coarse_key,
+                "hist_sum": coarse_sum, "event_n": event_n}
+    if lat_n != event_n:
+        return {"reason": lat_event_reason, "latency_n": lat_n, "event_n": event_n}
+
+    fine = row.get(fine_key)
+    if fine is not None:
+        if not isinstance(fine, list):
+            return {"reason": "histogram_malformed", "field": fine_key}
+        expected_fine_w = len(FINE_LATENCY_BOUNDS_MS) + 1
+        if len(fine) != expected_fine_w:
+            return {"reason": "fine_histogram_width_mismatch", "field": fine_key}
+        fine_bound_list = row.get("fine_latency_bound_ms")
+        if fine_bound_list is None:
+            return {"reason": "fine_latency_bounds_missing", "field": "fine_latency_bound_ms"}
+        if not _exact_int_bounds_tuple(fine_bound_list, FINE_LATENCY_BOUNDS_MS):
+            return {"reason": "fine_latency_bounds_schema_mismatch",
+                    "field": "fine_latency_bound_ms"}
+        fine_sum = _hist_sum(fine)
+        if fine_sum is None:
+            return {"reason": "histogram_malformed", "field": fine_key}
+        if fine_sum != lat_n:
+            return {"reason": "fine_histogram_latency_n_mismatch", "field": fine_key,
+                    "hist_sum": fine_sum, "latency_n": lat_n}
+        if fine_sum != coarse_sum:
+            return {"reason": "fine_coarse_count_mismatch",
+                    "fine_sum": fine_sum, "coarse_sum": coarse_sum}
+        roll_err = _validate_fine_coarse_conservation(list(coarse), list(fine))
+        if roll_err:
+            return {"reason": roll_err, "field": fine_key}
+    return None
+
+
 def _validate_interior_histograms(selected_items: list, prefix: str) -> Optional[dict]:
-    """Interior coarse+fine histograms and latency_n must be non-decreasing when present.
+    """Interior coarse+fine histograms and latency_n must be non-decreasing.
 
     Shared by decode and input counter families — input must not return before this.
     Also rejects recovered resets where counters climb but hist counts drop then recover.
+    Every selected row (endpoints + interior) must conserve hist sum == latency_n ==
+    dispatch/complete; missing required native fields reject. Maximal span is kept —
+    no favorable inner window around a bad middle.
     """
     if prefix == "decode":
-        hist_keys = ["decode_latency_buckets", "decode_fine_latency_buckets"]
+        coarse_key = "decode_latency_buckets"
+        fine_key = "decode_fine_latency_buckets"
         lat_key = "decode_latency_n"
+        hist_keys = [coarse_key, fine_key]
     elif prefix == "input":
-        hist_keys = ["input_latency_buckets", "input_fine_latency_buckets"]
+        coarse_key = "input_latency_buckets"
+        fine_key = "input_fine_latency_buckets"
         lat_key = "input_latency_n"
+        hist_keys = [coarse_key, fine_key]
     else:
         return {"reason": "unknown_prefix", "prefix": prefix}
+
+    # Fine presence must be uniform across the selected span (all or none).
+    fine_flags = [item["row"].get(fine_key) is not None for item in selected_items]
+    if any(fine_flags) and not all(fine_flags):
+        return {"reason": "histogram_missing_interior", "field": fine_key}
+
+    # Coarse hist required on every selected row (native always emits under profile).
+    for item in selected_items:
+        if item["row"].get(coarse_key) is None:
+            return {"reason": "histogram_missing", "field": coarse_key}
+        if lat_key not in item["row"] or item["row"].get(lat_key) is None:
+            return {"reason": "latency_counter_incomplete", "field": lat_key}
+
+    # Monotonicity first so recovered resets still surface as counter_reset.
     for hkey in hist_keys:
         prev = selected_items[0]["row"].get(hkey)
         if prev is None:
+            # Fine optional when entirely absent; coarse already required above.
             continue
         if not isinstance(prev, list):
             return {"reason": "histogram_malformed", "field": hkey}
@@ -927,19 +1073,21 @@ def _validate_interior_histograms(selected_items: list, prefix: str) -> Optional
             ):
                 return {"reason": "counter_reset", "field": hkey}
             prev = cur
-    # latency_n monotonic when present on any interior row.
-    if any(lat_key in item["row"] for item in selected_items):
-        prev_lat = None
-        for item in selected_items:
-            if lat_key not in item["row"]:
-                return {"reason": "latency_counter_incomplete", "field": lat_key}
-            v = item["row"].get(lat_key)
-            if not _finite(v) or float(v) != int(v) or int(v) < 0:
-                return {"reason": "latency_counter_malformed", "field": lat_key}
-            vi = int(v)
-            if prev_lat is not None and vi < prev_lat:
-                return {"reason": "counter_reset", "field": lat_key}
-            prev_lat = vi
+    prev_lat = None
+    for item in selected_items:
+        v = item["row"].get(lat_key)
+        if not _finite(v) or float(v) != int(v) or int(v) < 0:
+            return {"reason": "latency_counter_malformed", "field": lat_key}
+        vi = int(v)
+        if prev_lat is not None and vi < prev_lat:
+            return {"reason": "counter_reset", "field": lat_key}
+        prev_lat = vi
+
+    # Every selected row (endpoints + interior): hist sum == latency_n == event.
+    for item in selected_items:
+        row_err = _validate_row_hist_conservation(item["row"], prefix)
+        if row_err is not None:
+            return row_err
     return None
 
 

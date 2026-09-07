@@ -1240,6 +1240,218 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         self.assertEqual(g["status"], "unavailable", g)
         self.assertEqual(g["slots"][0]["reason"], "counter_reset", g["slots"][0])
 
+    def test_input_interior_hist_conservation_mismatch_rejects_maximal_span(self):
+        """Orch b157df7 hole: monotonic middle hist 201 vs complete/latency_n 250.
+
+        Endpoints conserve; interior only was monotonic. Must stay unavailable
+        without shrinking the maximal contained window around the bad middle.
+        """
+        path = (
+            ROOT
+            / "diagnostics"
+            / "clock-adapter-review-20260907T022630Z"
+            / "input-interior-conservation-mismatch.json"
+        )
+        data = json.loads(path.read_text())
+        g = rm.evaluate_input(data["meta"], data["samples"], target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(
+            g["slots"][0]["reason"],
+            "histogram_latency_n_mismatch",
+            g["slots"][0],
+        )
+        self.assertNotEqual(g["slots"][0].get("target_verdict"), "meet")
+        self.assertNotEqual(g["slots"][0].get("contained_window"), True)
+
+    def test_decode_interior_hist_conservation_mismatch_rejects(self):
+        """Decode sibling: middle hist under-counts vs dispatch/latency_n."""
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        e0, e1, e2, e3 = 40e9, 70e9, 85e9, 100e9
+        bounds = list(rm.LATENCY_BOUNDS_MS)
+
+        def stamp(row, clo, chi):
+            row["decode_capture_mono_ns_lower"] = int(clo)
+            row["decode_capture_mono_ns_upper"] = int(chi)
+            row["latency_bound_ms"] = bounds
+
+        start_row = start["responsiveness_profile"][0]
+        stamp(start_row, 10e9, 10e9 + 1e5)
+        mid = json.loads(json.dumps(start))
+        mid["elapsed_s"] = 100.0
+        mr = mid["responsiveness_profile"][0]
+        # Monotonic hist 200→201→300 but dispatch/latency_n 200→250→300.
+        mr.update({
+            "decode_edge_n": 250, "dispatch_n": 250, "decode_latency_n": 250,
+            "decode_latency_buckets": [0, 0, 0, 20, 181, 0, 0, 0, 0, 0, 0],  # sum 201
+            "decode_canceled_n": 5, "decode_unmatched_canceled_n": 5,
+            "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
+        })
+        stamp(mr, e0 + 1e6, e0 + 2e6)
+        end_row = end["responsiveness_profile"][0]
+        end_row.update({
+            "decode_edge_n": 300, "dispatch_n": 300, "decode_latency_n": 300,
+            "decode_latency_buckets": [0, 0, 0, 30, 270, 0, 0, 0, 0, 0, 0],
+            "decode_canceled_n": 5, "decode_unmatched_canceled_n": 5,
+        })
+        stamp(end_row, e1 + 1e6, e1 + 2e6)
+        # Extra interior after mid so maximal span includes the bad middle.
+        mid2 = json.loads(json.dumps(end))
+        mid2["elapsed_s"] = 130.0
+        m2 = mid2["responsiveness_profile"][0]
+        m2.update({
+            "decode_edge_n": 280, "dispatch_n": 280, "decode_latency_n": 280,
+            "decode_latency_buckets": [0, 0, 0, 28, 252, 0, 0, 0, 0, 0, 0],
+            "updated_ms": int((_meta()["started_unix"] + 129.7) * 1000),
+        })
+        stamp(m2, 60e9, 60e9 + 1e5)
+        samples = [start, mid, mid2, end]
+        for s, en in zip(samples, (e0, e1, e2, e3)):
+            s["responsiveness_clock"] = self._mono_clock(
+                int(en), sample_lo=int(en), sample_hi=int(en) + 5_000_000,
+                read_lo=int(en) + 100_000, read_hi=int(en) + 3_000_000,
+            )
+        g = rm.evaluate_decode(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(
+            g["slots"][0]["reason"],
+            "histogram_latency_n_mismatch",
+            g["slots"][0],
+        )
+
+    def test_input_missing_required_latency_n_rejects(self):
+        """Native always emits input_latency_n under the profile — missing rejects."""
+        meta = _meta(responsiveness_profile=True)
+        bounds = list(rm.LATENCY_BOUNDS_MS)
+        e0, e1 = 40e9, 100e9
+
+        def row(n, *, drop_lat=False):
+            r = {
+                "slot_id": 7, "generation": 1, "sample_age_ms": 0,
+                "decode_edge_n": n, "dispatch_n": n,
+                "decode_canceled_n": 5, "decode_unmatched_canceled_n": 5,
+                "decode_lost_n": 0, "decode_dropped_n": 0, "decode_pending_n": 0,
+                "decode_latency_n": n,
+                "decode_latency_buckets": [0, 0, 0, 0, n, 0, 0, 0, 0, 0, 0],
+                "decode_coverage_complete": False,
+                "latency_bound_ms": bounds, "ended": False,
+                "updated_ms": 0,
+                "decode_capture_mono_ns_lower": int(e0 + 1e6 if n > 100 else 10e9),
+                "decode_capture_mono_ns_upper": int(e0 + 2e6 if n > 100 else 10e9 + 1e5),
+                "input_start_n": n, "input_complete_n": n,
+                "input_canceled_n": 0, "input_lost_n": 0, "input_dropped_n": 0,
+                "input_pending_n": 0,
+                "input_latency_buckets": [n] + [0] * 10,
+                "input_coverage_complete": True,
+                "input_surface": "tui",
+                "visible_ack": {"available": True},
+                "input_capture_mono_ns_lower": int(e0 + 1e6 if n > 100 else 10e9),
+                "input_capture_mono_ns_upper": int(e0 + 2e6 if n > 100 else 10e9 + 1e5),
+            }
+            if not drop_lat:
+                r["input_latency_n"] = n
+            return r
+
+        start = {
+            "phase": "observe", "elapsed_s": 40.5,
+            "responsiveness_profile": [row(100)],
+            "responsiveness_clock": self._mono_clock(
+                int(e0), sample_lo=int(e0), sample_hi=int(e0) + 5_000_000,
+                read_lo=int(e0) + 100_000, read_hi=int(e0) + 3_000_000,
+            ),
+        }
+        end = {
+            "phase": "observe", "elapsed_s": 160.0,
+            "responsiveness_profile": [row(300, drop_lat=True)],
+            "responsiveness_clock": self._mono_clock(
+                int(e1), sample_lo=int(e1), sample_hi=int(e1) + 5_000_000,
+                read_lo=int(e1) + 100_000, read_hi=int(e1) + 3_000_000,
+            ),
+        }
+        # Start capture before observe_lb so selected span is end-only? Need two
+        # selected rows: put start capture inside observe window too.
+        start["responsiveness_profile"][0]["input_capture_mono_ns_lower"] = int(e0 + 1e6)
+        start["responsiveness_profile"][0]["input_capture_mono_ns_upper"] = int(e0 + 2e6)
+        start["responsiveness_profile"][0]["decode_capture_mono_ns_lower"] = int(e0 + 1e6)
+        start["responsiveness_profile"][0]["decode_capture_mono_ns_upper"] = int(e0 + 2e6)
+        end["responsiveness_profile"][0]["input_capture_mono_ns_lower"] = int(e0 + 3e6)
+        end["responsiveness_profile"][0]["input_capture_mono_ns_upper"] = int(e0 + 4e6)
+        g = rm.evaluate_input(meta, [start, end], target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(
+            g["slots"][0]["reason"],
+            "latency_counter_incomplete",
+            g["slots"][0],
+        )
+
+    def test_exact_int_bounds_tuple_rejects_lossy_and_nonfinite(self):
+        """Bounds schema: no lossy int() coercion; bool/frac/inf/NaN reject."""
+        exp = rm.LATENCY_BOUNDS_MS
+        self.assertTrue(rm._exact_int_bounds_tuple(list(exp), exp))
+        self.assertTrue(rm._exact_int_bounds_tuple(tuple(float(x) for x in exp), exp))
+        bad_frac = list(exp)
+        bad_frac[0] = 5.9
+        self.assertFalse(rm._exact_int_bounds_tuple(bad_frac, exp))
+        bad_bool = list(exp)
+        bad_bool[0] = True  # would become 1 under int()
+        self.assertFalse(rm._exact_int_bounds_tuple(bad_bool, exp))
+        bad_inf = list(exp)
+        bad_inf[0] = float("inf")
+        self.assertFalse(rm._exact_int_bounds_tuple(bad_inf, exp))
+        bad_nan = list(exp)
+        bad_nan[0] = float("nan")
+        self.assertFalse(rm._exact_int_bounds_tuple(bad_nan, exp))
+        bad_neg = list(exp)
+        bad_neg[0] = -5
+        self.assertFalse(rm._exact_int_bounds_tuple(bad_neg, exp))
+        self.assertFalse(rm._exact_int_bounds_tuple(list(exp)[:-1], exp))
+        mutated = list(exp)
+        mutated[3] = 26  # was 25
+        self.assertFalse(rm._exact_int_bounds_tuple(mutated, exp))
+
+    def test_decode_middle_fractional_bounds_reject(self):
+        """Mutated middle latency_bound_ms with fractional edge fails closed."""
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        e0, e1, e2 = 40e9, 70e9, 100e9
+        start["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": 10_000_000_000,
+            "decode_capture_mono_ns_upper": 10_000_100_000,
+        })
+        mid = json.loads(json.dumps(start))
+        mid["elapsed_s"] = 100.0
+        mr = mid["responsiveness_profile"][0]
+        bad_bounds = list(rm.LATENCY_BOUNDS_MS)
+        bad_bounds[0] = 5.9
+        mr.update({
+            "decode_edge_n": 200, "dispatch_n": 200, "decode_latency_n": 200,
+            "decode_latency_buckets": [0, 0, 0, 20, 180, 0, 0, 0, 0, 0, 0],
+            "latency_bound_ms": bad_bounds,
+            "decode_capture_mono_ns_lower": e0 + 1_000_000,
+            "decode_capture_mono_ns_upper": e0 + 2_000_000,
+            "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
+        })
+        end["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e1 + 1_000_000,
+            "decode_capture_mono_ns_upper": e1 + 2_000_000,
+        })
+        start["responsiveness_clock"] = self._mono_clock(int(e0))
+        mid["responsiveness_clock"] = self._mono_clock(
+            int(e1), sample_lo=int(e1), sample_hi=int(e1) + 5_000_000,
+            read_lo=int(e1) + 100_000, read_hi=int(e1) + 3_000_000,
+        )
+        end["responsiveness_clock"] = self._mono_clock(
+            int(e2), sample_lo=int(e2), sample_hi=int(e2) + 5_000_000,
+            read_lo=int(e2) + 100_000, read_hi=int(e2) + 3_000_000,
+        )
+        g = rm.evaluate_decode(meta, [start, mid, end], target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(
+            g["slots"][0]["reason"],
+            "latency_bounds_schema_mismatch",
+            g["slots"][0],
+        )
+
 
 class ObservationWindowTests(unittest.TestCase):
     def test_boundaries_and_contamination_intersection(self):

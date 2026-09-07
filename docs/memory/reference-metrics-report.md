@@ -11,7 +11,8 @@ that span, including duplicate/missing rows, monotonic slot-generation counters,
 resets (including interior histogram recovered-resets), cancellation/lost/drop
 deltas, pending boundaries (pending is a gauge), decode accounting with
 `decode_unmatched_canceled_n` when present, and coarse/fine histogram
-conservation vs `latency_n` / dispatch or complete deltas.
+conservation on **every selected native row** (hist sum == `latency_n` ==
+dispatch/complete; stable exact-integer bounds schema) plus boundary deltas.
 
 ## Native mono clock brackets (task `t_6670c1ec`)
 

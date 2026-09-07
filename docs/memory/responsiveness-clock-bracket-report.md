@@ -24,7 +24,8 @@ Scope: instrumentation + offline adapter only. **No live/performance acceptance,
 - Without mono: fail-closed `publisher_clock_bracket_missing` after counter audit.
 - Decode identity: `edge = dispatch + canceled - unmatched + pending + dropped + lost`; pending is a gauge.
 - **Both** decode and input run interior histogram + `latency_n` monotonic checks before accepting a span (closes recovered hist-reset false pass).
-- Hist conservation: coarse sum == `latency_n` delta == dispatch (decode) / complete (input) delta when those fields are present; when fine is present, fine sum matches and rolls into coarse ≤100 bins with overflow equality.
+- **Per selected native row** (endpoints + every interior): coarse hist sum == `latency_n` == dispatch (decode) / complete (input); required native hist/latency_n/event/bounds fields missing → reject (not optional-when-present). When fine is present on the span, it must be uniform, conserve totals, and roll into coarse ≤100 bins with overflow equality. Maximal contained span is kept — no favorable inner search around a bad middle.
+- Boundary hist conservation (span delta) still applies after selection: coarse sum == `latency_n` delta == dispatch/complete delta; fine when present.
 - Single-run emits coarse/fine p99 bounds only. **No same-run `fine_paired_within_2ms`.**
 - `paired_fine_p99_margin` is a **diagnostic** bound-difference helper only: finite
   nonnegative lower≤upper bounds may yield `diagnostic_margin_ms`, but status stays
@@ -52,11 +53,12 @@ Exact live on/off overhead measurement remains **missing** (resource overhead pr
 | `cargo test -p host --lib responsiveness_profile -- --test-threads=1` | **21 passed** |
 | `cargo test -p host-play --lib --features memory-profile -- --test-threads=1` | **146 passed** |
 | `cargo check -p tui --features memory-profile` | **ok** |
-| `python3 -m unittest test_reference_metrics test_run_diagnostic` | **85 passed** (after paired provenance tests) |
+| `python3 -m unittest test_reference_metrics test_run_diagnostic` | **90 passed** |
 
 Adversarial fixtures under `docs/memory/diagnostics/clock-adapter-review-20260907T022630Z/`:
 - `input-recovered-histogram-reset.json` → `unavailable` / `counter_reset`
 - `same-run-false-paired-proof.json` → no same-run paired claim; conservation rejects inconsistent fine/coarse
+- `input-interior-conservation-mismatch.json` → `unavailable` / `histogram_latency_n_mismatch` (per-row; was false-available on b157df7)
 
 ## Limitations (explicit)
 
