@@ -1034,6 +1034,62 @@ impl GameSnapshot {
         &self.side_tabs
     }
 
+    /// Prototype/test support: take the owned widgets body after a real
+    /// rebuild without changing production gate/rebuild behavior.
+    #[doc(hidden)]
+    pub fn proto_take_widgets(&mut self) -> Vec<WidgetView> {
+        std::mem::take(&mut self.widgets)
+    }
+
+    /// Prototype/test support: take the owned side-tabs body.
+    #[doc(hidden)]
+    pub fn proto_take_side_tabs(&mut self) -> Vec<SideTabView> {
+        std::mem::take(&mut self.side_tabs)
+    }
+
+    /// Prototype/test support: take the owned loc body.
+    #[doc(hidden)]
+    pub fn proto_take_locs(&mut self) -> Vec<LocView> {
+        std::mem::take(&mut self.loc)
+    }
+
+    /// Prototype/test support: restore an owned widgets body (e.g. after
+    /// measuring a candidate). Does not touch gates.
+    #[doc(hidden)]
+    pub fn proto_put_widgets(&mut self, body: Vec<WidgetView>) {
+        self.widgets = body;
+    }
+
+    /// Prototype/test support: restore an owned side-tabs body.
+    #[doc(hidden)]
+    pub fn proto_put_side_tabs(&mut self, body: Vec<SideTabView>) {
+        self.side_tabs = body;
+    }
+
+    /// Prototype/test support: restore an owned loc body.
+    #[doc(hidden)]
+    pub fn proto_put_locs(&mut self, body: Vec<LocView>) {
+        self.loc = body;
+    }
+
+    /// Prototype/test support: requested capacity of the widgets vector.
+    #[doc(hidden)]
+    pub fn proto_widgets_capacity(&self) -> usize {
+        self.widgets.capacity()
+    }
+
+    /// Prototype/test support: requested capacity of the side-tabs vector.
+    #[doc(hidden)]
+    pub fn proto_side_tabs_capacity(&self) -> usize {
+        self.side_tabs.capacity()
+    }
+
+    /// Prototype/test support: requested capacity of the loc vector.
+    #[doc(hidden)]
+    pub fn proto_locs_capacity(&self) -> usize {
+        self.loc.capacity()
+    }
+
     /// Chat history from the last chat rebuild, newest first (ring order).
     pub fn chat_lines(&self) -> &[ChatLineView] {
         &self.chat_lines
