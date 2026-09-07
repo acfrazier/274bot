@@ -22,19 +22,29 @@ No RSS, CPU, cadence, latency, or candidate-vs-reference comparison is valid.
 
 ## Evidence checked
 
+The approved screen reports are present under `docs/memory/diagnostics/` rather
+than at the named root paths (for example,
+`docs/memory/diagnostics/borrowed-fingerprint-corrected-native-screen-report.md`).
+That placement is preserved intentionally: these approved reports must not be
+moved or edited as part of this diagnosis.
+
 ### Cell receipt and qualification boundary
 
-- `02-candidate-n16/cells/02-candidate-n16/receipt.json` records `launched: true`,
-  `attempts: 1`, candidate binary SHA-256
+- `02-candidate-n16/cells/02-candidate-n16/cell_report.json` records
+  `launched: true`, `attempts: 1`, the candidate binary SHA-256
   `10ddc915c7b0f5ef9f3fbb9443c95bc74249303d9a048fcdc4fb4e4fc69af008`, launcher
-  exit 1, and `status: failed_or_unavailable`.
-- The same receipt records only `runner:unexpected qualification phase` and
-  `runner:missing observation boundary` as runner errors, plus
-  `frontend_failed_or_incomplete` and `launcher_failed`. It records no exception
-  text, stack, snapshot field, or operation name.
-- `cell_report.json` records one qualification record at the `failure-boundary`
-  phase, with 16 slots in mixed `Idle`/`Running` states. Thus there is no
-  observe-start or observe-end boundary and no qualified candidate sample.
+  exit 1, and `status: failed_or_unavailable`. It also records only one
+  qualification line (`qualification_line_count: 1`), not the 16-slot failure
+  boundary.
+- `02-candidate-n16/cells/02-candidate-n16/receipt.json` records only
+  `runner:unexpected qualification phase` and `runner:missing observation
+  boundary` as runner errors, plus `frontend_failed_or_incomplete` and
+  `launcher_failed`. It records no exception text, stack, snapshot field, or
+  operation name.
+- `02-candidate-n16/cells/02-candidate-n16/samples.qualification.jsonl` holds
+  the one `failure-boundary` record with 16 slots in mixed `Idle`/`Running`
+  states. Thus there is no observe-start or observe-end boundary and no
+  qualified candidate sample.
 - `samples.jsonl` has 17 seed-phase samples and zero observe samples.
   `samples.qualification.jsonl` has one failure-boundary record only.
 - The failing slot record has `state: Running`, `error: "tick 19: Unknown error"`,
@@ -72,7 +82,7 @@ is responsible for the different outcome.
 The reference and candidate use the same client commit and client source proof.
 The frozen host inputs differ exactly as declared: reference host snapshot
 `763700b6c3f7f92e617caa0cf052eaccfab05b56b2c840b068f519de27dd7098`; candidate
-snapshot `f7143dc74ae74b598e486ce7e6b758d7a6fe3b5d2cbe101da986c5261301613`.
+snapshot/`host_sources_sha256` `f7143dc74ae74b598e486ce7e6b758d7a6fe3b5d2cbe101da986c5261301613c`.
 The candidate commit is `188a520`; the exact Rust code ownership difference is
 `crates/script/src/isolate_fb.rs` and `crates/script/src/slot.rs`, changing the
 live snapshot delta path from constructing/replacing a full owned fingerprint
