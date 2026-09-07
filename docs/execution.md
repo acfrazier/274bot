@@ -89,6 +89,10 @@ a moving HEAD or imply that uncommitted worker changes were reviewed.
 Root reconciles the findings against source, raw evidence or reproductions and
 records severity, confirmed unique findings, overlap, rejected findings and why,
 later-discovered misses, actual model/provider, reviewed commits and elapsed time.
+Record blocked tool calls, retries and other execution restrictions as timing
+confounders; wall time alone is not model review speed. Prefer established
+read-only tools and approved verification commands, without weakening approval
+policy to make a reviewer comparison look cleaner.
 Retain legitimate disagreements for resolution; do not decide by majority vote
 or raw finding count. One trial supplies local evidence, not a general model
 ranking. Change standing reviewer assignments only after the operator decides.
