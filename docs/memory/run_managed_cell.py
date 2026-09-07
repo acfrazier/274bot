@@ -488,6 +488,7 @@ def run_managed_cell(
     collector_stop_requested = False
     collector_stop_mono: Optional[float] = None
     observe_end_mono: Optional[float] = None
+    launcher_exited_before_pad = False
     backend = 'system'
     boundaries = QualificationBoundaries()
     runner_errors = []
@@ -681,24 +682,47 @@ def run_managed_cell(
                     boundaries.consume(qline, time.monotonic())
                 observe_end_mono = boundaries.end_received_mono
 
+            # After a validated observe-end, keep the collector alive for at
+            # least two sampler intervals even if the launcher already exited.
+            pad_elapsed = (
+                observe_end_mono is not None
+                and now >= observe_end_mono + 2.0 * interval
+            )
             if (
                 not collector_stop_requested
-                and observe_end_mono is not None
-                and now >= observe_end_mono + 2.0 * interval
-                and collector is not None
-                and collector.poll() is None
+                and pad_elapsed
             ):
-                collector.send_signal(signal.SIGTERM)
+                if collector is not None and collector.poll() is None:
+                    collector.send_signal(signal.SIGTERM)
                 collector_stop_requested = True
                 collector_stop_mono = now
                 report["collector_stop_requested_utc"] = _utc()
 
-            if launcher.poll() is not None:
-                launcher_exit = launcher.returncode
-                if collector is not None and collector.poll() is None:
-                    collector.send_signal(signal.SIGTERM)
-                    collector_stop_requested = True
-                break
+            launcher_done = launcher.poll() is not None
+            if launcher_done:
+                if launcher_exit is None:
+                    launcher_exit = launcher.returncode
+                # Hold the loop only while a valid end still needs its pad.
+                still_need_pad = (
+                    observe_end_mono is not None
+                    and collector_stop_mono is None
+                    and now < observe_end_mono + 2.0 * interval
+                )
+                if still_need_pad:
+                    # Launcher left before the required post-end collector hold.
+                    # Keep waiting the pad wall-clock; do not fake role lifetime.
+                    # Continuous required-role sampling will honestly fail once the
+                    # launcher PID is gone; receipt stays failed (no retry).
+                    launcher_exited_before_pad = True
+                else:
+                    if (
+                        collector is not None
+                        and collector.poll() is None
+                        and not collector_stop_requested
+                    ):
+                        collector.send_signal(signal.SIGTERM)
+                        collector_stop_requested = True
+                    break
 
             if (
                 collector is not None
@@ -736,8 +760,19 @@ def run_managed_cell(
             if qual_tail.partial:
                 runner_errors.append('partial qualification row at completion')
         runner_errors.extend(boundaries.failures())
-        if collector_stop_mono is None and not max_wall_exceeded:
+        # Pad failure only when observe-end arrived but the 2-interval stop did not.
+        # Missing end is already reported via boundaries.failures().
+        if (
+            collector_stop_mono is None
+            and not max_wall_exceeded
+            and observe_end_mono is not None
+        ):
             runner_errors.append('collector did not reach post-observation stop boundary')
+        if launcher_exited_before_pad:
+            runner_errors.append(
+                'launcher exited before post-observation collector coverage'
+            )
+            report['launcher_exited_before_pad'] = True
         if max_wall_exceeded:
             runner_errors.append('max_wall_exceeded')
         if any(info.get('orphan_risk') for info in cleanup.values()):
@@ -794,15 +829,12 @@ def run_managed_cell(
         report["status"] = "failed_or_unavailable"
         report["error"] = str(exc)
         report["ended_utc"] = _utc()
-        _terminate_owned(collector, label="collector")
-        _terminate_owned(
-            launcher,
-            label="launcher",
-            frontend_pid=frontend_pid,
-            frontend_identity=frontend_identity,
-            launcher_pid=launcher.pid if launcher else None,
-        )
-        report['frontend_cleanup'] = _cleanup_frontend(frontend_pid, frontend_identity, backend=backend)
+        cleanup = {
+            "collector": _terminate_owned(collector, label="collector"),
+            "launcher": _terminate_owned(launcher, label="launcher"),
+            "frontend": _cleanup_frontend(frontend_pid, frontend_identity, backend=backend),
+        }
+        report["cleanup"] = cleanup
         if cell_dir is not None:
             try:
                 write_json(cell_dir / "cell_report.json", report)

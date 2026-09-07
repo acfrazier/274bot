@@ -23,10 +23,26 @@ in the frontend's own raw series.
 The runner parses native `observe-start` and `observe-end` qualification rows.
 It requires one ordered pair with increasing finite elapsed values and slot
 records, and requests collector stop at least two intervals after receiving the
-actual end. Login/setup delays cannot trigger an early time-estimated stop.
+actual end — including when the launcher has already exited with a short
+teardown. Login/setup delays cannot trigger an early time-estimated stop.
 Missing, malformed, partial, duplicate, or out-of-order boundaries fail the
 durable receipt through `runner_errors`, preserving actual child exit codes.
-The matched reader independently validates full workload and slot contents.
+The pad-stop runner_error is emitted only when observe-end arrived but the
+two-interval hold did not complete; missing end uses the boundary failure only.
+
+Contract note on short teardown vs completed receipts: production frontend
+teardown is long (order of 60s) relative to the default 1s sampler interval, so
+the launcher normally remains a live required role through the post-end pad.
+If teardown is shorter than two intervals, the launcher PID dies while the
+collector still must sample it. Holding the pad after launcher exit is correct
+for wall-clock stop bookkeeping, but continuous required-role evidence then
+fails honestly (collector exit non-zero / sampler incomplete). The runner
+records `launcher exited before post-observation collector coverage` and keeps
+a failed measurement receipt with no retry. It does not drop the launcher role,
+substitute another PID, extend launcher lifetime, or rewrite collector failure
+into success. A completed receipt in that situation would falsify continuous
+required-role coverage. The matched reader independently validates full
+workload and slot contents.
 
 Cleanup reaps owned launcher/collector children and independently checks the
 captured frontend even if its launcher already exited. Frontend ownership is
@@ -35,16 +51,16 @@ identity is rechecked immediately before TERM and KILL. Each signal stage has a
 bounded 15-second wait. Identity mismatch/unavailability prevents signaling and
 reports unresolved cleanup. Server/ambient/controller PIDs are never adopted as
 frontends. Exceptions after launch, including output collisions, clean up owned
-children and preserve a failed receipt where writable. Existing output is never
-overwritten.
+children, record the same `cleanup` structure as the happy path, and preserve a
+failed receipt where writable. Existing output is never overwritten.
 
-Validation: the full 16-test dummy-process suite passed, then an additional
-nonobject-server-sidecar preflight test passed (17 tests total). Coverage includes
-real delayed qualification, absent/duplicate boundaries, launcher exit leaving
-a TERM-ignoring frontend, identity mismatch without foreign signaling, native
-backend identity consistency, finite timing/reserved roles/actual argv, exclusive
-output, failed launch/collector, distinct child exits, and preflight failures.
-No live bot/server, release build, or performance measurement in these tests.
+Validation: the full dummy-process suite (18 tests) covers real delayed
+qualification, short-teardown early-launcher-exit failure with pad hold,
+absent/duplicate boundaries, launcher exit leaving a TERM-ignoring frontend,
+identity mismatch without foreign signaling, native backend identity
+consistency, finite timing/reserved roles/actual argv, exclusive output, failed
+launch/collector, distinct child exits, and preflight failures. No live
+bot/server, release build, or performance measurement in these tests.
 
 Cache fingerprint and continuous process-evidence consumption remain separate
 integration work. A completed receipt does not establish overhead or performance

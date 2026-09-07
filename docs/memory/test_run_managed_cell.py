@@ -308,6 +308,35 @@ class ManagedCellTests(unittest.TestCase):
                 (pathlib.Path(report['cell_dir'])/'process_accounting.jsonl').read_text().splitlines()]
         self.assertGreater(rows[-1]['elapsed_s'], 1.5)
 
+    def test_short_teardown_before_pad_fails_honestly(self):
+        # Teardown shorter than 2*interval: launcher dies while the required
+        # post-observe collector hold is still running. Launcher remains a
+        # required sampled role, so continuous collection fails honestly —
+        # never completed, never retried, never by dropping/faking the role.
+        interval = 0.25
+        spec = self.fx.base_spec(
+            observe=0.5, teardown=0.05, mode="ok", interval=interval, cell_id="short_td"
+        )
+        report = self._run(spec)
+        self.assertEqual(report["status"], "failed_or_unavailable", report)
+        self.assertEqual(report.get("launcher_exit_code"), 0, report)
+        self.assertTrue(report.get("launcher_exited_before_pad"), report)
+        # Pad wall-clock still held after observe-end even though measurement fails.
+        self.assertIsNotNone(report.get("collector_stop_after_observe_s"), report)
+        self.assertGreaterEqual(
+            report["collector_stop_after_observe_s"], 2.0 * interval, report
+        )
+        receipt = json.loads((pathlib.Path(report["cell_dir"]) / "receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed_or_unavailable", receipt)
+        runner_errors = receipt.get("runner_errors") or []
+        self.assertTrue(
+            any("launcher exited before post-observation" in e for e in runner_errors),
+            receipt,
+        )
+        # Collector exit stays the real accounting outcome (typically nonzero
+        # once the required launcher PID is gone); never rewritten to success.
+        self.assertIsInstance(report.get("collector_exit_code"), int, report)
+
     def test_missing_or_duplicate_boundary_fails_durable_receipt(self):
         for mode in ('missing_end', 'duplicate_end'):
             with self.subTest(mode=mode):
