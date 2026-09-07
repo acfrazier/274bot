@@ -2,6 +2,7 @@
 """Run one diagnostic cell without overwriting the T4 baseline artifacts."""
 import argparse, hashlib, json, os, pathlib, signal, subprocess, sys, time
 import errno, fcntl, pty, struct, termios, threading
+from build_provenance import file_sha256, verify_build, recheck_files
 
 def build_parser():
     p = argparse.ArgumentParser()
@@ -17,6 +18,8 @@ def build_parser():
     p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
     p.add_argument('--failure-capture', action='store_true', help='Set BOT_MEMORY_FAILURE_CAPTURE=1 (failure-boundary stop-reason). Independent of diagnostics; pair with --no-diagnostics for failure-only mode (no periodic sidecar)')
     p.add_argument('--binary', type=pathlib.Path, help='Use an immutable saved frontend build')
+    p.add_argument('--build-manifest', type=pathlib.Path, help='Verify saved binary and runtime fixture hashes against this frozen-build manifest')
+    p.add_argument('--build-role', choices=['reference', 'candidate'], help='Required with --build-manifest; selects the named frozen binary')
     p.add_argument('--sustain', action='store_true')
     stack_logging = p.add_mutually_exclusive_group()
     stack_logging.add_argument('--stack-logging', action='store_true')
@@ -32,6 +35,10 @@ def build_parser():
 
 def validate_args(a, parser):
     """Reject invalid flag combinations before any process start or run dir."""
+    if bool(a.build_manifest) != bool(a.build_role):
+        parser.error('--build-manifest and --build-role must be supplied together')
+    if a.build_manifest and not a.binary:
+        parser.error('--build-manifest requires explicit --binary')
     panel_modes = [a.single_renderer, a.focused_one, a.focused_background]
     if sum(bool(x) for x in panel_modes) > 1:
         parser.error('--single-renderer, --focused-one, and --focused-background are mutually exclusive')
@@ -131,7 +138,6 @@ def main(argv=None):
     root = pathlib.Path(__file__).resolve().parents[2]
     binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
     run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
-    run.mkdir(parents=True, exist_ok=False)
     env = build_child_env(a, run)
     def git(*args):
         return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
@@ -147,6 +153,14 @@ def main(argv=None):
         return digest.hexdigest()
     nav_pack = pathlib.Path(env.get('NAV_PACK', str(pathlib.Path.home()/'.274bot/274bot.navpack'))).resolve()
     nav_flags = pathlib.Path(env.get('NAV_FLAGS', str(nav_pack.with_suffix('.navflags')))).resolve()
+    catalog_path = (pathlib.Path(env.get('HOME') or '.') / '.274bot/js-scripts.json').resolve()
+    provenance = {'status': 'unavailable', 'reason': 'no_build_manifest', 'performance_acceptance': False}
+    if a.build_manifest:
+        try:
+            provenance = verify_build(a.build_manifest, a.build_role, a.frontend, binary, nav_pack, nav_flags, catalog_path)
+        except (ValueError, OSError, TypeError) as error:
+            p.error(f'build provenance: {error}')
+    run.mkdir(parents=True, exist_ok=False)
     render_policy = requested_render_policy(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
                 nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
@@ -156,6 +170,17 @@ def main(argv=None):
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
                 rs2b0t_commit=subprocess.check_output(['git','-C',env['RS2B0T'],'rev-parse','HEAD'],text=True).strip(),
                 run_dir=str(run),started_unix=time.time())
+    # Legacy source/commit fields above describe this checkout, not the saved
+    # binary. Build claims stay in an independently verified nested object.
+    meta.update(build_provenance=provenance,
+                checkout_source_labels_only=True,
+                nav_flags_sha256=file_sha256(nav_flags) if nav_flags.is_file() else None,
+                catalog_path=str(catalog_path),
+                catalog_sha256=file_sha256(catalog_path) if catalog_path.is_file() else None,
+                effective_cli=[sys.executable, str(pathlib.Path(__file__).resolve()), *(sys.argv[1:] if argv is None else [str(x) for x in argv])],
+                feature_flags=provenance.get('feature_flags'),
+                allocator_provenance=provenance.get('allocator_provenance'),
+                allocation_counting=provenance.get('allocation_counting'))
     with (run/'run.log').open('xb') as log:
         reader = None
         if terminal:
@@ -190,8 +215,19 @@ def main(argv=None):
         rc=child.wait()
         if reader: reader.join()
     meta.update(exit_code=rc,ended_unix=time.time())
+    provenance_error = None
+    if provenance['status'] == 'verified':
+        try:
+            recheck_files(provenance['files'])
+            provenance['completion_status'] = 'unchanged'
+        except (ValueError, OSError) as error:
+            provenance_error = str(error)
+            provenance.update(status='invalid', completion_status='changed_or_unreadable', error=provenance_error)
     (run/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
     print(json.dumps({'run_dir':str(run),'exit_code':rc}),flush=True)
+    if provenance_error:
+        print(f'FAIL: build provenance: {provenance_error}', file=sys.stderr)
+        sys.exit(1)
     sys.exit(rc if rc >= 0 else 128-rc)
 
 if __name__ == '__main__':
