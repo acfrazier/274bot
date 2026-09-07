@@ -31,22 +31,25 @@ moved or edited as part of this diagnosis.
 ### Cell receipt and qualification boundary
 
 - `02-candidate-n16/cells/02-candidate-n16/cell_report.json` records
-  `launched: true`, `attempts: 1`, the candidate binary SHA-256
-  `10ddc915c7b0f5ef9f3fbb9443c95bc74249303d9a048fcdc4fb4e4fc69af008`, launcher
-  exit 1, and `status: failed_or_unavailable`. It also records only one
-  qualification line (`qualification_line_count: 1`), not the 16-slot failure
-  boundary.
+  `launched: true`, `attempts: 1`, launcher exit 1, and
+  `status: failed_or_unavailable`. It also records only one qualification line
+  (`qualification_line_count: 1`), not the 16-slot failure boundary. The
+  candidate binary SHA-256 is recorded in the sibling `receipt.json` and in
+  `verified-build-preflight.json` under `files.binary.sha256`:
+  `10ddc915c7b0f5ef9f3fbb9443c95bc74249303d9a048fcdc4fb4e4fc69af008`.
 - `02-candidate-n16/cells/02-candidate-n16/receipt.json` records only
   `runner:unexpected qualification phase` and `runner:missing observation
   boundary` as runner errors, plus `frontend_failed_or_incomplete` and
   `launcher_failed`. It records no exception text, stack, snapshot field, or
   operation name.
-- `02-candidate-n16/cells/02-candidate-n16/samples.qualification.jsonl` holds
-  the one `failure-boundary` record with 16 slots in mixed `Idle`/`Running`
-  states. Thus there is no observe-start or observe-end boundary and no
-  qualified candidate sample.
-- `samples.jsonl` has 17 seed-phase samples and zero observe samples.
-  `samples.qualification.jsonl` has one failure-boundary record only.
+- The receipt/cell report `run_dir` sibling
+  `docs/memory/diagnostics/borrowed-fingerprint-native-screen-20260907b/20260907T203813Z_tui_n16_active/samples.qualification.jsonl`
+  holds the one `failure-boundary` record with 16 slots in mixed
+  `Idle`/`Running` states. The corresponding `samples.jsonl` in that run
+  directory has 17 seed-phase samples and zero observe samples. The cell-dir
+  path `02-candidate-n16/cells/02-candidate-n16/samples.qualification.jsonl`
+  does not exist. Thus there is no observe-start or observe-end boundary and
+  no qualified candidate sample.
 - The failing slot record has `state: Running`, `error: "tick 19: Unknown error"`,
   `ingame: true`, `scene_state: 2`, and position `(2661, 3306, 0)`. Its runtime
   has only 2 dispatched ticks and `last_completed_tick: 20`; its paint is still
