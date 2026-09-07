@@ -298,3 +298,39 @@ progress (`t_6670c1ec`). The reviewed offline adapter correctly rejects the old
 raw clock evidence; prior first-pair decode/input results remain unavailable.
 Failure-only capture (`t_d102507c`) follows this instrumentation review. Neither
 work item authorizes a performance claim or changes route/script behavior.
+
+
+### 2026-09-07 02:57 UTC — native clock instrumentation reviewed
+
+`t_6670c1ec` passed Grok-4.5 review on `9adce7c` + report correction `42addcf`.
+The implementation records separate decode/input capture brackets and the sample
+elapsed instant in one process-local monotonic domain, adds opt-in fine latency
+bins, and preserves legacy coverage fields. Native unmatched-cancellation
+accounting is a sibling counter. Required host-play memory-feature tests and the
+TUI memory-feature build check passed; earlier default-feature-only receipts did
+not cover the serializer and were rejected.
+
+Three independently reproduced analyzer false passes are fixed: same-run
+fine/coarse treated as a paired margin, a recovered interior input histogram
+reset, and a monotonic interior histogram that disagreed with its event counts.
+Every selected native row now requires histogram/counter conservation and exact
+bounds schemas. Paired fine-margin arithmetic remains explicitly unavailable
+until an artifact-backed matched-run reader exists. The older real N1 files
+remain unavailable: the missing unmatched counter is reported first, and native
+clock brackets are also absent. No old timestamps/counts were synthesized.
+
+See [clock report](responsiveness-clock-bracket-report.md). Extra structural
+storage is 1,656 bytes per observation copy, about 3,312 bytes for an active
+profiled slot's local and registry copies, plus temporary serialization; this is
+not a measured RSS or overhead result. Failure-only capture `t_d102507c` is now
+ready; bounded TUI route/guardian capture `t_45abc379` follows its review. No new
+live run has started. The bank failure and all performance gates remain open.
+
+Two read-only reports also passed review:
+[animation ownership](animation-owner-audit.md), `eaa701d`, reconciles global
+tables, per-frame retained base duplication, and transient owned lookup clones;
+the old 34.5 MiB allocation attribution is not a per-client RSS amount.
+[matched evidence design](matched-evidence-adapter-design.md), `4de3b76`, defines
+artifact/qualification bindings, separates common configuration from each build's
+provenance, and preserves the predeclared off/on/on/off overhead sequence. Its
+implementation and real overhead evidence are still pending.
