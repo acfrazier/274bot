@@ -130,13 +130,21 @@ that path to slot 12's error.
 
 ## One actionable next step
 
-Root should run one bounded, non-performance candidate reproducer with the same
-frozen binary, fixture, 16-slot declaration, and timeout, but with the existing
-failure-capture/diagnostic channel configured to preserve the underlying isolate
-exception (including JS value/message and the snapshot tick/field-mask event)
-for the failing slot before qualification stops. The discriminator is whether
-slot 12's `tick 19` error occurs immediately after `encode_snapshot_delta` and
-which field mask was emitted; if no encode event precedes it, park the
-borrowed-fingerprint candidate and investigate the script/fixture path instead.
-This is a failure-only diagnostic: do not accept RSS/CPU results, alter the
-fixture or script, retry until pass, or relabel the existing failed cell.
+Root should run exactly one bounded, failure-only diagnostic with the same frozen
+candidate binary, fixture, 16-slot declaration, and timeout, changing only the
+existing diagnostic switch from `--no-diagnostics` to `--debug` (equivalently,
+set `BOT_DEBUG=1`). In this path `host-play`'s existing
+`emit_script_debug_logs` drains isolate log lines, including the
+`interrupted slow tick ...` line emitted by `crates/script/src/load.rs:1119`
+when the slow-tick budget interrupts a tick. The discriminator is therefore
+whether the preserved slot-12 `tick 19` failure has an interrupted-slow-tick
+line or only the generic error/other drained lines.
+
+This does not assume that failure capture can preserve a JS exception
+value/message, a snapshot field mask, or an encode event. The frozen binary has
+no encode-event instrumentation, so absence of such an event is not evidence
+against the candidate and must not be used to park it. If the run does not
+reproduce or still reports only `Unknown error`, the result is inconclusive:
+make no causal attribution and neither accept nor park the candidate on that
+basis. Do not collect RSS/CPU data, alter the fixture or script, retry until
+pass, or relabel the existing failed cell.
