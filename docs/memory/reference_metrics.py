@@ -35,6 +35,11 @@ SLOT_INTERVAL_BOUNDS_MS = (
     500, 1000,
 )
 LATENCY_BOUNDS_MS = (5, 10, 20, 25, 40, 50, 100, 250, 500, 1000)
+# Fine sibling: 1..100 ms inclusive upper edges + overflow (matches host FINE_LATENCY_BOUNDS_MS).
+FINE_LATENCY_BOUNDS_MS = tuple(range(1, 101))
+RESPONSIVENESS_CLOCK_DOMAIN = "responsiveness_process_mono"
+# Paired clean-run non-regression margin (plan §5): candidate upper vs reference lower.
+PAIRED_LATENCY_MARGIN_MS = 2.0
 
 PASS_MEANS = (
     "offline histogram / observation-window core only; "
@@ -619,18 +624,41 @@ def _slot_hist_delta(
     return delta, None
 
 
+def _mono_ns_pair(obj: dict, lo_key: str, hi_key: str) -> tuple[Optional[int], Optional[int], Optional[str]]:
+    """Parse an inclusive mono-ns bracket. Returns (lo, hi, err_reason)."""
+    lo, hi = obj.get(lo_key), obj.get(hi_key)
+    if lo is None and hi is None:
+        return None, None, "missing"
+    if not _finite(lo) or not _finite(hi):
+        return None, None, "malformed"
+    lo_i, hi_i = int(lo), int(hi)
+    if float(lo) != lo_i or float(hi) != hi_i or lo_i < 0 or hi_i < 0:
+        return None, None, "malformed"
+    if hi_i < lo_i:
+        return None, None, "inverted"
+    if lo_i == 0 and hi_i == 0:
+        return None, None, "unset"
+    return lo_i, hi_i, None
+
+
 def _contained_responsiveness_pair(
     meta: dict, samples: list[dict], key: tuple[Any, Any], prefix: str,
 ) -> tuple[Optional[dict], Optional[dict], dict]:
     """Audit one deterministic maximal publisher-contained counter span.
 
-    ``*_coverage_complete`` is cumulative and may be false because warmup had
-    cancellations.  This adapter instead proves a window from the publisher
-    timestamps and counter deltas.  It never treats a lifetime flag as a
-    window flag or selects a favorable inner segment.
+    Uses native process-local mono brackets (decode/input capture + sample/read)
+    when present. Never invents a clock from age alone. Never selects a
+    favorable inner segment after outcome validation fails.
     """
     observed = [s for s in samples if isinstance(s, dict) and s.get("phase") == "observe"]
+    if len(observed) < 2:
+        return None, None, {"reason": "publisher_timestamp_missing"}
+
+    cap_lo_k = f"{prefix}_capture_mono_ns_lower"
+    cap_hi_k = f"{prefix}_capture_mono_ns_upper"
     rows = []
+    clocks_present = 0
+    clocks_absent = 0
     for sample_index, sample in enumerate(observed):
         elapsed = sample.get("elapsed_s")
         if not _finite(elapsed):
@@ -647,107 +675,326 @@ def _contained_responsiveness_pair(
             return None, None, {"reason": "publisher_age_invalid"}
         if not _finite(updated):
             return None, None, {"reason": "publisher_timestamp_missing"}
-        # updated_ms is validated serializer evidence only: launcher wall time
-        # has no proven mapping to elapsed_s.  Age gives a one-sided bound.
-        publisher_lower = float(elapsed) - float(age) / 1000.0
-        rows.append((sample_index, float(elapsed), row, publisher_lower,
-                     float(elapsed), float(age)))
-    if len(rows) < 2:
-        return None, None, {"reason": "publisher_timestamp_missing"}
-    if any(b[1] <= a[1] for a, b in zip(rows, rows[1:])):
+
+        clock = sample.get("responsiveness_clock")
+        if not isinstance(clock, dict):
+            clocks_absent += 1
+            rows.append({
+                "i": sample_index, "elapsed": float(elapsed), "row": row,
+                "age": float(age), "clock": None,
+            })
+            continue
+
+        # Domain is required exactly when any mono evidence is present.
+        domain = clock.get("domain")
+        if domain != "responsiveness_process_mono":
+            if domain is None and not any(
+                k in clock for k in (
+                    "sample_mono_ns_lower", "read_mono_ns_lower", "elapsed_mono_ns",
+                )
+            ):
+                clocks_absent += 1
+                rows.append({
+                    "i": sample_index, "elapsed": float(elapsed), "row": row,
+                    "age": float(age), "clock": None,
+                })
+                continue
+            return None, None, {"reason": "clock_domain_mismatch", "domain": domain}
+
+        sample_lo, sample_hi, s_err = _mono_ns_pair(
+            clock, "sample_mono_ns_lower", "sample_mono_ns_upper")
+        read_lo, read_hi, r_err = _mono_ns_pair(
+            clock, "read_mono_ns_lower", "read_mono_ns_upper")
+        cap_lo, cap_hi, c_err = _mono_ns_pair(row, cap_lo_k, cap_hi_k)
+        elapsed_ns = clock.get("elapsed_mono_ns")
+        if s_err == "missing" and r_err == "missing" and c_err in (None, "missing", "unset") and elapsed_ns is None:
+            clocks_absent += 1
+            rows.append({
+                "i": sample_index, "elapsed": float(elapsed), "row": row,
+                "age": float(age), "clock": None,
+            })
+            continue
+        if s_err or r_err:
+            return None, None, {
+                "reason": "publisher_clock_bracket_malformed",
+                "sample_err": s_err, "read_err": r_err, "sample_index": sample_index,
+            }
+        if not _finite(elapsed_ns) or float(elapsed_ns) != int(elapsed_ns) or int(elapsed_ns) < 0:
+            return None, None, {
+                "reason": "elapsed_mono_ns_malformed", "sample_index": sample_index,
+            }
+        elapsed_ns_i = int(elapsed_ns)
+        if c_err == "unset" or c_err == "missing":
+            clocks_absent += 1
+            rows.append({
+                "i": sample_index, "elapsed": float(elapsed), "row": row,
+                "age": float(age), "clock": None,
+            })
+            continue
+        if c_err:
+            return None, None, {
+                "reason": "capture_bracket_malformed",
+                "capture_err": c_err, "sample_index": sample_index, "prefix": prefix,
+            }
+        assert sample_lo is not None and sample_hi is not None
+        assert read_lo is not None and read_hi is not None
+        assert cap_lo is not None and cap_hi is not None
+        # Read fully contained in sample enclosure (not mere overlap).
+        if read_lo < sample_lo or read_hi > sample_hi:
+            return None, None, {
+                "reason": "read_outside_sample_bracket",
+                "sample_index": sample_index,
+            }
+        # Capture ends at/before read upper; capture sits at/before sample upper.
+        if cap_hi > read_hi or cap_hi > sample_hi or cap_lo > sample_hi:
+            return None, None, {
+                "reason": "capture_outside_sample_bracket",
+                "sample_index": sample_index,
+            }
+        # elapsed_mono_ns is the Instant twin of elapsed_s — must lie in sample.
+        if elapsed_ns_i < sample_lo or elapsed_ns_i > sample_hi:
+            return None, None, {
+                "reason": "elapsed_mono_outside_sample_bracket",
+                "sample_index": sample_index,
+            }
+        clocks_present += 1
+        rows.append({
+            "i": sample_index, "elapsed": float(elapsed), "row": row,
+            "age": float(age), "clock": clock,
+            "sample_lo": sample_lo, "sample_hi": sample_hi,
+            "read_lo": read_lo, "read_hi": read_hi,
+            "cap_lo": cap_lo, "cap_hi": cap_hi,
+            "elapsed_ns": elapsed_ns_i,
+        })
+
+    if any(b["elapsed"] <= a["elapsed"] for a, b in zip(rows, rows[1:])):
         return None, None, {"reason": "non_increasing_observation_elapsed"}
 
-    observe_lb, observe_ub = rows[0][1], rows[-1][1]
-    start_candidates = [item for item in rows if item[3] >= observe_lb]
-    end_candidates = [item for item in rows if item[4] <= observe_ub]
-    if not start_candidates or not end_candidates:
-        return None, None, {"reason": "publisher_window_not_contained",
-                            "missing_capability": "native_sample_publisher_bracket"}
-    start_item, end_item = start_candidates[0], end_candidates[-1]
-    if start_item[0] >= end_item[0]:
-        return None, None, {"reason": "publisher_window_too_short"}
-    selected = rows[start_item[0]:end_item[0] + 1]
-    if len(selected) != end_item[0] - start_item[0] + 1:
-        return None, None, {"reason": "publisher_slot_row_missing_or_duplicate"}
-
-    if prefix == "input":
-        srow, erow = start_item[2], end_item[2]
-        if srow.get("ended") is True or erow.get("ended") is True:
-            return None, None, {"reason": "boundary_ended"}
-        fields = {
-            name: f"input_{name}_n"
-            for name in ("start", "complete", "canceled", "lost", "dropped", "pending")
+    def _validate_counters(selected_items: list) -> tuple[Optional[dict], Optional[dict], dict]:
+        """Shared counter/outcome checks on a pre-selected maximal span."""
+        if not selected_items:
+            return None, None, {"reason": "publisher_window_too_short"}
+        srow, erow = selected_items[0]["row"], selected_items[-1]["row"]
+        # Any ended row in the span (including interior) rejects the window.
+        for item in selected_items:
+            if item["row"].get("ended") is True:
+                return None, None, {"reason": "boundary_ended" if item in (selected_items[0], selected_items[-1]) else "interior_ended"}
+        if prefix == "input":
+            mono_names = ("start", "complete", "canceled", "lost", "dropped")
+            fields = {name: f"input_{name}_n" for name in mono_names}
+            fields["pending"] = "input_pending_n"
+            parsed = []
+            for item in selected_items:
+                values = [item["row"].get(field) for field in fields.values()]
+                if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
+                    return None, None, {"reason": "counter_missing_or_malformed"}
+                parsed.append({name: int(item["row"][field]) for name, field in fields.items()})
+            # Pending is a gauge — exclude from monotonic/reset checks.
+            for before, after in zip(parsed, parsed[1:]):
+                if any(after[name] < before[name] for name in mono_names):
+                    return None, None, {"reason": "counter_reset"}
+            deltas = {name: parsed[-1][name] - parsed[0][name] for name in fields}
+            if any(deltas[name] < 0 for name in mono_names):
+                return None, None, {"reason": "counter_reset"}
+            if any(deltas[name] for name in ("canceled", "lost", "dropped")):
+                return None, None, {"reason": "coverage_lost_or_incomplete"}
+            if parsed[0]["pending"] != 0 or parsed[-1]["pending"] != 0:
+                return None, None, {"reason": "boundary_pending_incomplete"}
+            # Per-row identity: start - complete - canceled - lost - dropped == pending
+            for row in parsed:
+                open_n = (row["start"] - row["complete"] - row["canceled"]
+                          - row["lost"] - row["dropped"])
+                if open_n != row["pending"]:
+                    return None, None, {
+                        "reason": "input_accounting_identity_mismatch",
+                        "open_n": open_n, "pending": row["pending"],
+                    }
+            if deltas["complete"] > deltas["start"]:
+                return None, None, {"reason": "input_accounting_identity_mismatch"}
+            # Span identity with pending gauge: Δstart = Δcomplete + Δcanceled + Δlost + Δdropped + Δpending
+            if (deltas["start"] != deltas["complete"] + deltas["canceled"]
+                    + deltas["lost"] + deltas["dropped"] + deltas["pending"]):
+                return None, None, {"reason": "input_accounting_identity_mismatch"}
+            return srow, erow, {"counter_deltas": deltas}
+        mono_names = ("edge", "dispatch", "canceled", "lost", "dropped")
+        names = {
+            "edge": f"{prefix}_edge_n",
+            "dispatch": "dispatch_n",
+            "canceled": f"{prefix}_canceled_n",
+            "lost": f"{prefix}_lost_n",
+            "dropped": f"{prefix}_dropped_n",
+            "pending": f"{prefix}_pending_n",
         }
+        unmatched_key = f"{prefix}_unmatched_canceled_n"
         parsed = []
-        for item in selected:
-            values = [item[2].get(field) for field in fields.values()]
+        for item in selected_items:
+            values = [item["row"].get(name) for name in names.values()]
             if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
                 return None, None, {"reason": "counter_missing_or_malformed"}
-            parsed.append({name: int(item[2][field]) for name, field in fields.items()})
+            row = {name: int(item["row"][field]) for name, field in names.items()}
+            if prefix == "decode":
+                um = item["row"].get(unmatched_key)
+                if um is None:
+                    # Legacy rows without unmatched sibling cannot prove identity
+                    # under native unmatched-cancel semantics.
+                    return None, None, {
+                        "reason": "unmatched_canceled_counter_missing",
+                        "missing_capability": "decode_unmatched_canceled_n",
+                    }
+                if not _finite(um) or float(um) != int(um) or int(um) < 0:
+                    return None, None, {"reason": "counter_missing_or_malformed",
+                                        "field": unmatched_key}
+                row["unmatched_canceled"] = int(um)
+                if row["unmatched_canceled"] > row["canceled"]:
+                    return None, None, {"reason": "accounting_identity_mismatch",
+                                        "detail": "unmatched_gt_canceled"}
+            else:
+                # Input has no unmatched sibling yet; identity is
+                # edge(=start) = complete + canceled + pending + lost + dropped.
+                row["unmatched_canceled"] = 0
+            parsed.append(row)
         for before, after in zip(parsed, parsed[1:]):
-            if any(after[name] < before[name] for name in fields):
+            if any(after[name] < before[name] for name in mono_names):
                 return None, None, {"reason": "counter_reset"}
-        deltas = {name: parsed[-1][name] - parsed[0][name] for name in fields}
-        if any(value < 0 for value in deltas.values()):
+            if after["unmatched_canceled"] < before["unmatched_canceled"]:
+                return None, None, {"reason": "counter_reset", "field": unmatched_key}
+        deltas = {name: parsed[-1][name] - parsed[0][name] for name in list(names) + ["unmatched_canceled"]}
+        if any(deltas[name] < 0 for name in mono_names):
             return None, None, {"reason": "counter_reset"}
         if any(deltas[name] for name in ("canceled", "lost", "dropped")):
-            return None, None, {"reason": "coverage_lost_or_incomplete"}
+            # canceled delta may include unmatched; still a coverage cancel in-span
+            if deltas["canceled"] or deltas["lost"] or deltas["dropped"]:
+                # Matched cancels in-span are coverage_lost; unmatched-only may
+                # still break product coverage intent — reject any cancel delta.
+                return None, None, {"reason": "coverage_lost_or_incomplete"}
         if parsed[0]["pending"] != 0 or parsed[-1]["pending"] != 0:
             return None, None, {"reason": "boundary_pending_incomplete"}
-        # Input has the same missing native bracket as decode; keep the
-        # validated accounting visible in the reason rather than passing.
+        # edge = dispatch + canceled - unmatched_canceled + pending + dropped + lost
+        for row in parsed:
+            rhs = (row["dispatch"] + row["canceled"] - row["unmatched_canceled"]
+                   + row["pending"] + row["dropped"] + row["lost"])
+            if row["edge"] != rhs:
+                return None, None, {
+                    "reason": "accounting_identity_mismatch",
+                    "edge": row["edge"], "rhs": rhs,
+                }
+        if (deltas["edge"] != deltas["dispatch"] + deltas["canceled"] - deltas["unmatched_canceled"]
+                + deltas["pending"] + deltas["dropped"] + deltas["lost"]):
+            return None, None, {"reason": "accounting_identity_mismatch"}
+        # Interior histogram non-decreasing when present (coarse + fine).
+        hist_keys = ["decode_latency_buckets", "decode_fine_latency_buckets"] if prefix == "decode" else []
+        for hkey in hist_keys:
+            prev = selected_items[0]["row"].get(hkey)
+            if prev is None:
+                continue
+            if not isinstance(prev, list):
+                return None, None, {"reason": "histogram_malformed", "field": hkey}
+            for item in selected_items[1:]:
+                cur = item["row"].get(hkey)
+                if cur is None:
+                    return None, None, {"reason": "histogram_missing_interior", "field": hkey}
+                if not isinstance(cur, list) or len(cur) != len(prev):
+                    return None, None, {"reason": "histogram_malformed", "field": hkey}
+                if any(
+                    (not _finite(a) or not _finite(b) or int(b) < int(a)
+                     or float(a) != int(a) or float(b) != int(b))
+                    for a, b in zip(prev, cur)
+                ):
+                    return None, None, {"reason": "counter_reset", "field": hkey}
+                prev = cur
+        return srow, erow, {"counter_deltas": deltas}
+
+    # No native mono: age-based maximal span still audits counters, then fails
+    # closed on missing clock (never a contained pass without mono proof).
+    if clocks_present == 0:
+        observe_lb_e, observe_ub_e = rows[0]["elapsed"], rows[-1]["elapsed"]
+        for r in rows:
+            r["pub_lo"] = r["elapsed"] - r["age"] / 1000.0
+            r["pub_hi"] = r["elapsed"]
+        start_c = [r for r in rows if r["pub_lo"] >= observe_lb_e]
+        end_c = [r for r in rows if r["pub_hi"] <= observe_ub_e]
+        if not start_c or not end_c:
+            return None, None, {
+                "reason": "publisher_window_not_contained",
+                "missing_capability": "native_sample_publisher_bracket",
+            }
+        si, ei = start_c[0], end_c[-1]
+        if si["i"] >= ei["i"]:
+            return None, None, {"reason": "publisher_window_too_short"}
+        selected = rows[si["i"]:ei["i"] + 1]
+        if len(selected) != ei["i"] - si["i"] + 1:
+            return None, None, {"reason": "publisher_slot_row_missing_or_duplicate"}
+        _s, _e, ctr = _validate_counters(selected)
+        if _s is None:
+            return None, None, ctr
         return None, None, {
             "reason": "publisher_clock_bracket_missing",
             "missing_capability": "native_sample_publisher_bracket",
-            "selected_start_elapsed_s": start_item[1],
-            "selected_end_elapsed_s": end_item[1],
-            "sample_ages_ms": [item[5] for item in selected],
+            "selected_start_elapsed_s": si["elapsed"],
+            "selected_end_elapsed_s": ei["elapsed"],
+            "sample_ages_ms": [item["age"] for item in selected],
+            "coverage_excluded_edges": {
+                "before_start_samples": si["i"],
+                "after_end_samples": len(observed) - 1 - ei["i"],
+            },
+        }
+    if clocks_absent:
+        return None, None, {
+            "reason": "publisher_clock_bracket_incomplete",
+            "missing_capability": "native_sample_publisher_bracket",
+            "clocks_present": clocks_present,
+            "clocks_absent": clocks_absent,
         }
 
-    names = {
-        "edge": f"{prefix}_edge_n",
-        "dispatch": "dispatch_n",
-        "canceled": f"{prefix}_canceled_n",
-        "lost": f"{prefix}_lost_n",
-        "dropped": f"{prefix}_dropped_n",
-        "pending": f"{prefix}_pending_n",
+    # Conservative observe mono window from first/last elapsed_mono_ns
+    # (same Instant as elapsed_s) — not sample_hi, which includes later
+    # registry-read/serialization and is not phase-end proof.
+    observe_lb = rows[0]["elapsed_ns"]
+    observe_ub = rows[-1]["elapsed_ns"]
+    if observe_ub < observe_lb:
+        return None, None, {"reason": "observe_mono_window_inverted"}
+
+    # Maximal contained span: first row whose capture lower ≥ observe_lb,
+    # last row whose capture upper ≤ observe_ub. No favorable inner search.
+    start_candidates = [r for r in rows if r["cap_lo"] >= observe_lb]
+    end_candidates = [r for r in rows if r["cap_hi"] <= observe_ub]
+    if not start_candidates or not end_candidates:
+        return None, None, {
+            "reason": "publisher_window_not_contained",
+            "missing_capability": "native_sample_publisher_bracket",
+        }
+    start_item, end_item = start_candidates[0], end_candidates[-1]
+    if start_item["i"] >= end_item["i"]:
+        return None, None, {"reason": "publisher_window_too_short"}
+    selected = rows[start_item["i"]:end_item["i"] + 1]
+    if len(selected) != end_item["i"] - start_item["i"] + 1:
+        return None, None, {"reason": "publisher_slot_row_missing_or_duplicate"}
+    for a, b in zip(selected, selected[1:]):
+        if b["cap_lo"] < a["cap_lo"] or b["cap_hi"] < a["cap_hi"]:
+            return None, None, {"reason": "capture_bracket_order_regression"}
+        if b["elapsed_ns"] < a["elapsed_ns"]:
+            return None, None, {"reason": "elapsed_mono_order_regression"}
+
+    srow, erow, ctr = _validate_counters(selected)
+    if srow is None:
+        return None, None, ctr
+    meta_out = {
+        "contained_window": True,
+        "clock_domain": "responsiveness_process_mono",
+        "selected_start_elapsed_s": start_item["elapsed"],
+        "selected_end_elapsed_s": end_item["elapsed"],
+        "sample_ages_ms": [item["age"] for item in selected],
+        "observe_mono_ns_lower": observe_lb,
+        "observe_mono_ns_upper": observe_ub,
+        "start_capture_mono_ns_lower": start_item["cap_lo"],
+        "end_capture_mono_ns_upper": end_item["cap_hi"],
+        "counter_deltas": ctr["counter_deltas"],
+        "coverage_excluded_edges": {
+            "before_start_samples": start_item["i"],
+            "after_end_samples": len(observed) - 1 - end_item["i"],
+        },
     }
-    # Boundaries are selected before validating outcomes; never hide a bad
-    # middle by choosing a favorable inner segment.
-    srow, erow = start_item[2], end_item[2]
-    if srow.get("ended") is True or erow.get("ended") is True:
-        return None, None, {"reason": "boundary_ended"}
-    counter_names = tuple(names.values())
-    parsed = []
-    for item in selected:
-        values = [item[2].get(name) for name in counter_names]
-        if not all(_finite(v) and float(v) >= 0 and float(v) == int(v) for v in values):
-            return None, None, {"reason": "counter_missing_or_malformed"}
-        parsed.append({name: int(item[2][name]) for name in counter_names})
-    for before, after in zip(parsed, parsed[1:]):
-        if any(after[name] < before[name] for name in counter_names):
-            return None, None, {"reason": "counter_reset"}
-    deltas = {name: parsed[-1][field] - parsed[0][field] for name, field in names.items()}
-    if any(value < 0 for value in deltas.values()):
-        return None, None, {"reason": "counter_reset"}
-    if any(deltas[name] for name in ("canceled", "lost", "dropped")):
-        return None, None, {"reason": "coverage_lost_or_incomplete"}
-    if parsed[0][names["pending"]] != 0 or parsed[-1][names["pending"]] != 0:
-        return None, None, {"reason": "boundary_pending_incomplete"}
-    offsets = [row[names["edge"]] - row[names["dispatch"]] - row[names["canceled"]]
-               for row in parsed]
-    if len(set(offsets)) != 1 or deltas["edge"] != deltas["dispatch"] + deltas["canceled"]:
-        return None, None, {"reason": "accounting_identity_mismatch"}
-    # The current serializer has no monotonic bracket around the registry read
-    # and sample capture.  Age therefore supplies only a one-sided relation;
-    # do not turn it into a contained-window pass without native proof.
-    return None, None, {"reason": "publisher_clock_bracket_missing",
-                        "missing_capability": "native_sample_publisher_bracket",
-                        "selected_start_elapsed_s": start_item[1],
-                        "selected_end_elapsed_s": end_item[1],
-                        "sample_ages_ms": [item[5] for item in selected],
-                        "coverage_excluded_edges": {"before_start_samples": start_item[0],
-                                                     "after_end_samples": len(observed) - 1 - end_item[0]}}
+    return srow, erow, meta_out
 
 def evaluate_decode(
     meta: dict,
@@ -868,6 +1115,17 @@ def evaluate_decode(
                 bounds = p99_lower_upper_ms(delta, tuple(int(x) for x in bound_list))
             except (TypeError, ValueError):
                 pass
+        fine_bounds = None
+        fine_delta, fine_err = _slot_hist_delta(srow, erow, "decode_fine_latency_buckets")
+        if fine_delta is not None and fine_err is None:
+            fine_bound_list = erow.get("fine_latency_bound_ms")
+            fine_bounds_tuple = FINE_LATENCY_BOUNDS_MS
+            if isinstance(fine_bound_list, list) and fine_bound_list:
+                try:
+                    fine_bounds_tuple = tuple(int(x) for x in fine_bound_list)
+                except (TypeError, ValueError):
+                    pass
+            fine_bounds = p99_lower_upper_ms(fine_delta, fine_bounds_tuple)
         verdict = target_verdict(bounds, target_ms)
         row = {
             "slot_id": key[0],
@@ -881,6 +1139,19 @@ def evaluate_decode(
             "sample_age_ms": erow.get("sample_age_ms"),
             "freshness_field": "sample_age_ms",
         }
+        if fine_bounds is not None:
+            row["fine_buckets_delta"] = fine_delta
+            row["fine_p99"] = fine_bounds
+            # Paired 2ms margin only with proven bounds on both histograms.
+            if (
+                bounds.get("status") == "available"
+                and fine_bounds.get("status") == "available"
+                and bounds.get("lower_ms") is not None
+                and fine_bounds.get("upper_ms") is not None
+            ):
+                margin = float(fine_bounds["upper_ms"]) - float(bounds["lower_ms"])
+                row["fine_paired_margin_ms"] = margin
+                row["fine_paired_within_2ms"] = margin <= 2.0
         if contained:
             row.update(contained)
             row["decode_canceled_n_delta"] = contained["counter_deltas"]["canceled"]

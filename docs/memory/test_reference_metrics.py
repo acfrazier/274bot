@@ -721,19 +721,26 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
     def _contained_pair(self, *, canceled_end=5, ended=False, publisher=True):
         """A publisher-timestamped span with a warmup-only cancel offset."""
         bounds = list(rm.LATENCY_BOUNDS_MS)
+        # Warmup unmatched cancels do not consume edges on this slot:
+        # edge = dispatch + (canceled - unmatched) + pending + lost + dropped
+        # With unmatched==canceled and pending 0 → edge == dispatch.
         start_row = {
             "slot_id": 7, "generation": 1, "sample_age_ms": 0,
-            "decode_edge_n": 100, "dispatch_n": 90,
-            "decode_canceled_n": 5, "decode_lost_n": 0,
+            "decode_edge_n": 100, "dispatch_n": 100,
+            "decode_canceled_n": 5, "decode_unmatched_canceled_n": 5,
+            "decode_lost_n": 0,
             "decode_dropped_n": 0, "decode_pending_n": 0,
             "decode_coverage_complete": False,
             "decode_latency_buckets": [0, 0, 0, 10, 80, 0, 0, 0, 0, 0, 0],
             "latency_bound_ms": bounds, "ended": ended,
         }
         end_row = dict(start_row)
+        # matched in-span = canceled_end - 5; unmatched stays 5
+        matched = canceled_end - 5
         end_row.update({
-            "decode_edge_n": 300, "dispatch_n": 290,
+            "decode_edge_n": 300, "dispatch_n": 300 - matched,
             "decode_canceled_n": canceled_end,
+            "decode_unmatched_canceled_n": 5,
             "decode_latency_buckets": [0, 0, 0, 30, 170, 0, 0, 0, 0, 0, 0],
         })
         if publisher:
@@ -750,6 +757,206 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         g = rm.evaluate_decode(meta, [start, end], target_ms=100)
         self.assertEqual(g["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_missing")
+
+    def _mono_clock(self, elapsed_ns, sample_lo=None, sample_hi=None, read_lo=None, read_hi=None):
+        """Build a valid mono clock: elapsed in sample; read ⊆ sample."""
+        sample_lo = elapsed_ns if sample_lo is None else sample_lo
+        sample_hi = elapsed_ns + 50_000 if sample_hi is None else sample_hi
+        read_lo = elapsed_ns + 10_000 if read_lo is None else read_lo
+        read_hi = elapsed_ns + 40_000 if read_hi is None else read_hi
+        return {
+            "domain": "responsiveness_process_mono",
+            "elapsed_mono_ns": elapsed_ns,
+            "sample_mono_ns_lower": sample_lo,
+            "sample_mono_ns_upper": sample_hi,
+            "read_mono_ns_lower": read_lo,
+            "read_mono_ns_upper": read_hi,
+        }
+
+    def test_decode_mono_clock_contained_window_passes(self):
+        """Native mono brackets unlock contained deltas (warmup cancel offset OK)."""
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        # first.elapsed_ns is observe_lb; mid/end captures must be ≥ that.
+        e0, e1, e2 = 40_000_000_000, 70_000_000_000, 100_000_000_000
+        mid_row = json.loads(json.dumps(start["responsiveness_profile"][0]))
+        mid_row.update({
+            "decode_edge_n": 200, "dispatch_n": 200, "decode_canceled_n": 5,
+            "decode_unmatched_canceled_n": 5,
+            "decode_latency_buckets": [0, 0, 0, 20, 120, 0, 0, 0, 0, 0, 0],
+            # Capture after observe_lb, before read_hi of its sample.
+            "decode_capture_mono_ns_lower": e0 + 1_000_000,
+            "decode_capture_mono_ns_upper": e0 + 2_000_000,
+            "updated_ms": int((_meta()["started_unix"] + 100.0 - 0.3) * 1000),
+        })
+        start["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": 10_000_000_000,  # before observe_lb
+            "decode_capture_mono_ns_upper": 10_000_100_000,
+        })
+        end["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e1 + 1_000_000,
+            "decode_capture_mono_ns_upper": e1 + 2_000_000,
+        })
+        # Delayed serialization: sample_hi >> elapsed (read still ⊆ sample).
+        start["responsiveness_clock"] = self._mono_clock(
+            e0, sample_lo=e0, sample_hi=e0 + 5_000_000,
+            read_lo=e0 + 100_000, read_hi=e0 + 200_000,
+        )
+        # start capture 10e9 > read_hi of start? cap checked vs THIS sample's read.
+        # start cap 10e9 << start read — OK for start row; excluded as start candidate.
+        middle = {
+            "phase": "observe", "elapsed_s": 100.0,
+            "responsiveness_profile": [mid_row],
+            "responsiveness_clock": self._mono_clock(
+                e1, sample_lo=e1, sample_hi=e1 + 5_000_000,
+                read_lo=e1 + 100_000, read_hi=e1 + 3_000_000,
+            ),
+        }
+        end["responsiveness_clock"] = self._mono_clock(
+            e2, sample_lo=e2, sample_hi=e2 + 5_000_000,
+            read_lo=e2 + 100_000, read_hi=e2 + 3_000_000,
+        )
+        g = rm.evaluate_decode(meta, [start, middle, end], target_ms=100)
+        self.assertEqual(g["status"], "available", g)
+        slot = g["slots"][0]
+        self.assertTrue(slot.get("contained_window"))
+        self.assertEqual(slot["status"], "available")
+        # Delta mid→end: edges 100, dispatch 100, cancel 0
+        self.assertEqual(slot["counter_deltas"]["edge"], 100)
+        self.assertEqual(slot["counter_deltas"]["canceled"], 0)
+        self.assertEqual(slot["target_verdict"], "meet")
+
+    def test_decode_fine_hist_paired_margin_when_present(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        fine_bounds = list(rm.FINE_LATENCY_BOUNDS_MS)
+        fine_s = [0] * (len(fine_bounds) + 1)
+        fine_e = list(fine_s)
+        fine_s[2] = 10
+        fine_e[2] = 110
+        e0, e1, e2 = 40_000_000_000, 70_000_000_000, 100_000_000_000
+        start["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": 10_000_000_000,
+            "decode_capture_mono_ns_upper": 10_000_100_000,
+            "decode_fine_latency_buckets": list(fine_s),
+            "fine_latency_bound_ms": fine_bounds,
+        })
+        start["responsiveness_clock"] = self._mono_clock(e0)
+        mid = json.loads(json.dumps(start))
+        mid["elapsed_s"] = 100.0
+        mr = mid["responsiveness_profile"][0]
+        mr.update({
+            "decode_edge_n": 200, "dispatch_n": 200,
+            "decode_latency_buckets": [0, 0, 0, 20, 120, 0, 0, 0, 0, 0, 0],
+            "decode_fine_latency_buckets": list(fine_s),
+            "decode_capture_mono_ns_lower": e0 + 1_000_000,
+            "decode_capture_mono_ns_upper": e0 + 2_000_000,
+            "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
+        })
+        mid["responsiveness_clock"] = self._mono_clock(
+            e1, sample_lo=e1, sample_hi=e1 + 5_000_000,
+            read_lo=e1 + 100_000, read_hi=e1 + 3_000_000,
+        )
+        end["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e1 + 1_000_000,
+            "decode_capture_mono_ns_upper": e1 + 2_000_000,
+            "decode_fine_latency_buckets": fine_e,
+            "fine_latency_bound_ms": fine_bounds,
+        })
+        end["responsiveness_clock"] = self._mono_clock(
+            e2, sample_lo=e2, sample_hi=e2 + 5_000_000,
+            read_lo=e2 + 100_000, read_hi=e2 + 3_000_000,
+        )
+        g = rm.evaluate_decode(meta, [start, mid, end], target_ms=100)
+        self.assertEqual(g["status"], "available", g)
+        slot = g["slots"][0]
+        self.assertIn("fine_p99", slot)
+        self.assertEqual(slot["fine_p99"]["status"], "available")
+        self.assertIn("fine_paired_within_2ms", slot)
+
+    def test_interior_ended_row_rejects_mono_window(self):
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        e0, e1, e2 = 40_000_000_000, 70_000_000_000, 100_000_000_000
+        # Start is a valid candidate (cap after observe_lb) so mid is truly interior.
+        start["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e0 + 100_000,
+            "decode_capture_mono_ns_upper": e0 + 200_000,
+        })
+        start["responsiveness_clock"] = self._mono_clock(
+            e0, sample_lo=e0, sample_hi=e0 + 5_000_000,
+            read_lo=e0 + 100_000, read_hi=e0 + 3_000_000,
+        )
+        end["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e1 + 1_000_000,
+            "decode_capture_mono_ns_upper": e1 + 2_000_000,
+        })
+        end["responsiveness_clock"] = self._mono_clock(
+            e2, sample_lo=e2, sample_hi=e2 + 5_000_000,
+            read_lo=e2 + 100_000, read_hi=e2 + 3_000_000,
+        )
+        mid = json.loads(json.dumps(start))
+        mid["elapsed_s"] = 100.0
+        mr = mid["responsiveness_profile"][0]
+        mr.update({
+            "ended": True,
+            "decode_edge_n": 200, "dispatch_n": 200,
+            "decode_capture_mono_ns_lower": e0 + 1_000_000,
+            "decode_capture_mono_ns_upper": e0 + 2_000_000,
+            "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
+        })
+        mid["responsiveness_clock"] = self._mono_clock(
+            e1, sample_lo=e1, sample_hi=e1 + 5_000_000,
+            read_lo=e1 + 100_000, read_hi=e1 + 3_000_000,
+        )
+        g = rm.evaluate_decode(meta, [start, mid, end])
+        self.assertEqual(g["status"], "unavailable")
+        self.assertEqual(g["slots"][0]["reason"], "interior_ended")
+
+    def test_pending_gauge_mid_span_does_not_false_reject(self):
+        """pending 0→1→0 is a gauge swing, not a counter reset."""
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        e0, e1, e2 = 40_000_000_000, 70_000_000_000, 100_000_000_000
+        # Start is a valid candidate so mid stays interior with pending=1.
+        start["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e0 + 100_000,
+            "decode_capture_mono_ns_upper": e0 + 200_000,
+        })
+        start["responsiveness_clock"] = self._mono_clock(
+            e0, sample_lo=e0, sample_hi=e0 + 5_000_000,
+            read_lo=e0 + 100_000, read_hi=e0 + 3_000_000,
+        )
+        mid = json.loads(json.dumps(start))
+        mid["elapsed_s"] = 100.0
+        mr = mid["responsiveness_profile"][0]
+        # One edge in flight: edge 201 = dispatch 200 + unmatched0 matched + pending 1
+        # cancel 5 unmatched 5 → 200 + 0 + 1 = 201
+        mr.update({
+            "decode_edge_n": 201, "dispatch_n": 200, "decode_canceled_n": 5,
+            "decode_unmatched_canceled_n": 5, "decode_pending_n": 1,
+            "decode_latency_buckets": [0, 0, 0, 20, 120, 0, 0, 0, 0, 0, 0],
+            "decode_capture_mono_ns_lower": e0 + 1_000_000,
+            "decode_capture_mono_ns_upper": e0 + 2_000_000,
+            "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
+        })
+        mid["responsiveness_clock"] = self._mono_clock(
+            e1, sample_lo=e1, sample_hi=e1 + 5_000_000,
+            read_lo=e1 + 100_000, read_hi=e1 + 3_000_000,
+        )
+        end["responsiveness_profile"][0].update({
+            "decode_edge_n": 300, "dispatch_n": 300, "decode_canceled_n": 5,
+            "decode_unmatched_canceled_n": 5, "decode_pending_n": 0,
+            "decode_capture_mono_ns_lower": e1 + 1_000_000,
+            "decode_capture_mono_ns_upper": e1 + 2_000_000,
+        })
+        end["responsiveness_clock"] = self._mono_clock(
+            e2, sample_lo=e2, sample_hi=e2 + 5_000_000,
+            read_lo=e2 + 100_000, read_hi=e2 + 3_000_000,
+        )
+        g = rm.evaluate_decode(meta, [start, mid, end], target_ms=100)
+        self.assertEqual(g["status"], "available", g)
+        self.assertEqual(g["slots"][0]["counter_deltas"]["pending"], 0)
 
     def test_decode_cancellation_inside_contained_span_rejected(self):
         meta = _meta(responsiveness_profile=True)
@@ -772,12 +979,18 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         middle["elapsed_s"] = 100.0
         row = middle["responsiveness_profile"][0]
         row["updated_ms"] = int((meta["started_unix"] + 99.7) * 1000)
+        # Matched cancels in middle; unmatched stays warmup-only 5.
         row["decode_edge_n"] = 200
-        row["dispatch_n"] = 189
-        row["decode_canceled_n"] = 6
-        end["responsiveness_profile"][0]["decode_canceled_n"] = 7
-        end["responsiveness_profile"][0]["decode_edge_n"] = 302
-        end["responsiveness_profile"][0]["updated_ms"] = int((meta["started_unix"] + 159.7) * 1000)
+        row["decode_canceled_n"] = 11
+        row["decode_unmatched_canceled_n"] = 5
+        row["dispatch_n"] = 200 - (11 - 5)  # 194
+        end["responsiveness_profile"][0].update({
+            "decode_edge_n": 302,
+            "decode_canceled_n": 12,
+            "decode_unmatched_canceled_n": 5,
+            "dispatch_n": 302 - (12 - 5),  # 295
+            "updated_ms": int((meta["started_unix"] + 159.7) * 1000),
+        })
         g = rm.evaluate_decode(meta, [start, middle, end])
         self.assertEqual(g["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "coverage_lost_or_incomplete")
@@ -800,6 +1013,7 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         row["updated_ms"] = int((meta["started_unix"] + 99.7) * 1000)
         row["decode_edge_n"] = 10
         row["dispatch_n"] = 5
+        row["decode_canceled_n"] = 5  # 10-5-5=0 pending
         g = rm.evaluate_decode(meta, [start, middle, end])
         self.assertEqual(g["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "counter_reset")

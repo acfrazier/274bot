@@ -110,6 +110,7 @@ class RunDiagnosticCli(unittest.TestCase):
         a = p.parse_args(["panel", "1", "idle", "--responsiveness-profile"])
         rd.validate_args(a, p)
         self.assertTrue(a.responsiveness_profile)
+        self.assertFalse(a.responsiveness_fine)
         a2 = p.parse_args(["tui", "1", "idle", "--responsiveness-profile"])
         rd.validate_args(a2, p)
         self.assertTrue(a2.responsiveness_profile)
@@ -117,6 +118,12 @@ class RunDiagnosticCli(unittest.TestCase):
         self.assertFalse(a3.responsiveness_profile)
         help_proc = run_cli("--help")
         self.assertIn("--responsiveness-profile", help_proc.stdout)
+        self.assertIn("--responsiveness-fine", help_proc.stdout)
+        fine = p.parse_args(["panel", "1", "idle", "--responsiveness-profile", "--responsiveness-fine"])
+        rd.validate_args(fine, p)
+        self.assertTrue(fine.responsiveness_fine)
+        bad = run_cli("panel", "1", "idle", "--responsiveness-fine")
+        self.assertNotEqual(bad.returncode, 0)
 
 
 if __name__ == "__main__":

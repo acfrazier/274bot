@@ -419,6 +419,9 @@ impl Run {
         }
         if std::env::var("BOT_RESPONSIVENESS_PROFILE").as_deref() == Ok("1") {
             host::responsiveness_profile::enable();
+            if std::env::var("BOT_RESPONSIVENESS_FINE").as_deref() == Ok("1") {
+                host::responsiveness_profile::enable_fine();
+            }
             if frontend == "panel" {
                 host::responsiveness_profile::set_input_surface(
                     host::responsiveness_profile::InputSurface::Panel,
@@ -742,11 +745,25 @@ impl Run {
             let live = sum("v8_live");
             let sampled = metrics.iter().filter(|m|m["v8_live"]==1 && m["v8_heap_samples"].as_u64().unwrap_or(0)>0).count() as u64;
             let gpu = client::profiling::gpu_bytes();
+            // Stamp mono at the same Instant used for elapsed_s so the sibling
+            // encloses the native phase boundary (not a later post-metrics time).
+            let (elapsed_s, elapsed_mono_ns) = if host::responsiveness_profile::enabled() {
+                let now_i = std::time::Instant::now();
+                let elapsed_s = now_i
+                    .saturating_duration_since(self.started)
+                    .as_secs_f64();
+                (
+                    elapsed_s,
+                    Some(host::responsiveness_profile::mono_ns(now_i)),
+                )
+            } else {
+                (self.started.elapsed().as_secs_f64(), None)
+            };
             let sample = Sample {
                 frontend: self.frontend.into(),
                 n: self.config.n,
                 workload: self.config.workload,
-                elapsed_s: self.started.elapsed().as_secs_f64(),
+                elapsed_s,
                 phase: if self.teardown.is_some() {
                     "teardown".into()
                 } else if self.observing.is_some() {
@@ -991,16 +1008,38 @@ impl Run {
             // Decode→script dispatch and focused-input→UI endpoint latencies.
             // Null while profiling off. Input endpoint is surface-specific;
             // display scanout remains explicitly unavailable on panel.
-            value["responsiveness_profile"] = host::responsiveness_profile::read()
-                .map(|slots| {
+            // Sample/read mono brackets share CLOCK_DOMAIN with per-row capture
+            // brackets; wall updated_ms/sample_age_ms remain legacy siblings.
+            value["responsiveness_profile"] = host::responsiveness_profile::read_bracketed()
+                .map(|snap| {
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(0);
                     let ack = host::responsiveness_profile::visible_ack_status();
                     let surface = host::responsiveness_profile::input_surface().as_str();
+                    let fine_on = host::responsiveness_profile::fine_enabled();
+                    let elapsed_ns = elapsed_mono_ns.unwrap_or(snap.read_mono_ns_lower);
+                    let sample_lo = elapsed_ns.min(snap.read_mono_ns_lower);
+                    let sample_hi = snap.read_mono_ns_upper.max(elapsed_ns).max(sample_lo);
+                    value["responsiveness_clock"] = serde_json::json!({
+                        "domain": host::responsiveness_profile::CLOCK_DOMAIN,
+                        "elapsed_mono_ns": elapsed_mono_ns,
+                        "elapsed_mono_ms_lower": elapsed_mono_ns.map(host::responsiveness_profile::mono_ns_floor_ms),
+                        "elapsed_mono_ms_upper": elapsed_mono_ns.map(host::responsiveness_profile::mono_ns_ceil_ms),
+                        "read_mono_ns_lower": snap.read_mono_ns_lower,
+                        "read_mono_ns_upper": snap.read_mono_ns_upper,
+                        "read_mono_ms_lower": snap.read_mono_ms_lower(),
+                        "read_mono_ms_upper": snap.read_mono_ms_upper(),
+                        "sample_mono_ns_lower": sample_lo,
+                        "sample_mono_ns_upper": sample_hi,
+                        "sample_mono_ms_lower": host::responsiveness_profile::mono_ns_floor_ms(sample_lo),
+                        "sample_mono_ms_upper": host::responsiveness_profile::mono_ns_ceil_ms(sample_hi),
+                        "fine_latency_enabled": fine_on,
+                        "means": "process_local_mono_ns_enclosing_elapsed_capture_and_registry_read_floor_ceil_ms_siblings_not_cross_run",
+                    });
                     serde_json::Value::Array(
-                        slots
+                        snap.slots
                             .into_iter()
                             .map(|s| {
                                 let age = if s.updated_ms == 0 {
@@ -1008,16 +1047,58 @@ impl Run {
                                 } else {
                                     serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
                                 };
+                                let fine_decode = if fine_on {
+                                    serde_json::json!(s.decode_fine_latency_buckets)
+                                } else {
+                                    serde_json::Value::Null
+                                };
+                                let fine_input = if fine_on {
+                                    serde_json::json!(s.input_fine_latency_buckets)
+                                } else {
+                                    serde_json::Value::Null
+                                };
+                                let fine_bounds = if fine_on {
+                                    serde_json::json!(host::responsiveness_profile::FINE_LATENCY_BOUNDS_MS)
+                                } else {
+                                    serde_json::Value::Null
+                                };
+                                let fine_decode_p99 = if fine_on {
+                                    serde_json::json!(
+                                        host::responsiveness_profile::fine_p99_upper_bound_ms(
+                                            &s.decode_fine_latency_buckets
+                                        )
+                                    )
+                                } else {
+                                    serde_json::Value::Null
+                                };
+                                let fine_input_p99 = if fine_on {
+                                    serde_json::json!(
+                                        host::responsiveness_profile::fine_p99_upper_bound_ms(
+                                            &s.input_fine_latency_buckets
+                                        )
+                                    )
+                                } else {
+                                    serde_json::Value::Null
+                                };
                                 serde_json::json!({
                                     "slot_id": s.slot_id,
                                     "generation": s.generation,
                                     "updated_ms": s.updated_ms,
                                     "sample_age_ms": age,
+                                    "decode_capture_mono_ns_lower": s.decode_capture_mono_ns_lower,
+                                    "decode_capture_mono_ns_upper": s.decode_capture_mono_ns_upper,
+                                    "decode_capture_mono_ms_lower": host::responsiveness_profile::mono_ns_floor_ms(s.decode_capture_mono_ns_lower),
+                                    "decode_capture_mono_ms_upper": host::responsiveness_profile::mono_ns_ceil_ms(s.decode_capture_mono_ns_upper),
+                                    "input_capture_mono_ns_lower": s.input_capture_mono_ns_lower,
+                                    "input_capture_mono_ns_upper": s.input_capture_mono_ns_upper,
+                                    "input_capture_mono_ms_lower": host::responsiveness_profile::mono_ns_floor_ms(s.input_capture_mono_ns_lower),
+                                    "input_capture_mono_ms_upper": host::responsiveness_profile::mono_ns_ceil_ms(s.input_capture_mono_ns_upper),
                                     "ended": s.ended,
                                     "input_surface": surface,
                                     "decode_edge_n": s.decode_edge_n,
                                     "dispatch_n": s.dispatch_n,
                                     "decode_canceled_n": s.decode_canceled_n,
+                                    "decode_unmatched_canceled_n": s.decode_unmatched_canceled_n,
                                     "decode_lost_n": s.decode_lost_n,
                                     "decode_dropped_n": s.decode_dropped_n,
                                     "decode_pending_n": s.decode_pending_n,
@@ -1025,7 +1106,10 @@ impl Run {
                                     "decode_latency_ns": s.decode_latency_ns,
                                     "decode_latency_buckets": s.decode_latency_buckets,
                                     "decode_p99_upper_bound_ms": host::responsiveness_profile::p99_upper_bound_ms(&s.decode_latency_buckets),
+                                    "decode_fine_latency_buckets": fine_decode,
+                                    "decode_fine_p99_upper_bound_ms": fine_decode_p99,
                                     "decode_coverage_complete": host::responsiveness_profile::decode_coverage_complete(&s),
+                                    "decode_accounting_exact": host::responsiveness_profile::decode_accounting_exact(&s),
                                     "decode_means": "PLAYER_INFO_after_drain_to_on_game_tick_entry",
                                     "input_start_n": s.input_start_n,
                                     "input_complete_n": s.input_complete_n,
@@ -1037,8 +1121,11 @@ impl Run {
                                     "input_latency_ns": s.input_latency_ns,
                                     "input_latency_buckets": s.input_latency_buckets,
                                     "input_p99_upper_bound_ms": host::responsiveness_profile::p99_upper_bound_ms(&s.input_latency_buckets),
+                                    "input_fine_latency_buckets": fine_input,
+                                    "input_fine_p99_upper_bound_ms": fine_input_p99,
                                     "input_coverage_complete": host::responsiveness_profile::input_coverage_complete(&s),
                                     "latency_bound_ms": host::responsiveness_profile::LATENCY_BOUNDS_MS,
+                                    "fine_latency_bound_ms": fine_bounds,
                                     "visible_ack": {
                                         "available": ack.available,
                                         "endpoint": ack.endpoint,
@@ -1050,7 +1137,10 @@ impl Run {
                             .collect(),
                     )
                 })
-                .unwrap_or(serde_json::Value::Null);
+                .unwrap_or_else(|| {
+                    value["responsiveness_clock"] = serde_json::Value::Null;
+                    serde_json::Value::Null
+                });
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;

@@ -24,6 +24,7 @@ def build_parser():
     p.add_argument('--render-profile', action='store_true', help='Collect per-slot renderer residency and host paint cadence')
     p.add_argument('--gpu-completion-profile', action='store_true', help='Panel+render-profile: bounded GPU queue.on_submitted_work_done completion samples')
     p.add_argument('--responsiveness-profile', action='store_true', help='Collect decode→script and input→UI endpoint latencies')
+    p.add_argument('--responsiveness-fine', action='store_true', help='With --responsiveness-profile: also collect ≤1ms fine latency histograms (recorded in metadata)')
     p.add_argument('--observe', type=int, default=600)
     p.add_argument('--warmup', type=int, default=120)
     return p
@@ -43,6 +44,8 @@ def validate_args(a, parser):
             parser.error('--gpu-completion-profile requires frontend panel')
         if not a.render_profile:
             parser.error('--gpu-completion-profile requires --render-profile')
+    if a.responsiveness_fine and not a.responsiveness_profile:
+        parser.error('--responsiveness-fine requires --responsiveness-profile')
 
 def requested_render_policy(a):
     if a.frontend != 'panel':
@@ -65,7 +68,7 @@ def main(argv=None):
     run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
     run.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
-    for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_MEMORY_RENDER_POLICY','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE','BOT_RENDER_PROFILE','BOT_GPU_COMPLETION_PROFILE','BOT_RESPONSIVENESS_PROFILE']:
+    for k in ['BOT_CPU','BOT_LIVE','BOT_DEBUG','MallocStackLogging','MallocStackLoggingNoCompact','BOT_MEMORY_SUSTAIN','BOT_MEMORY_SINGLE_RENDERER','BOT_MEMORY_RENDER_POLICY','BOT_NAV_CAPTURES','BOT_SCHEDULING_PROFILE','BOT_RENDER_PROFILE','BOT_GPU_COMPLETION_PROFILE','BOT_RESPONSIVENESS_PROFILE','BOT_RESPONSIVENESS_FINE']:
         env.pop(k, None)
     env.update(LIVE='1', BOT_TARGET='local', BOT_MEMORY_N=str(a.n), BOT_MEMORY_WORKLOAD=a.workload,
                BOT_MEMORY_OUTPUT=str(run/'samples.jsonl'), BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
@@ -88,6 +91,7 @@ def main(argv=None):
     if a.render_profile: env['BOT_RENDER_PROFILE'] = '1'
     if a.gpu_completion_profile: env['BOT_GPU_COMPLETION_PROFILE'] = '1'
     if a.responsiveness_profile: env['BOT_RESPONSIVENESS_PROFILE'] = '1'
+    if a.responsiveness_fine: env['BOT_RESPONSIVENESS_FINE'] = '1'
     def git(*args):
         return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
     def source_digest(directory):
@@ -105,7 +109,7 @@ def main(argv=None):
     render_policy = requested_render_policy(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
                 nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
-                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,gpu_completion_profile=a.gpu_completion_profile,responsiveness_profile=a.responsiveness_profile,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
+                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,gpu_completion_profile=a.gpu_completion_profile,responsiveness_profile=a.responsiveness_profile,responsiveness_fine=a.responsiveness_fine,diagnostic_sidecar=not a.no_diagnostics,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                 host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),

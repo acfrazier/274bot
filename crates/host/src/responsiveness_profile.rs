@@ -23,16 +23,21 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+/// Fine (≤1 ms) latency histograms — default off; independent of coarse legacy bins.
+static FINE_ENABLED: AtomicBool = AtomicBool::new(false);
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static REGISTRY: Mutex<Vec<SlotObservation>> = Mutex::new(Vec::new());
 /// Process-wide pending focused-input samples (panel + TUI), all slots.
 static INPUT_PENDING: Mutex<VecDeque<InputPending>> = Mutex::new(VecDeque::new());
 /// Frontend surface that last armed input endpoints (for JSON semantics).
 static INPUT_SURFACE: Mutex<InputSurface> = Mutex::new(InputSurface::Unknown);
+/// Shared process-local monotonic origin for publisher capture + sample/read brackets.
+/// Not comparable across process runs; durations within one process are.
+static MONO_ORIGIN: OnceLock<Instant> = OnceLock::new();
 
 const MAX_ENDED_UNREAD: usize = 64;
 /// Max outstanding decode→dispatch stamps per slot generation.
@@ -42,8 +47,29 @@ const MAX_INPUT_PENDING: usize = 256;
 
 /// Histogram upper bounds in ms (inclusive on exact Duration), then overflow.
 /// Covers the 100 ms responsiveness gate and slower outliers.
+/// Legacy coarse bins retained for existing consumers; cannot prove a 2 ms margin.
 pub const LATENCY_BOUNDS_MS: [u64; 10] = [5, 10, 20, 25, 40, 50, 100, 250, 500, 1000];
 const LATENCY_BUCKETS: usize = LATENCY_BOUNDS_MS.len() + 1;
+
+/// Fine latency inclusive upper bounds: 1, 2, …, 100 ms, then overflow.
+/// Sibling of [`LATENCY_BOUNDS_MS`]; never interpolated from coarse bins.
+pub const FINE_LATENCY_BOUND_COUNT: usize = 100;
+pub const FINE_LATENCY_BUCKETS: usize = FINE_LATENCY_BOUND_COUNT + 1;
+
+const fn fine_latency_bounds_ms_const() -> [u64; FINE_LATENCY_BOUND_COUNT] {
+    let mut a = [0u64; FINE_LATENCY_BOUND_COUNT];
+    let mut i = 0;
+    while i < FINE_LATENCY_BOUND_COUNT {
+        a[i] = (i as u64) + 1;
+        i += 1;
+    }
+    a
+}
+
+pub const FINE_LATENCY_BOUNDS_MS: [u64; FINE_LATENCY_BOUND_COUNT] = fine_latency_bounds_ms_const();
+
+/// Process-local clock domain label emitted with sample/read brackets.
+pub const CLOCK_DOMAIN: &str = "responsiveness_process_mono";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputSurface {
@@ -71,6 +97,15 @@ pub struct SlotObservation {
     pub generation: u64,
     pub updated_ms: u64,
     pub ended: bool,
+    /// Decode-counter publication bracket (ns since process mono origin).
+    /// Stamped only when Local.flush writes decode state; not retimed by input.
+    /// 0/0 = never decode-published. Floor/ceil ms siblings are derived at emit.
+    pub decode_capture_mono_ns_lower: u64,
+    pub decode_capture_mono_ns_upper: u64,
+    /// Input-counter publication bracket (ns). Stamped only on input registry
+    /// mutations; lower begins before INPUT_PENDING cut when applicable.
+    pub input_capture_mono_ns_lower: u64,
+    pub input_capture_mono_ns_upper: u64,
 
     // --- decode → script dispatch ---
     /// PLAYER_INFO edges observed at host after_drain.
@@ -79,6 +114,10 @@ pub struct SlotObservation {
     pub dispatch_n: u64,
     /// Tick edges dropped because script was not Running / no dispatch.
     pub decode_canceled_n: u64,
+    /// Cancels recorded while decode_pending was empty (unmatched). Subtract
+    /// from coverage identity: edge = dispatch + canceled - unmatched_canceled
+    /// + pending + dropped + lost.
+    pub decode_unmatched_canceled_n: u64,
     /// Pending stamps discarded on slot end / overflow without dispatch.
     pub decode_lost_n: u64,
     pub decode_dropped_n: u64,
@@ -86,6 +125,9 @@ pub struct SlotObservation {
     pub decode_latency_n: u64,
     pub decode_latency_ns: u64,
     pub decode_latency_buckets: [u64; LATENCY_BUCKETS],
+    /// Fine sibling of decode_latency_buckets (1 ms bins 0–100 + overflow).
+    /// Counts only while fine profile is on; zeros when fine off.
+    pub decode_fine_latency_buckets: [u64; FINE_LATENCY_BUCKETS],
 
     // --- focused input → UI endpoint (surface-specific) ---
     pub input_start_n: u64,
@@ -97,6 +139,7 @@ pub struct SlotObservation {
     pub input_latency_n: u64,
     pub input_latency_ns: u64,
     pub input_latency_buckets: [u64; LATENCY_BUCKETS],
+    pub input_fine_latency_buckets: [u64; FINE_LATENCY_BUCKETS],
 }
 
 impl SlotObservation {
@@ -106,15 +149,21 @@ impl SlotObservation {
             generation,
             updated_ms: 0,
             ended: false,
+            decode_capture_mono_ns_lower: 0,
+            decode_capture_mono_ns_upper: 0,
+            input_capture_mono_ns_lower: 0,
+            input_capture_mono_ns_upper: 0,
             decode_edge_n: 0,
             dispatch_n: 0,
             decode_canceled_n: 0,
+            decode_unmatched_canceled_n: 0,
             decode_lost_n: 0,
             decode_dropped_n: 0,
             decode_pending_n: 0,
             decode_latency_n: 0,
             decode_latency_ns: 0,
             decode_latency_buckets: [0; LATENCY_BUCKETS],
+            decode_fine_latency_buckets: [0; FINE_LATENCY_BUCKETS],
             input_start_n: 0,
             input_complete_n: 0,
             input_canceled_n: 0,
@@ -124,7 +173,26 @@ impl SlotObservation {
             input_latency_n: 0,
             input_latency_ns: 0,
             input_latency_buckets: [0; LATENCY_BUCKETS],
+            input_fine_latency_buckets: [0; FINE_LATENCY_BUCKETS],
         }
+    }
+}
+
+/// Registry clone plus the mono bracket enclosing the registry lock/read.
+/// Bracket uses ns; ms helpers floor lower / ceil upper so ms still encloses.
+#[derive(Clone, Debug)]
+pub struct ReadSnapshot {
+    pub slots: Vec<SlotObservation>,
+    pub read_mono_ns_lower: u64,
+    pub read_mono_ns_upper: u64,
+}
+
+impl ReadSnapshot {
+    pub fn read_mono_ms_lower(&self) -> u64 {
+        mono_ns_floor_ms(self.read_mono_ns_lower)
+    }
+    pub fn read_mono_ms_upper(&self) -> u64 {
+        mono_ns_ceil_ms(self.read_mono_ns_upper)
     }
 }
 
@@ -148,11 +216,64 @@ fn wall_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn mono_origin() -> Instant {
+    *MONO_ORIGIN.get_or_init(Instant::now)
+}
+
+/// Mono ns of `at` relative to the process responsiveness origin.
+pub fn mono_ns(at: Instant) -> u64 {
+    at.saturating_duration_since(mono_origin())
+        .as_nanos()
+        .min(u64::MAX as u128) as u64
+}
+
+/// Mono ns of `Instant::now()` on the shared domain.
+pub fn mono_ns_now() -> u64 {
+    mono_ns(Instant::now())
+}
+
+/// Floor ms from mono ns — use for inclusive **lower** edges only.
+pub fn mono_ns_floor_ms(ns: u64) -> u64 {
+    ns / 1_000_000
+}
+
+/// Ceil ms from mono ns — use for inclusive **upper** edges so the ms interval
+/// still encloses the real instant (plain as_millis on both ends does not).
+pub fn mono_ns_ceil_ms(ns: u64) -> u64 {
+    if ns == 0 {
+        return 0;
+    }
+    ns.div_ceil(1_000_000)
+}
+
+/// @deprecated prefer mono_ns; kept for tests that only need coarse order.
+pub fn mono_ms(at: Instant) -> u64 {
+    mono_ns_floor_ms(mono_ns(at))
+}
+
+pub fn mono_ms_now() -> u64 {
+    mono_ns_floor_ms(mono_ns_now())
+}
+
+fn stamp_ns_bracket(lo: &mut u64, hi: &mut u64, t0: Instant, t1: Instant) {
+    let a = mono_ns(t0);
+    let b = mono_ns(t1).max(a);
+    *lo = a;
+    *hi = b;
+}
+
 fn latency_bucket(d: Duration) -> usize {
     LATENCY_BOUNDS_MS
         .iter()
         .position(|&bound| d <= Duration::from_millis(bound))
         .unwrap_or(LATENCY_BOUNDS_MS.len())
+}
+
+fn fine_latency_bucket(d: Duration) -> usize {
+    FINE_LATENCY_BOUNDS_MS
+        .iter()
+        .position(|&bound| d <= Duration::from_millis(bound))
+        .unwrap_or(FINE_LATENCY_BOUND_COUNT)
 }
 
 fn ns(d: Duration) -> u64 {
@@ -176,11 +297,22 @@ fn prune_ended_overflow(reg: &mut Vec<SlotObservation>) {
 }
 
 pub fn enable() {
+    let _ = mono_origin(); // pin domain before any capture/read stamps
     ENABLED.store(true, Relaxed);
 }
 
 pub fn enabled() -> bool {
     ENABLED.load(Relaxed)
+}
+
+/// Opt-in fine (≤1 ms) latency histograms. No-op cost when false: coarse path
+/// only. Requires [`enable`] for any recording.
+pub fn enable_fine() {
+    FINE_ENABLED.store(true, Relaxed);
+}
+
+pub fn fine_enabled() -> bool {
+    FINE_ENABLED.load(Relaxed)
 }
 
 pub fn set_input_surface(surface: InputSurface) {
@@ -205,13 +337,28 @@ pub fn slot_id_for(username: &str) -> u64 {
 }
 
 pub fn read() -> Option<Vec<SlotObservation>> {
+    read_bracketed().map(|s| s.slots)
+}
+
+/// Clone live registry rows and record the mono bracket around that lock/read.
+/// Ended rows are returned once then dropped from the registry (same as [`read`]).
+pub fn read_bracketed() -> Option<ReadSnapshot> {
     if !ENABLED.load(Relaxed) {
         return None;
     }
+    let t0 = Instant::now();
     let mut reg = REGISTRY.lock().unwrap();
     let out = reg.clone();
     reg.retain(|s| !s.ended);
-    Some(out)
+    drop(reg);
+    let t1 = Instant::now();
+    let lo = mono_ns(t0);
+    let hi = mono_ns(t1).max(lo);
+    Some(ReadSnapshot {
+        slots: out,
+        read_mono_ns_lower: lo,
+        read_mono_ns_upper: hi,
+    })
 }
 
 /// Conservative p99 from fixed histogram buckets: returns the **upper bound**
@@ -219,6 +366,15 @@ pub fn read() -> Option<Vec<SlotObservation>> {
 /// Overflow bucket yields `None` (unbounded / unavailable precise p99).
 /// Empty samples yield `None`.
 pub fn p99_upper_bound_ms(buckets: &[u64; LATENCY_BUCKETS]) -> Option<u64> {
+    p99_upper_bound_from(buckets, &LATENCY_BOUNDS_MS)
+}
+
+/// Same rule as [`p99_upper_bound_ms`] for the fine (1 ms) histogram.
+pub fn fine_p99_upper_bound_ms(buckets: &[u64; FINE_LATENCY_BUCKETS]) -> Option<u64> {
+    p99_upper_bound_from(buckets, &FINE_LATENCY_BOUNDS_MS)
+}
+
+fn p99_upper_bound_from(buckets: &[u64], bounds_ms: &[u64]) -> Option<u64> {
     let n: u64 = buckets.iter().sum();
     if n == 0 {
         return None;
@@ -228,8 +384,8 @@ pub fn p99_upper_bound_ms(buckets: &[u64; LATENCY_BUCKETS]) -> Option<u64> {
     for (i, &c) in buckets.iter().enumerate() {
         cum = cum.saturating_add(c);
         if cum.saturating_mul(100) >= n.saturating_mul(99) {
-            if i < LATENCY_BOUNDS_MS.len() {
-                return Some(LATENCY_BOUNDS_MS[i]);
+            if i < bounds_ms.len() {
+                return Some(bounds_ms[i]);
             }
             return None; // overflow bucket — no finite upper bound
         }
@@ -246,6 +402,19 @@ pub fn decode_coverage_complete(s: &SlotObservation) -> bool {
             == s.dispatch_n
                 .saturating_add(s.decode_canceled_n)
                 .saturating_add(s.decode_lost_n)
+}
+
+/// Exact native accounting identity using the unmatched-cancel sibling:
+/// `edge == dispatch + canceled - unmatched_canceled + pending + dropped + lost`.
+/// Legacy [`decode_coverage_complete`] is unchanged and does not use unmatched.
+pub fn decode_accounting_exact(s: &SlotObservation) -> bool {
+    let rhs = s
+        .dispatch_n
+        .saturating_add(s.decode_canceled_n.saturating_sub(s.decode_unmatched_canceled_n))
+        .saturating_add(s.decode_pending_n)
+        .saturating_add(s.decode_dropped_n)
+        .saturating_add(s.decode_lost_n);
+    s.decode_edge_n == rhs && s.decode_unmatched_canceled_n <= s.decode_canceled_n
 }
 
 /// Coverage for input samples: starts accounted as complete/canceled/lost;
@@ -377,9 +546,11 @@ impl Local {
             self.snap.decode_canceled_n = self.snap.decode_canceled_n.wrapping_add(1);
             self.snap.decode_pending_n = self.decode_pending.len() as u64;
         } else {
-            // Edge observed elsewhere without pending — still count cancel for coverage math
-            // only when decode_edge already advanced; leave alone if empty.
+            // Unmatched cancel: pending empty. Still increments canceled for
+            // legacy coverage math; sibling unmatched counter restores identity.
             self.snap.decode_canceled_n = self.snap.decode_canceled_n.wrapping_add(1);
+            self.snap.decode_unmatched_canceled_n =
+                self.snap.decode_unmatched_canceled_n.wrapping_add(1);
         }
         self.dirty = true;
         self.maybe_flush();
@@ -389,8 +560,12 @@ impl Local {
         let b = latency_bucket(d);
         self.snap.decode_latency_n = self.snap.decode_latency_n.wrapping_add(1);
         self.snap.decode_latency_ns = self.snap.decode_latency_ns.wrapping_add(ns(d));
-        self.snap.decode_latency_buckets[b] =
-            self.snap.decode_latency_buckets[b].wrapping_add(1);
+        self.snap.decode_latency_buckets[b] = self.snap.decode_latency_buckets[b].wrapping_add(1);
+        if fine_enabled() {
+            let fb = fine_latency_bucket(d);
+            self.snap.decode_fine_latency_buckets[fb] =
+                self.snap.decode_fine_latency_buckets[fb].wrapping_add(1);
+        }
     }
 
     #[allow(dead_code)] // kept for Local-side pairing if a future path completes on Local
@@ -399,6 +574,11 @@ impl Local {
         self.snap.input_latency_n = self.snap.input_latency_n.wrapping_add(1);
         self.snap.input_latency_ns = self.snap.input_latency_ns.wrapping_add(ns(d));
         self.snap.input_latency_buckets[b] = self.snap.input_latency_buckets[b].wrapping_add(1);
+        if fine_enabled() {
+            let fb = fine_latency_bucket(d);
+            self.snap.input_fine_latency_buckets[fb] =
+                self.snap.input_fine_latency_buckets[fb].wrapping_add(1);
+        }
     }
 
     /// Merge process-wide input completions addressed to this slot.
@@ -417,10 +597,20 @@ impl Local {
     }
 
     fn flush(&mut self, ended: bool) {
+        self.flush_from(Instant::now(), ended);
+    }
+
+    /// `t0` must precede any INPUT_PENDING cut or counter merge this publication
+    /// claims to enclose (Drop loses pending before calling this).
+    fn flush_from(&mut self, t0: Instant, ended: bool) {
+        // Decode bracket: [t0, t1] around pending-count + registry decode write.
+        // Input bracket: conservative UNION of prior input-capture (counter cuts
+        // from with_live_slot) and this flush's pending refresh/merge window —
+        // preserving the old stamp alone would leave entry.input_pending_n from
+        // the fresh INPUT_PENDING cut outside the claimed input bracket.
         self.snap.ended = ended;
         self.snap.updated_ms = wall_ms();
         self.snap.decode_pending_n = self.decode_pending.len() as u64;
-        // Refresh input_pending from global queue for this slot.
         let pending = INPUT_PENDING.lock().unwrap();
         self.snap.input_pending_n = pending
             .iter()
@@ -430,7 +620,6 @@ impl Local {
 
         let mut reg = REGISTRY.lock().unwrap();
         if let Some(entry) = reg.iter_mut().find(|s| s.generation == self.generation) {
-            // Preserve input counters that global helpers wrote onto the registry row.
             let input_start_n = entry.input_start_n.max(self.snap.input_start_n);
             let input_complete_n = entry.input_complete_n.max(self.snap.input_complete_n);
             let input_canceled_n = entry.input_canceled_n.max(self.snap.input_canceled_n);
@@ -440,8 +629,16 @@ impl Local {
             let input_latency_ns = entry.input_latency_ns.max(self.snap.input_latency_ns);
             let mut input_latency_buckets = self.snap.input_latency_buckets;
             for i in 0..LATENCY_BUCKETS {
-                input_latency_buckets[i] = entry.input_latency_buckets[i].max(input_latency_buckets[i]);
+                input_latency_buckets[i] =
+                    entry.input_latency_buckets[i].max(input_latency_buckets[i]);
             }
+            let mut input_fine_latency_buckets = self.snap.input_fine_latency_buckets;
+            for i in 0..FINE_LATENCY_BUCKETS {
+                input_fine_latency_buckets[i] =
+                    entry.input_fine_latency_buckets[i].max(input_fine_latency_buckets[i]);
+            }
+            let prior_in_lo = entry.input_capture_mono_ns_lower;
+            let prior_in_hi = entry.input_capture_mono_ns_upper;
             *entry = self.snap.clone();
             entry.input_start_n = input_start_n;
             entry.input_complete_n = input_complete_n;
@@ -451,7 +648,42 @@ impl Local {
             entry.input_latency_n = input_latency_n;
             entry.input_latency_ns = input_latency_ns;
             entry.input_latency_buckets = input_latency_buckets;
+            entry.input_fine_latency_buckets = input_fine_latency_buckets;
             entry.input_pending_n = self.snap.input_pending_n;
+            let t1 = Instant::now();
+            stamp_ns_bracket(
+                &mut entry.decode_capture_mono_ns_lower,
+                &mut entry.decode_capture_mono_ns_upper,
+                t0,
+                t1,
+            );
+            // Union prior input bracket with this flush window (pending refresh).
+            let flush_lo = mono_ns(t0);
+            let flush_hi = mono_ns(t1).max(flush_lo);
+            let input_touched = prior_in_lo != 0
+                || prior_in_hi != 0
+                || input_start_n != 0
+                || input_complete_n != 0
+                || input_canceled_n != 0
+                || input_lost_n != 0
+                || input_dropped_n != 0
+                || entry.input_pending_n != 0;
+            if input_touched {
+                if prior_in_lo == 0 && prior_in_hi == 0 {
+                    entry.input_capture_mono_ns_lower = flush_lo;
+                    entry.input_capture_mono_ns_upper = flush_hi;
+                } else {
+                    entry.input_capture_mono_ns_lower = prior_in_lo.min(flush_lo);
+                    entry.input_capture_mono_ns_upper = prior_in_hi.max(flush_hi);
+                }
+            } else {
+                entry.input_capture_mono_ns_lower = prior_in_lo;
+                entry.input_capture_mono_ns_upper = prior_in_hi;
+            }
+            self.snap.decode_capture_mono_ns_lower = entry.decode_capture_mono_ns_lower;
+            self.snap.decode_capture_mono_ns_upper = entry.decode_capture_mono_ns_upper;
+            self.snap.input_capture_mono_ns_lower = entry.input_capture_mono_ns_lower;
+            self.snap.input_capture_mono_ns_upper = entry.input_capture_mono_ns_upper;
             self.snap.input_start_n = input_start_n;
             self.snap.input_complete_n = input_complete_n;
             self.snap.input_canceled_n = input_canceled_n;
@@ -460,8 +692,48 @@ impl Local {
             self.snap.input_latency_n = input_latency_n;
             self.snap.input_latency_ns = input_latency_ns;
             self.snap.input_latency_buckets = input_latency_buckets;
+            self.snap.input_fine_latency_buckets = input_fine_latency_buckets;
         } else if !ended {
+            let t1 = Instant::now();
+            stamp_ns_bracket(
+                &mut self.snap.decode_capture_mono_ns_lower,
+                &mut self.snap.decode_capture_mono_ns_upper,
+                t0,
+                t1,
+            );
+            if self.snap.input_start_n != 0
+                || self.snap.input_complete_n != 0
+                || self.snap.input_lost_n != 0
+                || self.snap.input_pending_n != 0
+            {
+                stamp_ns_bracket(
+                    &mut self.snap.input_capture_mono_ns_lower,
+                    &mut self.snap.input_capture_mono_ns_upper,
+                    t0,
+                    t1,
+                );
+            }
             reg.push(self.snap.clone());
+        } else {
+            let t1 = Instant::now();
+            stamp_ns_bracket(
+                &mut self.snap.decode_capture_mono_ns_lower,
+                &mut self.snap.decode_capture_mono_ns_upper,
+                t0,
+                t1,
+            );
+            if self.snap.input_start_n != 0
+                || self.snap.input_complete_n != 0
+                || self.snap.input_lost_n != 0
+                || self.snap.input_pending_n != 0
+            {
+                stamp_ns_bracket(
+                    &mut self.snap.input_capture_mono_ns_lower,
+                    &mut self.snap.input_capture_mono_ns_upper,
+                    t0,
+                    t1,
+                );
+            }
         }
         if ended {
             prune_ended_overflow(&mut reg);
@@ -480,7 +752,8 @@ impl Drop for Local {
             self.snap.decode_lost_n = self.snap.decode_lost_n.wrapping_add(1);
         }
         self.snap.decode_pending_n = 0;
-        // Lose any input pending for this slot.
+        // Bracket lower before INPUT_PENDING cut + lost accounting + flush merge.
+        let t0 = Instant::now();
         let mut pending = INPUT_PENDING.lock().unwrap();
         let before = pending.len();
         pending.retain(|p| p.slot_id != self.snap.slot_id);
@@ -489,19 +762,40 @@ impl Drop for Local {
         if lost > 0 {
             self.snap.input_lost_n = self.snap.input_lost_n.wrapping_add(lost);
         }
-        self.flush(true);
+        self.flush_from(t0, true);
     }
 }
 
-fn with_live_slot(slot_id: u64, f: impl FnOnce(&mut SlotObservation)) {
+/// Apply `f` to the live (or most recent) row for `slot_id`, stamping the
+/// **input** capture bracket from `t0` through registry unlock. Callers that
+/// cut INPUT_PENDING must pass a `t0` taken **before** that cut so the
+/// bracket encloses the pending/counter cut, not only the registry write.
+fn with_live_slot_from(t0: Instant, slot_id: u64, f: impl FnOnce(&mut SlotObservation)) {
     let mut reg = REGISTRY.lock().unwrap();
-    if let Some(entry) = reg.iter_mut().rev().find(|s| s.slot_id == slot_id && !s.ended) {
+    if let Some(entry) = reg
+        .iter_mut()
+        .rev()
+        .find(|s| s.slot_id == slot_id && !s.ended)
+    {
         f(entry);
         entry.updated_ms = wall_ms();
+        let t1 = Instant::now();
+        stamp_ns_bracket(
+            &mut entry.input_capture_mono_ns_lower,
+            &mut entry.input_capture_mono_ns_upper,
+            t0,
+            t1,
+        );
     } else if let Some(entry) = reg.iter_mut().rev().find(|s| s.slot_id == slot_id) {
-        // Prefer live; fall back to most recent row for this slot.
         f(entry);
         entry.updated_ms = wall_ms();
+        let t1 = Instant::now();
+        stamp_ns_bracket(
+            &mut entry.input_capture_mono_ns_lower,
+            &mut entry.input_capture_mono_ns_upper,
+            t0,
+            t1,
+        );
     }
 }
 
@@ -512,10 +806,13 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
     if !ENABLED.load(Relaxed) {
         return false;
     }
+    // Bracket lower must precede pending cut + counter bump.
+    let t0 = Instant::now();
     let surface = *INPUT_SURFACE.lock().unwrap();
     let mut q = INPUT_PENDING.lock().unwrap();
     if q.len() >= MAX_INPUT_PENDING {
-        with_live_slot(slot_id, |s| {
+        drop(q);
+        with_live_slot_from(t0, slot_id, |s| {
             s.input_dropped_n = s.input_dropped_n.wrapping_add(1);
             s.input_start_n = s.input_start_n.wrapping_add(1);
         });
@@ -529,7 +826,7 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
     });
     let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
     drop(q);
-    with_live_slot(slot_id, |s| {
+    with_live_slot_from(t0, slot_id, |s| {
         s.input_start_n = s.input_start_n.wrapping_add(1);
         s.input_pending_n = pending_n;
     });
@@ -541,12 +838,13 @@ pub fn note_input_canceled(slot_id: u64) {
     if !ENABLED.load(Relaxed) {
         return;
     }
+    let t0 = Instant::now();
     let mut q = INPUT_PENDING.lock().unwrap();
     if let Some(pos) = q.iter().position(|p| p.slot_id == slot_id) {
         q.remove(pos);
         let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
         drop(q);
-        with_live_slot(slot_id, |s| {
+        with_live_slot_from(t0, slot_id, |s| {
             s.input_canceled_n = s.input_canceled_n.wrapping_add(1);
             s.input_pending_n = pending_n;
         });
@@ -581,6 +879,8 @@ pub fn note_tui_draw_flush(slot_id: u64, at: Instant) {
 
 /// Complete all matching pending inputs for slot (FIFO among matches).
 fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> bool) {
+    // t0 before pending cut so input bracket encloses the deque mutation.
+    let t0 = Instant::now();
     let mut q = INPUT_PENDING.lock().unwrap();
     let mut completed: Vec<Duration> = Vec::new();
     let mut i = 0;
@@ -597,13 +897,18 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
     if completed.is_empty() {
         return;
     }
-    with_live_slot(slot_id, |s| {
+    with_live_slot_from(t0, slot_id, |s| {
         for d in completed {
             let b = latency_bucket(d);
             s.input_complete_n = s.input_complete_n.wrapping_add(1);
             s.input_latency_n = s.input_latency_n.wrapping_add(1);
             s.input_latency_ns = s.input_latency_ns.wrapping_add(ns(d));
             s.input_latency_buckets[b] = s.input_latency_buckets[b].wrapping_add(1);
+            if fine_enabled() {
+                let fb = fine_latency_bucket(d);
+                s.input_fine_latency_buckets[fb] =
+                    s.input_fine_latency_buckets[fb].wrapping_add(1);
+            }
         }
         s.input_pending_n = pending_n;
     });
@@ -746,7 +1051,13 @@ mod tests {
     static TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
     fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Isolate fine flag + leftover registry rows between tests.
+        FINE_ENABLED.store(false, Relaxed);
+        REGISTRY.lock().unwrap().clear();
+        INPUT_PENDING.lock().unwrap().clear();
+        DECODE_BRIDGE.lock().unwrap().clear();
+        g
     }
 
     fn fresh_local(name: &str) -> Local {
@@ -1011,5 +1322,243 @@ mod tests {
         l2.drain_bridge();
         assert_eq!(l2.snap.dispatch_n, 1);
         assert_eq!(l2.snap.decode_pending_n, 0);
+    }
+
+    #[test]
+    fn capture_and_read_brackets_share_mono_domain() {
+        let _g = lock_tests();
+        let mut l = fresh_local("resp-clock-bracket");
+        let t_before = mono_ns_now();
+        let t0 = Instant::now();
+        l.note_decode_edge(t0);
+        l.note_script_dispatch(t0 + Duration::from_millis(3));
+        assert!(l.snap.decode_capture_mono_ns_upper >= l.snap.decode_capture_mono_ns_lower);
+        assert!(l.snap.decode_capture_mono_ns_lower >= t_before);
+        // Floor/ceil ms still enclose ns.
+        let lo_ms = mono_ns_floor_ms(l.snap.decode_capture_mono_ns_lower);
+        let hi_ms = mono_ns_ceil_ms(l.snap.decode_capture_mono_ns_upper);
+        assert!(hi_ms >= lo_ms);
+        assert!(lo_ms * 1_000_000 <= l.snap.decode_capture_mono_ns_lower);
+        assert!(hi_ms * 1_000_000 >= l.snap.decode_capture_mono_ns_upper);
+
+        std::thread::sleep(Duration::from_millis(5));
+        let snap = read_bracketed().expect("on");
+        assert!(snap.read_mono_ns_upper >= snap.read_mono_ns_lower);
+        assert!(snap.read_mono_ns_lower >= l.snap.decode_capture_mono_ns_lower);
+        let row = snap
+            .slots
+            .iter()
+            .find(|s| s.slot_id == l.slot_id())
+            .expect("row");
+        assert!(row.decode_capture_mono_ns_upper > 0);
+        assert!(row.decode_capture_mono_ns_upper <= snap.read_mono_ns_upper);
+        // Input never mutated — input bracket stays unset.
+        assert_eq!(row.input_capture_mono_ns_lower, 0);
+        assert_eq!(row.input_capture_mono_ns_upper, 0);
+        l.decode_pending.clear();
+    }
+
+    #[test]
+    fn mono_ms_floor_ceil_encloses_ns() {
+        let _g = lock_tests();
+        assert_eq!(mono_ns_floor_ms(0), 0);
+        assert_eq!(mono_ns_ceil_ms(0), 0);
+        assert_eq!(mono_ns_floor_ms(1), 0);
+        assert_eq!(mono_ns_ceil_ms(1), 1);
+        assert_eq!(mono_ns_floor_ms(1_000_000), 1);
+        assert_eq!(mono_ns_ceil_ms(1_000_000), 1);
+        assert_eq!(mono_ns_floor_ms(1_000_001), 1);
+        assert_eq!(mono_ns_ceil_ms(1_000_001), 2);
+        // Both ends as plain floor would miss the upper enclosure:
+        let ns = 1_999_999u64;
+        assert!(mono_ns_floor_ms(ns) * 1_000_000 <= ns);
+        assert!(mono_ns_ceil_ms(ns) * 1_000_000 >= ns);
+        assert!(mono_ns_floor_ms(ns) < mono_ns_ceil_ms(ns));
+    }
+
+    #[test]
+    fn input_mutation_does_not_retime_decode_capture_bracket() {
+        let _g = lock_tests();
+        enable();
+        INPUT_PENDING.lock().unwrap().clear();
+        set_input_surface(InputSurface::Tui);
+        let mut l = fresh_local("resp-separate-brackets");
+        let sid = l.slot_id();
+        let t0 = Instant::now();
+        l.note_decode_edge(t0);
+        l.note_script_dispatch(t0 + Duration::from_millis(1));
+        let decode_lo = l.snap.decode_capture_mono_ns_lower;
+        let decode_hi = l.snap.decode_capture_mono_ns_upper;
+        assert!(decode_hi > 0);
+        std::thread::sleep(Duration::from_millis(3));
+        assert!(note_input_start(sid, Instant::now(), 0));
+        note_tui_draw_flush(sid, Instant::now() + Duration::from_millis(1));
+        let rows = read().expect("on");
+        let row = rows.iter().find(|s| s.slot_id == sid).expect("row");
+        // Decode bracket frozen at flush; input has its own later bracket.
+        assert_eq!(row.decode_capture_mono_ns_lower, decode_lo);
+        assert_eq!(row.decode_capture_mono_ns_upper, decode_hi);
+        assert!(row.input_capture_mono_ns_upper > 0);
+        assert!(row.input_capture_mono_ns_lower >= decode_hi || row.input_capture_mono_ns_lower > decode_lo);
+        assert_eq!(row.input_complete_n, 1);
+        assert_eq!(row.dispatch_n, 1);
+        l.decode_pending.clear();
+    }
+
+    #[test]
+    fn concurrent_input_and_local_flush_interleave_with_barrier() {
+        let _g = lock_tests();
+        enable();
+        INPUT_PENDING.lock().unwrap().clear();
+        set_input_surface(InputSurface::Tui);
+        let mut l = fresh_local("resp-clock-input-conc");
+        let sid = l.slot_id();
+        let t0 = Instant::now();
+        l.note_decode_edge(t0);
+        // Barrier: input complete runs concurrent with decode dispatch flush.
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let b_in = barrier.clone();
+        let handle = std::thread::spawn(move || {
+            assert!(note_input_start(sid, Instant::now(), 0));
+            b_in.wait();
+            note_tui_draw_flush(sid, Instant::now() + Duration::from_millis(1));
+        });
+        barrier.wait();
+        l.note_script_dispatch(t0 + Duration::from_millis(2));
+        handle.join().expect("input thread");
+        let rows = read().expect("on");
+        let row = rows.iter().find(|s| s.slot_id == sid).expect("row");
+        assert!(row.decode_capture_mono_ns_upper > 0);
+        assert!(row.input_capture_mono_ns_upper > 0);
+        assert_eq!(row.input_complete_n, 1);
+        assert_eq!(row.dispatch_n, 1);
+        // Separate families: either order is fine; both must be non-zero and valid.
+        assert!(row.decode_capture_mono_ns_upper >= row.decode_capture_mono_ns_lower);
+        assert!(row.input_capture_mono_ns_upper >= row.input_capture_mono_ns_lower);
+        l.decode_pending.clear();
+    }
+
+    #[test]
+    fn flush_expands_input_bracket_over_fresh_pending_cut() {
+        // Operator note: old input bracket alone does not enclose overwritten
+        // input_pending_n from a fresh INPUT_PENDING cut on flush. Flush must
+        // union old input bracket with the pending-cut/merge bracket.
+        let _g = lock_tests();
+        enable();
+        INPUT_PENDING.lock().unwrap().clear();
+        set_input_surface(InputSurface::Tui);
+        let mut l = fresh_local("resp-input-pending-union");
+        let sid = l.slot_id();
+        assert!(note_input_start(sid, Instant::now(), 0));
+        let rows0 = read().expect("on");
+        let r0 = rows0.iter().find(|s| s.slot_id == sid).expect("row");
+        let after_first_hi = r0.input_capture_mono_ns_upper;
+        assert!(after_first_hi > 0);
+        assert_eq!(r0.input_pending_n, 1);
+        assert_eq!(r0.input_start_n, 1);
+        // Second start: input path replaces publication stamp; pending becomes 2.
+        std::thread::sleep(Duration::from_millis(3));
+        assert!(note_input_start(sid, Instant::now(), 0));
+        let rows1 = read().expect("on");
+        let r1 = rows1.iter().find(|s| s.slot_id == sid).expect("row");
+        assert_eq!(r1.input_start_n, 2);
+        assert_eq!(r1.input_pending_n, 2);
+        let after_second_lo = r1.input_capture_mono_ns_lower;
+        let after_second_hi = r1.input_capture_mono_ns_upper;
+        assert!(after_second_hi > after_first_hi);
+        // Decode flush refreshes pending from INPUT_PENDING and must expand
+        // the input bracket past the input-only stamp (forced interleaving of
+        // stale start counts + pending cut, not equality/zero-delta alone).
+        std::thread::sleep(Duration::from_millis(3));
+        l.note_decode_edge(Instant::now());
+        let rows2 = read().expect("on");
+        let r2 = rows2.iter().find(|s| s.slot_id == sid).expect("row");
+        assert_eq!(r2.input_start_n, 2, "stale start count retained");
+        assert_eq!(r2.input_pending_n, 2, "pending gauge still 2 after flush cut");
+        assert!(r2.input_capture_mono_ns_lower <= after_second_lo);
+        assert!(
+            r2.input_capture_mono_ns_upper > after_second_hi,
+            "flush must expand input upper past input-only bracket; before={after_second_hi} after={}",
+            r2.input_capture_mono_ns_upper
+        );
+        l.decode_pending.clear();
+        INPUT_PENDING.lock().unwrap().clear();
+    }
+
+    #[test]
+    fn generation_restart_ends_prior_row_with_capture_bracket() {
+        let _g = lock_tests();
+        let mut l = fresh_local("resp-clock-restart");
+        let sid = l.slot_id();
+        let gen1 = l.generation();
+        l.note_decode_edge(Instant::now());
+        drop(l);
+        let rows = read().expect("on");
+        let ended = rows
+            .iter()
+            .find(|s| s.slot_id == sid && s.generation == gen1)
+            .expect("ended gen1");
+        assert!(ended.ended);
+        assert!(ended.decode_capture_mono_ns_upper >= ended.decode_capture_mono_ns_lower);
+        assert!(ended.decode_capture_mono_ns_upper > 0);
+        let mut l2 = fresh_local("resp-clock-restart");
+        assert_ne!(l2.generation(), gen1);
+        l2.note_decode_edge(Instant::now());
+        l2.note_script_dispatch(Instant::now());
+        assert!(l2.snap.decode_capture_mono_ns_upper > 0);
+        l2.decode_pending.clear();
+    }
+
+    #[test]
+    fn fine_bins_boundary_overflow_and_legacy_unchanged_when_fine_off() {
+        let _g = lock_tests();
+        // Fine off: legacy only.
+        FINE_ENABLED.store(false, Relaxed);
+        let mut l = fresh_local("resp-fine-off");
+        let t0 = Instant::now();
+        l.note_decode_edge(t0);
+        l.note_script_dispatch(t0 + Duration::from_millis(3));
+        assert_eq!(l.snap.decode_latency_buckets.iter().sum::<u64>(), 1);
+        assert_eq!(l.snap.decode_fine_latency_buckets.iter().sum::<u64>(), 0);
+        l.decode_pending.clear();
+
+        enable_fine();
+        assert!(fine_enabled());
+        let mut l2 = fresh_local("resp-fine-on");
+        let t1 = Instant::now();
+        // Exact 1 ms → fine bucket 0 (≤1), legacy bucket 0 (≤5).
+        l2.note_decode_edge(t1);
+        l2.note_script_dispatch(t1 + Duration::from_millis(1));
+        assert_eq!(l2.snap.decode_fine_latency_buckets[0], 1);
+        assert_eq!(l2.snap.decode_latency_buckets[0], 1);
+        // 100 ms exact → fine bucket 99 (≤100), legacy index of 100 ms bound.
+        l2.note_decode_edge(t1);
+        l2.note_script_dispatch(t1 + Duration::from_millis(100));
+        assert_eq!(l2.snap.decode_fine_latency_buckets[99], 1);
+        assert_eq!(l2.snap.decode_latency_buckets[6], 1);
+        // 101 ms → fine overflow (100), legacy ≤250.
+        l2.note_decode_edge(t1);
+        l2.note_script_dispatch(t1 + Duration::from_millis(101));
+        assert_eq!(l2.snap.decode_fine_latency_buckets[100], 1);
+        assert_eq!(l2.snap.decode_latency_buckets[7], 1);
+        assert_eq!(
+            fine_p99_upper_bound_ms(&l2.snap.decode_fine_latency_buckets),
+            None
+        ); // overflow in p99 path when overflow holds the cum
+        l2.decode_pending.clear();
+        FINE_ENABLED.store(false, Relaxed);
+    }
+
+    #[test]
+    fn fine_bucket_edges_and_p99() {
+        let _g = lock_tests();
+        assert_eq!(fine_latency_bucket(Duration::ZERO), 0);
+        assert_eq!(fine_latency_bucket(Duration::from_millis(1)), 0);
+        assert_eq!(fine_latency_bucket(Duration::from_micros(1_001)), 1);
+        assert_eq!(fine_latency_bucket(Duration::from_millis(100)), 99);
+        assert_eq!(fine_latency_bucket(Duration::from_millis(101)), 100);
+        let mut b = [0u64; FINE_LATENCY_BUCKETS];
+        b[4] = 100; // ≤5 ms
+        assert_eq!(fine_p99_upper_bound_ms(&b), Some(5));
     }
 }
