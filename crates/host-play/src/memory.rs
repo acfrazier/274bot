@@ -33,6 +33,7 @@ pub type BenchmarkAllocator = System;
 pub const BENCHMARK_ALLOCATOR: BenchmarkAllocator = System;
 
 /// Process CPU time, distinct from overlapping per-thread wall durations.
+/// Returns `(user_seconds, kernel/system_seconds)` when the OS sampler works.
 fn process_cpu_seconds() -> Option<(f64, f64)> {
     #[cfg(unix)]
     {
@@ -43,8 +44,15 @@ fn process_cpu_seconds() -> Option<(f64, f64)> {
         let seconds = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1_000_000.0;
         Some((seconds(usage.ru_utime), seconds(usage.ru_stime)))
     }
-    #[cfg(not(unix))]
-    None
+    #[cfg(windows)]
+    {
+        // User + kernel from GetProcessTimes; optional fields stay null on fail.
+        crate::rss::windows_cpu_user_kernel()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
 }
 
 
@@ -1050,7 +1058,24 @@ impl Run {
                 ready,
                 active,
                 resident_bytes: crate::current_resident_bytes(),
-                peak_resident_bytes: Some(crate::sample_process().0),
+                // sample_process first field is peak. Windows: never Some(0)
+                // (fail/zero → None). Unix: preserve prior Some(sample.0)
+                // including Some(0) when getrusage/sentinel yields 0.
+                peak_resident_bytes: {
+                    let peak = crate::sample_process().0;
+                    #[cfg(windows)]
+                    {
+                        if peak == 0 {
+                            None
+                        } else {
+                            Some(peak)
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Some(peak)
+                    }
+                },
                 rust_allocations: (!cfg!(feature = "memory-profile-no-alloc")).then_some(allocs),
                 rust_allocated_bytes: (!cfg!(feature = "memory-profile-no-alloc")).then_some(alloc_bytes),
                 rust_live_bytes: (!cfg!(feature = "memory-profile-no-alloc")).then_some(live_bytes),
@@ -1639,10 +1664,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn process_cpu_time_is_available_and_monotonic() {
-        let before = process_cpu_seconds().expect("getrusage");
-        let after = process_cpu_seconds().expect("getrusage");
+        let before = process_cpu_seconds().expect("process cpu sample");
+        let after = process_cpu_seconds().expect("process cpu sample");
         assert!(before.0 >= 0.0 && before.1 >= 0.0);
         assert!(after.0 >= before.0 && after.1 >= before.1);
     }

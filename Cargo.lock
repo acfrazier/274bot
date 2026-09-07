@@ -2328,6 +2328,7 @@ dependencies = [
  "script",
  "serde_json",
  "vault",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
