@@ -17,6 +17,9 @@ ordinal consumption remain unavailable pending their separate integration.
 - The reviewed `build_provenance.verify_build` verifies canonical named binary
   and navpack/navflags/catalog paths against real file hashes, successful build
   exit, typed features/allocator, stable source digests and build/client commits.
+  Metadata must declare non-empty actual paths for all three runtime fixtures
+  (`nav_pack`, `nav_flags`, `catalog_path`) before verify; digest-only claims
+  (hashes without paths) are rejected and never fall back to manifest paths.
   Metadata must carry matching nested `build_provenance` with completion_status
   unchanged. Missing runtime hash/configuration fields are never filled in.
 - Top-level legacy source/client labels describe the checkout. The actual saved
@@ -46,11 +49,12 @@ metadata timestamps, completed nested build provenance and unchanged sidecars.
 The positive fixture proves binding and qualification only, then reaches
 `overhead_unavailable`.
 
-Eighteen added production-path negative cases cover invalid/mismatched UTC,
+Nineteen production-path negative cases cover invalid/mismatched UTC,
 missing/extra profile flags, duplicate timing arguments, missing manifest
 fixtures, invalid source digests, wrong manifest hashes, corrupt assets, swapped
 server sidecars, nonfinite metadata, bool PID/feature confusion, absent/changed
-build completion, launcher/sampler failure and explicit binding errors.
+build completion, launcher/sampler failure, explicit binding errors, and
+digest-only runtime fixtures (sha fields kept, path fields omitted).
 Additional tests cover changed checkout labels remaining distinct from saved
 builds, file mutation during independent analysis and host-sidecar mutation.
 The six repeat root probes are saved in

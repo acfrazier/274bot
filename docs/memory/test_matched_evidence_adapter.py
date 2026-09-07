@@ -463,7 +463,8 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
                   'duplicate_observe', 'missing_manifest_fixtures', 'bad_source_digest',
                   'wrong_manifest_hash', 'asset_corruption', 'server_sidecar_swap',
                   'nonfinite_metadata', 'bool_pid', 'missing_build_proof', 'changed_build_proof',
-                  'launcher_failed', 'sampler_failed', 'explicit_binding_error', 'bool_feature')
+                  'launcher_failed', 'sampler_failed', 'explicit_binding_error', 'bool_feature',
+                  'digest_only_runtime_fixtures')
         for probe in probes:
             with self.subTest(probe=probe):
                 ref, _, manifest_path, server = self._positive_pair()
@@ -488,6 +489,10 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
                 if probe == 'sampler_failed': receipt['sampler_result'] = {'exit_code': 1}
                 if probe == 'explicit_binding_error': receipt['binding_errors'] = ['failed']
                 if probe == 'bool_feature': meta['feature_flags']['locked'] = 1
+                # Hashes remain; paths omitted — must not fall back to manifest paths.
+                if probe == 'digest_only_runtime_fixtures':
+                    for field in ('nav_pack', 'nav_flags', 'catalog_path'):
+                        meta.pop(field, None)
                 _write_json(manifest_path, manifest)
                 receipt['manifest_sha256'] = mea.sha256_file(manifest_path)
                 if probe == 'wrong_manifest_hash': receipt['manifest_sha256'] = '0' * 64
@@ -499,6 +504,9 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
                 bound = mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest_path, server_identity_path=server)
                 self.assertFalse(bound['binding_ok'], (probe, bound))
                 self.assertEqual(bound['status'], 'unavailable')
+                if probe == 'digest_only_runtime_fixtures':
+                    self.assertEqual(bound['reason'], 'metadata_runtime_fixture_path_missing')
+                    self.assertIn(bound.get('field'), ('nav_pack', 'nav_flags', 'catalog_path'))
 
     def test_checkout_labels_can_differ_from_saved_binary_sources(self):
         ref, _, manifest, server = self._positive_pair()

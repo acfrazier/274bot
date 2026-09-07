@@ -598,10 +598,27 @@ def _bind_side(
     if cli_err is not None:
         return _unavailable(cli_err, path=str(receipt_path))
 
+    # Runtime fixtures need actual metadata paths (launcher keys nav_pack,
+    # nav_flags, catalog_path). Digest-only claims are not binding: verify_build
+    # would otherwise fall back to manifest-recorded paths when actual is None.
+    runtime_fixture_paths = {}
+    for field in ('nav_pack', 'nav_flags', 'catalog_path'):
+        value = meta.get(field)
+        if not isinstance(value, str) or not value:
+            return _unavailable('metadata_runtime_fixture_path_missing', field=field)
+        runtime_fixture_paths[field] = value
+
     # Reuse the reviewed launcher verifier instead of duplicating a weaker
     # manifest/fixture implementation. It verifies real canonical file paths.
-    verified_build = bp.verify_build(manifest_path, receipt['_binding_role'], meta['frontend'],
-                                     meta['binary'], meta.get('nav_pack'), meta.get('nav_flags'), meta.get('catalog_path'))
+    verified_build = bp.verify_build(
+        manifest_path,
+        receipt['_binding_role'],
+        meta['frontend'],
+        meta['binary'],
+        runtime_fixture_paths['nav_pack'],
+        runtime_fixture_paths['nav_flags'],
+        runtime_fixture_paths['catalog_path'],
+    )
     recorded_build = meta.get('build_provenance')
     if not isinstance(recorded_build, dict) or recorded_build.get('status') != 'verified' or recorded_build.get('completion_status') != 'unchanged':
         return _unavailable('completed_build_provenance_missing_or_invalid')
