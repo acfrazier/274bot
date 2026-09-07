@@ -9,7 +9,7 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current actions — 2026-09-07 19:14 UTC
+## Current actions — 2026-09-07 19:42 UTC
 
 - Continue approved performance-finish-plan.md. Native Linux N16 still misses
   memory/CPU targets; Windows panel misses simulation/render cadence. No final
@@ -22,23 +22,35 @@ verify it on resume because a worker may finish after this snapshot.
   ~32 UI fps, ~17 client ticks/s and ~58ms work spans are measured. Static
   wgpu-core29.0.4 shared-device fence coupling exists; runtime lock stalls and
   RDP causality remain unproven. Root directly viewed the scene-ready capture.
-- t_ada38c88 (Luna): corrective submit-attribution opt-in/test isolation before
-  native integration, same isolated .worktrees/windows-panel-attribution with
-  host/client codex/windows-submit-attribution. Prior t_c14b3d93 review passed
-  before root found general profiling incorrectly activates the new ring.
-  Preserve current host/client working diffs; root commits client/gitlink only
-  after this corrective review. No driver/presentation/scheduling changes.
-- Native Hyper-V builder is running and key-only SSH verified. Alias
-  274bot-builder works from Mac. 4vCPU/8GiB static/64GiB Gen2, Secure Boot On,
-  existing Default Switch, no autostart. Rust/Cargo1.98 and native C/Rust smoke
-  pass; project build not yet proven. Report da0ecc4+d72c112 passed actual
-  Grok4.5 t_f48dee57, session20260907_150811_0664b8. Keep builder workload quiet
-  for future clean Windows measurements and record VM state separately.
-- Installed NVIDIA driver remains616.56 (native19:10 check). Operator will
-  download the available update with Tiny NVIDIA Update Checker, then sign out
-  the non-Test desktop. Installer is queued for an appropriate quiet boundary
-  AFTER old-driver timing proof; no installation or reboot yet. Re-read session
-  state for the next run; SSH/VM do not require the interactive admin login.
+- Submit diagnostic t_ada38c88 approved actual Grok4.5 round2 run359,
+  session20260907_153013_9e569e. Host3a2cf3e/client5ee9b6e committed on the
+  isolated codex/windows-submit-attribution branch. Native Windows release build
+  passed; all851 source hashes match before/after. Binary SHA256
+  a4f50f53b1047fa7c72b04bbd310110542b6359b3512e0666f10750fbc61a96d.
+  Native profiling and selected GPU integration checks passed; full logs retained.
+- Old-driver submit trace is running under limited BotTest in
+  C:\Users\BotTest\274bot-runs\managed-panel-attribution-submit-3a2cf3e-61656-a.
+  Same30s warmup/120s observation and panel diagnostics as prior a3f trace.
+  Await actual completion, qualification/binding, dropped-record and overlap
+  analysis. CPU submission-expression spans include encoder.finish argument
+  evaluation; these are not isolated lock measurements or GPU execution time.
+- Hyper-V builder native setup passed actual Grok4.5 t_f48dee57,
+  session20260907_150811_0664b8. Root shut the guest down gracefully via SSH;
+  native preflight confirms VM Off for the old-driver trace. Project build on
+  this VM remains unproven; Linux matched freeze still runs on Mac Docker.
+- Installed NVIDIA driver remains616.56 at old-trace preflight. Root exported
+  and hashed its219-file package for rollback. NVIDIA-signed616.64 remains in
+  C:\TNUC; official hotfix616.86 also downloaded, signature Valid, SHA256
+  e14b1c806bd7d7657c612da6144a3412ed9f055a067548ea05ecd30a7d7ed7e4.
+  Operator authorizes hotfix comparison and needed Windows restarts. Install
+  only after preserving the old-driver trace, then reuse the same binary and
+  settings. No driver change or second reboot has occurred yet.
+- Operator signed out Austen. BotTest RDP2 is the only logged-on session.
+  Root removed two identified stale SSH probe trees and temporarily stopped
+  DellTechHub,DellClientManagementService,ClickToRunSvc plus their identified
+  leftover children. Startup types unchanged; restore receipts/script retained
+  C:\ProgramData\274bot-Test\quiet-services-20260907. Intel services preserved.
+  Recheck/reapply this quiet state after reboot for an equal comparison.
 - Network diagnostics: direct TCP11.124MB/s up/9.892MB/s down, both machines
   on2.4GHz at observation. SSH is not the sole limit; band causality remains
   unproven. Test listener/firewall removed. Operator permits throughput tests
