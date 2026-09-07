@@ -5,7 +5,7 @@
 //! callbacks. Sample fields are separate domains; never sum them and never
 //! equate allocation counts with RSS.
 
-use crate::Play;
+use crate::{Play, PlayOptions};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::HashMap;
 use std::io::Write;
@@ -333,6 +333,179 @@ fn seed_runner(scenario: scenario::Scenario, name: &str, world: Option<Arc<nav::
     runner.set_live_names(&[name.to_owned()]);
     runner.set_deadline(Duration::from_secs(1800));
     Seed { runner, started: false }
+}
+
+/// Live fields collected per fixture name at a qualification boundary.
+/// Ordinal + slot ids are filled by [`qualification_slot_rows`] from `names`.
+struct QualificationSlotFields {
+    state: String,
+    error: Option<String>,
+    runtime: serde_json::Value,
+    client: Option<serde_json::Value>,
+}
+
+/// Build one qualification slot row per entry in `names` (authoritative fixture
+/// ordinal = enumerate order). Status/hash-map order must never drive ordinals.
+fn qualification_slot_rows(
+    names: &[String],
+    mut fields_for: impl FnMut(&str) -> QualificationSlotFields,
+) -> Vec<serde_json::Value> {
+    names
+        .iter()
+        .enumerate()
+        .map(|(ordinal, name)| {
+            let f = fields_for(name);
+            serde_json::json!({
+                "ordinal": ordinal,
+                "name": name,
+                // Run-local FNV ids: map instrumentation onto fixture ordinal.
+                // Do not compare these ids numerically across separate runs.
+                "responsiveness_slot_id": host::responsiveness_profile::slot_id_for(name),
+                "cadence_slot_id": host::cadence::slot_id_for(name),
+                "state": f.state,
+                "error": f.error,
+                "runtime": f.runtime,
+                "client": f.client,
+            })
+        })
+        .collect()
+}
+
+/// Canonicalize `cache_dir` when the path exists; otherwise keep the selected
+/// string and note why canonicalization failed. Never hashes cache contents.
+fn cache_dir_evidence(cache_dir: &str) -> serde_json::Value {
+    let path = PathBuf::from(cache_dir);
+    match path.canonicalize() {
+        Ok(canon) => serde_json::json!({
+            "cache_dir": cache_dir,
+            "cache_dir_canonical": canon.display().to_string(),
+            "cache_dir_canonical_available": true,
+            "cache_content_hash": serde_json::Value::Null,
+            "cache_content_hash_reason": "not_hashed_at_boundary; launcher/preflight may hash path independently",
+        }),
+        Err(e) => serde_json::json!({
+            "cache_dir": cache_dir,
+            "cache_dir_canonical": serde_json::Value::Null,
+            "cache_dir_canonical_available": false,
+            "cache_dir_canonical_reason": format!("canonicalize failed: {e}"),
+            "cache_content_hash": serde_json::Value::Null,
+            "cache_content_hash_reason": "not_hashed_at_boundary; launcher/preflight may hash path independently",
+        }),
+    }
+}
+
+/// Unavailable marker for live per-slot client state that is not exposed on
+/// `Play`/`SlotStatus` without invasive instrumentation. Never invent defaults.
+fn unavailable_client_state(reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "available": false,
+        "reason": reason,
+    })
+}
+
+/// Requested wall/harness options recorded at a successful qualification boundary.
+/// Distinguishes Play creation options from unobserved live client state.
+fn qualification_settings_value(
+    options: &PlayOptions,
+    frontend: &str,
+    config: &Config,
+    render_policy: RenderPolicy,
+    single_renderer: bool,
+    diagnostics: bool,
+    failure_capture: bool,
+) -> serde_json::Value {
+    let env_flag = |key: &str| std::env::var(key).as_deref() == Ok("1");
+    let mut settings = match cache_dir_evidence(&options.cache_dir) {
+        serde_json::Value::Object(map) => map,
+        other => panic!("cache_dir_evidence must be object, got {other}"),
+    };
+    settings.insert("host".into(), options.host.clone().into());
+    settings.insert("port".into(), options.port.into());
+    // PlayOptions.lowmem is the wall option selected at Play::new. Per-slot
+    // ClientConfig.lowmem comes from vault ProfileSettings and may differ;
+    // live client lowmem/audio/renderer are not on SlotStatus.
+    settings.insert("lowmem_requested".into(), options.lowmem.into());
+    settings.insert("mainland".into(), options.mainland.into());
+    settings.insert("frontend".into(), frontend.into());
+    settings.insert("n".into(), config.n.into());
+    settings.insert("workload".into(), config.workload.as_str().into());
+    settings.insert(
+        "render_policy_requested".into(),
+        render_policy.as_str().into(),
+    );
+    settings.insert("single_renderer".into(), single_renderer.into());
+    settings.insert("diagnostics".into(), diagnostics.into());
+    settings.insert("failure_capture".into(), failure_capture.into());
+    // Env labels as requested at process boundary time — not proof the
+    // corresponding profiler was initialized. Actual enablement is separate.
+    settings.insert(
+        "env_flags_requested".into(),
+        serde_json::json!({
+            "BOT_SCHEDULING_PROFILE": env_flag("BOT_SCHEDULING_PROFILE"),
+            "BOT_RENDER_PROFILE": env_flag("BOT_RENDER_PROFILE"),
+            "BOT_GPU_COMPLETION_PROFILE": env_flag("BOT_GPU_COMPLETION_PROFILE"),
+            "BOT_RESPONSIVENESS_PROFILE": env_flag("BOT_RESPONSIVENESS_PROFILE"),
+            "BOT_RESPONSIVENESS_FINE": env_flag("BOT_RESPONSIVENESS_FINE"),
+        }),
+    );
+    settings.insert(
+        "scheduling_profile_enabled".into(),
+        host::cadence::enabled().into(),
+    );
+    settings.insert(
+        "render_profile_enabled".into(),
+        host::render_profile::enabled().into(),
+    );
+    settings.insert(
+        "gpu_completion_profile_enabled".into(),
+        host::render_profile::gpu_completion_enabled().into(),
+    );
+    settings.insert(
+        "responsiveness_profile_enabled".into(),
+        host::responsiveness_profile::enabled().into(),
+    );
+    settings.insert(
+        "responsiveness_fine_enabled".into(),
+        host::responsiveness_profile::fine_enabled().into(),
+    );
+    settings.insert(
+        "client_lowmem_actual".into(),
+        unavailable_client_state(
+            "per-slot ClientConfig.lowmem / live Client.lowmem not exposed on Play statuses without invasive instrumentation",
+        ),
+    );
+    settings.insert(
+        "client_audio_actual".into(),
+        unavailable_client_state(
+            "per-slot audio/music gate not exposed on Play statuses without invasive instrumentation",
+        ),
+    );
+    settings.insert(
+        "client_renderer_actual".into(),
+        unavailable_client_state(
+            "per-slot renderer backend/mode not exposed on Play statuses without invasive instrumentation",
+        ),
+    );
+    serde_json::Value::Object(settings)
+}
+
+/// Successful observe-start / observe-end qualification row. Slots first, then
+/// elapsed_s, then optional settings (additive; legacy keys preserved).
+fn serialize_qualification_boundary(
+    phase: &str,
+    slots: Vec<serde_json::Value>,
+    elapsed_s: f64,
+    settings: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "phase": phase,
+        "elapsed_s": elapsed_s,
+        "slots": slots,
+    });
+    if let Some(settings) = settings {
+        value["settings"] = settings;
+    }
+    value
 }
 
 type ScriptCard = (
@@ -1205,33 +1378,40 @@ impl Run {
     // pre-failure-capture path (flag off / success rows unchanged).
     fn qualification_slots(&self, play: &Play) -> Vec<serde_json::Value> {
         let statuses = play.statuses();
-        self.names
-            .iter()
-            .map(|name| {
+        qualification_slot_rows(&self.names, |name| {
+            let client = statuses.iter().find(|s| s.username == name).map(|s| {
                 serde_json::json!({
-                    "name": name,
-                    "state": format!("{:?}", play.script_state(name)),
-                    "error": play.script_last_error(name),
-                    "runtime": play.memory_script_progress(name),
-                    "client": statuses.iter().find(|s| &s.username == name).map(|s| serde_json::json!({
-                        "ingame": s.ingame,
-                        "scene_state": s.scene_state,
-                        "x": s.tile_x,
-                        "z": s.tile_z,
-                        "level": s.tile_level
-                    })),
+                    "ingame": s.ingame,
+                    "scene_state": s.scene_state,
+                    "x": s.tile_x,
+                    "z": s.tile_z,
+                    "level": s.tile_level
                 })
-            })
-            .collect()
+            });
+            QualificationSlotFields {
+                state: format!("{:?}", play.script_state(name)),
+                error: play.script_last_error(name),
+                runtime: play.memory_script_progress(name),
+                client,
+            }
+        })
     }
 
     fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
+        // Slots first (progress evidence), then elapsed, then settings.
         let slots = self.qualification_slots(play);
-        let value = serde_json::json!({
-            "phase": phase,
-            "elapsed_s": self.started.elapsed().as_secs_f64(),
-            "slots": slots
-        });
+        let elapsed_s = self.started.elapsed().as_secs_f64();
+        // Child module can read private parent `Play.options` — no public API.
+        let settings = qualification_settings_value(
+            &play.options,
+            self.frontend,
+            &self.config,
+            self.render_policy,
+            self.single_renderer,
+            self.diagnostics,
+            self.failure_capture,
+        );
+        let value = serialize_qualification_boundary(phase, slots, elapsed_s, Some(settings));
         writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
     }
 
@@ -2086,5 +2266,187 @@ mod tests {
         assert!(!run_off.failure_capture);
         assert!(!run_off.diagnostics);
         let _ = std::fs::remove_dir_all(_qpath.parent().unwrap());
+    }
+
+    fn stub_fields(name: &str) -> QualificationSlotFields {
+        QualificationSlotFields {
+            state: format!("Running-{name}"),
+            error: None,
+            runtime: serde_json::json!({"dispatched": 1}),
+            client: Some(serde_json::json!({
+                "ingame": true,
+                "scene_state": 2,
+                "x": 1,
+                "z": 2,
+                "level": 0
+            })),
+        }
+    }
+
+    fn assert_slot_legacy_and_ids(row: &serde_json::Value, ordinal: u64, name: &str) {
+        assert_eq!(row["ordinal"], ordinal);
+        assert_eq!(row["name"], name);
+        assert_eq!(
+            row["responsiveness_slot_id"],
+            host::responsiveness_profile::slot_id_for(name)
+        );
+        assert_eq!(row["cadence_slot_id"], host::cadence::slot_id_for(name));
+        assert_eq!(row["state"], format!("Running-{name}"));
+        assert!(row["error"].is_null());
+        assert_eq!(row["runtime"]["dispatched"], 1);
+        assert_eq!(row["client"]["ingame"], true);
+        // Legacy keys still present.
+        for key in ["name", "state", "error", "runtime", "client"] {
+            assert!(row.get(key).is_some(), "missing legacy key {key}");
+        }
+    }
+
+    #[test]
+    fn qualification_slot_rows_stable_ordinals_for_n1_and_n16() {
+        for n in [1usize, 16] {
+            let names: Vec<String> = (0..n).map(|i| format!("fix{i}")).collect();
+            let rows = qualification_slot_rows(&names, |name| stub_fields(name));
+            assert_eq!(rows.len(), n, "N={n} must emit one row per name");
+            let mut seen = std::collections::BTreeSet::new();
+            for (i, row) in rows.iter().enumerate() {
+                let name = &names[i];
+                assert_slot_legacy_and_ids(row, i as u64, name);
+                assert!(seen.insert(name.clone()), "duplicate name at N={n}");
+                assert!(
+                    seen.insert(format!("ord:{}", row["ordinal"])),
+                    "duplicate ordinal at N={n}"
+                );
+            }
+            assert_eq!(seen.len(), n * 2);
+        }
+    }
+
+    #[test]
+    fn qualification_slot_rows_ignore_status_hash_order() {
+        // Producer only sees names; status map order cannot reorder ordinals.
+        let names = vec!["z_last".into(), "a_first".into(), "m_mid".into()];
+        let rows = qualification_slot_rows(&names, |name| stub_fields(name));
+        assert_eq!(
+            rows.iter().map(|r| r["name"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["z_last", "a_first", "m_mid"]
+        );
+        assert_eq!(
+            rows.iter().map(|r| r["ordinal"].as_u64().unwrap()).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn serialize_qualification_boundary_preserves_key_order_contract() {
+        let names = vec!["unit0".into()];
+        let slots = qualification_slot_rows(&names, |name| stub_fields(name));
+        let options = PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp/274bot-qual-missing-cache".into(),
+            lowmem: true,
+            mainland: false,
+        };
+        let settings = qualification_settings_value(
+            &options,
+            "tui",
+            &unit_config(1, Workload::Active),
+            RenderPolicy::RotatingAll,
+            false,
+            false,
+            true,
+        );
+        let value = serialize_qualification_boundary(
+            "observe-start",
+            slots,
+            12.5,
+            Some(settings),
+        );
+        // Top-level successful boundary keys.
+        assert_eq!(value["phase"], "observe-start");
+        assert_eq!(value["elapsed_s"], 12.5);
+        assert!(value["slots"].is_array());
+        assert!(value.get("settings").is_some());
+        // Legacy top-level keys unchanged; settings additive.
+        for key in ["phase", "elapsed_s", "slots"] {
+            assert!(value.get(key).is_some(), "missing top-level {key}");
+        }
+        let s = &value["settings"];
+        assert_eq!(s["host"], "127.0.0.1");
+        assert_eq!(s["port"], 43594);
+        assert_eq!(s["cache_dir"], "/tmp/274bot-qual-missing-cache");
+        assert_eq!(s["lowmem_requested"], true);
+        assert_eq!(s["frontend"], "tui");
+        assert_eq!(s["n"], 1);
+        assert_eq!(s["workload"], "active");
+        assert_eq!(s["render_policy_requested"], "rotating-all");
+        assert_eq!(s["single_renderer"], false);
+        assert_eq!(s["diagnostics"], false);
+        assert_eq!(s["failure_capture"], true);
+        assert_eq!(s["cache_content_hash"], serde_json::Value::Null);
+        assert_eq!(s["client_lowmem_actual"]["available"], false);
+        assert_eq!(s["client_audio_actual"]["available"], false);
+        assert_eq!(s["client_renderer_actual"]["available"], false);
+        assert!(
+            s["client_lowmem_actual"]["reason"].as_str().unwrap().contains("invasive"),
+            "unavailable must carry reason, not assumed default"
+        );
+    }
+
+    #[test]
+    fn qualification_settings_distinguishes_lowmem_requested_from_actual() {
+        let options = PlayOptions {
+            host: "example.test".into(),
+            port: 1,
+            cache_dir: "/no/such/cache/dir/for-qual".into(),
+            lowmem: false,
+            mainland: true,
+        };
+        let s = qualification_settings_value(
+            &options,
+            "panel",
+            &unit_config(16, Workload::Idle),
+            RenderPolicy::FocusedOne,
+            true,
+            true,
+            false,
+        );
+        assert_eq!(s["lowmem_requested"], false);
+        assert_eq!(s["mainland"], true);
+        assert_eq!(s["n"], 16);
+        assert_eq!(s["frontend"], "panel");
+        assert_eq!(s["render_policy_requested"], "focused-one");
+        assert_eq!(s["single_renderer"], true);
+        // Actual live client state must not be invented as false/default.
+        assert_ne!(s["client_lowmem_actual"], false);
+        assert_ne!(s["client_lowmem_actual"], true);
+        assert_eq!(s["client_lowmem_actual"]["available"], false);
+        assert!(s["cache_dir_canonical"].is_null());
+        assert_eq!(s["cache_dir_canonical_available"], false);
+    }
+
+    #[test]
+    fn cache_dir_evidence_canonicalizes_existing_path_without_hash() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-qual-cache-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = cache_dir_evidence(dir.to_str().unwrap());
+        assert_eq!(v["cache_dir"], dir.to_str().unwrap());
+        assert_eq!(v["cache_dir_canonical_available"], true);
+        assert!(v["cache_dir_canonical"].as_str().unwrap().len() > 0);
+        assert!(v["cache_content_hash"].is_null());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn serialize_qualification_boundary_omits_settings_when_none() {
+        let value = serialize_qualification_boundary("observe-end", vec![], 1.0, None);
+        assert_eq!(value["phase"], "observe-end");
+        assert!(value.get("settings").is_none());
     }
 }
