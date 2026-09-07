@@ -9,18 +9,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current actions — 2026-09-07 18:31 UTC
+## Current actions — 2026-09-07 18:53 UTC
 
 - Continue approved performance-finish-plan.md. Native Linux N16 still misses
   memory/CPU targets; Windows panel misses simulation/render cadence. No final
   campaign acceptance or newly accepted RSS saving.
 - t_ab1637ae (Luna): freeze matched Linux e318/188a borrowed-fingerprint binaries
   in isolated snapshots. Await actual Grok4.5 review, then native VPS paired screen.
-- t_c037f97a (Luna): analyze completed native panel a3f729d evidence and code
-  for ~31ms swapchain acquire / ~32 UI fps / ~17 client ticks. No causal RDP
-  conclusion or scheduling/presentation change yet.
-- t_82c720f3 (Luna): prepare verified generic Ubuntu cloud image locally for
-  Hyper-V. Root owns native VM provisioning after image review.
+- Causal report 716eb01 passed Grok4.5 (t_c037f97a, session
+  20260907_144709_906027). Native evidence shows ~31ms acquire, ~32 UI fps,
+  ~17 client ticks/s and ~58ms work spans with ~0.7ms sleep. Static shared
+  wgpu-core29.0.4 fence read/write coupling exists; runtime stalls and RDP
+  causality remain unproven. t_c14b3d93 (Luna) now adds opt-in aligned
+  acquire/submit timing on isolated host/client codex/windows-submit-attribution
+  at .worktrees/windows-panel-attribution. No presentation policy changes.
+- Generic Ubuntu image 3ca3e66 passed Grok4.5 (t_82c720f3, session
+  20260907_144508_78a2e1). Root is staging the immutable VHDX and verified
+  CIDATA seed to isolated C:\ProgramData\274bot\hyperv-builder. No VM has
+  been created or booted yet. Transfer hash and native boot/SSH proof pending.
 - Windows reboot completed; Hyper-V/vmms and SSH verified. BotTest RDP2 plus
   restored Austen console1 remain active with operator consent. Process Lasso
   remains read-only in BotTest and system governor remains running.
@@ -727,3 +733,31 @@ reboot will replace its identity, so future cells require fresh server sidecars.
 Panel attribution corrected a3f729d is in round2Grok review t_e142021e. Native
 reader fixture/replay review t_af39df26 still running. Both run on Mac and can
 continue through the Windows reboot.
+
+## 2026-09-07 18:53 UTC — causal attribution and builder preparation
+
+Root directly inspected the native a3f729d scene-ready PNG: guard-thieving
+scene, player and guards, inventory, minimap and script overlay visible; scene2
+and one running bot shown. This is capture-time visual proof, not cadence or
+whole-run focus proof. The native run has 2027 stable completed GPU callbacks
+with no pending/lost/dropped and 118 periodic frame-stage samples; these are
+different populations. Worker work spans average ~58.17ms, with ~0.7ms sleep.
+Current code's shared device fence read is held across acquire while submit
+needs its write lock; static coupling is verified, dynamic contention is not.
+Aligned timing diagnostic t_c14b3d93 is the next bounded discriminator before
+viewer/session experiments. No RDP resizing, reconnect, backend or present-mode
+change has been made.
+
+Hyper-V generic image source/VHDX are locally immutable and verified; image
+review corrected a missing log citation without regenerating bytes. Root
+verified no existing VM, existing Default Switch and absent isolated path, then
+created staging directories and began copying the 3.51GiB VHDX. Seed contains
+only a new public login key, locked password, build dependencies and a serial
+public-hostkey receipt command. Private login key stays outside checkout.
+VM creation must verify transferred hashes and preserve the immutable image
+using a separate writable disk. Planned builder is 4vCPU/8GiB static/64GiB Gen2,
+existing Default Switch, no autostart. No boot or SSH success is claimed yet.
+
+Linux matched e318/188a freeze t_ab1637ae remains running; baseline build and
+script/host-play tests passed, TUI tests and candidate/review remain pending.
+No new live VPS cells or accepted performance claims.
