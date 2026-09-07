@@ -109,8 +109,13 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(rb.bind(self.receipt,self.native,self.server)['status'],'unavailable')
 
     def test_cache_directory_uses_filesystem_identity(self):
-        alias = self.root / 'cache-alias'
-        alias.symlink_to(self.cache, target_is_directory=True)
+        if sys.platform == 'win32':
+            # Exercise the native producer spelling without requiring the
+            # standard test account to have symlink creation privileges.
+            alias = pathlib.Path('\\\\?\\' + str(self.cache.resolve()))
+        else:
+            alias = self.root / 'cache-alias'
+            alias.symlink_to(self.cache, target_is_directory=True)
         native = copy.deepcopy(self.native)
         native['match_keys']['qualification_settings']['cache_dir_canonical'] = str(alias)
         self.assertEqual(rb.bind(self.receipt, native, self.server)['status'], 'available')
