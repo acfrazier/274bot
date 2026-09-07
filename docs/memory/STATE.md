@@ -483,3 +483,8 @@ Fresh N1 cell completed with independent workload/native/cache/process binding a
 ## 2026-09-07 07:36 UTC — N16 overhead screen complete
 
 All four declared OFF/ON/ON/OFF cells qualified and bound with continuous helper/server accounting. See [instrumentation-overhead-live-report.md](instrumentation-overhead-live-report.md). Host CPU profiles ON measured 13.8–15.6% above OFF in the empirical screen; no profiling RSS effect established. Use clean profile-off CPU comparisons and separate latency companions. N16 Mac median RSS883–927MiB and ~37.1loops/s remain target misses. Real PTY probes produce native input samples but aggregate input gate is unproven; t_b0bc0948 diagnoses focus/publisher cuts. No accepted optimization savings yet.
+
+
+## 2026-09-07 08:31 UTC — N16 clean R/C/C/R screen
+
+All four corrected matched cells completed and independently bound; see [shared-nav-resource-live-report.md](shared-nav-resource-live-report.md). Candidate median RSS893.5–907.7MiB vs reference944.5–963.8MiB; minimum36.8MiB gap exceeds19.3MiB within-role spread. CPU conservative +2.68% passes5% empirical screen. Short-screen supported, accepted savings/final acceptance false. Earlier invalid-kind preflight preserved, no frontend launched there. Input preactivity reader f306183 approved t_fb472c0c, replay5available/11no-input per ON cell,106selected events each; full input target unproven. Next longer clean confirmation and600s latency companions for all-seat rotation, followed by remaining target/renderer/Linux/panel/lifecycle and whole-branch review.
