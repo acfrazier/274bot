@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "date": "2026-09-07",
+  "status": "diagnostic_comparison_only",
+  "final_acceptance_claim": false,
+  "conclusion": "The 616.86 hotfix did not improve the observed RDP cadence. The local-console run was substantially faster, but driver, display, and session conditions are confounded; the evidence does not isolate a driver-only cause.",
+  "provenance": {
+    "raw_root": "docs/memory/diagnostics/windows-submit-driver-comparison-20260907",
+    "host_build_commit": "3a2cf3e7be8b388bea8955fc251d035675a52990",
+    "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+    "binary_sha256": "a4f50f53b1047fa7c72b04bbd310110542b6359b3512e0666f10750fbc61a96d",
+    "code_review": "Grok 4.5, task t_ada38c88, round 2, run 359",
+    "source_stability": "all 851 source hashes matched before and after the native build"
+  },
+  "cells": [
+    {
+      "id": "old-driver-rdp",
+      "driver": "616.56",
+      "session": "RDP",
+      "raw_dir": "old-driver",
+      "run": "20260907T194009Z_panel_n1_active",
+      "receipt": "old-driver/managed-panel-attribution-submit-3a2cf3e-61656-a/independent-binding-reader-2539cab.json",
+      "qualified_workload": true,
+      "exit_code": 0,
+      "observation_s": 119.0587651,
+      "client_ticks_per_slot_s": 16.6388422,
+      "median_resident_bytes": 505452544,
+      "native_driver_version": "32.0.16.1656",
+      "submit_trace": {
+        "events": 241,
+        "acquire_mean_ms": 30.5489278,
+        "acquire_p50_ms": 30.7115,
+        "acquire_p95_ms": 34.2878,
+        "acquire_p99_ms": 35.963,
+        "chrome_long_records": 3538,
+        "scene_long_records": 3758
+      },
+      "startup_display": {"width": 2240, "height": 1160, "scale": 2.0},
+      "desktop_observation": {"remote_session": true, "session_id": 2, "observer_foreground": "powershell"},
+      "qualified_counts": {"client_dropped": 0, "acquire_dropped": 0, "frames_incomplete": 0}
+    },
+    {
+      "id": "new-driver-rdp",
+      "driver": "616.86",
+      "session": "RDP",
+      "raw_dir": "new-driver",
+      "run": "20260907T200004Z_panel_n1_active",
+      "receipt": "new-driver/managed-panel-attribution-submit-3a2cf3e-61686-a/independent-binding-reader-2539cab.json",
+      "qualified_workload": true,
+      "exit_code": 0,
+      "observation_s": 119.1874054,
+      "client_ticks_per_slot_s": 16.2684974,
+      "median_resident_bytes": 545320960,
+      "native_driver_version": "32.0.16.1686",
+      "submit_trace": {
+        "events": 233,
+        "acquire_mean_ms": 30.5403809,
+        "acquire_p50_ms": 30.7237,
+        "acquire_p95_ms": 34.1403,
+        "acquire_p99_ms": 36.7526,
+        "chrome_long_records": 3368,
+        "scene_long_records": 3627
+      },
+      "startup_display": {"width": 2240, "height": 1160, "scale": 2.0},
+      "desktop_observation": {"remote_session": true, "session_id": 2, "observer_foreground": "powershell"},
+      "qualified_counts": {"client_dropped": 0, "acquire_dropped": 0, "frames_incomplete": 0}
+    },
+    {
+      "id": "new-driver-console",
+      "driver": "616.86",
+      "session": "local_console",
+      "raw_dir": "console",
+      "run": "20260907T201529Z_panel_n1_active",
+      "receipt": "console/managed-panel-attribution-submit-3a2cf3e-61686-console-a/independent-binding-reader-2539cab.json",
+      "qualified_workload": true,
+      "exit_code": 0,
+      "observation_s": 119.0,
+      "client_ticks_per_slot_s": "about 49",
+      "native_driver_version": "32.0.16.1686",
+      "submit_trace": {
+        "events": 236,
+        "acquire_mean_ms": 0.0194003,
+        "acquire_p50_ms": 0.0181,
+        "acquire_p95_ms": 0.0268,
+        "acquire_p99_ms": 0.0405,
+        "chrome_long_records": 0,
+        "scene_long_records": 0
+      },
+      "startup_display": {"width": 1680, "height": 870, "scale": 1.5},
+      "desktop_observation": {"remote_session": false, "session_id": 2, "observer_foreground": "powershell"},
+      "qualified_counts": {"client_dropped": 0, "acquire_dropped": 0, "frames_incomplete": 0}
+    }
+  ],
+  "interpretation": {
+    "steady_metrics": "Use independently bound scheduling, GPU, and decode records for qualified counts and native process resources; do not use frontend historical CPU fields as verified native managed CPU.",
+    "submit_overlap": "The summaries cover all emitted records, including warmup, captures, and teardown. The submission expression includes encoder.finish argument evaluation. Overlap is an association, not proof of a dynamic lock or GPU-execution cause.",
+    "gpu_semantics": "GPU callback delivery is CPU-side completion after submit, not hardware scanout or physical-display presentation.",
+    "scope": "All-emitted rows are not steady-state scope. Diagnostic disabled-path remains uninstrumented.",
+    "focus": "Startup focus was cached; the observer was briefly foreground. No whole-run focus proof exists.",
+    "confounders": ["RDP versus local console", "resolution and display scale", "Windows session/presentation path", "driver version", "foreground/focus state"],
+    "capture_proof": "The three console PNGs are capture-time evidence: scene-ready guard thieving with four food, bank view with 22 food and closing-bank overlay, and return-route 22-food overlay. They do not prove cadence or whole-run focus."
+  },
+  "gates": {
+    "driver_only_causal_attribution": "unresolved",
+    "hotfix_rdp_cadence_improvement": "not_observed",
+    "console_diagnostic_improvement": "observed_but_confounded",
+    "input_p99": "missing",
+    "final_latency_pass": "not_run",
+    "final_performance_acceptance": "blocked"
+  },
+  "driver_change": {
+    "install": "signed 616.86 hotfix installed",
+    "reboot": "completed",
+    "native_confirmation": "32.0.16.1686",
+    "setup_sha256": "eaece8114261befa6c2a2dc1cfdb17090f369d65f42f04ab5aaabacb8f8f115b",
+    "rollback_directory": "C:\\ProgramData\\274bot-Test\\driver-backup-61656-20260907",
+    "preflight": "Hyper-V VM Off; Dell/Office quiet services stopped; Intel graphics preserved"
+  },
+  "remaining_gates": [
+    "Resolve driver/display/session causality with matched presentation conditions.",
+    "Capture input p99 and run the final latency pass.",
+    "Separate steady-state windows from warmup, captures, and teardown.",
+    "Verify native managed process-resource attribution without relying on frontend historical CPU fields.",
+    "Complete the broader performance, lifecycle, target-hardware, and whole-branch review gates."
+  ]
+}
