@@ -32,21 +32,23 @@ record, so there is no failure-boundary snapshot. For `livefd010_5`, that
 record shows:
 
 - state `Running`, error `null`
-- runtime dispatched 181, last completed tick 195
+- runtime dispatched 82, last completed tick 102
 - paint title `ThievingBot — Pickpocket Guard at (2664, 3302, 0)`
 - position `(2665, 3302, 0)`
 - Food 4, Steals 1, HP 84%
 - `in_flight: null`
-- inventory contains four Lobster entries/counts and Coins count 330
+- inventory contains four Lobster entries/counts and Coins count 30
 - bank is empty, `bank_open: false`, `bank_loaded: false`
 - client `ingame: true`, `scene_state: 2`, position `(2665, 3302, 0)`
 
 The PTY log is raw terminal output rather than a structured event receipt. The
 retained failure message identifies the event as `script requested stop on tick
 289; isolate stopping`; it does not identify the reason argument or the bot
-state that caused it. The receipt's last completed tick (195) is not evidence
-that the stop happened at tick 195: it is a different, sparse observation of
-runtime progress taken before the failure boundary.
+state that caused it.
+The receipt's last completed tick (102) is not evidence
+that the stop happened at tick 102: it is a different, sparse observation of
+runtime progress taken before the failure boundary. The PTY-reported stop tick
+is 289; there is no retained runtime snapshot at that boundary.
 
 ## What the source proves
 
@@ -75,11 +77,15 @@ the failure-only slot snapshot nor debug log forwarding available as a retained
 artifact.
 
 `crates/host-play/src/memory.rs:1070-1078` shows the normal qualification
-record shape: state, last error, runtime progress, and client location. It does
-not include stop reason, paint, bank/inventory, or in-flight details. The
-failure-only diagnostic shape at lines 1081-1098 would include runtime progress,
-`memory_diagnostics::sample`, and client-side slot state, but was not produced
-for this run.
+record shape: state, last error, runtime progress, and client location. The
+runtime progress returned by `crates/script/src/load.rs:1122-1128` includes
+paint and in-flight details; `crates/script/src/slot.rs:377-385` adds inventory,
+bank, and bank-open/loaded state. The observe-start record therefore already
+retains those fields under `runtime`. It does not include `stopReason`, and
+this run has no failure-boundary qualification record. The failure-only
+diagnostic shape at `crates/host-play/src/memory.rs:1081-1098` would additionally
+include seed status and `memory_diagnostics::sample`, but was not produced for
+this run.
 
 ## Stop-path candidates: evidence versus hypothesis
 
