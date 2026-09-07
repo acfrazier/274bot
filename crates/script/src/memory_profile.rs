@@ -1,6 +1,26 @@
 //! Passive per-isolate accounting. Snapshot gauges cover queued and decoding
 //! buffers, including capacity; no extra channel messages or JS probes.
-use std::sync::{Arc, atomic::{AtomicU64, Ordering::Relaxed}};
+//!
+//! When `BOT_MEMORY_DIAGNOSTICS=1` is resolved once at isolate creation, a
+//! bounded optional stop-reason string may be retained on this Arc for the
+//! diagnostic `memory_progress` payload only. It is never part of [`Counters::snapshot`].
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}};
+
+/// Max Unicode scalars retained for an opt-in diagnostic stop reason.
+pub const STOP_REASON_CAP: usize = 1024;
+
+/// Opt-in diagnostic capture of `ScriptRunner.stop` / `host.stopReason`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum StopReasonCapture {
+    /// No stop observed yet, or diagnostics were off (nothing written).
+    #[default]
+    Absent,
+    /// Diagnostics on; own data-property string missing, non-string, accessor, or eval failed.
+    Unavailable,
+    /// Own data-property string (may be empty); length ≤ [`STOP_REASON_CAP`].
+    Value(String),
+}
+
 #[derive(Default)]
 pub struct Counters {
     pub bytes: AtomicU64,
@@ -14,6 +34,10 @@ pub struct Counters {
     pub tick_count: AtomicU64,
     pub tick_ns: AtomicU64,
     pub tick_max_ns: AtomicU64,
+    /// Resolved once at isolate creation from `BOT_MEMORY_DIAGNOSTICS=1` (or test enable).
+    diagnostics: AtomicBool,
+    /// Bounded stop reason for diagnostic progress only; not retained on snapshot rows.
+    stop_reason: Mutex<StopReasonCapture>,
 }
 impl Counters {
     pub fn snapshot(&self) -> serde_json::Value {
@@ -28,6 +52,30 @@ impl Counters {
     pub fn tick(&self, elapsed: std::time::Duration) {
         let ns=elapsed.as_nanos().min(u64::MAX as u128) as u64;
         self.tick_ns.fetch_add(ns,Relaxed);self.tick_max_ns.fetch_max(ns,Relaxed);self.tick_count.fetch_add(1,Relaxed);
+    }
+    pub fn enable_diagnostics(&self) {
+        self.diagnostics.store(true, Relaxed);
+    }
+    pub fn diagnostics_enabled(&self) -> bool {
+        self.diagnostics.load(Relaxed)
+    }
+    /// Write once on the first stop observation; later calls are no-ops.
+    pub fn record_stop_reason(&self, capture: StopReasonCapture) {
+        let mut slot = self.stop_reason.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*slot, StopReasonCapture::Absent) {
+            *slot = capture;
+        }
+    }
+    pub fn stop_reason(&self) -> StopReasonCapture {
+        self.stop_reason.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// Bound a captured string to [`STOP_REASON_CAP`] Unicode scalars.
+    pub fn bound_stop_reason(s: String) -> String {
+        if s.chars().count() <= STOP_REASON_CAP {
+            s
+        } else {
+            s.chars().take(STOP_REASON_CAP).collect()
+        }
     }
 }
 pub struct SnapshotLease { counters: Arc<Counters>, len:u64, capacity:u64 }

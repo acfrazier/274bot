@@ -1015,6 +1015,11 @@ mod isolate {
             let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
             #[cfg(feature = "memory-profile")]
             let counters = crate::memory_profile::registered();
+            // Resolve diagnostic mode once at isolate creation (not per stop/tick).
+            #[cfg(feature = "memory-profile")]
+            if std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1") {
+                counters.enable_diagnostics();
+            }
             #[cfg(feature = "memory-profile")]
             let thread_counters = counters.clone();
             let handle = std::thread::Builder::new()
@@ -1118,13 +1123,28 @@ mod isolate {
         pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> { self.counters.clone() }
 
         /// Read cached counters only; do not pump messages or probe JS.
+        /// When diagnostics were enabled at spawn, may include `stop_reason`
+        /// (string, including empty) or `null` if capture was unavailable.
         #[cfg(feature = "memory-profile")]
         pub fn memory_progress(&self) -> serde_json::Value {
             use std::sync::atomic::Ordering::Relaxed;
-            serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
+            use crate::memory_profile::StopReasonCapture;
+            let mut value = serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
                 "last_completed_tick":self.last_completed.load(Relaxed),
                 "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
-                "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(tick,t)|(*tick,t.elapsed().as_millis()))})
+                "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(tick,t)|(*tick,t.elapsed().as_millis()))});
+            if self.counters.diagnostics_enabled() {
+                match self.counters.stop_reason() {
+                    StopReasonCapture::Absent => {}
+                    StopReasonCapture::Unavailable => {
+                        value["stop_reason"] = serde_json::Value::Null;
+                    }
+                    StopReasonCapture::Value(reason) => {
+                        value["stop_reason"] = serde_json::Value::String(reason);
+                    }
+                }
+            }
+            value
         }
 
         /// Park tick dispatch. A runaway tick is interrupted first so the
@@ -1300,6 +1320,42 @@ mod isolate {
                 "(() => { const b = globalThis.__rs_bot; if (!b || typeof b.ignoredRandoms !== 'function') return []; const l = b.ignoredRandoms(); return Array.isArray(l) ? l.filter(x => typeof x === 'string') : []; })()",
             )
             .unwrap_or_default()
+    }
+
+    /// Own data-property read of `host.stopReason` only. Never invokes getters.
+    /// Returns a JS string or null (absent / non-string / accessor / error).
+    #[cfg(feature = "memory-profile")]
+    const STOP_REASON_CAPTURE_JS: &str = r#"( () => {
+        try {
+            const h = globalThis.__rs2b0t_host;
+            if (!h || (typeof h !== 'object' && typeof h !== 'function')) return null;
+            const d = Object.getOwnPropertyDescriptor(h, 'stopReason');
+            if (!d || !Object.prototype.hasOwnProperty.call(d, 'value')) return null;
+            if (typeof d.value !== 'string') return null;
+            const s = d.value;
+            return s.length > 1024 ? s.slice(0, 1024) : s;
+        } catch (_) {
+            return null;
+        }
+    } )()"#;
+
+    /// When diagnostics are enabled, cache a bounded stop reason on `counters`
+    /// before Runtime drop. Swallows all capture failures as Unavailable.
+    #[cfg(feature = "memory-profile")]
+    fn capture_stop_reason_diag(
+        runtime: &mut Runtime,
+        counters: &crate::memory_profile::Counters,
+    ) {
+        use crate::memory_profile::{Counters, StopReasonCapture};
+        if !counters.diagnostics_enabled() {
+            return;
+        }
+        let capture = match runtime.eval::<Option<String>>(STOP_REASON_CAPTURE_JS) {
+            Ok(Some(s)) => StopReasonCapture::Value(Counters::bound_stop_reason(s)),
+            Ok(None) => StopReasonCapture::Unavailable,
+            Err(_) => StopReasonCapture::Unavailable,
+        };
+        counters.record_stop_reason(capture);
     }
 
     /// The isolate thread: create the Runtime, wire the module, hand the
@@ -2613,6 +2669,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         )
                         .unwrap_or(false);
                     if stopped {
+                        // Opt-in diagnostics only: cache bounded stopReason on
+                        // the counters Arc before Runtime drop. No new channel
+                        // messages; capture errors must not change Stop.
+                        #[cfg(feature = "memory-profile")]
+                        capture_stop_reason_diag(&mut runtime, &counters);
                         let _ = out.send(ThreadMsg::Completed(n));
                         let _ = out.send(ThreadMsg::Log(format!(
                             "script requested stop on tick {n}; isolate stopping"

@@ -5240,3 +5240,252 @@ fn passive_metrics_count_decode_lifetime_heap_and_teardown() {
     let stopped=counters.snapshot();
     assert_eq!(stopped["v8_live"],0);assert_eq!(stopped["v8_used_bytes"],0);assert_eq!(stopped["v8_total_bytes"],0);
 }
+
+#[cfg(feature = "memory-profile")]
+fn wait_stop_logs(iso: &LoadIsolate) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let logs = iso.drain_logs();
+        if logs.iter().any(|l| l.contains("script requested stop")) || Instant::now() > deadline {
+            return logs;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+fn wait_isolate_dead(iso: &LoadIsolate) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if iso.probe("1 + 1").is_err() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "isolate must exit after ScriptRunner.stop");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Diagnostics on: ScriptRunner.stop("sentinel") retains the exact reason in
+/// memory_progress; generic stop log and metrics snapshot stay unchanged.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_captures_sentinel() {
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('sentinel'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.on_game_tick(1);
+    let logs = wait_stop_logs(&iso);
+    assert!(
+        logs.iter()
+            .any(|l| l == "script requested stop on tick 1; isolate stopping"),
+        "generic stop log must be preserved exactly: {logs:?}"
+    );
+    wait_isolate_dead(&iso);
+    let progress = iso.memory_progress();
+    assert_eq!(progress["stop_reason"], "sentinel");
+    let metrics = iso.memory_metrics();
+    assert!(
+        metrics.get("stop_reason").is_none(),
+        "snapshot metrics must not carry stop_reason text: {metrics}"
+    );
+    iso.join();
+}
+
+/// Diagnostics off: stop still works; progress has no stop_reason field.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_disabled_omits_reason() {
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('should-not-appear'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    assert!(!iso.memory_metrics_handle().diagnostics_enabled());
+    iso.on_game_tick(1);
+    let logs = wait_stop_logs(&iso);
+    assert!(
+        logs.iter()
+            .any(|l| l == "script requested stop on tick 1; isolate stopping"),
+        "generic stop log must remain: {logs:?}"
+    );
+    wait_isolate_dead(&iso);
+    let progress = iso.memory_progress();
+    assert!(
+        progress.get("stop_reason").is_none(),
+        "disabled diagnostics must omit stop_reason: {progress}"
+    );
+    iso.join();
+}
+
+/// Empty string reason is distinct from unavailable/null.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_retains_empty_string() {
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop(''); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.on_game_tick(1);
+    wait_stop_logs(&iso);
+    wait_isolate_dead(&iso);
+    assert_eq!(iso.memory_progress()["stop_reason"], "");
+    iso.join();
+}
+
+/// Missing / non-string own property → stop_reason null; stop unchanged.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_missing_and_nonstring_are_unavailable() {
+    let missing = r#"
+export default class T extends LoopingBot {
+    loop() { globalThis.__rs2b0t_host.stopRequested = true; }
+}
+"#;
+    let iso = LoadIsolate::spawn(missing.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.on_game_tick(1);
+    wait_stop_logs(&iso);
+    wait_isolate_dead(&iso);
+    assert!(iso.memory_progress()["stop_reason"].is_null());
+    iso.join();
+
+    let nonstring = r#"
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__rs2b0t_host.stopReason = 42;
+        globalThis.__rs2b0t_host.stopRequested = true;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(nonstring.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.on_game_tick(1);
+    wait_stop_logs(&iso);
+    wait_isolate_dead(&iso);
+    assert!(iso.memory_progress()["stop_reason"].is_null());
+    iso.join();
+}
+
+/// Accessor descriptors are not invoked (hit flag stays false via probe before stop).
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_does_not_invoke_accessor() {
+    // Prove the capture expression itself never calls getters while the isolate lives.
+    let src = r#"
+export default class T extends LoopingBot {
+    loop() { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1; }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    iso.probe("1").unwrap();
+    iso.probe(
+        r#"( () => {
+            Object.defineProperty(globalThis.__rs2b0t_host, 'stopReason', {
+                get() { globalThis.__accessor_hit = true; throw new Error('accessor'); },
+                configurable: true
+            });
+            return true;
+        } )()"#,
+    )
+    .unwrap();
+    // Same descriptor rules as production capture (own data value only).
+    let captured = iso
+        .probe(
+            r#"( () => {
+                try {
+                    const h = globalThis.__rs2b0t_host;
+                    if (!h) return null;
+                    const d = Object.getOwnPropertyDescriptor(h, 'stopReason');
+                    if (!d || !Object.prototype.hasOwnProperty.call(d, 'value')) return null;
+                    if (typeof d.value !== 'string') return null;
+                    return d.value;
+                } catch (_) { return null; }
+            } )()"#,
+        )
+        .unwrap();
+    assert!(captured.is_null(), "accessor must yield unavailable, got {captured}");
+    assert_eq!(
+        iso.probe("globalThis.__accessor_hit === true").unwrap(),
+        false,
+        "stopReason getter must not run"
+    );
+    // Full stop path with accessor still stops cleanly and records unavailable.
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.probe("globalThis.__rs2b0t_host.stopRequested = true").unwrap();
+    iso.on_game_tick(2);
+    wait_stop_logs(&iso);
+    wait_isolate_dead(&iso);
+    assert!(iso.memory_progress()["stop_reason"].is_null());
+    iso.join();
+}
+
+/// Oversized reason is capped at 1024 scalars.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_bounds_oversized_reason() {
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('x'.repeat(2000)); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.on_game_tick(1);
+    wait_stop_logs(&iso);
+    wait_isolate_dead(&iso);
+    let progress = iso.memory_progress();
+    let reason = progress["stop_reason"].as_str().expect("string reason");
+    assert_eq!(reason.chars().count(), 1024);
+    assert!(reason.chars().all(|c| c == 'x'));
+    iso.join();
+}
+
+/// New isolate does not retain a prior isolate's stop reason.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn stop_reason_diag_reset_on_new_isolate() {
+    let src = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('first-run'); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.memory_metrics_handle().enable_diagnostics();
+    iso.on_game_tick(1);
+    wait_stop_logs(&iso);
+    wait_isolate_dead(&iso);
+    assert_eq!(iso.memory_progress()["stop_reason"], "first-run");
+    iso.join();
+
+    let src2 = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('second-run'); }
+}
+"#;
+    let iso2 = LoadIsolate::spawn(src2.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso2.memory_metrics_handle().enable_diagnostics();
+    assert!(
+        iso2.memory_progress().get("stop_reason").is_none(),
+        "fresh isolate must start without a cached reason"
+    );
+    iso2.on_game_tick(1);
+    wait_stop_logs(&iso2);
+    wait_isolate_dead(&iso2);
+    assert_eq!(iso2.memory_progress()["stop_reason"], "second-run");
+    iso2.join();
+}
