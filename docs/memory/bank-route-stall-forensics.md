@@ -14,8 +14,9 @@ shows `stop_reason` in the terminal runtime snapshot, and the paint title
 carries the same text.
 
 The host did find a route and issued one driver-accepted walk command. The
-time series shows substantial southward movement, followed by a guardian
-stun/hold and northward reversal before the route later expired. It does not
+time series shows substantial southward movement, followed by a
+guardian/random-event hold and northward reversal before the route later
+expired. It does not
 prove that the guardian interruption caused the eventual bank failure: the
 diagnostic and navigation ticks are different domains, and there is no
 per-tick route/hold join. It also does not prove collision, scene loading, wire
@@ -52,18 +53,22 @@ The navigation trace for the same slot is:
 
 The sampled diagnostic series adds important temporal evidence before that
 terminal record. At elapsed 143.321--150.454 seconds, slot 14 moves from
-`(2662,3307)` to `(2662,3303)`, `(2662,3301)`, and `(2662,3297)`; subsequent
-samples show it reversing through `(2662,3301)`, `(2662,3303)`, and `(2660,3305)`.
-The client samples report `hold=true` during the reversal, animation 424 and
-spot animation 245 at the onset, chat `You've been stunned!`, then repeated
-`You're stunned!`; the hold later clears with chat `It's not here for you.`.
-This is guardian/random-event evidence, not terminal-only state. The
-corresponding diagnostic `client_tick` values (242--254) must not be equated
-with navigation tick 230 or runtime tick 297. The nav generation and request
-batch count remain unchanged, and the capture shows only one `WalkAttempt`.
+`(2662,3307)` to `(2662,3303)`, `(2662,3301)`, and `(2662,3297)`;
+subsequent samples show it reversing through `(2662,3301)`, `(2662,3303)`, and
+`(2660,3305)`. The hold-window samples report `hold=true` from elapsed
+146.412 through 149.452, with animation and spot animation both `-1`; the
+chat remains `You pick the guard's pocket.` before changing to
+`It's not here for you.`. This is guardian/random-event wrong-talk evidence,
+not pickpocket-stun evidence: the animation 424, spot animation 245, and
+`You've been stunned!`/`You're stunned!` samples belong to earlier pickpocket
+phases. The hold clears by elapsed 150.454, but the position remains
+`(2660,3305)` through `FollowEnd` tick 297 and the terminal sample, with no
+second walk attempt. The corresponding diagnostic `client_tick` values
+(242--254) must not be equated with navigation tick 230 or runtime tick 297.
+The nav generation and request-batch count remain unchanged.
 
 Thus `FindEnd=Routed`, `WalkAttempt refusal=None`, movement in both directions,
-guardian hold/stun samples, `Leg Failed`, `Stalled/Expired`, and `tries=1` are
+guardian/wrong-talk hold samples, `Leg Failed`, `Stalled/Expired`, and `tries=1` are
 all direct observations. The route was not a `NoPath` result and the send was
 not synchronously refused. `refusal=None` means the driver accepted/queued the
 interaction synchronously; it is not a wire or server acknowledgement.
@@ -82,8 +87,8 @@ The request maps to `InteractReq::WalkNear` in
 `crates/host-play/src/lib.rs:950-952`, which calls
 `ScriptWalkArm::route_with_radius`. That path records a per-slot generation,
 keeps one worker and one latest pending request (`lib.rs:2310-2319,
-2356-2372`), and publishes only a routed result (`lib.rs:9442-9459`). The
-The existing route/generation safeguards are not shown to be the cause by this
+2356-2372`), and publishes only a routed result (`lib.rs:9442-9459`). The existing
+route/generation safeguards are not shown to be the cause by this
 trace: generation 1 was found and followed, with no competing generation in
 the captured slot evidence. Separately, `crates/host-play/src/lib.rs:2435-2439`
 intentionally returns early while guardian `hold` is true, leaving the armed
@@ -113,7 +118,7 @@ this report proposes changing those semantics.
 The original ThievingBot/`Traversal.walkResilient` contract supplies bounded
 walk attempts (the prior compatibility audit records four attempts) and the
 current shim's relevant mapping is the one-call `walkResilient` path above. The
-The current capture does not show whether the original policy would have retried
+current capture does not show whether the original policy would have retried
 this particular interrupted movement, nor whether the game's walk command was
 accepted on the wire and then ignored, superseded, blocked by a live actor, or
 unable to advance because of scene/collision state. The existing guardian
