@@ -1110,6 +1110,8 @@ mod isolate {
                 // Leave the terminate armed until the isolate thread has
                 // returned from the tick (it cancels there); an immediate
                 // cancel would race the interrupt and make this a no-op.
+                #[cfg(feature = "memory-profile")]
+                self.counters.next_interrupt_id(tick);
                 self.terminate.terminate_execution();
                 // `in_flight` was released before this lock, so the lock
                 // order (never `in_flight` -> `logs`) holds everywhere.
@@ -1147,6 +1149,16 @@ mod isolate {
                     StopReasonCapture::Value(reason) => {
                         value["stop_reason"] = serde_json::Value::String(reason);
                     }
+                }
+                if let Some(attribution) = self.counters.failure_attribution() {
+                    value["failure_attribution"] = serde_json::json!({
+                        "tick": attribution.tick,
+                        "call_path": attribution.call_path,
+                        "error_variant": attribution.error_variant,
+                        "error_debug": attribution.error_debug,
+                        "terminating_before_cancel": attribution.terminating_before_cancel,
+                        "interrupt_id": attribution.interrupt_id,
+                    });
                 }
             }
             value
@@ -2554,6 +2566,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)",
                         )
                         .unwrap_or(false);
+                    let call_path = if parked { "async-parked" } else { "sync" };
                     let result: Result<(), rustyscript::Error> = if parked {
                         // Pump settles the wait (and may re-park), then
                         // paints. Drain so await + onPaint + loop
@@ -2580,6 +2593,31 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         );
                         result
                     };
+                    #[cfg(feature = "memory-profile")]
+                    if let Err(error) = &result {
+                        if counters.stop_reason_capture_enabled() {
+                            let terminating = runtime
+                                .deno_runtime()
+                                .v8_isolate()
+                                .is_execution_terminating();
+                            let debug = format!("{error:?}");
+                            let variant = debug
+                                .split(['(', '{'])
+                                .next()
+                                .unwrap_or("unknown")
+                                .to_string();
+                            counters.record_failure_attribution(
+                                crate::memory_profile::FailureAttribution {
+                                    tick: n,
+                                    call_path,
+                                    error_variant: variant,
+                                    error_debug: debug,
+                                    terminating_before_cancel: terminating,
+                                    interrupt_id: counters.interrupt_id_for_tick(n),
+                                },
+                            );
+                        }
+                    }
                     // The host may have armed `terminate_execution` to
                     // interrupt a slow tick; clear it now that the tick's
                     // JS frames have fully unwound. This is the only cancel

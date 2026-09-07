@@ -23,6 +23,17 @@ pub enum StopReasonCapture {
     Value(String),
 }
 
+/// Bounded failure-only context captured before V8 termination is cancelled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailureAttribution {
+    pub tick: u64,
+    pub call_path: &'static str,
+    pub error_variant: String,
+    pub error_debug: String,
+    pub terminating_before_cancel: bool,
+    pub interrupt_id: Option<u64>,
+}
+
 #[derive(Default)]
 pub struct Counters {
     pub bytes: AtomicU64,
@@ -41,6 +52,9 @@ pub struct Counters {
     stop_reason_capture: AtomicBool,
     /// Bounded stop reason for progress payloads only; not retained on snapshot rows.
     stop_reason: Mutex<StopReasonCapture>,
+    interrupt_id: AtomicU64,
+    interrupt_tick: AtomicU64,
+    failure_attribution: Mutex<Option<FailureAttribution>>,
 }
 impl Counters {
     pub fn snapshot(&self) -> serde_json::Value {
@@ -88,6 +102,43 @@ impl Counters {
             s.chars().take(STOP_REASON_CAP).collect()
         }
     }
+
+    /// Allocate a monotonic identity for a host-issued interrupt.
+    pub fn next_interrupt_id(&self, tick: u64) -> u64 {
+        self.interrupt_tick.store(tick, Relaxed);
+        self.interrupt_id.fetch_add(1, Relaxed) + 1
+    }
+
+    pub fn interrupt_id_for_tick(&self, tick: u64) -> Option<u64> {
+        if self.interrupt_tick.load(Relaxed) == tick {
+            self.latest_interrupt_id()
+        } else {
+            None
+        }
+    }
+
+    pub fn latest_interrupt_id(&self) -> Option<u64> {
+        match self.interrupt_id.load(Relaxed) {
+            0 => None,
+            id => Some(id),
+        }
+    }
+
+    /// Keep only the first bounded failure attribution.
+    pub fn record_failure_attribution(&self, mut attribution: FailureAttribution) {
+        attribution.error_debug = Self::bound_stop_reason(attribution.error_debug);
+        let mut slot = self.failure_attribution.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(attribution);
+        }
+    }
+
+    pub fn failure_attribution(&self) -> Option<FailureAttribution> {
+        self.failure_attribution
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
 }
 pub struct SnapshotLease { counters: Arc<Counters>, len:u64, capacity:u64 }
 impl SnapshotLease {
@@ -103,6 +154,35 @@ impl Drop for SnapshotLease {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test]
+    fn failure_attribution_is_bounded_first_only_and_capture_off_is_empty() {
+        let c = Arc::new(Counters::default());
+        assert!(c.failure_attribution().is_none());
+        c.record_failure_attribution(FailureAttribution {
+            tick: 7,
+            call_path: "sync",
+            error_variant: "JsError".into(),
+            error_debug: "x".repeat(STOP_REASON_CAP + 1),
+            terminating_before_cancel: true,
+            interrupt_id: Some(3),
+        });
+        c.record_failure_attribution(FailureAttribution {
+            tick: 8,
+            call_path: "async-parked",
+            error_variant: "Runtime".into(),
+            error_debug: "later".into(),
+            terminating_before_cancel: false,
+            interrupt_id: None,
+        });
+        let value = c.failure_attribution().expect("first failure retained");
+        assert_eq!(value.tick, 7);
+        assert_eq!(value.call_path, "sync");
+        assert_eq!(value.interrupt_id, Some(3));
+        assert_eq!(value.error_debug.chars().count(), STOP_REASON_CAP);
+        let off = Counters::default();
+        assert!(off.failure_attribution().is_none());
+    }
+
     #[test] fn thread_ownership_survives_handle_release_without_registry_retention() {
         let counters=registered();let weak=Arc::downgrade(&counters);
         let (tx,rx)=std::sync::mpsc::channel();
