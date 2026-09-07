@@ -42,13 +42,43 @@ If the extracted VHD is attached directly, retain it as the verified source and 
 ```powershell
 Convert-VHD -Path "$root\image\ubuntu-24.04-server-cloudimg-amd64-azure.vhd" `
   -DestinationPath "$root\vm\ubuntu-builder-os.vhdx" -VHDType Dynamic
+Resize-VHD -Path "$root\vm\ubuntu-builder-os.vhdx" -SizeBytes 64GB
 ```
+
+The resize is applied to the writable copy, not the verified source. Confirm the
+logical size with `Get-VHD` before attaching it; the dynamically allocated file
+will initially consume less space than its 64 GiB logical capacity.
 
 Record the final source and converted-disk hashes in the provisioning log. A converted VHDX hash is expected to differ from the Canonical tarball digest; only the downloaded tarball is checked against the published digest.
 
 ## Cloud-init seed and key-only SSH
 
-Use NoCloud seed data on a small ISO attached only for first boot. NoCloud accepts a volume labeled `CIDATA` containing `user-data` and `meta-data`.[4] `ssh_pwauth: false` and an `ssh_authorized_keys` entry provide key-only SSH without putting a password in the seed.[5] Generate the key outside the repository and substitute only the public half below:
+Use NoCloud seed data on a small ISO attached only for first boot. NoCloud accepts a volume labeled `CIDATA` containing `user-data` and `meta-data`.[4] The Azure-flavoured image is not safe to treat as NoCloud-ready: inspect its cloud-init configuration before first boot and convert the writable copy's datasource selection offline. A seed ISO alone is insufficient when the image pins `datasource_list: [ Azure ]`.
+
+Before creating the seed ISO or VM, attach the writable VHDX to an approved
+offline Linux environment (for example, an already available WSL2 instance using
+`wsl --mount <path-to-vhdx> --bare`; do not install WSL or create another VM in
+this task), identify the Linux root partition, and mount it read-write. In the
+mounted root, inspect `/etc/cloud/cloud.cfg.d/90_dpkg.cfg` and any other
+`datasource_list` setting. Change the effective setting to exactly:
+
+```yaml
+datasource_list: [ NoCloud ]
+```
+
+Remove an Azure-only duplicate setting rather than leaving conflicting files.
+Clear the copied image's prior cloud-init state from the mounted root (at
+minimum `/var/lib/cloud/`; preserve the package and configuration files), then
+unmount and detach the disk cleanly. Record the offline helper and the exact
+file diff. Before `Start-VM`, verify from the mounted filesystem that there is
+one effective `NoCloud` datasource setting and no effective Azure-only override;
+if the root filesystem cannot be mounted or the setting cannot be verified,
+stop before VM creation. This is required because cloud-init documents that
+datasource discovery is controlled by its datasource list.[4]
+
+`ssh_pwauth: false` and an `ssh_authorized_keys` entry provide key-only SSH
+without putting a password in the seed.[5] Generate the key outside the
+repository and substitute only the public half below:
 
 ```yaml
 # user-data (0600 while staging)
@@ -103,7 +133,7 @@ New-VM -Name $vm -Generation 2 -MemoryStartupBytes 8GB `
   -VHDPath 'C:\ProgramData\274bot\hyperv-builder\vm\ubuntu-builder-os.vhdx' `
   -Path 'C:\ProgramData\274bot\hyperv-builder\vm' -SwitchName 'Default Switch'
 Set-VMProcessor -VMName $vm -Count 4
-Set-VMMemory -VMName $vm -DynamicMemoryEnabled $false -StartupBytes 8GB -MinimumBytes 8GB -MaximumBytes 16GB
+Set-VMMemory -VMName $vm -DynamicMemoryEnabled $true -StartupBytes 8GB -MinimumBytes 8GB -MaximumBytes 16GB
 Set-VMFirmware -VMName $vm -EnableSecureBoot On -SecureBootTemplate 'MicrosoftUEFICertificateAuthority'
 Add-VMDvdDrive -VMName $vm -Path 'C:\ProgramData\274bot\hyperv-builder\seed\cidata.iso'
 Set-VM -Name $vm -AutomaticStopAction ShutDown
@@ -154,3 +184,4 @@ No additional host reboot is requested by this plan. Hyper-V enablement and the 
 [3] https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/Supported-Ubuntu-virtual-machines-on-Hyper-V
 [4] https://cloudinit.readthedocs.io/en/stable/reference/datasources/nocloud.html
 [5] https://cloudinit.readthedocs.io/en/stable/topics/examples.html
+[6] https://cloudinit.readthedocs.io/en/stable/reference/base_config_reference.html
