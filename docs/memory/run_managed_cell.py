@@ -544,7 +544,12 @@ def run_managed_cell(
     _test_launcher: bool = False,
 ) -> Dict[str, Any]:
     """Run exactly one managed cell. Never retries. Never signals server/ambient."""
-    accounting_script = pathlib.Path(accounting_script or DEFAULT_ACCOUNTING)
+    # Children use different working directories. Resolve caller paths once so
+    # the collector writes into the same exclusive cell directory as the runner.
+    spec_path = pathlib.Path(spec_path).resolve()
+    cells_root = pathlib.Path(cells_root).resolve()
+    accounting_script = pathlib.Path(accounting_script or DEFAULT_ACCOUNTING).resolve()
+    cwd = pathlib.Path(cwd).resolve() if cwd is not None else None
     report: Dict[str, Any] = {
         "schema": 1,
         "attempts": 1,

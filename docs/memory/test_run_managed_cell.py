@@ -319,6 +319,19 @@ class ManagedCellTests(unittest.TestCase):
         if report.get("collector_pid"):
             self.assertFalse(_alive(report["collector_pid"]))
 
+    def test_relative_cell_root_and_accounting_path_reach_same_output(self):
+        spec=self.fx.base_spec(observe=.4,teardown=1.0,interval=.15)
+        path=self.fx.root/'relative-spec.json'
+        path.write_text(json.dumps(spec))
+        result=rmc.run_managed_cell(path,os.path.relpath(self.fx.cells),
+            accounting_script=os.path.relpath(ACCOUNTING),_test_launcher=True)
+        self.assertEqual(result['status'],'completed',result)
+        cell=pathlib.Path(result['cell_dir'])
+        self.assertTrue(cell.is_absolute())
+        self.assertTrue((cell/'process_accounting.jsonl').is_file())
+        receipt=json.loads((cell/'receipt.json').read_text())
+        self.assertEqual(pathlib.Path(receipt['sampler_output_path']),cell/'process_accounting.jsonl')
+
     def test_real_delayed_qualification_controls_stop(self):
         spec = self.fx.base_spec(observe=.5, teardown=1, mode='delayed', interval=.15)
         report = self._run(spec)

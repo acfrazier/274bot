@@ -103,3 +103,18 @@ New coverage:
 
 Real dummy processes + temp cache only. No live bot/server launch, no build.
 No overhead or performance-acceptance labels from series existence.
+
+## Relative-path correction after first live pipeline cell
+
+The N1 diagnostic at `diagnostics/20260907T061512Z_tui_n1_active` completed
+with frontend/launcher exit0 and qualified native workload/settings/ordinals, but
+the collector exited1 because its relative output path was resolved under its
+different working directory. The failed receipt and all original artifacts are
+preserved under `diagnostics/managed-pipeline-qualification-20260907T061239Z`.
+This run is not continuous helper evidence or accepted performance.
+
+The runner now resolves spec path, cells root, accounting script and optional
+cwd at entry. An added real dummy-process regression using relative cells root
+and accounting-script arguments completes and binds the intended absolute output.
+The production CLI invocation needs no workaround. A new explicitly recorded
+validation cell is required after review; the failed cell is never overwritten.
