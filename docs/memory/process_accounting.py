@@ -364,6 +364,16 @@ def _resolve_sample_timeout(
     return float(sample_timeout)
 
 
+def process_sampler(backend: str):
+    """Explicit backend choice; never silently falls back after a failure."""
+    if backend == 'system':
+        return sr.sample_process
+    if backend == 'libproc':
+        from native_process_sample import sample_process
+        return sample_process
+    raise AccountingError('unknown process sampling backend')
+
+
 def run(
     roles: Mapping[str, int],
     output: pathlib.Path,
@@ -381,6 +391,7 @@ def run(
     install_signal_handlers: bool = True,
     sample_timeout: Optional[float] = None,
     rusage_children_fn: Optional[Callable[[], Any]] = None,
+    process_backend: str = 'system',
 ) -> int:
     """Run continuous multi-role accounting.
 
@@ -398,6 +409,8 @@ def run(
         raise AccountingError("duration must be finite and positive when provided")
 
     resolved_timeout = _resolve_sample_timeout(duration=duration, sample_timeout=sample_timeout)
+    selected_sampler = process_sampler(process_backend)
+    backend_label = 'injected' if sample_fn is not None else process_backend
 
     # Stop control: reject hang if neither duration, stop_event, nor working signals.
     local_stop = stop_event or threading.Event()
@@ -432,7 +445,7 @@ def run(
     out = open_output(output)
     monotonic_fn = monotonic_fn or time.monotonic
     sleep_fn = sleep_fn or time.sleep
-    sample_fn = sample_fn or sr.sample_process
+    sample_fn = sample_fn or selected_sampler
     pressure_fn = pressure_fn or sr.sample_pressure
     utc_fn = utc_fn or _utc_now
 
@@ -457,6 +470,7 @@ def run(
             {
                 "type": "metadata",
                 "schema": SCHEMA,
+                "process_backend": backend_label,
                 "roles": {name: {"pid": pid} for name, pid in sorted(resolved.items())},
                 "interval_s": interval,
                 "duration_s": duration,
@@ -862,6 +876,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="new JSONL output path (exclusive create; no overwrite)",
     )
     parser.add_argument("--interval", type=float, default=1.0, help="sample cadence seconds")
+    parser.add_argument('--process-backend', choices=['system', 'libproc'], default='system',
+                        help='Explicit process counter source; libproc uses macOS native counters without ps children')
     parser.add_argument(
         "--duration",
         type=float,
@@ -892,6 +908,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.duration,
             include_collector_self=not args.no_collector_self,
             sample_timeout=args.sample_timeout,
+            process_backend=args.process_backend,
         )
     except (AccountingError, sr.SampleError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)

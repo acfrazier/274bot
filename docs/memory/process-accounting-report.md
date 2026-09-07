@@ -1,5 +1,10 @@
 # Continuous explicit-process resource accounting
 
+Optional native process counters are described in
+[native-process-sample-report.md](native-process-sample-report.md).
+`--process-backend libproc` avoids macOS ps sampling children; default `system`
+and older single-PID sampling are unchanged. Metadata records the backend.
+
 Deliverable for multi-role diagnostic collection: `process_accounting.py`,
 `test_process_accounting.py`, and this report. Bounded collector only — no
 launcher integration, no live game-server attach in this task, and **no
