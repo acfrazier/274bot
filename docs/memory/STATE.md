@@ -1,6 +1,6 @@
 # Memory campaign — current execution state
 
-Updated 2026-09-06. Branch `codex/memory-diagnostics`; active checkout
+Updated 2026-09-07. Branch `codex/memory-diagnostics`; active checkout
 `/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f`.
 
 Approved plan: [performance-finish-plan.md](performance-finish-plan.md), initially
@@ -9,7 +9,32 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current work and next actions
+## Current actions — 2026-09-07 18:31 UTC
+
+- Continue approved performance-finish-plan.md. Native Linux N16 still misses
+  memory/CPU targets; Windows panel misses simulation/render cadence. No final
+  campaign acceptance or newly accepted RSS saving.
+- t_ab1637ae (Luna): freeze matched Linux e318/188a borrowed-fingerprint binaries
+  in isolated snapshots. Await actual Grok4.5 review, then native VPS paired screen.
+- t_c037f97a (Luna): analyze completed native panel a3f729d evidence and code
+  for ~31ms swapchain acquire / ~32 UI fps / ~17 client ticks. No causal RDP
+  conclusion or scheduling/presentation change yet.
+- t_82c720f3 (Luna): prepare verified generic Ubuntu cloud image locally for
+  Hyper-V. Root owns native VM provisioning after image review.
+- Windows reboot completed; Hyper-V/vmms and SSH verified. BotTest RDP2 plus
+  restored Austen console1 remain active with operator consent. Process Lasso
+  remains read-only in BotTest and system governor remains running.
+- Native ConPTY N1C completed/bound; report e5b2c83 passed Grok4.5. Native reader
+  replay/fixture a0bca8d passed Grok4.5. Windows panel attribution a3f729d passed
+  Grok4.5 and native build/live; analysis task above is next.
+- Viewer requirement: start windowed near panel+taskbar size, small margin.
+  Do not change RDP/display/protocol during an ongoing run.
+- Final low-end absolute budgets, matched regression/latency evidence, three
+  modes, lifecycle/scaling, candidate dispositions, whole-branch Grok4.6 and
+  authorized integration remain incomplete. Latest detailed receipts follow
+  chronologically below. Earlier next-step prose is superseded by this list.
+
+## Earlier execution milestones (evidence snapshots)
 
 1. Execution correction is complete: profile-based dispatch without task model
    pins, automatic same-card review, one shared Hermes skill, and portable resume
