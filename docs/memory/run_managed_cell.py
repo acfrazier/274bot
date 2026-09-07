@@ -24,6 +24,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import build_provenance as bp  # noqa: E402
+import cache_provenance as cp  # noqa: E402
 import managed_receipt as mr  # noqa: E402
 import run_diagnostic as rd  # noqa: E402
 import server_resources as sr  # noqa: E402
@@ -32,6 +33,8 @@ import process_accounting as pa  # noqa: E402
 CLEANUP_WAIT_S = 15.0
 SAMPLE_TIMEOUT_S = 2.0
 DEFAULT_ACCOUNTING = _ROOT / "process_accounting.py"
+DEFAULT_SERVER_RESOURCES = _ROOT / "server_resources.py"
+DEFAULT_NATIVE_PROCESS_SAMPLE = _ROOT / "native_process_sample.py"
 
 
 class CellError(RuntimeError):
@@ -124,10 +127,42 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
     out.setdefault('process_backend', 'system')
     if out['process_backend'] not in ('system', 'libproc'):
         raise CellError('invalid process_backend')
+    has_cache = 'cache_dir' in out and out['cache_dir'] is not None
+    has_unpack = 'unpack_root' in out and out['unpack_root'] is not None
+    if has_cache ^ has_unpack:
+        raise CellError('spec.cache_dir and spec.unpack_root must both be set or both omitted')
+    if has_cache:
+        if not isinstance(out.get('cache_dir'), str) or not out['cache_dir']:
+            raise CellError('spec.cache_dir must be a non-empty path string')
+        if not isinstance(out.get('unpack_root'), str) or not out['unpack_root']:
+            raise CellError('spec.unpack_root must be a non-empty path string')
     pids = [gs, os.getpid(), *cleaned_ambient.values()]
     if len(pids) != len(set(pids)):
         raise CellError('duplicate process role PID')
     return out
+
+
+def expected_unpack_root(*, cwd: Optional[pathlib.Path] = None) -> pathlib.Path:
+    """Client bot_target::unpack_dir: HOME/.274bot/unpack, or cwd/.274bot/unpack if HOME empty."""
+    home = os.environ.get('HOME')
+    if isinstance(home, str) and home:
+        return (pathlib.Path(home) / '.274bot' / 'unpack')
+    base = pathlib.Path(cwd) if cwd is not None else pathlib.Path.cwd()
+    return base / '.274bot' / 'unpack'
+
+
+def _role_identity(pid: int, *, backend: str, role: str, timeout: float = SAMPLE_TIMEOUT_S) -> Dict[str, Any]:
+    """Sample an exact PID identity; never invent or substitute another process."""
+    if type(pid) is not int or isinstance(pid, bool) or pid <= 0:
+        raise CellError(f'role {role!r} pid must be a positive int')
+    try:
+        sample = pa.process_sampler(backend)(pid, timeout=timeout)
+    except (sr.SampleError, OSError, ValueError, TypeError) as exc:
+        raise CellError(f'role {role!r} identity unavailable: {exc}') from exc
+    identity = sample.get('start_identity') if isinstance(sample, dict) else None
+    if not isinstance(identity, str) or not identity:
+        raise CellError(f'role {role!r} identity unavailable')
+    return {'pid': int(pid), 'start_identity': identity}
 
 
 def parse_diagnostic_argv(diag_argv: Sequence[str]) -> argparse.Namespace:
@@ -391,6 +426,28 @@ class QualificationBoundaries:
 def _build_sampler_config(
     spec: Mapping[str, Any], roles: Mapping[str, int], argv: Sequence[str], accounting_script=DEFAULT_ACCOUNTING
 ) -> Dict[str, Any]:
+    accounting = pathlib.Path(accounting_script).resolve()
+    modules: Dict[str, Any] = {
+        'process_accounting.py': {
+            'path': str(accounting),
+            'sha256': bp.file_sha256(accounting) if accounting.is_file() else None,
+        },
+        'server_resources.py': {
+            'path': str(pathlib.Path(sr.__file__).resolve()),
+            'sha256': bp.file_sha256(pathlib.Path(sr.__file__).resolve()),
+        },
+    }
+    if spec.get('process_backend') == 'libproc':
+        native = pathlib.Path(DEFAULT_NATIVE_PROCESS_SAMPLE).resolve()
+        try:
+            import native_process_sample as nps  # type: ignore
+            native = pathlib.Path(nps.__file__).resolve()
+        except Exception:
+            pass
+        modules['native_process_sample.py'] = {
+            'path': str(native),
+            'sha256': bp.file_sha256(native) if native.is_file() else None,
+        }
     return {
         "interval_s": float(spec["sampler_interval_s"]),
         "duration_s_requested": None,
@@ -399,11 +456,35 @@ def _build_sampler_config(
         "roles": {k: int(v) for k, v in roles.items()},
         "argv": list(argv),
         "process_backend": spec['process_backend'],
-        "module": str(pathlib.Path(accounting_script).resolve()),
-        "module_sha256": bp.file_sha256(accounting_script)
-        if pathlib.Path(accounting_script).is_file()
-        else None,
+        "module": str(accounting),
+        "module_sha256": modules['process_accounting.py']['sha256'],
+        "modules": modules,
     }
+
+
+def _recheck_sampler_modules(modules: Optional[Mapping[str, Any]]) -> List[str]:
+    """Fail closed when any bound sampler module bytes change before completion."""
+    errors: List[str] = []
+    if not isinstance(modules, Mapping) or not modules:
+        return ['sampler modules missing at completion']
+    for name, binding in sorted(modules.items()):
+        if not isinstance(binding, Mapping):
+            errors.append(f'sampler module binding invalid: {name}')
+            continue
+        path_value = binding.get('path')
+        expected = binding.get('sha256')
+        if not isinstance(path_value, str) or not path_value:
+            errors.append(f'sampler module path missing: {name}')
+            continue
+        path = pathlib.Path(path_value)
+        try:
+            actual = bp.file_sha256(path)
+        except OSError as exc:
+            errors.append(f'sampler module unreadable at completion: {name}: {exc}')
+            continue
+        if not isinstance(expected, str) or actual != expected:
+            errors.append(f'sampler module changed since launch: {name}')
+    return errors
 
 
 def _parse_metadata_line(line: str) -> Optional[Dict[str, Any]]:
@@ -553,6 +634,7 @@ def run_managed_cell(
     # --- launch + collect ---
     try:
         effective_cli = [str(x) for x in spec["launcher_argv"]]
+        # Prelaunch role map: server/controller/ambient only (owned children added at runtime).
         sampler_roles_placeholder = {
             "game_server": int(spec["game_server_pid"]),
             "controller": os.getpid(),
@@ -564,8 +646,42 @@ def run_managed_cell(
                 raise CellError(f"duplicate PID {pid} for roles {seen[pid]!r} and {name!r}")
             seen[pid] = name
 
+        # Exact role identities for receipt binding: sample controller now; server/ambient
+        # reuse preflight samples; launcher/collector immediately after each Popen.
+        role_identities: Dict[str, Dict[str, Any]] = {
+            "game_server": {
+                "pid": int(pf["server_pid"]),
+                "start_identity": pf["server_sample"].get("start_identity"),
+            },
+            "controller": _role_identity(os.getpid(), backend=backend, role="controller"),
+        }
+        if not isinstance(role_identities["game_server"]["start_identity"], str) or not role_identities["game_server"]["start_identity"]:
+            raise CellError("role 'game_server' identity unavailable")
+        for name, info in sorted(pf["ambient_identities"].items()):
+            sample = info.get("sample") if isinstance(info, dict) else None
+            identity = sample.get("start_identity") if isinstance(sample, dict) else None
+            if not isinstance(identity, str) or not identity:
+                raise CellError(f"role {name!r} identity unavailable")
+            role_identities[name] = {"pid": int(info["pid"]) if "pid" in info else int(spec["ambient_helpers"][name]), "start_identity": identity}
+
+        cache_provenance_path: Optional[pathlib.Path] = None
+        if spec.get("cache_dir") is not None:
+            if not _test_launcher:
+                expected = expected_unpack_root(cwd=cwd).resolve()
+                actual_unpack = pathlib.Path(spec["unpack_root"]).resolve()
+                if actual_unpack != expected:
+                    raise CellError(
+                        f"unpack_root canonical {actual_unpack} != inherited {expected}"
+                    )
+            snapshot = cp.capture(spec["cache_dir"], spec["unpack_root"])
+            cache_provenance_path = cell_dir / "cache-provenance.json"
+            write_json(cache_provenance_path, snapshot)
+
         launch_path = cell_dir / "launch.json"
         sampler_argv_preview = [sys.executable, str(accounting_script)]
+        sampler_config = _build_sampler_config(
+            spec, sampler_roles_placeholder, sampler_argv_preview, accounting_script
+        )
         launch_rec = mr.create_launch(
             launch_path,
             cell_id=spec["id"],
@@ -576,9 +692,8 @@ def run_managed_cell(
             manifest_path=spec["build_manifest"],
             server_identity_path=spec["server_identity_path"],
             host_conditions_path=spec["host_conditions_path"],
-            sampler_config=_build_sampler_config(
-                spec, sampler_roles_placeholder, sampler_argv_preview, accounting_script
-            ),
+            sampler_config=sampler_config,
+            cache_provenance_path=str(cache_provenance_path) if cache_provenance_path is not None else None,
         )
         report["launch_started_utc"] = launch_rec["started_utc"]
 
@@ -603,6 +718,9 @@ def run_managed_cell(
         report["launched"] = True
         report["launcher_pid"] = launcher.pid
         startup["launcher_start_gap_s"] = time.monotonic() - t0
+        role_identities["launcher"] = _role_identity(
+            launcher.pid, backend=backend, role="launcher"
+        )
 
         roles = dict(sampler_roles_placeholder)
         if launcher.pid in seen and seen[launcher.pid] != "launcher":
@@ -641,6 +759,9 @@ def run_managed_cell(
             report["collector_pid"] = collector.pid
             startup["collector_start_gap_s"] = time.monotonic() - t1
             startup["roles"] = roles
+            role_identities["collector"] = _role_identity(
+                collector.pid, backend=backend, role="collector"
+            )
         except OSError as exc:
             # Sampler failed to start — record, do not replace, continue to wait launcher.
             collector = None
@@ -648,6 +769,10 @@ def run_managed_cell(
             report["sampler_premature_exit"] = 127
             report["sampler_start_error"] = str(exc)
             startup["collector_start_error"] = str(exc)
+            runner_errors.append(f"collector identity unavailable: {exc}")
+        except CellError as exc:
+            runner_errors.append(str(exc))
+            # Collector may still be running; continue observation and fail receipt honestly.
 
         log_tail = IncrementalLines(launcher_log)
         qual_tail: Optional[IncrementalLines] = None
@@ -789,6 +914,23 @@ def run_managed_cell(
             )
 
         summary = _accounting_summary(sampler_out) if sampler_out else {}
+        runner_errors.extend(_recheck_sampler_modules(sampler_config.get("modules") if isinstance(sampler_config, dict) else None))
+        # Require full identity set before claiming complete; never invent missing roles.
+        required_roles = set(sampler_roles_placeholder) | {"launcher", "collector"}
+        if set(role_identities) != required_roles:
+            missing = sorted(required_roles - set(role_identities))
+            if missing:
+                runner_errors.append(
+                    "role identities unavailable: " + ", ".join(missing)
+                )
+        for name, identity in sorted(role_identities.items()):
+            if (
+                not isinstance(identity, dict)
+                or type(identity.get("pid")) is not int
+                or not isinstance(identity.get("start_identity"), str)
+                or not identity["start_identity"]
+            ):
+                runner_errors.append(f"role {name!r} identity incomplete")
         sampler_result = {
             "exit_code": int(collector_exit) if isinstance(collector_exit, int) else 1,
             "output": str(sampler_out) if sampler_out and sampler_out.is_file() else None,
@@ -796,8 +938,21 @@ def run_managed_cell(
             "status": summary.get("status"),
             "duration_mode": "stop_controlled",
             "duration_s_requested": None,
+            "role_identities": {
+                name: {"pid": int(info["pid"]), "start_identity": info["start_identity"]}
+                for name, info in role_identities.items()
+                if isinstance(info, dict)
+                and type(info.get("pid")) is int
+                and isinstance(info.get("start_identity"), str)
+                and info["start_identity"]
+            },
+            "launcher_pid": int(launcher.pid) if launcher is not None else report.get("launcher_pid"),
+            "collector_pid": int(collector.pid)
+            if collector is not None
+            else report.get("collector_pid"),
         }
         report["sampler_result"] = sampler_result
+        report["role_identities"] = sampler_result["role_identities"]
 
         receipt_path = cell_dir / "receipt.json"
         if launch_path is not None and launch_path.is_file():

@@ -20,12 +20,32 @@ ROOT = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import build_provenance as bp  # noqa: E402
+import cache_provenance as cp  # noqa: E402
 import managed_receipt as mr  # noqa: E402
 import run_managed_cell as rmc  # noqa: E402
 import server_resources as sr  # noqa: E402
 
 MEMORY = ROOT
 ACCOUNTING = MEMORY / "process_accounting.py"
+SERVER_RESOURCES = MEMORY / "server_resources.py"
+NATIVE_PROCESS_SAMPLE = MEMORY / "native_process_sample.py"
+
+
+def _make_cache_tree(root: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    cache = root / "pack" / "client"
+    unpack = root / "unpack"
+    cache.mkdir(parents=True, exist_ok=True)
+    unpack.mkdir(parents=True, exist_ok=True)
+    for name in cp.JAGS:
+        (cache / name).write_bytes(name.encode())
+    version = cp.file_sha256(cache / "versionlist")[:16]
+    snapshot = unpack / version
+    snapshot.mkdir(exist_ok=True)
+    for name in cp.SNAPSHOTS:
+        (snapshot / name).write_bytes(name.encode())
+    for name in cp.STORE_FILES:
+        (cache.parent / name).write_bytes(name.encode())
+    return cache, unpack
 
 
 def _sha(path: pathlib.Path) -> str:
@@ -498,6 +518,218 @@ class ManagedCellTests(unittest.TestCase):
                 self.assertEqual(digest, _sha(pathlib.Path(receipt["run_dir"]) / name))
         self.assertIsInstance(receipt["exit_code"], int)
         self.assertIsInstance(receipt["launcher_exit_code"], int)
+
+    def test_default_no_cache_stays_compatible(self):
+        report = self._run(self.fx.base_spec(cell_id="nocache", observe=0.5, teardown=0.8))
+        self.assertEqual(report["status"], "completed", report)
+        launch = json.loads((pathlib.Path(report["cell_dir"]) / "launch.json").read_text())
+        self.assertNotIn("cache_provenance_path", launch)
+        receipt = json.loads((pathlib.Path(report["cell_dir"]) / "receipt.json").read_text())
+        self.assertNotIn("cache_provenance_path", receipt)
+        self.assertNotIn("cache_verified_after_completion_utc", receipt)
+
+    def test_paired_cache_fields_required_together(self):
+        cache, unpack = _make_cache_tree(self.fx.root / "cache_pair")
+        with self.assertRaises(rmc.CellError):
+            rmc.validate_spec(self.fx.base_spec() | {"cache_dir": str(cache)})
+        with self.assertRaises(rmc.CellError):
+            rmc.validate_spec(self.fx.base_spec() | {"unpack_root": str(unpack)})
+        ok = rmc.validate_spec(
+            self.fx.base_spec() | {"cache_dir": str(cache), "unpack_root": str(unpack)}
+        )
+        self.assertEqual(ok["cache_dir"], str(cache))
+        self.assertEqual(ok["unpack_root"], str(unpack))
+
+    def test_complete_cache_proof_pre_and_post(self):
+        cache, unpack = _make_cache_tree(self.fx.root / "cache_ok")
+        spec = self.fx.base_spec(cell_id="cache_ok", observe=0.5, teardown=0.8)
+        spec["cache_dir"] = str(cache)
+        spec["unpack_root"] = str(unpack)
+        report = self._run(spec)
+        self.assertEqual(report["status"], "completed", report)
+        cell_dir = pathlib.Path(report["cell_dir"])
+        prov_path = cell_dir / "cache-provenance.json"
+        self.assertTrue(prov_path.is_file(), report)
+        launch = json.loads((cell_dir / "launch.json").read_text())
+        receipt = json.loads((cell_dir / "receipt.json").read_text())
+        self.assertEqual(launch["cache_provenance_path"], str(prov_path.resolve()))
+        self.assertEqual(launch["cache_provenance_sha256"], _sha(prov_path))
+        self.assertEqual(
+            launch["cache_content_identity_sha256"],
+            json.loads(prov_path.read_text())["content_identity_sha256"],
+        )
+        self.assertIn("cache_verified_before_launch_utc", launch)
+        self.assertIn("cache_verified_after_completion_utc", receipt)
+        self.assertEqual(receipt["cache_provenance_path"], launch["cache_provenance_path"])
+        # Full scope still verifies after observation.
+        cp.verify_snapshot(json.loads(prov_path.read_text()))
+
+    def test_cache_changed_during_observation_fails_receipt(self):
+        cache, unpack = _make_cache_tree(self.fx.root / "cache_mut")
+        spec = self.fx.base_spec(cell_id="cache_mut", observe=0.8, teardown=0.6, interval=0.15)
+        spec["cache_dir"] = str(cache)
+        spec["unpack_root"] = str(unpack)
+
+        real_create = mr.create_launch
+
+        def create_and_mutate(*args, **kwargs):
+            value = real_create(*args, **kwargs)
+            (cache / "config").write_bytes(b"mutated-during-observation")
+            return value
+
+        with mock.patch.object(rmc.mr, "create_launch", side_effect=create_and_mutate):
+            report = self._run(spec)
+        self.assertEqual(report["status"], "failed_or_unavailable", report)
+        receipt = json.loads((pathlib.Path(report["cell_dir"]) / "receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed_or_unavailable")
+        self.assertIn("cache_provenance_changed_or_invalid", receipt["binding_errors"])
+
+    def test_role_identities_agree_with_collector_and_server_sidecar(self):
+        report = self._run(self.fx.base_spec(cell_id="roles", observe=0.5, teardown=0.8, interval=0.15))
+        self.assertEqual(report["status"], "completed", report)
+        receipt = json.loads((pathlib.Path(report["cell_dir"]) / "receipt.json").read_text())
+        launch = json.loads((pathlib.Path(report["cell_dir"]) / "launch.json").read_text())
+        result = receipt["sampler_result"]
+        roles = result["role_identities"]
+        expected = set(launch["sampler"]["roles"]) | {"launcher", "collector"}
+        self.assertEqual(set(roles), expected)
+        self.assertEqual(result["launcher_pid"], report["launcher_pid"])
+        self.assertEqual(result["collector_pid"], report["collector_pid"])
+        self.assertEqual(roles["launcher"]["pid"], result["launcher_pid"])
+        self.assertEqual(roles["collector"]["pid"], result["collector_pid"])
+        server = json.loads(self.fx.server_identity.read_text())
+        self.assertEqual(roles["game_server"]["pid"], server["pid"])
+        self.assertEqual(roles["game_server"]["start_identity"], server["start_identity"])
+        # Prelaunch map excludes owned children.
+        self.assertNotIn("launcher", launch["sampler"]["roles"])
+        self.assertNotIn("collector", launch["sampler"]["roles"])
+        self.assertEqual(launch["sampler"]["roles"]["game_server"], self.fx.game_server.pid)
+        self.assertEqual(launch["sampler"]["roles"]["controller"], os.getpid())
+        # First collector sample rows match recorded identities.
+        rows = [
+            json.loads(line)
+            for line in (pathlib.Path(report["cell_dir"]) / "process_accounting.jsonl")
+            .read_text()
+            .splitlines()
+        ]
+        samples = [r for r in rows if r.get("type") == "sample"]
+        self.assertTrue(samples, rows[:3])
+        first = samples[0]["roles"]
+        for name, identity in roles.items():
+            if name not in first:
+                continue
+            row = first[name]
+            if row.get("status") != "ok":
+                continue
+            self.assertEqual(row["pid"], identity["pid"], name)
+            self.assertEqual(row["start_identity"], identity["start_identity"], name)
+
+    def test_sampler_modules_bound_and_backend_identity_consistent(self):
+        report = self._run(self.fx.base_spec(cell_id="mods", observe=0.5, teardown=0.8))
+        self.assertEqual(report["status"], "completed", report)
+        launch = json.loads((pathlib.Path(report["cell_dir"]) / "launch.json").read_text())
+        modules = launch["sampler"]["modules"]
+        self.assertEqual(set(modules), {"process_accounting.py", "server_resources.py"})
+        self.assertEqual(
+            pathlib.Path(modules["process_accounting.py"]["path"]).resolve(),
+            ACCOUNTING.resolve(),
+        )
+        self.assertEqual(modules["process_accounting.py"]["sha256"], _sha(ACCOUNTING))
+        self.assertEqual(
+            pathlib.Path(modules["server_resources.py"]["path"]).resolve(),
+            SERVER_RESOURCES.resolve(),
+        )
+        self.assertEqual(modules["server_resources.py"]["sha256"], _sha(SERVER_RESOURCES))
+        self.assertEqual(
+            pathlib.Path(launch["sampler"]["module"]).resolve(),
+            pathlib.Path(modules["process_accounting.py"]["path"]).resolve(),
+        )
+        self.assertEqual(
+            launch["sampler"]["module_sha256"], modules["process_accounting.py"]["sha256"]
+        )
+        # Injected private accounting script is recorded under the same key.
+        injected = self.fx.root / "injected_accounting.py"
+        injected.write_text(
+            "import runpy, sys, pathlib\n"
+            f"sys.path.insert(0, {str(MEMORY)!r})\n"
+            f"sys.argv[0] = {str(ACCOUNTING)!r}\n"
+            f"runpy.run_path({str(ACCOUNTING)!r}, run_name='__main__')\n"
+        )
+        report2 = self._run(
+            self.fx.base_spec(cell_id="mods_inj", observe=0.5, teardown=0.8),
+            accounting_script=injected,
+        )
+        self.assertEqual(report2["status"], "completed", report2)
+        launch2 = json.loads((pathlib.Path(report2["cell_dir"]) / "launch.json").read_text())
+        self.assertEqual(
+            pathlib.Path(launch2["sampler"]["modules"]["process_accounting.py"]["path"]).resolve(),
+            injected.resolve(),
+        )
+        self.assertEqual(
+            launch2["sampler"]["module_sha256"],
+            launch2["sampler"]["modules"]["process_accounting.py"]["sha256"],
+        )
+        self.assertEqual(
+            launch2["sampler"]["modules"]["process_accounting.py"]["sha256"], _sha(injected)
+        )
+
+    @unittest.skipUnless(sys.platform == "darwin", "native macOS backend")
+    def test_libproc_modules_include_native_and_identity_backend(self):
+        spec = self.fx.base_spec(cell_id="libproc_mods", interval=0.15)
+        spec["process_backend"] = "libproc"
+        native = rmc.pa.process_sampler("libproc")(self.fx.game_server.pid, timeout=2)
+        self.fx.server_identity.write_text(
+            json.dumps(
+                {"pid": self.fx.game_server.pid, "start_identity": native["start_identity"]}
+            )
+        )
+        report = self._run(spec)
+        self.assertEqual(report["status"], "completed", report)
+        launch = json.loads((pathlib.Path(report["cell_dir"]) / "launch.json").read_text())
+        modules = launch["sampler"]["modules"]
+        self.assertEqual(
+            set(modules),
+            {"process_accounting.py", "server_resources.py", "native_process_sample.py"},
+        )
+        self.assertEqual(
+            pathlib.Path(modules["native_process_sample.py"]["path"]).resolve(),
+            NATIVE_PROCESS_SAMPLE.resolve(),
+        )
+        self.assertEqual(
+            modules["native_process_sample.py"]["sha256"], _sha(NATIVE_PROCESS_SAMPLE)
+        )
+        result = json.loads((pathlib.Path(report["cell_dir"]) / "receipt.json").read_text())[
+            "sampler_result"
+        ]
+        self.assertEqual(
+            result["role_identities"]["game_server"]["start_identity"], native["start_identity"]
+        )
+
+    def test_module_mutation_before_completion_fails_runner(self):
+        injected = self.fx.root / "mut_accounting.py"
+        injected.write_text(
+            "import runpy, sys\n"
+            f"sys.path.insert(0, {str(MEMORY)!r})\n"
+            f"sys.argv[0] = {str(ACCOUNTING)!r}\n"
+            f"runpy.run_path({str(ACCOUNTING)!r}, run_name='__main__')\n"
+        )
+        spec = self.fx.base_spec(cell_id="mod_mut", observe=0.6, teardown=0.6, interval=0.15)
+
+        real_create = mr.create_launch
+
+        def create_and_mutate_module(*args, **kwargs):
+            value = real_create(*args, **kwargs)
+            injected.write_text(injected.read_text() + "\n# mutated\n")
+            return value
+
+        with mock.patch.object(rmc.mr, "create_launch", side_effect=create_and_mutate_module):
+            report = self._run(spec, accounting_script=injected)
+        self.assertEqual(report["status"], "failed_or_unavailable", report)
+        receipt = json.loads((pathlib.Path(report["cell_dir"]) / "receipt.json").read_text())
+        self.assertTrue(
+            any("module" in e.lower() or "changed" in e.lower() for e in receipt.get("runner_errors") or []),
+            receipt,
+        )
 
 
 def _alive(pid: int) -> bool:
