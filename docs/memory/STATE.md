@@ -395,3 +395,42 @@ Provider failures and a dispatcher restart preceded that implementation; no
 local duplicate reader remains. The reader, overhead evidence, active-run
 qualification, absolute budgets, lifecycle matrix and final branch review are
 still incomplete.
+
+
+## 2026-09-07 managed N16 completion and evidence-tool follow-up
+
+The reviewed capture binary completed one managed N16 active diagnostic:
+`diagnostics/20260907T041253Z_tui_n16_active`, managed receipts under
+`diagnostics/n16-capture-managed-20260907T041253Z/`. Frontend and launcher exited
+0 after the existing teardown, with no outer deadline/retry. All 16 slots
+qualified, gained 14–40 steals and completed one bank trip. The 300.029s harness
+window contains 294 ordinary samples spanning 299.389s. Three watched-slot
+TUI checkpoints were captured; no failure boundary occurred. The successful
+run does not explain the earlier intermittent N16 failure. Decode fine-p99
+upper bounds were 48–60ms with selected edge/dispatch totals both 7952. Input
+had no samples; scheduling/GPU were disabled. Short teardown cleared active
+slots, isolates and in-flight snapshots; this is not the long lifecycle proof.
+Report `n16-capture-managed-report.md` (`b5be744`) passed Grok-4.5 artifact
+review `t_39e1801b`. No performance acceptance follows from this run.
+
+Reader correction `ebdbb7e` passed its round-2 Grok review, but root's later
+production probes still reported invalid receipt times, contradictory CLI,
+missing manifest fixtures and invalid source digests as bound. Evidence is
+preserved in `diagnostics/adapter-contract-review-20260907T040246Z/root-round2-probes.json`.
+Follow-up `t_528f8db0` owns those corrections; root has not accepted the reader.
+
+Root launcher change `3f74108` adds optional frozen-manifest verification and
+separates saved-binary build provenance from checkout source labels. Twenty
+focused tests passed; old two TUI manifest entries verified read-only.
+`t_81c198a9` is its pending Grok-4.5 review. No new binary/live run was made.
+
+Continuous explicit-process accounting `67919d6` (`t_82caa9dc`) is under review.
+Root requested fixes for overwrite support, unbounded stop-mode sampling,
+per-role acquisition times, skipped-duration claims and measurable waited-child
+CPU accounting. This collector is not yet approved for measurement use.
+
+Remaining prerequisites include managed raw-hash/sidecar receipts, complete
+runtime settings/host/server provenance, collector/overhead consumption,
+matched builds with equal instrumentation, then the approved resource,
+responsiveness, panel and lifecycle matrix and final whole-branch Grok-4.6.
+No matched performance win or low-end deployment qualification is accepted.
