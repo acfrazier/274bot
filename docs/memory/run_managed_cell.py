@@ -29,6 +29,7 @@ import managed_receipt as mr  # noqa: E402
 import run_diagnostic as rd  # noqa: E402
 import server_resources as sr  # noqa: E402
 import process_accounting as pa  # noqa: E402
+from operator_home import unpack_root_path  # noqa: E402
 
 CLEANUP_WAIT_S = 15.0
 SAMPLE_TIMEOUT_S = 2.0
@@ -146,12 +147,8 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def expected_unpack_root(*, cwd: Optional[pathlib.Path] = None) -> pathlib.Path:
-    """Client bot_target::unpack_dir: HOME/.274bot/unpack, or cwd/.274bot/unpack if HOME empty."""
-    home = os.environ.get('HOME')
-    if isinstance(home, str) and home:
-        return (pathlib.Path(home) / '.274bot' / 'unpack')
-    base = pathlib.Path(cwd) if cwd is not None else pathlib.Path.cwd()
-    return base / '.274bot' / 'unpack'
+    """Client unpack directory with the same HOME/USERPROFILE selection as launch."""
+    return unpack_root_path(cwd=cwd)
 
 
 def _role_identity(pid: int, *, backend: str, role: str, timeout: float = SAMPLE_TIMEOUT_S) -> Dict[str, Any]:
