@@ -65,15 +65,15 @@ across N roles.
 | Field | Notes |
 | --- | --- |
 | `status` | `ok` \| `incomplete` \| `fail` \| **`closed`** (stop-controlled requested stop) |
-| `completion` | `full_duration` \| `partial_orchestrator_stop` \| **`controlled_stop`** \| `failed_or_incomplete` |
+| `completion` | `required_grid_complete` \| `partial_orchestrator_stop` \| **`controlled_stop`** \| `failed_or_incomplete` |
 | `sample_count` | rows written including failed ticks |
 | `ok_sample_count` | ticks with all roles ok |
 | `required_grid_sample_count` | echo metadata; null if stop-controlled |
 | `grid_complete` | true only when fixed + ok + ok_sample_count ≥ required |
-| `observed_covered_span_s` | actual min(first_ok)→max(last_ok); **not** configured duration |
+| `observed_covered_span_s` | common intersection max(first_ok)→min(last_ok); unavailable if any role lacks samples; **not** configured duration |
 | `configured_duration_s` | may be null |
 | `stop_reason` / `fail_reason` | as applicable |
-| `role_lifetimes` | per role: first/last ok, **`observed_span_s`** (honest), `run_elapsed_s`, `complete_for_configured_duration`, **`full_duration_claim`** (always false in stop-controlled) |
+| `role_lifetimes` | per role: first/last ok, **`observed_span_s`** (honest), `run_elapsed_s`, `complete_for_required_grid`, `complete_for_configured_duration`, **`full_duration_claim`** (duration claims require actual observed span >= configured duration; always false in stop-controlled) |
 | `bracketing` | run monotonic start/end + per-role first/last |
 | `reader_note` | controlled_stop is **not** full observation coverage |
 | `role_errors`, `scope_gaps`, `sampling_overhead` | as before |
@@ -92,11 +92,11 @@ appear (`status=fail`, partial count). Partial JSONL is retained.
 
 | Mode | Requested stop | Success condition |
 | --- | --- | --- |
-| `fixed` (`duration_s` set) | → `incomplete` / `partial_orchestrator_stop` / exit **1** | all `required_grid_sample_count` ok samples + cadence/identity/counters ok → `full_duration` / exit 0 |
-| `stop_controlled` (`duration_s=null`) | → `closed` / `controlled_stop` / exit **0** | no promised end; **no** `full_duration` flag; reader must independently require coverage |
+| `fixed` (`duration_s` set) | → `incomplete` / `partial_orchestrator_stop` / exit **1** | all `required_grid_sample_count` ok samples + cadence/identity/counters ok → `required_grid_complete` / exit 0 |
+| `stop_controlled` (`duration_s=null`) | → `closed` / `controlled_stop` / exit **0** | no promised end; **no** `required_grid_complete` flag; reader must independently require coverage |
 
 Missing required tick (duration exhausted / clock jump / lateness beyond tolerance)
-under fixed mode is **`fail`**, never silent `full_duration`.
+under fixed mode is **`fail`**, never silent `required_grid_complete`.
 
 ## CLI
 
@@ -151,7 +151,7 @@ approved OFF/ON/ON/OFF protocol is independently validated elsewhere.
 2. **`sample_timeout_s` always finite** (default 5.0); per-role remaining recompute.
 3. **Per-role** `acquisition_*` brackets; CPU `interval_basis=per_role_acquisition_start`.
 4. **`required_grid_sample_count`**, `ok_sample_count`, `grid_complete`;
-   fixed mode cannot claim `full_duration` without full grid; missing tick / late
+   fixed mode cannot claim `required_grid_complete` without full grid; missing tick / late
    clock → `fail`. `observed_span_s` / `observed_covered_span_s` are actual
    sample spans, not configured duration.
 5. **`waited_children_cpu`** (and `ps_child_cost` alias) carries RUSAGE_CHILDREN
@@ -206,3 +206,14 @@ python3 docs/memory/test_process_accounting.py
 ```
 
 No performance acceptance. Existing `server_resources` finite sampler untouched.
+
+## Root coverage correction
+
+A complete fixed sampling grid now reports `completion=required_grid_complete`.
+It does not by itself set `complete_for_configured_duration` or
+`full_duration_claim`: those additionally require actual per-role sample span
+to reach the requested duration. For example, 0/1/2s samples for duration 3s
+complete the declared grid but cover only 2s. The shared
+`observed_covered_span_s` is the intersection of all per-role sample ranges,
+not their union. Tests explicitly check both distinctions (36 tests pass).
+No process sampling, cadence or exit-code policy changed in this correction.

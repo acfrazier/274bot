@@ -205,10 +205,12 @@ class InjectedCollectorTests(unittest.TestCase):
         summary = rows[-1]
         self.assertEqual(summary["type"], "summary")
         self.assertEqual(summary["status"], "ok")
-        self.assertEqual(summary["completion"], "full_duration")
+        self.assertEqual(summary["completion"], "required_grid_complete")
         self.assertTrue(summary["grid_complete"])
         self.assertEqual(summary["ok_sample_count"], 4)
-        self.assertTrue(summary["role_lifetimes"]["a"]["complete_for_configured_duration"])
+        self.assertTrue(summary["role_lifetimes"]["a"]["complete_for_required_grid"])
+        self.assertFalse(summary["role_lifetimes"]["a"]["complete_for_configured_duration"])
+        self.assertFalse(summary["role_lifetimes"]["a"]["full_duration_claim"])
         # observed span is actual first→last, not configured duration
         obs = summary["role_lifetimes"]["a"]["observed_span_s"]
         self.assertIsNotNone(obs)
@@ -561,6 +563,12 @@ class InjectedCollectorTests(unittest.TestCase):
         self.assertLess(a["acquisition_start_monotonic_s"], b["acquisition_start_monotonic_s"])
         self.assertLess(a["acquisition_end_monotonic_s"], b["acquisition_end_monotonic_s"])
         self.assertEqual(a["cpu"]["interval_basis"], "per_role_acquisition_start")
+        summary = rows[-1]
+        lifetimes = summary['role_lifetimes'].values()
+        intersection = min(r['last_ok_monotonic_s'] for r in lifetimes) - max(r['first_ok_monotonic_s'] for r in lifetimes)
+        self.assertAlmostEqual(summary['observed_covered_span_s'], max(0, intersection))
+        union = max(r['last_ok_monotonic_s'] for r in lifetimes) - min(r['first_ok_monotonic_s'] for r in lifetimes)
+        self.assertLess(summary['observed_covered_span_s'], union)
 
     def test_clock_jump_skips_required_grid_fails(self):
         clock = Clock()

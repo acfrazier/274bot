@@ -11,7 +11,8 @@ sample failure yields exit 1 with partial records retained.
 
 Modes:
   fixed duration: full required-grid coverage → exit 0 / status ok /
-    completion full_duration. Early orchestrator stop → incomplete / exit 1.
+    completion required_grid_complete. Actual duration coverage is separate.
+    Early orchestrator stop → incomplete / exit 1.
   stop_controlled (duration=None): requested stop → exit 0 / status closed /
     completion controlled_stop with honest first/last spans and no
     full-duration flag. Future readers must independently require coverage.
@@ -753,12 +754,13 @@ def run(
                 # Honest wall of samples actually observed — not configured duration.
                 "observed_span_s": observed,
                 "run_elapsed_s": end_mono - monotonic_start,
-                "complete_for_configured_duration": complete,
-                "full_duration_claim": False if duration is None else complete,
+                "complete_for_required_grid": complete,
+                "complete_for_configured_duration": bool(complete and observed is not None and observed >= duration),
+                "full_duration_claim": bool(complete and observed is not None and observed >= duration),
             }
 
         if status == "ok" and duration is not None:
-            completion = "full_duration"
+            completion = "required_grid_complete"
         elif status == "closed" and duration is None and stop_reason == "orchestrator_stop":
             completion = "controlled_stop"
         elif status == "incomplete":
@@ -767,8 +769,9 @@ def run(
             completion = "failed_or_incomplete"
 
         covered_span = None
-        if role_first_ok and role_last_ok:
-            covered_span = max(0.0, max(role_last_ok.values()) - min(role_first_ok.values()))
+        if len(role_first_ok) == len(resolved) and len(role_last_ok) == len(resolved):
+            # Coverage shared by every role, not the union of staggered ranges.
+            covered_span = max(0.0, min(role_last_ok.values()) - max(role_first_ok.values()))
 
         summary: Dict[str, Any] = {
             "type": "summary",
