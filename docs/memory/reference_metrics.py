@@ -1108,6 +1108,52 @@ def _mono_ns_pair(obj: dict, lo_key: str, hi_key: str) -> tuple[Optional[int], O
     return lo_i, hi_i, None
 
 
+def _input_row_preactivity_ok(row: dict) -> Optional[str]:
+    """Return None when input counters/hists prove genuine pre-activity (all zero).
+
+    Missing or malformed required counters, any non-zero counter, or a present
+    non-zero/malformed coarse/fine hist means the row is not trim-eligible.
+    """
+    counter_fields = (
+        "input_start_n",
+        "input_complete_n",
+        "input_canceled_n",
+        "input_lost_n",
+        "input_dropped_n",
+        "input_pending_n",
+    )
+    for field in counter_fields:
+        if field not in row:
+            return f"preactivity_counter_missing:{field}"
+        value = row.get(field)
+        if not _finite(value) or float(value) != int(value) or int(value) < 0:
+            return f"preactivity_counter_malformed:{field}"
+        if int(value) != 0:
+            return f"preactivity_counter_nonzero:{field}"
+    for field in ("input_latency_n", "input_latency_ns"):
+        if field not in row:
+            continue
+        value = row.get(field)
+        if value is None:
+            return f"preactivity_counter_null:{field}"
+        if not _finite(value) or float(value) != int(value) or int(value) < 0:
+            return f"preactivity_counter_malformed:{field}"
+        if int(value) != 0:
+            return f"preactivity_counter_nonzero:{field}"
+    for hkey in ("input_latency_buckets", "input_fine_latency_buckets"):
+        hist = row.get(hkey)
+        if hist is None:
+            continue
+        if not isinstance(hist, list):
+            return f"preactivity_hist_malformed:{hkey}"
+        for item in hist:
+            if not _finite(item) or float(item) != int(item) or int(item) < 0:
+                return f"preactivity_hist_malformed:{hkey}"
+            if int(item) != 0:
+                return f"preactivity_hist_nonzero:{hkey}"
+    return None
+
+
 def _contained_responsiveness_pair(
     meta: dict, samples: list[dict], key: tuple[Any, Any], prefix: str,
 ) -> tuple[Optional[dict], Optional[dict], dict]:
@@ -1116,6 +1162,12 @@ def _contained_responsiveness_pair(
     Uses native process-local mono brackets (decode/input capture + sample/read)
     when present. Never invents a clock from age alone. Never selects a
     favorable inner segment after outcome validation fails.
+
+    For prefix==\"input\" only: leading rows with unset/missing input capture and
+    genuine all-zero input counters/hists are omitted after sample/read clock
+    validation (pre-activity trim). Observe mono bounds still come from the full
+    observe series of validated sample clocks. Unset capture after any activity
+    or set capture still fails closed.
     """
     observed = [s for s in samples if isinstance(s, dict) and s.get("phase") == "observe"]
     if len(observed) < 2:
@@ -1126,10 +1178,19 @@ def _contained_responsiveness_pair(
     rows = []
     clocks_present = 0
     clocks_absent = 0
+    # Full-observe mono bounds (includes input pre-activity rows that were trimmed).
+    observe_elapsed_ns: list[int] = []
+    input_preactivity_rows_trimmed = 0
+    input_activity_or_capture_seen = False
+    prev_elapsed: Optional[float] = None
     for sample_index, sample in enumerate(observed):
         elapsed = sample.get("elapsed_s")
         if not _finite(elapsed):
             return None, None, {"reason": "invalid_observation_elapsed"}
+        elapsed_f = float(elapsed)
+        if prev_elapsed is not None and elapsed_f <= prev_elapsed:
+            return None, None, {"reason": "non_increasing_observation_elapsed"}
+        prev_elapsed = elapsed_f
         matches = [r for r in (sample.get("responsiveness_profile") or [])
                    if isinstance(r, dict) and (r.get("slot_id"), r.get("generation")) == key]
         if len(matches) != 1:
@@ -1147,7 +1208,7 @@ def _contained_responsiveness_pair(
         if not isinstance(clock, dict):
             clocks_absent += 1
             rows.append({
-                "i": sample_index, "elapsed": float(elapsed), "row": row,
+                "i": sample_index, "elapsed": elapsed_f, "row": row,
                 "age": float(age), "clock": None,
             })
             continue
@@ -1162,7 +1223,7 @@ def _contained_responsiveness_pair(
             ):
                 clocks_absent += 1
                 rows.append({
-                    "i": sample_index, "elapsed": float(elapsed), "row": row,
+                    "i": sample_index, "elapsed": elapsed_f, "row": row,
                     "age": float(age), "clock": None,
                 })
                 continue
@@ -1177,7 +1238,7 @@ def _contained_responsiveness_pair(
         if s_err == "missing" and r_err == "missing" and c_err in (None, "missing", "unset") and elapsed_ns is None:
             clocks_absent += 1
             rows.append({
-                "i": sample_index, "elapsed": float(elapsed), "row": row,
+                "i": sample_index, "elapsed": elapsed_f, "row": row,
                 "age": float(age), "clock": None,
             })
             continue
@@ -1191,10 +1252,42 @@ def _contained_responsiveness_pair(
                 "reason": "elapsed_mono_ns_malformed", "sample_index": sample_index,
             }
         elapsed_ns_i = int(elapsed_ns)
+        # Sample/read already validated: elapsed must lie in sample before trim.
+        assert sample_lo is not None and sample_hi is not None
+        assert read_lo is not None and read_hi is not None
+        if read_lo < sample_lo or read_hi > sample_hi:
+            return None, None, {
+                "reason": "read_outside_sample_bracket",
+                "sample_index": sample_index,
+            }
+        if elapsed_ns_i < sample_lo or elapsed_ns_i > sample_hi:
+            return None, None, {
+                "reason": "elapsed_mono_outside_sample_bracket",
+                "sample_index": sample_index,
+            }
         if c_err == "unset" or c_err == "missing":
+            if prefix == "input":
+                pre_err = _input_row_preactivity_ok(row)
+                if pre_err is None and not input_activity_or_capture_seen:
+                    # Genuine leading pre-activity: keep observe mono bounds, omit row.
+                    observe_elapsed_ns.append(elapsed_ns_i)
+                    input_preactivity_rows_trimmed += 1
+                    continue
+                return None, None, {
+                    "reason": "publisher_clock_bracket_incomplete",
+                    "missing_capability": "native_sample_publisher_bracket",
+                    "sample_index": sample_index,
+                    "prefix": prefix,
+                    "capture_err": c_err,
+                    "preactivity_detail": (
+                        "input_capture_unset_after_activity"
+                        if pre_err is None
+                        else pre_err
+                    ),
+                }
             clocks_absent += 1
             rows.append({
-                "i": sample_index, "elapsed": float(elapsed), "row": row,
+                "i": sample_index, "elapsed": elapsed_f, "row": row,
                 "age": float(age), "clock": None,
             })
             continue
@@ -1203,30 +1296,19 @@ def _contained_responsiveness_pair(
                 "reason": "capture_bracket_malformed",
                 "capture_err": c_err, "sample_index": sample_index, "prefix": prefix,
             }
-        assert sample_lo is not None and sample_hi is not None
-        assert read_lo is not None and read_hi is not None
         assert cap_lo is not None and cap_hi is not None
-        # Read fully contained in sample enclosure (not mere overlap).
-        if read_lo < sample_lo or read_hi > sample_hi:
-            return None, None, {
-                "reason": "read_outside_sample_bracket",
-                "sample_index": sample_index,
-            }
         # Capture ends at/before read upper; capture sits at/before sample upper.
         if cap_hi > read_hi or cap_hi > sample_hi or cap_lo > sample_hi:
             return None, None, {
                 "reason": "capture_outside_sample_bracket",
                 "sample_index": sample_index,
             }
-        # elapsed_mono_ns is the Instant twin of elapsed_s — must lie in sample.
-        if elapsed_ns_i < sample_lo or elapsed_ns_i > sample_hi:
-            return None, None, {
-                "reason": "elapsed_mono_outside_sample_bracket",
-                "sample_index": sample_index,
-            }
+        if prefix == "input":
+            input_activity_or_capture_seen = True
         clocks_present += 1
+        observe_elapsed_ns.append(elapsed_ns_i)
         rows.append({
-            "i": sample_index, "elapsed": float(elapsed), "row": row,
+            "i": sample_index, "elapsed": elapsed_f, "row": row,
             "age": float(age), "clock": clock,
             "sample_lo": sample_lo, "sample_hi": sample_hi,
             "read_lo": read_lo, "read_hi": read_hi,
@@ -1398,30 +1480,49 @@ def _contained_responsiveness_pair(
             "clocks_absent": clocks_absent,
         }
 
-    # Conservative observe mono window from first/last elapsed_mono_ns
-    # (same Instant as elapsed_s) — not sample_hi, which includes later
-    # registry-read/serialization and is not phase-end proof.
-    observe_lb = rows[0]["elapsed_ns"]
-    observe_ub = rows[-1]["elapsed_ns"]
+    # Conservative observe mono window from first/last elapsed_mono_ns across
+    # the full observe series of validated sample clocks (including any input
+    # pre-activity rows that were trimmed out of the selection list). Not
+    # sample_hi — that includes later registry-read/serialization.
+    if len(observe_elapsed_ns) < 2:
+        # Fallback for paths that only populated rows with clocks (e.g. decode).
+        clocked = [r for r in rows if r.get("elapsed_ns") is not None]
+        if len(clocked) < 2:
+            return None, None, {
+                "reason": "publisher_clock_bracket_incomplete",
+                "missing_capability": "native_sample_publisher_bracket",
+                "clocks_present": clocks_present,
+                "clocks_absent": clocks_absent,
+            }
+        observe_elapsed_ns = [int(r["elapsed_ns"]) for r in clocked]
+    observe_lb = observe_elapsed_ns[0]
+    observe_ub = observe_elapsed_ns[-1]
     if observe_ub < observe_lb:
         return None, None, {"reason": "observe_mono_window_inverted"}
 
-    # Maximal contained span: first row whose capture lower ≥ observe_lb,
-    # last row whose capture upper ≤ observe_ub. No favorable inner search.
-    start_candidates = [r for r in rows if r["cap_lo"] >= observe_lb]
-    end_candidates = [r for r in rows if r["cap_hi"] <= observe_ub]
-    if not start_candidates or not end_candidates:
+    # Maximal contained span over the (possibly pre-activity-trimmed) row list:
+    # first list entry whose capture lower ≥ observe_lb, last whose capture
+    # upper ≤ observe_ub. No favorable inner search. List positions — not
+    # raw sample indices — because leading input pre-activity rows may be gone.
+    start_pos = next((idx for idx, r in enumerate(rows) if r.get("cap_lo") is not None and r["cap_lo"] >= observe_lb), None)
+    end_pos = next(
+        (idx for idx in range(len(rows) - 1, -1, -1)
+         if rows[idx].get("cap_hi") is not None and rows[idx]["cap_hi"] <= observe_ub),
+        None,
+    )
+    if start_pos is None or end_pos is None:
         return None, None, {
             "reason": "publisher_window_not_contained",
             "missing_capability": "native_sample_publisher_bracket",
         }
-    start_item, end_item = start_candidates[0], end_candidates[-1]
-    if start_item["i"] >= end_item["i"]:
+    if start_pos >= end_pos:
         return None, None, {"reason": "publisher_window_too_short"}
-    selected = rows[start_item["i"]:end_item["i"] + 1]
-    if len(selected) != end_item["i"] - start_item["i"] + 1:
-        return None, None, {"reason": "publisher_slot_row_missing_or_duplicate"}
+    selected = rows[start_pos:end_pos + 1]
+    start_item, end_item = selected[0], selected[-1]
+    # Contiguous original sample indices inside the selected mono span.
     for a, b in zip(selected, selected[1:]):
+        if b["i"] != a["i"] + 1:
+            return None, None, {"reason": "publisher_slot_row_missing_or_duplicate"}
         if b["cap_lo"] < a["cap_lo"] or b["cap_hi"] < a["cap_hi"]:
             return None, None, {"reason": "capture_bracket_order_regression"}
         if b["elapsed_ns"] < a["elapsed_ns"]:
@@ -1446,6 +1547,8 @@ def _contained_responsiveness_pair(
             "after_end_samples": len(observed) - 1 - end_item["i"],
         },
     }
+    if prefix == "input":
+        meta_out["input_preactivity_rows_trimmed"] = input_preactivity_rows_trimmed
     return srow, erow, meta_out
 
 def evaluate_decode(

@@ -1817,5 +1817,323 @@ class ResourceAdapterTests(unittest.TestCase):
         self.assertIn("metrics", result)
 
 
+class InputPreactivityTrimTests(unittest.TestCase):
+    """Leading input-capture unset + all-zero counters may be trimmed; fail-closed otherwise."""
+
+    def _mono_clock(self, elapsed_ns, sample_lo=None, sample_hi=None, read_lo=None, read_hi=None):
+        sample_lo = elapsed_ns if sample_lo is None else sample_lo
+        sample_hi = elapsed_ns + 5_000_000 if sample_hi is None else sample_hi
+        read_lo = elapsed_ns + 100_000 if read_lo is None else read_lo
+        read_hi = elapsed_ns + 3_000_000 if read_hi is None else read_hi
+        return {
+            "domain": "responsiveness_process_mono",
+            "elapsed_mono_ns": int(elapsed_ns),
+            "sample_mono_ns_lower": int(sample_lo),
+            "sample_mono_ns_upper": int(sample_hi),
+            "read_mono_ns_lower": int(read_lo),
+            "read_mono_ns_upper": int(read_hi),
+        }
+
+    def _input_row(
+        self,
+        *,
+        start_n=0,
+        complete_n=None,
+        cap_lo=0,
+        cap_hi=0,
+        buckets=None,
+        fine=None,
+        pending=0,
+        canceled=0,
+        lost=0,
+        dropped=0,
+        latency_n=None,
+        omit_counters=(),
+        visible_ack=True,
+    ):
+        if complete_n is None:
+            complete_n = start_n
+        if latency_n is None:
+            latency_n = complete_n
+        if buckets is None:
+            buckets = [int(latency_n)] + [0] * 10
+        bounds = list(rm.LATENCY_BOUNDS_MS)
+        row = {
+            "slot_id": 7,
+            "generation": 1,
+            "sample_age_ms": 0,
+            "ended": False,
+            "updated_ms": 0,
+            "latency_bound_ms": bounds,
+            "decode_edge_n": 0,
+            "dispatch_n": 0,
+            "decode_canceled_n": 0,
+            "decode_unmatched_canceled_n": 0,
+            "decode_lost_n": 0,
+            "decode_dropped_n": 0,
+            "decode_pending_n": 0,
+            "decode_latency_n": 0,
+            "decode_latency_buckets": [0] * 11,
+            "decode_coverage_complete": False,
+            "decode_capture_mono_ns_lower": 0,
+            "decode_capture_mono_ns_upper": 0,
+            "input_start_n": start_n,
+            "input_complete_n": complete_n,
+            "input_canceled_n": canceled,
+            "input_lost_n": lost,
+            "input_dropped_n": dropped,
+            "input_pending_n": pending,
+            "input_latency_n": latency_n,
+            "input_latency_buckets": list(buckets),
+            "input_coverage_complete": True,
+            "input_surface": "tui",
+            "visible_ack": {"available": True} if visible_ack else {"available": False},
+            "input_capture_mono_ns_lower": int(cap_lo),
+            "input_capture_mono_ns_upper": int(cap_hi),
+        }
+        if fine is not None:
+            row["input_fine_latency_buckets"] = list(fine)
+            row["fine_latency_bound_ms"] = list(rm.FINE_LATENCY_BOUNDS_MS)
+        for key in omit_counters:
+            row.pop(key, None)
+        return row
+
+    def _sample(self, elapsed_s, elapsed_ns, row, *, clock=True):
+        out = {
+            "phase": "observe",
+            "elapsed_s": float(elapsed_s),
+            "responsiveness_profile": [row],
+        }
+        if clock:
+            out["responsiveness_clock"] = self._mono_clock(int(elapsed_ns))
+        return out
+
+    def test_leading_unset_zero_then_input_available(self):
+        """Leading unset capture + typed-zero counters trim; later input is available."""
+        meta = _meta(responsiveness_profile=True)
+        e = [40e9, 50e9, 60e9, 70e9, 100e9]
+        # Three leading pre-activity rows: valid sample clocks, unset capture, all zero.
+        samples = [
+            self._sample(40.0 + i, e[i], self._input_row(start_n=0, cap_lo=0, cap_hi=0, buckets=[0] * 11))
+            for i in range(3)
+        ]
+        # Activity: capture set inside observe mono; counters climb with conserved hist.
+        samples.append(
+            self._sample(
+                70.0,
+                e[3],
+                self._input_row(
+                    start_n=0,
+                    complete_n=0,
+                    cap_lo=int(e[3] + 1e6),
+                    cap_hi=int(e[3] + 2e6),
+                    buckets=[0] * 11,
+                    latency_n=0,
+                ),
+            )
+        )
+        # End capture must sit at/before observe_ub (= last elapsed_mono_ns).
+        samples.append(
+            self._sample(
+                160.0,
+                e[4],
+                self._input_row(
+                    start_n=20,
+                    complete_n=20,
+                    cap_lo=int(e[3] + 3e6),
+                    cap_hi=int(e[3] + 4e6),
+                    buckets=[20] + [0] * 10,
+                    latency_n=20,
+                ),
+            )
+        )
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "available", g)
+        slot = g["slots"][0]
+        self.assertEqual(slot["status"], "available", slot)
+        self.assertNotEqual(slot.get("reason"), "publisher_clock_bracket_incomplete")
+        self.assertTrue(slot.get("contained_window"))
+        self.assertEqual(slot["counter_deltas"]["start"], 20)
+        self.assertEqual(slot["counter_deltas"]["complete"], 20)
+        self.assertEqual(slot.get("input_preactivity_rows_trimmed"), 3)
+
+    def test_unset_nonzero_counter_rejects(self):
+        meta = _meta(responsiveness_profile=True)
+        e0, e1 = 40e9, 100e9
+        samples = [
+            self._sample(
+                40.0,
+                e0,
+                self._input_row(start_n=5, complete_n=5, cap_lo=0, cap_hi=0, buckets=[5] + [0] * 10),
+            ),
+            self._sample(
+                160.0,
+                e1,
+                self._input_row(
+                    start_n=20,
+                    complete_n=20,
+                    cap_lo=int(e1 + 1e6),
+                    cap_hi=int(e1 + 2e6),
+                    buckets=[20] + [0] * 10,
+                ),
+            ),
+        ]
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_incomplete")
+
+    def test_unset_zero_nonzero_hist_rejects(self):
+        meta = _meta(responsiveness_profile=True)
+        e0, e1 = 40e9, 100e9
+        samples = [
+            self._sample(
+                40.0,
+                e0,
+                self._input_row(start_n=0, cap_lo=0, cap_hi=0, buckets=[3] + [0] * 10, latency_n=0),
+            ),
+            self._sample(
+                160.0,
+                e1,
+                self._input_row(
+                    start_n=10,
+                    complete_n=10,
+                    cap_lo=int(e1 + 1e6),
+                    cap_hi=int(e1 + 2e6),
+                    buckets=[10] + [0] * 10,
+                ),
+            ),
+        ]
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_incomplete")
+
+    def test_missing_global_sample_clock_on_preactivity_rejects(self):
+        meta = _meta(responsiveness_profile=True)
+        e0, e1, e2 = 40e9, 70e9, 100e9
+        samples = [
+            self._sample(40.0, e0, self._input_row(start_n=0, cap_lo=0, cap_hi=0, buckets=[0] * 11), clock=False),
+            self._sample(
+                100.0,
+                e1,
+                self._input_row(
+                    start_n=0,
+                    cap_lo=int(e1 + 1e6),
+                    cap_hi=int(e1 + 2e6),
+                    buckets=[0] * 11,
+                    latency_n=0,
+                ),
+            ),
+            self._sample(
+                160.0,
+                e2,
+                self._input_row(
+                    start_n=8,
+                    complete_n=8,
+                    cap_lo=int(e2 + 1e6),
+                    cap_hi=int(e2 + 2e6),
+                    buckets=[8] + [0] * 10,
+                ),
+            ),
+        ]
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_incomplete")
+
+    def test_missing_sample_clock_post_activity_rejects(self):
+        meta = _meta(responsiveness_profile=True)
+        e0, e1, e2 = 40e9, 70e9, 100e9
+        samples = [
+            self._sample(
+                40.0,
+                e0,
+                self._input_row(
+                    start_n=0,
+                    cap_lo=int(e0 + 1e6),
+                    cap_hi=int(e0 + 2e6),
+                    buckets=[0] * 11,
+                    latency_n=0,
+                ),
+            ),
+            self._sample(
+                100.0,
+                e1,
+                self._input_row(
+                    start_n=5,
+                    complete_n=5,
+                    cap_lo=int(e1 + 1e6),
+                    cap_hi=int(e1 + 2e6),
+                    buckets=[5] + [0] * 10,
+                ),
+                clock=False,
+            ),
+            self._sample(
+                160.0,
+                e2,
+                self._input_row(
+                    start_n=10,
+                    complete_n=10,
+                    cap_lo=int(e2 + 1e6),
+                    cap_hi=int(e2 + 2e6),
+                    buckets=[10] + [0] * 10,
+                ),
+            ),
+        ]
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_incomplete")
+
+    def test_internal_unset_after_activity_rejects(self):
+        meta = _meta(responsiveness_profile=True)
+        e0, e1, e2 = 40e9, 70e9, 100e9
+        samples = [
+            self._sample(
+                40.0,
+                e0,
+                self._input_row(
+                    start_n=0,
+                    cap_lo=int(e0 + 1e6),
+                    cap_hi=int(e0 + 2e6),
+                    buckets=[0] * 11,
+                    latency_n=0,
+                ),
+            ),
+            self._sample(
+                100.0,
+                e1,
+                self._input_row(
+                    start_n=5,
+                    complete_n=5,
+                    cap_lo=0,
+                    cap_hi=0,
+                    buckets=[5] + [0] * 10,
+                ),
+            ),
+            self._sample(
+                160.0,
+                e2,
+                self._input_row(
+                    start_n=10,
+                    complete_n=10,
+                    cap_lo=int(e2 + 1e6),
+                    cap_hi=int(e2 + 2e6),
+                    buckets=[10] + [0] * 10,
+                ),
+            ),
+        ]
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(g["slots"][0]["reason"], "publisher_clock_bracket_incomplete")
+
+    def test_never_input_still_no_input_samples(self):
+        meta = _meta(responsiveness_profile=True)
+        e0, e1 = 40e9, 100e9
+        samples = [
+            self._sample(40.0, e0, self._input_row(start_n=0, cap_lo=0, cap_hi=0, buckets=[0] * 11)),
+            self._sample(160.0, e1, self._input_row(start_n=0, cap_lo=0, cap_hi=0, buckets=[0] * 11)),
+        ]
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["slots"][0]["reason"], "no_input_samples")
+
+
 if __name__ == "__main__":
     unittest.main()
