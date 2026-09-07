@@ -1,0 +1,149 @@
+{
+  "task": "t_27a3363a",
+  "kind": "n16_stop_functional_diagnostic",
+  "branch": "codex/memory-diagnostics",
+  "host_commit": "944fb60923b8a2ce533c9ac676396f9bdc929437",
+  "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+  "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "performance_acceptance": false,
+  "n16_supported": false,
+  "qualified": false,
+  "qualification_false_reason": "process_interrupted_sigterm_exit_-15_agent_foreground_timeout_~420s",
+  "exit_class": "tool_timeout_sigterm",
+  "original_script_stop_reproduced": false,
+  "stop_reason_captured": false,
+  "stop_reason_notes": "No script-requested stop in authorized cell; stop_reason key absent from qualification slot/runtime objects (field not written). Distinct from captured null after stop.",
+  "full_observe_300s_retained": true,
+  "observe_start_elapsed_s": 103.357451542,
+  "observe_end_elapsed_s": 403.371508334,
+  "observe_span_s": 300.014056792,
+  "last_sample_phase": "teardown",
+  "last_sample_elapsed_s": 418.995756542,
+  "wall_duration_s": 419.86985993385315,
+  "requested": {
+    "frontend": "tui",
+    "n": 16,
+    "workload": "active",
+    "sustain": true,
+    "warmup_s": 30,
+    "observe_s": 300,
+    "teardown_budget_s": 60,
+    "diagnostic_sidecar": true,
+    "stack_logging": false,
+    "debug": false,
+    "scheduling_profile": false,
+    "render_profile": false,
+    "responsiveness_profile": false
+  },
+  "build": {
+    "command": "CARGO_TARGET_DIR=.../target-shared-nav-candidate cargo build --release --locked -p tui --bin tui-play --features memory-profile-no-alloc",
+    "exit": 0,
+    "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target-shared-nav-candidate",
+    "features": ["memory-profile-no-alloc"],
+    "allocator": "std::alloc::System",
+    "build_dir": "docs/memory/diagnostics/n16-stop-diagnostic-build-20260907T012907Z",
+    "binary_name": "tui-play-n16-stop-diagnostic-system-20260907T012907Z",
+    "binary_path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/n16-stop-diagnostic-build-20260907T012907Z/tui-play-n16-stop-diagnostic-system-20260907T012907Z",
+    "binary_sha256": "13a1221c3f0d6f03ca3884894b36d6c995c3c7b3e7bcf70567aa50d8223557aa",
+    "binary_size": 80999632,
+    "nm_non_v8_CountingAllocator_lines": [],
+    "differs_from_frozen_candidate": true,
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)"
+  },
+  "frozen_binaries_untouched": {
+    "tui-play-candidate-system-20260906T235815Z": "769a9367e8c2808ebf7b1feb9f2d4830804524613721c9082e22056d7ac61928",
+    "tui-play-control-system-20260906T235815Z": "53ddeda0eadd241913a2b05c01eb35c90af5af8d70122387a95fea72364b3eb2",
+    "panel-play-candidate-system-20260906T235815Z": "99fe1accdaef4568926fe64db067c161a4258d64f810547085cf77e868d98f5f",
+    "panel-play-control-system-20260906T235815Z": "bd41cd4dfe8d1a2758e2fc02f3519a6f3798dd75b29c291e9cc928de759b78ea"
+  },
+  "source_hashes": {
+    "host_sources_sha256": "9fee9ab6804e283293b2ad2797eff22f170fdd72d8709beb253601123fb587a8",
+    "client_sources_sha256": "27246deba654abac980395b0bbf9ad077d8d3feb66992b4d659512e0630e4a25",
+    "host_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "crates_since_6345fbc": {
+    "commits": ["341a5b8 feat(script): retain bounded stopReason in opt-in diagnostics"],
+    "files": [
+      "crates/script/src/load.rs",
+      "crates/script/src/memory_profile.rs",
+      "crates/script/tests/load_isolate.rs"
+    ]
+  },
+  "assets": {
+    "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+    "nav_flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb",
+    "js_scripts_sha256": "3bee852f888a9c383b23d299979a3e898c4b620b73b5c8a6f69e87584399d4f6"
+  },
+  "server": {
+    "pid": 4719,
+    "listen": 43594,
+    "action": "existing_not_restarted"
+  },
+  "helpers_retained": ["memory-ref-amd64-view:6080", "fr-vault-chroma:8765"],
+  "authorized_run": {
+    "run_dir": "docs/memory/diagnostics/20260907T012918Z_tui_n16_active",
+    "command": "python3 docs/memory/run_diagnostic.py tui 16 active --sustain --binary docs/memory/diagnostics/n16-stop-diagnostic-build-20260907T012907Z/tui-play-n16-stop-diagnostic-system-20260907T012907Z --warmup 30 --observe 300",
+    "exit_code": -15,
+    "pid": 73225,
+    "started_unix": 1788744558.488327,
+    "ended_unix": 1788744978.358187,
+    "metadata_binary_sha256": "13a1221c3f0d6f03ca3884894b36d6c995c3c7b3e7bcf70567aa50d8223557aa",
+    "diagnostic_sidecar": true,
+    "samples_n": 409,
+    "sample_phases": {"seed": 73, "warmup": 29, "observe": 291, "teardown": 16},
+    "sample_elapsed_by_phase": {
+      "seed": {"n": 73, "min": 0.05353475, "max": 73.236008},
+      "warmup": {"n": 29, "min": 74.259004125, "max": 102.961511375},
+      "observe": {"n": 291, "min": 103.994386084, "max": 402.655664084},
+      "teardown": {"n": 16, "min": 403.661025792, "max": 418.995756542}
+    },
+    "qualification_boundaries": ["observe-start", "observe-end"],
+    "diagnostics_lines": 409,
+    "diagnostics_stop_reason_hits": 0,
+    "run_log_script_requested_stop": false,
+    "run_log_FAIL_memory": false,
+    "account_prefix": "live11e09_",
+    "observe_end_progress": {
+      "all_running": true,
+      "steals_min": 19,
+      "steals_max": 51,
+      "steals_total": 594,
+      "food_min": 19,
+      "food_max": 20,
+      "bank_trips_each": 1,
+      "slots_with_error": 0,
+      "stop_reason_field_absent_on_all_slots": true
+    },
+    "observe_start_progress": {
+      "all_running": true,
+      "steals_min": 5,
+      "steals_max": 14,
+      "steals_total": 144
+    }
+  },
+  "unauthorized_aborted_rerun": {
+    "run_dir": "docs/memory/diagnostics/20260907T013727Z_tui_n16_active",
+    "exit_code": -15,
+    "duration_s": 13.043598175048828,
+    "samples_n": 13,
+    "note": "Worker automatic rerun after tool timeout; orch forbade rerun; killed. Not an authorized cell."
+  },
+  "original_failure_immutable": {
+    "run_dir": "docs/memory/diagnostics/20260907T005032Z_tui_n16_active",
+    "binary_sha256": "769a9367e8c2808ebf7b1feb9f2d4830804524613721c9082e22056d7ac61928",
+    "diagnostic_sidecar": false,
+    "observe_s": 120,
+    "failure": "script requested stop on tick 289; isolate stopping (slot livefd010_5)",
+    "stop_reason_recovered": false
+  },
+  "resource_metrics_excluded_from_acceptance": true,
+  "next_proposal": {
+    "summary": "One background PTY TUI N16 active cell on same diagnostic binary+sidecar with finite watchdog >=600s so exit is harness-controlled; on script stop require retained stop_reason; on clean exit0 report non-reproduction only — still no N16 support or performance batch resume.",
+    "implemented_this_card": false
+  },
+  "owned_report_files": [
+    "docs/memory/n16-stop-diagnostic.md",
+    "docs/memory/n16-stop-diagnostic-manifest.json"
+  ]
+}
