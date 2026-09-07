@@ -9,6 +9,43 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-07 22:43 UTC
+
+- Operator clarified architecture freedom EXCEPT maintained script compatibility
+  layer/client fence, then explicitly anchored inherited20ms Java-client logical
+  timing and game fidelity. Root docs44d09c5/b1fbfc0 define behavior-contract.md
+  and glossary CONTEXT.md. Docs44d09c5 approved actualGrok4.5 t_524c0329;
+  follow-on game-fidelity clause is an additional tighter root clarification.
+  Do not change logical client progression/order, timeouts, or cadence to meet
+  budgets. Host storage/publication mechanisms can be redesigned with outcome
+  proof; old task-specific byte/gate oracles remain until explicitly replaced.
+- Snapshot generation-only sharing rejected by audited report73f5933 actual
+  Grok4.5 review t_acaf5f62. Local input/draw/loc-distance inputs drift without
+  current share generations. No code shipped. Do not overgeneralize this as
+  impossible sharing: redesign t_97e3926f running implementer evaluates canonical
+  immutable publication, shared core/derived values and rebuild-edge equality
+  dedup. Loc tile context alone need not require full content hashing. Report
+  observable differences/tradeoffs and preserve clarified fidelity contract.
+- Native N16 controls0261b6e correctedfe5f270 wrong computer principal and missing
+  shared entrypoint staging. Root then requested changes on same card t_54a8358f:
+  archive omitted external receipt.run_dir raw and refused failed exits. Luna
+  correcting; await full reviewed controls. Preflight22:41 found BotTest console
+  LOCKED; no native workload launched. User22:42 says going to unlock, allow2min;
+  await confirmation then fresh preflight. No relaunch of any previous run.
+- Windows comparison7f09848 now approved actualGrok4.5 run417/session
+  20260907_182634_cae998 (14min independent cadence recomputation). Source report
+  accurately retains closedNvidia miss and available diagnostic resource samples.
+- Root found exact Unknown error source in pinnedrustyscript0.12.3:
+  call_function_by_ref returns Runtime Unknown when Function.call=None,
+  TryCatch.has_caught=true but message absent. This DOES NOT prove termination
+  caused the original failure. New t_d3665ce6 luna implements bounded existing
+  failure-capture attribution before cancel_terminate_execution: distinguish
+  path/error/termination evidence without altering existing timing/logs/API.
+  Requires new binary lineage and review; no native run delegated.
+- 289 orch run2 continues actualAstra, source review required further actor-mask
+  contract corrections. Stage tasks still dependency gated, no accepted source
+  milestone implied by their presence. Memory remains active independently.
+
 ## Latest boundary — 2026-09-07 22:32 UTC
 
 - Reviewed next ownership proposal a6a418c passed actual Grok4.5/xai-oauth
