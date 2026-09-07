@@ -15,8 +15,10 @@
 //! Posts are deltas (schema: `Snapshot`): `tick` is always carried, other
 //! fields only when they changed vs the last post — an omitted vector is
 //! absent, never empty, and the isolate keeps its last JS value for it.
-//! The per-slot last-post [`SnapshotFingerprint`] is compared by value
-//! (equality, not a hash) once per slot per tick.
+//! The per-slot last-post [`SnapshotFingerprint`] is compared against the
+//! next borrowed [`SnapshotInput`] (equality, not a hash) once per slot
+//! per tick; the live Slot path materializes owned fingerprint fields only
+//! when content actually changes.
 
 use flatbuffers::{
     root_with_opts, FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT,
@@ -216,7 +218,7 @@ const VT_PAINT_ACCENT: VOffsetT = 6;
 const VT_PAINT_LINES: VOffsetT = 8;
 
 /// A game tile `{x, z, level}`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TileInput {
     pub x: i32,
     pub z: i32,
@@ -290,7 +292,7 @@ impl<'a> ItemRowInput<'a> {
 }
 
 /// Posted side-tab root component id (`reader.sideTabInterface`).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SideTabIfaceInput {
     pub index: i32,
     pub id: i32,
@@ -325,7 +327,7 @@ pub struct CombatStyleInput<'a> {
 }
 
 /// One varp index/value pair.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VarpInput {
     pub index: i32,
     pub value: i32,
@@ -1385,7 +1387,7 @@ pub struct NearestBoothFp {
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
 /// small and the compare runs once per slot per tick.
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct SnapshotFingerprint {
     pub here: Option<TileInput>,
     pub ingame: bool,
@@ -1445,41 +1447,177 @@ pub struct SnapshotFingerprint {
     pub shop_stock: Vec<ItemRowFp>,
 }
 
+fn strings_eq(owned: &[String], borrowed: &[String]) -> bool {
+    owned.len() == borrowed.len() && owned.iter().zip(borrowed.iter()).all(|(a, b)| a == b)
+}
+
+fn item_row_fp(r: &ItemRowInput<'_>) -> ItemRowFp {
+    ItemRowFp {
+        name: r.name.map(str::to_string),
+        count: r.count,
+        id: r.id,
+        ops: r.ops.to_vec(),
+        noted: r.noted,
+        cert: r.cert,
+        component_id: r.component_id,
+    }
+}
+
+fn item_row_eq(fp: &ItemRowFp, r: &ItemRowInput<'_>) -> bool {
+    fp.count == r.count
+        && fp.id == r.id
+        && fp.noted == r.noted
+        && fp.cert == r.cert
+        && fp.component_id == r.component_id
+        && fp.name.as_deref() == r.name
+        && strings_eq(&fp.ops, r.ops)
+}
+
+fn item_rows_eq(fp: &[ItemRowFp], rows: &[ItemRowInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| item_row_eq(a, b))
+}
+
+fn entity_fp(e: &SceneEntityInput<'_>) -> SceneEntityFp {
+    SceneEntityFp {
+        index: e.index,
+        id: e.id,
+        name: e.name.map(str::to_string),
+        x: e.x,
+        z: e.z,
+        level: e.level,
+        distance: e.distance,
+        health: e.health,
+        max_health: e.max_health,
+        in_combat: e.in_combat,
+        animating: e.animating,
+        actions: e.actions.to_vec(),
+        reachable: e.reachable,
+        reachable_adj: e.reachable_adj,
+        combat_level: e.combat_level,
+        target_kind: e.target_kind,
+        target_index: e.target_index,
+    }
+}
+
+fn entity_eq(fp: &SceneEntityFp, e: &SceneEntityInput<'_>) -> bool {
+    fp.index == e.index
+        && fp.id == e.id
+        && fp.name.as_deref() == e.name
+        && fp.x == e.x
+        && fp.z == e.z
+        && fp.level == e.level
+        && fp.distance == e.distance
+        && fp.health == e.health
+        && fp.max_health == e.max_health
+        && fp.in_combat == e.in_combat
+        && fp.animating == e.animating
+        && strings_eq(&fp.actions, e.actions)
+        && fp.reachable == e.reachable
+        && fp.reachable_adj == e.reachable_adj
+        && fp.combat_level == e.combat_level
+        && fp.target_kind == e.target_kind
+        && fp.target_index == e.target_index
+}
+
+fn entities_eq(fp: &[SceneEntityFp], rows: &[SceneEntityInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| entity_eq(a, b))
+}
+
+fn bank_stand_fp(b: &BankStandInput<'_>) -> BankStandFp {
+    BankStandFp {
+        name: b.name.to_string(),
+        x: b.x,
+        z: b.z,
+        level: b.level,
+        kind: b.kind.to_string(),
+        op: b.op,
+        choose: b.choose.map(str::to_string),
+    }
+}
+
+fn bank_stand_eq(fp: &BankStandFp, b: &BankStandInput<'_>) -> bool {
+    fp.name == b.name
+        && fp.x == b.x
+        && fp.z == b.z
+        && fp.level == b.level
+        && fp.kind == b.kind
+        && fp.op == b.op
+        && fp.choose.as_deref() == b.choose
+}
+
+fn banks_eq(fp: &[BankStandFp], rows: &[BankStandInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| bank_stand_eq(a, b))
+}
+
+fn stat_eq(fp: &(i32, String, i32, i32, i32), s: &StatInput<'_>) -> bool {
+    fp.0 == s.index && fp.1 == s.name && fp.2 == s.xp && fp.3 == s.base && fp.4 == s.effective
+}
+
+fn stats_eq(fp: &[(i32, String, i32, i32, i32)], rows: &[StatInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| stat_eq(a, b))
+}
+
+fn combat_style_fp(c: &CombatStyleInput<'_>) -> CombatStyleFp {
+    CombatStyleFp {
+        mode: c.mode,
+        label: c.label.to_string(),
+        component_id: c.component_id,
+    }
+}
+
+fn combat_style_eq(fp: &CombatStyleFp, c: &CombatStyleInput<'_>) -> bool {
+    fp.mode == c.mode && fp.label == c.label && fp.component_id == c.component_id
+}
+
+fn combat_styles_eq(fp: &[CombatStyleFp], rows: &[CombatStyleInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| combat_style_eq(a, b))
+}
+
+fn make_product_fp(p: &MakeProductInput<'_>) -> MakeProductFp {
+    MakeProductFp {
+        object_id: p.object_id,
+        name: p.name.to_string(),
+        buttons: p
+            .buttons
+            .iter()
+            .map(|b| MakeButtonFp {
+                qty: b.qty,
+                com_id: b.com_id,
+            })
+            .collect(),
+    }
+}
+
+fn make_product_eq(fp: &MakeProductFp, p: &MakeProductInput<'_>) -> bool {
+    fp.object_id == p.object_id
+        && fp.name == p.name
+        && fp.buttons.len() == p.buttons.len()
+        && fp
+            .buttons
+            .iter()
+            .zip(p.buttons.iter())
+            .all(|(a, b)| a.qty == b.qty && a.com_id == b.com_id)
+}
+
+fn make_products_eq(fp: &[MakeProductFp], rows: &[MakeProductInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| make_product_eq(a, b))
+}
+
+fn nearest_booth_eq(fp: &NearestBoothFp, b: &NearestBoothInput<'_>) -> bool {
+    fp.x == b.x && fp.z == b.z && fp.level == b.level && fp.name == b.name && fp.op == b.op
+}
+
+fn chat_options_eq(fp: &[String], rows: &[ChatOptionInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| a == b.text)
+}
+
+fn chat_lines_eq(fp: &[(i32, String)], rows: &[ChatLineInput<'_>]) -> bool {
+    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| a.0 == b.seq && a.1 == b.text)
+}
+
 impl SnapshotFingerprint {
     /// Own the input's field values (names cloned) for later comparison.
     pub fn from_input(input: &SnapshotInput<'_>) -> SnapshotFingerprint {
-        fn item_row_fp(r: &ItemRowInput<'_>) -> ItemRowFp {
-            ItemRowFp {
-                name: r.name.map(str::to_string),
-                count: r.count,
-                id: r.id,
-                ops: r.ops.iter().map(|a| a.to_string()).collect(),
-                noted: r.noted,
-                cert: r.cert,
-                component_id: r.component_id,
-            }
-        }
-        fn entity_fp(e: &SceneEntityInput<'_>) -> SceneEntityFp {
-            SceneEntityFp {
-                index: e.index,
-                id: e.id,
-                name: e.name.map(str::to_string),
-                x: e.x,
-                z: e.z,
-                level: e.level,
-                distance: e.distance,
-                health: e.health,
-                max_health: e.max_health,
-                in_combat: e.in_combat,
-                animating: e.animating,
-                actions: e.actions.iter().map(|a| a.to_string()).collect(),
-                reachable: e.reachable,
-                reachable_adj: e.reachable_adj,
-                combat_level: e.combat_level,
-                target_kind: e.target_kind,
-                target_index: e.target_index,
-            }
-        }
         SnapshotFingerprint {
             here: input.here,
             ingame: input.ingame,
@@ -1498,19 +1636,7 @@ impl SnapshotFingerprint {
                 name: b.name.to_string(),
                 op: b.op.to_string(),
             }),
-            banks: input
-                .banks
-                .iter()
-                .map(|b| BankStandFp {
-                    name: b.name.to_string(),
-                    x: b.x,
-                    z: b.z,
-                    level: b.level,
-                    kind: b.kind.to_string(),
-                    op: b.op,
-                    choose: b.choose.map(str::to_string),
-                })
-                .collect(),
+            banks: input.banks.iter().map(bank_stand_fp).collect(),
             bank: input.bank.iter().map(item_row_fp).collect(),
             bank_side: input.bank_side.iter().map(item_row_fp).collect(),
             bank_open: input.bank_open,
@@ -1532,15 +1658,7 @@ impl SnapshotFingerprint {
                 .collect(),
             side_tab: input.side_tab,
             varps: input.varps.to_vec(),
-            combat_styles: input
-                .combat_styles
-                .iter()
-                .map(|c| CombatStyleFp {
-                    mode: c.mode,
-                    label: c.label.to_string(),
-                    component_id: c.component_id,
-                })
-                .collect(),
+            combat_styles: input.combat_styles.iter().map(combat_style_fp).collect(),
             run_energy: input.run_energy,
             run_enabled: input.run_enabled,
             retaliate_enabled: input.retaliate_enabled,
@@ -1549,32 +1667,9 @@ impl SnapshotFingerprint {
             animating: input.animating,
             main_modal_id: input.main_modal_id,
             chat_modal_id: input.chat_modal_id,
-            make_products: input
-                .make_products
-                .iter()
-                .map(|p| MakeProductFp {
-                    object_id: p.object_id,
-                    name: p.name.to_string(),
-                    buttons: p
-                        .buttons
-                        .iter()
-                        .map(|b| MakeButtonFp {
-                            qty: b.qty,
-                            com_id: b.com_id,
-                        })
-                        .collect(),
-                })
-                .collect(),
+            make_products: input.make_products.iter().map(make_product_fp).collect(),
             side_tab_ifaces: input.side_tab_ifaces.to_vec(),
-            spell_buttons: input
-                .spell_buttons
-                .iter()
-                .map(|c| CombatStyleFp {
-                    mode: c.mode,
-                    label: c.label.to_string(),
-                    component_id: c.component_id,
-                })
-                .collect(),
+            spell_buttons: input.spell_buttons.iter().map(combat_style_fp).collect(),
             chat_lines: input
                 .chat_lines
                 .iter()
@@ -1600,6 +1695,270 @@ impl SnapshotFingerprint {
             shop_stock: input.shop_stock.iter().map(item_row_fp).collect(),
         }
     }
+
+    /// Rewrite only fields whose content differs from `input`. `mask` is the
+    /// wire mask (so `hold` is always set; `banks` may be force-only). Forced
+    /// equal `banks` are left in place — no re-clone.
+    pub fn retain_from_input(&mut self, input: &SnapshotInput<'_>, mask: &DeltaMask) {
+        if mask.here {
+            self.here = input.here;
+        }
+        if mask.ingame {
+            self.ingame = input.ingame;
+        }
+        if mask.inv {
+            self.inv = input.inv.iter().map(item_row_fp).collect();
+        }
+        if mask.inv_size {
+            self.inv_size = input.inv_size;
+        }
+        if mask.stats {
+            self.stats = input
+                .stats
+                .iter()
+                .map(|s| (s.index, s.name.to_string(), s.xp, s.base, s.effective))
+                .collect();
+        }
+        if mask.booths {
+            self.booths = input.booths.to_vec();
+        }
+        if mask.nearest_booth {
+            self.nearest_booth = input.nearest_booth.as_ref().map(|b| NearestBoothFp {
+                x: b.x,
+                z: b.z,
+                level: b.level,
+                name: b.name.to_string(),
+                op: b.op.to_string(),
+            });
+        }
+        if mask.banks && !banks_eq(&self.banks, input.banks) {
+            self.banks = input.banks.iter().map(bank_stand_fp).collect();
+        }
+        if mask.bank {
+            self.bank = input.bank.iter().map(item_row_fp).collect();
+        }
+        if mask.bank_side {
+            self.bank_side = input.bank_side.iter().map(item_row_fp).collect();
+        }
+        if mask.bank_open {
+            self.bank_open = input.bank_open;
+        }
+        if mask.bank_loaded {
+            self.bank_loaded = input.bank_loaded;
+        }
+        // hold is always on the wire; cheap scalar refresh.
+        if mask.hold {
+            self.hold = input.hold;
+        }
+        if mask.ours {
+            self.ours = input.ours;
+        }
+        if mask.npcs {
+            self.npcs = input.npcs.iter().map(entity_fp).collect();
+        }
+        if mask.locs {
+            self.locs = input.locs.iter().map(entity_fp).collect();
+        }
+        if mask.players {
+            self.players = input.players.iter().map(entity_fp).collect();
+        }
+        if mask.ground {
+            self.ground = input.ground.iter().map(entity_fp).collect();
+        }
+        if mask.equipment {
+            self.equipment = input.equipment.iter().map(item_row_fp).collect();
+        }
+        if mask.chat_open {
+            self.chat_open = input.chat_open;
+        }
+        if mask.chat_continue {
+            self.chat_continue = input.chat_continue;
+        }
+        if mask.chat_text {
+            self.chat_text = input.chat_text.map(str::to_string);
+        }
+        if mask.chat_options {
+            self.chat_options = input
+                .chat_options
+                .iter()
+                .map(|o| o.text.to_string())
+                .collect();
+        }
+        if mask.side_tab {
+            self.side_tab = input.side_tab;
+        }
+        if mask.varps {
+            self.varps = input.varps.to_vec();
+        }
+        if mask.combat_styles {
+            self.combat_styles = input.combat_styles.iter().map(combat_style_fp).collect();
+        }
+        if mask.run_energy {
+            self.run_energy = input.run_energy;
+        }
+        if mask.run_enabled {
+            self.run_enabled = input.run_enabled;
+        }
+        if mask.retaliate_enabled {
+            self.retaliate_enabled = input.retaliate_enabled;
+        }
+        if mask.my_name {
+            self.my_name = input.my_name.map(str::to_string);
+        }
+        if mask.in_combat {
+            self.in_combat = input.in_combat;
+        }
+        if mask.animating {
+            self.animating = input.animating;
+        }
+        if mask.main_modal_id {
+            self.main_modal_id = input.main_modal_id;
+        }
+        if mask.chat_modal_id {
+            self.chat_modal_id = input.chat_modal_id;
+        }
+        if mask.make_products {
+            self.make_products = input.make_products.iter().map(make_product_fp).collect();
+        }
+        if mask.side_tab_ifaces {
+            self.side_tab_ifaces = input.side_tab_ifaces.to_vec();
+        }
+        if mask.spell_buttons {
+            self.spell_buttons = input.spell_buttons.iter().map(combat_style_fp).collect();
+        }
+        if mask.chat_lines {
+            self.chat_lines = input
+                .chat_lines
+                .iter()
+                .map(|l| (l.seq, l.text.to_string()))
+                .collect();
+        }
+        if mask.bank_note_on {
+            self.bank_note_on = input.bank_note_on;
+        }
+        if mask.bank_note_off {
+            self.bank_note_off = input.bank_note_off;
+        }
+        if mask.scene_state {
+            self.scene_state = input.scene_state;
+        }
+        if mask.weight {
+            self.weight = input.weight;
+        }
+        if mask.camera_yaw {
+            self.camera_yaw = input.camera_yaw;
+        }
+        if mask.camera_pitch {
+            self.camera_pitch = input.camera_pitch;
+        }
+        if mask.teleports_enabled {
+            self.teleports_enabled = input.teleports_enabled;
+        }
+        if mask.self_slot {
+            self.self_slot = input.self_slot;
+        }
+        if mask.trade_offer_open {
+            self.trade_offer_open = input.trade_offer_open;
+        }
+        if mask.trade_confirm_open {
+            self.trade_confirm_open = input.trade_confirm_open;
+        }
+        if mask.trade_partner {
+            self.trade_partner = input.trade_partner.map(str::to_string);
+        }
+        if mask.trade_mine {
+            self.trade_mine = input.trade_mine.iter().map(item_row_fp).collect();
+        }
+        if mask.trade_theirs {
+            self.trade_theirs = input.trade_theirs.iter().map(item_row_fp).collect();
+        }
+        if mask.trade_side {
+            self.trade_side = input.trade_side.iter().map(item_row_fp).collect();
+        }
+        if mask.trade_accept_id {
+            self.trade_accept_id = input.trade_accept_id;
+        }
+        if mask.trade_decline_id {
+            self.trade_decline_id = input.trade_decline_id;
+        }
+        if mask.shop_open {
+            self.shop_open = input.shop_open;
+        }
+        if mask.shop_stock {
+            self.shop_stock = input.shop_stock.iter().map(item_row_fp).collect();
+        }
+    }
+
+    /// Stable buffer identities for allocation-avoidance tests (not a public API).
+    #[cfg(test)]
+    pub(crate) fn buffer_ptrs(&self) -> FingerprintBufferPtrs {
+        FingerprintBufferPtrs {
+            inv: self.inv.as_ptr() as usize,
+            inv_cap: self.inv.capacity(),
+            stats: self.stats.as_ptr() as usize,
+            stats_cap: self.stats.capacity(),
+            booths: self.booths.as_ptr() as usize,
+            banks: self.banks.as_ptr() as usize,
+            banks_cap: self.banks.capacity(),
+            bank: self.bank.as_ptr() as usize,
+            bank_side: self.bank_side.as_ptr() as usize,
+            npcs: self.npcs.as_ptr() as usize,
+            npcs_cap: self.npcs.capacity(),
+            locs: self.locs.as_ptr() as usize,
+            players: self.players.as_ptr() as usize,
+            ground: self.ground.as_ptr() as usize,
+            equipment: self.equipment.as_ptr() as usize,
+            chat_options: self.chat_options.as_ptr() as usize,
+            varps: self.varps.as_ptr() as usize,
+            combat_styles: self.combat_styles.as_ptr() as usize,
+            make_products: self.make_products.as_ptr() as usize,
+            side_tab_ifaces: self.side_tab_ifaces.as_ptr() as usize,
+            spell_buttons: self.spell_buttons.as_ptr() as usize,
+            chat_lines: self.chat_lines.as_ptr() as usize,
+            chat_text: self.chat_text.as_ref().map(|s| s.as_ptr() as usize),
+            my_name: self.my_name.as_ref().map(|s| s.as_ptr() as usize),
+            trade_partner: self.trade_partner.as_ref().map(|s| s.as_ptr() as usize),
+            trade_mine: self.trade_mine.as_ptr() as usize,
+            trade_theirs: self.trade_theirs.as_ptr() as usize,
+            trade_side: self.trade_side.as_ptr() as usize,
+            shop_stock: self.shop_stock.as_ptr() as usize,
+        }
+    }
+}
+
+/// Pointer/capacity snapshot of owned fingerprint buffers (tests only).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FingerprintBufferPtrs {
+    pub inv: usize,
+    pub inv_cap: usize,
+    pub stats: usize,
+    pub stats_cap: usize,
+    pub booths: usize,
+    pub banks: usize,
+    pub banks_cap: usize,
+    pub bank: usize,
+    pub bank_side: usize,
+    pub npcs: usize,
+    pub npcs_cap: usize,
+    pub locs: usize,
+    pub players: usize,
+    pub ground: usize,
+    pub equipment: usize,
+    pub chat_options: usize,
+    pub varps: usize,
+    pub combat_styles: usize,
+    pub make_products: usize,
+    pub side_tab_ifaces: usize,
+    pub spell_buttons: usize,
+    pub chat_lines: usize,
+    pub chat_text: Option<usize>,
+    pub my_name: Option<usize>,
+    pub trade_partner: Option<usize>,
+    pub trade_mine: usize,
+    pub trade_theirs: usize,
+    pub trade_side: usize,
+    pub shop_stock: usize,
 }
 
 /// Which snapshot fields a delta carries. `tick` is always carried; every
@@ -1607,7 +1966,7 @@ impl SnapshotFingerprint {
 /// first post / isolate spawn). `force_banks` re-includes the packed banks
 /// when the `NavWorld` identity changed even though the stand list is
 /// byte-identical.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct DeltaMask {
     pub here: bool,
     pub ingame: bool,
@@ -1730,10 +2089,11 @@ impl DeltaMask {
         }
     }
 
-    /// The fields that differ from `last` (all when there is no last post
-    /// — a keyframe). Packed banks are additionally forced by
+    /// Owned-to-owned compare (oracle / tests). Production uses
+    /// [`Self::changed_from_input`]. Packed banks are forced by
     /// `force_banks` (a `NavWorld` identity change the list alone cannot
     /// see).
+    #[cfg(test)]
     fn changed(
         last: &SnapshotFingerprint,
         next: &SnapshotFingerprint,
@@ -1800,6 +2160,79 @@ impl DeltaMask {
             shop_stock: next.shop_stock != last.shop_stock,
         }
     }
+
+    /// Borrowed compare: same wire mask as [`Self::changed`] without
+    /// materializing an owned next fingerprint.
+    fn changed_from_input(
+        last: &SnapshotFingerprint,
+        input: &SnapshotInput<'_>,
+        force_banks: bool,
+    ) -> DeltaMask {
+        DeltaMask {
+            here: input.here != last.here,
+            ingame: input.ingame != last.ingame,
+            inv: !item_rows_eq(&last.inv, input.inv),
+            inv_size: input.inv_size != last.inv_size,
+            stats: !stats_eq(&last.stats, input.stats),
+            booths: input.booths != last.booths.as_slice(),
+            nearest_booth: match (&last.nearest_booth, &input.nearest_booth) {
+                (None, None) => false,
+                (Some(fp), Some(b)) => !nearest_booth_eq(fp, b),
+                _ => true,
+            },
+            banks: force_banks || !banks_eq(&last.banks, input.banks),
+            bank: !item_rows_eq(&last.bank, input.bank),
+            bank_side: !item_rows_eq(&last.bank_side, input.bank_side),
+            bank_open: input.bank_open != last.bank_open,
+            bank_loaded: input.bank_loaded != last.bank_loaded,
+            // SEC-004: re-post hold every tick so JS cannot clear
+            // `__rs2b0t_host.hold` in onPaint and unfreeze loop().
+            hold: true,
+            ours: input.ours != last.ours,
+            npcs: !entities_eq(&last.npcs, input.npcs),
+            locs: !entities_eq(&last.locs, input.locs),
+            players: !entities_eq(&last.players, input.players),
+            ground: !entities_eq(&last.ground, input.ground),
+            equipment: !item_rows_eq(&last.equipment, input.equipment),
+            chat_open: input.chat_open != last.chat_open,
+            chat_continue: input.chat_continue != last.chat_continue,
+            chat_text: input.chat_text != last.chat_text.as_deref(),
+            chat_options: !chat_options_eq(&last.chat_options, input.chat_options),
+            side_tab: input.side_tab != last.side_tab,
+            varps: input.varps != last.varps.as_slice(),
+            combat_styles: !combat_styles_eq(&last.combat_styles, input.combat_styles),
+            run_energy: input.run_energy != last.run_energy,
+            run_enabled: input.run_enabled != last.run_enabled,
+            retaliate_enabled: input.retaliate_enabled != last.retaliate_enabled,
+            my_name: input.my_name != last.my_name.as_deref(),
+            in_combat: input.in_combat != last.in_combat,
+            animating: input.animating != last.animating,
+            main_modal_id: input.main_modal_id != last.main_modal_id,
+            chat_modal_id: input.chat_modal_id != last.chat_modal_id,
+            make_products: !make_products_eq(&last.make_products, input.make_products),
+            side_tab_ifaces: input.side_tab_ifaces != last.side_tab_ifaces.as_slice(),
+            spell_buttons: !combat_styles_eq(&last.spell_buttons, input.spell_buttons),
+            chat_lines: !chat_lines_eq(&last.chat_lines, input.chat_lines),
+            bank_note_on: input.bank_note_on != last.bank_note_on,
+            bank_note_off: input.bank_note_off != last.bank_note_off,
+            scene_state: input.scene_state != last.scene_state,
+            weight: input.weight != last.weight,
+            camera_yaw: input.camera_yaw != last.camera_yaw,
+            camera_pitch: input.camera_pitch != last.camera_pitch,
+            teleports_enabled: input.teleports_enabled != last.teleports_enabled,
+            self_slot: input.self_slot != last.self_slot,
+            trade_offer_open: input.trade_offer_open != last.trade_offer_open,
+            trade_confirm_open: input.trade_confirm_open != last.trade_confirm_open,
+            trade_partner: input.trade_partner != last.trade_partner.as_deref(),
+            trade_mine: !item_rows_eq(&last.trade_mine, input.trade_mine),
+            trade_theirs: !item_rows_eq(&last.trade_theirs, input.trade_theirs),
+            trade_side: !item_rows_eq(&last.trade_side, input.trade_side),
+            trade_accept_id: input.trade_accept_id != last.trade_accept_id,
+            trade_decline_id: input.trade_decline_id != last.trade_decline_id,
+            shop_open: input.shop_open != last.shop_open,
+            shop_stock: !item_rows_eq(&last.shop_stock, input.shop_stock),
+        }
+    }
 }
 
 /// One reusable FlatBuffer builder for isolate IPC. Each started JS slot
@@ -1843,21 +2276,49 @@ impl IsolateBuf {
     /// Encode a delta snapshot: `tick` always; every other field only when
     /// it differs from `last` (all fields when `last` is `None` — the
     /// keyframe). Returns the encoded buffer and the fingerprint of what
-    /// was just posted.
+    /// was just posted. Comparison uses borrowed input equality; the
+    /// returned fingerprint is still fully owned for public callers.
     pub fn encode_snapshot_delta(
         &mut self,
         last: Option<&SnapshotFingerprint>,
         input: &SnapshotInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
-        let fp = SnapshotFingerprint::from_input(input);
         let mask = match last {
             None => DeltaMask::all(),
-            Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
+            Some(prev) => DeltaMask::changed_from_input(prev, input, force_banks),
         };
         self.builder.reset();
         encode_snapshot_masked_into(&mut self.builder, input, &mask);
-        (self.copy_finished(), fp)
+        (self.copy_finished(), SnapshotFingerprint::from_input(input))
+    }
+
+    /// Live Slot path: encode a delta and update retained fingerprint
+    /// storage only for fields whose content changed (no full
+    /// `from_input` replace on an unchanged post).
+    pub fn encode_snapshot_delta_updating(
+        &mut self,
+        last: &mut Option<SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        force_banks: bool,
+    ) -> Vec<u8> {
+        match last {
+            None => {
+                self.builder.reset();
+                encode_snapshot_masked_into(&mut self.builder, input, &DeltaMask::all());
+                let bytes = self.copy_finished();
+                *last = Some(SnapshotFingerprint::from_input(input));
+                bytes
+            }
+            Some(prev) => {
+                let mask = DeltaMask::changed_from_input(prev, input, force_banks);
+                self.builder.reset();
+                encode_snapshot_masked_into(&mut self.builder, input, &mask);
+                let bytes = self.copy_finished();
+                prev.retain_from_input(input, &mask);
+                bytes
+            }
+        }
     }
 
     /// Encode the tick's shim interact queue as a root-`InteractBatch`.
@@ -3768,5 +4229,414 @@ pub(crate) mod tests {
         let bytes = buf.encode_snapshot(&empty_input(2));
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
         assert_eq!(snap.tick(), 2);
+    }
+
+    fn entity(
+        index: i32,
+        id: i32,
+        name: Option<&'static str>,
+        actions: &'static [String],
+    ) -> SceneEntityInput<'static> {
+        SceneEntityInput {
+            index,
+            id,
+            name,
+            x: 100 + index,
+            z: 200 + index,
+            level: 0,
+            distance: index,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions,
+            reachable: true,
+            reachable_adj: false,
+            combat_level: 1,
+            target_kind: 0,
+            target_index: -1,
+        }
+    }
+
+    struct RichBacking {
+        inv: Vec<ItemRowInput<'static>>,
+        stats: Vec<StatInput<'static>>,
+        booths: Vec<TileInput>,
+        banks: Vec<BankStandInput<'static>>,
+        bank: Vec<ItemRowInput<'static>>,
+        bank_side: Vec<ItemRowInput<'static>>,
+        npcs: Vec<SceneEntityInput<'static>>,
+        locs: Vec<SceneEntityInput<'static>>,
+        players: Vec<SceneEntityInput<'static>>,
+        ground: Vec<SceneEntityInput<'static>>,
+        equipment: Vec<ItemRowInput<'static>>,
+        chat_options: Vec<ChatOptionInput<'static>>,
+        varps: Vec<VarpInput>,
+        combat_styles: Vec<CombatStyleInput<'static>>,
+        make_products: Vec<MakeProductInput<'static>>,
+        side_tab_ifaces: Vec<SideTabIfaceInput>,
+        spell_buttons: Vec<CombatStyleInput<'static>>,
+        chat_lines: Vec<ChatLineInput<'static>>,
+        trade_mine: Vec<ItemRowInput<'static>>,
+        trade_theirs: Vec<ItemRowInput<'static>>,
+        trade_side: Vec<ItemRowInput<'static>>,
+        shop_stock: Vec<ItemRowInput<'static>>,
+    }
+
+    impl RichBacking {
+        fn new() -> Self {
+            static INV_OPS: &[&str] = &["Wield", "Drop"];
+            let inv_ops_owned: &'static [String] = Box::leak(
+                INV_OPS
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            );
+            let npc_actions: &'static [String] =
+                Box::leak(vec!["Attack".to_string(), "Talk-to".to_string()].into_boxed_slice());
+            let loc_actions: &'static [String] =
+                Box::leak(vec!["Open".to_string()].into_boxed_slice());
+            let player_actions: &'static [String] =
+                Box::leak(vec!["Follow".to_string()].into_boxed_slice());
+            let ground_actions: &'static [String] =
+                Box::leak(vec!["Take".to_string()].into_boxed_slice());
+            let make_buttons: &'static [MakeButtonInput] = Box::leak(
+                vec![
+                    MakeButtonInput { qty: 1, com_id: 10 },
+                    MakeButtonInput { qty: 5, com_id: 11 },
+                ]
+                .into_boxed_slice(),
+            );
+
+            Self {
+                inv: vec![ItemRowInput {
+                    name: Some("Bones"),
+                    count: 2,
+                    id: 526,
+                    ops: inv_ops_owned,
+                    noted: false,
+                    cert: -1,
+                    component_id: 1,
+                }],
+                stats: vec![StatInput {
+                    index: 3,
+                    name: "hitpoints",
+                    xp: 1500,
+                    base: 10,
+                    effective: 10,
+                }],
+                booths: vec![TileInput {
+                    x: 1,
+                    z: 2,
+                    level: 0,
+                }],
+                banks: vec![BankStandInput {
+                    name: "Bank booth",
+                    x: 10,
+                    z: 20,
+                    level: 0,
+                    kind: "booth",
+                    op: 1,
+                    choose: None,
+                }],
+                bank: vec![ItemRowInput::nc(Some("Coins"), 100)],
+                bank_side: vec![ItemRowInput::nc(Some("Bones"), 2)],
+                npcs: vec![entity(7, 41, Some("Chicken"), npc_actions)],
+                locs: vec![entity(1, 99, Some("Door"), loc_actions)],
+                players: vec![entity(0, -1, Some("Alice"), player_actions)],
+                ground: vec![entity(3, 526, Some("Bones"), ground_actions)],
+                equipment: vec![ItemRowInput {
+                    name: Some("Bronze sword"),
+                    count: 1,
+                    id: 1277,
+                    ops: inv_ops_owned,
+                    noted: false,
+                    cert: -1,
+                    component_id: 2,
+                }],
+                chat_options: vec![
+                    ChatOptionInput { text: "Yes" },
+                    ChatOptionInput { text: "No" },
+                ],
+                varps: vec![VarpInput {
+                    index: 43,
+                    value: 1,
+                }],
+                combat_styles: vec![CombatStyleInput {
+                    mode: 0,
+                    label: "Accurate",
+                    component_id: 5,
+                }],
+                make_products: vec![MakeProductInput {
+                    object_id: 434,
+                    name: "Clay",
+                    buttons: make_buttons,
+                }],
+                side_tab_ifaces: vec![SideTabIfaceInput { index: 3, id: 321 }],
+                spell_buttons: vec![CombatStyleInput {
+                    mode: 1,
+                    label: "Wind Strike",
+                    component_id: 9,
+                }],
+                chat_lines: vec![ChatLineInput {
+                    seq: 1,
+                    text: "hello",
+                }],
+                trade_mine: vec![ItemRowInput::nc(Some("Logs"), 1)],
+                trade_theirs: vec![ItemRowInput::nc(Some("Ore"), 1)],
+                trade_side: vec![ItemRowInput::nc(Some("Coins"), 50)],
+                shop_stock: vec![ItemRowInput::nc(Some("Pot"), 5)],
+            }
+        }
+
+        fn input(&self, tick: u64) -> SnapshotInput<'_> {
+            SnapshotInput {
+                tick,
+                here: Some(TileInput {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                }),
+                ingame: true,
+                inv: &self.inv,
+                inv_size: 28,
+                stats: &self.stats,
+                booths: &self.booths,
+                nearest_booth: Some(NearestBoothInput {
+                    x: 10,
+                    z: 20,
+                    level: 0,
+                    name: "Bank booth",
+                    op: "Use-quickly",
+                }),
+                banks: &self.banks,
+                bank: &self.bank,
+                bank_side: &self.bank_side,
+                bank_open: true,
+                bank_loaded: true,
+                hold: false,
+                ours: false,
+                npcs: &self.npcs,
+                locs: &self.locs,
+                players: &self.players,
+                ground: &self.ground,
+                equipment: &self.equipment,
+                chat_open: true,
+                chat_continue: false,
+                chat_text: Some("Welcome"),
+                chat_options: &self.chat_options,
+                side_tab: 3,
+                varps: &self.varps,
+                combat_styles: &self.combat_styles,
+                run_energy: 100,
+                run_enabled: true,
+                retaliate_enabled: true,
+                my_name: Some("Tester"),
+                in_combat: false,
+                animating: false,
+                main_modal_id: 12,
+                chat_modal_id: 13,
+                make_products: &self.make_products,
+                side_tab_ifaces: &self.side_tab_ifaces,
+                spell_buttons: &self.spell_buttons,
+                chat_lines: &self.chat_lines,
+                bank_note_on: 14,
+                bank_note_off: 15,
+                scene_state: 2,
+                weight: 7,
+                camera_yaw: 100,
+                camera_pitch: 200,
+                teleports_enabled: true,
+                self_slot: 0,
+                trade_offer_open: true,
+                trade_confirm_open: false,
+                trade_partner: Some("Bob"),
+                trade_mine: &self.trade_mine,
+                trade_theirs: &self.trade_theirs,
+                trade_side: &self.trade_side,
+                trade_accept_id: 20,
+                trade_decline_id: 21,
+                shop_open: true,
+                shop_stock: &self.shop_stock,
+            }
+        }
+    }
+
+    fn oracle_mask_and_bytes(
+        last: Option<&SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        force_banks: bool,
+    ) -> (DeltaMask, Vec<u8>) {
+        // Baseline encoder semantics: owned from_input then owned changed.
+        let owned = SnapshotFingerprint::from_input(input);
+        let mask = match last {
+            None => DeltaMask::all(),
+            Some(prev) => DeltaMask::changed(prev, &owned, force_banks),
+        };
+        let mut b = FlatBufferBuilder::new();
+        encode_snapshot_masked_into(&mut b, input, &mask);
+        (mask, b.finished_data().to_vec())
+    }
+
+    /// Borrowed mask matches owned-from_input mask; public encode bytes match
+    /// the baseline encoder for empty / rich / equal / changed / force_banks.
+    #[test]
+    fn borrowed_fingerprint_oracle_matches_owned_encoder() {
+        let empty = empty_input(1);
+        let (m0, base0) = oracle_mask_and_bytes(None, &empty, false);
+        let (bytes0, fp0) = encode_snapshot_delta(None, &empty, false);
+        assert_eq!(m0, DeltaMask::all());
+        assert_eq!(bytes0, base0);
+        assert_eq!(fp0, SnapshotFingerprint::from_input(&empty));
+
+        let (m1, base1) = oracle_mask_and_bytes(Some(&fp0), &empty, false);
+        let borrowed1 = DeltaMask::changed_from_input(&fp0, &empty, false);
+        assert_eq!(borrowed1, m1);
+        let (bytes1, fp1) = encode_snapshot_delta(Some(&fp0), &empty, false);
+        assert_eq!(bytes1, base1);
+        assert_eq!(fp1, fp0);
+        assert!(!borrowed1.inv);
+        assert!(borrowed1.hold);
+
+        let rich = RichBacking::new();
+        let input = rich.input(2);
+        let (m_key, base_key) = oracle_mask_and_bytes(None, &input, false);
+        let (bytes_key, fp_key) = encode_snapshot_delta(None, &input, false);
+        assert_eq!(m_key, DeltaMask::all());
+        assert_eq!(bytes_key, base_key);
+
+        // Equal rich → only hold on the wire among content families.
+        let (m_eq, base_eq) = oracle_mask_and_bytes(Some(&fp_key), &input, false);
+        let borrowed_eq = DeltaMask::changed_from_input(&fp_key, &input, false);
+        assert_eq!(borrowed_eq, m_eq);
+        let (bytes_eq, _) = encode_snapshot_delta(Some(&fp_key), &input, false);
+        assert_eq!(bytes_eq, base_eq);
+        assert!(m_eq.hold);
+        assert!(!m_eq.inv && !m_eq.npcs && !m_eq.banks && !m_eq.stats);
+
+        // force_banks with equal stands still carries banks.
+        let (m_fb, base_fb) = oracle_mask_and_bytes(Some(&fp_key), &input, true);
+        let borrowed_fb = DeltaMask::changed_from_input(&fp_key, &input, true);
+        assert_eq!(borrowed_fb, m_fb);
+        assert!(m_fb.banks);
+        let (bytes_fb, _) = encode_snapshot_delta(Some(&fp_key), &input, true);
+        assert_eq!(bytes_fb, base_fb);
+        let view_fb = decode_snapshot(&bytes_fb).unwrap();
+        assert!(view_fb.has_banks());
+
+        // Changed inv count.
+        let mut changed = rich.input(2);
+        let inv2 = [ItemRowInput {
+            name: Some("Bones"),
+            count: 1,
+            id: 526,
+            ops: rich.inv[0].ops,
+            noted: false,
+            cert: -1,
+            component_id: 1,
+        }];
+        changed.inv = &inv2;
+        let (m_ch, base_ch) = oracle_mask_and_bytes(Some(&fp_key), &changed, false);
+        let borrowed_ch = DeltaMask::changed_from_input(&fp_key, &changed, false);
+        assert_eq!(borrowed_ch, m_ch);
+        assert!(m_ch.inv);
+        assert!(!m_ch.npcs);
+        let (bytes_ch, _) = encode_snapshot_delta(Some(&fp_key), &changed, false);
+        assert_eq!(bytes_ch, base_ch);
+
+        // Reordered npcs (order-sensitive).
+        let mut reordered = rich.input(2);
+        let npc_b = entity(8, 42, Some("Goblin"), rich.npcs[0].actions);
+        let npc_a = rich.npcs[0];
+        let npcs2 = [npc_b, npc_a];
+        reordered.npcs = &npcs2;
+        let (m_ro, base_ro) = oracle_mask_and_bytes(Some(&fp_key), &reordered, false);
+        assert_eq!(
+            DeltaMask::changed_from_input(&fp_key, &reordered, false),
+            m_ro
+        );
+        assert!(m_ro.npcs);
+        let (bytes_ro, _) = encode_snapshot_delta(Some(&fp_key), &reordered, false);
+        assert_eq!(bytes_ro, base_ro);
+
+        // Empty tables after populated keyframe.
+        let empty2 = empty_input(3);
+        let (m_empty, base_empty) = oracle_mask_and_bytes(Some(&fp_key), &empty2, false);
+        assert_eq!(
+            DeltaMask::changed_from_input(&fp_key, &empty2, false),
+            m_empty
+        );
+        assert!(m_empty.inv && m_empty.npcs && m_empty.banks);
+        let (bytes_empty, _) = encode_snapshot_delta(Some(&fp_key), &empty2, false);
+        assert_eq!(bytes_empty, base_empty);
+    }
+
+    /// Live updating encode retains fingerprint buffers on unchanged posts
+    /// and only rewrites the changed family; force_banks does not re-clone
+    /// equal banks storage.
+    #[test]
+    fn live_updating_encode_avoids_fingerprint_rebuild_when_unchanged() {
+        let rich = RichBacking::new();
+        let input = rich.input(1);
+        let mut last = None;
+        let mut buf = IsolateBuf::new();
+
+        let keyframe = buf.encode_snapshot_delta_updating(&mut last, &input, false);
+        let kf = decode_snapshot(&keyframe).unwrap();
+        assert!(kf.has_inv() && kf.has_npcs() && kf.has_banks());
+        let fp = last.as_ref().expect("keyframe stores fingerprint");
+        let ptrs0 = fp.buffer_ptrs();
+        assert!(!fp.inv.is_empty());
+
+        // Unchanged content: buffers must stay put.
+        let delta = buf.encode_snapshot_delta_updating(&mut last, &input, false);
+        let view = decode_snapshot(&delta).unwrap();
+        assert!(!view.has_inv() && !view.has_npcs());
+        let ptrs1 = last.as_ref().unwrap().buffer_ptrs();
+        assert_eq!(
+            ptrs1, ptrs0,
+            "unchanged post must not rebuild fingerprint buffers"
+        );
+        assert_eq!(
+            last.as_ref().unwrap(),
+            &SnapshotFingerprint::from_input(&input)
+        );
+
+        // force_banks: banks on wire, equal content keeps banks buffer.
+        let forced = buf.encode_snapshot_delta_updating(&mut last, &input, true);
+        let fv = decode_snapshot(&forced).unwrap();
+        assert!(fv.has_banks());
+        let ptrs2 = last.as_ref().unwrap().buffer_ptrs();
+        assert_eq!(ptrs2.banks, ptrs0.banks);
+        assert_eq!(ptrs2.banks_cap, ptrs0.banks_cap);
+        assert_eq!(ptrs2.inv, ptrs0.inv);
+        assert_eq!(ptrs2.npcs, ptrs0.npcs);
+
+        // Change only inv: inv buffer moves; npcs/banks stay.
+        let mut changed = rich.input(1);
+        let inv2 = [ItemRowInput {
+            name: Some("Bones"),
+            count: 9,
+            id: 526,
+            ops: rich.inv[0].ops,
+            noted: false,
+            cert: -1,
+            component_id: 1,
+        }];
+        changed.inv = &inv2;
+        let ch = buf.encode_snapshot_delta_updating(&mut last, &changed, false);
+        let cv = decode_snapshot(&ch).unwrap();
+        assert!(cv.has_inv());
+        assert!(!cv.has_npcs());
+        let ptrs3 = last.as_ref().unwrap().buffer_ptrs();
+        assert_ne!(ptrs3.inv, ptrs0.inv, "changed inv must rematerialize inv");
+        assert_eq!(ptrs3.npcs, ptrs0.npcs);
+        assert_eq!(ptrs3.banks, ptrs0.banks);
+        assert_eq!(ptrs3.stats, ptrs0.stats);
+        assert_eq!(
+            last.as_ref().unwrap(),
+            &SnapshotFingerprint::from_input(&changed)
+        );
     }
 }

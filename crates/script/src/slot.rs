@@ -246,20 +246,17 @@ impl SlotScript {
     }
 
     /// Encode `input` into this slot's reusable isolate buffer and return
-    /// the finished bytes. Stores the new last-post fingerprint so the
-    /// next observe is a delta. Disjoint-field borrow of `ipc` and
-    /// `last_snapshot` — no extra fingerprint clone.
+    /// the finished bytes. Updates the retained last-post fingerprint only
+    /// for fields whose content changed (borrowed compare first). Disjoint
+    /// borrow of `ipc` and `last_snapshot`.
     #[cfg(feature = "load")]
     pub fn encode_snapshot_delta(
         &mut self,
         input: &crate::isolate_fb::SnapshotInput<'_>,
         force_banks: bool,
     ) -> Vec<u8> {
-        let (bytes, fp) =
-            self.ipc
-                .encode_snapshot_delta(self.last_snapshot.as_ref(), input, force_banks);
-        self.last_snapshot = Some(fp);
-        bytes
+        self.ipc
+            .encode_snapshot_delta_updating(&mut self.last_snapshot, input, force_banks)
     }
 
     /// The `NavWorld` identity the packed banks were posted against
