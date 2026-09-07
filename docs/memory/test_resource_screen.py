@@ -88,6 +88,12 @@ class ResourceScreenTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             rs.analyze([], manifest='x', overhead_receipts=[], bind_side=lambda *a: {})
 
+    def test_non_object_receipts_are_unavailable(self):
+        self.paths[0].write_text('[]')
+        self.assertEqual(self.run_screen()['reason'], 'artifact_validation_failed')
+        self.paths[4].write_text('[]')
+        self.assertEqual(self.run_screen()['reason'], 'overhead_receipt_must_be_object')
+
     def test_real_overhead_receipts_cannot_be_relabelled_as_reference(self):
         root = pathlib.Path(__file__).resolve().parent
         batch = root/'diagnostics/instrumentation-overhead-20260907T064437Z'

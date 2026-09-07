@@ -23,6 +23,8 @@ def _bind(path, role, manifest):
     # checked by bind_side. Their contents are never accepted from this load.
     import json
     receipt = json.loads(pathlib.Path(path).read_text())
+    if not isinstance(receipt, dict):
+        raise ValueError('receipt must be a JSON object')
     return mea.bind_side(path, role=role, manifest_path=manifest,
                          server_identity_path=receipt.get('server_identity_path'),
                          host_conditions_path=receipt.get('host_conditions_path'))
@@ -47,6 +49,8 @@ def _analyze(receipts, *, manifest, overhead_receipts):
         return unavailable('explicit_overhead_quartet_required')
     import json
     overhead_first = json.loads(pathlib.Path(overhead_receipts[0]).read_text())
+    if not isinstance(overhead_first, dict):
+        return unavailable('overhead_receipt_must_be_object')
     overhead = io.analyze_instrumentation_overhead(
         overhead_receipts, manifest_path=manifest,
         server_identity_path=overhead_first.get('server_identity_path'),
