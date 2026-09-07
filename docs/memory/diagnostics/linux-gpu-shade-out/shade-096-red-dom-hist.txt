@@ -1,0 +1,3 @@
+shade=96 expected=96 max_red=112
+96 51059
+112 22359

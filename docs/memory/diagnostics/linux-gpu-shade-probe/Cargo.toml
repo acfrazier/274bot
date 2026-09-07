@@ -1,0 +1,20 @@
+# Scratch diagnostic only — not a workspace member, not production.
+# Build inside memory-ref container against cached /target deps.
+# Empty workspace table keeps this package out of the host /work workspace.
+[workspace]
+
+[package]
+name = "linux-gpu-shade-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "linux-gpu-shade-probe"
+path = "src/main.rs"
+
+[dependencies]
+client = { path = "../../../../vendor/fr-client-rust/crates/client" }
+wgpu = "29"
+pollster = "0.4"
+bytemuck = "1"

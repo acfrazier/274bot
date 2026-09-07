@@ -1,0 +1,3 @@
+shade=32 expected=191 max_red=223
+191 64544
+223 8874

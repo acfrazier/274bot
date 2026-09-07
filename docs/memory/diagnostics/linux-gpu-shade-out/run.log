@@ -1,0 +1,93 @@
+=== linux-gpu-shade-probe ===
+time_utc=1788752195 unix_s
+cwd=Some("/work")
+SKIP_GPU=Ok("0")
+BOT_CPU=Ok("0")
+WGPU_BACKEND=Ok("vulkan")
+DISPLAY=Ok(":99")
+VK_ICD_FILENAMES=Err(NotPresent)
+LIBGL_ALWAYS_SOFTWARE=Err(NotPresent)
+XDG_RUNTIME_DIR=Ok("/tmp")
+--- wgpu adapters ---
+enumerate_count=1
+adapter[0] name="llvmpipe (LLVM 15.0.6, 128 bits)" vendor=0x10005 device=0x0 device_type=Cpu backend=Gl driver="" driver_info="4.5 (Core Profile) Mesa 22.3.6"
+selected_like_client name="llvmpipe (LLVM 15.0.6, 128 bits)" backend=Gl driver="" driver_info="4.5 (Core Profile) Mesa 22.3.6" device_type=Cpu vendor=0x10005 device=0x0
+--- expected block factors (shader mirror) ---
+shade=  0 s=  0 block=0 factor=1.0000 expected_red~255
+shade= 15 s= 15 block=0 factor=1.0000 expected_red~255
+shade= 16 s= 16 block=1 factor=0.8750 expected_red~223
+shade= 17 s= 17 block=1 factor=0.8750 expected_red~223
+shade= 31 s= 31 block=1 factor=0.8750 expected_red~223
+shade= 32 s= 32 block=2 factor=0.7500 expected_red~191
+shade= 33 s= 33 block=2 factor=0.7500 expected_red~191
+shade= 47 s= 47 block=2 factor=0.7500 expected_red~191
+shade= 48 s= 48 block=3 factor=0.6250 expected_red~159
+shade= 49 s= 49 block=3 factor=0.6250 expected_red~159
+shade= 63 s= 63 block=3 factor=0.6250 expected_red~159
+shade= 64 s= 64 block=0 factor=0.5000 expected_red~128
+shade= 65 s= 65 block=0 factor=0.5000 expected_red~128
+shade= 79 s= 79 block=0 factor=0.5000 expected_red~128
+shade= 80 s= 80 block=1 factor=0.4375 expected_red~112
+shade= 95 s= 95 block=1 factor=0.4375 expected_red~112
+shade= 96 s= 96 block=2 factor=0.3750 expected_red~96
+shade=111 s=111 block=2 factor=0.3750 expected_red~96
+shade=112 s=112 block=3 factor=0.3125 expected_red~80
+shade=127 s=127 block=3 factor=0.3125 expected_red~80
+--- mesh shade packing (CPU only) ---
+input_shade=0 verts=24 textured=6 flat=18 tex_shade_hist={0: 6} samples(tex,u,shade)=[(8, 0, 0), (8, 256, 0), (8, 0, 0), (8, 0, 0), (8, 0, 0), (8, 65280, 0)]
+input_shade=15 verts=24 textured=6 flat=18 tex_shade_hist={15: 6} samples(tex,u,shade)=[(8, 0, 15), (8, 256, 15), (8, 0, 15), (8, 0, 15), (8, 0, 15), (8, 65280, 15)]
+input_shade=16 verts=24 textured=6 flat=18 tex_shade_hist={16: 6} samples(tex,u,shade)=[(8, 0, 16), (8, 256, 16), (8, 0, 16), (8, 0, 16), (8, 0, 16), (8, 65280, 16)]
+input_shade=17 verts=24 textured=6 flat=18 tex_shade_hist={17: 6} samples(tex,u,shade)=[(8, 0, 17), (8, 256, 17), (8, 0, 17), (8, 0, 17), (8, 0, 17), (8, 65280, 17)]
+input_shade=31 verts=24 textured=6 flat=18 tex_shade_hist={31: 6} samples(tex,u,shade)=[(8, 0, 31), (8, 256, 31), (8, 0, 31), (8, 0, 31), (8, 0, 31), (8, 65280, 31)]
+input_shade=32 verts=24 textured=6 flat=18 tex_shade_hist={32: 6} samples(tex,u,shade)=[(8, 0, 32), (8, 256, 32), (8, 0, 32), (8, 0, 32), (8, 0, 32), (8, 65280, 32)]
+input_shade=33 verts=24 textured=6 flat=18 tex_shade_hist={33: 6} samples(tex,u,shade)=[(8, 0, 33), (8, 256, 33), (8, 0, 33), (8, 0, 33), (8, 0, 33), (8, 65280, 33)]
+input_shade=47 verts=24 textured=6 flat=18 tex_shade_hist={47: 6} samples(tex,u,shade)=[(8, 0, 47), (8, 256, 47), (8, 0, 47), (8, 0, 47), (8, 0, 47), (8, 65280, 47)]
+input_shade=48 verts=24 textured=6 flat=18 tex_shade_hist={48: 6} samples(tex,u,shade)=[(8, 0, 48), (8, 256, 48), (8, 0, 48), (8, 0, 48), (8, 0, 48), (8, 65280, 48)]
+input_shade=49 verts=24 textured=6 flat=18 tex_shade_hist={49: 6} samples(tex,u,shade)=[(8, 0, 49), (8, 256, 49), (8, 0, 49), (8, 0, 49), (8, 0, 49), (8, 65280, 49)]
+input_shade=63 verts=24 textured=6 flat=18 tex_shade_hist={63: 6} samples(tex,u,shade)=[(8, 0, 63), (8, 256, 63), (8, 0, 63), (8, 0, 63), (8, 0, 63), (8, 65280, 63)]
+input_shade=64 verts=24 textured=6 flat=18 tex_shade_hist={64: 6} samples(tex,u,shade)=[(8, 0, 64), (8, 256, 64), (8, 0, 64), (8, 0, 64), (8, 0, 64), (8, 65280, 64)]
+input_shade=65 verts=24 textured=6 flat=18 tex_shade_hist={65: 6} samples(tex,u,shade)=[(8, 0, 65), (8, 256, 65), (8, 0, 65), (8, 0, 65), (8, 0, 65), (8, 65280, 65)]
+input_shade=80 verts=24 textured=6 flat=18 tex_shade_hist={80: 6} samples(tex,u,shade)=[(8, 0, 80), (8, 256, 80), (8, 0, 80), (8, 0, 80), (8, 0, 80), (8, 65280, 80)]
+input_shade=96 verts=24 textured=6 flat=18 tex_shade_hist={96: 6} samples(tex,u,shade)=[(8, 0, 96), (8, 256, 96), (8, 0, 96), (8, 0, 96), (8, 0, 96), (8, 65280, 96)]
+input_shade=112 verts=24 textured=6 flat=18 tex_shade_hist={112: 6} samples(tex,u,shade)=[(8, 0, 112), (8, 256, 112), (8, 0, 112), (8, 0, 112), (8, 0, 112), (8, 65280, 112)]
+--- GPU render histograms ---
+GpuBackend::try_new OK
+shade=  0 expected~255 max_red=255 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={0: 6} top_red_dom_bins=[(255, 73418)] max_red_rgb=0xff0000
+shade= 15 expected~255 max_red=255 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={15: 6} top_red_dom_bins=[(255, 73418)] max_red_rgb=0xff0000
+shade= 16 expected~223 max_red=255 delta= +32 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={16: 6} top_red_dom_bins=[(223, 64544), (255, 8874)] max_red_rgb=0xff0000
+shade= 17 expected~223 max_red=223 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={17: 6} top_red_dom_bins=[(223, 73418)] max_red_rgb=0xdf0000
+shade= 31 expected~223 max_red=223 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={31: 6} top_red_dom_bins=[(223, 73418)] max_red_rgb=0xdf0000
+shade= 32 expected~191 max_red=223 delta= +32 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={32: 6} top_red_dom_bins=[(191, 64544), (223, 8874)] max_red_rgb=0xdf0000
+shade= 33 expected~191 max_red=191 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={33: 6} top_red_dom_bins=[(191, 73418)] max_red_rgb=0xbf0000
+shade= 47 expected~191 max_red=191 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={47: 6} top_red_dom_bins=[(191, 73418)] max_red_rgb=0xbf0000
+shade= 48 expected~159 max_red=191 delta= +32 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={48: 6} top_red_dom_bins=[(159, 51059), (191, 22359)] max_red_rgb=0xbf0000
+shade= 49 expected~159 max_red=159 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={49: 6} top_red_dom_bins=[(159, 73418)] max_red_rgb=0x9f0000
+shade= 63 expected~159 max_red=159 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={63: 6} top_red_dom_bins=[(159, 73418)] max_red_rgb=0x9f0000
+shade= 64 expected~128 max_red=159 delta= +31 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={64: 6} top_red_dom_bins=[(128, 64544), (159, 8874)] max_red_rgb=0x9f0000
+shade= 65 expected~128 max_red=128 delta=  +0 pass=true red_dom_px=73418 nonzero=153856 mesh_tex_shades={65: 6} top_red_dom_bins=[(128, 73418)] max_red_rgb=0x800000
+shade= 80 expected~112 max_red=128 delta= +16 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={80: 6} top_red_dom_bins=[(128, 47716), (112, 25702)] max_red_rgb=0x800000
+shade= 96 expected~ 96 max_red=112 delta= +16 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={96: 6} top_red_dom_bins=[(96, 51059), (112, 22359)] max_red_rgb=0x700000
+shade=112 expected~ 80 max_red= 96 delta= +16 pass=false red_dom_px=73418 nonzero=153856 mesh_tex_shades={112: 6} top_red_dom_bins=[(96, 40083), (80, 33335)] max_red_rgb=0x600000
+--- summary table ---
+shade expected max_red delta pass red_dom_px
+    0      255     255    +0 true  73418
+   15      255     255    +0 true  73418
+   16      223     255   +32 false 73418
+   17      223     223    +0 true  73418
+   31      223     223    +0 true  73418
+   32      191     223   +32 false 73418
+   33      191     191    +0 true  73418
+   47      191     191    +0 true  73418
+   48      159     191   +32 false 73418
+   49      159     159    +0 true  73418
+   63      159     159    +0 true  73418
+   64      128     159   +31 false 73418
+   65      128     128    +0 true  73418
+   80      112     128   +16 false 73418
+   96       96     112   +16 false 73418
+  112       80      96   +16 false 73418
+mesh_exact_input_shade_for_all_cases=true
+block1_under64_max_red_near_full_brightness_fail=true
+INFERENCE_HINT=mesh packs correct shade; FS brightness still full → u32(in.hsl) block decode or factor path not taking effect on this adapter/run (or max_red selects non-representative pixels — see hist)
+report_path=/work/docs/memory/diagnostics/linux-gpu-shade-out/probe-report.txt
+out_dir=/work/docs/memory/diagnostics/linux-gpu-shade-out

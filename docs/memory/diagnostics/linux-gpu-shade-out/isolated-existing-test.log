@@ -1,0 +1,14 @@
+# docker exec memory-ref-amd64-view existing gpu_texture bin
+# env: SKIP_GPU=0 BOT_CPU=0 DISPLAY=:99 XDG_RUNTIME_DIR=/tmp WGPU_BACKEND=vulkan
+# binary: /target/debug/deps/gpu_texture-3b22fb5e3f1b99ef
+# filter: --exact gpu_textured_shade_scales_texel_brightness --nocapture
+# exit: 101
+
+running 1 test
+
+thread 'gpu_textured_shade_scales_texel_brightness' panicked at crates/client/tests/gpu_texture.rs:485:9:
+shade 16 must scale the red texel to ~223, got 255
+test gpu_textured_shade_scales_texel_brightness ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out
+EXIT:101

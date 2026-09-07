@@ -1,0 +1,22 @@
+# Linux GPU shade probe — provenance receipt
+time_utc=2026-09-07T03:37:50Z
+branch=codex/memory-diagnostics
+host_head=23a110326e1383f28806363f01aed97a90902c20
+client_head=451759f2a7df9c57895657d5b8d506172860cee1
+gpu_rs_sha256=f12964e1ffeeace8195af2cfa656e052da809b2eace1b5894bae6d5d1425e613
+gpu_texture_rs_sha256=053eaef148d5a15e9bfe5da2d55393717707aef675e30a26aa40a22351513e9f
+world_rs_sha256=9e2cc21a2c42c9f9956b7bd7e0a7790f0138a975b66413b41e8ca64a432e54e9
+existing_test_bin_sha256=58fd55ffa98d64b02848091588fde5d404395d23d874a04181edeabeec44d0bc
+existing_test_bin_mtime=2026-09-06T23:52:15Z
+probe_bin_sha256=c9123c06f605fd6680775bc18940448894524cdbfb7ee6821e8581cbbe3bc0ea
+probe_bin_mtime=2026-09-07T03:36:30Z
+container=memory-ref-amd64-view
+actual_adapter=llvmpipe (LLVM 15.0.6, 128 bits)
+actual_backend=Gl
+actual_driver_info=4.5 (Core Profile) Mesa 22.3.6
+WGPU_BACKEND_env=vulkan
+vulkan_icd_dir=absent
+mesa_vulkan_drivers=absent
+note=WGPU_BACKEND=vulkan did not select Vulkan; do not call this lavapipe/Vulkan.
+isolated_existing_test_exit=101
+isolated_existing_test_msg=shade 16 must scale the red texel to ~223, got 255
