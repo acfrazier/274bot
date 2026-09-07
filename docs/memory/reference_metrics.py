@@ -1525,10 +1525,19 @@ def _resource_match_metadata(meta: dict) -> dict:
         "frontend", "n", "workload", "render_policy", "render_policy_requested",
         "single_renderer", "diagnostic_sidecar", "allocation_counting",
         "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
+        "cache_settings", "catalog_sha256", "feature_flags", "allocator_provenance",
+        "host_sources_sha256", "client_sources_sha256", "binary_sha256",
     )}
     if out["render_policy"] is None and out["frontend"] == "tui":
         out["render_policy"] = "none"
     return out
+
+
+RESOURCE_PROVENANCE_FIELDS = (
+    "nav_pack_sha256", "nav_flags_sha256", "renderer_settings", "cache_settings",
+    "catalog_sha256", "feature_flags", "allocator_provenance",
+    "host_sources_sha256", "client_sources_sha256", "binary_sha256",
+)
 
 
 def evaluate_resources(
@@ -1547,7 +1556,9 @@ def evaluate_resources(
     base = {"gate": "resources", "final_acceptance_claim": False,
             "pass_means": PASS_MEANS, "accepted_saving": False,
             "cpu_units": "process_cpu_seconds / sampled_monotonic_wall_seconds",
-            "match_metadata": _resource_match_metadata(meta)}
+            "match_metadata": _resource_match_metadata(meta),
+            # A label is not evidence; overhead attribution is not implemented.
+            "overhead": "unknown"}
     if not isinstance(meta, dict) or not isinstance(samples, list):
         return {**base, "status": "unavailable", "reason": "malformed_resource_input"}
     qualification_reason = None
@@ -1562,6 +1573,8 @@ def evaluate_resources(
     times = [row.get("elapsed_s") for row in observed]
     if not all(_finite(value) for value in times):
         return {**base, "status": "unavailable", "reason": "invalid_observation_wall_time"}
+    if any(float(b) <= float(a) for a, b in zip(times, times[1:])):
+        return {**base, "status": "unavailable", "reason": "non_increasing_observation_wall_time"}
     duration = float(times[-1]) - float(times[0])
     if duration <= 0:
         return {**base, "status": "unavailable", "reason": "invalid_observation_wall_span"}
@@ -1571,14 +1584,20 @@ def evaluate_resources(
             return {**base, "status": "unavailable", "reason": "invalid_cpu_counter", "field": field}
         if any(float(b) < float(a) for a, b in zip(values, values[1:])):
             return {**base, "status": "unavailable", "reason": "cpu_counter_reset", "field": field}
+        if any(float(value) < 0 for value in values):
+            return {**base, "status": "unavailable", "reason": "negative_cpu_counter", "field": field}
     rss = [row.get("resident_bytes") for row in observed]
     if not all(_finite(value) for value in rss):
         return {**base, "status": "unavailable", "reason": "invalid_resident_rss"}
+    if any(float(value) < 0 for value in rss):
+        return {**base, "status": "unavailable", "reason": "negative_resident_rss"}
     # Lifetime peak is intentionally sourced from every phase; it is not the
     # maximum of the steady observation RSS samples.
     peaks = [row.get("peak_resident_bytes") for row in samples if isinstance(row, dict)]
     if not all(_finite(value) for value in peaks):
         return {**base, "status": "unavailable", "reason": "invalid_peak_rss"}
+    if any(float(value) < 0 for value in peaks):
+        return {**base, "status": "unavailable", "reason": "negative_peak_rss"}
     cpu_seconds = ((float(observed[-1]["process_cpu_user_s"]) - float(observed[0]["process_cpu_user_s"])) +
                    (float(observed[-1]["process_cpu_system_s"]) - float(observed[0]["process_cpu_system_s"])))
     policy = meta.get("render_policy")
@@ -1591,6 +1610,9 @@ def evaluate_resources(
     budget = RESOURCE_BUDGETS.get(key)
     if budget is None:
         return {**base, "status": "unavailable", "reason": "unsupported_resource_profile",
+                "profile": list(key)}
+    if meta.get("workload") != "active":
+        return {**base, "status": "unavailable", "reason": "unsupported_resource_workload",
                 "profile": list(key)}
     median_rss = statistics.median(rss)
     max_rss = max(rss)
@@ -1605,6 +1627,12 @@ def evaluate_resources(
                                  "target_verdict": "meet" if cpu_cores <= budget["cpu_cores"] else "miss"}
     verdict = "miss" if any(m["target_verdict"] == "miss" for m in metrics.values()) else "meet"
     blocked_reason = qualification_reason or contamination_reason
+    if blocked_reason is None:
+        missing = [field for field in RESOURCE_PROVENANCE_FIELDS if meta.get(field) is None]
+        if missing:
+            blocked_reason = "missing_resource_provenance"
+    if blocked_reason is None:
+        blocked_reason = "overhead_unknown"
     return {**base, "status": "unavailable" if blocked_reason else "available",
             "reason": blocked_reason, "target_verdict": "unavailable" if blocked_reason else verdict,
             "observation_s": duration,
@@ -1630,10 +1658,18 @@ def compare_matched_runs(candidate: dict, reference: dict, *, cpu_margin: float 
     if contaminated(candidate) or contaminated(reference):
         out["reason"] = "contaminated_matched_run"
         return out
+    for run in (candidate, reference):
+        metadata = run.get("match_metadata")
+        if (not isinstance(metadata, dict) or
+                any(metadata.get(field) in (None, "", {}, [])
+                    for field in RESOURCE_PROVENANCE_FIELDS)):
+            out["reason"] = "missing_match_provenance"
+            return out
     if candidate.get("match_metadata") != reference.get("match_metadata"):
         out["reason"] = "mismatched_provenance_or_settings"
         return out
-    if candidate.get("overhead", "unknown") != "measured":
+    if (candidate.get("overhead", "unknown") != "measured" or
+            reference.get("overhead", "unknown") != "measured"):
         out["reason"] = "overhead_unknown"
         return out
     cpu_change = candidate["cpu_cores"] - reference["cpu_cores"]

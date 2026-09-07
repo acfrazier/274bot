@@ -72,7 +72,15 @@ hardware-presentation endpoint remain outside this card.
    both panel policies use the exact budgets in `performance-finish-plan.md`;
    unsupported scales/modes are unavailable. Numerical observations remain
    visible under `--inspect`, while resource status requires the real
-   `qualify_control` result and rejects contaminated windows.
+   `qualify_control` result and active workload. Attributable instrumentation
+   overhead evidence is not implemented, so the required resource gate remains
+   unavailable (a caller cannot manufacture it with an `overhead` label), and
+   complete provenance metadata is still required for matching:
+   `nav_pack_sha256`, `nav_flags_sha256`, `renderer_settings`, `cache_settings`,
+   `catalog_sha256`, `feature_flags`, `allocator_provenance`,
+   `host_sources_sha256`, `client_sources_sha256`, and `binary_sha256`. Missing
+   evidence remains unavailable while numerical observations stay visible under
+   `--inspect`; contaminated windows are rejected.
 8. **Matched comparisons** — `compare_matched_runs` requires available,
    uncontaminated runs with identical frontend, scale, workload, renderer/data
    settings, provenance and measured overhead metadata. It reports intended
@@ -95,7 +103,7 @@ hardware-presentation endpoint remain outside this card.
    or scanout, and never uses host paint as a proxy.
 10. **CLI**
    - `--inspect` (default path): partial JSON, **exit 0**
-   - `--require scheduling,decode,input,gpu`: **exit 1** if any required gate is
+   - `--require resources,scheduling,decode,input,gpu`: **exit 1** if any required gate is
      unavailable or target not `meet` (straddle = unproven → fail)
    - `-o` / `--output`: **exclusive create** (`open("x")`); existing path → exit 1,
      no overwrite (immutable evidence)
@@ -133,7 +141,7 @@ Product `gpu` never reaches that path on completion-latency alone.
 
 ```text
 python3 docs/memory/test_reference_metrics.py
-→ 54 passed
+→ 61 passed
 ```
 
 Coverage includes: empty/overflow/missing histograms; counter reset; generation
@@ -174,6 +182,6 @@ grants acceptance).
 python3 docs/memory/reference_metrics.py \
   docs/memory/diagnostics/low-end-reference-screen-20260906T220129Z/tui_n1_active \
   --inspect --contamination-from 2026-09-06T22:21:17Z \
-  --require scheduling,decode,input,gpu
+  --require resources,scheduling,decode,input,gpu
 # exit 1; JSON gates all unavailable; final_acceptance_claim false
 ```

@@ -43,6 +43,17 @@ def _meta(**flags):
         "responsiveness_profile": False,
         "render_profile": False,
         "gpu_completion_profile": False,
+
+        "nav_pack_sha256": "nav-pack",
+        "nav_flags_sha256": "nav-flags",
+        "renderer_settings": {"quality": "default"},
+        "cache_settings": {"cache": "default"},
+        "catalog_sha256": "catalog",
+        "feature_flags": {"feature": True},
+        "allocator_provenance": "system",
+        "host_sources_sha256": "host",
+        "client_sources_sha256": "client",
+        "binary_sha256": "binary",
     }
     base.update(flags)
     return base
@@ -944,8 +955,8 @@ class ResourceAdapterTests(unittest.TestCase):
 
     def test_cpu_is_process_core_delta_over_sampled_wall_and_rss_is_current(self):
         result = rm.evaluate_resources(_meta(), self._samples(),
-                                        workload_qualification={"qualified": True})
-        self.assertEqual(result["status"], "available")
+                                       workload_qualification={"qualified": True})
+        self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["observation_s"], 10.0)
         self.assertEqual(result["cpu_seconds"], 3.0)
         self.assertEqual(result["cpu_cores"], 0.3)
@@ -983,8 +994,10 @@ class ResourceAdapterTests(unittest.TestCase):
             row["resident_bytes"] += 400 * 1024 * 1024
         result = rm.evaluate_resources(_meta(), rows,
                                        workload_qualification={"qualified": True})
-        self.assertEqual(result["target_verdict"], "miss")
+        self.assertEqual(result["target_verdict"], "unavailable")
+        self.assertEqual(result["metrics"]["median_rss"]["target_verdict"], "miss")
         self.assertFalse(result["accepted_saving"])
+        result["status"] = "available"  # direct comparison fixture only
         result["overhead"] = "measured"
         pair = rm.compare_matched_runs(result, result)
         self.assertEqual(pair["status"], "inconclusive")
@@ -993,15 +1006,81 @@ class ResourceAdapterTests(unittest.TestCase):
     def test_matched_pair_rejects_mismatch_contamination_and_unknown_overhead(self):
         base = rm.evaluate_resources(_meta(), self._samples(),
                                      workload_qualification={"qualified": True})
+        base["status"] = "available"  # direct comparison fixture only
         other = dict(base)
-        other["match_metadata"] = {"frontend": "panel"}
-        base["match_metadata"] = {"frontend": "tui"}
-        self.assertEqual(rm.compare_matched_runs(other, base)["status"], "inconclusive")
+        other["match_metadata"] = dict(base["match_metadata"])
+        other["match_metadata"]["frontend"] = "panel"
+        base["match_metadata"] = dict(base["match_metadata"])
+        base["match_metadata"]["frontend"] = "tui"
+        mismatch = rm.compare_matched_runs(other, base)
+        self.assertEqual(mismatch["status"], "inconclusive")
+        self.assertEqual(mismatch["reason"], "mismatched_provenance_or_settings")
         base["contaminated"] = True
-        self.assertEqual(rm.compare_matched_runs(base, base)["status"], "inconclusive")
+        contamination = rm.compare_matched_runs(base, base)
+        self.assertEqual(contamination["status"], "inconclusive")
+        self.assertEqual(contamination["reason"], "contaminated_matched_run")
         base["contaminated"] = False
-        base["overhead"] = "unknown"
-        self.assertEqual(rm.compare_matched_runs(base, base)["status"], "inconclusive")
+        base["overhead"] = "measured"
+        candidate_unknown = dict(base)
+        candidate_unknown["overhead"] = "unknown"
+        candidate_result = rm.compare_matched_runs(candidate_unknown, base)
+        self.assertEqual(candidate_result["status"], "inconclusive")
+        self.assertEqual(candidate_result["reason"], "overhead_unknown")
+        reference_unknown = dict(base)
+        reference_unknown["overhead"] = "unknown"
+        reference_result = rm.compare_matched_runs(base, reference_unknown)
+        self.assertEqual(reference_result["status"], "inconclusive")
+        self.assertEqual(reference_result["reason"], "overhead_unknown")
+        self.assertNotIn("intended_rss_change_bytes", reference_result)
+        self.assertNotIn("cpu_non_regression", reference_result)
+        missing_metadata = dict(base)
+        missing_metadata["match_metadata"] = dict(base["match_metadata"])
+        missing_metadata["match_metadata"].pop("catalog_sha256")
+        missing_result = rm.compare_matched_runs(missing_metadata, base)
+        self.assertEqual(missing_result["status"], "inconclusive")
+        self.assertEqual(missing_result["reason"], "missing_match_provenance")
+
+    def test_resource_gate_rejects_negative_values_idle_and_bad_wall_samples(self):
+        for field, reason in (("resident_bytes", "negative_resident_rss"),
+                              ("peak_resident_bytes", "negative_peak_rss"),
+                              ("process_cpu_user_s", "negative_cpu_counter")):
+            rows = self._samples()
+            if field == "process_cpu_user_s":
+                for row in rows:
+                    row[field] = -1
+            else:
+                rows[1][field] = -1
+            result = rm.evaluate_resources(_meta(), rows,
+                                           workload_qualification={"qualified": True})
+            self.assertEqual(result["reason"], reason)
+
+        idle = rm.evaluate_resources(_meta(n=16, workload="idle"), self._samples(),
+                                     workload_qualification={"qualified": True})
+        self.assertEqual(idle["reason"], "unsupported_resource_workload")
+        rows = self._samples()
+        rows[1]["elapsed_s"] = rows[0]["elapsed_s"]
+        result = rm.evaluate_resources(_meta(), rows,
+                                       workload_qualification={"qualified": True})
+        self.assertEqual(result["reason"], "non_increasing_observation_wall_time")
+
+    def test_resource_gate_requires_overhead_and_full_provenance(self):
+        missing = _meta()
+        missing.pop("catalog_sha256")
+        result = rm.evaluate_resources(missing, self._samples(),
+                                       workload_qualification={"qualified": True})
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "missing_resource_provenance")
+        unknown = _meta(overhead="unknown")
+        result = rm.evaluate_resources(unknown, self._samples(),
+                                       workload_qualification={"qualified": True})
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "overhead_unknown")
+        measured_label = _meta(overhead="measured")
+        result = rm.evaluate_resources(measured_label, self._samples(),
+                                       workload_qualification={"qualified": True})
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "overhead_unknown")
+        self.assertIn("metrics", result)
 
 
 if __name__ == "__main__":
