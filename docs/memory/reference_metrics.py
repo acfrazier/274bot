@@ -2454,24 +2454,43 @@ def _finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and value not in (float("inf"), float("-inf"))
 
 
-def _resource_match_metadata(meta: dict) -> dict:
-    out = {key: meta.get(key) for key in (
-        "frontend", "n", "workload", "render_policy", "render_policy_requested",
-        "single_renderer", "diagnostic_sidecar", "allocation_counting",
-        "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
-        "cache_settings", "catalog_sha256", "feature_flags", "allocator_provenance",
-        "host_sources_sha256", "client_sources_sha256", "binary_sha256",
-    )}
-    if out["render_policy"] is None and out["frontend"] == "tui":
-        out["render_policy"] = "none"
-    return out
+# Match keys must be present and equal across paired sides. Binary/source build
+# digests are side provenance: present and role-correct, but allowed to differ.
+RESOURCE_MATCH_KEY_FIELDS = (
+    "frontend", "n", "workload", "render_policy", "render_policy_requested",
+    "single_renderer", "diagnostic_sidecar", "allocation_counting",
+    "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
+    "cache_settings", "catalog_sha256", "feature_flags", "allocator_provenance",
+    "client_sources_sha256",
+)
 
+RESOURCE_SIDE_PROVENANCE_FIELDS = (
+    "binary_sha256", "host_sources_sha256",
+)
 
+# Single-run resource gate still requires full provenance present on meta.
 RESOURCE_PROVENANCE_FIELDS = (
     "nav_pack_sha256", "nav_flags_sha256", "renderer_settings", "cache_settings",
     "catalog_sha256", "feature_flags", "allocator_provenance",
     "host_sources_sha256", "client_sources_sha256", "binary_sha256",
 )
+
+
+def resource_match_keys_from_meta(meta: dict) -> dict:
+    """Equality-checked match keys only (no binary/host source side digests)."""
+    out = {key: meta.get(key) for key in RESOURCE_MATCH_KEY_FIELDS}
+    if out["render_policy"] is None and out["frontend"] == "tui":
+        out["render_policy"] = "none"
+    return out
+
+
+def resource_side_provenance_from_meta(meta: dict) -> dict:
+    """Role-specific binary/source digests; may differ across paired sides."""
+    return {key: meta.get(key) for key in RESOURCE_SIDE_PROVENANCE_FIELDS}
+
+
+def _resource_match_metadata(meta: dict) -> dict:
+    return resource_match_keys_from_meta(meta)
 
 
 def evaluate_resources(
@@ -2491,6 +2510,8 @@ def evaluate_resources(
             "pass_means": PASS_MEANS, "accepted_saving": False,
             "cpu_units": "process_cpu_seconds / sampled_monotonic_wall_seconds",
             "match_metadata": _resource_match_metadata(meta),
+            "side_provenance": resource_side_provenance_from_meta(meta)
+            if isinstance(meta, dict) else {},
             # A label is not evidence; overhead attribution is not implemented.
             "overhead": "unknown"}
     if not isinstance(meta, dict) or not isinstance(samples, list):
@@ -2592,14 +2613,41 @@ def compare_matched_runs(candidate: dict, reference: dict, *, cpu_margin: float 
     if contaminated(candidate) or contaminated(reference):
         out["reason"] = "contaminated_matched_run"
         return out
+    def _side_prov(run: dict) -> dict:
+        side = run.get("side_provenance")
+        if isinstance(side, dict):
+            return side
+        # Backward-compatible: older callers left digests inside match_metadata.
+        metadata = run.get("match_metadata")
+        if isinstance(metadata, dict):
+            return {field: metadata.get(field) for field in RESOURCE_SIDE_PROVENANCE_FIELDS}
+        return {}
+
+    # Equality-checked match keys (no binary/host source side digests).
+    match_prov_keys = (
+        "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
+        "cache_settings", "catalog_sha256", "feature_flags",
+        "allocator_provenance", "client_sources_sha256",
+    )
     for run in (candidate, reference):
         metadata = run.get("match_metadata")
         if (not isinstance(metadata, dict) or
                 any(metadata.get(field) in (None, "", {}, [])
-                    for field in RESOURCE_PROVENANCE_FIELDS)):
+                    for field in match_prov_keys)):
             out["reason"] = "missing_match_provenance"
             return out
-    if candidate.get("match_metadata") != reference.get("match_metadata"):
+        side = _side_prov(run)
+        if any(side.get(field) in (None, "", {}, [])
+               for field in RESOURCE_SIDE_PROVENANCE_FIELDS):
+            out["reason"] = "missing_side_provenance"
+            return out
+
+    def _match_only(md: Any) -> dict:
+        if not isinstance(md, dict):
+            return {}
+        return {k: md.get(k) for k in RESOURCE_MATCH_KEY_FIELDS}
+
+    if _match_only(candidate.get("match_metadata")) != _match_only(reference.get("match_metadata")):
         out["reason"] = "mismatched_provenance_or_settings"
         return out
     if (candidate.get("overhead", "unknown") != "measured" or
