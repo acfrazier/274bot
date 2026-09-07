@@ -9,36 +9,46 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
-## Current actions — 2026-09-07 18:53 UTC
+## Current actions — 2026-09-07 19:14 UTC
 
 - Continue approved performance-finish-plan.md. Native Linux N16 still misses
   memory/CPU targets; Windows panel misses simulation/render cadence. No final
   campaign acceptance or newly accepted RSS saving.
-- t_ab1637ae (Luna): freeze matched Linux e318/188a borrowed-fingerprint binaries
-  in isolated snapshots. Await actual Grok4.5 review, then native VPS paired screen.
-- Causal report 716eb01 passed Grok4.5 (t_c037f97a, session
-  20260907_144709_906027). Native evidence shows ~31ms acquire, ~32 UI fps,
-  ~17 client ticks/s and ~58ms work spans with ~0.7ms sleep. Static shared
-  wgpu-core29.0.4 fence read/write coupling exists; runtime stalls and RDP
-  causality remain unproven. t_c14b3d93 (Luna) now adds opt-in aligned
-  acquire/submit timing on isolated host/client codex/windows-submit-attribution
-  at .worktrees/windows-panel-attribution. No presentation policy changes.
-- Generic Ubuntu image 3ca3e66 passed Grok4.5 (t_82c720f3, session
-  20260907_144508_78a2e1). Root is staging the immutable VHDX and verified
-  CIDATA seed to isolated C:\ProgramData\274bot\hyperv-builder. No VM has
-  been created or booted yet. Transfer hash and native boot/SSH proof pending.
-- Windows reboot completed; Hyper-V/vmms and SSH verified. BotTest RDP2 plus
-  restored Austen console1 remain active with operator consent. Process Lasso
-  remains read-only in BotTest and system governor remains running.
-- Native ConPTY N1C completed/bound; report e5b2c83 passed Grok4.5. Native reader
-  replay/fixture a0bca8d passed Grok4.5. Windows panel attribution a3f729d passed
-  Grok4.5 and native build/live; analysis task above is next.
+- t_ab1637ae (Luna): freeze matched Linux e318/188a borrowed-fingerprint binaries.
+  Baseline required checks passed; candidate build remains live in the isolated
+  amd64 Docker container. Await actual Grok4.5 review before native VPS pairs.
+  Screen protocol is borrowed-fingerprint-native-screen-protocol.md (2526bbb).
+- Native causal report716eb01 passed Grok4.5 t_c037f97a. ~31ms acquire,
+  ~32 UI fps, ~17 client ticks/s and ~58ms work spans are measured. Static
+  wgpu-core29.0.4 shared-device fence coupling exists; runtime lock stalls and
+  RDP causality remain unproven. Root directly viewed the scene-ready capture.
+- t_ada38c88 (Luna): corrective submit-attribution opt-in/test isolation before
+  native integration, same isolated .worktrees/windows-panel-attribution with
+  host/client codex/windows-submit-attribution. Prior t_c14b3d93 review passed
+  before root found general profiling incorrectly activates the new ring.
+  Preserve current host/client working diffs; root commits client/gitlink only
+  after this corrective review. No driver/presentation/scheduling changes.
+- Native Hyper-V builder is running and key-only SSH verified. Alias
+  274bot-builder works from Mac. 4vCPU/8GiB static/64GiB Gen2, Secure Boot On,
+  existing Default Switch, no autostart. Rust/Cargo1.98 and native C/Rust smoke
+  pass; project build not yet proven. Report da0ecc4+d72c112 passed actual
+  Grok4.5 t_f48dee57, session20260907_150811_0664b8. Keep builder workload quiet
+  for future clean Windows measurements and record VM state separately.
+- Installed NVIDIA driver remains616.56 (native19:10 check). Operator will
+  download the available update with Tiny NVIDIA Update Checker, then sign out
+  the non-Test desktop. Installer is queued for an appropriate quiet boundary
+  AFTER old-driver timing proof; no installation or reboot yet. Re-read session
+  state for the next run; SSH/VM do not require the interactive admin login.
+- Network diagnostics: direct TCP11.124MB/s up/9.892MB/s down, both machines
+  on2.4GHz at observation. SSH is not the sole limit; band causality remains
+  unproven. Test listener/firewall removed. Operator permits throughput tests
+  but forbids resetting other users' connections. No router or Wi-Fi changes.
 - Viewer requirement: start windowed near panel+taskbar size, small margin.
   Do not change RDP/display/protocol during an ongoing run.
 - Final low-end absolute budgets, matched regression/latency evidence, three
   modes, lifecycle/scaling, candidate dispositions, whole-branch Grok4.6 and
-  authorized integration remain incomplete. Latest detailed receipts follow
-  chronologically below. Earlier next-step prose is superseded by this list.
+  authorized integration remain incomplete. Earlier next-step prose below is
+  an evidence snapshot, superseded by this list.
 
 ## Earlier execution milestones (evidence snapshots)
 
