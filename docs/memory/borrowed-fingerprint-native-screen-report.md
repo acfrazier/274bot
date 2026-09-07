@@ -16,7 +16,7 @@ The predeclared order was R/C/C/R at N16, then R/C/C/R at N1, using the reviewed
 
 ## Preflight and exact failure
 
-Concord preflight succeeded for the environmental checks immediately before the attempted cell: Ubuntu 24.04 x86_64, listener `127.0.0.1:43594` present, server PID `152004` present, and MemAvailable `951332 kB` (above the 128 MiB guard). The server was not signaled, restarted, or changed.
+Concord preflight succeeded for the environmental checks immediately before the attempted cell: Ubuntu 24.04 x86_64, listener `127.0.0.1:43594` present, server PID `152004` present, and MemAvailable `966467584` bytes (`943816` KiB, above the 128 MiB guard). The server was not signaled, restarted, or changed. These values are copied from the preserved `preflight-01.json` and `host-conditions-01.json` artifacts.
 
 The first declared cell was `reference_n16_01`. Its managed controller executed exactly once and exited before launch:
 
@@ -32,6 +32,16 @@ The failure was in the transferred adapter build-manifest binding: the initial m
 The failed raw cell receipt and exact spec are preserved at:
 
 `diagnostics/borrowed-fingerprint-native-screen-20260907/cells/reference_n16_01/`
+
+The failed binding and controller receipt are also archived locally:
+
+- `diagnostics/borrowed-fingerprint-native-screen-20260907/binding/native-build-manifest.json`
+  (SHA-256 `43bd530611793f6fd6574574bd49292b02d05973d8806165f4712e96e6c35f54`)
+- `diagnostics/borrowed-fingerprint-native-screen-20260907/binding/controller-01.stdout`
+  (SHA-256 `cdcabbef78536afa1d70992dcf7f305dedb526da69734753032c0db07652a2c1`)
+
+The manifest archive is the exact input named by
+`diagnostics/borrowed-fingerprint-native-screen-20260907/attempted-manifest-sha256.txt`.
 
 The dedicated remote directory and immutable pair remain at:
 
