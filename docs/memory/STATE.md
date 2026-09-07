@@ -362,3 +362,36 @@ not a successful GPU test. Read-only forensics `t_f4cb042f` will investigate; no
 shader/test expectation change is authorized by that card. Full Linux client
 regression, native GPU evidence, absolute budgets, matched overhead, lifecycle
 runs, and the final whole-branch Grok-4.6 review remain pending.
+
+### 2026-09-07 04:05 UTC — bounded capture approved and binary frozen
+
+Navigation capture `t_45abc379` passed Grok-4.5 round 3 on `864ae3e`.
+TUI now drains bounded checkpoint data without screenshots or a new failure
+timeout. Corrections preserve completion when evidence writes fail, count
+discarded records, and keep routine empty drains silent. Reviewer reruns passed
+14 capture tests, 165 host-play memory-feature tests, 12 launcher tests, and the
+TUI feature check. See [capture report](tui-nav-capture-report.md).
+
+Root froze the reviewed native source with the system allocator in
+`diagnostics/n16-capture-build-20260907T040110Z/`; its build receipt records stable
+host/client source hashes, successful build and symbol checks, and unchanged
+older frozen binaries. The new TUI SHA-256 is
+`efc1679e58a109a017c4783a196cc9a046fb01c1012ec4f25fb0c071ad8187bd`.
+No live run has started from it. The single managed N16 diagnostic waits for
+remaining workers to be quiet.
+
+Linux shade forensics `64781d4` and root interpretation correction `f9af303`
+passed Grok-4.5 reviews (`t_f4cb042f`, `t_e07f1d67`). The current viewer probe
+uses OpenGL llvmpipe; it is distinct from the older desktop image. Exact input
+shades produce mixed correct/previous-block pixels at boundaries; direct
+fragment input is unobserved. No shader correction or weaker test assertion was
+made. See [forensics](linux-gpu-shade-forensics.md).
+
+Artifact reader `t_39ba45ce` implementation `ee09dd7` is not approved. Root's
+negative probes in `diagnostics/adapter-contract-review-20260907T040246Z/`
+reproduced incomplete/wrong receipts reported as bound and a weakened
+configuration-equality check. Grok returned the task for strict binding fixes.
+Provider failures and a dispatcher restart preceded that implementation; no
+local duplicate reader remains. The reader, overhead evidence, active-run
+qualification, absolute budgets, lifecycle matrix and final branch review are
+still incomplete.
