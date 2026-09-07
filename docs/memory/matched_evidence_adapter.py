@@ -527,7 +527,7 @@ def match_keys_complete(keys: dict) -> Optional[str]:
                 return key
             continue
         if key == "host_conditions":
-            if not _native_windows_conditions_complete(val) and _deep_missing(val):
+            if not _host_conditions_complete(val):
                 return key
             continue
         if _deep_missing(val):

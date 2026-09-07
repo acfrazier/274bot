@@ -843,7 +843,29 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
     def test_native_windows_conditions_fail_closed_for_malformed_and_inconsistent_observations(self):
         value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
         value["native_preflight"]["consoleSessionId"] = "two"
+        value["native_preflight"]["dxdiag"][0].update(
+            currentMode="unknown", hybridGraphicsGPU="unknown", monitorName="unknown",
+        )
+        value["dxdiag"][0]["monitorName"] = "unknown"
+        process = {
+            "ProcessId": 6728, "ParentProcessId": 1, "SessionId": 2,
+            "Name": "node.exe", "CreationDate": "/Date(1)/", "CommandLine": "unknown",
+        }
+        value["native_preflight"]["processes"] = [process]
+        value["native_preflight"]["processLasso"]["processes"] = [process]
+        value["process_lasso"]["processes"] = [process]
         self.assertFalse(mea._native_windows_conditions_complete(value))
+        # A dense recognized native shape must not fall back to legacy
+        # _deep_missing validation merely because it has no null leaves.
+        keys: dict[str, object] = {key: True for key in mea.MATCH_KEY_FIELDS}
+        keys["frontend"] = "panel"
+        keys["terminal"] = False
+        keys["terminal_size"] = None
+        keys["sampler_duration_mode"] = "fixed"
+        keys["sampler_duration_s_requested"] = 1
+        keys["host_conditions"] = value
+        self.assertFalse(mea._deep_missing(value))
+        self.assertEqual(mea.match_keys_complete(keys), "host_conditions")
         value = json.loads(json.dumps(NATIVE_WINDOWS_CONDITIONS))
         value["process_lasso"]["running"] = True
         self.assertFalse(mea._native_windows_conditions_complete(value))
@@ -1735,6 +1757,7 @@ class NativeRuntimeContractTests(unittest.TestCase):
             frontend='panel', n=1, terminal=False, terminal_size=None,
             sampler_duration_mode='fixed', sampler_duration_s_requested=1,
         )
+        base['host_conditions'] = HOST_CONDITIONS
         self.assertIsNone(
             mea.match_keys_complete(base)
         )

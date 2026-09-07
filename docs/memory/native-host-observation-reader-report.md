@@ -12,7 +12,7 @@ Repair
 
 matched_evidence_adapter.py now recognizes one bounded native Windows observation shape and fails closed whenever its native marker is present. It requires non-empty platform/user identity and purpose, explicit boolean control fields, native preflight adapter/time/session, VM state, quiet-service records, driver identity records, session text, process record types, ProcessLasso consistency and file hashes, display card/driver identity, server identity, and explicit performance-acceptance booleans. It permits only the documented optional null display fields and process CommandLine values, and permits empty lists only where the frozen observation legitimately reports them. Required null, missing, empty, wrong-type, inconsistent, or malformed identity/control records remain invalid. Legacy host-condition documents retain the recursive strict validator.
 
-The same bounded rule is used when checking the host_conditions match key. All other match keys retain the recursive strict validator. Sidecar path binding, recorded SHA-256 verification, post-read rechecks, raw hashes, manifest/build provenance, and pair eligibility logic are unchanged. A bound side is not a pair-eligible or performance-accepted result.
+The same bounded rule is used when checking the host_conditions match key, including fail-closed handling for malformed recognized native shapes. All other match keys retain the recursive strict validator. Sidecar path binding, recorded SHA-256 verification, post-read rechecks, raw hashes, manifest/build provenance, and pair eligibility logic are unchanged. A bound side is not a pair-eligible or performance-accepted result.
 
 Verification
 
@@ -20,7 +20,7 @@ Mac targeted suite:
 
     python3 -m unittest docs.memory.test_matched_evidence_adapter -q
 
-Result: 42 tests passed.
+Result: 44 tests passed.
 
 Coverage added for the representative native shape with running=false and empty process lists, nullable optional display/process fields, missing/null machine identity and controls, and read-only host-sidecar hash/provenance preservation. Existing tests continue to cover null required match keys, nested required settings, sidecar hash tampering, manifest/path binding, and unchanged required match-key behavior.
 
