@@ -627,3 +627,55 @@ repaired, RuneWiki289 pinned0c00ef249546fada67b1f6eb8bbe01ea7c250c95; prior loca
 vendor/client-java-289 was present and retained. This supersedes the earlier missing
 289 inventory statement. Private FR-vault main fast-forwarded/pushedb82ac41; FTS
 1621files22557chunks, existing Chroma data/vector service preserved.
+
+## 2026-09-07 18:08 UTC — native resources and Windows evidence repairs
+
+Native resource report a5ede85+5c2d40c is approved by Grok4.5 session
+20260907_135803_8622ba (t_02ab165f). Linux corrected N1B and N16A both qualify
+and bind on the VPS with separately sampled server resources. N16 diagnostic
+median RSS640348160 and CPU0.72958343 cores exceed the512MiB/0.5-core targets;
+no final budget or matched saving accepted. See native-platform-resource-screen-report.md.
+Windows frozen b4 panel recording qualifies but observes16.6086GPU callbacks/s;
+40fps gate fails. Callback delivery is not physical scanout. Raw recording and
+original failed path-binding result are preserved.
+
+ConPTY helper wiring e3188e2 and test-only portability2539cab passed Grok4.5:
+t_7510ad70 session20260907_134401_693fd5; t_3a5a9918 session20260907_140003_d8c328.
+Native original160-test fixture run failed hard-coded macOS process sampling;
+corrected160 tests pass/7platform skips. See conpty-native-fixture-review.md.
+Fresh Windows limited BotTest managed N1C is currently running with e318 tooling,
+frozen b4 TUI binary, corrected predeclared server identity, render profiling,
+and actual ConPTY helper capture. Controller14160 started18:05:42UTC. Output
+C:\Users\BotTest\274bot-runs\managed-conpty-e3188e2-c. Poll this actual task;
+completion, helper coverage, full binding and resource results are still pending.
+
+Native path reader8c2cb0e+8f19e52 passed Grok4.5 session20260907_135403_faf70d.
+Exact2539 Git Python tooling (45files/hashmanifest) was staged separately on
+Windows, preserving all b4/e318 receipt dependencies. Native replay of old panel
+recording now bound/qualified, no missing match keys, managed resources available.
+Original result remains unchanged. Standard-account symlink fixture failed;
+root test-onlya0bca8d uses actual Windows extended-path spelling, retaining POSIX
+symlink coverage and distinct/missing negatives. Native49 tests now pass/1skip;
+Mac module10 tests pass. Corrective review t_af39df26 pending. All receipts under
+diagnostics/windows-native-reader-2539cab; no new performance acceptance.
+
+Borrowed fingerprint candidate188a520 approved Grok4.5 session20260907_134802_422244
+(t_520e3abc). Functional/oracle/allocation-retention evidence only. Freeze matched
+baselinee318 versus candidate188a Rust inputs and measure allocation/RSS/CPU/latency;
+no savings claim yet. Later doc/reader commits do not alter those Rust inputs.
+
+Windows panel stage attribution t_e142021e is isolated on codex/windows-panel-attribution
+at .worktrees/windows-panel-attribution, basee318/client3456. First review rejected
+4685501: incomplete frame double count, missing encode timing, disabled-path timing
+work, insufficient enabled-counter tests. Luna correcting; await same-card Grok4.5
+approval then root native Windows build and actual adapter/stage/session proof.
+No RDP attribution established. Operator permits alternative VNC/viewer if RDP is
+shown causal. No viewer/VM changes performed.
+
+VPS live check18:06UTC:1967MiB total,939MiB available, server152004 RSS642332KiB;
+no bot/compiler running there. Hyper-V remains disabled. Linux builds use Mac
+Docker; last build container removed, existing Linux viewer and Chroma preserved.
+Public host development branch remains e318; main/client stable branches unchanged.
+Remaining campaign gates: final absolute budgets, matched savings/regression/latency,
+three modes, lifecycle/scaling, native Windows cadence fix if indicated, whole-branch
+Grok4.6 and authorized integration. Continue measurement and implementation.
