@@ -73,27 +73,48 @@ Note: reference ordinal 6 fails **both** input and decode on the same `slot_id` 
 
 Applies to candidate ordinals 5 & 6 and reference ordinals 5, 6, 7.
 
-**Not** a reader bug, lifecycle `ended` loss, cancel/lost/dropped coverage hole, or publisher/counter epoch mismatch.
+**Reader path:** not a metrics-reader bug, lifecycle `ended` loss, cancel/lost/dropped coverage hole, or publisher/counter epoch mismatch on the published gauges. Gauges at the selected edges are real and identity-matched. This ruling does **not** clear the TUI producer path (see §A.1 / ruling matrix).
 
 Per-slot facts (selected maximal contained span; identity `start − complete − canceled − lost − dropped == pending` holds at both edges):
 
-| Role | Ord | Selected start elapsed_s | Selected end elapsed_s | Start counters (start/complete/pending) | End counters | Terminal pending streak wall_s (lower bound) | Last complete advance elapsed_s |
-|:---|---:|---:|---:|:---|:---|---:|---:|
-| C | 6 | 193.869 | 792.340 | 2/2/0 | 45/44/1 | **102.223** (samples 486→586) | 689.081 |
-| C | 5 | 631.927 | 792.340 | 1/1/0 | 28/27/1 | **131.817** (457→586) | 659.498 |
-| R | 7 | 211.603 | 809.652 | 2/2/0 | 56/55/1 | **88.761** (499→586) | 719.842 |
-| R | 6 | 661.697 | 809.652 | 1/1/0 | 28/27/1 | **119.427** (469→586) | 689.200 |
-| R | 5 | 631.952 | 809.652 | 1/1/0 | 28/27/1 | **148.958** (440→586) | 659.677 |
+| Role | Ord | Selected start elapsed_s | Selected end elapsed_s | Start counters (start/complete/pending) | End counters | Terminal pending streak wall_s (lower bound) | Last complete advance elapsed_s | Streak onset ≈ 30s boundary |
+|:---|---:|---:|---:|:---|:---|---:|---:|:---|
+| C | 6 | 193.869 | 792.340 | 2/2/0 | 45/44/1 | **102.223** (samples 486→586) | 689.081 | **~690 s** |
+| C | 5 | 631.927 | 792.340 | 1/1/0 | 28/27/1 | **131.817** (457→586) | 659.498 | **~660 s** |
+| R | 7 | 211.603 | 809.652 | 2/2/0 | 56/55/1 | **88.761** (499→586) | 719.842 | **~720 s** |
+| R | 6 | 661.697 | 809.652 | 1/1/0 | 28/27/1 | **119.427** (469→586) | 689.200 | **~690 s** |
+| R | 5 | 631.952 | 809.652 | 1/1/0 | 28/27/1 | **148.958** (440→586) | 659.677 | **~660 s** |
 
-Common pattern:
+Common pattern (published series):
 
 1. Observe series length 587 samples both roles; clock domain `responsiveness_process_mono`.
 2. One input **starts** near the terminal streak (`Δstart` leaves `pending=1`) and **never completes** through the last observe sample.
 3. `ended=false`; canceled/lost/dropped remain 0 across the span.
-4. Capture brackets remain set; `cap_lo` freezes at the open input’s capture lower while `cap_hi` keeps advancing with later registry reads — consistent with an open in-flight input, not a missing publisher epoch.
+4. Capture brackets remain set; `cap_lo` freezes at the open input’s capture lower while `cap_hi` keeps advancing with later registry reads — consistent with an open in-flight input on the published counters, not a missing publisher epoch.
 5. Reader correctly refuses histogram p99: an open completion at the end edge means the window is not a closed accounting interval.
 
-These are **long-lived open inputs** (order 10² s of observe wall time still pending), not single-sample edge jitter. Do not reclassify as pass by trimming the end or picking an earlier quiet sample (forbidden favorable inner window).
+These are **long-lived open pending gauges** (order 10² s of observe wall time still pending), not single-sample edge jitter. Do not reclassify as pass by trimming the end or picking an earlier quiet sample (forbidden favorable inner window). Whether the underlying input *should* have completed earlier is a separate producer question (§A.1), not a reader reclassification.
+
+#### A.1 Unresolved TUI producer focus/flush correlation risk (hypothesis — not proven RC here)
+
+Distinguish two layers:
+
+| Layer | Status in this audit |
+|:---|:---|
+| **(a) Metrics reader** | Correctly fail-closes on open gauges at the selected edges. Recompute matches bound reasons. No reader bug proven. |
+| **(b) TUI producer correlation** | **Unresolved risk.** Evidence does **not** clear instrumentation on the TUI start/flush path. Not proven as root cause in this audit; root owns a separate bounded proof/fix. |
+
+Producer path (cited, not fixed here):
+
+1. `crates/tui/src/bin.rs` `run_loop`: each iteration calls `session.pump(&mut app)` **before** `terminal.draw` (~1304–1316). Under `memory-profile`, `Session::pump` sets `app.focused = Some(run.focus_index())` and `play.focus(...)` (~943–945).
+2. After a successful draw, `note_tui_draw_flush` runs only for the **post-pump** `app.focused_name()` (~1318–1322).
+3. Host `note_tui_draw_flush` (`crates/host/src/responsiveness_profile.rs` ~871–877) completes pending only when `p.surface == Tui && p.slot_id == flush slot_id`.
+4. Input starts also bind `focused_name` at key/mouse time (~1328–1333, ~1345–1350).
+5. Focus rotation: `host-play` `MemoryRun::focus_index` = `(started.elapsed().as_secs() / 30) % n` unless `render_policy.pins_focus()` (`crates/host-play/src/memory.rs` ~1592–1598; default panel benchmark comment: rotate every 30s).
+
+**Time tie-in (consistent with risk, not proof):** terminal input pending-streak onsets cluster on **30 s boundaries** across cand/ref — ~660 / ~690 / ~720 s elapsed (table above). A plausible mechanism is focus-switch mis-attribution: start recorded against slot A, then pump advances focus before draw so flush completes only the **new** focused slot, leaving A’s pending open until a later focus return (or never within observe). Candidate input **ordinal 9 overflow** may be a long-but-eventually-completed instance of the same class (edges quiet; one completion >1000 ms coarse). Mark as **hypothesis/risk for separate root proof** — not proven root cause here, and **not** a reader defect.
+
+Do **not** globally assert “no instrumentation bug,” “not a serializer glitch,” or “pure harness teardown workload.” Those claims overreach: (a) is cleared; (b) is not.
 
 ### B. Decode `boundary_pending_incomplete` — two distinct edge geometries
 
@@ -169,30 +190,33 @@ p99 decision: with n=55, cum·100 ≥ n·99 requires the overflow bucket on both
 |:---|:---|
 | Real nonzero pending at selected edges | **Yes** for all `boundary_pending_incomplete` slots (input end-open; cand decode start-open; ref decode end-open). Gauges match accounting identity. |
 | Lifecycle loss (`ended`, cancel/lost/drop) | **No** on these failing slots’ selected edges / deltas. |
-| Publisher/counter epoch mismatch | **No** evidence: mono counters non-decreasing, identities hold, capture brackets ordered, clock domain constant. |
-| Reader bug | **Not proven.** Failures reproduce from raw rows through current `_contained_responsiveness_pair` + pending edge rule. Recompute matches bound reasons exactly. |
+| Publisher/counter epoch mismatch | **No** evidence on published counters: mono non-decreasing, identities hold, capture brackets ordered, clock domain constant. |
+| Reader bug | **Not proven.** Failures reproduce from raw rows through current `_contained_responsiveness_pair` + pending edge rule. Recompute matches bound reasons exactly. Reader correctly fail-closes. |
+| TUI / instrumentation producer bug | **Not cleared.** Unresolved focus/flush correlation risk (§A.1): pump-before-draw + flush only for post-pump focused slot + 30s rotation; input streak onsets align ~660/690/720 s. Hypothesis only — not proven RC in this audit; raw classifications unchanged. |
+| “No instrumentation bug” / pure workload teardown | **Do not claim.** Overreaches beyond reader-only evidence. |
 | Favorable inner window would “fix” | Possibly for cand decode start-open (next sample quiet) and maybe ref decode last-sample open — **explicitly disallowed** by reader policy; must not be counted as pass. |
 | Unavailable counted as pass | **No** in bound or recompute. |
 
 ## One concrete confounder / honest limitation
 
-**Observe window ends while work is still open, and the maximal contained span is pinned to observe mono bounds rather than to a drain-to-quiet condition.**
+**Open gauges at the observe edge under a maximal contained span pinned to observe mono bounds (no drain-to-quiet), plus an unresolved TUI producer focus/flush correlation risk that could leave prior-focus slots pending across 30 s rotations.**
 
-- For **input**, several bots carry a single incomplete start for ~90–150 s through the end of the 600 s observation. That is workload/teardown reality on this harness (PTY probes + rotating focus), not a serializer glitch. Until that completion lands (or is canceled/lost with coverage flags), input p99 for that slot is unprovable under the closed-span rule.
-- For **decode**, high-rate edges mean the first capture that satisfies `cap_lo ≥ observe_lb` (candidate) or the last sample before observe ends (reference) often coincides with `pending=1` for a few milliseconds of sample age. The reader’s refusal is intentional fail-closed; the limitation is that **600 s observation without an end-of-window quiet/drain requirement** leaves a minority of slots without a closed decode span even when interior traffic is healthy.
+- **(a) Reader / window:** For **input**, several bots publish a single incomplete start for ~90–150 s through end of observe; until completion (or cancel/lost with coverage) lands, input p99 for that slot is unprovable under the closed-span rule. For **decode**, high-rate edges mean the first capture with `cap_lo ≥ observe_lb` (candidate) or the last sample before observe ends (reference) often coincides with `pending=1` for a few milliseconds of sample age. Reader refusal is intentional fail-closed; **600 s observation without end-of-window quiet/drain** leaves a minority of slots without a closed span even when interior traffic looks healthy. No favorable-window or gate relaxation.
+- **(b) Producer risk (unproven RC):** Input end-open streak starts cluster on 30 s focus boundaries (660/690/720 s) on both roles — consistent with `session.pump` advancing `focus_index` before `note_tui_draw_flush` attributes completion only to the new focused `slot_id` (`bin.rs` ~943–945, ~1304–1322; `responsiveness_profile.rs` ~871–877). Overflow ordinal 9 may be the same class with a late completion. This is **not** a workload-only explanation and **not** a proven root cause here; it is the honest instrumentation limitation alongside (a).
 
-This confounder explains why both roles show incomplete input boundaries on nearby ordinals (5–7) and why decode incompletes differ in edge geometry between candidate and reference without implying a metrics-reader defect.
+This pair explains why both roles show incomplete input boundaries on nearby ordinals (5–7) and why decode incompletes differ in edge geometry between candidate and reference **without** implying a metrics-reader defect, and **without** asserting the producer path is clean.
 
 ## Bounded correction proposal
 
-**No source correction is proposed.** No bug was proven in the reader or in the bound artifacts.
+**No source correction in this task.** No reader bug was proven; producer focus/flush ordering is **not** implemented or fixed here (root-owned if authorized). Bound artifacts and unavailable classifications stay as-is.
 
-If a **future harness** change is authorized separately (out of this task), the only evidence-backed directions are operational, not gate relaxation:
+Out-of-scope notes only (operational / future authorized work — **not** gate relaxation):
 
-1. **Drain / quiet tail (harness):** after observe_s, optionally wait until per-slot input/decode pending return to 0 (with timeout → keep `boundary_pending_incomplete`) before stopping samples — would address end-open cases without changing p99 math.
-2. **Do not** auto-advance start/end to the nearest quiet sample inside the reader (that is favorable window selection).
-3. **Do not** treat `overflow_bucket` as a finite p99 or soften overflow to a synthetic upper bound.
-4. Preserve all current unavailable classifications on these artifacts.
+1. **Producer ordering proof/fix (root-owned, separate task):** if authorized, prove or fix pump-vs-draw / focus-slot flush attribution so starts and flushes cannot desync across 30 s rotations. Out of scope for this audit.
+2. **Drain / quiet tail (harness):** after observe_s, optionally wait until per-slot input/decode pending return to 0 (with timeout → keep `boundary_pending_incomplete`) before stopping samples — would address end-open cases without changing p99 math.
+3. **Do not** auto-advance start/end to the nearest quiet sample inside the reader (that is favorable window selection).
+4. **Do not** treat `overflow_bucket` as a finite p99 or soften overflow to a synthetic upper bound.
+5. Preserve all current unavailable classifications on these artifacts.
 
 ## What this audit does not claim
 
@@ -200,6 +224,8 @@ If a **future harness** change is authorized separately (out of this task), the 
 - No final acceptance, no metric gate change, no claim that interior “most slots meet 100 ms” substitutes for full 16/16 closed spans.
 - No precise duration for the overflowing input sample beyond **> 1000 ms** coarse lower bound.
 - No re-litigation of `f306183` pre-activity trim (already reviewed).
+- No clearance of TUI producer instrumentation; §A.1 is hypothesis/risk only, not a proven root cause and not a source fix.
+- No change to raw bound classifications or gate thresholds.
 
 ## Method note
 
