@@ -1,0 +1,499 @@
+{
+  "task_id": "t_54b3b727",
+  "title": "Screen shared-nav memory and per-slot timing on a quiet host",
+  "created_utc": "2026-09-07T00:40:29Z",
+  "ended_utc": "2026-09-07T00:54:51Z",
+  "claim_scope": {
+    "is_initial_short_screen_only": true,
+    "final_absolute_budgets": false,
+    "three_run_matrix": false,
+    "native_owner_removal": false,
+    "modest_hardware_acceptance": false,
+    "campaign_performance_acceptance": false,
+    "accepted_rss_or_cpu_saving": false,
+    "source_edits": false,
+    "rebuilds": false,
+    "metric_tool_edits": false
+  },
+  "outcome": {
+    "status": "failed_screen_stopped_early",
+    "stopped_after_cell": "candidate_n16_profiles_on",
+    "stop_reason": {
+      "type": "functional_failure",
+      "diag_exit": 1,
+      "qualified": false,
+      "qualify_errors": [
+        "missing boundary qualification",
+        "observation incomplete",
+        "process failed or incomplete"
+      ],
+      "run_log_fail_line": "FAIL: memory tui: livefd010_5: script requested stop on tick 289; isolate stopping",
+      "observation_s_partial": 110.56159141600001,
+      "note": "One failed functional/scale cell => retain failure and stop batch; no retry in this card. Orch investigates separately; no source changes here."
+    },
+    "cells_completed_qualified": [
+      "control_n1_profiles_on",
+      "candidate_n1_profiles_on"
+    ],
+    "cells_failed": [
+      "candidate_n16_profiles_on"
+    ],
+    "cells_not_run": [
+      "control_n16_profiles_on",
+      "candidate_n16_overhead_off_a",
+      "candidate_n16_overhead_on_a",
+      "candidate_n16_overhead_on_b",
+      "candidate_n16_overhead_off_b"
+    ],
+    "downstream_pending_not_authorized_here": [
+      "reverse_matched_order_control_candidate_swap",
+      "N1_overhead_profiles_off_on_pair"
+    ]
+  },
+  "artifacts": {
+    "diagnostic_root": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z",
+    "batch_state": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/batch_state.json",
+    "batch_wall_log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/batch_wall_log.txt",
+    "summary_extract": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/summary_extract.json",
+    "provenance_lock": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/provenance_lock.json",
+    "report_md": "docs/memory/shared-nav-clean-screen.md",
+    "report_json": "docs/memory/shared-nav-clean-screen.json"
+  },
+  "contamination_window": {
+    "start_utc": "2026-09-07T00:40:29Z",
+    "end_utc": "2026-09-07T00:54:51Z",
+    "orchestration_read_only_monitoring_ok": true,
+    "local_code_tests_during_observe": false
+  },
+  "quiet_gate": {
+    "preflight_path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/quiet_gate_preflight.txt",
+    "in_process_quiet_check_limitation": "Running batch process loaded cargo/rustc-only quiet_check; disk patch after start did not affect the running interpreter.",
+    "manual_stronger_boundary_receipts": [
+      {
+        "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/quiet_boundary_post_cell01_pre_cell02.json",
+        "utc": "2026-09-07T00:46:11Z",
+        "quiet": true
+      },
+      {
+        "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/quiet_boundary_mid_batch_005148.json",
+        "utc": "2026-09-07T00:51:48Z",
+        "quiet": true
+      },
+      {
+        "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/quiet_boundary_mid_batch_005600.json",
+        "utc": "2026-09-07T00:56:00Z",
+        "quiet": true
+      }
+    ],
+    "needles_manual": [
+      "cargo/rustc",
+      "foreign tui-play/panel-play/host-play",
+      "perf/Instruments/dtrace/lldb/MallocStackLogging",
+      "agent test scripts (test_reference_metrics, pytest, run_matrix)",
+      "other board running tasks"
+    ],
+    "competing_workloads_observed": []
+  },
+  "host_conditions": {
+    "os": "macOS 15.7.9",
+    "arch": "arm64",
+    "cpu": "Apple M4 Max",
+    "ncpu": 16,
+    "memsize_bytes": 137438953472,
+    "note": "Development host; not modest target hardware. No non-starvation or target-hardware claim from this screen alone."
+  },
+  "ambient_helpers_retained_unchanged": {
+    "game_server": {
+      "pid": 4719,
+      "start_identity": "macos_lstart:Wed Aug 26 15:57:11 2026",
+      "port_listen": 43594,
+      "action": "read-only locate only; never start/reset/stop",
+      "preflight_resident_bytes": 1236713472,
+      "argv_env_recorded": false
+    },
+    "docker_vnc_viewer": {
+      "name": "memory-ref-amd64-view",
+      "image": "sha256:5158583a5beb3587793f0aad3e56b9b00cf688cbb0176c1071192e1bc7502d56",
+      "ports": "127.0.0.1:6080->6080/tcp",
+      "preflight_docker_stats": "CPU 0.53%; MEM 169.2MiB / 4GiB"
+    },
+    "chroma": {
+      "name": "fr-vault-chroma",
+      "image": "sha256:5c8c39dccb348eaadf16579b5927c793995e2566e9a7927dca28910830e87dea",
+      "ports": "127.0.0.1:8765->8000/tcp",
+      "preflight_docker_stats": "CPU 0.00%; MEM 5.012MiB / 7.747GiB"
+    },
+    "macos_pressure": {
+      "status": "unavailable",
+      "reason": "unsupported_pressure_counter",
+      "semantics": "unavailable is not zero or healthy"
+    }
+  },
+  "binary_provenance": {
+    "manifest": "docs/memory/shared-nav-build-manifest.json",
+    "build_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-build-20260906T235815Z",
+    "features": "memory-profile-no-alloc",
+    "allocator": "std::alloc::System",
+    "control_tui": {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-build-20260906T235815Z/tui-play-control-system-20260906T235815Z",
+      "sha256": "53ddeda0eadd241913a2b05c01eb35c90af5af8d70122387a95fea72364b3eb2",
+      "matches_manifest": true,
+      "binary_build_commit": "d373ea0caf8b0d85c561551c9c792b5988b4db67",
+      "note": "control = 6345fbc with ONLY 606c93b (share Play NavWorld) reverted; retains scheduling instrumentation"
+    },
+    "candidate_tui": {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-build-20260906T235815Z/tui-play-candidate-system-20260906T235815Z",
+      "sha256": "769a9367e8c2808ebf7b1feb9f2d4830804524613721c9082e22056d7ac61928",
+      "matches_manifest": true,
+      "rust_base": "6345fbc5de9d76dc05552ef2bc07e634b4b04afa"
+    },
+    "checkout_at_run": {
+      "host_commit": "bd5dc1e28c8230d603746cb43c41fed7e957bf41",
+      "client_commit": "451759f2a7df9c57895657d5b8d506172860cee1",
+      "branch": "codex/memory-diagnostics",
+      "binding_rule": "run_diagnostic metadata.host_commit records current checkout even for older frozen binary; binary_sha256 is authority for binary build source — do not mislabel checkout as binary build commit"
+    },
+    "nav_catalog_verified_at_preflight": {
+      "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+      "nav_flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb",
+      "js_scripts_json_sha256": "3bee852f888a9c383b23d299979a3e898c4b620b73b5c8a6f69e87584399d4f6",
+      "rs2b0t_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "matches_manifest": true
+    },
+    "timing_instrumentation": "Both control and candidate frozen binaries include the same per-slot timing instrumentation; historical 57cbfc7 reference does NOT and was not used."
+  },
+  "cell_protocol": {
+    "frontend": "tui",
+    "terminal": "actual PTY 120x40",
+    "workload": "active sustained level-50 Thiever",
+    "warmup_s": 30,
+    "observe_s": 120,
+    "teardown_s_nominal": 60,
+    "runner": "docs/memory/run_diagnostic.py --sustain --no-diagnostics --binary ... --warmup 30 --observe 120",
+    "enabled_profiles_flags": [
+      "--scheduling-profile",
+      "--responsiveness-profile",
+      "--render-profile"
+    ],
+    "gpu_completion_flag": false,
+    "note_tui_no_gpu_completion": true,
+    "stack_logging": false,
+    "counting_allocator": false,
+    "verbose_diagnostic_sidecar": false,
+    "native_attribution": false,
+    "authorized_order": [
+      "control_n1_profiles_on",
+      "candidate_n1_profiles_on",
+      "candidate_n16_profiles_on",
+      "control_n16_profiles_on",
+      "candidate_n16_overhead_off_a",
+      "candidate_n16_overhead_on_a",
+      "candidate_n16_overhead_on_b",
+      "candidate_n16_overhead_off_b"
+    ]
+  },
+  "cells": [
+    {
+      "id": "control_n1_profiles_on",
+      "kind": "matched",
+      "n": 1,
+      "binary_role": "control",
+      "binary_sha256": "53ddeda0eadd241913a2b05c01eb35c90af5af8d70122387a95fea72364b3eb2",
+      "profiles": "on",
+      "effective_flags": [
+        "--sustain",
+        "--no-diagnostics",
+        "--scheduling-profile",
+        "--render-profile",
+        "--responsiveness-profile",
+        "--warmup 30",
+        "--observe 120"
+      ],
+      "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260907T004143Z_tui_n1_active",
+      "receipt": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/cell_01_control_n1_profiles_on/receipt.json",
+      "started_utc": "2026-09-07T00:41:42Z",
+      "ended_utc": "2026-09-07T00:46:01Z",
+      "wall_s": 222.801489917,
+      "diag_exit": 0,
+      "qualified": true,
+      "steal_gains": {
+        "livef7c70_0": 7
+      },
+      "qualification_observation_s": 118.208605625,
+      "resources_numerical": {
+        "status_strict": "unavailable",
+        "reason": "missing_resource_provenance",
+        "overhead": "unknown",
+        "resident_median_bytes": 384958464,
+        "resident_median_mib": 367.125,
+        "resident_max_bytes": 392478720,
+        "peak_resident_bytes": 392527872,
+        "peak_resident_mib": 374.344,
+        "note_median_vs_peak": "median current RSS distinct from lifetime peak_resident_bytes",
+        "cpu_cores": 0.03782568939341552,
+        "cpu_formula": "process user+system endpoint delta / sampled elapsed_s observation span",
+        "observation_s": 118.208605625,
+        "budget_median_rss_bytes": 268435456,
+        "budget_peak_rss_bytes": 402653184,
+        "numerical_median_vs_budget": "miss",
+        "numerical_peak_vs_budget": "meet",
+        "gate_satisfies_require": false
+      },
+      "scheduling": {
+        "status": "available",
+        "target_verdict": "meet",
+        "full_fleet_coverage": true,
+        "qualified_slot_n": 1,
+        "observed_iterations_per_s": 41.943465292841644,
+        "p99_lower_ms": 25,
+        "p99_upper_ms": 26,
+        "scene_transition_separation": "unavailable",
+        "require_scheduling_ok": true
+      },
+      "decode": {
+        "status": "unavailable",
+        "reason": "coverage_lost_or_incomplete",
+        "decode_canceled_n": 11,
+        "decode_dropped_n": 0,
+        "decode_lost_n": 0,
+        "decode_pending_n": 0,
+        "note": "Known conservative cumulative end-snapshot coverage limitation (warmup cancels remain in lifetime counters). Not treated as a timing regression; raw evidence retained. Do not patch evaluator."
+      },
+      "input": {
+        "status": "unavailable",
+        "reason": "no_input_samples",
+        "note": "Lack of generated input events / visible endpoint remains unavailable, not pass."
+      },
+      "renderer": {
+        "frontend": "tui",
+        "gpu_completion_profile": false,
+        "renderer_count_expected": 0,
+        "note": "TUI cell; no GPU completion flag. resource_renderer_expanded_adapters message only: diagnostic adapters, no final acceptance."
+      },
+      "metrics_require_scheduling_decode_exit": 1,
+      "metrics_require_failure": "decode unavailable (scheduling met)",
+      "server_sampler": {
+        "pid": 4719,
+        "interval_s": 1.0,
+        "duration_s_requested": 260,
+        "sample_count": 260,
+        "exit_code": 0,
+        "rss_median_bytes": 1236713472,
+        "rss_max_bytes": 1236713472,
+        "cpu_cores_median": 0.03999839506345114,
+        "cpu_cores_max": 0.3400157257251855,
+        "overhead": "unmeasured",
+        "pressure": "macOS unavailable"
+      },
+      "helper_snapshots_limitation": "sample_self captured sampler/launcher RSS at startup only; after cell end those PIDs are gone. No measured helper CPU delta or attributable overhead claim from these snapshots."
+    },
+    {
+      "id": "candidate_n1_profiles_on",
+      "kind": "matched",
+      "n": 1,
+      "binary_role": "candidate",
+      "binary_sha256": "769a9367e8c2808ebf7b1feb9f2d4830804524613721c9082e22056d7ac61928",
+      "profiles": "on",
+      "effective_flags": [
+        "--sustain",
+        "--no-diagnostics",
+        "--scheduling-profile",
+        "--render-profile",
+        "--responsiveness-profile",
+        "--warmup 30",
+        "--observe 120"
+      ],
+      "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260907T004608Z_tui_n1_active",
+      "receipt": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/cell_02_candidate_n1_profiles_on/receipt.json",
+      "started_utc": "2026-09-07T00:46:07Z",
+      "ended_utc": "2026-09-07T00:50:26Z",
+      "wall_s": 234.43502529199998,
+      "diag_exit": 0,
+      "qualified": true,
+      "steal_gains": {
+        "livefa6c0_0": 9
+      },
+      "qualification_observation_s": 118.335938917,
+      "resources_numerical": {
+        "status_strict": "unavailable",
+        "reason": "missing_resource_provenance",
+        "overhead": "unknown",
+        "resident_median_bytes": 310394880,
+        "resident_median_mib": 296.015625,
+        "resident_max_bytes": 318259200,
+        "peak_resident_bytes": 318308352,
+        "peak_resident_mib": 303.563,
+        "note_median_vs_peak": "median current RSS distinct from lifetime peak_resident_bytes",
+        "cpu_cores": 0.04090566267780382,
+        "cpu_formula": "process user+system endpoint delta / sampled elapsed_s observation span",
+        "observation_s": 118.335938917,
+        "budget_median_rss_bytes": 268435456,
+        "budget_peak_rss_bytes": 402653184,
+        "numerical_median_vs_budget": "miss",
+        "numerical_peak_vs_budget": "meet",
+        "gate_satisfies_require": false
+      },
+      "scheduling": {
+        "status": "available",
+        "target_verdict": "meet",
+        "full_fleet_coverage": true,
+        "qualified_slot_n": 1,
+        "observed_iterations_per_s": 42.162782069012046,
+        "p99_lower_ms": 25,
+        "p99_upper_ms": 26,
+        "scene_transition_separation": "unavailable",
+        "require_scheduling_ok": true
+      },
+      "decode": {
+        "status": "unavailable",
+        "reason": "coverage_lost_or_incomplete",
+        "decode_canceled_n": 14,
+        "decode_dropped_n": 0,
+        "decode_lost_n": 0,
+        "decode_pending_n": 0,
+        "note": "Same conservative cumulative coverage limitation as control."
+      },
+      "input": {
+        "status": "unavailable",
+        "reason": "no_input_samples"
+      },
+      "renderer": {
+        "frontend": "tui",
+        "gpu_completion_profile": false,
+        "renderer_count_expected": 0
+      },
+      "metrics_require_scheduling_decode_exit": 1,
+      "metrics_require_failure": "decode unavailable (scheduling met)",
+      "server_sampler": {
+        "pid": 4719,
+        "interval_s": 1.0,
+        "duration_s_requested": 260,
+        "sample_count": 260,
+        "exit_code": 0,
+        "rss_median_bytes": 1236713472,
+        "rss_max_bytes": 1236713472,
+        "cpu_cores_median": 0.03999885339374093,
+        "cpu_cores_max": 0.29108051503007687,
+        "overhead": "unmeasured",
+        "pressure": "macOS unavailable"
+      },
+      "helper_snapshots_limitation": "Startup/residual snapshots only; no measured helper overhead claim."
+    },
+    {
+      "id": "candidate_n16_profiles_on",
+      "kind": "matched",
+      "n": 16,
+      "binary_role": "candidate",
+      "binary_sha256": "769a9367e8c2808ebf7b1feb9f2d4830804524613721c9082e22056d7ac61928",
+      "profiles": "on",
+      "run_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260907T005032Z_tui_n16_active",
+      "receipt": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/shared-nav-clean-screen-20260907T004029Z/cell_03_candidate_n16_profiles_on/receipt.json",
+      "started_utc": "2026-09-07T00:50:31Z",
+      "ended_utc": "2026-09-07T00:54:50Z",
+      "wall_s": 232.21400533400003,
+      "diag_exit": 1,
+      "qualified": false,
+      "functional_failure": true,
+      "fail_line": "FAIL: memory tui: livefd010_5: script requested stop on tick 289; isolate stopping",
+      "qualify_errors": [
+        "missing boundary qualification",
+        "observation incomplete",
+        "process failed or incomplete"
+      ],
+      "partial_observation_s": 110.56159141600001,
+      "partial_numerical_not_for_acceptance": {
+        "resident_median_bytes": 947363840.0,
+        "peak_resident_bytes": 968982528,
+        "cpu_cores": 0.23778367029000144,
+        "note": "Unqualified incomplete observe; retained as failure evidence only. Not a performance pass or matched comparison input."
+      },
+      "partial_scheduling_diagnostic_only": {
+        "status": "available",
+        "target_verdict": "meet",
+        "qualified_slot_n": 16,
+        "full_fleet_coverage": true,
+        "worst_p99_upper_ms": 25,
+        "note": "Present on incomplete window; does not override functional failure or unlock acceptance."
+      },
+      "server_sampler": {
+        "sample_count": 260,
+        "exit_code": 0,
+        "rss_median_bytes": 1236729856.0,
+        "cpu_cores_median": 0.03000002501885729,
+        "overhead": "unmeasured"
+      }
+    }
+  ],
+  "matched_n1_comparison_diagnostic": {
+    "order": "control then candidate (forward)",
+    "profiles": "both ON (three profiles together)",
+    "single_pair": true,
+    "accepted_saving": false,
+    "rss_median_bytes": {
+      "control": 384958464,
+      "candidate": 310394880,
+      "delta_candidate_minus_control": -74563584,
+      "delta_mib": -71.109375
+    },
+    "rss_peak_bytes": {
+      "control": 392527872,
+      "candidate": 318308352,
+      "delta_candidate_minus_control": -74219520
+    },
+    "cpu_cores": {
+      "control": 0.03782568939341552,
+      "candidate": 0.04090566267780382,
+      "ratio_candidate_over_control": 1.081425,
+      "pct_change": 8.1425,
+      "provisional_non_regression_margin_pct": 5,
+      "within_margin": false,
+      "note": "Candidate CPU higher by ~8.14% (>5% margin). Not an accepted CPU improvement; single pair always inconclusive for acceptance."
+    },
+    "scheduling_p99_ms": {
+      "control": [25, 26],
+      "candidate": [25, 26],
+      "conservative_regression_rule": "candidate_upper - reference_lower <= 2 ms",
+      "candidate_upper_minus_control_lower_ms": 1,
+      "p99_regression_provable": false,
+      "note": "Both meet 40ms target band; no p99 regression proven against 2ms rule in either direction as acceptance."
+    },
+    "intended_fixed_rss_change": {
+      "direction_observed": "candidate median RSS lower by ~71.1 MiB on this single forward pair",
+      "accepted": false,
+      "reasons": [
+        "single pair always inconclusive under compare_matched_runs",
+        "strict resources gate unavailable (overhead unknown; missing match provenance fields)",
+        "profiles-on instrumentation overhead not attributable",
+        "no reverse-order pair in this card",
+        "N16 matched control never reached"
+      ]
+    },
+    "absolute_tui_n1_budget": {
+      "median_target_mib": 256,
+      "control_median_mib": 367.125,
+      "candidate_median_mib": 296.015625,
+      "both_still_miss_absolute_median_budget": true
+    }
+  },
+  "tooling_gaps_disclosed": [
+    "Strict resources eligibility UNAVAILABLE until attributable overhead-evidence reader exists; numerical RSS/CPU remain visible under inspect.",
+    "missing_resource_provenance / overhead=unknown on both N1 cells (nav_flags_sha256, catalog_sha256, allocator_provenance, feature_flags, renderer_settings, cache_settings null in match_metadata).",
+    "Decode gate unavailable due to lifetime decode_canceled_n on end snapshot (control 11, candidate 14); zero lost/drop/pending.",
+    "Input gate unavailable: no generated input events / visible_ack endpoint.",
+    "scene_transition_separation unavailable in scheduling.",
+    "macOS host pressure unavailable.",
+    "Server sampler overhead unmeasured; helper sample_self is startup/residual only — not helper CPU delta proof.",
+    "In-process quiet_check during batch was cargo/rustc-only; stronger checks were manual boundary receipts."
+  ],
+  "next_requirements": {
+    "not_done_here": [
+      "Reverse matched order (candidate then control) for N1 and N16 once N16 functional failure root-caused",
+      "N1 overhead profiles OFF/ON pair (candidate-only or both sides as authorized)",
+      "Complete control N16 profiles-on after N16 functional fix",
+      "Candidate N16 overhead OFF/ON/ON/OFF quartet after functional N16",
+      "No native diagnostics in this card (still pending later)",
+      "Do not treat this failed short screen as final budgets / three-run matrix / modest-hardware acceptance"
+    ],
+    "orch_followup": "Investigate candidate N16 livefd010_5 script-requested stop on tick 289; measuring processes stopped; no source changes in this implementer card."
+  }
+}
