@@ -761,3 +761,26 @@ existing Default Switch, no autostart. No boot or SSH success is claimed yet.
 Linux matched e318/188a freeze t_ab1637ae remains running; baseline build and
 script/host-play tests passed, TUI tests and candidate/review remain pending.
 No new live VPS cells or accepted performance claims.
+
+## 2026-09-07 19:04 UTC — native builder ready; network held unchanged
+
+Root created and booted 274bot-builder (Gen2,4vCPU,8GiB static,64GiB,Default
+Switch,Secure Boot On,no autostart). Both transferred hashes verified.
+Cloud-init NoCloud completes with no errors; root partition expanded; verified
+serial-hostkey trust and key-only SSH via Windows proxy. Mac alias274bot-builder
+works. Rust/Cargo1.98 plus rustfmt/clippy installed; native C/Rust smoke pass.
+Seed detached; serial task stopped/disabled; pre-campaign-toolchain checkpoint
+retained, future automatic checkpoints disabled. Project build not yet run.
+See hyperv-builder-native-proof-report.md and its raw hashed evidence.
+
+User requested network observation/notes only while others use it. Both hosts
+use2.4GHz/channel6; disk-free SSH measured6.84MB/s upload and8.70MB/s download
+through guest proxy. Wireless leading hypothesis, not proven sole limit.
+No router/Wi-Fi changes, reconnects or further throughput tests now. Existing
+Windows viewer settings unchanged.
+
+Native fingerprint screen protocol predeclared2526bbb; no paired cells yet.
+Luna freeze t_ab1637ae now building candidate after baseline tests passed.
+Submit attribution70e9783 plus uncommitted client diff is in Grok4.5 review
+t_c14b3d93; root must commit reviewed client and gitlink before native build.
+Final performance/latency/lifecycle/scaling and whole-branchGrok4.6 remain.
