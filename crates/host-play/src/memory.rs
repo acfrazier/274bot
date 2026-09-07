@@ -1047,40 +1047,9 @@ impl Run {
                                 } else {
                                     serde_json::Value::from(now_ms.saturating_sub(s.updated_ms))
                                 };
-                                let fine_decode = if fine_on {
-                                    serde_json::json!(s.decode_fine_latency_buckets)
-                                } else {
-                                    serde_json::Value::Null
-                                };
-                                let fine_input = if fine_on {
-                                    serde_json::json!(s.input_fine_latency_buckets)
-                                } else {
-                                    serde_json::Value::Null
-                                };
-                                let fine_bounds = if fine_on {
-                                    serde_json::json!(host::responsiveness_profile::FINE_LATENCY_BOUNDS_MS)
-                                } else {
-                                    serde_json::Value::Null
-                                };
-                                let fine_decode_p99 = if fine_on {
-                                    serde_json::json!(
-                                        host::responsiveness_profile::fine_p99_upper_bound_ms(
-                                            &s.decode_fine_latency_buckets
-                                        )
-                                    )
-                                } else {
-                                    serde_json::Value::Null
-                                };
-                                let fine_input_p99 = if fine_on {
-                                    serde_json::json!(
-                                        host::responsiveness_profile::fine_p99_upper_bound_ms(
-                                            &s.input_fine_latency_buckets
-                                        )
-                                    )
-                                } else {
-                                    serde_json::Value::Null
-                                };
-                                serde_json::json!({
+                                // Two-layer json! (core row + fine/ack siblings) stays under the
+                                // serde_json recursion limit — same pattern as scheduling_slots.
+                                let mut row = serde_json::json!({
                                     "slot_id": s.slot_id,
                                     "generation": s.generation,
                                     "updated_ms": s.updated_ms,
@@ -1106,8 +1075,6 @@ impl Run {
                                     "decode_latency_ns": s.decode_latency_ns,
                                     "decode_latency_buckets": s.decode_latency_buckets,
                                     "decode_p99_upper_bound_ms": host::responsiveness_profile::p99_upper_bound_ms(&s.decode_latency_buckets),
-                                    "decode_fine_latency_buckets": fine_decode,
-                                    "decode_fine_p99_upper_bound_ms": fine_decode_p99,
                                     "decode_coverage_complete": host::responsiveness_profile::decode_coverage_complete(&s),
                                     "decode_accounting_exact": host::responsiveness_profile::decode_accounting_exact(&s),
                                     "decode_means": "PLAYER_INFO_after_drain_to_on_game_tick_entry",
@@ -1121,18 +1088,75 @@ impl Run {
                                     "input_latency_ns": s.input_latency_ns,
                                     "input_latency_buckets": s.input_latency_buckets,
                                     "input_p99_upper_bound_ms": host::responsiveness_profile::p99_upper_bound_ms(&s.input_latency_buckets),
-                                    "input_fine_latency_buckets": fine_input,
-                                    "input_fine_p99_upper_bound_ms": fine_input_p99,
                                     "input_coverage_complete": host::responsiveness_profile::input_coverage_complete(&s),
                                     "latency_bound_ms": host::responsiveness_profile::LATENCY_BOUNDS_MS,
-                                    "fine_latency_bound_ms": fine_bounds,
-                                    "visible_ack": {
-                                        "available": ack.available,
-                                        "endpoint": ack.endpoint,
-                                        "missing_capability": ack.missing_capability,
-                                        "means": ack.means,
-                                    },
-                                })
+                                });
+                                if let Some(obj) = row.as_object_mut() {
+                                    if fine_on {
+                                        obj.insert(
+                                            "decode_fine_latency_buckets".into(),
+                                            serde_json::json!(s.decode_fine_latency_buckets.as_slice()),
+                                        );
+                                        obj.insert(
+                                            "decode_fine_p99_upper_bound_ms".into(),
+                                            serde_json::json!(
+                                                host::responsiveness_profile::fine_p99_upper_bound_ms(
+                                                    &s.decode_fine_latency_buckets
+                                                )
+                                            ),
+                                        );
+                                        obj.insert(
+                                            "input_fine_latency_buckets".into(),
+                                            serde_json::json!(s.input_fine_latency_buckets.as_slice()),
+                                        );
+                                        obj.insert(
+                                            "input_fine_p99_upper_bound_ms".into(),
+                                            serde_json::json!(
+                                                host::responsiveness_profile::fine_p99_upper_bound_ms(
+                                                    &s.input_fine_latency_buckets
+                                                )
+                                            ),
+                                        );
+                                        obj.insert(
+                                            "fine_latency_bound_ms".into(),
+                                            serde_json::json!(
+                                                host::responsiveness_profile::FINE_LATENCY_BOUNDS_MS
+                                                    .as_slice()
+                                            ),
+                                        );
+                                    } else {
+                                        obj.insert(
+                                            "decode_fine_latency_buckets".into(),
+                                            serde_json::Value::Null,
+                                        );
+                                        obj.insert(
+                                            "decode_fine_p99_upper_bound_ms".into(),
+                                            serde_json::Value::Null,
+                                        );
+                                        obj.insert(
+                                            "input_fine_latency_buckets".into(),
+                                            serde_json::Value::Null,
+                                        );
+                                        obj.insert(
+                                            "input_fine_p99_upper_bound_ms".into(),
+                                            serde_json::Value::Null,
+                                        );
+                                        obj.insert(
+                                            "fine_latency_bound_ms".into(),
+                                            serde_json::Value::Null,
+                                        );
+                                    }
+                                    obj.insert(
+                                        "visible_ack".into(),
+                                        serde_json::json!({
+                                            "available": ack.available,
+                                            "endpoint": ack.endpoint,
+                                            "missing_capability": ack.missing_capability,
+                                            "means": ack.means,
+                                        }),
+                                    );
+                                }
+                                row
                             })
                             .collect(),
                     )

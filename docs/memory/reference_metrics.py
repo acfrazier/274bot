@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import statistics
 import sys
@@ -624,6 +625,324 @@ def _slot_hist_delta(
     return delta, None
 
 
+def _hist_sum(buckets: Optional[list]) -> Optional[int]:
+    if not isinstance(buckets, (list, tuple)):
+        return None
+    total = 0
+    for v in buckets:
+        if not _finite(v) or float(v) != int(v) or int(v) < 0:
+            return None
+        total += int(v)
+    return total
+
+
+def _int_counter_delta(start_row: dict, end_row: dict, key: str) -> tuple[Optional[int], Optional[str]]:
+    """Non-negative integer delta for a cumulative counter field when present on both rows."""
+    if key not in start_row and key not in end_row:
+        return None, None
+    if key not in start_row or key not in end_row:
+        return None, "latency_counter_incomplete"
+    s, e = start_row.get(key), end_row.get(key)
+    if not _finite(s) or not _finite(e) or float(s) != int(s) or float(e) != int(e):
+        return None, "latency_counter_malformed"
+    si, ei = int(s), int(e)
+    if si < 0 or ei < 0 or ei < si:
+        return None, "counter_reset"
+    return ei - si, None
+
+
+def fine_to_coarse_rollup(
+    fine_delta: list,
+    coarse_bounds: tuple[int, ...] = LATENCY_BOUNDS_MS,
+    fine_bounds: tuple[int, ...] = FINE_LATENCY_BOUNDS_MS,
+) -> tuple[Optional[list], Optional[str]]:
+    """Roll fine 1 ms bins into coarse bins. Fine overflow maps to all coarse >100 + overflow."""
+    if len(fine_delta) != len(fine_bounds) + 1:
+        return None, "fine_histogram_width_mismatch"
+    expected_coarse = len(coarse_bounds) + 1
+    rolled = [0] * expected_coarse
+    # Map each finite fine upper edge into the first coarse bound that covers it.
+    for i, upper in enumerate(fine_bounds):
+        count = int(fine_delta[i])
+        placed = False
+        for ci, cb in enumerate(coarse_bounds):
+            if upper <= cb:
+                rolled[ci] += count
+                placed = True
+                break
+        if not placed:
+            # Fine finite bin above all coarse bounds → coarse overflow.
+            rolled[-1] += count
+    # Fine overflow must equal sum of coarse bins whose lower edge is > last fine bound
+    # (coarse bounds strictly greater than 100) plus coarse overflow.
+    fine_overflow = int(fine_delta[-1])
+    last_fine = fine_bounds[-1]
+    tail = 0
+    for ci, cb in enumerate(coarse_bounds):
+        prev = 0 if ci == 0 else coarse_bounds[ci - 1]
+        # Coarse bin covers (prev, cb]; contributes to fine-overflow tail iff prev >= last_fine.
+        if prev >= last_fine:
+            tail += rolled[ci]  # still 0 here; tail is only fine_overflow placement target
+    # Place fine overflow entirely into the first coarse bin with prev >= last_fine, else overflow.
+    placed_overflow = False
+    for ci, cb in enumerate(coarse_bounds):
+        prev = 0 if ci == 0 else coarse_bounds[ci - 1]
+        if prev >= last_fine:
+            rolled[ci] += fine_overflow
+            placed_overflow = True
+            # Remaining coarser bins stay 0 from fine (events >100 all share fine overflow).
+            # We cannot split fine overflow across 250/500/1000; require coarse tail+overflow
+            # equality against fine overflow in the conservation check instead.
+            break
+    if not placed_overflow:
+        rolled[-1] += fine_overflow
+    return rolled, None
+
+
+def _validate_fine_coarse_conservation(
+    coarse_delta: list,
+    fine_delta: list,
+    coarse_bounds: tuple[int, ...] = LATENCY_BOUNDS_MS,
+    fine_bounds: tuple[int, ...] = FINE_LATENCY_BOUNDS_MS,
+) -> Optional[str]:
+    """When both hists count the same events: totals match; fine rolls into ≤100 coarse bins."""
+    c_sum = _hist_sum(coarse_delta)
+    f_sum = _hist_sum(fine_delta)
+    if c_sum is None or f_sum is None:
+        return "histogram_malformed"
+    if c_sum != f_sum:
+        return "fine_coarse_count_mismatch"
+    if len(coarse_delta) != len(coarse_bounds) + 1:
+        return "coarse_histogram_width_mismatch"
+    if len(fine_delta) != len(fine_bounds) + 1:
+        return "fine_histogram_width_mismatch"
+    # Roll finite fine bins into coarse bins with bound <= last_fine.
+    last_fine = fine_bounds[-1]
+    expected = [0] * len(coarse_delta)
+    for i, upper in enumerate(fine_bounds):
+        count = int(fine_delta[i])
+        for ci, cb in enumerate(coarse_bounds):
+            if upper <= cb:
+                expected[ci] += count
+                break
+        else:
+            expected[-1] += count
+    # Finite coarse bins with bound <= last_fine must match rolled fine.
+    for ci, cb in enumerate(coarse_bounds):
+        if cb <= last_fine:
+            if int(coarse_delta[ci]) != expected[ci]:
+                return "fine_coarse_rollup_mismatch"
+        else:
+            # Coarse bins above fine range must be empty on the rolled side.
+            if expected[ci] != 0:
+                return "fine_coarse_rollup_mismatch"
+    # Fine overflow + any fine beyond last coarse-≤100 must equal coarse tail (bounds > last_fine) + overflow.
+    fine_overflow = int(fine_delta[-1])
+    coarse_tail = sum(int(coarse_delta[ci]) for ci, cb in enumerate(coarse_bounds) if cb > last_fine)
+    coarse_tail += int(coarse_delta[-1])
+    if fine_overflow != coarse_tail:
+        return "fine_coarse_overflow_mismatch"
+    return None
+
+
+def _validate_latency_hist_conservation(
+    *,
+    prefix: str,
+    srow: dict,
+    erow: dict,
+    coarse_delta: list,
+    fine_delta: Optional[list] = None,
+    counter_deltas: Optional[dict] = None,
+) -> Optional[str]:
+    """Require hist totals match latency_n and event counters; fine/coarse when both present."""
+    coarse_sum = _hist_sum(coarse_delta)
+    if coarse_sum is None:
+        return "histogram_malformed"
+    lat_key = f"{prefix}_latency_n"
+    lat_delta, lat_err = _int_counter_delta(srow, erow, lat_key)
+    if lat_err:
+        return lat_err
+    if lat_delta is not None and lat_delta != coarse_sum:
+        return "histogram_latency_n_mismatch"
+    # Event counter: decode uses dispatch; input uses complete.
+    if prefix == "decode":
+        event_delta = None
+        if counter_deltas is not None and "dispatch" in counter_deltas:
+            event_delta = int(counter_deltas["dispatch"])
+        else:
+            event_delta, err = _int_counter_delta(srow, erow, "dispatch_n")
+            if err:
+                return err
+        if event_delta is not None and event_delta != coarse_sum:
+            return "histogram_dispatch_mismatch"
+        if lat_delta is not None and event_delta is not None and lat_delta != event_delta:
+            return "latency_n_dispatch_mismatch"
+    elif prefix == "input":
+        event_delta = None
+        if counter_deltas is not None and "complete" in counter_deltas:
+            event_delta = int(counter_deltas["complete"])
+        else:
+            event_delta, err = _int_counter_delta(srow, erow, "input_complete_n")
+            if err:
+                return err
+        if event_delta is not None and event_delta != coarse_sum:
+            return "histogram_complete_mismatch"
+        if lat_delta is not None and event_delta is not None and lat_delta != event_delta:
+            return "latency_n_complete_mismatch"
+    if fine_delta is not None:
+        fine_sum = _hist_sum(fine_delta)
+        if fine_sum is None:
+            return "histogram_malformed"
+        if lat_delta is not None and fine_sum != lat_delta:
+            return "fine_histogram_latency_n_mismatch"
+        if fine_sum != coarse_sum:
+            return "fine_coarse_count_mismatch"
+        roll_err = _validate_fine_coarse_conservation(coarse_delta, fine_delta)
+        if roll_err:
+            return roll_err
+    return None
+
+
+def _finite_nonneg_ms(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v) or v < 0.0:
+        return None
+    return v
+
+
+def paired_fine_p99_margin(
+    candidate_slot: dict,
+    reference_slot: dict,
+    *,
+    candidate_run: Optional[dict] = None,
+    reference_run: Optional[dict] = None,
+    margin_ms: float = PAIRED_LATENCY_MARGIN_MS,
+) -> dict:
+    """Diagnostic fine p99 bound difference — pairing eligibility stays unavailable.
+
+    Single-run evaluation must never claim paired ≤2 ms. This helper does **not**
+    implement an independently-qualified matched-run reader (no artifact binding,
+    slot→run binding, gate/endpoint match, or qualification loader). Callers may
+    supply optional run labels for diagnostics only; they never unlock a pair pass.
+
+    When both slots carry available fine_p99 bounds that are finite, nonnegative,
+    and lower ≤ upper, the result includes a diagnostic arithmetic difference
+    (candidate upper − reference lower) but **never** ``paired_within_margin`` or
+    an available/pass status. True paired ≤2 ms remains a remaining gap until a
+    real matched-run evidence adapter exists.
+    """
+    del candidate_run, reference_run  # labels ignored; not proof
+    out: dict[str, Any] = {
+        "status": "unavailable",
+        "reason": "paired_matched_run_evidence_pending",
+        "gate": "paired_fine_p99",
+        "means": (
+            "diagnostic bound difference only when finite bounds present; "
+            "paired eligibility unavailable until a real matched-run evidence "
+            "adapter binds distinct qualified runs (artifact/slot/gate/endpoint); "
+            "not same-run coarse/fine and not caller metadata labels"
+        ),
+        "margin_ms": None,
+        "diagnostic_margin_ms": None,
+    }
+    m_lim = _finite_nonneg_ms(margin_ms)
+    if m_lim is not None:
+        out["margin_ms"] = m_lim
+    if not isinstance(candidate_slot, dict) or not isinstance(reference_slot, dict):
+        out["reason"] = "paired_slot_missing"
+        return out
+    c_fine = candidate_slot.get("fine_p99")
+    r_fine = reference_slot.get("fine_p99")
+    if not isinstance(c_fine, dict) or not isinstance(r_fine, dict):
+        return out
+    if c_fine.get("status") != "available" or r_fine.get("status") != "available":
+        return out
+    c_lo = _finite_nonneg_ms(c_fine.get("lower_ms"))
+    c_up = _finite_nonneg_ms(c_fine.get("upper_ms"))
+    r_lo = _finite_nonneg_ms(r_fine.get("lower_ms"))
+    r_up = _finite_nonneg_ms(r_fine.get("upper_ms"))
+    if c_lo is None or c_up is None or r_lo is None or r_up is None:
+        out["reason"] = "paired_fine_bounds_malformed"
+        return out
+    if c_lo > c_up or r_lo > r_up:
+        out["reason"] = "paired_fine_bounds_inverted"
+        return out
+    margin = c_up - r_lo
+    if not math.isfinite(margin):
+        out["reason"] = "paired_fine_bounds_malformed"
+        return out
+    out.update(
+        {
+            "reason": "paired_matched_run_evidence_pending",
+            "candidate_fine_lower_ms": c_lo,
+            "candidate_fine_upper_ms": c_up,
+            "reference_fine_lower_ms": r_lo,
+            "reference_fine_upper_ms": r_up,
+            "diagnostic_margin_ms": margin,
+            # Explicit: no eligibility boolean — do not reintroduce false pair pass.
+        }
+    )
+    return out
+
+
+# Removed ad-hoc _PAIRED_RUN_MATCH_KEYS / _paired_run_evidence: caller labels are
+# not independently-qualified matched-run proof. Keep arithmetic helper above.
+
+
+def _validate_interior_histograms(selected_items: list, prefix: str) -> Optional[dict]:
+    """Interior coarse+fine histograms and latency_n must be non-decreasing when present.
+
+    Shared by decode and input counter families — input must not return before this.
+    Also rejects recovered resets where counters climb but hist counts drop then recover.
+    """
+    if prefix == "decode":
+        hist_keys = ["decode_latency_buckets", "decode_fine_latency_buckets"]
+        lat_key = "decode_latency_n"
+    elif prefix == "input":
+        hist_keys = ["input_latency_buckets", "input_fine_latency_buckets"]
+        lat_key = "input_latency_n"
+    else:
+        return {"reason": "unknown_prefix", "prefix": prefix}
+    for hkey in hist_keys:
+        prev = selected_items[0]["row"].get(hkey)
+        if prev is None:
+            continue
+        if not isinstance(prev, list):
+            return {"reason": "histogram_malformed", "field": hkey}
+        for item in selected_items[1:]:
+            cur = item["row"].get(hkey)
+            if cur is None:
+                return {"reason": "histogram_missing_interior", "field": hkey}
+            if not isinstance(cur, list) or len(cur) != len(prev):
+                return {"reason": "histogram_malformed", "field": hkey}
+            if any(
+                (not _finite(a) or not _finite(b) or int(b) < int(a)
+                 or float(a) != int(a) or float(b) != int(b))
+                for a, b in zip(prev, cur)
+            ):
+                return {"reason": "counter_reset", "field": hkey}
+            prev = cur
+    # latency_n monotonic when present on any interior row.
+    if any(lat_key in item["row"] for item in selected_items):
+        prev_lat = None
+        for item in selected_items:
+            if lat_key not in item["row"]:
+                return {"reason": "latency_counter_incomplete", "field": lat_key}
+            v = item["row"].get(lat_key)
+            if not _finite(v) or float(v) != int(v) or int(v) < 0:
+                return {"reason": "latency_counter_malformed", "field": lat_key}
+            vi = int(v)
+            if prev_lat is not None and vi < prev_lat:
+                return {"reason": "counter_reset", "field": lat_key}
+            prev_lat = vi
+    return None
+
+
 def _mono_ns_pair(obj: dict, lo_key: str, hi_key: str) -> tuple[Optional[int], Optional[int], Optional[str]]:
     """Parse an inclusive mono-ns bracket. Returns (lo, hi, err_reason)."""
     lo, hi = obj.get(lo_key), obj.get(hi_key)
@@ -815,6 +1134,9 @@ def _contained_responsiveness_pair(
             if (deltas["start"] != deltas["complete"] + deltas["canceled"]
                     + deltas["lost"] + deltas["dropped"] + deltas["pending"]):
                 return None, None, {"reason": "input_accounting_identity_mismatch"}
+            hist_err = _validate_interior_histograms(selected_items, prefix)
+            if hist_err is not None:
+                return None, None, hist_err
             return srow, erow, {"counter_deltas": deltas}
         mono_names = ("edge", "dispatch", "canceled", "lost", "dropped")
         names = {
@@ -881,27 +1203,9 @@ def _contained_responsiveness_pair(
         if (deltas["edge"] != deltas["dispatch"] + deltas["canceled"] - deltas["unmatched_canceled"]
                 + deltas["pending"] + deltas["dropped"] + deltas["lost"]):
             return None, None, {"reason": "accounting_identity_mismatch"}
-        # Interior histogram non-decreasing when present (coarse + fine).
-        hist_keys = ["decode_latency_buckets", "decode_fine_latency_buckets"] if prefix == "decode" else []
-        for hkey in hist_keys:
-            prev = selected_items[0]["row"].get(hkey)
-            if prev is None:
-                continue
-            if not isinstance(prev, list):
-                return None, None, {"reason": "histogram_malformed", "field": hkey}
-            for item in selected_items[1:]:
-                cur = item["row"].get(hkey)
-                if cur is None:
-                    return None, None, {"reason": "histogram_missing_interior", "field": hkey}
-                if not isinstance(cur, list) or len(cur) != len(prev):
-                    return None, None, {"reason": "histogram_malformed", "field": hkey}
-                if any(
-                    (not _finite(a) or not _finite(b) or int(b) < int(a)
-                     or float(a) != int(a) or float(b) != int(b))
-                    for a, b in zip(prev, cur)
-                ):
-                    return None, None, {"reason": "counter_reset", "field": hkey}
-                prev = cur
+        hist_err = _validate_interior_histograms(selected_items, prefix)
+        if hist_err is not None:
+            return None, None, hist_err
         return srow, erow, {"counter_deltas": deltas}
 
     # No native mono: age-based maximal span still audits counters, then fails
@@ -1107,6 +1411,33 @@ def evaluate_decode(
                 _unavailable(err, slot_id=key[0], generation=key[1], gate="decode")
             )
             continue
+        # Fine hist optional sibling — only when both endpoints carry the array.
+        fine_delta = None
+        fine_err = None
+        if (
+            srow.get("decode_fine_latency_buckets") is not None
+            or erow.get("decode_fine_latency_buckets") is not None
+        ):
+            fine_delta, fine_err = _slot_hist_delta(srow, erow, "decode_fine_latency_buckets")
+            if fine_err:
+                slots.append(
+                    _unavailable(fine_err, slot_id=key[0], generation=key[1], gate="decode",
+                                 field="decode_fine_latency_buckets")
+                )
+                continue
+        cons_err = _validate_latency_hist_conservation(
+            prefix="decode",
+            srow=srow,
+            erow=erow,
+            coarse_delta=delta,
+            fine_delta=fine_delta,
+            counter_deltas=contained.get("counter_deltas") if contained else None,
+        )
+        if cons_err:
+            slots.append(
+                _unavailable(cons_err, slot_id=key[0], generation=key[1], gate="decode")
+            )
+            continue
         bounds = p99_lower_upper_ms(delta, LATENCY_BOUNDS_MS)
         # Prefer host-emitted bounds list when present.
         bound_list = erow.get("latency_bound_ms")
@@ -1116,8 +1447,7 @@ def evaluate_decode(
             except (TypeError, ValueError):
                 pass
         fine_bounds = None
-        fine_delta, fine_err = _slot_hist_delta(srow, erow, "decode_fine_latency_buckets")
-        if fine_delta is not None and fine_err is None:
+        if fine_delta is not None:
             fine_bound_list = erow.get("fine_latency_bound_ms")
             fine_bounds_tuple = FINE_LATENCY_BOUNDS_MS
             if isinstance(fine_bound_list, list) and fine_bound_list:
@@ -1142,16 +1472,8 @@ def evaluate_decode(
         if fine_bounds is not None:
             row["fine_buckets_delta"] = fine_delta
             row["fine_p99"] = fine_bounds
-            # Paired 2ms margin only with proven bounds on both histograms.
-            if (
-                bounds.get("status") == "available"
-                and fine_bounds.get("status") == "available"
-                and bounds.get("lower_ms") is not None
-                and fine_bounds.get("upper_ms") is not None
-            ):
-                margin = float(fine_bounds["upper_ms"]) - float(bounds["lower_ms"])
-                row["fine_paired_margin_ms"] = margin
-                row["fine_paired_within_2ms"] = margin <= 2.0
+            # Same-run coarse/fine is NOT a paired 2ms proof. Paired margin
+            # requires paired_fine_p99_margin(candidate_slot, reference_slot).
         if contained:
             row.update(contained)
             row["decode_canceled_n_delta"] = contained["counter_deltas"]["canceled"]
@@ -1349,6 +1671,31 @@ def evaluate_input(
         if err:
             slots.append(_unavailable(err, slot_id=key[0], generation=key[1], gate="input"))
             continue
+        fine_delta = None
+        if (
+            srow.get("input_fine_latency_buckets") is not None
+            or erow.get("input_fine_latency_buckets") is not None
+        ):
+            fine_delta, fine_err = _slot_hist_delta(srow, erow, "input_fine_latency_buckets")
+            if fine_err:
+                slots.append(
+                    _unavailable(fine_err, slot_id=key[0], generation=key[1], gate="input",
+                                 field="input_fine_latency_buckets")
+                )
+                continue
+        cons_err = _validate_latency_hist_conservation(
+            prefix="input",
+            srow=srow,
+            erow=erow,
+            coarse_delta=delta,
+            fine_delta=fine_delta,
+            counter_deltas=contained.get("counter_deltas") if contained else None,
+        )
+        if cons_err:
+            slots.append(
+                _unavailable(cons_err, slot_id=key[0], generation=key[1], gate="input")
+            )
+            continue
         bounds = p99_lower_upper_ms(delta, LATENCY_BOUNDS_MS)
         bound_list = erow.get("latency_bound_ms")
         if isinstance(bound_list, list) and bound_list:
@@ -1356,6 +1703,16 @@ def evaluate_input(
                 bounds = p99_lower_upper_ms(delta, tuple(int(x) for x in bound_list))
             except (TypeError, ValueError):
                 pass
+        fine_bounds = None
+        if fine_delta is not None:
+            fine_bound_list = erow.get("fine_latency_bound_ms")
+            fine_bounds_tuple = FINE_LATENCY_BOUNDS_MS
+            if isinstance(fine_bound_list, list) and fine_bound_list:
+                try:
+                    fine_bounds_tuple = tuple(int(x) for x in fine_bound_list)
+                except (TypeError, ValueError):
+                    pass
+            fine_bounds = p99_lower_upper_ms(fine_delta, fine_bounds_tuple)
         verdict = target_verdict(bounds, target_ms)
         row = {
             "slot_id": key[0],
@@ -1370,6 +1727,9 @@ def evaluate_input(
             "sample_age_ms": erow.get("sample_age_ms"),
             "freshness_field": "sample_age_ms",
         }
+        if fine_bounds is not None:
+            row["fine_buckets_delta"] = fine_delta
+            row["fine_p99"] = fine_bounds
         if contained:
             row.update(contained)
         if bounds.get("status") == "available":

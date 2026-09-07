@@ -724,24 +724,28 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         # Warmup unmatched cancels do not consume edges on this slot:
         # edge = dispatch + (canceled - unmatched) + pending + lost + dropped
         # With unmatched==canceled and pending 0 → edge == dispatch.
+        # Hist totals must equal latency_n == dispatch (native one-sample-per-dispatch).
         start_row = {
             "slot_id": 7, "generation": 1, "sample_age_ms": 0,
             "decode_edge_n": 100, "dispatch_n": 100,
             "decode_canceled_n": 5, "decode_unmatched_canceled_n": 5,
             "decode_lost_n": 0,
             "decode_dropped_n": 0, "decode_pending_n": 0,
+            "decode_latency_n": 100,
             "decode_coverage_complete": False,
-            "decode_latency_buckets": [0, 0, 0, 10, 80, 0, 0, 0, 0, 0, 0],
+            "decode_latency_buckets": [0, 0, 0, 10, 90, 0, 0, 0, 0, 0, 0],
             "latency_bound_ms": bounds, "ended": ended,
         }
         end_row = dict(start_row)
         # matched in-span = canceled_end - 5; unmatched stays 5
         matched = canceled_end - 5
+        end_dispatch = 300 - matched
         end_row.update({
-            "decode_edge_n": 300, "dispatch_n": 300 - matched,
+            "decode_edge_n": 300, "dispatch_n": end_dispatch,
             "decode_canceled_n": canceled_end,
             "decode_unmatched_canceled_n": 5,
-            "decode_latency_buckets": [0, 0, 0, 30, 170, 0, 0, 0, 0, 0, 0],
+            "decode_latency_n": end_dispatch,
+            "decode_latency_buckets": [0, 0, 0, 30, end_dispatch - 30, 0, 0, 0, 0, 0, 0],
         })
         if publisher:
             for row, elapsed in ((start_row, 40.5), (end_row, 160.0)):
@@ -783,7 +787,8 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         mid_row.update({
             "decode_edge_n": 200, "dispatch_n": 200, "decode_canceled_n": 5,
             "decode_unmatched_canceled_n": 5,
-            "decode_latency_buckets": [0, 0, 0, 20, 120, 0, 0, 0, 0, 0, 0],
+            "decode_latency_n": 200,
+            "decode_latency_buckets": [0, 0, 0, 20, 180, 0, 0, 0, 0, 0, 0],
             # Capture after observe_lb, before read_hi of its sample.
             "decode_capture_mono_ns_lower": e0 + 1_000_000,
             "decode_capture_mono_ns_upper": e0 + 2_000_000,
@@ -826,14 +831,22 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         self.assertEqual(slot["counter_deltas"]["canceled"], 0)
         self.assertEqual(slot["target_verdict"], "meet")
 
-    def test_decode_fine_hist_paired_margin_when_present(self):
+    def test_decode_fine_hist_emits_bounds_without_same_run_paired_claim(self):
+        """Fine p99 sibling is available; same-run paired ≤2ms must NOT be claimed."""
         meta = _meta(responsiveness_profile=True)
         start, end = self._contained_pair()
         fine_bounds = list(rm.FINE_LATENCY_BOUNDS_MS)
+        # Conserved with coarse: start 10@≤25 + 90@≤40; end 30@≤25 + 270@≤40
+        # Fine: 10 events at 25ms (idx 24), 90 at 40ms (idx 39) → start totals 100
         fine_s = [0] * (len(fine_bounds) + 1)
+        fine_s[24] = 10
+        fine_s[39] = 90
+        fine_m = list(fine_s)
+        fine_m[24] = 20
+        fine_m[39] = 180
         fine_e = list(fine_s)
-        fine_s[2] = 10
-        fine_e[2] = 110
+        fine_e[24] = 30
+        fine_e[39] = 270
         e0, e1, e2 = 40_000_000_000, 70_000_000_000, 100_000_000_000
         start["responsiveness_profile"][0].update({
             "decode_capture_mono_ns_lower": 10_000_000_000,
@@ -846,9 +859,9 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         mid["elapsed_s"] = 100.0
         mr = mid["responsiveness_profile"][0]
         mr.update({
-            "decode_edge_n": 200, "dispatch_n": 200,
-            "decode_latency_buckets": [0, 0, 0, 20, 120, 0, 0, 0, 0, 0, 0],
-            "decode_fine_latency_buckets": list(fine_s),
+            "decode_edge_n": 200, "dispatch_n": 200, "decode_latency_n": 200,
+            "decode_latency_buckets": [0, 0, 0, 20, 180, 0, 0, 0, 0, 0, 0],
+            "decode_fine_latency_buckets": fine_m,
             "decode_capture_mono_ns_lower": e0 + 1_000_000,
             "decode_capture_mono_ns_upper": e0 + 2_000_000,
             "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
@@ -872,7 +885,130 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         slot = g["slots"][0]
         self.assertIn("fine_p99", slot)
         self.assertEqual(slot["fine_p99"]["status"], "available")
-        self.assertIn("fine_paired_within_2ms", slot)
+        self.assertNotIn("fine_paired_within_2ms", slot)
+        self.assertNotIn("fine_paired_margin_ms", slot)
+
+    def test_decode_inconsistent_fine_coarse_is_negative(self):
+        """Former false-paired fixture: coarse 25–40 vs fine ~3ms must fail closed."""
+        meta = _meta(responsiveness_profile=True)
+        start, end = self._contained_pair()
+        fine_bounds = list(rm.FINE_LATENCY_BOUNDS_MS)
+        fine_s = [0] * (len(fine_bounds) + 1)
+        fine_e = list(fine_s)
+        fine_s[2] = 10
+        fine_e[2] = 110  # n=100 at ~3ms while coarse stays in 25–40 bins
+        e0, e1, e2 = 40_000_000_000, 70_000_000_000, 100_000_000_000
+        start["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": 10_000_000_000,
+            "decode_capture_mono_ns_upper": 10_000_100_000,
+            "decode_fine_latency_buckets": list(fine_s),
+            "fine_latency_bound_ms": fine_bounds,
+        })
+        start["responsiveness_clock"] = self._mono_clock(e0)
+        mid = json.loads(json.dumps(start))
+        mid["elapsed_s"] = 100.0
+        mr = mid["responsiveness_profile"][0]
+        mr.update({
+            "decode_edge_n": 200, "dispatch_n": 200, "decode_latency_n": 200,
+            "decode_latency_buckets": [0, 0, 0, 20, 180, 0, 0, 0, 0, 0, 0],
+            "decode_fine_latency_buckets": list(fine_s),
+            "decode_capture_mono_ns_lower": e0 + 1_000_000,
+            "decode_capture_mono_ns_upper": e0 + 2_000_000,
+            "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
+        })
+        mid["responsiveness_clock"] = self._mono_clock(
+            e1, sample_lo=e1, sample_hi=e1 + 5_000_000,
+            read_lo=e1 + 100_000, read_hi=e1 + 3_000_000,
+        )
+        end["responsiveness_profile"][0].update({
+            "decode_capture_mono_ns_lower": e1 + 1_000_000,
+            "decode_capture_mono_ns_upper": e1 + 2_000_000,
+            "decode_fine_latency_buckets": fine_e,
+            "fine_latency_bound_ms": fine_bounds,
+        })
+        end["responsiveness_clock"] = self._mono_clock(
+            e2, sample_lo=e2, sample_hi=e2 + 5_000_000,
+            read_lo=e2 + 100_000, read_hi=e2 + 3_000_000,
+        )
+        g = rm.evaluate_decode(meta, [start, mid, end], target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertIn(
+            g["slots"][0]["reason"],
+            {
+                "fine_coarse_rollup_mismatch",
+                "fine_coarse_count_mismatch",
+                "fine_histogram_latency_n_mismatch",
+            },
+            g["slots"][0],
+        )
+
+    def test_paired_fine_margin_is_diagnostic_only_never_eligibility_pass(self):
+        """Arithmetic delta may be reported; paired eligibility stays unavailable."""
+        cand = {
+            "status": "available", "contained_window": True,
+            "fine_p99": {"status": "available", "lower_ms": 2, "upper_ms": 3},
+        }
+        ref = {
+            "status": "available", "contained_window": True,
+            "fine_p99": {"status": "available", "lower_ms": 2, "upper_ms": 3},
+        }
+        p = rm.paired_fine_p99_margin(cand, ref)
+        self.assertEqual(p["status"], "unavailable")
+        self.assertEqual(p["reason"], "paired_matched_run_evidence_pending")
+        self.assertEqual(p["diagnostic_margin_ms"], 1.0)
+        self.assertNotIn("paired_within_margin", p)
+        # Caller labels must not unlock a pass
+        fake_runs = (
+            {"run_id": "c1", "qualified": True, "frontend": "tui", "n": 1,
+             "workload": "active", "renderer": "cpu",
+             "responsiveness_profile": True, "responsiveness_fine": True},
+            {"run_id": "r1", "qualified": True, "frontend": "tui", "n": 1,
+             "workload": "active", "renderer": "cpu",
+             "responsiveness_profile": True, "responsiveness_fine": True},
+        )
+        p2 = rm.paired_fine_p99_margin(
+            cand, ref, candidate_run=fake_runs[0], reference_run=fake_runs[1]
+        )
+        self.assertEqual(p2["status"], "unavailable")
+        self.assertEqual(p2["reason"], "paired_matched_run_evidence_pending")
+        self.assertNotIn("paired_within_margin", p2)
+        # NaN / negative / inverted bounds rejected (still no pass)
+        bad_nan = {
+            "status": "available", "contained_window": True,
+            "fine_p99": {"status": "available", "lower_ms": float("nan"), "upper_ms": 3},
+        }
+        self.assertEqual(
+            rm.paired_fine_p99_margin(bad_nan, ref)["reason"],
+            "paired_fine_bounds_malformed",
+        )
+        bad_neg = {
+            "status": "available", "contained_window": True,
+            "fine_p99": {"status": "available", "lower_ms": -1, "upper_ms": 3},
+        }
+        self.assertEqual(
+            rm.paired_fine_p99_margin(bad_neg, ref)["reason"],
+            "paired_fine_bounds_malformed",
+        )
+        bad_inv = {
+            "status": "available", "contained_window": True,
+            "fine_p99": {"status": "available", "lower_ms": 5, "upper_ms": 3},
+        }
+        self.assertEqual(
+            rm.paired_fine_p99_margin(bad_inv, ref)["reason"],
+            "paired_fine_bounds_inverted",
+        )
+        # -inf must not yield a true eligibility pass
+        bad_ninf = {
+            "status": "available", "contained_window": True,
+            "fine_p99": {
+                "status": "available",
+                "lower_ms": float("-inf"),
+                "upper_ms": 3,
+            },
+        }
+        pn = rm.paired_fine_p99_margin(cand, bad_ninf)
+        self.assertEqual(pn["status"], "unavailable")
+        self.assertNotIn("paired_within_margin", pn)
 
     def test_interior_ended_row_rejects_mono_window(self):
         meta = _meta(responsiveness_profile=True)
@@ -935,7 +1071,8 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         mr.update({
             "decode_edge_n": 201, "dispatch_n": 200, "decode_canceled_n": 5,
             "decode_unmatched_canceled_n": 5, "decode_pending_n": 1,
-            "decode_latency_buckets": [0, 0, 0, 20, 120, 0, 0, 0, 0, 0, 0],
+            "decode_latency_n": 200,
+            "decode_latency_buckets": [0, 0, 0, 20, 180, 0, 0, 0, 0, 0, 0],
             "decode_capture_mono_ns_lower": e0 + 1_000_000,
             "decode_capture_mono_ns_upper": e0 + 2_000_000,
             "updated_ms": int((_meta()["started_unix"] + 99.7) * 1000),
@@ -947,6 +1084,8 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         end["responsiveness_profile"][0].update({
             "decode_edge_n": 300, "dispatch_n": 300, "decode_canceled_n": 5,
             "decode_unmatched_canceled_n": 5, "decode_pending_n": 0,
+            "decode_latency_n": 300,
+            "decode_latency_buckets": [0, 0, 0, 30, 270, 0, 0, 0, 0, 0, 0],
             "decode_capture_mono_ns_lower": e1 + 1_000_000,
             "decode_capture_mono_ns_upper": e1 + 2_000_000,
         })
@@ -1037,6 +1176,69 @@ class DecodeInputGpuSyntheticTests(unittest.TestCase):
         g = rm.evaluate_decode(meta, [start, middle, end])
         self.assertEqual(g["status"], "unavailable")
         self.assertEqual(g["slots"][0]["reason"], "publisher_slot_row_missing_or_duplicate")
+
+    def test_input_interior_histogram_reset_rejects_even_when_counters_recover(self):
+        """Orch false-pass: input hist 200→5→300 with counters climbing must be unavailable."""
+        meta = _meta(responsiveness_profile=True)
+        bounds = list(rm.LATENCY_BOUNDS_MS)
+        e0, e1, e2, e3 = 40e9, 70e9, 85e9, 100e9
+
+        def row(start_n, buckets, cap_lo, cap_hi, age_elapsed):
+            return {
+                "slot_id": 7, "generation": 1, "sample_age_ms": 0,
+                "decode_edge_n": start_n, "dispatch_n": start_n,
+                "decode_canceled_n": 5, "decode_unmatched_canceled_n": 5,
+                "decode_lost_n": 0, "decode_dropped_n": 0, "decode_pending_n": 0,
+                "decode_latency_n": start_n,
+                "decode_latency_buckets": [0, 0, 0, 0, start_n, 0, 0, 0, 0, 0, 0],
+                "decode_coverage_complete": False,
+                "latency_bound_ms": bounds, "ended": False,
+                "updated_ms": int((_meta()["started_unix"] + age_elapsed - 0.3) * 1000),
+                "decode_capture_mono_ns_lower": int(cap_lo),
+                "decode_capture_mono_ns_upper": int(cap_hi),
+                "input_start_n": start_n, "input_complete_n": start_n,
+                "input_canceled_n": 0, "input_lost_n": 0, "input_dropped_n": 0,
+                "input_pending_n": 0, "input_latency_n": start_n,
+                "input_latency_buckets": buckets,
+                "input_coverage_complete": True,
+                "input_surface": "tui",
+                "visible_ack": {"available": True},
+                "input_capture_mono_ns_lower": int(cap_lo),
+                "input_capture_mono_ns_upper": int(cap_hi),
+            }
+
+        samples = []
+        for elapsed, en, buckets, clo, chi in (
+            (40.5, 100, [100] + [0] * 10, 10e9, 10e9 + 1e5),
+            (100.0, 200, [200] + [0] * 10, e0 + 1e6, e0 + 2e6),
+            (130.0, 250, [5] + [0] * 10, 60e9, 60e9 + 1e5),  # hist reset
+            (160.0, 300, [300] + [0] * 10, e1 + 1e6, e1 + 2e6),
+        ):
+            samples.append({
+                "phase": "observe", "elapsed_s": elapsed,
+                "responsiveness_profile": [row(en, buckets, clo, chi, elapsed)],
+                "responsiveness_clock": self._mono_clock(
+                    int(en * 1e0 + elapsed * 1e9),  # unique-ish
+                    sample_lo=int(elapsed * 1e9),
+                    sample_hi=int(elapsed * 1e9) + 5_000_000,
+                    read_lo=int(elapsed * 1e9) + 100_000,
+                    read_hi=int(elapsed * 1e9) + 3_000_000,
+                ),
+            })
+        # Fix elapsed_mono to the intended e0..e3 series
+        for s, en in zip(samples, (e0, e1, e2, e3)):
+            s["responsiveness_clock"] = self._mono_clock(
+                int(en), sample_lo=int(en), sample_hi=int(en) + 5_000_000,
+                read_lo=int(en) + 100_000, read_hi=int(en) + 3_000_000,
+            )
+        # First row capture before observe_lb so window starts at sample1
+        samples[0]["responsiveness_profile"][0]["input_capture_mono_ns_lower"] = 10_000_000_000
+        samples[0]["responsiveness_profile"][0]["input_capture_mono_ns_upper"] = 10_000_100_000
+        samples[0]["responsiveness_profile"][0]["decode_capture_mono_ns_lower"] = 10_000_000_000
+        samples[0]["responsiveness_profile"][0]["decode_capture_mono_ns_upper"] = 10_000_100_000
+        g = rm.evaluate_input(meta, samples, target_ms=100)
+        self.assertEqual(g["status"], "unavailable", g)
+        self.assertEqual(g["slots"][0]["reason"], "counter_reset", g["slots"][0])
 
 
 class ObservationWindowTests(unittest.TestCase):

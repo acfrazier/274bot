@@ -3,32 +3,48 @@
 Task `t_135ceb9f` (recovery of timed-out `t_8bade183`). **No final performance
 or lifecycle acceptance claim.**
 
-## Contained responsiveness windows (follow-up)
+# Contained responsiveness windows (follow-up)
 
 Decode/input rows are audited for a deterministic maximal observation span before
 any latency result is considered. The adapter validates every publisher row in
 that span, including duplicate/missing rows, monotonic slot-generation counters,
-resets, cancellation/lost/drop deltas, pending boundaries, and decode accounting
-offsets. It never searches for a favorable inner segment and never treats a
-lifetime coverage flag as a window flag.
+resets (including interior histogram recovered-resets), cancellation/lost/drop
+deltas, pending boundaries (pending is a gauge), decode accounting with
+`decode_unmatched_canceled_n` when present, and coarse/fine histogram
+conservation vs `latency_n` / dispatch or complete deltas.
 
-The current serializer emits `updated_ms` and `sample_age_ms`, but it does not
-bracket the responsiveness registry read and sample elapsed capture with a
-shared monotonic clock. `elapsed_s - sample_age_ms` is only a one-sided relation;
-there is no source-proven upper bound on serialization delay or clock mapping.
-Therefore the adapter returns `publisher_clock_bracket_missing` after retaining
-its selected-boundary and counter-audit details. It does not claim the apparent
-N=1 decode span as available. Input applies the same fail-closed boundary policy
-and remains unavailable with no generated input events.
+## Native mono clock brackets (task `t_6670c1ec`)
+
+When samples carry `responsiveness_clock` with domain
+`responsiveness_process_mono` and `elapsed_mono_ns` stamped with the same Instant
+as `elapsed_s`, the offline adapter selects conservative observe bounds from the
+first/last observe-row mono elapsed values, requires read ⊆ sample brackets, and
+requires capture_hi ≤ read_hi. Separate decode vs input capture brackets are
+consumed as emitted.
+
+Without mono brackets the adapter still fail-closes with
+`publisher_clock_bracket_missing` after counter audit (not a metadata opt-in).
+Legacy JSONL is not retrofitted.
+
+Fine latency histograms (1 ms bins 0–100 + overflow) are optional siblings.
+Single-run evaluation emits coarse and fine p99 bounds only — **never** a
+same-run `fine_paired_within_2ms` claim. `paired_fine_p99_margin` may report a
+diagnostic arithmetic difference when fine bounds are finite and well-ordered,
+but pairing eligibility remains `unavailable`
+(`paired_matched_run_evidence_pending`) with **no** `paired_within_margin` pass
+boolean. A real matched-run evidence adapter (artifact/slot/gate/endpoint
+binding) is an explicit remaining gap — caller metadata labels are not proof.
+
+Design / storage cost / test commands: see
+`docs/memory/responsiveness-clock-bracket-report.md`.
 
 The failed N=16 run `20260907T005032Z_tui_n16_active` remains unqualified and
 cannot pass overall; its partial observations are not acceptance evidence.
 
-This adapter cannot prove the requested 2 ms paired margin: coarse histogram
-bounds remain 25–40 ms, not a precise 2 ms measurement. Resource strict
-eligibility remains unavailable without attributable sampler/serializer
-overhead evidence. Hardware presentation/scanout timestamps, generated input
-events, and target-hardware validation remain unavailable.
+Resource strict eligibility remains unavailable without attributable
+sampler/serializer overhead evidence. Hardware presentation/scanout timestamps
+and target-hardware validation remain unavailable. **No live/performance
+acceptance from unit fixtures or this adapter alone.**
 
 ## Scope (this card only)
 
