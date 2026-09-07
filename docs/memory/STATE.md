@@ -260,3 +260,41 @@ runtime x11vnc fix applied); rebuilt desktop image is available separately.
 Existing Chroma service was not changed. These are ambient helpers, not free
 resources to omit from later accounting. No target-hardware, final matrix,
 lifecycle, 128-capacity, remaining-candidate or whole-branch acceptance yet.
+
+
+### 2026-09-07 02:05 UTC — managed Stop evidence; measurements paused
+
+Reviewed Stop-reason instrumentation (`341a5b8`) captured an actual bank-route
+failure in managed diagnostic `20260907T014123Z_tui_n16_active`. The process
+exited 1 itself; its outer watchdog did not fire. Slot `live121fc_14` stopped
+at snapshot tick 529 with `could not reach Bank booth bank`. The reviewed
+receipt is [managed diagnostic](n16-stop-managed-diagnostic.md), `0376084`.
+It remains unqualified, with no observe-end and no performance acceptance.
+The original quiet-screen Stop reason remains unknown; do not equate them.
+
+Root inspection of this run's existing diagnostic rows 141–148 shows movement
+from `(2662,3307)` south to `(2662,3297)`, then north to `(2660,3305)` during
+`hold=true`. Chat changes to `It's not here for you.` before hold releases.
+The original route stays generation 1 with no second WalkAttempt. This is
+sampled interruption evidence, not proof of the exact guardian command or NPC.
+The client generation counter and navigation snapshot tick are different
+clock domains. The route expires at navigation tick 297; the terminal
+`hold=false` cannot establish absence of an earlier interruption.
+
+Forensics `t_7269f401` is being revised/reviewed against that whole timeline and
+the existing guardian freeze/resume path. No behavioral fix, additional live
+retry, or new capture mechanism is approved by this status entry. Existing
+`BOT_NAV_CAPTURES` can save full scene snapshots at navigation failure, but is
+currently wired to panel captures only. Reuse existing capabilities if a
+further diagnostic is needed; local driver acceptance is not a server ACK.
+
+Earlier diagnostic `20260907T012918Z_tui_n16_active` completed its 300-second
+observation with progress but was externally terminated during teardown; it is
+not a qualified full-process pass. An accidentally started second attempt was
+stopped and retained. Neither supersedes the managed failing receipt.
+
+Native responsiveness clock brackets and fine latency histograms are in
+progress (`t_6670c1ec`). The reviewed offline adapter correctly rejects the old
+raw clock evidence; prior first-pair decode/input results remain unavailable.
+Failure-only capture (`t_d102507c`) follows this instrumentation review. Neither
+work item authorizes a performance claim or changes route/script behavior.
