@@ -189,6 +189,173 @@ class RunDiagnosticCli(unittest.TestCase):
         self.assertEqual(env_both.get("BOT_MEMORY_FAILURE_CAPTURE"), "1")
         self.assertEqual(env_both["BOT_MEMORY_DIAGNOSTICS"], "1")
 
+    def test_import_survives_missing_unix_tty_modules(self):
+        """Panel import/validate must work when pty/fcntl/termios are absent."""
+        code = r"""
+import importlib
+import sys
+import types
+
+BLOCK = {"pty", "fcntl", "termios"}
+
+class Blocker:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in BLOCK:
+            raise ModuleNotFoundError(fullname)
+        return None
+
+# Drop cached modules so the blocker is meaningful.
+for name in list(sys.modules):
+    if name in BLOCK or name == "run_diagnostic" or name.startswith("run_diagnostic."):
+        del sys.modules[name]
+
+sys.meta_path.insert(0, Blocker())
+import run_diagnostic as rd
+
+# Top-level import must not pull Unix TTY stack.
+assert "pty" not in sys.modules
+assert "fcntl" not in sys.modules
+assert "termios" not in sys.modules
+
+p = rd.build_parser()
+a = p.parse_args(["panel", "1", "idle", "--focused-one"])
+rd.validate_args(a, p)
+env = rd.build_child_env(
+    a, "/tmp/panel-no-pty", base_env={"PATH": "/usr/bin", "HOME": "/tmp"}, platform="win32"
+)
+assert "RS2B0T" not in env or env.get("RS2B0T") != rd._DEFAULT_RS2B0T_MAC
+assert env.get("BOT_MEMORY_RENDER_POLICY") == "focused-one"
+
+# Real TUI terminal must fail closed, never silently headless.
+try:
+    rd.require_terminal_transport(platform="win32")
+except RuntimeError as err:
+    msg = str(err).lower()
+    assert "windows" in msg or "conpty" in msg
+    assert "headless" in msg or "panel" in msg
+else:
+    raise SystemExit("expected Windows TUI terminal RuntimeError")
+
+try:
+    rd.require_terminal_transport(platform="linux")
+except RuntimeError as err:
+    assert "pty" in str(err).lower() or "termios" in str(err).lower() or "fcntl" in str(err).lower()
+else:
+    raise SystemExit("expected missing-module RuntimeError on linux flag")
+
+print("ok")
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env={**dict(**{k: v for k, v in __import__("os").environ.items()}), "PYTHONPATH": str(ROOT)},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("ok", proc.stdout)
+
+    def test_rs2b0t_default_mac_only_not_windows(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a = p.parse_args(["panel", "1", "idle"])
+        base = {"PATH": "/usr/bin", "HOME": "/tmp"}
+        env_mac = rd.build_child_env(a, "/tmp/r1", base_env=base, platform="darwin")
+        self.assertEqual(env_mac.get("RS2B0T"), rd._DEFAULT_RS2B0T_MAC)
+        env_win = rd.build_child_env(a, "/tmp/r2", base_env=dict(base), platform="win32")
+        self.assertNotIn("RS2B0T", env_win)
+        env_win_explicit = rd.build_child_env(
+            a,
+            "/tmp/r3",
+            base_env={**base, "RS2B0T": r"C:\src\rs2b0t"},
+            platform="win32",
+        )
+        self.assertEqual(env_win_explicit.get("RS2B0T"), r"C:\src\rs2b0t")
+
+    def test_resolve_rs2b0t_commit_fail_closed_windows(self):
+        import run_diagnostic as rd
+
+        with self.assertRaises(ValueError) as ctx:
+            rd.resolve_rs2b0t_commit({}, platform="win32")
+        self.assertIn("RS2B0T", str(ctx.exception))
+        self.assertNotIn("deadbeef", str(ctx.exception).lower())
+
+        calls = []
+
+        def fake_git(args):
+            calls.append(args)
+            return "abc123real"
+
+        # Non-dir path must not call git with a fabricated SHA path silently OK.
+        with self.assertRaises(ValueError):
+            rd.resolve_rs2b0t_commit(
+                {"RS2B0T": "/no/such/rs2b0t-checkout-xyz"},
+                platform="win32",
+                git_check_output=fake_git,
+            )
+        self.assertEqual(calls, [])
+
+    def test_resolve_rs2b0t_commit_real_git_when_path_ok(self):
+        import run_diagnostic as rd
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "t@example.com"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "t"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            (root / "f").write_text("x\n")
+            subprocess.run(["git", "add", "f"], cwd=root, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "t"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            head = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            got = rd.resolve_rs2b0t_commit({"RS2B0T": str(root)}, platform="win32")
+            self.assertEqual(got, head)
+
+    def test_catalog_path_uses_operator_home_windows_profile(self):
+        import run_diagnostic as rd
+
+        path = rd.catalog_path_for_env(
+            {"USERPROFILE": r"C:\Users\BotTest", "PATH": "x"},
+            windows=True,
+        )
+        self.assertTrue(str(path).replace("\\", "/").endswith(".274bot/js-scripts.json"))
+        # Empty explicit HOME must not silently use USERPROFILE (Rust parity).
+        path_empty = rd.catalog_path_for_env(
+            {"HOME": "", "USERPROFILE": r"C:\Users\BotTest"},
+            windows=True,
+        )
+        # bot_home "." → resolve relative catalog
+        self.assertTrue(str(path_empty).endswith(str(pathlib.Path(".274bot") / "js-scripts.json")) or
+                        ".274bot" in str(path_empty))
+
+    def test_unix_terminal_transport_loads_when_modules_present(self):
+        import run_diagnostic as rd
+
+        if sys.platform == "win32":
+            self.skipTest("host is win32")
+        fcntl, pty, termios = rd.require_terminal_transport()
+        self.assertTrue(hasattr(pty, "openpty"))
+        self.assertTrue(hasattr(fcntl, "ioctl"))
+        self.assertTrue(hasattr(termios, "TIOCSWINSZ"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,14 @@ Modes:
   stop_controlled (duration=None): requested stop -> exit 0 / status closed /
     completion controlled_stop with honest first/last spans and no
     full-duration flag. Future readers must independently require coverage.
+
+Stop channels (stop_controlled):
+  - Unix SIGINT/SIGTERM handlers (when installable)
+  - in-process stop_event
+  - portable exclusive stop-file path (--stop-file): orchestrator creates the
+    file to request stop; presence is polled in sleep slices. Stale/missing
+    parent / non-absolute path fail closed at start. Does not rely on
+    TerminateProcess-as-SIGTERM on Windows.
 """
 from __future__ import annotations
 
@@ -418,6 +426,40 @@ def process_sampler(backend: str):
     raise AccountingError('unknown process sampling backend')
 
 
+def validate_stop_file_path(stop_file: Optional[pathlib.Path]) -> Optional[pathlib.Path]:
+    """Fail closed on stale, relative, or parent-missing stop paths.
+
+    The path must not exist yet — exclusive create is the orchestrator's job.
+    """
+    if stop_file is None:
+        return None
+    path = pathlib.Path(stop_file)
+    if not path.is_absolute():
+        raise AccountingError(f"stop_file must be an absolute path, got {stop_file!r}")
+    parent = path.parent
+    try:
+        if not parent.is_dir():
+            raise AccountingError(f"stop_file parent directory missing: {parent}")
+        if path.exists():
+            raise AccountingError(f"stop_file already exists (stale): {path}")
+    except OSError as exc:
+        raise AccountingError(f"stop_file path unusable: {path}: {exc}") from exc
+    return path
+
+
+def stop_file_present(stop_file: Optional[pathlib.Path]) -> bool:
+    """True when the orchestrator has exclusively created the stop file."""
+    if stop_file is None:
+        return False
+    try:
+        return stop_file.is_file()
+    except OSError:
+        # Unreadable path mid-run is not a stop request; loop continues until
+        # another channel fires or duration ends. Start-time validation already
+        # refused missing parents / relative paths.
+        return False
+
+
 def run(
     roles: Mapping[str, int],
     output: pathlib.Path,
@@ -432,6 +474,7 @@ def run(
     utc_fn: Optional[Callable[[], str]] = None,
     getpid_fn: Optional[Callable[[], int]] = None,
     stop_event: Optional[threading.Event] = None,
+    stop_file: Optional[pathlib.Path] = None,
     install_signal_handlers: bool = True,
     sample_timeout: Optional[float] = None,
     rusage_children_fn: Optional[Callable[[], Any]] = None,
@@ -439,8 +482,10 @@ def run(
 ) -> int:
     """Run continuous multi-role accounting.
 
-    duration: finite seconds, or None for stop-event/signal controlled only.
+    duration: finite seconds, or None for stop-event/signal/stop-file controlled only.
     stop_event: when set, ends the loop.
+    stop_file: absolute path; when the file appears (orchestrator exclusive create),
+      ends the loop. Same completion rules as stop_event.
       - fixed duration + early stop → incomplete / exit 1
       - stop_controlled (duration=None) + requested stop → closed / controlled_stop / exit 0
     Returns 0 on clean full-duration completion or intentional controlled stop;
@@ -452,11 +497,13 @@ def run(
     if duration is not None and (duration <= 0 or not math.isfinite(duration)):
         raise AccountingError("duration must be finite and positive when provided")
 
+    resolved_stop_file = validate_stop_file_path(stop_file)
+
     resolved_timeout = _resolve_sample_timeout(duration=duration, sample_timeout=sample_timeout)
     selected_sampler = process_sampler(process_backend)
     backend_label = 'injected' if sample_fn is not None else process_backend
 
-    # Stop control: reject hang if neither duration, stop_event, nor working signals.
+    # Stop control: reject hang if neither duration, stop_event, stop_file, nor signals.
     local_stop = stop_event or threading.Event()
     previous_handlers: Dict[Any, Any] = {}
     signals_installed = 0
@@ -473,11 +520,24 @@ def run(
                 # Not in main thread or unsupported.
                 pass
 
-    if duration is None and stop_event is None and signals_installed == 0:
+    if (
+        duration is None
+        and stop_event is None
+        and resolved_stop_file is None
+        and signals_installed == 0
+    ):
         raise AccountingError(
             "stop-controlled run requires a finite duration, an external stop_event, "
-            "or installable signal handlers; refusing to hang"
+            "a stop_file path, or installable signal handlers; refusing to hang"
         )
+
+    def _stop_requested() -> bool:
+        if local_stop.is_set():
+            return True
+        if stop_file_present(resolved_stop_file):
+            local_stop.set()
+            return True
+        return False
 
     grid_required: Optional[int] = None
     if duration is not None:
@@ -551,13 +611,19 @@ def run(
                 },
                 "children_cpu": "resource.getrusage(RUSAGE_CHILDREN) cumulative+delta per sweep when available",
                 "children_rss": "current unavailable; maxrss high-water not emitted as current",
+                "stop_file": str(resolved_stop_file) if resolved_stop_file is not None else None,
+                "stop_channels": {
+                    "stop_event": stop_event is not None,
+                    "stop_file": resolved_stop_file is not None,
+                    "signals_installed": signals_installed,
+                },
             }
         )
 
         deadline = (monotonic_start + duration) if duration is not None else None
 
         while True:
-            if local_stop.is_set():
+            if _stop_requested():
                 stop_reason = "orchestrator_stop"
                 if duration is None:
                     status = "closed"
@@ -572,9 +638,9 @@ def run(
 
             now = monotonic_fn()
             if now < scheduled:
-                # Sleep in small slices so stop_event/signals remain responsive.
+                # Sleep in small slices so stop_event/signals/stop_file remain responsive.
                 while True:
-                    if local_stop.is_set():
+                    if _stop_requested():
                         stop_reason = "orchestrator_stop"
                         if duration is None:
                             status = "closed"
@@ -780,7 +846,7 @@ def run(
                 fail_reason = "sample cadence missed required deadline"
                 break
 
-            if local_stop.is_set():
+            if _stop_requested():
                 stop_reason = "orchestrator_stop"
                 if duration is None:
                     status = "closed"
@@ -950,6 +1016,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             "always finite positive; recomputed vs remaining duration each role)"
         ),
     )
+    parser.add_argument(
+        "--stop-file",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "absolute path polled for graceful stop (orchestrator exclusive-creates "
+            "the file); portable controlled_stop without relying on SIGTERM->TerminateProcess"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         role_map = parse_role_specs(args.roles)
@@ -961,6 +1036,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             include_collector_self=not args.no_collector_self,
             sample_timeout=args.sample_timeout,
             process_backend=args.process_backend,
+            stop_file=args.stop_file,
         )
     except (AccountingError, sr.SampleError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)

@@ -358,6 +358,77 @@ class InjectedCollectorTests(unittest.TestCase):
         self.assertIsNotNone(summary["observed_covered_span_s"])
         self.assertIn("reader_note", summary)
 
+    def test_stop_controlled_via_stop_file_is_closed_exit0(self):
+        """Portable stop-file IPC yields controlled_stop / exit 0 without signals."""
+        clock = Clock()
+        calls = {"n": 0}
+        with tempfile.TemporaryDirectory() as td:
+            stop_path = pathlib.Path(td) / "collector.stop"
+            out = pathlib.Path(td) / "acct.jsonl"
+
+            def sample(pid, timeout=None):
+                calls["n"] += 1
+                if calls["n"] >= 2 and not stop_path.exists():
+                    stop_path.write_text('{"reason":"test"}\n')
+                return _sample(f"id-{pid}", user=1.0 + 0.01 * calls["n"], system=0.1)
+
+            status = pa.run(
+                {"a": 10},
+                out,
+                0.1,
+                None,
+                include_collector_self=False,
+                sample_fn=sample,
+                pressure_fn=lambda: {"status": "unavailable", "reason": "test"},
+                monotonic_fn=clock.monotonic,
+                sleep_fn=clock.sleep,
+                utc_fn=lambda: "1970-01-01T00:00:00Z",
+                getpid_fn=lambda: 4242,
+                stop_file=stop_path,
+                install_signal_handlers=False,
+                sample_timeout=1.0,
+            )
+            rows = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
+            self.assertEqual(status, 0, rows)
+            meta = rows[0]
+            self.assertEqual(meta["stop_file"], str(stop_path))
+            self.assertTrue(meta["stop_channels"]["stop_file"])
+            summary = rows[-1]
+            self.assertEqual(summary["status"], "closed")
+            self.assertEqual(summary["completion"], "controlled_stop")
+            self.assertEqual(summary["stop_reason"], "orchestrator_stop")
+
+    def test_stop_file_stale_relative_or_missing_parent_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = pathlib.Path(td)
+            out = base / "acct.jsonl"
+            stale = base / "stale.stop"
+            stale.write_text("x")
+            with self.assertRaises(pa.AccountingError) as ctx:
+                pa.validate_stop_file_path(stale)
+            self.assertIn("stale", str(ctx.exception).lower())
+            with self.assertRaises(pa.AccountingError):
+                pa.validate_stop_file_path(pathlib.Path("relative.stop"))
+            missing_parent = base / "no_such_dir" / "x.stop"
+            with self.assertRaises(pa.AccountingError):
+                pa.validate_stop_file_path(missing_parent)
+            # run refuses before creating output
+            with self.assertRaises(pa.AccountingError):
+                pa.run(
+                    {"a": 1},
+                    out,
+                    0.1,
+                    None,
+                    include_collector_self=False,
+                    install_signal_handlers=False,
+                    stop_file=stale,
+                    sample_fn=lambda pid, timeout=None: _sample("x"),
+                    pressure_fn=lambda: {},
+                    monotonic_fn=Clock().monotonic,
+                    sleep_fn=Clock().sleep,
+                )
+            self.assertFalse(out.exists())
+
     def test_duplicate_pid_in_run_rejected_before_write(self):
         with tempfile.TemporaryDirectory() as td:
             out = pathlib.Path(td) / "acct.jsonl"

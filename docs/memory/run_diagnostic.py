@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
 """Run one diagnostic cell without overwriting the T4 baseline artifacts."""
 import argparse, hashlib, json, os, pathlib, signal, subprocess, sys, time
-import errno, fcntl, pty, struct, termios, threading
+import errno, struct, threading
 from build_provenance import file_sha256, verify_build, recheck_files
+from operator_home import bot_home_path
+
+# Historical Mac checkout default for rs2b0t provenance. Never applied on win32.
+_DEFAULT_RS2B0T_MAC = '/Users/acfrazier/experiments/rs2b0t'
+
+_WINDOWS_TUI_TERMINAL_UNSUPPORTED = (
+    'real TUI terminal diagnostic is not supported on native Windows yet '
+    '(no ConPTY transport); use panel, or tui --headless for non-terminal '
+    'launch. Do not treat a missing PTY as silent headless success.'
+)
+
+_UNIX_TTY_IMPORT_REQUIRED = (
+    'real TUI terminal diagnostic requires Unix pty/fcntl/termios; '
+    'modules unavailable. Use panel or tui --headless, or provide a later '
+    'ConPTY path on Windows.'
+)
+
 
 def build_parser():
     p = argparse.ArgumentParser()
@@ -79,7 +96,46 @@ _SCRUB_CHILD_ENV = (
     'BOT_RESPONSIVENESS_FINE',
 )
 
-def build_child_env(a, run_dir, base_env=None):
+def apply_rs2b0t_default(env, *, platform=None):
+    """Preserve historical Mac RS2B0T default off Windows only.
+
+    On win32 never inject the Mac path; callers must set a real checkout path
+    for rs2b0t provenance (no guessed SHA).
+    """
+    plat = sys.platform if platform is None else platform
+    if plat != 'win32':
+        env.setdefault('RS2B0T', _DEFAULT_RS2B0T_MAC)
+    return env
+
+def resolve_rs2b0t_commit(env, *, platform=None, git_check_output=None):
+    """Return real git HEAD under env['RS2B0T'] or raise ValueError.
+
+    Never invents a commit SHA. Windows requires an explicit non-empty RS2B0T.
+    """
+    plat = sys.platform if platform is None else platform
+    run_git = git_check_output or (
+        lambda args: subprocess.check_output(args, text=True).strip()
+    )
+    rs2 = env.get('RS2B0T')
+    if not isinstance(rs2, str) or not rs2.strip():
+        if plat == 'win32':
+            raise ValueError(
+                'RS2B0T must be set to an explicit checkout path on Windows '
+                '(Mac default path is not applied; no fabricated commit SHA)'
+            )
+        raise ValueError('RS2B0T is unset or empty; cannot resolve rs2b0t_commit')
+    path = pathlib.Path(rs2)
+    if not path.is_dir():
+        raise ValueError(f'RS2B0T path does not exist or is not a directory: {rs2}')
+    try:
+        commit = run_git(['git', '-C', str(path), 'rev-parse', 'HEAD'])
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(f'RS2B0T git rev-parse failed under {rs2}: {error}') from error
+    if not isinstance(commit, str) or not commit.strip():
+        raise ValueError(f'RS2B0T git rev-parse returned empty under {rs2}')
+    return commit.strip()
+
+def build_child_env(a, run_dir, base_env=None, *, platform=None):
     """Construct the host-play child environment from CLI args.
 
     Shared by main and unit tests so scrub/set regressions are caught against
@@ -100,7 +156,7 @@ def build_child_env(a, run_dir, base_env=None):
         BOT_MEMORY_WARMUP_S=str(a.warmup),
         BOT_MEMORY_OBSERVE_S=str(a.observe),
     )
-    env.setdefault('RS2B0T', '/Users/acfrazier/experiments/rs2b0t')
+    apply_rs2b0t_default(env, platform=platform)
     # Scrub inherited failure-capture above; set only when the CLI flag is on.
     if a.failure_capture:
         env['BOT_MEMORY_FAILURE_CAPTURE'] = '1'
@@ -133,6 +189,27 @@ def build_child_env(a, run_dir, base_env=None):
         env['BOT_RESPONSIVENESS_FINE'] = '1'
     return env
 
+def catalog_path_for_env(env, *, windows=None):
+    """js-scripts catalog under operator home (HOME/USERPROFILE parity)."""
+    base = bot_home_path(environ=env, windows=windows)
+    return (pathlib.Path(base) / '.274bot/js-scripts.json').resolve()
+
+def require_terminal_transport(*, platform=None):
+    """Lazy-load Unix PTY stack; fail closed on Windows / missing modules.
+
+    Returns ``(fcntl, pty, termios)``. Does not silently fall through to headless.
+    """
+    plat = sys.platform if platform is None else platform
+    if plat == 'win32':
+        raise RuntimeError(_WINDOWS_TUI_TERMINAL_UNSUPPORTED)
+    try:
+        import fcntl
+        import pty
+        import termios
+    except ImportError as error:
+        raise RuntimeError(f'{_UNIX_TTY_IMPORT_REQUIRED} ({error})') from error
+    return fcntl, pty, termios
+
 def main(argv=None):
     p = build_parser()
     a = p.parse_args(argv)
@@ -156,13 +233,22 @@ def main(argv=None):
         return digest.hexdigest()
     nav_pack = pathlib.Path(env.get('NAV_PACK', str(pathlib.Path.home()/'.274bot/274bot.navpack'))).resolve()
     nav_flags = pathlib.Path(env.get('NAV_FLAGS', str(nav_pack.with_suffix('.navflags')))).resolve()
-    catalog_path = (pathlib.Path(env.get('HOME') or '.') / '.274bot/js-scripts.json').resolve()
+    catalog_path = catalog_path_for_env(env)
     provenance = {'status': 'unavailable', 'reason': 'no_build_manifest', 'performance_acceptance': False}
     if a.build_manifest:
         try:
             provenance = verify_build(a.build_manifest, a.build_role, a.frontend, binary, nav_pack, nav_flags, catalog_path)
         except (ValueError, OSError, TypeError) as error:
             p.error(f'build provenance: {error}')
+    try:
+        rs2b0t_commit = resolve_rs2b0t_commit(env)
+    except ValueError as error:
+        p.error(f'rs2b0t provenance: {error}')
+    if terminal:
+        try:
+            require_terminal_transport()
+        except RuntimeError as error:
+            p.error(str(error))
     run.mkdir(parents=True, exist_ok=False)
     render_policy = requested_render_policy(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
@@ -171,7 +257,7 @@ def main(argv=None):
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                 host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
-                rs2b0t_commit=subprocess.check_output(['git','-C',env['RS2B0T'],'rev-parse','HEAD'],text=True).strip(),
+                rs2b0t_commit=rs2b0t_commit,
                 run_dir=str(run),started_unix=time.time())
     # Legacy source/commit fields above describe this checkout, not the saved
     # binary. Build claims stay in an independently verified nested object.
@@ -189,6 +275,7 @@ def main(argv=None):
         reader = None
         probe = None
         if terminal:
+            fcntl, pty, termios = require_terminal_transport()
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',40,120,0,0))
             env['TERM']='xterm-256color'

@@ -781,6 +781,91 @@ class ManagedCellTests(unittest.TestCase):
             receipt,
         )
 
+    def test_successful_cell_uses_stop_file_not_only_sigterm(self):
+        spec = self.fx.base_spec(observe=0.5, teardown=0.5, mode="ok", interval=0.15)
+        report = self._run(spec)
+        self.assertEqual(report["status"], "completed", report)
+        stop_path = report.get("collector_stop_path")
+        self.assertIsInstance(stop_path, str, report)
+        self.assertTrue(pathlib.Path(stop_path).is_file(), report)
+        self.assertTrue(stop_path.endswith("collector.stop"), report)
+        cell_dir = pathlib.Path(report["cell_dir"]).resolve()
+        self.assertEqual(pathlib.Path(stop_path).resolve().parent, cell_dir)
+        stop_req = report.get("collector_stop_request") or {}
+        self.assertTrue((stop_req.get("stop_file") or {}).get("ok"), report)
+        # Sampler completed with controlled_stop via portable channel.
+        self.assertEqual(report["sampler_result"].get("completion"), "controlled_stop", report)
+        self.assertEqual(report["sampler_result"]["exit_code"], 0, report)
+        argv = report.get("sampler_argv") or []
+        self.assertIn("--stop-file", argv)
+        self.assertIn(stop_path, argv)
+
+    def test_portable_cleanup_signal_labels_no_undefined_sigkill(self):
+        # Unit-level: win32 branch must not evaluate signal.SIGKILL.
+        self.assertEqual(rmc._soft_signal_label(), "SIGTERM")
+        with mock.patch.object(rmc.sys, "platform", "win32"):
+            self.assertEqual(rmc._hard_signal_label(), "TERMINATE")
+            # Constructing the cleanup stage list must not touch missing SIGKILL.
+            stages = []
+            for stage in ("soft", "hard"):
+                if stage == "soft":
+                    stages.append(rmc._soft_signal_label())
+                else:
+                    stages.append(rmc._hard_signal_label())
+            self.assertEqual(stages, ["SIGTERM", "TERMINATE"])
+        if hasattr(signal, "SIGKILL"):
+            with mock.patch.object(rmc.sys, "platform", "linux"):
+                self.assertEqual(rmc._hard_signal_label(), "SIGKILL")
+
+    def test_parent_pid_rejects_foreign_and_accepts_owned_child(self):
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+        )
+
+        def _reap():
+            if child.poll() is None:
+                try:
+                    child.kill()
+                except OSError:
+                    pass
+                try:
+                    child.wait(timeout=5)
+                except Exception:
+                    pass
+
+        self.addCleanup(_reap)
+        time.sleep(0.05)
+        parent = rmc.parent_pid(child.pid)
+        self.assertEqual(parent, os.getpid())
+        # Owned child of this process is not a child of a foreign launcher PID.
+        with self.assertRaises(rmc.CellError):
+            rmc._capture_owned_frontend(
+                child.pid, launcher_pid=1, forbidden=set(), backend="system"
+            )
+        # Missing PID fails closed.
+        with self.assertRaises(rmc.CellError):
+            rmc.parent_pid(2_000_000_001)
+
+    def test_cleanup_rechecks_parent_while_launcher_alive(self):
+        # Foreign PID with wrong parent must not be signaled even with matching fake identity.
+        helper_pid = self.fx.helper.pid
+        identity = rmc._start_identity(helper_pid, backend="system")
+        self.assertIsNotNone(identity)
+        # Launcher PID is this test process (alive); helper's parent is not us typically
+        # if helper was started by FixtureTree — parent is test runner. Use a fake launcher.
+        fake_launcher = helper_pid  # distinct process; helper is not child of itself
+        # helper's parent is not helper_pid, so parent check fails when launcher "alive".
+        result = rmc._cleanup_frontend(
+            helper_pid,
+            identity,
+            backend="system",
+            launcher_pid=fake_launcher,
+            wait_s=0.01,
+        )
+        self.assertEqual(result["signals"], [])
+        self.assertTrue(result.get("orphan_risk"))
+        self.assertTrue(_alive(helper_pid))
+
 
 def _alive(pid: int) -> bool:
     if not isinstance(pid, int) or pid <= 0:

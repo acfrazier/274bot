@@ -36,6 +36,8 @@ DEFAULT_ACCOUNTING = _ROOT / "process_accounting.py"
 DEFAULT_SERVER_RESOURCES = _ROOT / "server_resources.py"
 DEFAULT_NATIVE_PROCESS_SAMPLE = _ROOT / "native_process_sample.py"
 DEFAULT_WINDOWS_PROCESS_SAMPLE = _ROOT / "windows_process_sample.py"
+DEFAULT_WINDOWS_PROCESS_PARENT = _ROOT / "windows_process_parent.py"
+COLLECTOR_STOP_BASENAME = "collector.stop"
 
 
 class CellError(RuntimeError):
@@ -295,6 +297,125 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def parent_pid(pid: int, *, timeout: float = SAMPLE_TIMEOUT_S) -> int:
+    """Return parent PID for an explicit local PID. Fail closed; no name scan."""
+    if type(pid) is not int or isinstance(pid, bool) or pid <= 0:
+        raise CellError('invalid PID for parent lookup')
+    if sys.platform == 'win32':
+        try:
+            import windows_process_parent as wpp  # type: ignore
+        except ImportError as exc:
+            raise CellError(f'windows parent helper unavailable: {exc}') from exc
+        try:
+            return int(wpp.parent_pid(pid))
+        except Exception as exc:
+            raise CellError(f'cannot establish frontend parent ownership: {exc}') from exc
+    try:
+        out = subprocess.check_output(
+            ['ps', '-o', 'ppid=', '-p', str(pid)],
+            text=True,
+            timeout=timeout,
+        ).strip()
+        return int(out)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise CellError(f'cannot establish frontend parent ownership: {exc}') from exc
+
+
+def _soft_signal_label() -> str:
+    return 'SIGTERM'
+
+
+def _hard_signal_label() -> str:
+    # signal.SIGKILL is undefined on win32; never evaluate it there.
+    if sys.platform == 'win32' or not hasattr(signal, 'SIGKILL'):
+        return 'TERMINATE'
+    return 'SIGKILL'
+
+
+def _signal_owned_pid(pid: int, *, stage: str) -> str:
+    """Signal an owned non-child PID. Soft = TERM; hard = KILL/TerminateProcess.
+
+    On Windows both stages use os.kill(SIGTERM) → TerminateProcess; labels differ
+    so cleanup reports stay honest about escalation without referencing SIGKILL.
+    """
+    if stage == 'soft':
+        os.kill(pid, signal.SIGTERM)
+        return _soft_signal_label()
+    if sys.platform == 'win32' or not hasattr(signal, 'SIGKILL'):
+        # Escalate with TerminateProcess-class kill (same primitive as SIGTERM map).
+        os.kill(pid, signal.SIGTERM)
+        return _hard_signal_label()
+    os.kill(pid, signal.SIGKILL)  # type: ignore[attr-defined]
+    return _hard_signal_label()
+
+
+def request_collector_stop_file(stop_path: pathlib.Path, *, reason: str = 'orchestrator_stop') -> Dict[str, Any]:
+    """Exclusive-create the cell-local collector stop file (portable graceful IPC)."""
+    info: Dict[str, Any] = {
+        'path': str(stop_path),
+        'created': False,
+        'ok': False,
+        'reason': reason,
+    }
+    try:
+        path = pathlib.Path(stop_path)
+        if not path.is_absolute():
+            info['error'] = 'stop path must be absolute and cell-contained'
+            return info
+        parent = path.parent
+        if not parent.is_dir():
+            info['error'] = f'stop path parent missing: {parent}'
+            return info
+        payload = (json.dumps({'reason': reason, 'utc': _utc()}, sort_keys=True) + '\n').encode('utf-8')
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        if hasattr(os, 'O_BINARY'):
+            flags |= os.O_BINARY  # type: ignore[attr-defined]
+        try:
+            fd = os.open(str(path), flags, 0o644)
+        except FileExistsError:
+            info['ok'] = True
+            info['already_present'] = True
+            return info
+        try:
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
+        info['created'] = True
+        info['ok'] = True
+        return info
+    except OSError as exc:
+        info['error'] = str(exc)
+        return info
+
+
+def _request_collector_stop(
+    collector: Optional[subprocess.Popen],
+    stop_path: Optional[pathlib.Path],
+    *,
+    also_unix_sigterm: bool = True,
+) -> Dict[str, Any]:
+    """Graceful collector stop: stop-file first; Unix may also SIGTERM (handlers).
+
+    Never uses send_signal(SIGTERM) as the graceful path on Windows — that maps
+    to TerminateProcess and skips controlled_stop summary/exit 0.
+    """
+    result: Dict[str, Any] = {'stop_file': None, 'sigterm': False}
+    if stop_path is not None:
+        result['stop_file'] = request_collector_stop_file(stop_path)
+    if (
+        also_unix_sigterm
+        and sys.platform != 'win32'
+        and collector is not None
+        and collector.poll() is None
+    ):
+        try:
+            collector.send_signal(signal.SIGTERM)
+            result['sigterm'] = True
+        except OSError as exc:
+            result['sigterm_error'] = str(exc)
+    return result
+
+
 def _start_identity(pid: int, timeout: float = SAMPLE_TIMEOUT_S, backend='system') -> Optional[str]:
     try:
         return pa.process_sampler(backend)(pid, timeout=timeout).get("start_identity")
@@ -307,11 +428,13 @@ def _terminate_owned(
     *,
     label: str,
     wait_s: float = CLEANUP_WAIT_S,
-    frontend_pid: Optional[int] = None,
-    frontend_identity: Optional[str] = None,
-    launcher_pid: Optional[int] = None,
+    stop_path: Optional[pathlib.Path] = None,
 ) -> Dict[str, Any]:
-    """Terminate/reap an owned direct child. Frontend cleanup is independent."""
+    """Terminate/reap an owned direct child. Frontend cleanup is independent.
+
+    Collector path: optional stop-file graceful request first, then wait, then
+    Popen.kill() escalation (TerminateProcess on Windows). Never signals server.
+    """
     info: Dict[str, Any] = {"label": label, "signaled": False, "exit_code": None}
     if proc is None:
         return info
@@ -319,17 +442,41 @@ def _terminate_owned(
     if proc.poll() is not None:
         info["exit_code"] = proc.returncode
         return info
-    info["signaled"] = True
-    try:
-        proc.send_signal(signal.SIGTERM)
-    except OSError as exc:
-        info["error"] = str(exc)
-    try:
-        proc.wait(timeout=wait_s)
-        info["exit_code"] = proc.returncode
-        return info
-    except subprocess.TimeoutExpired:
-        pass
+    if stop_path is not None and label == 'collector':
+        info['graceful_stop'] = _request_collector_stop(proc, stop_path, also_unix_sigterm=True)
+        try:
+            proc.wait(timeout=wait_s)
+            info["exit_code"] = proc.returncode
+            info["signaled"] = bool((info.get('graceful_stop') or {}).get('sigterm'))
+            return info
+        except subprocess.TimeoutExpired:
+            pass
+    else:
+        info["signaled"] = True
+        try:
+            # Direct children: soft TERM then kill. On Windows send_signal(SIGTERM)
+            # is TerminateProcess — still valid for owned launcher/collector escalate.
+            if sys.platform != 'win32':
+                proc.send_signal(signal.SIGTERM)
+            else:
+                # Prefer kill for owned Windows children after any graceful channel.
+                proc.kill()
+                info['killed'] = True
+                try:
+                    proc.wait(timeout=wait_s)
+                    info['exit_code'] = proc.returncode
+                except subprocess.TimeoutExpired:
+                    info['exit_code'] = proc.poll()
+                    info['orphan_risk'] = True
+                return info
+        except OSError as exc:
+            info["error"] = str(exc)
+        try:
+            proc.wait(timeout=wait_s)
+            info["exit_code"] = proc.returncode
+            return info
+        except subprocess.TimeoutExpired:
+            pass
     try:
         proc.kill()
     except OSError:
@@ -344,22 +491,56 @@ def _terminate_owned(
     return info
 
 
-def _cleanup_frontend(pid, identity, *, backend, wait_s=CLEANUP_WAIT_S):
-    """Independently clean a captured owned frontend, even after launcher exit."""
+def _cleanup_frontend(
+    pid,
+    identity,
+    *,
+    backend,
+    launcher_pid: Optional[int] = None,
+    wait_s=CLEANUP_WAIT_S,
+):
+    """Independently clean a captured owned frontend, even after launcher exit.
+
+    Before each escalation stage: require stable start_identity. While the
+    launcher is still alive, also require parent_pid == launcher_pid. After
+    launcher death, identity alone gates signals (parent may reparent to init).
+    Never references signal.SIGKILL on win32.
+    """
     result = {'pid': pid, 'signals': [], 'orphan_risk': False}
     if pid is None or not _pid_alive(pid):
         return result
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+    for stage in ('soft', 'hard'):
         if not _pid_alive(pid):
             return result
-        # Recheck immediately before EACH signal, including escalation.
+        # Recheck ownership immediately before EACH signal, including escalation.
+        if launcher_pid is not None and _pid_alive(launcher_pid):
+            try:
+                parent = parent_pid(pid)
+            except CellError:
+                if not _pid_alive(pid):
+                    return result
+                result.update(
+                    orphan_risk=True,
+                    reason='frontend parent unavailable; no signal',
+                )
+                return result
+            if parent != launcher_pid:
+                result.update(
+                    orphan_risk=True,
+                    reason='frontend parent is not owned launcher; no signal',
+                )
+                return result
         if not identity or _start_identity(pid, backend=backend) != identity:
             result.update(orphan_risk=True, reason='frontend identity unavailable or changed; no signal')
             return result
         try:
-            os.kill(pid, sig)
-            result['signals'].append(sig.name)
+            label = _signal_owned_pid(pid, stage=stage)
+            result['signals'].append(label)
         except ProcessLookupError:
+            return result
+        except OSError as exc:
+            result['error'] = str(exc)
+            result['orphan_risk'] = _pid_alive(pid)
             return result
         deadline = time.monotonic() + wait_s
         while time.monotonic() < deadline:
@@ -376,12 +557,11 @@ def _capture_owned_frontend(pid, launcher_pid, forbidden, backend):
     if not _pid_alive(pid):
         return pid, None
     try:
-        parent = int(subprocess.check_output(
-            ['ps', '-o', 'ppid=', '-p', str(pid)], text=True, timeout=SAMPLE_TIMEOUT_S).strip())
-    except (OSError, ValueError, subprocess.SubprocessError):
+        parent = parent_pid(pid)
+    except CellError:
         if not _pid_alive(pid):
             return pid, None
-        raise CellError('cannot establish frontend parent ownership')
+        raise
     if parent != launcher_pid:
         raise CellError('frontend is not a child of the owned launcher')
     return pid, _start_identity(pid, backend=backend)
@@ -589,6 +769,7 @@ def run_managed_cell(
     sampler_out: Optional[pathlib.Path] = None
     collector_stop_requested = False
     collector_stop_mono: Optional[float] = None
+    collector_stop_path: Optional[pathlib.Path] = None
     observe_end_mono: Optional[float] = None
     launcher_exited_before_pad = False
     backend = 'system'
@@ -756,6 +937,14 @@ def run_managed_cell(
             seen2[pid] = name
 
         sampler_out = cell_dir / "process_accounting.jsonl"
+        collector_stop_path = (cell_dir / COLLECTOR_STOP_BASENAME).resolve()
+        if collector_stop_path.exists():
+            raise CellError(f'stale collector stop path: {collector_stop_path}')
+        # Stop IPC must stay inside the exclusive cell directory.
+        try:
+            collector_stop_path.relative_to(cell_dir.resolve())
+        except ValueError as exc:
+            raise CellError(f'collector stop path escapes cell dir: {collector_stop_path}') from exc
         role_args = [f"{name}={pid}" for name, pid in sorted(roles.items())]
         collector_argv = [
             sys.executable,
@@ -765,9 +954,11 @@ def run_managed_cell(
             "--interval",
             str(float(spec["sampler_interval_s"])),
             '--process-backend', backend,
+            '--stop-file', str(collector_stop_path),
         ]
         report["sampler_argv"] = collector_argv
         report["sampler_roles"] = roles
+        report["collector_stop_path"] = str(collector_stop_path)
         t1 = time.monotonic()
         collector_out_fh = (cell_dir / "logs" / "collector.stdout").open("xb")
         try:
@@ -839,7 +1030,13 @@ def run_managed_cell(
                 and pad_elapsed
             ):
                 if collector is not None and collector.poll() is None:
-                    collector.send_signal(signal.SIGTERM)
+                    stop_info = _request_collector_stop(collector, collector_stop_path)
+                    report["collector_stop_request"] = stop_info
+                    if not (stop_info.get("stop_file") or {}).get("ok"):
+                        runner_errors.append(
+                            f"collector stop file request failed: "
+                            f"{(stop_info.get('stop_file') or {}).get('error')}"
+                        )
                 collector_stop_requested = True
                 collector_stop_mono = now
                 report["collector_stop_requested_utc"] = _utc()
@@ -866,7 +1063,13 @@ def run_managed_cell(
                         and collector.poll() is None
                         and not collector_stop_requested
                     ):
-                        collector.send_signal(signal.SIGTERM)
+                        stop_info = _request_collector_stop(collector, collector_stop_path)
+                        report["collector_stop_request"] = stop_info
+                        if not (stop_info.get("stop_file") or {}).get("ok"):
+                            runner_errors.append(
+                                f"collector stop file request failed: "
+                                f"{(stop_info.get('stop_file') or {}).get('error')}"
+                            )
                         collector_stop_requested = True
                     break
 
@@ -892,10 +1095,27 @@ def run_managed_cell(
 
         # The loop exits only on launcher completion or the external deadline.
         # Reap direct children and independently inspect the captured frontend.
+        # Always attempt graceful collector stop before escalation cleanup.
+        if (
+            collector is not None
+            and collector.poll() is None
+            and not collector_stop_requested
+            and collector_stop_path is not None
+        ):
+            stop_info = _request_collector_stop(collector, collector_stop_path)
+            report["collector_stop_request"] = stop_info
+            collector_stop_requested = True
         cleanup = {
-            "collector": _terminate_owned(collector, label="collector"),
+            "collector": _terminate_owned(
+                collector, label="collector", stop_path=collector_stop_path
+            ),
             "launcher": _terminate_owned(launcher, label="launcher"),
-            "frontend": _cleanup_frontend(frontend_pid, frontend_identity, backend=backend),
+            "frontend": _cleanup_frontend(
+                frontend_pid,
+                frontend_identity,
+                backend=backend,
+                launcher_pid=launcher.pid if launcher is not None else report.get("launcher_pid"),
+            ),
         }
         launcher_exit = launcher.poll() if launcher is not None else launcher_exit
         collector_exit = collector.poll() if collector is not None else collector_exit
@@ -1005,10 +1225,30 @@ def run_managed_cell(
         report["status"] = "failed_or_unavailable"
         report["error"] = str(exc)
         report["ended_utc"] = _utc()
+        if (
+            collector is not None
+            and collector.poll() is None
+            and not collector_stop_requested
+            and collector_stop_path is not None
+        ):
+            try:
+                report["collector_stop_request"] = _request_collector_stop(
+                    collector, collector_stop_path
+                )
+                collector_stop_requested = True
+            except Exception:
+                pass
         cleanup = {
-            "collector": _terminate_owned(collector, label="collector"),
+            "collector": _terminate_owned(
+                collector, label="collector", stop_path=collector_stop_path
+            ),
             "launcher": _terminate_owned(launcher, label="launcher"),
-            "frontend": _cleanup_frontend(frontend_pid, frontend_identity, backend=backend),
+            "frontend": _cleanup_frontend(
+                frontend_pid,
+                frontend_identity,
+                backend=backend,
+                launcher_pid=launcher.pid if launcher is not None else report.get("launcher_pid"),
+            ),
         }
         report["cleanup"] = cleanup
         if cell_dir is not None:
