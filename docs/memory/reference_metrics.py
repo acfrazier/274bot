@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import statistics
 import sys
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
@@ -1497,6 +1498,152 @@ def evaluate_gpu(
     return product
 
 
+# Approved finish-line resource budgets. Values are bytes and process cores;
+# they apply only to active N=1/N=16 cells, not to arbitrary matrix rows.
+RESOURCE_BUDGETS = {
+    ("tui", 1, "none"): {"median_rss_bytes": 256 * 1024**2,
+                           "peak_rss_bytes": 384 * 1024**2, "cpu_cores": None},
+    ("tui", 16, "none"): {"median_rss_bytes": 512 * 1024**2,
+                            "peak_rss_bytes": 768 * 1024**2, "cpu_cores": 0.5},
+    ("panel", 1, "focused-one"): {"median_rss_bytes": 384 * 1024**2,
+                                    "peak_rss_bytes": 512 * 1024**2, "cpu_cores": None},
+    ("panel", 16, "focused-one"): {"median_rss_bytes": 768 * 1024**2,
+                                     "peak_rss_bytes": 1024 * 1024**2, "cpu_cores": 1.0},
+    ("panel", 1, "focused-plus-background"): {"median_rss_bytes": 384 * 1024**2,
+                                                "peak_rss_bytes": 512 * 1024**2, "cpu_cores": None},
+    ("panel", 16, "focused-plus-background"): {"median_rss_bytes": 768 * 1024**2,
+                                                 "peak_rss_bytes": 1024 * 1024**2, "cpu_cores": 1.0},
+}
+
+
+def _finite(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and value not in (float("inf"), float("-inf"))
+
+
+def _resource_match_metadata(meta: dict) -> dict:
+    out = {key: meta.get(key) for key in (
+        "frontend", "n", "workload", "render_policy", "render_policy_requested",
+        "single_renderer", "diagnostic_sidecar", "allocation_counting",
+        "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
+    )}
+    if out["render_policy"] is None and out["frontend"] == "tui":
+        out["render_policy"] = "none"
+    return out
+
+
+def evaluate_resources(
+    meta: dict,
+    samples: list[dict],
+    *,
+    workload_qualification: Optional[dict] = None,
+    contaminated: bool = False,
+) -> dict:
+    """Evaluate bounded RSS/CPU observations without confusing peak and RSS.
+
+    CPU is process user+system counter delta divided by the elapsed monotonic
+    sample span. The JSONL ``elapsed_s`` field is the host's monotonic-relative
+    timestamp; no machine-wide percentage or nominal observe duration is used.
+    """
+    base = {"gate": "resources", "final_acceptance_claim": False,
+            "pass_means": PASS_MEANS, "accepted_saving": False,
+            "cpu_units": "process_cpu_seconds / sampled_monotonic_wall_seconds",
+            "match_metadata": _resource_match_metadata(meta)}
+    if not isinstance(meta, dict) or not isinstance(samples, list):
+        return {**base, "status": "unavailable", "reason": "malformed_resource_input"}
+    qualification_reason = None
+    if workload_qualification is None:
+        qualification_reason = "missing_workload_qualification"
+    elif workload_qualification.get("qualified") is not True:
+        qualification_reason = "workload_not_qualified"
+    contamination_reason = "contaminated_observation" if contaminated else None
+    observed = [row for row in samples if isinstance(row, dict) and row.get("phase") == "observe"]
+    if len(observed) < 2:
+        return {**base, "status": "unavailable", "reason": "insufficient_observation_boundaries"}
+    times = [row.get("elapsed_s") for row in observed]
+    if not all(_finite(value) for value in times):
+        return {**base, "status": "unavailable", "reason": "invalid_observation_wall_time"}
+    duration = float(times[-1]) - float(times[0])
+    if duration <= 0:
+        return {**base, "status": "unavailable", "reason": "invalid_observation_wall_span"}
+    for field in ("process_cpu_user_s", "process_cpu_system_s"):
+        values = [row.get(field) for row in observed]
+        if not all(_finite(value) for value in values):
+            return {**base, "status": "unavailable", "reason": "invalid_cpu_counter", "field": field}
+        if any(float(b) < float(a) for a, b in zip(values, values[1:])):
+            return {**base, "status": "unavailable", "reason": "cpu_counter_reset", "field": field}
+    rss = [row.get("resident_bytes") for row in observed]
+    if not all(_finite(value) for value in rss):
+        return {**base, "status": "unavailable", "reason": "invalid_resident_rss"}
+    # Lifetime peak is intentionally sourced from every phase; it is not the
+    # maximum of the steady observation RSS samples.
+    peaks = [row.get("peak_resident_bytes") for row in samples if isinstance(row, dict)]
+    if not all(_finite(value) for value in peaks):
+        return {**base, "status": "unavailable", "reason": "invalid_peak_rss"}
+    cpu_seconds = ((float(observed[-1]["process_cpu_user_s"]) - float(observed[0]["process_cpu_user_s"])) +
+                   (float(observed[-1]["process_cpu_system_s"]) - float(observed[0]["process_cpu_system_s"])))
+    policy = meta.get("render_policy")
+    if policy is None and meta.get("frontend") == "tui":
+        policy = "none"
+    if meta.get("frontend") == "panel" and policy not in {"focused-one", "focused-plus-background"}:
+        return {**base, "status": "unavailable", "reason": "unsupported_panel_render_policy",
+                "profile": [meta.get("frontend"), meta.get("n"), policy]}
+    key = (meta.get("frontend"), meta.get("n"), policy)
+    budget = RESOURCE_BUDGETS.get(key)
+    if budget is None:
+        return {**base, "status": "unavailable", "reason": "unsupported_resource_profile",
+                "profile": list(key)}
+    median_rss = statistics.median(rss)
+    max_rss = max(rss)
+    peak_rss = max(peaks)
+    cpu_cores = cpu_seconds / duration
+    metrics = {"median_rss": {"value_bytes": median_rss, "budget_bytes": budget["median_rss_bytes"],
+                               "target_verdict": "meet" if median_rss <= budget["median_rss_bytes"] else "miss"},
+               "peak_rss": {"value_bytes": peak_rss, "budget_bytes": budget["peak_rss_bytes"],
+                            "target_verdict": "meet" if peak_rss <= budget["peak_rss_bytes"] else "miss"}}
+    if budget["cpu_cores"] is not None:
+        metrics["cpu_cores"] = {"value": cpu_cores, "budget": budget["cpu_cores"],
+                                 "target_verdict": "meet" if cpu_cores <= budget["cpu_cores"] else "miss"}
+    verdict = "miss" if any(m["target_verdict"] == "miss" for m in metrics.values()) else "meet"
+    blocked_reason = qualification_reason or contamination_reason
+    return {**base, "status": "unavailable" if blocked_reason else "available",
+            "reason": blocked_reason, "target_verdict": "unavailable" if blocked_reason else verdict,
+            "observation_s": duration,
+            "sample_n": len(observed), "cpu_seconds": cpu_seconds, "cpu_cores": cpu_cores,
+            "resident_median_bytes": median_rss, "resident_max_bytes": max_rss,
+            "peak_resident_bytes": peak_rss, "metrics": metrics, "budget": budget,
+            "contaminated": contaminated}
+
+
+def compare_matched_runs(candidate: dict, reference: dict, *, cpu_margin: float = 0.05) -> dict:
+    """Return diagnostic paired deltas; one pair never establishes significance."""
+    out = {"status": "inconclusive", "accepted_saving": False,
+           "pass_means": PASS_MEANS}
+    if not isinstance(candidate, dict) or not isinstance(reference, dict):
+        out["reason"] = "missing_matched_run"
+        return out
+    if candidate.get("status") != "available" or reference.get("status") != "available":
+        out["reason"] = "unavailable_matched_run"
+        return out
+    def contaminated(run: dict) -> bool:
+        window = run.get("observation_window")
+        return bool(run.get("contaminated") or (window or {}).get("contaminated"))
+    if contaminated(candidate) or contaminated(reference):
+        out["reason"] = "contaminated_matched_run"
+        return out
+    if candidate.get("match_metadata") != reference.get("match_metadata"):
+        out["reason"] = "mismatched_provenance_or_settings"
+        return out
+    if candidate.get("overhead", "unknown") != "measured":
+        out["reason"] = "overhead_unknown"
+        return out
+    cpu_change = candidate["cpu_cores"] - reference["cpu_cores"]
+    out.update({"intended_rss_change_bytes": candidate["resident_median_bytes"] - reference["resident_median_bytes"],
+                "cpu_change": cpu_change, "cpu_margin": cpu_margin,
+                "cpu_non_regression": candidate["cpu_cores"] <= reference["cpu_cores"] * (1.0 + cpu_margin),
+                "reason": "single_pair_no_variation"})
+    return out
+
+
 def load_run_samples(run_dir: pathlib.Path, *, max_samples: Optional[int] = None) -> list[dict]:
     path = run_dir / "samples.jsonl"
     if not path.is_file():
@@ -1522,12 +1669,13 @@ def analyze_run(
         "run": str(run_dir),
         "pass_means": PASS_MEANS,
         "final_acceptance_claim": False,
-        "resource_renderer_expanded_adapters": "not_in_this_core; next card if needed",
+        "resource_renderer_expanded_adapters": "resource RSS/CPU adapters are diagnostic; no final acceptance",
     }
     meta_path = run_dir / "metadata.json"
     if not meta_path.is_file():
         result["error"] = "missing metadata.json"
         result["gates"] = {
+            "resources": _unavailable("missing_metadata"),
             "scheduling": _unavailable("missing_metadata"),
             "decode": _unavailable("missing_metadata"),
             "input": _unavailable("missing_metadata"),
@@ -1540,6 +1688,7 @@ def analyze_run(
     except (OSError, json.JSONDecodeError) as exc:
         result["error"] = f"metadata unreadable: {exc}"
         result["gates"] = {
+            "resources": _unavailable("bad_metadata"),
             "scheduling": _unavailable("bad_metadata"),
             "decode": _unavailable("bad_metadata"),
             "input": _unavailable("bad_metadata"),
@@ -1548,9 +1697,10 @@ def analyze_run(
         return result
     if not isinstance(meta, dict):
         result["error"] = "metadata not object"
-        result["gates"] = {
+        result["gates"] = {"resources": _unavailable("bad_metadata")}
+        result["gates"].update({
             k: _unavailable("bad_metadata") for k in ("scheduling", "decode", "input", "gpu")
-        }
+        })
         return result
 
     result["metadata_flags"] = {
@@ -1569,6 +1719,7 @@ def analyze_run(
         result["error"] = str(exc)
         result["observation_window"] = _unavailable("samples_unreadable")
         result["gates"] = {
+            "resources": _unavailable("samples_unreadable"),
             "scheduling": _unavailable("samples_unreadable"),
             "decode": _unavailable("samples_unreadable"),
             "input": _unavailable("samples_unreadable"),
@@ -1579,16 +1730,6 @@ def analyze_run(
     result["observation_window"] = observe_window(
         meta, samples, contamination_from=contamination_from
     )
-    result["gates"] = {
-        # The scheduling gate is per-slot only. Keep legacy process-wide groups
-        # as a separately named diagnostic; they must not satisfy this gate.
-        "scheduling": evaluate_scheduling_slots(meta, samples),
-        "scheduling_process_wide": evaluate_scheduling(meta, samples),
-        "decode": evaluate_decode(meta, samples),
-        "input": evaluate_input(meta, samples),
-        "gpu": evaluate_gpu(meta, samples),
-    }
-
     if qualify:
         try:
             import qualify_control as qc
@@ -1602,6 +1743,21 @@ def analyze_run(
                 "errors": [f"qualify_control adapter error: {exc}"],
                 "pass_means": "workload qualification only; not performance acceptance",
             }
+
+    result["gates"] = {
+        "resources": evaluate_resources(
+            meta, samples,
+            workload_qualification=result.get("workload_qualification"),
+            contaminated=bool(result["observation_window"].get("contaminated")),
+        ),
+        # The scheduling gate is per-slot only. Keep legacy process-wide groups
+        # as a separately named diagnostic; they must not satisfy this gate.
+        "scheduling": evaluate_scheduling_slots(meta, samples),
+        "scheduling_process_wide": evaluate_scheduling(meta, samples),
+        "decode": evaluate_decode(meta, samples),
+        "input": evaluate_input(meta, samples),
+        "gpu": evaluate_gpu(meta, samples),
+    }
 
     return result
 
@@ -1631,7 +1787,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument(
         "--require",
         default="",
-        help="comma list: scheduling,decode,input,gpu — exit 1 if unavailable or target unproven",
+        help="comma list: resources,scheduling,decode,input,gpu — exit 1 if unavailable or target unproven",
     )
     p.add_argument(
         "--contamination-from",

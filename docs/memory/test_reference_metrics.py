@@ -929,5 +929,80 @@ class NoInputAndEmptyRunTests(unittest.TestCase):
         self.assertEqual(r["gates"]["scheduling"]["status"], "unavailable")
 
 
+class ResourceAdapterTests(unittest.TestCase):
+    def _samples(self, **changes):
+        rows = []
+        for t, user, system, rss, peak in ((0.0, 1.0, 0.5, 100, 120),
+                                            (5.0, 2.0, 1.0, 140, 160),
+                                            (10.0, 3.0, 1.5, 120, 180)):
+            row = {"phase": "observe", "elapsed_s": t,
+                   "process_cpu_user_s": user, "process_cpu_system_s": system,
+                   "resident_bytes": rss, "peak_resident_bytes": peak}
+            row.update(changes)
+            rows.append(row)
+        return rows
+
+    def test_cpu_is_process_core_delta_over_sampled_wall_and_rss_is_current(self):
+        result = rm.evaluate_resources(_meta(), self._samples(),
+                                        workload_qualification={"qualified": True})
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["observation_s"], 10.0)
+        self.assertEqual(result["cpu_seconds"], 3.0)
+        self.assertEqual(result["cpu_cores"], 0.3)
+        self.assertEqual(result["resident_median_bytes"], 120)
+        self.assertEqual(result["resident_max_bytes"], 140)
+        self.assertEqual(result["peak_resident_bytes"], 180)
+        self.assertEqual(result["cpu_units"], "process_cpu_seconds / sampled_monotonic_wall_seconds")
+
+    def test_missing_nan_and_reset_cpu_fail_closed(self):
+        for index, changes, reason in ((None, {"process_cpu_system_s": None}, "invalid_cpu_counter"),
+                                       (None, {"process_cpu_user_s": float("nan")}, "invalid_cpu_counter"),
+                                       (1, {"process_cpu_user_s": -1.0}, "cpu_counter_reset")):
+            rows = self._samples()
+            if index is None:
+                for row in rows:
+                    row.update(changes)
+            else:
+                rows[index].update(changes)
+            result = rm.evaluate_resources(_meta(), rows,
+                                           workload_qualification={"qualified": True})
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], reason)
+
+    def test_wrong_mode_and_unqualified_workload_never_pass(self):
+        result = rm.evaluate_resources(_meta(frontend="panel", n=1, render_policy="none"),
+                                        self._samples(), workload_qualification={"qualified": True})
+        self.assertEqual(result["reason"], "unsupported_panel_render_policy")
+        result = rm.evaluate_resources(_meta(), self._samples(),
+                                       workload_qualification={"qualified": False})
+        self.assertEqual(result["reason"], "workload_not_qualified")
+
+    def test_budget_miss_is_honest_and_single_pair_is_not_significance(self):
+        rows = self._samples()
+        for row in rows:
+            row["resident_bytes"] += 400 * 1024 * 1024
+        result = rm.evaluate_resources(_meta(), rows,
+                                       workload_qualification={"qualified": True})
+        self.assertEqual(result["target_verdict"], "miss")
+        self.assertFalse(result["accepted_saving"])
+        result["overhead"] = "measured"
+        pair = rm.compare_matched_runs(result, result)
+        self.assertEqual(pair["status"], "inconclusive")
+        self.assertIn("single", pair["reason"])
+
+    def test_matched_pair_rejects_mismatch_contamination_and_unknown_overhead(self):
+        base = rm.evaluate_resources(_meta(), self._samples(),
+                                     workload_qualification={"qualified": True})
+        other = dict(base)
+        other["match_metadata"] = {"frontend": "panel"}
+        base["match_metadata"] = {"frontend": "tui"}
+        self.assertEqual(rm.compare_matched_runs(other, base)["status"], "inconclusive")
+        base["contaminated"] = True
+        self.assertEqual(rm.compare_matched_runs(base, base)["status"], "inconclusive")
+        base["contaminated"] = False
+        base["overhead"] = "unknown"
+        self.assertEqual(rm.compare_matched_runs(base, base)["status"], "inconclusive")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -62,7 +62,24 @@ hardware-presentation endpoint remain outside this card.
    A paired candidate/reference p99 comparison is accepted only when the
    conservative bound `candidate_upper - reference_lower <= 2 ms`; otherwise
    it is `inconclusive`. No interpolation or exact percentile is claimed.
-7. **GPU product gate** — `--require gpu` is the **product frame/cadence** gate.
+7. **Resources** — `evaluate_resources` consumes the host's sampled
+   `process_cpu_user_s` + `process_cpu_system_s` counters and divides their
+   endpoint delta by the actual `elapsed_s` monotonic-relative observation
+   span. It reports process CPU cores, current resident RSS median/max, and
+   lifetime/observation peak RSS separately; it never calls peak RSS steady
+   resident memory. Missing, non-finite, non-monotonic, reset, or insufficient
+   counters/boundaries are unavailable. The approved active N=1/N=16 TUI and
+   both panel policies use the exact budgets in `performance-finish-plan.md`;
+   unsupported scales/modes are unavailable. Numerical observations remain
+   visible under `--inspect`, while resource status requires the real
+   `qualify_control` result and rejects contaminated windows.
+8. **Matched comparisons** — `compare_matched_runs` requires available,
+   uncontaminated runs with identical frontend, scale, workload, renderer/data
+   settings, provenance and measured overhead metadata. It reports intended
+   RSS and CPU deltas diagnostically, but a single pair is always
+   `inconclusive`; mismatches and unknown profiles-on overhead never become
+   accepted savings. P99 comparisons remain conservative bound comparisons.
+9. **GPU product gate** — `--require gpu` is the **product frame/cadence** gate.
    The adapter now differences stable completion interval histograms,
    `stable_completed_n`, and registration/completion/lost/dropped/pending
    counters between the exact observe endpoints for every `(slot_id,
@@ -76,7 +93,7 @@ hardware-presentation endpoint remain outside this card.
    cannot product-meet on their own. The product result still records that the
    endpoint is CPU callback delivery after a prior submit, not hardware timing
    or scanout, and never uses host paint as a proxy.
-8. **CLI**
+10. **CLI**
    - `--inspect` (default path): partial JSON, **exit 0**
    - `--require scheduling,decode,input,gpu`: **exit 1** if any required gate is
      unavailable or target not `meet` (straddle = unproven → fail)
@@ -138,7 +155,8 @@ grants acceptance).
 
 ## Explicit non-claims / remaining gaps
 
-- No RSS/CPU resource gate productization.
+- Resource RSS/CPU results are bounded diagnostic gates only; no final
+  performance acceptance or overhead-corrected saving is claimed.
 - Legacy process-wide scheduling remains diagnostic; per-slot scheduling is
   qualified only when endpoint-stamped `scheduling_slots` rows are present.
 - GPU interval evidence is callback-delivery cadence, not a true presentation
