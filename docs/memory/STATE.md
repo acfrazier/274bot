@@ -9,6 +9,41 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-07 22:32 UTC
+
+- Reviewed next ownership proposal a6a418c passed actual Grok4.5/xai-oauth
+  session20260907_182834_837327. Implementation t_acaf5f62 now running
+  implementer: first prove builder provenance, then private immutable family
+  sharing if safe. It must preserve OLD owner gates/stale behavior as well as
+  independent publication epochs; reject unsafe sharing with counterexample.
+  No live runs or client edits delegated. Dedicated build target required.
+- Native Intel N16 diagnostic controls t_54a8358f assigned luna, preparation
+  only for focused-one then focused-plus-background. Same frozen36825a9/client5ee9
+  binary, qualified local console, new outputs; root executes after review.
+  This closes missing native mode/scale evidence, not a matched savings claim.
+- Reader901c2b0 transfer/test/replay is DONE:45sources verified, native Python
+  exit0 at22:10:40; receipt under diagnostics/windows-clamshell-20260907/
+  reader-tools-901c2b0. Five independent replays available there, originals
+  preserved. Resource samples exist despite unavailable final resource gate
+  (missing_resource_provenance/overhead not accepted). Reopened single PNG
+  directly inspected22:18; valid scene, no bank/return capture in that run.
+- Windows comparison7f09848 t_7b6eec9f currently reviewer round2. Root corrected
+  blanket scheduling pass and missing frontend metric interpretation; closed
+  Nvidia is p99 250–500ms MISS, other four20–21ms meet. Await actual verdict.
+- Fingerprint decision febe50e corrected root e1169f5, corrective Grok4.5 card
+  t_4ff54b6b approved. Debug slot9 gained zero steals but DID bank/restock/move:
+  banktrips0->1, food3->21, dispatched173->373. Strict qualification remains
+  failed unchanged; do not describe it as zero gameplay progress. Original
+  Unknown remains unexplained. Park live/performance claim, preserve reviewed
+  source, no further unchanged retries; independent owner work continues.
+- User asked target feasibility: root reported native Linux167MiB N1/611MiB
+  N16, incremental29.6MiB, profiled.73core and Windows503–633MiB N1. Targets
+  remain working budgets; no promise full set achievable. Sharing allocation
+  upper~41MiB TUI is insufficient alone for~99MiB N16 gap; no RSS claim.
+- Separate289 orch resumed after earlier dependency correction (run2 active);
+  source t_c59985d0 in review round2. Stage1/2/3/finalGrok4.6 queued behind
+  evidence dependencies. Keep polling actual runs, no duplicate campaigns.
+
 ## Latest boundary — 2026-09-07 22:06 UTC
 
 - Separate operator-authorized 289 client campaign is dispatched on existing
