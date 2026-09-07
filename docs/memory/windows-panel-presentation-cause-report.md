@@ -137,9 +137,20 @@ Consequently, a slow panel acquire cannot synchronously block a slot at the
 Rust mailbox API: the slot stores its frame and continues. It can still contend
 indirectly for CPU/GPU scheduling, and a GPU queue callback may be delivered
 later because callbacks are delivered by existing queue progress/polling rather
-than by a new wait. That indirect coupling is consistent with the observations,
-but this run did not capture per-thread scheduler states or hardware queue
-timestamps, so it remains a hypothesis rather than a proven root cause.
+than by a new wait. There is also a concrete static shared-device coupling
+path: the panel injects cloned device/queue handles into the client's
+process-wide GPU context (`crates/panel/src/app.rs:4075-4078`), and the client
+submits on that shared queue (`vendor/fr-client-rust/crates/client/src/render/
+backend/gpu.rs:1059,1447,1588`). In locked `wgpu-core` 29.0.4 (Cargo.lock
+checksum `2f519832254e56965a9940c4af57dcb75f702b6f6fa4a0b172f685395843a4d7`),
+`Surface::get_current_texture` holds `device.fence.read()` across HAL
+`acquire_texture` (`present.rs:165-175`), while `Queue::submit` takes the same
+device fence's write lock (`device/queue.rs:1198-1204`). Thus a FIFO acquire
+wait can be a ranked candidate for delaying a client submit on the shared
+device. This is a static coupling mechanism, not a captured runtime lock
+trace: the run does not prove that a dynamic fence stall caused the ~58 ms
+`CLIENT_TICK`, and the remaining decomposition includes simulation, submit/
+driver work, and preemption.
 
 ### Why approximately 17 Hz beside approximately 32 Hz UI
 
@@ -194,9 +205,12 @@ readback explains that capture outlier, not the persistent acquire median.
 
 A GPU/desktop presentation coupling remains plausible indirectly: FIFO acquire
 waits on the panel thread, while the same process and adapter service the
-client's GPU work and completion callbacks. The run does not prove that this
-indirect competition is the worker's sole cause. There is no evidence here of a
-Rust API lock or mailbox backpressure that would directly stop the worker.
+client's GPU work and completion callbacks. The shared-device `wgpu-core`
+fence read/write path described above materially ranks acquire-vs-submit
+contention alongside desktop/FIFO behavior. There is no mailbox backpressure
+or runtime lock-contention trace captured in this run, however, and static
+existence of the path does not establish a dynamic stall or make it the
+worker's sole cause.
 
 ### Is RDP established as the cause?
 
@@ -227,6 +241,14 @@ wait or worker cadence to RDP.
    delivery intervals and pending ages show the same gaps as worker intervals,
    and CPU/GPU queue instrumentation identifies a causal ordering. The current
    callback counters only show delivery cadence, not this ordering.
+
+The shared-device fence path is a more specific version of hypotheses 1 and 4:
+an acquire held under `device.fence.read()` can overlap a client
+`Queue::submit` needing `device.fence.write()`. It should be tested as a
+coupling candidate, not reported as a proven cause. Aligned acquire-entry/
+exit and worker-submit timestamps (or stack/duration sampling) would directly
+test whether submit calls wait behind acquire; this adds evidence without
+changing present policy or cadence.
 
 Do not change present mode, maximum latency, redraw policy, renderer fidelity,
 window protocol, or viewer geometry during the discriminating run. Keep the
