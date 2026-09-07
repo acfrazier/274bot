@@ -488,3 +488,8 @@ All four declared OFF/ON/ON/OFF cells qualified and bound with continuous helper
 ## 2026-09-07 08:31 UTC — N16 clean R/C/C/R screen
 
 All four corrected matched cells completed and independently bound; see [shared-nav-resource-live-report.md](shared-nav-resource-live-report.md). Candidate median RSS893.5–907.7MiB vs reference944.5–963.8MiB; minimum36.8MiB gap exceeds19.3MiB within-role spread. CPU conservative +2.68% passes5% empirical screen. Short-screen supported, accepted savings/final acceptance false. Earlier invalid-kind preflight preserved, no frontend launched there. Input preactivity reader f306183 approved t_fb472c0c, replay5available/11no-input per ON cell,106selected events each; full input target unproven. Next longer clean confirmation and600s latency companions for all-seat rotation, followed by remaining target/renderer/Linux/panel/lifecycle and whole-branch review.
+
+
+## 2026-09-07 09:47 UTC — longer resource confirmation, latency unproven
+
+All four predeclared 120s/600s longer cells completed and independently bound. See [shared-nav-confirmation-report.md](shared-nav-confirmation-report.md). Unprofiled reference989.250MiB vs candidate912.109MiB, observed reduction77.141MiB, CPU+2.195%; still N16 RSS/cadence target misses. Like-profile latency companions have incomplete boundary accounting on both sides, candidate input overflow at ordinal9, and three usable input ordinal bound differences above2ms. No acceptance or new live retry. Bounded raw accounting/overflow audit t_da2f4634 is active; report review follows. Actual backend/full-pair/target/Linux/panel/lifecycle and whole-branch Grok4.6 remain.
