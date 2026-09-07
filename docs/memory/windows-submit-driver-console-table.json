@@ -25,6 +25,7 @@
       "observation_s": 119.0587651,
       "client_ticks_per_slot_s": 16.6388422,
       "median_resident_bytes": 505452544,
+      "gpu_callbacks_per_slot_s": 16.512853953664937,
       "native_driver_version": "32.0.16.1656",
       "submit_trace": {
         "events": 241,
@@ -51,6 +52,7 @@
       "observation_s": 119.1874054,
       "client_ticks_per_slot_s": 16.2684974,
       "median_resident_bytes": 545320960,
+      "gpu_callbacks_per_slot_s": 16.167815664187618,
       "native_driver_version": "32.0.16.1686",
       "submit_trace": {
         "events": 233,
@@ -75,7 +77,8 @@
       "qualified_workload": true,
       "exit_code": 0,
       "observation_s": 119.0,
-      "client_ticks_per_slot_s": "about 49",
+      "client_ticks_per_slot_s": 48.913217835644595,
+      "gpu_callbacks_per_slot_s": 48.929923169604855,
       "native_driver_version": "32.0.16.1686",
       "submit_trace": {
         "events": 236,
@@ -97,8 +100,60 @@
     "gpu_semantics": "GPU callback delivery is CPU-side completion after submit, not hardware scanout or physical-display presentation.",
     "scope": "All-emitted rows are not steady-state scope. Diagnostic disabled-path remains uninstrumented.",
     "focus": "Startup focus was cached; the observer was briefly foreground. No whole-run focus proof exists.",
-    "confounders": ["RDP versus local console", "resolution and display scale", "Windows session/presentation path", "driver version", "foreground/focus state"],
+    "confounders": ["RDP versus local console", "resolution and display scale", "Windows session/presentation path", "driver version", "foreground/focus state", "server/restart/slot identity"],
     "capture_proof": "The three console PNGs are capture-time evidence: scene-ready guard thieving with four food, bank view with 22 food and closing-bank overlay, and return-route 22-food overlay. They do not prove cadence or whole-run focus."
+  },
+  "endpoint_diagnostics": {
+    "scope": "offline histogram / observation-window core only; not final performance or lifecycle acceptance",
+    "gpu_semantics": "GPU callback delivery is CPU-side completion after prior submit, not hardware scanout or physical-display presentation",
+    "old_driver_rdp": {
+      "scheduling": {"status": "miss", "interval_n_delta": 1985, "cycle_n_delta": 1985, "observed_fps": 16.641376246007326, "p99_bucket_ms": [50, 100]},
+      "gpu": {"status": "miss", "registered_n": 1966, "completed_n": 1966, "observed_fps": 16.512853953664937, "p99_bucket_ms": [50, 100]},
+      "decode": {"status": "meet", "sample_n": 196, "p99_bucket_ms": [10, 20]},
+      "input": {"status": "unavailable", "reason": "no_input_samples"}
+    },
+    "new_driver_rdp": {
+      "scheduling": {"status": "unavailable", "reason": "no_complete_qualified_per_slot", "slot_reason": "stale_snapshot"},
+      "gpu": {"status": "miss", "registered_n": 1927, "completed_n": 1927, "observed_fps": 16.167815664187618, "p99_bucket_ms": [50, 100]},
+      "decode": {"status": "meet", "sample_n": 197, "p99_bucket_ms": [10, 20]},
+      "input": {"status": "unavailable", "reason": "no_input_samples"}
+    },
+    "new_driver_console": {
+      "scheduling": {"status": "meet", "interval_n_delta": 5850, "cycle_n_delta": 5850, "observed_fps": 48.91386143580996, "p99_bucket_ms": [20, 21]},
+      "gpu": {"status": "meet", "registered_n": 5858, "completed_n": 5858, "observed_fps": 48.929923169604855, "p99_bucket_ms": [25, 40]},
+      "decode": {"status": "meet", "sample_n": 198, "p99_bucket_ms": [10, 20]},
+      "input": {"status": "unavailable", "reason": "no_input_samples"}
+    }
+  },
+  "native_managed_resources": {
+    "scope": "explicit PIDs; continuous coverage; RSS is sampled rather than continuous peak capture; CPU brackets enclose observation; instrumentation overhead not measured; diagnostic only",
+    "old_driver_rdp": {
+      "game_server": {"resident_median_bytes": 491114496, "cpu_s_enclosing_observation": 2.59375, "cpu_cores_interval": [0.02152488327917836, 0.021524892532197065]},
+      "controller": {"resident_median_bytes": 29110272, "cpu_s_enclosing_observation": 0.5625, "cpu_cores_interval": [0.004668047038189664, 0.0046680489247776435]},
+      "bootstrap": {"resident_median_bytes": 71708672, "cpu_s_enclosing_observation": 0.0, "cpu_cores_interval": [0.0, 0.0]},
+      "launcher": {"resident_median_bytes": 23838720, "cpu_s_enclosing_observation": 0.0, "cpu_cores_interval": [0.0, 0.0]},
+      "collector": {"resident_median_bytes": 23793664, "cpu_s_enclosing_observation": 0.265625, "cpu_cores_interval": [0.0022043555220303728, 0.002204356456823293]}
+    },
+    "new_driver_rdp": {
+      "game_server": {"resident_median_bytes": 478236672, "cpu_s_enclosing_observation": 3.140625, "cpu_cores_interval": [0.02606332232676136, 0.026063333509140082]},
+      "controller": {"resident_median_bytes": 29003776, "cpu_s_enclosing_observation": 0.59375, "cpu_cores_interval": [0.004927393914976649, 0.004927395971810017]},
+      "bootstrap": {"resident_median_bytes": 71139328, "cpu_s_enclosing_observation": 0.0, "cpu_cores_interval": [0.0, 0.0]},
+      "launcher": {"resident_median_bytes": 23240704, "cpu_s_enclosing_observation": 0.0, "cpu_cores_interval": [0.0, 0.0]},
+      "collector": {"resident_median_bytes": 23842816, "cpu_s_enclosing_observation": 0.375, "cpu_cores_interval": [0.0031120379728383826, 0.0031120393287082213]}
+    },
+    "new_driver_console": {
+      "game_server": {"resident_median_bytes": 413335552, "cpu_s_enclosing_observation": 3.5, "cpu_cores_interval": [0.029045637922901733, 0.02904564915549098]},
+      "controller": {"resident_median_bytes": 29265920, "cpu_s_enclosing_observation": 0.4375, "cpu_cores_interval": [0.00363070490607951, 0.003630706249892594]},
+      "bootstrap": {"resident_median_bytes": 70930432, "cpu_s_enclosing_observation": 0.0, "cpu_cores_interval": [0.0, 0.0]},
+      "launcher": {"resident_median_bytes": 23654400, "cpu_s_enclosing_observation": 0.0, "cpu_cores_interval": [0.0, 0.0]},
+      "collector": {"resident_median_bytes": 23605248, "cpu_s_enclosing_observation": 3.484375, "cpu_cores_interval": [0.028915971936175684, 0.028915983214607737]}
+    }
+  },
+  "panel_qualification_metrics": {
+    "old_driver_rdp": {"cpu_seconds": 0.203125, "cpu_cores": 0.001706090264159812, "median_resident_bytes": 505452544},
+    "new_driver_rdp": {"cpu_seconds": 0.234375, "cpu_cores": 0.0019664409944441996, "median_resident_bytes": 545320960},
+    "new_driver_console": {"cpu_seconds": 28.640625, "cpu_cores": 0.239225602727802, "median_resident_bytes": 540743680},
+    "provenance": "qualification fields from the independent binding; not verified native managed CPU and not resource-budget acceptance"
   },
   "gates": {
     "driver_only_causal_attribution": "unresolved",
