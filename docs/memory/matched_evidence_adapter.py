@@ -308,6 +308,8 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
     Never default TUI render_policy null → \"none\". Absent stays unavailable.
     """
     out: dict[str, Any] = {}
+    # Legacy launcher lacked this opt-in flag; its validated CLI proves off.
+    out['tui_input_probes'] = meta.get('tui_input_probes', False)
     for key in MATCH_KEY_FIELDS:
         if key in (
             "server_start_identity",
@@ -448,6 +450,9 @@ def _validate_effective_cli(receipt: dict, meta: dict) -> Optional[str]:
     for field, expected in values.items():
         if field not in meta or meta[field] != expected or (type(expected) is bool and type(meta[field]) is not bool):
             return f"receipt_cli_metadata_mismatch:{field}"
+    probe_flag = meta.get('tui_input_probes', False)
+    if type(probe_flag) is not bool or probe_flag != args.tui_input_probes:
+        return 'receipt_cli_metadata_mismatch:tui_input_probes'
     if args.build_manifest is not None:
         if canonical_path(args.build_manifest) != canonical_path(receipt.get('manifest_path')):
             return 'receipt_cli_manifest_mismatch'
@@ -673,6 +678,17 @@ def _bind_side(
             run_dir / "samples.qualification.jsonl"
         ),
     }
+    if meta.get('tui_input_probes') is True:
+        result = meta.get('input_probe_result')
+        probe_path = run_dir / 'input-probes.jsonl'
+        digest = _file_hash_if_present(probe_path)
+        if (not isinstance(result, dict) or result.get('error') is not None
+                or type(result.get('sent')) is not int or result['sent'] <= 0
+                or not isinstance(result.get('path'), str)
+                or canonical_path(result['path']) != probe_path
+                or digest is None or result.get('sha256') != digest):
+            return _unavailable('input_probe_artifact_invalid')
+        snapshot_hashes['input-probes.jsonl'] = digest
     if any(v is None for v in snapshot_hashes.values()):
         return _unavailable("raw_hash_failed", path=str(run_dir), raw_hashes=snapshot_hashes)
 
@@ -944,13 +960,7 @@ def _bind_side(
     )
 
     # Post-read content recheck: raw files must still match recorded hashes.
-    recheck = {
-        "metadata.json": _file_hash_if_present(meta_path),
-        "samples.jsonl": _file_hash_if_present(run_dir / "samples.jsonl"),
-        "samples.qualification.jsonl": _file_hash_if_present(
-            run_dir / "samples.qualification.jsonl"
-        ),
-    }
+    recheck = {name: _file_hash_if_present(run_dir / name) for name in raw_hashes}
     if recheck != raw_hashes:
         return _unavailable(
             "raw_hash_changed_after_read",

@@ -9,6 +9,20 @@ import cache_provenance as cp
 
 
 class ManagedReceiptTests(unittest.TestCase):
+    def test_opt_in_probe_raw_artifact_is_required_and_hashed(self):
+        self.meta['tui_input_probes'] = True
+        self.write_meta()
+        missing = self.finish()
+        self.assertIn('missing_raw_file:input-probes.jsonl', missing['binding_errors'])
+
+    def test_opt_in_probe_existing_artifact_is_hashed(self):
+        self.meta['tui_input_probes'] = True
+        self.write_meta()
+        artifact = self.run/'input-probes.jsonl'
+        artifact.write_text('{"kind":"complete"}\n')
+        result = self.finish()
+        self.assertEqual(result['raw_hashes']['input-probes.jsonl'], mr.file_sha256(artifact))
+
     def add_cache_launch(self):
         cache, unpack = self.root/'cache', self.root/'unpack'
         cache.mkdir()

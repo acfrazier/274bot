@@ -617,6 +617,38 @@ def _bind_fixture_artifacts(root, manifest_path, server_path):
 
 
 class MatchedEvidenceAdapterTests(unittest.TestCase):
+    def test_probe_flag_and_artifact_binding(self):
+        ref, _, manifest, server = self._positive_pair()
+        receipt = json.loads(ref['receipt_path'].read_text())
+        meta_path = ref['run_dir']/'metadata.json'
+        meta = json.loads(meta_path.read_text())
+        receipt['effective_cli'].append('--tui-input-probes')
+        meta['tui_input_probes'] = True
+        artifact = ref['run_dir']/'input-probes.jsonl'
+        artifact.write_text('{"kind":"complete","sent":1}\n')
+        digest = mea.sha256_file(artifact)
+        meta['input_probe_result'] = dict(sent=1, error=None, path=str(artifact), sha256=digest)
+        _write_json(meta_path, meta)
+        receipt['raw_hashes']['metadata.json'] = mea.sha256_file(meta_path)
+        receipt['raw_hashes']['input-probes.jsonl'] = digest
+        _write_json(ref['receipt_path'], receipt)
+        def bind():
+            return mea.bind_side(ref['receipt_path'], role='reference', manifest_path=manifest,
+                                 server_identity_path=server)
+        good = bind()
+        self.assertTrue(good['binding_ok'], good)
+        self.assertTrue(good['match_keys']['tui_input_probes'])
+        self.assertEqual(good['raw_hashes']['input-probes.jsonl'], digest)
+        artifact.write_text('changed bytes')
+        self.assertEqual(bind()['reason'], 'input_probe_artifact_invalid')
+        artifact.write_text('{"kind":"complete","sent":1}\n')
+        receipt['raw_hashes'].pop('input-probes.jsonl')
+        _write_json(ref['receipt_path'], receipt)
+        self.assertEqual(bind()['reason'], 'receipt_raw_hash_field_missing')
+        receipt['effective_cli'].remove('--tui-input-probes')
+        _write_json(ref['receipt_path'], receipt)
+        self.assertEqual(bind()['reason'], 'receipt_cli_metadata_mismatch:tui_input_probes')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

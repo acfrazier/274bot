@@ -116,6 +116,12 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result,
                 errors.append('missing_raw_file:' + name)
         try:
             meta = _load(run_dir / 'metadata.json')
+            if meta.get('tui_input_probes') is True:
+                source = run_dir / 'input-probes.jsonl'
+                if source.is_file():
+                    receipt['raw_hashes']['input-probes.jsonl'] = file_sha256(source)
+                else:
+                    errors.append('missing_raw_file:input-probes.jsonl')
             receipt['exit_code'] = meta.get('exit_code')
             if meta.get('run_dir') is None or pathlib.Path(meta['run_dir']).resolve() != run_dir:
                 errors.append('metadata_run_dir_mismatch')

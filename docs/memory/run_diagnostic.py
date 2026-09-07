@@ -14,6 +14,7 @@ def build_parser():
     p.add_argument('--focused-one', action='store_true', help='Panel: fixed slot0 full-rate GPU; others simulation-only (deterministic prefs)')
     p.add_argument('--focused-background', action='store_true', help='Panel: fixed slot0 full-rate; other slots draw at 1 fps skip-paint')
     p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')
+    p.add_argument('--tui-input-probes', action='store_true', help='TUI PTY: toggle settings overlay once per second during observation; writes alone are not latency evidence')
     p.add_argument('--debug', action='store_true')
     p.add_argument('--no-diagnostics', action='store_true', help='Disable verbose diagnostics; retain boundary qualification')
     p.add_argument('--failure-capture', action='store_true', help='Set BOT_MEMORY_FAILURE_CAPTURE=1 (failure-boundary stop-reason). Independent of diagnostics; pair with --no-diagnostics for failure-only mode (no periodic sidecar)')
@@ -39,6 +40,8 @@ def validate_args(a, parser):
         parser.error('--build-manifest and --build-role must be supplied together')
     if a.build_manifest and not a.binary:
         parser.error('--build-manifest requires explicit --binary')
+    if a.tui_input_probes and (a.frontend != 'tui' or a.headless):
+        parser.error('--tui-input-probes requires the real TUI terminal')
     panel_modes = [a.single_renderer, a.focused_one, a.focused_background]
     if sum(bool(x) for x in panel_modes) > 1:
         parser.error('--single-renderer, --focused-one, and --focused-background are mutually exclusive')
@@ -173,6 +176,7 @@ def main(argv=None):
     # Legacy source/commit fields above describe this checkout, not the saved
     # binary. Build claims stay in an independently verified nested object.
     meta.update(build_provenance=provenance,
+                tui_input_probes=a.tui_input_probes,
                 checkout_source_labels_only=True,
                 nav_flags_sha256=file_sha256(nav_flags) if nav_flags.is_file() else None,
                 catalog_path=str(catalog_path),
@@ -183,6 +187,7 @@ def main(argv=None):
                 allocation_counting=provenance.get('allocation_counting'))
     with (run/'run.log').open('xb') as log:
         reader = None
+        probe = None
         if terminal:
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',40,120,0,0))
@@ -192,6 +197,9 @@ def main(argv=None):
                 fcntl.ioctl(slave,termios.TIOCSCTTY,0)
             child=subprocess.Popen([str(binary)],cwd=root,env=env,stdin=slave,stdout=slave,stderr=slave,preexec_fn=terminal_session)
             os.close(slave)
+            if a.tui_input_probes:
+                from tui_input_probe import InputProbe
+                probe = InputProbe(master, run)
             def drain_terminal():
                 try:
                     while True:
@@ -209,12 +217,21 @@ def main(argv=None):
         meta['pid']=child.pid
         (run/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
         print(json.dumps(meta),flush=True)
+        if probe:
+            probe.start()
         def stop(sig,frame): child.terminate()
         signal.signal(signal.SIGTERM,stop)
         signal.signal(signal.SIGINT,stop)
         rc=child.wait()
+        if probe:
+            probe.close()
         if reader: reader.join()
     meta.update(exit_code=rc,ended_unix=time.time())
+    if probe:
+        probe_path = run/'input-probes.jsonl'
+        meta['input_probe_result'] = dict(sent=probe.sent, error=probe.error,
+            path=str(probe_path), sha256=file_sha256(probe_path) if probe_path.is_file() else None,
+            endpoint='PTY write only; use native input/draw counters for latency')
     provenance_error = None
     if provenance['status'] == 'verified':
         try:
@@ -227,6 +244,9 @@ def main(argv=None):
     print(json.dumps({'run_dir':str(run),'exit_code':rc}),flush=True)
     if provenance_error:
         print(f'FAIL: build provenance: {provenance_error}', file=sys.stderr)
+        sys.exit(1)
+    if probe and probe.error:
+        print(f'FAIL: input probe: {probe.error}', file=sys.stderr)
         sys.exit(1)
     sys.exit(rc if rc >= 0 else 128-rc)
 

@@ -1,0 +1,11 @@
+# Opt-in real TUI input probes
+
+`run_diagnostic.py --tui-input-probes` sends `o` through the existing real terminal PTY once per second after the native observe-start row. `App::on_key` toggles only the settings popup for this key; no profile setting is changed, no focus changes, and no game action is dispatched. The normal launcher default is unchanged. Panel and headless requests are rejected before launch.
+
+`tui_input_probe.py` owns a duplicated PTY master descriptor. Its bounded thread waits for ordered native boundaries, ignores a partially published final JSONL line, writes no catch-up bursts, stops on observe-end or child exit, closes its descriptor, and restores an odd overlay toggle after observe-end while the child is live. A write or boundary error is reported in completion metadata and makes the launcher exit unsuccessfully. No keystrokes are sent before the native start. A write near the native end can race with boundary publication; write timestamps are recorded and only independently contained native input intervals count toward latency evidence.
+
+`input-probes.jsonl` records configuration, actual write timestamps, restoration, and completion. Metadata binds its path, SHA, sent count and error. The managed receipt hashes the additional raw file when enabled; the matched reader requires both bindings, rechecks the file after reading, and compares the explicit probe flag. A legacy absent flag is false only alongside validated CLI parsing that confirms the option was absent. A probe-enabled run cannot match a run without probes.
+
+PTY writes are stimuli, never visible acknowledgments. Native input/draw counters remain the latency authority; profile-off cells still lack native latency histograms. This does not establish terminal display acknowledgement, sampler causal perturbation, physical input timing, or overhead acceptance.
+
+Validation: 90 affected tests passed (probe real PTY lifecycle, CLI, managed receipt, matched reader and managed runner). Three added artifact/receipt tests then passed with the existing receipt suite, 13 total; mutation, omitted receipt hash and CLI/metadata disagreement are rejected. The artifact path comparison uses canonical paths to handle macOS /var versus /private/var aliases. No bot run has yet exercised this opt-in flag; live validation follows review.
