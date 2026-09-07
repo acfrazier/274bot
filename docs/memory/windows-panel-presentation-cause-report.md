@@ -17,8 +17,11 @@ The evidence supports this bounded explanation:
   swapchain acquire, not GUI work, command encoding, or `frame.present()`.
 - The host worker is a separate per-slot thread. Its normal active loop runs
   `client_tick`, then sleeps the remainder of a fixed 20 ms frame budget
-  (`crates/host/src/lib.rs:253-286`). Its observed ~17 Hz is therefore a
-  missed/deferred 50 Hz loop, not a deliberate 17 Hz clamp in the Rust host.
+  (`crates/host/src/lib.rs:253-286`). The direct counters show this run was
+  work-bound: `client_tick` averaged about 58.17 ms, while requested and
+  actual sleep averaged only about 0.68/0.69 ms, with 1910/2000 work
+  overruns. Its observed ~17 Hz is therefore not a deliberate 17 Hz clamp or
+  primarily an overslept-wake hypothesis.
 - The most plausible coupling is scheduler/resource contention between the
   panel/event-loop thread and the slot thread while the panel waits for a FIFO
   image and the client produces GPU-backed frames. The run proves where the
@@ -73,8 +76,12 @@ callback-delivery measurement. The implementation registers
 moves (`crates/host/src/lib.rs:587-617`); the profile explicitly says callback
 time is CPU delivery after prior GPU work, delivered on a later existing
 submit/poll, not hardware completion or scanout (`crates/host/src/render_profile.rs:13-28`). Thus callback cadence can corroborate queue progress, but cannot be read as
-physical display cadence. The supplied evidence qualifies the 118 completed
-GPU-callback samples; it does not contain a full frame-duration distribution.
+physical display cadence. In the native observe window, the counters report
+2027 registered/completed/stable callbacks, about 17.04 callbacks/s, with a
+p99 stable-completion interval in the 50--100 ms bucket and zero
+lost/dropped/pending callbacks. The 118 samples are periodic
+observe/last-completed-frame samples, not the GPU-callback population, and do
+not contain a full frame-duration distribution.
 
 ## Causal path
 
@@ -110,7 +117,14 @@ The host has one OS thread per slot (`crates/host/src/lib.rs:128-170`). During
 an active frame it calls `observe`, drains input, executes one `client.mainloop`,
 possibly runs `mainredraw`, stores the resulting `FrameOutput`, and sleeps the
 remaining portion of the 20 ms budget (`lib.rs:371-406`, `lib.rs:465-505`,
-`lib.rs:581-620`). The sleep is after work; an overrun skips the sleep.
+`lib.rs:581-620`). The sleep is after work; an overrun skips the sleep. The
+observe-window `client_tick_total_ns/client_tick_count` counter gives about
+58.17 ms mean `CLIENT_TICK` wall span. The scheduling drawing group independently
+reports about 58.17 ms mean work, 0.68 ms requested sleep, 0.69 ms actual
+sleep, 1910/2000 work overruns, and about 58.86 ms mean start interval. These
+are batched-boundary CPU wall spans, not CPU-cost or a cross-thread lock trace,
+but they narrow the cadence miss to work inside `CLIENT_TICK` rather than
+equal-likelihood scheduler wake gaps.
 
 The client itself also has a Java-compatible 20 ms loop when driven by its
 normal run path (`vendor/fr-client-rust/crates/client/src/client/client.rs:
@@ -131,18 +145,23 @@ timestamps, so it remains a hypothesis rather than a proven root cause.
 
 The panel's 32 Hz completed-frame rate is consistent with FIFO acquire pacing
 near a display/compositor interval around 31 ms. The worker's approximately
-17 Hz rate is consistent with its 20 ms loop being delayed by roughly 40 ms on
-average, or by wake/scheduling gaps that produce the measured average. The host
-contains no 17 Hz constant or clamp in this path. Its idle park bounds (200 ms,
-600 ms, or 1 s) are not active here because the slot is full-rate and busy; the
-active branch is the fixed 20 ms cadence (`lib.rs:625-652`, `lib.rs:194-205`).
+17 Hz rate is instead explained first by the measured ~58 ms active tick work:
+the 20 ms budget is overrun on 1910/2000 drawing cycles, leaving only about
+0.7 ms of requested/actual sleep on average. The host contains no 17 Hz
+constant or clamp in this path. Its idle park bounds (200 ms, 600 ms, or 1 s)
+are not active here because the slot is full-rate and busy; the active branch
+is the fixed 20 ms cadence (`lib.rs:625-652`, `lib.rs:194-205`).
 
-The current evidence cannot distinguish these two possible contributors:
+The remaining uncertainty is what contributes to the `CLIENT_TICK` span:
 
-1. CPU scheduler starvation/preemption of the worker while the panel thread is
-   active and the GPU/desktop stack is servicing FIFO presentation;
-2. GPU/driver queue pressure causing worker-side GPU work or callback progress
-   to delay enough that the 20 ms loop misses wake deadlines.
+1. client simulation, main-loop/main-redraw work, or other CPU work inside the
+   batched tick boundary;
+2. GPU submission/queue progress or driver work encountered by that path;
+3. scheduler preemption layered on top of the work span.
+
+The counters do not provide a cross-thread lock trace or split the tick into
+those components. They do show that deliberate sleep/oversleep is not the
+primary explanation.
 
 The attribution timings rule out large UI preparation, UI body, command-submit,
 or `present()` CPU spans as the direct cause. They do not rule out work below
@@ -161,12 +180,17 @@ scheduler/loop-timing observation, not proof of server polling throttling.
 
 ### Does GPU readback/presentation couple worker timing?
 
-The ordinary panel path does not perform a readback. The client GPU frame is
-handed through the mailbox, the panel binds it, and the panel renders its own
-ImGui surface. The only deliberate blocking readback is the existing screenshot
-path, and its isolated 19.8883 ms sample is visible in the diagnostic log.
-Therefore readback explains that capture outlier, not the persistent acquire
-median.
+The ordinary host Texture path does not perform a readback. The GPU backend's
+production `finish` returns a `TextureHandle` containing the composited view;
+the host stores that handle in the mailbox (`crates/host/src/lib.rs:581-620`),
+and the panel binds the view directly. The mailbox store is a newest-frame
+handoff and documents no wait/readback. `TextureHandle::read_back` exists and
+calls `device.poll(wait_indefinitely)`, but it is a separate consumer/test
+utility, not the host Texture present path; the GPU backend's production
+`finish` explicitly returns the texture with no scene readback. The only
+deliberate blocking readback in this run is the existing screenshot path, and
+its isolated 19.8883 ms sample is visible in the diagnostic log. Therefore
+readback explains that capture outlier, not the persistent acquire median.
 
 A GPU/desktop presentation coupling remains plausible indirectly: FIFO acquire
 waits on the panel thread, while the same process and adapter service the
@@ -214,8 +238,10 @@ start, panel acquire entry/exit, callback delivery, and panel completion.
 This report does not claim a physical 32 Hz scanout rate: attribution is CPU API
 wall time and GPU callback delivery is CPU-side. It also does not claim that the
 118 last-completed-frame stage samples describe the full distribution of frame
-durations. No RDP causality, GPU hardware timestamp, compositor wait reason,
-thread-priority trace, or aligned per-event cross-thread timeline was captured.
+durations; the separate callback counters contain 2027 stable callbacks but
+also do not provide GPU hardware timestamps. No RDP causality, compositor wait
+reason, thread-priority trace, or aligned per-event cross-thread timeline was
+captured.
 
 Run exactly one matched pair next:
 
@@ -232,7 +258,7 @@ Run exactly one matched pair next:
   qualification separately.
 
 If session identity does not explain the difference, perform the same pair with
-only the backend changed. Until then, the safe attribution is: **persistent
-FIFO swapchain-acquire waiting is the direct panel-thread bottleneck; the
-worker's ~17 Hz is an active-loop scheduling miss whose precise coupling to
-presentation is not yet proven.**
+only the backend changed. Until then, the safe attribution is: **persistent FIFO swapchain-acquire
+waiting is the direct panel-thread bottleneck; the worker's ~17 Hz is a
+work-bound active-loop result inside `CLIENT_TICK`, while any precise coupling
+between that work and presentation is not yet proven.**
