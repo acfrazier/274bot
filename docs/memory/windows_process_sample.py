@@ -162,6 +162,88 @@ def _fail_open(pid: int, last_error: int) -> None:
     raise SampleError(f"OpenProcess failed for PID {pid} (Win32 error {last_error})")
 
 
+# Liveness-only rights: query + synchronize. No VM_READ (not needed to wait/exit-check).
+_PROCESS_ALIVE_ACCESS = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE
+
+
+def process_is_alive(
+    pid: int,
+    *,
+    api: Optional[Any] = None,
+    open_process: Optional[Callable[..., Any]] = None,
+    close_handle: Optional[Callable[..., Any]] = None,
+    wait_for_single_object: Optional[Callable[..., Any]] = None,
+    get_last_error: Optional[Callable[[], int]] = None,
+) -> bool:
+    """Return whether an explicit local Windows PID is still running.
+
+    Uses OpenProcess + zero-timeout WaitForSingleObject on the process handle.
+    Never uses ``os.kill(pid, 0)``: on Windows signal value 0 is CTRL_C_EVENT and
+    routes through GenerateConsoleCtrlEvent (console-group side effects), and it
+    does not honestly distinguish exited-but-still-handled process objects.
+
+    Semantics:
+    - OpenProcess fails with ERROR_INVALID_PARAMETER → dead / never existed
+    - OpenProcess fails with ERROR_ACCESS_DENIED → treat as alive (cannot claim dead)
+    - WaitForSingleObject == WAIT_OBJECT_0 → exited (handle still openable)
+    - WaitForSingleObject == WAIT_TIMEOUT → still running
+    """
+    if type(pid) is not int or isinstance(pid, bool) or pid <= 0:
+        return False
+    if pid > 0xFFFFFFFF:
+        return False
+
+    bound = api
+    if bound is None and any(
+        x is None
+        for x in (open_process, close_handle, wait_for_single_object, get_last_error)
+    ):
+        if sys.platform != "win32":
+            raise SampleError("Windows process liveness is supported only on win32")
+        bound = _default_api()
+
+    def _resolve(name: str, override, attr: str):
+        if override is not None:
+            return override
+        if bound is None:
+            raise SampleError(f"Windows API {name} not available")
+        return getattr(bound, attr)
+
+    _open = _resolve("OpenProcess", open_process, "OpenProcess")
+    _close = _resolve("CloseHandle", close_handle, "CloseHandle")
+    _wait = _resolve("WaitForSingleObject", wait_for_single_object, "WaitForSingleObject")
+    _gle = _resolve("GetLastError", get_last_error, "GetLastError")
+
+    handle = _open(_PROCESS_ALIVE_ACCESS, False, int(pid))
+    if not handle:
+        err = int(_gle() or 0)
+        if err in (ERROR_INVALID_PARAMETER, 0):
+            return False
+        if err == ERROR_ACCESS_DENIED:
+            # Alive-or-inaccessible: fail closed toward "still present" so cleanup
+            # does not skip owned children we cannot prove dead.
+            return True
+        # Unknown open failure: do not claim the PID is gone.
+        return True
+
+    closed = False
+    try:
+        wait_rc = int(_wait(handle, 0))
+        if wait_rc == WAIT_OBJECT_0:
+            return False
+        if wait_rc == WAIT_TIMEOUT:
+            return True
+        # WAIT_FAILED or unexpected: cannot prove dead.
+        return True
+    finally:
+        if not closed:
+            closed = True
+            try:
+                _close(handle)
+            except Exception:
+                pass
+
+
 def sample_process(
     pid: int,
     timeout: Optional[float] = None,

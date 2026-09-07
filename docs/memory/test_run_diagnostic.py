@@ -226,15 +226,17 @@ env = rd.build_child_env(
 assert "RS2B0T" not in env or env.get("RS2B0T") != rd._DEFAULT_RS2B0T_MAC
 assert env.get("BOT_MEMORY_RENDER_POLICY") == "focused-one"
 
-# Real TUI terminal must fail closed, never silently headless.
+# Real TUI terminal on forced win32 fails closed when native ConPTY
+# cannot bind (this host is not win32, or API missing) — never silent headless.
 try:
-    rd.require_terminal_transport(platform="win32")
+    tag = rd.require_terminal_transport(platform="win32")
 except RuntimeError as err:
     msg = str(err).lower()
     assert "windows" in msg or "conpty" in msg
     assert "headless" in msg or "panel" in msg
 else:
-    raise SystemExit("expected Windows TUI terminal RuntimeError")
+    # On real win32 the ConPTY helper loads successfully.
+    assert tag[0] == "conpty", tag
 
 try:
     rd.require_terminal_transport(platform="linux")
@@ -351,10 +353,27 @@ print("ok")
 
         if sys.platform == "win32":
             self.skipTest("host is win32")
-        fcntl, pty, termios = rd.require_terminal_transport()
+        tag, fcntl, pty, termios = rd.require_terminal_transport()
+        self.assertEqual(tag, "unix")
         self.assertTrue(hasattr(pty, "openpty"))
         self.assertTrue(hasattr(fcntl, "ioctl"))
         self.assertTrue(hasattr(termios, "TIOCSWINSZ"))
+
+    def test_win32_terminal_transport_selects_conpty_helper(self):
+        import run_diagnostic as rd
+        import windows_conpty as wcp
+
+        if sys.platform == "win32":
+            tag, mod = rd.require_terminal_transport(platform="win32")
+            self.assertEqual(tag, "conpty")
+            self.assertIs(mod, wcp)
+        else:
+            # Off Windows, forced platform still must not claim unix PTY.
+            with self.assertRaises(RuntimeError) as ctx:
+                rd.require_terminal_transport(platform="win32")
+            msg = str(ctx.exception).lower()
+            self.assertTrue("conpty" in msg or "windows" in msg)
+            self.assertTrue("headless" in msg or "panel" in msg)
 
 
 if __name__ == "__main__":

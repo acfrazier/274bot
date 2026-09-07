@@ -149,8 +149,13 @@ def main():
         time.sleep(observe + teardown)
         sys.exit(1)
     elif mode == 'orphan_after_start':
+        # Unix: ignore SIGTERM so cleanup must escalate to SIGKILL.
+        # Windows: SIGTERM maps to TerminateProcess and cannot be ignored; soft stage is already fatal.
         child = subprocess.Popen([sys.executable, '-c',
-            'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'])
+            "import sys,time; "
+            "(sys.platform == 'win32') or "
+            "__import__('signal').signal(__import__('signal').SIGTERM, __import__('signal').SIG_IGN); "
+            "time.sleep(60)"])
     else:
         child = subprocess.Popen(
             [sys.executable, "-c",
@@ -387,7 +392,18 @@ class ManagedCellTests(unittest.TestCase):
                                side_effect=lambda *a, **kw: actual_cleanup(*a, **kw, wait_s=.2)):
             report = self._run(self.fx.base_spec(mode='orphan_after_start', interval=.15))
         self.assertFalse(_alive(report['frontend_pid']), report)
-        self.assertIn('SIGKILL', report['cleanup']['frontend']['signals'])
+        signals = report['cleanup']['frontend']['signals']
+        # Unix: soft TERM ignored → hard SIGKILL. Windows: soft is already
+        # TerminateProcess (fatal); hard label is TERMINATE if escalation runs.
+        hard = rmc._hard_signal_label()
+        self.assertTrue(signals, report)
+        if hard == 'SIGKILL':
+            self.assertIn('SIGKILL', signals, report)
+        else:
+            self.assertTrue(
+                any(s in ('SIGTERM', hard) for s in signals),
+                report,
+            )
         self.assertTrue(_alive(self.fx.helper.pid))
         self.assertTrue(_alive(self.fx.game_server.pid))
 
@@ -643,7 +659,11 @@ class ManagedCellTests(unittest.TestCase):
         self.assertEqual(report["status"], "completed", report)
         launch = json.loads((pathlib.Path(report["cell_dir"]) / "launch.json").read_text())
         modules = launch["sampler"]["modules"]
-        self.assertEqual(set(modules), {"process_accounting.py", "server_resources.py"})
+        expected = {"process_accounting.py", "server_resources.py"}
+        if sys.platform == "win32":
+            # Producer-host system counters live in windows_process_sample.py.
+            expected.add("windows_process_sample.py")
+        self.assertEqual(set(modules), expected)
         self.assertEqual(
             pathlib.Path(modules["process_accounting.py"]["path"]).resolve(),
             ACCOUNTING.resolve(),
@@ -654,6 +674,14 @@ class ManagedCellTests(unittest.TestCase):
             SERVER_RESOURCES.resolve(),
         )
         self.assertEqual(modules["server_resources.py"]["sha256"], _sha(SERVER_RESOURCES))
+        if sys.platform == "win32":
+            self.assertEqual(
+                pathlib.Path(modules["windows_process_sample.py"]["path"]).resolve(),
+                WINDOWS_PROCESS_SAMPLE.resolve(),
+            )
+            self.assertEqual(
+                modules["windows_process_sample.py"]["sha256"], _sha(WINDOWS_PROCESS_SAMPLE)
+            )
         self.assertEqual(
             pathlib.Path(launch["sampler"]["module"]).resolve(),
             pathlib.Path(modules["process_accounting.py"]["path"]).resolve(),
@@ -817,6 +845,23 @@ class ManagedCellTests(unittest.TestCase):
             with mock.patch.object(rmc.sys, "platform", "linux"):
                 self.assertEqual(rmc._hard_signal_label(), "SIGKILL")
 
+    def test_pid_alive_rejects_invalid_and_detects_live_child(self):
+        self.assertFalse(rmc._pid_alive(0))
+        self.assertFalse(rmc._pid_alive(-1))
+        self.assertFalse(rmc._pid_alive(True))  # type: ignore[arg-type]
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(lambda: child.kill() if child.poll() is None else None)
+        self.addCleanup(lambda: child.wait(timeout=5) if child.poll() is None else None)
+        time.sleep(0.05)
+        self.assertTrue(rmc._pid_alive(child.pid))
+        child.kill()
+        child.wait(timeout=5)
+        # Brief settle for Windows process-object teardown.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and rmc._pid_alive(child.pid):
+            time.sleep(0.05)
+        self.assertFalse(rmc._pid_alive(child.pid))
+
     def test_parent_pid_rejects_foreign_and_accepts_owned_child(self):
         child = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)"],
@@ -868,13 +913,8 @@ class ManagedCellTests(unittest.TestCase):
 
 
 def _alive(pid: int) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    """Test helper: portable process liveness (same semantics as run_managed_cell)."""
+    return rmc._pid_alive(pid) if isinstance(pid, int) else False
 
 
 if __name__ == "__main__":

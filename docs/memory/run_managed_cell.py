@@ -287,6 +287,23 @@ class IncrementalLines:
 
 
 def _pid_alive(pid: int) -> bool:
+    """True if the explicit local PID still refers to a running process.
+
+    POSIX: classic ``os.kill(pid, 0)`` existence probe (no signal delivered).
+    Windows: never ``os.kill(pid, 0)`` — that value is CTRL_C_EVENT and can hit a
+    whole console group; use Win32 OpenProcess + WaitForSingleObject instead
+    (same exit detection as windows_process_sample).
+    """
+    if type(pid) is not int or isinstance(pid, bool) or pid <= 0:
+        return False
+    if sys.platform == 'win32':
+        try:
+            import windows_process_sample as wps  # type: ignore
+            return bool(wps.process_is_alive(int(pid)))
+        except Exception:
+            # Fail closed toward "alive" so cleanup does not skip owned children
+            # when the helper cannot answer.
+            return True
     try:
         os.kill(pid, 0)
         return True

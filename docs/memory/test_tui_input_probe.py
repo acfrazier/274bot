@@ -87,6 +87,41 @@ class ProbeTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 rd.validate_args(p.parse_args(args), p)
 
+    def test_transport_write_path_for_conpty_style_writer(self):
+        """InputProbe must write the same bytes through a non-fd transport."""
+        class FakeWriter:
+            def __init__(self):
+                self.buf = bytearray()
+            def write(self, data):
+                self.buf.extend(data)
+                return len(data)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            writer = FakeWriter()
+            probe = InputProbe(writer, root, interval_s=2)
+            probe.start()
+            try:
+                boundaries = root / 'samples.qualification.jsonl'
+                boundaries.write_text('{"phase":"observe-start"}\n')
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline and writer.buf != b'o':
+                    time.sleep(0.05)
+                self.assertEqual(bytes(writer.buf), b'o')
+                with boundaries.open('a') as f:
+                    f.write('{"phase":"observe-end"}\n')
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline and writer.buf != b'oo':
+                    time.sleep(0.05)
+                probe.thread.join(2)
+                self.assertFalse(probe.thread.is_alive())
+                self.assertIsNone(probe.error)
+                self.assertEqual(bytes(writer.buf), b'oo')
+                rows = [json.loads(x) for x in (root/'input-probes.jsonl').read_text().splitlines()]
+                self.assertEqual([x['kind'] for x in rows], ['configuration','write','restore','complete'])
+            finally:
+                probe.close()
+
 
 if __name__ == '__main__':
     unittest.main()

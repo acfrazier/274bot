@@ -172,6 +172,34 @@ class InjectedSampleTests(unittest.TestCase):
         self.assertIn("exited", str(ctx.exception))
         self.assertEqual(fake.closed, [fake.handle])
 
+    def test_process_is_alive_running_and_exited(self):
+        fake = FakeWin32()
+        fake.wait_rc = wps.WAIT_TIMEOUT
+        self.assertTrue(wps.process_is_alive(4242, api=fake))
+        self.assertEqual(fake.open_access, wps._PROCESS_ALIVE_ACCESS)
+        self.assertEqual(fake.closed, [fake.handle])
+
+        fake2 = FakeWin32()
+        fake2.wait_rc = wps.WAIT_OBJECT_0
+        self.assertFalse(wps.process_is_alive(9, api=fake2))
+        self.assertEqual(fake2.closed, [fake2.handle])
+
+    def test_process_is_alive_missing_and_access_denied(self):
+        fake = FakeWin32()
+        fake.open_returns_null = True
+        fake.last_error = wps.ERROR_INVALID_PARAMETER
+        self.assertFalse(wps.process_is_alive(999_999_991, api=fake))
+        self.assertEqual(fake.closed, [])
+
+        fake2 = FakeWin32()
+        fake2.open_returns_null = True
+        fake2.last_error = wps.ERROR_ACCESS_DENIED
+        # Cannot prove dead → treat as present.
+        self.assertTrue(wps.process_is_alive(4, api=fake2))
+
+        self.assertFalse(wps.process_is_alive(0, api=FakeWin32()))
+        self.assertFalse(wps.process_is_alive(-1, api=FakeWin32()))
+
     def test_missing_pid_open_failure(self):
         fake = FakeWin32()
         fake.open_returns_null = True

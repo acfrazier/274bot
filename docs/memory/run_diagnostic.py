@@ -9,15 +9,19 @@ from operator_home import bot_home_path
 _DEFAULT_RS2B0T_MAC = '/Users/acfrazier/experiments/rs2b0t'
 
 _WINDOWS_TUI_TERMINAL_UNSUPPORTED = (
-    'real TUI terminal diagnostic is not supported on native Windows yet '
-    '(no ConPTY transport); use panel, or tui --headless for non-terminal '
-    'launch. Do not treat a missing PTY as silent headless success.'
+    'real TUI terminal diagnostic requires Windows ConPTY transport; '
+    'API unavailable. Use panel or tui --headless for non-terminal launch. '
+    'Do not treat a missing ConPTY as silent headless success.'
 )
 
 _UNIX_TTY_IMPORT_REQUIRED = (
     'real TUI terminal diagnostic requires Unix pty/fcntl/termios; '
-    'modules unavailable. Use panel or tui --headless, or provide a later '
-    'ConPTY path on Windows.'
+    'modules unavailable. Use panel or tui --headless, or the Windows '
+    'ConPTY path on win32.'
+)
+
+_TERMINAL_PROBE_ENDPOINT = (
+    'terminal write only; use native input/draw counters for latency'
 )
 
 
@@ -195,20 +199,29 @@ def catalog_path_for_env(env, *, windows=None):
     return (pathlib.Path(base) / '.274bot/js-scripts.json').resolve()
 
 def require_terminal_transport(*, platform=None):
-    """Lazy-load Unix PTY stack; fail closed on Windows / missing modules.
+    """Lazy-load real terminal transport; fail closed (never silent headless).
 
-    Returns ``(fcntl, pty, termios)``. Does not silently fall through to headless.
+    Returns a tag tuple:
+      ``('unix', fcntl, pty, termios)`` on non-Windows
+      ``('conpty', windows_conpty_module)`` on win32 when ConPTY helper loads
+
+    Does not silently fall through to headless.
     """
     plat = sys.platform if platform is None else platform
     if plat == 'win32':
-        raise RuntimeError(_WINDOWS_TUI_TERMINAL_UNSUPPORTED)
+        try:
+            import windows_conpty as wcp
+            wcp.require_conpty_support(platform=plat)
+        except Exception as error:
+            raise RuntimeError(f'{_WINDOWS_TUI_TERMINAL_UNSUPPORTED} ({error})') from error
+        return 'conpty', wcp
     try:
         import fcntl
         import pty
         import termios
     except ImportError as error:
         raise RuntimeError(f'{_UNIX_TTY_IMPORT_REQUIRED} ({error})') from error
-    return fcntl, pty, termios
+    return 'unix', fcntl, pty, termios
 
 def main(argv=None):
     p = build_parser()
@@ -274,51 +287,106 @@ def main(argv=None):
     with (run/'run.log').open('xb') as log:
         reader = None
         probe = None
+        conpty_session = None
         if terminal:
-            fcntl, pty, termios = require_terminal_transport()
-            master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',40,120,0,0))
-            env['TERM']='xterm-256color'
-            def terminal_session():
-                os.setsid()
-                fcntl.ioctl(slave,termios.TIOCSCTTY,0)
-            child=subprocess.Popen([str(binary)],cwd=root,env=env,stdin=slave,stdout=slave,stderr=slave,preexec_fn=terminal_session)
-            os.close(slave)
-            if a.tui_input_probes:
-                from tui_input_probe import InputProbe
-                probe = InputProbe(master, run)
-            def drain_terminal():
-                try:
-                    while True:
-                        try: data=os.read(master,65536)
-                        except OSError as error:
-                            if error.errno==errno.EIO: break
-                            raise
-                        if not data: break
-                        log.write(data)
-                finally: os.close(master)
-            reader=threading.Thread(target=drain_terminal)
-            reader.start()
+            transport = require_terminal_transport()
+            env['TERM'] = 'xterm-256color'
+            if transport[0] == 'conpty':
+                wcp = transport[1]
+                # Real 120x40 pseudoconsole — not headless. Child is a direct
+                # CreateProcess child of this launcher (explicit-parent topology).
+                conpty_session = wcp.spawn(
+                    [str(binary)],
+                    cwd=str(root),
+                    env={str(k): str(v) for k, v in env.items()},
+                    cols=120,
+                    rows=40,
+                )
+                child = conpty_session
+                meta['terminal_transport'] = 'conpty'
+                if a.tui_input_probes:
+                    from tui_input_probe import InputProbe
+                    probe = InputProbe(conpty_session.input_writer(), run)
+                def drain_terminal():
+                    try:
+                        while True:
+                            data = conpty_session.read(65536)
+                            if not data:
+                                break
+                            log.write(data)
+                            log.flush()
+                    finally:
+                        pass
+                reader = threading.Thread(target=drain_terminal, name='conpty-drain')
+                reader.start()
+            else:
+                _tag, fcntl, pty, termios = transport
+                master, slave = pty.openpty()
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
+                def terminal_session():
+                    os.setsid()
+                    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                child = subprocess.Popen(
+                    [str(binary)],
+                    cwd=root,
+                    env=env,
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    preexec_fn=terminal_session,
+                )
+                os.close(slave)
+                meta['terminal_transport'] = 'unix-pty'
+                if a.tui_input_probes:
+                    from tui_input_probe import InputProbe
+                    probe = InputProbe(master, run)
+                def drain_terminal():
+                    try:
+                        while True:
+                            try:
+                                data = os.read(master, 65536)
+                            except OSError as error:
+                                if error.errno == errno.EIO:
+                                    break
+                                raise
+                            if not data:
+                                break
+                            log.write(data)
+                    finally:
+                        os.close(master)
+                reader = threading.Thread(target=drain_terminal, name='unix-pty-drain')
+                reader.start()
         else:
-            child = subprocess.Popen([str(binary)],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT)
-        meta['pid']=child.pid
-        (run/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
-        print(json.dumps(meta),flush=True)
+            child = subprocess.Popen([str(binary)], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+        meta['pid'] = child.pid
+        (run / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
+        print(json.dumps(meta), flush=True)
         if probe:
             probe.start()
-        def stop(sig,frame): child.terminate()
-        signal.signal(signal.SIGTERM,stop)
-        signal.signal(signal.SIGINT,stop)
-        rc=child.wait()
+        def stop(sig, frame):
+            child.terminate()
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+        rc = child.wait()
         if probe:
             probe.close()
-        if reader: reader.join()
-    meta.update(exit_code=rc,ended_unix=time.time())
+        # ClosePseudoConsole after wait so drain observes EOF (avoids deadlock).
+        if conpty_session is not None:
+            conpty_session.close_pseudoconsole()
+        if reader:
+            reader.join()
+        if conpty_session is not None:
+            conpty_session.close()
+    meta.update(exit_code=rc, ended_unix=time.time())
     if probe:
-        probe_path = run/'input-probes.jsonl'
-        meta['input_probe_result'] = dict(sent=probe.sent, error=probe.error,
-            path=str(probe_path), sha256=file_sha256(probe_path) if probe_path.is_file() else None,
-            endpoint='PTY write only; use native input/draw counters for latency')
+        probe_path = run / 'input-probes.jsonl'
+        meta['input_probe_result'] = dict(
+            sent=probe.sent,
+            error=probe.error,
+            path=str(probe_path),
+            sha256=file_sha256(probe_path) if probe_path.is_file() else None,
+            endpoint=_TERMINAL_PROBE_ENDPOINT,
+        )
     provenance_error = None
     if provenance['status'] == 'verified':
         try:

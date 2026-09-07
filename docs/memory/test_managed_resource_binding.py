@@ -165,8 +165,7 @@ class BindingTests(unittest.TestCase):
     def test_windows_dependency_included_binds_on_any_reader_platform(self):
         """Producer Windows identities require windows_process_sample even on Mac reader."""
         receipt, server = self._windows_receipt(include_windows=True)
-        # Simulate non-Windows reader (this host is typically darwin/linux).
-        self.assertNotEqual(sys.platform, 'win32')
+        # Reader platform must not gate Windows producer binding — including win32 hosts.
         result = rb.bind(receipt, self.native, server)
         self.assertEqual(result['status'], 'available', result)
         self.assertIn('windows_process_sample.py', result['process']['module_bindings'])
