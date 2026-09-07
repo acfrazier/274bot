@@ -143,3 +143,7 @@ worker stopped at `kanban_request_review` per charter.
 ## Orchestrator freeze
 
 Client commit `e17deab` on `codex/memory-animation-bases` freezes the implementation. Root tightened the missing-ID fixture to assert the selected missing ID directly, removing its unrelated OR fallback; all six animation fixtures passed again. Earlier full test results remain as recorded. GPU failure class is documented before the scalar-delay change in `scalar-delay-experiment.md`; it is not a passing renderer result. Independent code review and live evidence remain pending.
+
+### Exact pre-change GPU failure reproduction
+
+Root separately ran `cargo test -p client --test iface_model -- gpu_` on the exact pre-change client `85266df` in an isolated control checkout, then on candidate `e17deab`. Both exit101 with the same four failures listed above (zero composite/overlay pixels and modal hole0 versus3368601); test source hashes match. Receipts and log hashes are in `diagnostics/animation-gpu-baseline-comparison.json`, with both raw logs retained. This establishes that those failures predate the private-store change; it does not grant a GPU pass or complete renderer non-regression. The control checkout is for tests only, not a measured performance cell.
